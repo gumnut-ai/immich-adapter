@@ -34,6 +34,8 @@ jobs:
         run: uv sync
 
       - name: Generate OpenAPI specification
+        env:
+          ENVIRONMENT: "test"
         run: |
           echo "Generating OpenAPI specification..."
           uv run tools/dump_openapi_json.py > adapter-openapi.json
