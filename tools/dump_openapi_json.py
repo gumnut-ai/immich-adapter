@@ -27,7 +27,9 @@ try:
     from main import app
 except ImportError as e:
     print(f"Error importing main app: {e}", file=sys.stderr)
-    print("Make sure you're running this from the project root directory", file=sys.stderr)
+    print(
+        "Make sure you're running this from the project root directory", file=sys.stderr
+    )
     sys.exit(1)
 
 
@@ -36,11 +38,11 @@ def main():
     try:
         # Generate the OpenAPI spec from the FastAPI app
         openapi_spec = app.openapi()
-        
+
         # Pretty print to stdout
         json.dump(openapi_spec, sys.stdout, indent=2)
         print()  # Add a newline at the end
-        
+
     except Exception as e:
         print(f"Error generating OpenAPI spec: {e}", file=sys.stderr)
         sys.exit(1)
