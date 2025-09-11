@@ -90,6 +90,30 @@ The API compatibility check runs automatically in GitHub Actions on:
 
 The workflow checks the `server` endpoint by default, but this can be customized via workflow inputs.
 
+### OpenAPI Specification Dumper
+
+The `dump_openapi_json.py` tool dumps the OpenAPI specification from the FastAPI app:
+
+```bash
+# Dump to stdout
+uv run tools/dump_openapi_json.py
+
+# Save to file
+uv run tools/dump_openapi_json.py > openapi_spec.json
+
+# Use with the compatibility validator
+uv run tools/dump_openapi_json.py > /tmp/spec.json
+uv run tools/validate_api_compatibility.py \
+  --endpoints=server \
+  --immich-spec=https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json \
+  --adapter-spec=/tmp/spec.json
+```
+
+This is useful for:
+- Debugging OpenAPI spec generation
+- Comparing specs without running a server
+- Offline analysis of the API specification
+
 ## Development Commands
 
 ### Core Commands
