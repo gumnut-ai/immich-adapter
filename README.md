@@ -40,7 +40,55 @@ to avoid conflicting with other apps commonly run alongside `immich-adapter`.
 ## Access the application
 
 - **API**: http://localhost:3001
-- **API Docs**: http://localhost:8000/docs and http://localhost:8000/redoc
+- **API Docs**: http://localhost:3001/docs and http://localhost:3001/redoc
+- **OpenAPI Spec**: http://localhost:3001/openapi.json
+
+## API Compatibility Tool
+
+The `validate_api_compatibility.py` tool ensures that immich-adapter correctly implements the Immich API endpoints.
+
+### Usage
+
+```bash
+# Compare specific endpoints
+uv run tools/validate_api_compatibility.py \
+  --endpoints=server,users \
+  --immich-spec=https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json \
+  --adapter-spec=http://localhost:3001/openapi.json
+
+# Compare all endpoints
+uv run tools/validate_api_compatibility.py \
+  --immich-spec=https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json \
+  --adapter-spec=http://localhost:3001/openapi.json
+
+# Use local specification files
+uv run tools/validate_api_compatibility.py \
+  --endpoints=server \
+  --immich-spec=./immich-openapi.json \
+  --adapter-spec=./adapter-openapi.json
+
+# Show verbose output including info-level differences
+uv run tools/validate_api_compatibility.py \
+  --endpoints=server \
+  --immich-spec=https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json \
+  --adapter-spec=http://localhost:3001/openapi.json \
+  --verbose
+```
+
+### Exit Codes
+
+The tool returns an exit code equal to the number of error-level incompatibilities found:
+- `0`: All specified endpoints are compatible
+- `>0`: Number of incompatible differences found
+
+### CI Integration
+
+The API compatibility check runs automatically in GitHub Actions on:
+- Push to main branch
+- Pull requests
+- Manual workflow dispatch
+
+The workflow checks the `server` endpoint by default, but this can be customized via workflow inputs.
 
 ## Development Commands
 
