@@ -281,7 +281,7 @@ class SpecComparator:
             # Get the $ref value
             return current.get("$ref") if isinstance(current, dict) else None
 
-        except (KeyError, TypeError, AttributeError, IndexError) as e:
+        except (KeyError, TypeError, AttributeError, IndexError):
             # Expected errors when navigating malformed paths or schemas
             # Could add logging here for debugging if needed
             pass

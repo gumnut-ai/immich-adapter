@@ -65,7 +65,7 @@ def fetch_spec(spec_path: str) -> tuple[str, bool]:
                         file=sys.stderr,
                     )
                     sys.exit(1)
-            
+
             # Only create temp file after successful parsing
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".json", delete=False
