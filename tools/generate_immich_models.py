@@ -28,7 +28,7 @@ import requests
 import yaml
 
 
-def fetch_spec(spec_path: str) -> str:
+def fetch_spec(spec_path: str) -> tuple[str, bool]:
     """
     Fetch OpenAPI spec from URL or file path and return path to local file.
 
@@ -36,7 +36,7 @@ def fetch_spec(spec_path: str) -> str:
         spec_path: URL or file path to OpenAPI spec
 
     Returns:
-        Path to local file containing the spec
+        Tuple of (path to local file containing the spec, is_temp_file)
     """
     # Check if it's a URL
     parsed = urlparse(spec_path)
@@ -52,26 +52,26 @@ def fetch_spec(spec_path: str) -> str:
             response = requests.get(spec_path, timeout=30)
             response.raise_for_status()
 
-            # Create temporary file
+            # Parse content first to avoid creating temp file on parse failure
+            try:
+                spec_data = response.json()
+            except json.JSONDecodeError:
+                # Try YAML if JSON fails
+                try:
+                    spec_data = yaml.safe_load(response.text)
+                except yaml.YAMLError as ye:
+                    print(
+                        f"Failed to parse spec as JSON or YAML: {ye}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+            
+            # Only create temp file after successful parsing
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".json", delete=False
             ) as f:
-                # Try to parse as JSON first
-                try:
-                    spec_data = response.json()
-                    json.dump(spec_data, f, indent=2)
-                except json.JSONDecodeError:
-                    # Try YAML if JSON fails
-                    try:
-                        spec_data = yaml.safe_load(response.text)
-                    except yaml.YAMLError as ye:
-                        print(
-                            f"Failed to parse spec as JSON or YAML: {ye}",
-                            file=sys.stderr,
-                        )
-                        sys.exit(1)
-                    json.dump(spec_data, f, indent=2)
-                return f.name
+                json.dump(spec_data, f, indent=2)
+                return f.name, True
 
         except requests.RequestException as e:
             print(f"Error fetching spec from {spec_path}: {e}", file=sys.stderr)
@@ -82,7 +82,7 @@ def fetch_spec(spec_path: str) -> str:
         if not path.exists():
             print(f"File not found: {spec_path}", file=sys.stderr)
             sys.exit(1)
-        return str(path)
+        return str(path), False
 
 
 @click.command()
@@ -106,8 +106,8 @@ def main(immich_spec: str, output: str, verbose: bool):
     # Resolve paths relative to current working directory for consistency
     output_file = Path(output).resolve()
 
-    # Fetch the spec (returns local file path)
-    spec_file = fetch_spec(immich_spec)
+    # Fetch the spec (returns local file path and temp flag)
+    spec_file, is_temp_file = fetch_spec(immich_spec)
 
     try:
         # Ensure output directory exists
@@ -161,7 +161,7 @@ def main(immich_spec: str, output: str, verbose: bool):
 
     finally:
         # Clean up temporary file if it was created
-        if spec_file != immich_spec and Path(spec_file).exists():
+        if is_temp_file and Path(spec_file).exists():
             Path(spec_file).unlink()
 
 
