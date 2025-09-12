@@ -1,4 +1,14 @@
+from datetime import datetime
 from fastapi import APIRouter
+
+from routers.immich_models import (
+    ServerFeaturesDto,
+    ServerConfigDto,
+    ServerAboutResponseDto,
+    ServerStorageResponseDto,
+    ServerVersionHistoryResponseDto,
+    ServerMediaTypesResponseDto,
+)
 
 router = APIRouter(
     prefix="/api/server",
@@ -61,7 +71,7 @@ fake_storage = {
 fake_version_history = [
     {
         "id": "b86ef90c-3973-4aae-8b74-2f24ac71fdd4",
-        "createdAt": "2025-01-13T21:28:34.519Z",
+        "createdAt": "2025-01-13T21:28:34.519+00:00",
         "version": "1.124.2",
     }
 ]
@@ -140,30 +150,37 @@ fake_media_types = {
 
 
 @router.get("/features")
-async def get_features():
-    return fake_features
+async def get_features() -> ServerFeaturesDto:
+    return ServerFeaturesDto(**fake_features)
 
 
 @router.get("/config")
-async def get_config():
-    return fake_config
+async def get_config() -> ServerConfigDto:
+    return ServerConfigDto(**fake_config)
 
 
 @router.get("/about")
-async def get_about():
-    return fake_about
+async def get_about() -> ServerAboutResponseDto:
+    return ServerAboutResponseDto(**fake_about)
 
 
 @router.get("/storage")
-async def get_storage():
-    return fake_storage
+async def get_storage() -> ServerStorageResponseDto:
+    return ServerStorageResponseDto(**fake_storage)
 
 
 @router.get("/version-history")
-async def get_version_history():
-    return fake_version_history
+async def get_version_history() -> list[ServerVersionHistoryResponseDto]:
+    return [
+        ServerVersionHistoryResponseDto(
+            id=item["id"],
+            version=item["version"],
+            createdAt=datetime.fromisoformat(item["createdAt"]),
+        )
+        for item in fake_version_history
+    ]
 
 
 @router.get("/media-types")
-async def get_media_types():
-    return fake_media_types
+async def get_media_types() -> ServerMediaTypesResponseDto:
+    return ServerMediaTypesResponseDto(**fake_media_types)
