@@ -43,7 +43,58 @@ to avoid conflicting with other apps commonly run alongside `immich-adapter`.
 - **API Docs**: http://localhost:3001/docs and http://localhost:3001/redoc
 - **OpenAPI Spec**: http://localhost:3001/openapi.json
 
-## API Compatibility Tool
+## Development Commands
+
+### Core Commands
+
+- **Lint**: `uv run ruff check --fix`
+- **Format**: `uv run ruff format`
+- **Type check**: `uv run pyright`
+- **Test**: `uv run pytest`
+- **Test single file**: `uv run pytest tests/path/to/test_file.py::test_function_name`
+
+## Development Tools
+
+### Pydantic Model Generator
+
+The `generate_immich_models.py` tool generates type-safe Pydantic v2 models from the Immich OpenAPI specification.
+
+#### Usage
+
+```bash
+# Generate models from local file (default: immich.json)
+uv run tools/generate_immich_models.py
+
+# Generate from Immich repository URL
+uv run tools/generate_immich_models.py \
+  --immich-spec https://raw.githubusercontent.com/immich-app/immich/main/open-api/immich-openapi-specs.json
+
+# Custom output location
+uv run tools/generate_immich_models.py \
+  --immich-spec immich.json \
+  --output src/models.py
+```
+
+This generates 300+ Pydantic models with:
+
+- Full type safety and validation
+- Proper field constraints from OpenAPI schema
+- Support for nested model relationships
+- Modern Pydantic v2 syntax with `Annotated` fields
+
+Generated models are used in FastAPI endpoints for request/response validation:
+
+```python
+from routers.immich_models import ServerFeaturesDto
+
+@router.get("/features", response_model=ServerFeaturesDto)
+async def get_features() -> ServerFeaturesDto:
+    return ServerFeaturesDto(**features_data)
+```
+
+Always run linting and formatting on the generated model file before committing; the script will not do this by itself.
+
+### API Compatibility Tool
 
 The `validate_api_compatibility.py` tool ensures that immich-adapter correctly implements the Immich API endpoints.
 
@@ -78,12 +129,14 @@ uv run tools/validate_api_compatibility.py \
 ### Exit Codes
 
 The tool returns an exit code equal to the number of error-level incompatibilities found:
+
 - `0`: All specified endpoints are compatible
 - `>0`: Number of incompatible differences found
 
 ### CI Integration
 
 The API compatibility check runs automatically in GitHub Actions on:
+
 - Push to main branch
 - Pull requests
 - Manual workflow dispatch
@@ -110,19 +163,10 @@ uv run tools/validate_api_compatibility.py \
 ```
 
 This is useful for:
+
 - Debugging OpenAPI spec generation
 - Comparing specs without running a server
 - Offline analysis of the API specification
-
-## Development Commands
-
-### Core Commands
-
-- **Lint**: `uv run ruff check --fix`
-- **Format**: `uv run ruff format`
-- **Type check**: `uv run pyright`
-- **Test**: `uv run pytest`
-- **Test single file**: `uv run pytest tests/path/to/test_file.py::test_function_name`
 
 ## Code Style and Best Practices
 
@@ -133,6 +177,15 @@ This is useful for:
 - **Imports**: Always place imports at the top of files (inline imports only to prevent circular dependencies)
 - **Dependencies**: Use `uv` for dependency management, not pip or poetry
 - **Versioning**: Version dependencies appropriately in `pyproject.toml`
+
+### Immich API Integration
+
+When implementing new endpoints:
+
+1. **Generate models**: Use `generate_immich_models.py` to create up-to-date Pydantic models
+2. **Import models**: Use generated models from `routers.immich_models` for type safety
+3. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
+4. **Test endpoints**: Verify responses match Immich API expectations
 
 ### Testing Guidelines
 

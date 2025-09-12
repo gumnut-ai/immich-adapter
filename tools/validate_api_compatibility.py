@@ -18,6 +18,7 @@ to ensure API compatibility.
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -143,6 +144,8 @@ class SpecComparator:
         self.immich_spec = immich_spec
         self.adapter_spec = adapter_spec
         self.differences = []
+        self.current_immich_schema = None  # Track current schema being compared
+        self.current_adapter_schema = None
 
     def _normalize_path(self, path: str) -> str:
         """
@@ -166,7 +169,11 @@ class SpecComparator:
                 clean_key = key.split("['")[-1].rstrip("']")
                 old_val = change.get("old_value", "N/A")
                 new_val = change.get("new_value", "N/A")
-                parts.append(f"'{clean_key}': {old_val} → {new_val}")
+
+                # Format values for better readability
+                old_str = self._format_value(old_val)
+                new_str = self._format_value(new_val)
+                parts.append(f"'{clean_key}': {old_str} → {new_str}")
 
         if "type_changes" in diff:
             for key, change in diff["type_changes"].items():
@@ -184,18 +191,41 @@ class SpecComparator:
                 parts.append(f"'{clean_key}' type: {old_type} → {new_type}")
 
         if "dictionary_item_added" in diff:
-            added_keys = [
-                k.split("['")[-1].rstrip("']") for k in diff["dictionary_item_added"]
-            ]
-            if added_keys:
-                parts.append(f"Added in adapter: {', '.join(added_keys)}")
+            added_items = []
+            for k in diff["dictionary_item_added"]:
+                # Extract the key path
+                if "['$ref']" in k or k == "root['$ref']":
+                    # For $ref, try to show what it references in the adapter
+                    ref_value = self._get_ref_from_path_in(
+                        k, self.adapter_spec, self.current_adapter_schema
+                    )
+                    if ref_value:
+                        added_items.append(f"$ref={ref_value}")
+                    else:
+                        added_items.append("$ref")
+                else:
+                    clean_key = k.split("['")[-1].rstrip("']")
+                    added_items.append(clean_key)
+            if added_items:
+                parts.append(f"Added in adapter: {', '.join(added_items)}")
 
         if "dictionary_item_removed" in diff:
-            removed_keys = [
-                k.split("['")[-1].rstrip("']") for k in diff["dictionary_item_removed"]
-            ]
-            if removed_keys:
-                parts.append(f"Missing in adapter: {', '.join(removed_keys)}")
+            removed_items = []
+            for k in diff["dictionary_item_removed"]:
+                # Extract the key path
+                if "['$ref']" in k or k == "root['$ref']":
+                    # For $ref, try to show what it references
+                    # We need to look at the parent to get the $ref value
+                    ref_value = self._get_ref_from_path(k)
+                    if ref_value:
+                        removed_items.append(f"$ref={ref_value}")
+                    else:
+                        removed_items.append("$ref")
+                else:
+                    clean_key = k.split("['")[-1].rstrip("']")
+                    removed_items.append(clean_key)
+            if removed_items:
+                parts.append(f"Missing in adapter: {', '.join(removed_items)}")
 
         if "iterable_item_added" in diff:
             parts.append(f"Items added: {len(diff['iterable_item_added'])}")
@@ -208,6 +238,82 @@ class SpecComparator:
             return str(diff)[:500]
 
         return "; ".join(parts)
+
+    def _get_ref_from_path_in(
+        self, path: str, spec: dict, current_schema: Any
+    ) -> str | None:
+        """
+        Try to extract the actual $ref value from the given spec.
+        Path format is like: root['something']['$ref'] or just root['$ref']
+        """
+        try:
+            # For the simple case where we're comparing schemas directly
+            if (
+                path == "root['$ref']"
+                and isinstance(current_schema, dict)
+                and "$ref" in current_schema
+            ):
+                return current_schema["$ref"]
+
+            # Extract all keys between brackets
+            keys = re.findall(r"\['([^']+)'\]", path)
+
+            if not keys or keys[-1] != "$ref":
+                return None
+
+            # Try to navigate from the current schema first
+            if (
+                len(keys) == 1
+                and keys[0] == "$ref"
+                and isinstance(current_schema, dict)
+                and "$ref" in current_schema
+            ):
+                return current_schema["$ref"]
+
+            # Otherwise navigate through the spec to the parent of $ref
+            current = spec
+            for key in keys[:-1]:  # All except '$ref'
+                if isinstance(current, dict) and key in current:
+                    current = current[key]
+                else:
+                    return None
+
+            # Get the $ref value
+            return current.get("$ref") if isinstance(current, dict) else None
+
+        except (KeyError, TypeError, AttributeError, IndexError):
+            # Expected errors when navigating malformed paths or schemas
+            # Could add logging here for debugging if needed
+            pass
+        return None
+
+    def _get_ref_from_path(self, path: str) -> str | None:
+        """
+        Try to extract the actual $ref value from the Immich spec.
+        Path format is like: root['something']['$ref'] or just root['$ref']
+        """
+        return self._get_ref_from_path_in(
+            path, self.immich_spec, self.current_immich_schema
+        )
+
+    def _format_value(self, value: Any) -> str:
+        """
+        Format a value for display, handling special cases like $ref.
+        """
+        if isinstance(value, dict):
+            if "$ref" in value:
+                return f"$ref={value['$ref']}"
+            # For other dicts, show a summary
+            return f"{{...}} ({len(value)} keys)"
+        elif isinstance(value, str):
+            # Truncate long strings
+            if len(value) > 100:
+                return f"'{value[:100]}...'"
+            return f"'{value}'"
+        elif isinstance(value, list):
+            return f"[...] ({len(value)} items)"
+        else:
+            return str(value)
 
     def compare(self) -> List[Dict[str, Any]]:
         """
@@ -561,6 +667,10 @@ class SpecComparator:
                     immich_schema = immich_content[content_type].get("schema", {})
                     adapter_schema = adapter_content[content_type].get("schema", {})
 
+                    # Store schemas for reference in formatting
+                    self.current_immich_schema = immich_schema
+                    self.current_adapter_schema = adapter_schema
+
                     schema_diff = DeepDiff(
                         immich_schema,
                         adapter_schema,
@@ -585,6 +695,10 @@ class SpecComparator:
                                 "details": details,
                             }
                         )
+
+                    # Reset schema context to avoid stale state
+                    self.current_immich_schema = None
+                    self.current_adapter_schema = None
 
 
 def display_results(differences: List[Dict[str, Any]], verbose: bool = False) -> int:
