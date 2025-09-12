@@ -92,6 +92,8 @@ async def get_features() -> ServerFeaturesDto:
     return ServerFeaturesDto(**features_data)
 ```
 
+Always run linting and formatting on the generated model file before committing; the script will not do this by itself.
+
 ### API Compatibility Tool
 
 The `validate_api_compatibility.py` tool ensures that immich-adapter correctly implements the Immich API endpoints.
