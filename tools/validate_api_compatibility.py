@@ -168,7 +168,7 @@ class SpecComparator:
                 clean_key = key.split("['")[-1].rstrip("']")
                 old_val = change.get("old_value", "N/A")
                 new_val = change.get("new_value", "N/A")
-                
+
                 # Format values for better readability
                 old_str = self._format_value(old_val)
                 new_str = self._format_value(new_val)
@@ -232,7 +232,7 @@ class SpecComparator:
             return str(diff)[:500]
 
         return "; ".join(parts)
-    
+
     def _get_ref_from_path(self, path: str) -> str | None:
         """
         Try to extract the actual $ref value from the Immich spec.
@@ -243,21 +243,28 @@ class SpecComparator:
             # The path will be root['$ref'] meaning the schema itself is just {"$ref": "..."}
             if path == "root['$ref']" and self.current_immich_schema:
                 # Use the stored schema reference
-                if isinstance(self.current_immich_schema, dict) and "$ref" in self.current_immich_schema:
+                if (
+                    isinstance(self.current_immich_schema, dict)
+                    and "$ref" in self.current_immich_schema
+                ):
                     return self.current_immich_schema["$ref"]
-            
+
             # Extract all keys between brackets
             import re
+
             keys = re.findall(r"\['([^']+)'\]", path)
-            
-            if not keys or keys[-1] != '$ref':
+
+            if not keys or keys[-1] != "$ref":
                 return None
-            
+
             # Try to navigate from the current schema first
-            if len(keys) == 1 and keys[0] == '$ref' and self.current_immich_schema:
-                if isinstance(self.current_immich_schema, dict) and "$ref" in self.current_immich_schema:
+            if len(keys) == 1 and keys[0] == "$ref" and self.current_immich_schema:
+                if (
+                    isinstance(self.current_immich_schema, dict)
+                    and "$ref" in self.current_immich_schema
+                ):
                     return self.current_immich_schema["$ref"]
-            
+
             # Otherwise navigate through the immich spec to the parent of $ref
             current = self.immich_spec
             for key in keys[:-1]:  # All except '$ref'
@@ -268,15 +275,15 @@ class SpecComparator:
                         return None
                 else:
                     return None
-            
+
             # Get the $ref value
             if isinstance(current, dict) and "$ref" in current:
                 return current["$ref"]
-                
+
         except Exception:
             pass
         return None
-    
+
     def _format_value(self, value: Any) -> str:
         """
         Format a value for display, handling special cases like $ref.
