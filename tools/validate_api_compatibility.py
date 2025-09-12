@@ -18,6 +18,7 @@ to ensure API compatibility.
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -193,10 +194,15 @@ class SpecComparator:
             added_items = []
             for k in diff["dictionary_item_added"]:
                 # Extract the key path
-                if "['$ref']" in k:
-                    # Try to extract the $ref value from the full diff
-                    # Format is like: root['something']['$ref']
-                    added_items.append(f"$ref (path: {k})")
+                if "['$ref']" in k or k == "root['$ref']":
+                    # For $ref, try to show what it references in the adapter
+                    ref_value = self._get_ref_from_path_in(
+                        k, self.adapter_spec, self.current_adapter_schema
+                    )
+                    if ref_value:
+                        added_items.append(f"$ref={ref_value}")
+                    else:
+                        added_items.append("$ref")
                 else:
                     clean_key = k.split("['")[-1].rstrip("']")
                     added_items.append(clean_key)
@@ -233,56 +239,60 @@ class SpecComparator:
 
         return "; ".join(parts)
 
-    def _get_ref_from_path(self, path: str) -> str | None:
+    def _get_ref_from_path_in(
+        self, path: str, spec: dict, current_schema: Any
+    ) -> str | None:
         """
-        Try to extract the actual $ref value from the Immich spec.
+        Try to extract the actual $ref value from the given spec.
         Path format is like: root['something']['$ref'] or just root['$ref']
         """
         try:
             # For the simple case where we're comparing schemas directly
-            # The path will be root['$ref'] meaning the schema itself is just {"$ref": "..."}
-            if path == "root['$ref']" and self.current_immich_schema:
-                # Use the stored schema reference
-                if (
-                    isinstance(self.current_immich_schema, dict)
-                    and "$ref" in self.current_immich_schema
-                ):
-                    return self.current_immich_schema["$ref"]
+            if (
+                path == "root['$ref']"
+                and isinstance(current_schema, dict)
+                and "$ref" in current_schema
+            ):
+                return current_schema["$ref"]
 
             # Extract all keys between brackets
-            import re
-
             keys = re.findall(r"\['([^']+)'\]", path)
 
             if not keys or keys[-1] != "$ref":
                 return None
 
             # Try to navigate from the current schema first
-            if len(keys) == 1 and keys[0] == "$ref" and self.current_immich_schema:
-                if (
-                    isinstance(self.current_immich_schema, dict)
-                    and "$ref" in self.current_immich_schema
-                ):
-                    return self.current_immich_schema["$ref"]
+            if (
+                len(keys) == 1
+                and keys[0] == "$ref"
+                and isinstance(current_schema, dict)
+                and "$ref" in current_schema
+            ):
+                return current_schema["$ref"]
 
-            # Otherwise navigate through the immich spec to the parent of $ref
-            current = self.immich_spec
+            # Otherwise navigate through the spec to the parent of $ref
+            current = spec
             for key in keys[:-1]:  # All except '$ref'
-                if isinstance(current, dict):
-                    if key in current:
-                        current = current[key]
-                    else:
-                        return None
+                if isinstance(current, dict) and key in current:
+                    current = current[key]
                 else:
                     return None
 
             # Get the $ref value
-            if isinstance(current, dict) and "$ref" in current:
-                return current["$ref"]
+            return current.get("$ref") if isinstance(current, dict) else None
 
         except Exception:
             pass
         return None
+
+    def _get_ref_from_path(self, path: str) -> str | None:
+        """
+        Try to extract the actual $ref value from the Immich spec.
+        Path format is like: root['something']['$ref'] or just root['$ref']
+        """
+        return self._get_ref_from_path_in(
+            path, self.immich_spec, self.current_immich_schema
+        )
 
     def _format_value(self, value: Any) -> str:
         """
@@ -683,6 +693,10 @@ class SpecComparator:
                                 "details": details,
                             }
                         )
+
+                    # Reset schema context to avoid stale state
+                    self.current_immich_schema = None
+                    self.current_adapter_schema = None
 
 
 def display_results(differences: List[Dict[str, Any]], verbose: bool = False) -> int:

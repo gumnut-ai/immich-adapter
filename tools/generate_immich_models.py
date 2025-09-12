@@ -62,7 +62,14 @@ def fetch_spec(spec_path: str) -> str:
                     json.dump(spec_data, f, indent=2)
                 except json.JSONDecodeError:
                     # Try YAML if JSON fails
-                    spec_data = yaml.safe_load(response.text)
+                    try:
+                        spec_data = yaml.safe_load(response.text)
+                    except yaml.YAMLError as ye:
+                        print(
+                            f"Failed to parse spec as JSON or YAML: {ye}",
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
                     json.dump(spec_data, f, indent=2)
                 return f.name
 
@@ -89,15 +96,15 @@ def fetch_spec(spec_path: str) -> str:
     default="routers/immich_models.py",
     help="Output file path for generated models (default: routers/immich_models.py)",
 )
-def main(immich_spec: str, output: str):
+@click.option(
+    "--verbose",
+    is_flag=True,
+    help="Show detailed output including command and subprocess stdout/stderr",
+)
+def main(immich_spec: str, output: str, verbose: bool):
     """Generate Pydantic v2 models from Immich OpenAPI specification."""
-    project_root = Path(__file__).parent.parent
-
-    # Resolve output path relative to project root
-    if not Path(output).is_absolute():
-        output_file = project_root / output
-    else:
-        output_file = Path(output)
+    # Resolve paths relative to current working directory for consistency
+    output_file = Path(output).resolve()
 
     # Fetch the spec (returns local file path)
     spec_file = fetch_spec(immich_spec)
@@ -122,18 +129,28 @@ def main(immich_spec: str, output: str):
             str(output_file),
         ]
 
-        print("Generating Pydantic models...")
-        print(f"Command: {' '.join(cmd)}")
+        if verbose:
+            print("Generating Pydantic models...")
+            print(f"Command: {' '.join(cmd)}")
+        else:
+            print("Generating Pydantic models...")
 
         try:
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             print(f"✓ Successfully generated models to {output_file}")
 
-            if result.stdout:
+            if verbose and result.stdout:
                 print("STDOUT:", result.stdout)
-            if result.stderr:
+            if verbose and result.stderr:
                 print("STDERR:", result.stderr)
 
+        except FileNotFoundError:
+            print(
+                "datamodel-codegen not found on PATH. Install it or run via 'uv run' "
+                "so inline dependencies are available.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         except subprocess.CalledProcessError as e:
             print(f"Error generating models: {e}", file=sys.stderr)
             if e.stdout:
@@ -141,8 +158,6 @@ def main(immich_spec: str, output: str):
             if e.stderr:
                 print("STDERR:", e.stderr, file=sys.stderr)
             sys.exit(1)
-
-        print(f"✓ Pydantic models generated successfully at {output_file}")
 
     finally:
         # Clean up temporary file if it was created
