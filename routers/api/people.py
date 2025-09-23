@@ -4,6 +4,7 @@ from uuid import UUID
 import logging
 
 from routers.utils.gumnut_client import get_gumnut_client
+from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.immich_models import (
     AssetFaceUpdateDto,
     BulkIdResponseDto,
@@ -47,15 +48,7 @@ async def create_person(person_data: PersonCreateDto) -> PersonResponseDto:
         return convert_gumnut_person_to_immich(gumnut_person)
 
     except Exception as e:
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to create person: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to create person")
 
 
 @router.put("")
@@ -91,14 +84,14 @@ async def update_people(people_data: PeopleUpdateDto) -> List[BulkIdResponseDto]
             )
 
         except Exception as e:
-            error_msg = str(e)
-            if "404" in error_msg or "Not found" in error_msg:
+            error_msg = str(e).lower()
+            if check_for_error_by_code(e, 404) or "not found" in error_msg:
                 results.append(
                     BulkIdResponseDto(
                         id=person_item.id, success=False, error=Error2.not_found
                     )
                 )
-            elif "401" in error_msg or "Invalid API key" in error_msg:
+            elif check_for_error_by_code(e, 401) or "invalid api key" in error_msg:
                 results.append(
                     BulkIdResponseDto(
                         id=person_item.id, success=False, error=Error2.no_permission
@@ -140,15 +133,7 @@ async def update_person(id: UUID, person_data: PersonUpdateDto) -> PersonRespons
         return convert_gumnut_person_to_immich(gumnut_person)
 
     except Exception as e:
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to update person: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to update person")
 
 
 @router.get("")
@@ -197,16 +182,7 @@ async def get_all_people(
         )
 
     except Exception as e:
-        # Handle general errors
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch people: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch people")
 
 
 @router.delete("", status_code=204)
@@ -223,17 +199,7 @@ async def delete_people(request: BulkIdsDto) -> Response:
         return Response(status_code=204)
 
     except Exception as e:
-        error_msg = str(e)
-        if "404" in error_msg or "Not found" in error_msg:
-            raise HTTPException(status_code=404, detail="Person not found")
-        elif "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to delete people: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to delete people")
 
 
 @router.get(
@@ -293,21 +259,13 @@ async def get_thumbnail(
             headers=response_headers,
         )
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 404 for no thumbnail)
+        raise
     except Exception as e:
-        # Provide more detailed error information
         # log the error
         logger.warning(f"Error fetching thumbnail for person {id}: {e}")
-        error_msg = str(e)
-        if "404" in error_msg or "Not found" in error_msg:
-            raise HTTPException(status_code=404, detail="Asset not found")
-        elif "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch asset: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch asset")
 
 
 @router.get("/{id}")
@@ -325,18 +283,11 @@ async def get_person(id: UUID) -> PersonResponseDto:
 
         return convert_gumnut_person_to_immich(gumnut_person)
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 404 for person not found)
+        raise
     except Exception as e:
-        error_msg = str(e)
-        if "404" in error_msg or "Not found" in error_msg:
-            raise HTTPException(status_code=404, detail="Person not found")
-        elif "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch person: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch person")
 
 
 @router.get("/{id}/statistics")
@@ -355,17 +306,7 @@ async def get_person_statistics(id: UUID) -> PersonStatisticsResponseDto:
             return PersonStatisticsResponseDto(assets=len(list(gumnut_assets)))
 
     except Exception as e:
-        error_msg = str(e)
-        if "404" in error_msg or "Not found" in error_msg:
-            raise HTTPException(status_code=404, detail="Person not found")
-        elif "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch person: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch person")
 
 
 @router.delete("/{id}", status_code=204)
@@ -381,17 +322,7 @@ async def delete_person(id: UUID) -> Response:
         return Response(status_code=204)
 
     except Exception as e:
-        error_msg = str(e)
-        if "404" in error_msg or "Not found" in error_msg:
-            raise HTTPException(status_code=404, detail="Person not found")
-        elif "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to delete people: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to delete people")
 
 
 @router.post("/{id}/merge")

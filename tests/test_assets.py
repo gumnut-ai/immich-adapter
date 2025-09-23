@@ -450,9 +450,14 @@ class TestViewAsset:
 
             # Assert
             assert result.media_type == "image/jpeg"
-            assert hasattr(result, 'body_iterator')  # StreamingResponse has body_iterator
+            assert hasattr(
+                result, "body_iterator"
+            )  # StreamingResponse has body_iterator
             # Called twice: once for headers, once for streaming
-            assert mock_client.assets.with_streaming_response.download_thumbnail.call_count == 2
+            assert (
+                mock_client.assets.with_streaming_response.download_thumbnail.call_count
+                == 2
+            )
 
     @pytest.mark.anyio
     async def test_view_asset_fullsize(self, sample_uuid):
@@ -471,14 +476,18 @@ class TestViewAsset:
             mock_context.__enter__ = Mock(return_value=mock_response)
             mock_context.__exit__ = Mock(return_value=None)
 
-            mock_client.assets.with_streaming_response.download.return_value = mock_context
+            mock_client.assets.with_streaming_response.download.return_value = (
+                mock_context
+            )
 
             # Execute
             result = await view_asset(sample_uuid, size=AssetMediaSize.fullsize)
 
             # Assert
             assert result.media_type == "image/jpeg"
-            assert hasattr(result, 'body_iterator')  # StreamingResponse has body_iterator
+            assert hasattr(
+                result, "body_iterator"
+            )  # StreamingResponse has body_iterator
             # Called twice: once for headers, once for streaming
             assert mock_client.assets.with_streaming_response.download.call_count == 2
 
@@ -523,14 +532,18 @@ class TestDownloadAsset:
             mock_context.__enter__ = Mock(return_value=mock_response)
             mock_context.__exit__ = Mock(return_value=None)
 
-            mock_client.assets.with_streaming_response.download.return_value = mock_context
+            mock_client.assets.with_streaming_response.download.return_value = (
+                mock_context
+            )
 
             # Execute
             result = await download_asset(sample_uuid)
 
             # Assert
             assert result.media_type == "image/jpeg"
-            assert hasattr(result, 'body_iterator')  # StreamingResponse has body_iterator
+            assert hasattr(
+                result, "body_iterator"
+            )  # StreamingResponse has body_iterator
             assert "Content-Disposition" in result.headers
             # Called twice: once for headers, once for streaming
             assert mock_client.assets.with_streaming_response.download.call_count == 2

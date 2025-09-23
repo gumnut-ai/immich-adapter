@@ -15,6 +15,7 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from routers.utils.gumnut_client import get_gumnut_client
+from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.immich_models import (
     AssetBulkDeleteDto,
     AssetBulkUpdateDto,
@@ -88,7 +89,9 @@ async def _download_asset_content(
             # Build response headers
             response_headers = {"Content-Type": content_type}
             if filename:
-                response_headers["Content-Disposition"] = f'inline; filename="{filename}"'
+                response_headers["Content-Disposition"] = (
+                    f'inline; filename="{filename}"'
+                )
 
             return content_type, response_headers
 
@@ -96,7 +99,9 @@ async def _download_asset_content(
             """Create a StreamingResponse with proper header extraction."""
             # Get headers first
             with streaming_context_factory() as gumnut_response:
-                content_type, response_headers = extract_headers_and_filename(gumnut_response)
+                content_type, response_headers = extract_headers_and_filename(
+                    gumnut_response
+                )
 
             # Create new streaming context for actual streaming
             return StreamingResponse(
@@ -108,9 +113,9 @@ async def _download_asset_content(
         # Determine the size and use appropriate Gumnut SDK function with streaming
         if size == AssetMediaSize.fullsize:
             # Use streaming download for original size
-            streaming_factory = lambda: client.assets.with_streaming_response.download(
-                gumnut_asset_id
-            )
+            def streaming_factory():
+                return client.assets.with_streaming_response.download(gumnut_asset_id)
+
             return create_streaming_response(streaming_factory)
         else:
             # Use streaming download_thumbnail for thumbnail and preview sizes
@@ -120,24 +125,15 @@ async def _download_asset_content(
             else:  # default to thumbnail
                 gumnut_size = "thumbnail"
 
-            streaming_factory = lambda: client.assets.with_streaming_response.download_thumbnail(
-                gumnut_asset_id, size=gumnut_size
-            )
+            def streaming_factory():
+                return client.assets.with_streaming_response.download_thumbnail(
+                    gumnut_asset_id, size=gumnut_size
+                )
+
             return create_streaming_response(streaming_factory)
 
     except Exception as e:
-        # Provide more detailed error information
-        error_msg = str(e)
-        if "404" in error_msg or "Not found" in error_msg:
-            raise HTTPException(status_code=404, detail="Asset not found")
-        elif "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch asset: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch asset")
 
 
 @router.post("/bulk-upload-check")
@@ -250,27 +246,22 @@ async def upload_asset(
         )
 
     except Exception as e:
-        # Handle specific error cases
-        error_msg = str(e)
-        if "duplicate" in error_msg.lower() or "already exists" in error_msg.lower():
+        # Handle specific upload error cases first
+        error_msg = str(e).lower()
+        if "duplicate" in error_msg or "already exists" in error_msg:
             # If it's a duplicate, we still need an asset ID
             # This is a simplified approach - in a real implementation you'd extract the existing asset ID
             return AssetMediaResponseDto(
                 id="00000000-0000-0000-0000-000000000000",  # Placeholder
                 status=AssetMediaStatus.duplicate,
             )
-        elif "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        elif "413" in error_msg or "too large" in error_msg.lower():
+        elif check_for_error_by_code(e, 413) or "too large" in error_msg:
             raise HTTPException(status_code=413, detail="Asset file too large")
-        elif "415" in error_msg or "unsupported" in error_msg.lower():
+        elif check_for_error_by_code(e, 415) or "unsupported" in error_msg:
             raise HTTPException(status_code=415, detail="Unsupported media type")
         else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to upload asset: {error_msg}"
-            )
+            # Use the general error mapper for other cases
+            raise map_gumnut_error(e, "Failed to upload asset")
 
 
 @router.put("", status_code=204)
@@ -301,8 +292,10 @@ async def delete_assets(request: AssetBulkDeleteDto) -> Response:
 
             except Exception as asset_error:
                 # Log individual asset errors but continue with other deletions
-                error_msg = str(asset_error)
-                if "404" in error_msg or "not found" in error_msg.lower():
+                if (
+                    check_for_error_by_code(asset_error, 404)
+                    or "not found" in str(asset_error).lower()
+                ):
                     # Asset already deleted or doesn't exist, continue
                     logger.warning(
                         f"Warning: Asset {asset_uuid} not found during deletion"
@@ -311,7 +304,7 @@ async def delete_assets(request: AssetBulkDeleteDto) -> Response:
                 else:
                     # For other errors, log but continue
                     logger.warning(
-                        f"Warning: Failed to delete asset {asset_uuid}: {error_msg}"
+                        f"Warning: Failed to delete asset {asset_uuid}: {asset_error}"
                     )
                     continue
 
@@ -319,16 +312,7 @@ async def delete_assets(request: AssetBulkDeleteDto) -> Response:
         return Response(status_code=204)
 
     except Exception as e:
-        # Handle general errors
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to delete assets: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to delete assets")
 
 
 @router.get("/device/{deviceId}")
@@ -380,16 +364,7 @@ async def get_asset_statistics(
         )
 
     except Exception as e:
-        # Handle general errors
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch asset statistics: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch asset statistics")
 
 
 @router.get("/random")
@@ -446,18 +421,7 @@ async def get_asset_info(
         return immich_asset
 
     except Exception as e:
-        # Provide more detailed error information
-        error_msg = str(e)
-        if "404" in error_msg or "Not found" in error_msg:
-            raise HTTPException(status_code=404, detail="Asset not found")
-        elif "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch asset: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch asset")
 
 
 @router.get(

@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from routers.utils.gumnut_client import get_gumnut_client
+from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.immich_models import (
     AlbumResponseDto,
     BulkIdResponseDto,
@@ -68,20 +69,7 @@ async def get_all_albums(
         return immich_albums
 
     except Exception as e:
-        # Provide more detailed error information
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        elif "404" in error_msg:
-            raise HTTPException(
-                status_code=404, detail="Gumnut albums endpoint not found"
-            )
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch albums: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch albums")
 
 
 @router.get("/statistics")
@@ -110,16 +98,7 @@ async def get_album_statistics() -> AlbumStatisticsResponseDto:
         )
 
     except Exception as e:
-        # Handle general errors
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch album statistics: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch album statistics")
 
 
 @router.get("/{id}")
@@ -179,18 +158,7 @@ async def get_album_info(
         return immich_album
 
     except Exception as e:
-        # Provide more detailed error information
-        error_msg = str(e)
-        if "404" in error_msg or "Not found" in error_msg:
-            raise HTTPException(status_code=404, detail="Album not found")
-        elif "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch album: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch album")
 
 
 @router.post("", status_code=201)
@@ -217,20 +185,7 @@ async def create_album(request: CreateAlbumDto) -> AlbumResponseDto:
         return immich_album
 
     except Exception as e:
-        # Provide more detailed error information
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        elif "400" in error_msg or "Bad Request" in error_msg:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid album data: {error_msg}"
-            )
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to create album: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to create album")
 
 
 @router.put("/{id}/assets")
@@ -253,7 +208,7 @@ async def add_assets_to_album(
         try:
             client.albums.retrieve(gumnut_album_id)
         except Exception as e:
-            if "404" in str(e) or "Not found" in str(e):
+            if check_for_error_by_code(e, 404):
                 raise HTTPException(
                     status_code=404,
                     detail=f"Album not found {id} -> {gumnut_album_id}",
@@ -276,17 +231,20 @@ async def add_assets_to_album(
 
             except Exception as asset_error:
                 # Handle individual asset errors
-                error_msg = str(asset_error)
+                error_msg = str(asset_error).lower()
                 if (
-                    "duplicate" in error_msg.lower()
-                    or "already exists" in error_msg.lower()
+                    "duplicate" in error_msg
+                    or "already exists" in error_msg
                 ):
                     response.append(
                         BulkIdResponseDto(
                             id=asset_uuid_str, success=False, error=Error2.duplicate
                         )
                     )
-                elif "404" in error_msg or "not found" in error_msg.lower():
+                elif (
+                    check_for_error_by_code(asset_error, 404)
+                    or "not found" in error_msg
+                ):
                     response.append(
                         BulkIdResponseDto(
                             id=asset_uuid_str, success=False, error=Error2.not_found
@@ -305,16 +263,7 @@ async def add_assets_to_album(
         # Re-raise HTTP exceptions (like 404 for album not found)
         raise
     except Exception as e:
-        # Handle general errors
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to update album assets: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to update album assets")
 
 
 @router.patch("/{id}")
@@ -335,7 +284,7 @@ async def update_album(
         try:
             current_album = client.albums.retrieve(gumnut_album_id)
         except Exception as e:
-            if "404" in str(e) or "Not found" in str(e):
+            if check_for_error_by_code(e, 404):
                 raise HTTPException(status_code=404, detail="Album not found")
             raise  # Re-raise other exceptions
 
@@ -362,20 +311,7 @@ async def update_album(
         # Re-raise HTTP exceptions (like 404 for album not found)
         raise
     except Exception as e:
-        # Handle general errors
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        elif "400" in error_msg or "Bad Request" in error_msg:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid album data: {error_msg}"
-            )
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to update album: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to update album")
 
 
 @router.delete("/{id}/assets")
@@ -396,7 +332,7 @@ async def remove_asset_from_album(
         try:
             client.albums.retrieve(gumnut_album_id)
         except Exception as e:
-            if "404" in str(e) or "Not found" in str(e):
+            if check_for_error_by_code(e, 404):
                 raise HTTPException(
                     status_code=404,
                     detail=f"Album not found {id} -> {gumnut_album_id}",
@@ -421,17 +357,17 @@ async def remove_asset_from_album(
 
             except Exception as asset_error:
                 # Handle individual asset errors
-                error_msg = str(asset_error)
-                if "404" in error_msg or "not found" in error_msg.lower():
+                error_msg = str(asset_error).lower()
+                if (
+                    check_for_error_by_code(asset_error, 404)
+                    or "not found" in error_msg
+                ):
                     response.append(
                         BulkIdResponseDto(
                             id=asset_uuid_str, success=False, error=Error2.not_found
                         )
                     )
-                elif (
-                    "not in album" in error_msg.lower()
-                    or "not member" in error_msg.lower()
-                ):
+                elif "not in album" in error_msg or "not member" in error_msg:
                     response.append(
                         BulkIdResponseDto(
                             id=asset_uuid_str, success=False, error=Error2.not_found
@@ -450,16 +386,7 @@ async def remove_asset_from_album(
         # Re-raise HTTP exceptions (like 404 for album not found)
         raise
     except Exception as e:
-        # Handle general errors
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to remove album assets: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to remove album assets")
 
 
 @router.delete("/{id}", status_code=204)
@@ -476,7 +403,7 @@ async def delete_album(id: UUID) -> Response:
         try:
             client.albums.retrieve(gumnut_album_id)
         except Exception as e:
-            if "404" in str(e) or "Not found" in str(e):
+            if check_for_error_by_code(e, 404):
                 raise HTTPException(status_code=404, detail="Album not found")
             raise  # Re-raise other exceptions
 
@@ -490,16 +417,7 @@ async def delete_album(id: UUID) -> Response:
         # Re-raise HTTP exceptions (like 404 for album not found)
         raise
     except Exception as e:
-        # Handle general errors
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to delete album: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to delete album")
 
 
 @router.put("/assets")
@@ -531,7 +449,7 @@ async def add_assets_to_albums(
                 try:
                     client.albums.retrieve(gumnut_album_id)
                 except Exception as e:
-                    if "404" in str(e) or "Not found" in str(e):
+                    if check_for_error_by_code(e, 404):
                         if first_error is None:
                             first_error = BulkIdErrorReason.not_found
                         continue
@@ -543,14 +461,14 @@ async def add_assets_to_albums(
 
             except Exception as album_error:
                 # Handle individual album errors
-                error_msg = str(album_error)
+                error_msg = str(album_error).lower()
                 if first_error is None:
-                    if "404" in error_msg or "not found" in error_msg.lower():
-                        first_error = BulkIdErrorReason.not_found
-                    elif (
-                        "duplicate" in error_msg.lower()
-                        or "already exists" in error_msg.lower()
+                    if (
+                        check_for_error_by_code(album_error, 404)
+                        or "not found" in error_msg
                     ):
+                        first_error = BulkIdErrorReason.not_found
+                    elif "duplicate" in error_msg or "already exists" in error_msg:
                         first_error = BulkIdErrorReason.duplicate
                     else:
                         first_error = BulkIdErrorReason.unknown
@@ -564,16 +482,7 @@ async def add_assets_to_albums(
             )
 
     except Exception as e:
-        # Handle general errors
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to add assets to albums: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to add assets to albums")
 
 
 @router.delete("/{id}/user/{userId}", status_code=204)

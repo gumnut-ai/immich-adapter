@@ -253,7 +253,7 @@ class TestUpdatePerson:
             with pytest.raises(HTTPException) as exc_info:
                 await update_person(sample_uuid, request)
 
-            assert exc_info.value.status_code == 500  # General error handling
+            assert exc_info.value.status_code == 404  # Now properly mapped as 404
 
 
 class TestGetAllPeople:
@@ -470,7 +470,7 @@ class TestGetThumbnail:
                 await get_thumbnail(sample_uuid)
 
             assert exc_info.value.status_code == 404
-            assert "Asset not found" in str(exc_info.value.detail)
+            assert "Person or thumbnail not found" in str(exc_info.value.detail)
 
     @pytest.mark.anyio
     async def test_get_thumbnail_person_not_found(self, sample_uuid):

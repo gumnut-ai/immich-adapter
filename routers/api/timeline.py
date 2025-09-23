@@ -1,8 +1,9 @@
 from collections import defaultdict
 from datetime import datetime
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from routers.utils.gumnut_client import get_gumnut_client
+from routers.utils.error_mapping import map_gumnut_error
 from routers.api.auth import get_current_user_id
 from routers.immich_models import (
     AssetOrder,
@@ -107,18 +108,7 @@ async def get_time_buckets(
         return buckets
 
     except Exception as e:
-        # Provide more detailed error information
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        elif "404" in error_msg:
-            raise HTTPException(status_code=404, detail="Assets not found")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch timeline buckets: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch timeline buckets")
 
 
 @router.get("/bucket")
@@ -296,15 +286,4 @@ async def get_time_bucket(
         }
 
     except Exception as e:
-        # Provide more detailed error information
-        error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
-            raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        elif "404" in error_msg:
-            raise HTTPException(status_code=404, detail="Assets not found")
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch timeline bucket: {error_msg}"
-            )
+        raise map_gumnut_error(e, "Failed to fetch timeline bucket")

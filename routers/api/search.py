@@ -4,6 +4,7 @@ from uuid import UUID
 from datetime import datetime
 
 from routers.utils.gumnut_client import get_gumnut_client
+from routers.utils.error_mapping import check_for_error_by_code
 from routers.immich_models import (
     PersonResponseDto,
     SearchAlbumResponseDto,
@@ -193,11 +194,11 @@ async def search_smart(request: SmartSearchDto) -> SearchResponseDto:
     except Exception as e:
         # Provide more detailed error information
         error_msg = str(e)
-        if "401" in error_msg or "Invalid API key" in error_msg:
+        if check_for_error_by_code(e, 401) or "Invalid API key" in error_msg:
             raise HTTPException(status_code=401, detail="Invalid Gumnut API key")
-        elif "403" in error_msg:
+        elif check_for_error_by_code(e, 403):
             raise HTTPException(status_code=403, detail="Access denied to Gumnut API")
-        elif "404" in error_msg:
+        elif check_for_error_by_code(e, 404):
             raise HTTPException(
                 status_code=404, detail="Gumnut albums endpoint not found"
             )
