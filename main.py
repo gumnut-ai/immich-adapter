@@ -3,12 +3,12 @@ from config.sentry import init_sentry
 from config.logging import init_logging
 
 from routers import static
-from routers.api import albums
-from routers.api import assets
 from routers.api import (
     activities,
     admin,
+    albums,
     api_keys,
+    assets,
     auth,
     download,
     duplicates,
@@ -52,8 +52,8 @@ app.mount("/api/socket.io", websockets.socket_app)
 # Then include other routers
 app.include_router(activities.router)
 app.include_router(admin.router)
-app.include_router(api_keys.router)
 app.include_router(albums.router)
+app.include_router(api_keys.router)
 app.include_router(assets.router)
 app.include_router(auth.router)
 app.include_router(download.router)

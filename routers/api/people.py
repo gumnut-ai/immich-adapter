@@ -1,6 +1,7 @@
 from typing import List
 from fastapi import APIRouter, HTTPException, Query, Response
 from uuid import UUID
+import logging
 
 from routers.utils.gumnut_client import get_gumnut_client
 from routers.immich_models import (
@@ -24,6 +25,8 @@ router = APIRouter(
     tags=["people"],
     responses={404: {"description": "Not found"}},
 )
+
+logger = logging.getLogger(__name__)
 
 
 @router.post("", status_code=201)
@@ -293,7 +296,7 @@ async def get_thumbnail(
     except Exception as e:
         # Provide more detailed error information
         # log the error
-        print(f"Error fetching thumbnail for person {id}: {e}")
+        logger.warning(f"Error fetching thumbnail for person {id}: {e}")
         error_msg = str(e)
         if "404" in error_msg or "Not found" in error_msg:
             raise HTTPException(status_code=404, detail="Asset not found")

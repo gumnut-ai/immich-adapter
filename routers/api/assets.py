@@ -1,5 +1,6 @@
 from typing import List
 from uuid import UUID
+import logging
 
 from fastapi import (
     APIRouter,
@@ -38,6 +39,7 @@ from routers.utils.gumnut_id_conversion import (
 )
 from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/assets",
@@ -284,11 +286,15 @@ async def delete_assets(request: AssetBulkDeleteDto) -> Response:
                 error_msg = str(asset_error)
                 if "404" in error_msg or "not found" in error_msg.lower():
                     # Asset already deleted or doesn't exist, continue
-                    print(f"Warning: Asset {asset_uuid} not found during deletion")
+                    logger.warning(
+                        f"Warning: Asset {asset_uuid} not found during deletion"
+                    )
                     continue
                 else:
                     # For other errors, log but continue
-                    print(f"Warning: Failed to delete asset {asset_uuid}: {error_msg}")
+                    logger.warning(
+                        f"Warning: Failed to delete asset {asset_uuid}: {error_msg}"
+                    )
                     continue
 
         # Return 204 No Content on successful completion

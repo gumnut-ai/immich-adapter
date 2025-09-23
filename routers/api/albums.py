@@ -1,5 +1,6 @@
 from typing import List
 from uuid import UUID
+import logging
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
@@ -25,6 +26,7 @@ from routers.utils.gumnut_id_conversion import (
 from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
 from routers.utils.album_conversion import convert_gumnut_album_to_immich
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/albums",
@@ -146,7 +148,7 @@ async def get_album_info(
             gumnut_assets = list(gumnut_assets_response)
         except Exception as assets_error:
             # If assets retrieval fails, continue with empty assets list
-            print(
+            logger.warning(
                 f"Warning: Could not retrieve assets for album {gumnut_album_id}: {assets_error}"
             )
             gumnut_assets = []
@@ -159,7 +161,7 @@ async def get_album_info(
                     immich_asset = convert_gumnut_asset_to_immich(gumnut_asset)
                     immich_assets.append(immich_asset)
                 except Exception as convert_error:
-                    print(
+                    logger.warning(
                         f"Warning: Could not convert asset {gumnut_asset}: {convert_error}"
                     )
 
