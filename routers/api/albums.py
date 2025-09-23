@@ -232,10 +232,7 @@ async def add_assets_to_album(
             except Exception as asset_error:
                 # Handle individual asset errors
                 error_msg = str(asset_error).lower()
-                if (
-                    "duplicate" in error_msg
-                    or "already exists" in error_msg
-                ):
+                if "duplicate" in error_msg or "already exists" in error_msg:
                     response.append(
                         BulkIdResponseDto(
                             id=asset_uuid_str, success=False, error=Error2.duplicate
