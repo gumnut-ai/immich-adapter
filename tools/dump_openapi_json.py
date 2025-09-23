@@ -6,6 +6,9 @@
 #     "pydantic-settings>=2.10.1",
 #     "python-socketio>=5.13.0",
 #     "sentry-sdk[fastapi]>=2.37.1",
+#     "gumnut-sdk",
+#     "b64uuid>=0.1",
+#     "shortuuid>=1.0.13",
 # ]
 # ///
 
