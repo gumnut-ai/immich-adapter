@@ -205,5 +205,5 @@ def convert_gumnut_asset_to_immich(gumnut_asset: AssetResponse) -> AssetResponse
         owner=create_user_response_dto(),
         thumbhash="",
         visibility=AssetVisibility.timeline,
-        people=people
+        people=people,
     )

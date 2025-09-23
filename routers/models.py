@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Classes used in this file are no longer used, having been replaced by DTOs.
 
+
 class ExifInfo(BaseModel):
     make: str | None = None
     model: str | None = None

@@ -4,7 +4,6 @@ import pytest
 from unittest.mock import Mock, patch
 from fastapi import HTTPException
 from uuid import uuid4
-from datetime import datetime, timezone
 
 from routers.api.albums import (
     get_all_albums,
@@ -35,13 +34,15 @@ class TestGetAllAlbums:
     ):
         """Test successful retrieval of albums."""
         # Setup - mock only the Gumnut client, let conversion functions run naturally
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
-            mock_client.albums.list.return_value = mock_sync_cursor_page(multiple_gumnut_albums)
+            mock_client.albums.list.return_value = mock_sync_cursor_page(
+                multiple_gumnut_albums
+            )
 
             # Execute
-            result = await get_all_albums(assetId=None, shared=None) # type: ignore
+            result = await get_all_albums(assetId=None, shared=None)  # type: ignore
 
             # Assert
             assert isinstance(result, list)
@@ -50,8 +51,8 @@ class TestGetAllAlbums:
             mock_get_client.assert_called_once()
             mock_client.albums.list.assert_called_once()
             # Verify the real conversion happened by checking result structure
-            assert all(hasattr(album, 'id') for album in result)
-            assert all(hasattr(album, 'albumName') for album in result)
+            assert all(hasattr(album, "id") for album in result)
+            assert all(hasattr(album, "albumName") for album in result)
 
     @pytest.mark.anyio
     async def test_get_all_albums_shared_returns_empty(self):
@@ -66,14 +67,14 @@ class TestGetAllAlbums:
     async def test_get_all_albums_gumnut_error(self):
         """Test handling of Gumnut API errors."""
         # Setup - mock directly in the test
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.albums.list.side_effect = Exception("API Error")
 
             # Execute & Assert
             with pytest.raises(HTTPException) as exc_info:
-                await get_all_albums(assetId=None, shared=None) # type: ignore
+                await get_all_albums(assetId=None, shared=None)  # type: ignore
 
             assert exc_info.value.status_code == 500
             assert "Failed to fetch albums" in str(exc_info.value.detail)
@@ -88,7 +89,9 @@ class TestGetAlbumStatistics:
     ):
         """Test successful retrieval of album statistics."""
         # Setup
-        mock_gumnut_client.albums.list.return_value = mock_sync_cursor_page(multiple_gumnut_albums)
+        mock_gumnut_client.albums.list.return_value = mock_sync_cursor_page(
+            multiple_gumnut_albums
+        )
 
         # Execute
         result = await get_album_statistics()
@@ -100,7 +103,9 @@ class TestGetAlbumStatistics:
         mock_gumnut_client.albums.list.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_get_album_statistics_empty(self, mock_gumnut_client, mock_sync_cursor_page):
+    async def test_get_album_statistics_empty(
+        self, mock_gumnut_client, mock_sync_cursor_page
+    ):
         """Test album statistics with no albums."""
         # Setup
         mock_gumnut_client.albums.list.return_value = mock_sync_cursor_page([])
@@ -131,23 +136,29 @@ class TestGetAlbumInfo:
 
     @pytest.mark.anyio
     async def test_get_album_info_success(
-        self, sample_gumnut_album, multiple_gumnut_assets, mock_sync_cursor_page, sample_uuid
+        self,
+        sample_gumnut_album,
+        multiple_gumnut_assets,
+        mock_sync_cursor_page,
+        sample_uuid,
     ):
         """Test successful retrieval of album info."""
         # Setup - mock only the Gumnut client, let conversion functions run naturally
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.albums.retrieve.return_value = sample_gumnut_album
-            mock_client.albums.assets.list.return_value = mock_sync_cursor_page(multiple_gumnut_assets)
+            mock_client.albums.assets.list.return_value = mock_sync_cursor_page(
+                multiple_gumnut_assets
+            )
 
             # Execute
             result = await get_album_info(sample_uuid)
 
             # Assert
             # Now result is a real AlbumResponseDto, so use attribute access
-            assert hasattr(result, 'id')
-            assert hasattr(result, 'albumName')
+            assert hasattr(result, "id")
+            assert hasattr(result, "albumName")
             assert result.albumName == "Test Album"  # From sample_gumnut_album.name
             mock_client.albums.retrieve.assert_called_once()
             mock_client.albums.assets.list.assert_called_once()
@@ -158,7 +169,7 @@ class TestGetAlbumInfo:
     ):
         """Test retrieval of album info without assets."""
         # Setup - mock only the Gumnut client, let conversion functions run naturally
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.albums.retrieve.return_value = sample_gumnut_album
@@ -170,7 +181,7 @@ class TestGetAlbumInfo:
 
             # Assert
             # Now result is a real AlbumResponseDto, so use attribute access
-            assert hasattr(result, 'id')
+            assert hasattr(result, "id")
             assert result.albumName == "Test Album"  # From sample_gumnut_album.name
             mock_client.albums.retrieve.assert_called_once()
             # Note: The current implementation always fetches assets but only processes them when withoutAssets is falsy
@@ -180,7 +191,7 @@ class TestGetAlbumInfo:
     async def test_get_album_info_not_found(self, sample_uuid):
         """Test handling of album not found."""
         # Setup - mock directly in the test
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.albums.retrieve.side_effect = Exception("404 Not found")
@@ -196,12 +207,10 @@ class TestCreateAlbum:
     """Test the create_album endpoint."""
 
     @pytest.mark.anyio
-    async def test_create_album_success(
-        self, sample_gumnut_album
-    ):
+    async def test_create_album_success(self, sample_gumnut_album):
         """Test successful album creation."""
         # Setup - mock only the Gumnut client, let conversion functions run naturally
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             # Update the sample to have the name we want to test
@@ -209,27 +218,26 @@ class TestCreateAlbum:
             sample_gumnut_album.description = "New Description"
             mock_client.albums.create.return_value = sample_gumnut_album
 
-            request = CreateAlbumDto(albumName="New Album", description="New Description")
+            request = CreateAlbumDto(
+                albumName="New Album", description="New Description"
+            )
 
             # Execute
             result = await create_album(request)
 
             # Assert
             # Now result is a real AlbumResponseDto, so use attribute access
-            assert hasattr(result, 'albumName')
+            assert hasattr(result, "albumName")
             assert result.albumName == "New Album"
             mock_client.albums.create.assert_called_once_with(
-                name="New Album",
-                description="New Description"
+                name="New Album", description="New Description"
             )
 
     @pytest.mark.anyio
-    async def test_create_album_no_name(
-        self, sample_gumnut_album
-    ):
+    async def test_create_album_no_name(self, sample_gumnut_album):
         """Test album creation with empty name."""
         # Setup - mock only the Gumnut client, let conversion functions run naturally
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             # Update the sample to have empty name we want to test
@@ -244,19 +252,18 @@ class TestCreateAlbum:
             result = await create_album(request)
 
             # Assert
-            assert hasattr(result, 'albumName')
+            assert hasattr(result, "albumName")
             # The conversion function converts empty names to "Untitled Album"
             assert result.albumName == "Untitled Album"
             mock_client.albums.create.assert_called_once_with(
-                name="",
-                description="Description"
+                name="", description="Description"
             )
 
     @pytest.mark.anyio
     async def test_create_album_gumnut_error(self):
         """Test handling of Gumnut API errors during creation."""
         # Setup - mock directly in the test
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.albums.create.side_effect = Exception("API Error")
@@ -274,12 +281,10 @@ class TestAddAssetsToAlbum:
     """Test the add_assets_to_album endpoint."""
 
     @pytest.mark.anyio
-    async def test_add_assets_success(
-        self, sample_gumnut_album, sample_uuid
-    ):
+    async def test_add_assets_success(self, sample_gumnut_album, sample_uuid):
         """Test successful addition of assets to album."""
         # Setup - mock only the Gumnut client, let conversion functions run naturally
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.albums.retrieve.return_value = sample_gumnut_album
@@ -303,9 +308,7 @@ class TestAddAssetsToAlbum:
             assert mock_client.albums.assets.add.call_count == 2
 
     @pytest.mark.anyio
-    async def test_add_assets_album_not_found(
-        self, mock_gumnut_client, sample_uuid
-    ):
+    async def test_add_assets_album_not_found(self, mock_gumnut_client, sample_uuid):
         """Test adding assets to non-existent album."""
         # Setup
         request = BulkIdsDto(ids=[uuid4()])
@@ -318,12 +321,10 @@ class TestAddAssetsToAlbum:
         assert exc_info.value.status_code == 404
 
     @pytest.mark.anyio
-    async def test_add_assets_mixed_results(
-        self, sample_gumnut_album, sample_uuid
-    ):
+    async def test_add_assets_mixed_results(self, sample_gumnut_album, sample_uuid):
         """Test adding assets with some failures."""
         # Setup - mock only the Gumnut client, let conversion functions run naturally
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.albums.retrieve.return_value = sample_gumnut_album
@@ -331,7 +332,7 @@ class TestAddAssetsToAlbum:
             # First call succeeds, second fails
             mock_client.albums.assets.add.side_effect = [
                 None,  # Success
-                Exception("Asset not found")  # Failure
+                Exception("Asset not found"),  # Failure
             ]
 
             asset_id1 = uuid4()
@@ -357,12 +358,10 @@ class TestUpdateAlbum:
     """Test the update_album endpoint."""
 
     @pytest.mark.anyio
-    async def test_update_album_success(
-        self, sample_gumnut_album, sample_uuid
-    ):
+    async def test_update_album_success(self, sample_gumnut_album, sample_uuid):
         """Test successful album update."""
         # Setup - mock only the Gumnut client, let conversion functions run naturally
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.albums.retrieve.return_value = sample_gumnut_album
@@ -371,14 +370,16 @@ class TestUpdateAlbum:
             sample_gumnut_album.description = "Updated Description"
             mock_client.albums.update.return_value = sample_gumnut_album
 
-            request = UpdateAlbumDto(albumName="Updated Album", description="Updated Description")
+            request = UpdateAlbumDto(
+                albumName="Updated Album", description="Updated Description"
+            )
 
             # Execute
             result = await update_album(sample_uuid, request)
 
             # Assert
             # Now result is a real AlbumResponseDto, so use attribute access
-            assert hasattr(result, 'albumName')
+            assert hasattr(result, "albumName")
             assert result.albumName == "Updated Album"
             mock_client.albums.retrieve.assert_called_once()
             mock_client.albums.update.assert_called_once()
@@ -401,12 +402,10 @@ class TestRemoveAssetFromAlbum:
     """Test the remove_asset_from_album endpoint."""
 
     @pytest.mark.anyio
-    async def test_remove_assets_success(
-        self, sample_gumnut_album, sample_uuid
-    ):
+    async def test_remove_assets_success(self, sample_gumnut_album, sample_uuid):
         """Test successful removal of assets from album."""
         # Setup - mock only the Gumnut client, let conversion functions run naturally
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.albums.retrieve.return_value = sample_gumnut_album
@@ -467,12 +466,10 @@ class TestAddAssetsToAlbums:
     """Test the add_assets_to_albums endpoint."""
 
     @pytest.mark.anyio
-    async def test_add_assets_to_albums_success(
-        self, sample_uuid
-    ):
+    async def test_add_assets_to_albums_success(self, sample_uuid):
         """Test successful addition of assets to multiple albums."""
         # Setup - mock directly in the test
-        with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.albums.assets.add.return_value = None

@@ -19,7 +19,7 @@ def anyio_backend():
 @pytest.fixture
 def mock_gumnut_client():
     """Mock the Gumnut client to avoid actual API calls."""
-    with patch('routers.api.albums.get_gumnut_client') as mock_get_client:
+    with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
         client = Mock()
         mock_get_client.return_value = client
         yield client
@@ -103,6 +103,7 @@ def multiple_gumnut_assets():
 
 class MockSyncCursorPage:
     """Mock for Gumnut SyncCursorPage response."""
+
     def __init__(self, items: List[Any]):
         self.items = items
 
@@ -116,8 +117,10 @@ class MockSyncCursorPage:
 @pytest.fixture
 def mock_sync_cursor_page():
     """Factory for creating mock SyncCursorPage objects."""
+
     def _create_page(items: List[Any]):
         return MockSyncCursorPage(items)
+
     return _create_page
 
 
@@ -154,5 +157,3 @@ def multiple_gumnut_people():
         person.updated_at = datetime.now(timezone.utc)
         people.append(person)
     return people
-
-

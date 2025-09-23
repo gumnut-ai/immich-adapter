@@ -11,4 +11,3 @@ router = APIRouter(
 @router.get("/custom.css")
 async def get_css():
     return FileResponse("routers/static/custom.css")
-

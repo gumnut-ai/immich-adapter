@@ -26,7 +26,9 @@ def _extract_person_fields(
     """
     person_id = gumnut_person.id
     person_name = gumnut_person.name or "Unknown Person"
-    birth_date = gumnut_person.birth_date or datetime(1970, 1, 1, tzinfo=timezone.utc)  # Default date if None
+    birth_date = gumnut_person.birth_date or datetime(
+        1970, 1, 1, tzinfo=timezone.utc
+    )  # Default date if None
     is_favorite = gumnut_person.is_favorite
     is_hidden = gumnut_person.is_hidden
     updated_at = gumnut_person.updated_at

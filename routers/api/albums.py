@@ -280,15 +280,21 @@ async def add_assets_to_album(
                     or "already exists" in error_msg.lower()
                 ):
                     response.append(
-                        BulkIdResponseDto(id=asset_uuid_str, success=False, error=Error2.duplicate)
+                        BulkIdResponseDto(
+                            id=asset_uuid_str, success=False, error=Error2.duplicate
+                        )
                     )
                 elif "404" in error_msg or "not found" in error_msg.lower():
                     response.append(
-                        BulkIdResponseDto(id=asset_uuid_str, success=False, error=Error2.not_found)
+                        BulkIdResponseDto(
+                            id=asset_uuid_str, success=False, error=Error2.not_found
+                        )
                     )
                 else:
                     response.append(
-                        BulkIdResponseDto(id=asset_uuid_str, success=False, error=Error2.unknown)
+                        BulkIdResponseDto(
+                            id=asset_uuid_str, success=False, error=Error2.unknown
+                        )
                     )
 
         return response
@@ -416,18 +422,24 @@ async def remove_asset_from_album(
                 error_msg = str(asset_error)
                 if "404" in error_msg or "not found" in error_msg.lower():
                     response.append(
-                        BulkIdResponseDto(id=asset_uuid_str, success=False, error=Error2.not_found)
+                        BulkIdResponseDto(
+                            id=asset_uuid_str, success=False, error=Error2.not_found
+                        )
                     )
                 elif (
                     "not in album" in error_msg.lower()
                     or "not member" in error_msg.lower()
                 ):
                     response.append(
-                        BulkIdResponseDto(id=asset_uuid_str, success=False, error=Error2.not_found)
+                        BulkIdResponseDto(
+                            id=asset_uuid_str, success=False, error=Error2.not_found
+                        )
                     )
                 else:
                     response.append(
-                        BulkIdResponseDto(id=asset_uuid_str, success=False, error=Error2.unknown)
+                        BulkIdResponseDto(
+                            id=asset_uuid_str, success=False, error=Error2.unknown
+                        )
                     )
 
         return response

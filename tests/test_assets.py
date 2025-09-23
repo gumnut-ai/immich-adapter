@@ -4,8 +4,6 @@ import pytest
 from unittest.mock import Mock, patch, AsyncMock
 from fastapi import HTTPException
 from uuid import uuid4
-from datetime import datetime, timezone
-from io import BytesIO
 
 from routers.api.assets import (
     bulk_upload_check,
@@ -43,7 +41,6 @@ from routers.immich_models import (
     AssetMetadataKey,
     AssetMediaSize,
     AssetMediaStatus,
-    AssetVisibility,
 )
 
 
@@ -53,10 +50,12 @@ class TestBulkUploadCheck:
     @pytest.mark.anyio
     async def test_bulk_upload_check_success(self):
         """Test successful bulk upload check."""
-        request = AssetBulkUploadCheckDto(assets=[
-            AssetBulkUploadCheckItem(id="asset1", checksum="checksum1"),
-            AssetBulkUploadCheckItem(id="asset2", checksum="checksum2"),
-        ])
+        request = AssetBulkUploadCheckDto(
+            assets=[
+                AssetBulkUploadCheckItem(id="asset1", checksum="checksum1"),
+                AssetBulkUploadCheckItem(id="asset2", checksum="checksum2"),
+            ]
+        )
 
         # Execute
         result = await bulk_upload_check(request)
@@ -76,7 +75,9 @@ class TestCheckExistingAssets:
     async def test_check_existing_assets_returns_empty(self):
         """Test that check_existing_assets returns empty list."""
         # Setup
-        request = CheckExistingAssetsDto(deviceAssetIds=["asset1", "asset2"], deviceId="device-123")
+        request = CheckExistingAssetsDto(
+            deviceAssetIds=["asset1", "asset2"], deviceId="device-123"
+        )
 
         # Execute
         result = await check_existing_assets(request)
@@ -92,7 +93,7 @@ class TestUploadAsset:
     async def test_upload_asset_success(self, sample_uuid):
         """Test successful asset upload."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
 
@@ -108,7 +109,9 @@ class TestUploadAsset:
             mock_file.read = AsyncMock(return_value=b"fake image data")
 
             # Mock safe_uuid_from_asset_id
-            with patch('routers.utils.gumnut_id_conversion.safe_uuid_from_asset_id') as mock_safe_uuid:
+            with patch(
+                "routers.utils.gumnut_id_conversion.safe_uuid_from_asset_id"
+            ) as mock_safe_uuid:
                 mock_safe_uuid.return_value = sample_uuid
 
                 # Execute
@@ -119,7 +122,7 @@ class TestUploadAsset:
                     fileCreatedAt="2023-01-01T12:00:00Z",
                     fileModifiedAt="2023-01-01T12:00:00Z",
                     isFavorite=False,
-                    duration=""
+                    duration="",
                 )
 
                 # Assert
@@ -131,7 +134,7 @@ class TestUploadAsset:
     async def test_upload_asset_duplicate(self, sample_uuid):
         """Test upload asset with duplicate error."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.assets.create.side_effect = Exception("Asset already exists")
@@ -147,7 +150,7 @@ class TestUploadAsset:
                 assetData=mock_file,
                 deviceAssetId="device-123",
                 deviceId="device-456",
-                fileCreatedAt="2023-01-01T12:00:00Z"
+                fileCreatedAt="2023-01-01T12:00:00Z",
             )
 
             # Assert
@@ -158,7 +161,7 @@ class TestUploadAsset:
     async def test_upload_asset_api_error(self):
         """Test upload asset with API error."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.assets.create.side_effect = Exception("401 Invalid API key")
@@ -175,7 +178,7 @@ class TestUploadAsset:
                     assetData=mock_file,
                     deviceAssetId="device-123",
                     deviceId="device-456",
-                    fileCreatedAt="2023-01-01T12:00:00Z"
+                    fileCreatedAt="2023-01-01T12:00:00Z",
                 )
 
             assert exc_info.value.status_code == 401
@@ -188,7 +191,9 @@ class TestUpdateAssets:
     async def test_update_assets_success(self):
         """Test successful assets update (stub implementation)."""
         # Setup
-        request = AssetBulkUpdateDto(ids=[uuid4()], dateTimeOriginal="2023-01-01T12:00:00Z")
+        request = AssetBulkUpdateDto(
+            ids=[uuid4()], dateTimeOriginal="2023-01-01T12:00:00Z"
+        )
 
         # Execute
         result = await update_assets(request)
@@ -204,7 +209,7 @@ class TestDeleteAssets:
     async def test_delete_assets_success(self):
         """Test successful assets deletion."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.assets.delete.return_value = None
@@ -223,14 +228,14 @@ class TestDeleteAssets:
     async def test_delete_assets_partial_failure(self):
         """Test deletion with some assets not found."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
 
             # First delete succeeds, second fails with 404
             mock_client.assets.delete.side_effect = [
                 None,  # Success
-                Exception("404 Not found")  # Failure
+                Exception("404 Not found"),  # Failure
             ]
 
             asset_ids = [uuid4(), uuid4()]
@@ -242,7 +247,6 @@ class TestDeleteAssets:
             # Assert - should still return 204 even with partial failures
             assert result.status_code == 204
             assert mock_client.assets.delete.call_count == 2
-
 
 
 class TestGetAllUserAssetsByDeviceId:
@@ -262,10 +266,12 @@ class TestGetAssetStatistics:
     """Test the get_asset_statistics endpoint."""
 
     @pytest.mark.anyio
-    async def test_get_asset_statistics_success(self, multiple_gumnut_assets, mock_sync_cursor_page):
+    async def test_get_asset_statistics_success(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
         """Test successful retrieval of asset statistics."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
 
@@ -290,7 +296,7 @@ class TestGetAssetStatistics:
     async def test_get_asset_statistics_empty(self, mock_sync_cursor_page):
         """Test asset statistics with no assets."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.assets.list.return_value = mock_sync_cursor_page([])
@@ -307,7 +313,7 @@ class TestGetAssetStatistics:
     async def test_get_asset_statistics_gumnut_error(self):
         """Test handling of Gumnut API errors."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.assets.list.side_effect = Exception("API Error")
@@ -339,7 +345,9 @@ class TestRunAssetJobs:
     async def test_run_asset_jobs_success(self):
         """Test successful asset jobs run (stub implementation)."""
         # Setup
-        request = AssetJobsDto(assetIds=[uuid4()], name=AssetJobName.regenerate_thumbnail)
+        request = AssetJobsDto(
+            assetIds=[uuid4()], name=AssetJobName.regenerate_thumbnail
+        )
 
         # Execute
         result = await run_asset_jobs(request)
@@ -355,7 +363,7 @@ class TestUpdateAsset:
     async def test_update_asset_success(self, sample_gumnut_asset, sample_uuid):
         """Test successful asset update (calls get_asset_info)."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.assets.retrieve.return_value = sample_gumnut_asset
@@ -367,9 +375,11 @@ class TestUpdateAsset:
 
             # Assert
             # Should return a converted AssetResponseDto from get_asset_info
-            assert hasattr(result, 'id')
-            assert hasattr(result, 'deviceAssetId')
-            assert result.deviceAssetId == "gumnut-asset-456"  # From sample_gumnut_asset.id
+            assert hasattr(result, "id")
+            assert hasattr(result, "deviceAssetId")
+            assert (
+                result.deviceAssetId == "gumnut-asset-456"
+            )  # From sample_gumnut_asset.id
             mock_client.assets.retrieve.assert_called_once()
 
 
@@ -380,7 +390,7 @@ class TestGetAssetInfo:
     async def test_get_asset_info_success(self, sample_gumnut_asset, sample_uuid):
         """Test successful retrieval of asset info."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.assets.retrieve.return_value = sample_gumnut_asset
@@ -390,16 +400,18 @@ class TestGetAssetInfo:
 
             # Assert
             # Result should be a real AssetResponseDto from conversion
-            assert hasattr(result, 'id')
-            assert hasattr(result, 'deviceAssetId')
-            assert result.deviceAssetId == "gumnut-asset-456"  # From sample_gumnut_asset.id
+            assert hasattr(result, "id")
+            assert hasattr(result, "deviceAssetId")
+            assert (
+                result.deviceAssetId == "gumnut-asset-456"
+            )  # From sample_gumnut_asset.id
             mock_client.assets.retrieve.assert_called_once()
 
     @pytest.mark.anyio
     async def test_get_asset_info_not_found(self, sample_uuid):
         """Test handling of asset not found."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
             mock_client.assets.retrieve.side_effect = Exception("404 Not found")
@@ -418,7 +430,7 @@ class TestViewAsset:
     async def test_view_asset_success(self, sample_uuid):
         """Test successful asset thumbnail view."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
 
@@ -440,7 +452,7 @@ class TestViewAsset:
     async def test_view_asset_fullsize(self, sample_uuid):
         """Test asset view with fullsize."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
 
@@ -461,10 +473,12 @@ class TestViewAsset:
     async def test_view_asset_not_found(self, sample_uuid):
         """Test handling of asset not found during view."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
-            mock_client.assets.download_thumbnail.side_effect = Exception("404 Not found")
+            mock_client.assets.download_thumbnail.side_effect = Exception(
+                "404 Not found"
+            )
 
             # Execute & Assert
             with pytest.raises(HTTPException) as exc_info:
@@ -480,7 +494,7 @@ class TestDownloadAsset:
     async def test_download_asset_success(self, sample_uuid):
         """Test successful asset download."""
         # Setup - mock only the Gumnut client
-        with patch('routers.api.assets.get_gumnut_client') as mock_get_client:
+        with patch("routers.api.assets.get_gumnut_client") as mock_get_client:
             mock_client = Mock()
             mock_get_client.return_value = mock_client
 
@@ -489,7 +503,7 @@ class TestDownloadAsset:
             mock_response.read.return_value = b"fake image data"
             mock_response.headers = {
                 "content-type": "image/jpeg",
-                "content-disposition": 'attachment; filename="test.jpg"'
+                "content-disposition": 'attachment; filename="test.jpg"',
             }
             mock_client.assets.download.return_value = mock_response
 
@@ -499,7 +513,7 @@ class TestDownloadAsset:
             # Assert
             assert result.media_type == "image/jpeg"
             assert result.body == b"fake image data"
-            assert 'Content-Disposition' in result.headers
+            assert "Content-Disposition" in result.headers
             mock_client.assets.download.assert_called_once()
 
 
@@ -539,9 +553,13 @@ class TestUpdateAssetMetadata:
     async def test_update_asset_metadata_returns_empty(self, sample_uuid):
         """Test that update_asset_metadata returns empty list."""
         # Setup
-        request = AssetMetadataUpsertDto(items=[
-            AssetMetadataUpsertItemDto(key=AssetMetadataKey.mobile_app, value={"test": "value"})
-        ])
+        request = AssetMetadataUpsertDto(
+            items=[
+                AssetMetadataUpsertItemDto(
+                    key=AssetMetadataKey.mobile_app, value={"test": "value"}
+                )
+            ]
+        )
 
         # Execute
         result = await update_asset_metadata(sample_uuid, request)
@@ -570,7 +588,9 @@ class TestGetAssetMetadataByKey:
     async def test_get_asset_metadata_by_key_returns_none(self, sample_uuid):
         """Test that get_asset_metadata_by_key returns None."""
         # Execute
-        result = await get_asset_metadata_by_key(sample_uuid, AssetMetadataKey.mobile_app)
+        result = await get_asset_metadata_by_key(
+            sample_uuid, AssetMetadataKey.mobile_app
+        )
 
         # Assert
         assert result is None
