@@ -13,6 +13,7 @@ from fastapi import (
     Response,
     status,
 )
+from fastapi.responses import StreamingResponse
 from routers.utils.gumnut_client import get_gumnut_client
 from routers.immich_models import (
     AssetBulkDeleteDto,
@@ -66,46 +67,63 @@ async def _download_asset_content(
     try:
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
-        # Determine the size and use appropriate Gumnut SDK function
+        # Helper function to create streaming generator
+        def create_streaming_generator(streaming_response_context):
+            with streaming_response_context as gumnut_response:
+                for chunk in gumnut_response.iter_bytes(chunk_size=8192):
+                    yield chunk
+
+        def extract_headers_and_filename(gumnut_response):
+            """Extract content type, filename, and build response headers."""
+            content_type = gumnut_response.headers.get(
+                "content-type", "application/octet-stream"
+            )
+
+            # Extract filename from content-disposition header if available
+            content_disposition = gumnut_response.headers.get("content-disposition", "")
+            filename = None
+            if 'filename="' in content_disposition:
+                filename = content_disposition.split('filename="')[1].split('"')[0]
+
+            # Build response headers
+            response_headers = {"Content-Type": content_type}
+            if filename:
+                response_headers["Content-Disposition"] = f'inline; filename="{filename}"'
+
+            return content_type, response_headers
+
+        def create_streaming_response(streaming_context_factory):
+            """Create a StreamingResponse with proper header extraction."""
+            # Get headers first
+            with streaming_context_factory() as gumnut_response:
+                content_type, response_headers = extract_headers_and_filename(gumnut_response)
+
+            # Create new streaming context for actual streaming
+            return StreamingResponse(
+                create_streaming_generator(streaming_context_factory()),
+                media_type=content_type,
+                headers=response_headers,
+            )
+
+        # Determine the size and use appropriate Gumnut SDK function with streaming
         if size == AssetMediaSize.fullsize:
-            # Use download for original size
-            gumnut_response = client.assets.download(gumnut_asset_id)
+            # Use streaming download for original size
+            streaming_factory = lambda: client.assets.with_streaming_response.download(
+                gumnut_asset_id
+            )
+            return create_streaming_response(streaming_factory)
         else:
-            # Use download_thumbnail for thumbnail and preview sizes
+            # Use streaming download_thumbnail for thumbnail and preview sizes
             # Map Immich size to Gumnut size parameter
             if size == AssetMediaSize.preview:
                 gumnut_size = "preview"
             else:  # default to thumbnail
                 gumnut_size = "thumbnail"
 
-            gumnut_response = client.assets.download_thumbnail(
+            streaming_factory = lambda: client.assets.with_streaming_response.download_thumbnail(
                 gumnut_asset_id, size=gumnut_size
             )
-
-        # Get the content and headers from the Gumnut response
-        content = gumnut_response.read()
-        content_type = gumnut_response.headers.get(
-            "content-type", "application/octet-stream"
-        )
-
-        # Extract filename from content-disposition header if available
-        content_disposition = gumnut_response.headers.get("content-disposition", "")
-        filename = None
-        if 'filename="' in content_disposition:
-            filename = content_disposition.split('filename="')[1].split('"')[0]
-
-        # Build response headers
-        response_headers = {
-            "Content-Type": content_type,
-        }
-        if filename:
-            response_headers["Content-Disposition"] = f'inline; filename="{filename}"'
-
-        return Response(
-            content=content,
-            media_type=content_type,
-            headers=response_headers,
-        )
+            return create_streaming_response(streaming_factory)
 
     except Exception as e:
         # Provide more detailed error information
