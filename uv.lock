@@ -169,7 +169,7 @@ wheels = [
 [[package]]
 name = "gumnut-sdk"
 version = "0.14.2"
-source = { git = "https://github.com/gumnut-ai/photos-sdk-python.git#6cf04ef20b51c0d31d8d4fc9588326e24a932dcb" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -177,6 +177,10 @@ dependencies = [
     { name = "pydantic" },
     { name = "sniffio" },
     { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b0/a7/310e79fd449193e251057da8337d79ae03cc080fa114eb1c4f6eb2f6c249/gumnut_sdk-0.14.2.tar.gz", hash = "sha256:92aaf73c116daf597d70934d3338673c8c73989cbb98d097a71155838043840f", size = 119656, upload-time = "2025-09-03T00:14:17.344Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/67/b38b64a8a24507092cd024ea042ad43dbb73c5a4128770b1faffa662961a/gumnut_sdk-0.14.2-py3-none-any.whl", hash = "sha256:28f858007d04a19db158d42be3ab46187e4ed497e3feef7a19804bd9227d0cc4", size = 105878, upload-time = "2025-09-03T00:14:16.352Z" },
 ]
 
 [[package]]
@@ -272,7 +276,7 @@ dev = [
 requires-dist = [
     { name = "b64uuid", specifier = ">=0.1" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.116.1" },
-    { name = "gumnut-sdk", git = "https://github.com/gumnut-ai/photos-sdk-python.git" },
+    { name = "gumnut-sdk" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "python-socketio", specifier = ">=5.13.0" },
