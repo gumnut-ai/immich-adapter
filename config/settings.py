@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     # External URL for API responses (set to https://api.gumnut.ai in production)
     gumnut_api_base_url: str = "http://localhost:8000"
+    gumnut_api_key: str | None = None
     sentry_dsn: str | None = None
 
     @field_validator("environment")

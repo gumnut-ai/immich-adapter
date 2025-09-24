@@ -1,13 +1,23 @@
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import List
 from fastapi import APIRouter
+from shortuuid import uuid
 
 from routers.immich_models import (
+    LicenseKeyDto,
+    LicenseResponseDto,
+    ServerApkLinksDto,
     ServerFeaturesDto,
     ServerConfigDto,
     ServerAboutResponseDto,
+    ServerPingResponse,
+    ServerStatsResponseDto,
     ServerStorageResponseDto,
+    ServerThemeDto,
     ServerVersionHistoryResponseDto,
+    ServerVersionResponseDto,
     ServerMediaTypesResponseDto,
+    VersionCheckStateResponseDto,
 )
 
 router = APIRouter(
@@ -48,8 +58,8 @@ fake_config = {
 }
 
 fake_about = {
-    "version": "v1.124.2",
-    "versionUrl": "https://github.com/immich-app/immich/releases/tag/v1.124.2",
+    "version": "v1.142.0",
+    "versionUrl": "https://github.com/immich-app/immich/releases/tag/v1.142.0",
     "licensed": False,
     "nodejs": "v20.18.1",
     "exiftool": "13.00",
@@ -72,7 +82,7 @@ fake_version_history = [
     {
         "id": "b86ef90c-3973-4aae-8b74-2f24ac71fdd4",
         "createdAt": "2025-01-13T21:28:34.519+00:00",
-        "version": "1.124.2",
+        "version": "1.142.0",
     }
 ]
 
@@ -170,7 +180,7 @@ async def get_storage() -> ServerStorageResponseDto:
 
 
 @router.get("/version-history")
-async def get_version_history() -> list[ServerVersionHistoryResponseDto]:
+async def get_version_history() -> List[ServerVersionHistoryResponseDto]:
     return [
         ServerVersionHistoryResponseDto(
             id=item["id"],
@@ -184,3 +194,102 @@ async def get_version_history() -> list[ServerVersionHistoryResponseDto]:
 @router.get("/media-types")
 async def get_media_types() -> ServerMediaTypesResponseDto:
     return ServerMediaTypesResponseDto(**fake_media_types)
+
+
+@router.get("/apk-links")
+async def get_apk_links() -> ServerApkLinksDto:
+    """
+    Get APK links for the Immich mobile app.
+    This is a stub implementation returning fake download links.
+    """
+    return ServerApkLinksDto(
+        arm64v8a="https://github.com/immich-app/immich/releases/download/v1.142.0/immich-v1.142.0-arm64-v8a.apk",
+        armeabiv7a="https://github.com/immich-app/immich/releases/download/v1.142.0/immich-v1.142.0-armeabi-v7a.apk",
+        universal="https://github.com/immich-app/immich/releases/download/v1.142.0/immich-v1.142.0-universal.apk",
+        x86_64="https://github.com/immich-app/immich/releases/download/v1.142.0/immich-v1.142.0-x86_64.apk",
+    )
+
+
+@router.get("/ping")
+async def ping_server() -> ServerPingResponse:
+    """
+    Ping the server to check if it's alive.
+    This is a stub implementation that always returns 'pong'.
+    """
+    return ServerPingResponse(res="pong")
+
+
+@router.get("/statistics")
+async def get_server_statistics() -> ServerStatsResponseDto:
+    """
+    Get server statistics including photo count and usage.
+    This is a stub implementation returning fake statistics.
+    """
+    return ServerStatsResponseDto(
+        photos=0, usage=0, usageByUser=[], usagePhotos=0, usageVideos=0, videos=0
+    )
+
+
+@router.get("/version")
+async def get_server_version() -> ServerVersionResponseDto:
+    """
+    Get server version information.
+    This is a stub implementation returning version 1.142.0.
+    """
+    return ServerVersionResponseDto(major=1, minor=142, patch=0)
+
+
+@router.get("/version-check")
+async def get_version_check() -> VersionCheckStateResponseDto:
+    """
+    Check for version updates.
+    This is a stub implementation returning version 1.142.0.
+    """
+    return VersionCheckStateResponseDto(
+        checkedAt=str(datetime.now(timezone.utc)),
+        releaseVersion="1.142.0",
+    )
+
+
+@router.get("/license")
+async def get_server_license() -> LicenseResponseDto:
+    """
+    Get server license information.
+    This is a stub implementation returning basic license info.
+    """
+    return LicenseResponseDto(
+        licenseKey="/IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA/",
+        activationKey=str(uuid()),
+        activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+    )
+
+
+@router.delete("/license", status_code=204)
+async def delete_server_license():
+    """
+    Delete server license information.
+    This is a stub implementation that does not perform any action.
+    """
+    return
+
+
+@router.put("/license")
+async def set_server_license(request: LicenseKeyDto) -> LicenseResponseDto:
+    """
+    Update server license information.
+    This is a stub implementation that does not perform any action.
+    """
+    return LicenseResponseDto(
+        licenseKey=request.licenseKey,
+        activationKey=request.activationKey,
+        activatedAt=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/theme")
+async def get_theme() -> ServerThemeDto:
+    """
+    Get server theme configuration.
+    This is a stub implementation returning empty custom CSS.
+    """
+    return ServerThemeDto(customCss="")

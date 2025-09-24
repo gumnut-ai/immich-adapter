@@ -15,7 +15,7 @@ sio = socketio.AsyncServer(
 )
 
 # Create the ASGI app
-socket_app = socketio.ASGIApp(socketio_server=sio, socketio_path="")
+socket_app = socketio.ASGIApp(socketio_server=sio, socketio_path="/")
 
 
 @sio.event
@@ -29,13 +29,13 @@ async def connect(sid, environ):
                 "options": {},
                 "loose": False,
                 "includePrerelease": False,
-                "raw": "1.125.3",
+                "raw": "1.142.3",
                 "major": 1,
-                "minor": 125,
+                "minor": 142,
                 "patch": 3,
                 "prerelease": [],
                 "build": [],
-                "version": "1.125.3",
+                "version": "1.142.3",
             },
             room=sid,
         )
