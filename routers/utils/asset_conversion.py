@@ -72,18 +72,7 @@ def extract_exif_info(exif: Exif | None) -> ExifResponseDto:
     file_size = None
     time_zone = None
 
-    # Parse datetime fields if they're strings
-    def parse_datetime(dt_value):
-        if isinstance(dt_value, str):
-            try:
-                return datetime.fromisoformat(dt_value.replace("Z", "+00:00"))
-            except (ValueError, AttributeError):
-                return None
-        return dt_value
-
-    date_time_original = parse_datetime(date_time_original)
-    modify_date = parse_datetime(modify_date)
-
+    # Pydantic will throw an error if date_time_original does not have a timezone
     if date_time_original is not None:
         time_zone = date_time_original.tzname()
         if not time_zone:

@@ -5,13 +5,12 @@ Gumnut uses short UUIDs with prefixes like 'album_' and 'asset_'
 while Immich expects regular UUIDs.
 """
 
-import hashlib
 from uuid import UUID
 
 import shortuuid
 
 
-def safe_uuid_from_gumnut_id(gumnut_id: str, prefix: str = "") -> UUID:
+def safe_uuid_from_gumnut_id(gumnut_id: str, prefix: str) -> UUID:
     """
     Convert Gumnut ID to a valid UUID.
     Gumnut IDs have format: {prefix}_{short_uuid}
@@ -19,34 +18,21 @@ def safe_uuid_from_gumnut_id(gumnut_id: str, prefix: str = "") -> UUID:
 
     Args:
         gumnut_id: The Gumnut ID (e.g., 'album_BM3nUmJ6fkBqBADyz5FEiu')
-        prefix: Expected prefix (e.g., 'album', 'asset'). If provided, validates the prefix.
+        prefix: Expected prefix (e.g., 'album', 'asset').
 
     Returns:
         UUID object
     """
-    try:
-        id_string = str(gumnut_id)
-
-        # Handle prefixed IDs with shortuuid decoding
-        expected_prefix = f"{prefix}_" if prefix else ""
-        if expected_prefix and id_string.startswith(expected_prefix):
-            short_uuid_part = id_string[len(expected_prefix) :]
-            # Decode the short UUID back to a regular UUID
-            return shortuuid.decode(short_uuid_part)
-        elif "_" in id_string and not prefix:
-            # Handle any prefixed ID when no specific prefix is expected
-            _, short_uuid_part = id_string.split("_", 1)
-            return shortuuid.decode(short_uuid_part)
-
-        # Try to parse as UUID directly
-        return UUID(id_string)
-    except (ValueError, TypeError):
-        # Fallback: generate a deterministic UUID from the full ID
-        # This ensures the same ID always gets the same UUID
-        hash_object = hashlib.md5(str(gumnut_id).encode())
-        hex_dig = hash_object.hexdigest()
-        uuid_string = f"{hex_dig[:8]}-{hex_dig[8:12]}-{hex_dig[12:16]}-{hex_dig[16:20]}-{hex_dig[20:32]}"
-        return UUID(uuid_string)
+    expected_prefix = f"{prefix}_"
+    if gumnut_id.startswith(expected_prefix):
+        short_uuid_part = gumnut_id[len(expected_prefix) :]
+        # Decode the short UUID back to a regular UUID
+        return shortuuid.decode(short_uuid_part)
+    else:
+        # should not reasonably happen
+        raise ValueError(
+            f"Invalid Gumnut ID format: {gumnut_id}, expected prefix: {expected_prefix}"
+        )
 
 
 def uuid_to_gumnut_id(uuid_obj: UUID, prefix: str) -> str:

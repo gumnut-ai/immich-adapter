@@ -14,6 +14,7 @@ from routers.immich_models import (
     AssetOrder,
     AssetVisibility,
 )
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 
 
 def call_get_time_buckets(**kwargs):
@@ -292,7 +293,7 @@ class TestGetTimeBucket:
             # Setup test assets - some in January 2024, some in February
             assets = multiple_gumnut_assets
             # Asset 0: January 2024 (should be included)
-            assets[0].id = "asset-jan-1"
+            assets[0].id = uuid_to_gumnut_asset_id(uuid4())
             assets[0].local_datetime = datetime(
                 2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc
             )
@@ -302,7 +303,7 @@ class TestGetTimeBucket:
             assets[0].local_datetime_offset = -5
 
             # Asset 1: February 2024 (should NOT be included)
-            assets[1].id = "asset-feb-1"
+            assets[1].id = uuid_to_gumnut_asset_id(uuid4())
             assets[1].local_datetime = datetime(
                 2024, 2, 20, 14, 0, 0, tzinfo=timezone.utc
             )
@@ -312,7 +313,7 @@ class TestGetTimeBucket:
             assets[1].local_datetime_offset = 0
 
             # Asset 2: January 2024 (should be included)
-            assets[2].id = "asset-jan-2"
+            assets[2].id = uuid_to_gumnut_asset_id(uuid4())
             assets[2].local_datetime = datetime(
                 2024, 1, 25, 16, 0, 0, tzinfo=timezone.utc
             )
@@ -370,7 +371,7 @@ class TestGetTimeBucket:
 
             # Setup test assets
             assets = multiple_gumnut_assets
-            assets[0].id = "asset-1"
+            assets[0].id = uuid_to_gumnut_asset_id(uuid4())
             assets[0].local_datetime = datetime(
                 2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc
             )
@@ -408,7 +409,7 @@ class TestGetTimeBucket:
 
             # Setup test assets
             assets = multiple_gumnut_assets
-            assets[0].id = "asset-1"
+            assets[0].id = uuid_to_gumnut_asset_id(uuid4())
             assets[0].local_datetime = datetime(
                 2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc
             )
@@ -443,7 +444,7 @@ class TestGetTimeBucket:
 
             # Create mock asset with string datetime
             mock_asset = Mock()
-            mock_asset.id = "asset-1"
+            mock_asset.id = uuid_to_gumnut_asset_id(uuid4())
             mock_asset.local_datetime = "2024-01-15T10:00:00Z"
             mock_asset.created_at = "2024-01-15T10:00:00Z"
             mock_asset.mime_type = "image/jpeg"
@@ -505,7 +506,7 @@ class TestGetTimeBucket:
 
             # Create dict-format asset
             dict_asset = {
-                "id": "dict-asset-1",
+                "id": uuid_to_gumnut_asset_id(uuid4()),
                 "local_datetime": "2024-01-15T10:00:00Z",
                 "created_at": "2024-01-15T10:00:00Z",
                 "mime_type": "image/jpeg",
@@ -538,7 +539,7 @@ class TestGetTimeBucket:
 
             # Create mock asset with minimal attributes
             mock_asset = Mock()
-            mock_asset.id = "minimal-asset"
+            mock_asset.id = uuid_to_gumnut_asset_id(uuid4())
             mock_asset.local_datetime = datetime(
                 2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc
             )

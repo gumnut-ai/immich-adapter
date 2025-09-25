@@ -234,32 +234,6 @@ class TestCreateAlbum:
             )
 
     @pytest.mark.anyio
-    async def test_create_album_no_name(self, sample_gumnut_album):
-        """Test album creation with empty name."""
-        # Setup - mock only the Gumnut client, let conversion functions run naturally
-        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
-            mock_client = Mock()
-            mock_get_client.return_value = mock_client
-            # Update the sample to have empty name we want to test
-            sample_gumnut_album.name = ""
-            sample_gumnut_album.description = "Description"
-            mock_client.albums.create.return_value = sample_gumnut_album
-
-            # Use empty string instead of None since albumName is required
-            request = CreateAlbumDto(albumName="", description="Description")
-
-            # Execute
-            result = await create_album(request)
-
-            # Assert
-            assert hasattr(result, "albumName")
-            # The conversion function converts empty names to "Untitled Album"
-            assert result.albumName == "Untitled Album"
-            mock_client.albums.create.assert_called_once_with(
-                name="", description="Description"
-            )
-
-    @pytest.mark.anyio
     async def test_create_album_gumnut_error(self):
         """Test handling of Gumnut API errors during creation."""
         # Setup - mock directly in the test

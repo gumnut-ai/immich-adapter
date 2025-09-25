@@ -5,7 +5,6 @@ This module provides shared functionality for converting album data from the Gum
 to the Immich API format, including handling of datetime fields and album metadata.
 """
 
-from datetime import datetime
 from uuid import UUID
 
 from gumnut.types.album_response import AlbumResponse
@@ -34,38 +33,10 @@ def convert_gumnut_album_to_immich(
         AlbumResponseDto object with processed data
     """
     album_id = gumnut_album.id
-    album_name = gumnut_album.name or "Untitled Album"
+    album_name = gumnut_album.name
     album_description = gumnut_album.description
     created_at = gumnut_album.created_at
     updated_at = gumnut_album.updated_at
-
-    # Ensure created_at and updated_at are datetime objects
-    # AlbumResponse should already have datetime objects, but handle edge cases
-    if created_at is None:
-        created_at = datetime.now()
-    elif not isinstance(created_at, datetime):
-        # If it's not already a datetime (e.g., it's a string), parse it
-        try:
-            if isinstance(created_at, str):
-                iso_string: str = created_at.replace("Z", "+00:00")
-                created_at = datetime.fromisoformat(iso_string)
-            else:
-                created_at = datetime.now()
-        except (ValueError, AttributeError):
-            created_at = datetime.now()
-
-    if updated_at is None:
-        updated_at = datetime.now()
-    elif not isinstance(updated_at, datetime):
-        # If it's not already a datetime (e.g., it's a string), parse it
-        try:
-            if isinstance(updated_at, str):
-                iso_string: str = updated_at.replace("Z", "+00:00")
-                updated_at = datetime.fromisoformat(iso_string)
-            else:
-                updated_at = datetime.now()
-        except (ValueError, AttributeError):
-            updated_at = datetime.now()
 
     # Determine asset count
     if asset_count is not None:
