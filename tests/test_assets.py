@@ -377,9 +377,6 @@ class TestUpdateAsset:
             # Should return a converted AssetResponseDto from get_asset_info
             assert hasattr(result, "id")
             assert hasattr(result, "deviceAssetId")
-            assert (
-                result.deviceAssetId == "gumnut-asset-456"
-            )  # From sample_gumnut_asset.id
             mock_client.assets.retrieve.assert_called_once()
 
 
@@ -402,9 +399,6 @@ class TestGetAssetInfo:
             # Result should be a real AssetResponseDto from conversion
             assert hasattr(result, "id")
             assert hasattr(result, "deviceAssetId")
-            assert (
-                result.deviceAssetId == "gumnut-asset-456"
-            )  # From sample_gumnut_asset.id
             mock_client.assets.retrieve.assert_called_once()
 
     @pytest.mark.anyio

@@ -6,6 +6,12 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from typing import List, Any
 
+from routers.utils.gumnut_id_conversion import (
+    uuid_to_gumnut_album_id,
+    uuid_to_gumnut_asset_id,
+    uuid_to_gumnut_person_id,
+)
+
 # Configure anyio to use only asyncio backend
 pytest_plugins = ("anyio",)
 
@@ -35,7 +41,7 @@ def sample_uuid():
 def sample_gumnut_album():
     """Create a sample Gumnut album object with proper date fields."""
     album = Mock()
-    album.id = "gumnut-album-123"
+    album.id = uuid_to_gumnut_album_id(uuid4())
     album.name = "Test Album"
     album.description = "Test Description"
     album.created_at = datetime.now(timezone.utc)
@@ -48,7 +54,7 @@ def sample_gumnut_album():
 def sample_gumnut_asset():
     """Create a sample Gumnut asset object with proper date fields."""
     asset = Mock()
-    asset.id = "gumnut-asset-456"
+    asset.id = uuid_to_gumnut_asset_id(uuid4())
     asset.device_asset_id = "device-123"
     asset.device_id = "device-456"
     asset.file_created_at = datetime.now(timezone.utc)
@@ -72,7 +78,7 @@ def multiple_gumnut_albums():
     albums = []
     for i in range(3):
         album = Mock()
-        album.id = f"gumnut-album-{i}"
+        album.id = uuid_to_gumnut_album_id(uuid4())
         album.name = f"Test Album {i}"
         album.description = f"Test Description {i}"
         album.created_at = datetime.now(timezone.utc)
@@ -88,7 +94,7 @@ def multiple_gumnut_assets():
     assets = []
     for i in range(3):
         asset = Mock()
-        asset.id = f"gumnut-asset-{i}"
+        asset.id = uuid_to_gumnut_asset_id(uuid4())
         asset.device_asset_id = f"device-{i}"
         asset.device_id = f"device-{i}"
         asset.file_created_at = datetime.now(timezone.utc)
@@ -128,7 +134,7 @@ def mock_sync_cursor_page():
 def sample_gumnut_person():
     """Create a sample Gumnut person object with proper fields."""
     person = Mock()
-    person.id = "gumnut-person-123"
+    person.id = uuid_to_gumnut_person_id(uuid4())
     person.name = "Test Person"
     person.birth_date = datetime(1990, 1, 1).date()
     person.is_favorite = False
@@ -146,7 +152,7 @@ def multiple_gumnut_people():
     people = []
     for i in range(3):
         person = Mock()
-        person.id = f"gumnut-person-{i}"
+        person.id = uuid_to_gumnut_person_id(uuid4())
         person.name = f"Test Person {i}"
         person.birth_date = datetime(1990 + i, 1, 1).date()
         person.is_favorite = i % 2 == 0  # Alternate favorites
