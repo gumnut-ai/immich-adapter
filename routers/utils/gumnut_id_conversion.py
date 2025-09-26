@@ -22,6 +22,9 @@ def safe_uuid_from_gumnut_id(gumnut_id: str, prefix: str) -> UUID:
 
     Returns:
         UUID object
+
+    Throws:
+        ValueError if the gumnut_id is not in the expected format or cannot be decoded
     """
     expected_prefix = f"{prefix}_"
     if gumnut_id.startswith(expected_prefix):
