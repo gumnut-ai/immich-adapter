@@ -206,7 +206,7 @@ async def get_time_bucket(
             )
 
             # Determine if asset is an image (vs video) based on MIME type
-            is_image_list.append(mime_type.startswith("image/") if mime_type else True)
+            is_image_list.append(mime_type.startswith("image/") if mime_type else False)
 
             ratio_list.append(float(aspect_ratio))
 
