@@ -16,6 +16,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_person_id,
 )
+from gumnut.types.asset_response import AssetResponse
 
 router = APIRouter(
     prefix="/api/timeline",
@@ -164,32 +165,12 @@ async def get_time_bucket(
         bucketDate = datetime.fromisoformat(timeBucket)
         target_year = bucketDate.year
         target_month = bucketDate.month
-        filtered_assets = []
-
-        for asset in gumnut_assets:
-            # Extract local_datetime or created_at for date filtering
-            if isinstance(asset, dict):
-                local_datetime = asset.get("local_datetime") or asset.get("created_at")
-            else:
-                local_datetime = getattr(asset, "local_datetime", None) or getattr(
-                    asset, "created_at", None
-                )
-
-            if local_datetime:
-                # Parse the datetime if it's a string
-                if isinstance(local_datetime, str):
-                    try:
-                        dt = datetime.fromisoformat(
-                            local_datetime.replace("Z", "+00:00")
-                        )
-                    except (ValueError, AttributeError):
-                        continue  # Skip assets with invalid dates
-                else:
-                    dt = local_datetime
-
-                # Check if asset matches the target year and month
-                if dt.year == target_year and dt.month == target_month:
-                    filtered_assets.append(asset)
+        filtered_assets: List[AssetResponse] = [
+            asset
+            for asset in gumnut_assets
+            if asset.local_datetime.year == target_year
+            and asset.local_datetime.month == target_month
+        ]
 
         # Build the response arrays based on filtered assets
         asset_count = len(filtered_assets)
@@ -203,58 +184,37 @@ async def get_time_bucket(
         local_offset_hours_list = []
 
         for asset in filtered_assets:
-            # Extract asset data (handle both dict and object formats)
-            if isinstance(asset, dict):
-                asset_id = asset.get("id", "unknown")
-                created_at = asset.get("local_datetime") or asset.get("created_at")
-                mime_type = asset.get("mime_type", "")
-                # Use placeholder aspect ratio if not available
-                aspect_ratio = asset.get("aspect_ratio", 1.0)
-                local_datetime_offset = asset.get("local_datetime_offset", 0)
+            asset_id = asset.id
+            created_at = asset.local_datetime
+            mime_type = asset.mime_type
+            aspect_ratio = (
+                asset.width / asset.height if asset.height and asset.width else 1.0
+            )
+            # get the local datetime offset in hours from UTC
+            utc_offset = asset.local_datetime.utcoffset()
+            if asset.local_datetime.tzinfo and utc_offset is not None:
+                local_datetime_offset = int(utc_offset.total_seconds() / 3600)
             else:
-                asset_id = getattr(asset, "id", "unknown")
-                created_at = getattr(asset, "local_datetime", None) or getattr(
-                    asset, "created_at", None
-                )
-                mime_type = getattr(asset, "mime_type", "")
-                aspect_ratio = getattr(asset, "aspect_ratio", 1.0)
-                local_datetime_offset = getattr(asset, "local_datetime_offset", 0)
+                local_datetime_offset = 0
 
             # Convert Gumnut asset ID to UUID format for response
             asset_ids.append(str(safe_uuid_from_asset_id(asset_id)))
 
-            # Format created_at timestamp
-            if created_at:
-                if isinstance(created_at, str):
-                    try:
-                        dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                        # Format as ISO without timezone (as required)
-                        file_created_at_list.append(
-                            dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
-                        )
-                    except (ValueError, AttributeError):
-                        file_created_at_list.append(
-                            "2024-01-01T00:00:00.000"
-                        )  # Fallback
-                else:
-                    file_created_at_list.append(
-                        created_at.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
-                    )
-            else:
-                file_created_at_list.append(
-                    "2024-01-01T00:00:00.000"
-                )  # Fallback timestamp
+            # Format file_created_at_list timestamp to ISO 8601 without timezone and 3 digits of milliseconds.
+            # This is a format only used for TimeBucketAssetResponseDto.
+            # Example: "2023-10-05T09:41:00.123"
+            file_created_at_list.append(
+                created_at.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+            )
 
             # Determine if asset is an image (vs video) based on MIME type
-            is_image_list.append(mime_type.startswith("image/") if mime_type else True)
+            is_image_list.append(mime_type.startswith("image/"))
 
-            # Add aspect ratio (width/height)
-            ratio_list.append(float(aspect_ratio) if aspect_ratio else 1.0)
+            ratio_list.append(float(aspect_ratio))
 
             # Set visibility (always timeline for now)
             visibility_list.append(AssetVisibility.timeline)
 
-            # Use dummy timezone offset
             local_offset_hours_list.append(local_datetime_offset)
 
         # Return as dict to bypass Pydantic validation issues with None in List[str]

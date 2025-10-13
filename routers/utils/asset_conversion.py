@@ -7,7 +7,7 @@ to the Immich API format, including EXIF data processing.
 
 from datetime import datetime, timezone
 
-from gumnut.types.asset_response import Exif, AssetResponse
+from gumnut.types.asset_response import AssetResponse
 from routers.api.auth import get_current_user_id
 from routers.immich_models import (
     AssetResponseDto,
@@ -20,19 +20,21 @@ from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
 from routers.utils.person_conversion import convert_gumnut_person_to_immich_with_faces
 
 
-def extract_exif_info(exif: Exif | None) -> ExifResponseDto:
+def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     """
-    Extract EXIF information from a Gumnut Exif object.
+    Extract EXIF information from a Gumnut AssetResponse object.
 
     Args:
-        exif: The Gumnut Exif object (or None)
+        gumnut_asset: The Gumnut AssetResponse object
 
     Returns:
         ExifResponseDto object with processed EXIF data
     """
     # Handle case where exif might be None
-    if exif is None:
+    if gumnut_asset.exif is None:
         return ExifResponseDto()
+
+    exif = gumnut_asset.exif
 
     # Extract EXIF fields directly from Gumnut Exif object
     # Note: These fields may not all be present in the Gumnut Exif type, using direct access where available
@@ -66,10 +68,10 @@ def extract_exif_info(exif: Exif | None) -> ExifResponseDto:
     date_time_original = exif.original_datetime
     modify_date = exif.modified_datetime
 
-    # These fields don't exist in Gumnut Exif, so set to None
-    width = None
-    height = None
-    file_size = None
+    width = gumnut_asset.width
+    height = gumnut_asset.height
+    file_size = gumnut_asset.file_size_bytes
+
     time_zone = None
 
     # Pydantic will throw an error if date_time_original does not have a timezone
@@ -167,7 +169,7 @@ def convert_gumnut_asset_to_immich(gumnut_asset: AssetResponse) -> AssetResponse
             people.append(convert_gumnut_person_to_immich_with_faces(person))
 
     # Extract EXIF object directly from AssetResponse
-    exif_info = extract_exif_info(gumnut_asset.exif)
+    exif_info = extract_exif_info(gumnut_asset)
 
     return AssetResponseDto(
         id=str(safe_uuid_from_asset_id(asset_id)),
