@@ -165,17 +165,12 @@ async def get_time_bucket(
         bucketDate = datetime.fromisoformat(timeBucket)
         target_year = bucketDate.year
         target_month = bucketDate.month
-        filtered_assets: List[AssetResponse] = []
-
-        for asset in gumnut_assets:
-            # Extract local_datetime or created_at for date filtering
-            local_datetime = asset.local_datetime or asset.created_at
-
-            if (
-                local_datetime.year == target_year
-                and local_datetime.month == target_month
-            ):
-                filtered_assets.append(asset)
+        filtered_assets: List[AssetResponse] = [
+            asset
+            for asset in gumnut_assets
+            if asset.local_datetime.year == target_year
+            and asset.local_datetime.month == target_month
+        ]
 
         # Build the response arrays based on filtered assets
         asset_count = len(filtered_assets)
@@ -190,8 +185,8 @@ async def get_time_bucket(
 
         for asset in filtered_assets:
             asset_id = asset.id
-            created_at = asset.local_datetime or asset.created_at
-            mime_type = asset.mime_type or ""
+            created_at = asset.local_datetime
+            mime_type = asset.mime_type
             aspect_ratio = (
                 asset.width / asset.height if asset.height and asset.width else 1.0
             )
@@ -200,13 +195,15 @@ async def get_time_bucket(
             # Convert Gumnut asset ID to UUID format for response
             asset_ids.append(str(safe_uuid_from_asset_id(asset_id)))
 
-            # Format created_at timestamp
+            # Format file_created_at_list timestamp to ISO 8601 without timezone and 3 digits of milliseconds.
+            # This is a format only used for TimeBucketAssetResponseDto.
+            # Example: "2023-10-05T09:41:00.123"
             file_created_at_list.append(
                 created_at.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
             )
 
             # Determine if asset is an image (vs video) based on MIME type
-            is_image_list.append(mime_type.startswith("image/") if mime_type else False)
+            is_image_list.append(mime_type.startswith("image/"))
 
             ratio_list.append(float(aspect_ratio))
 
