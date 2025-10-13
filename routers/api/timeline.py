@@ -190,7 +190,12 @@ async def get_time_bucket(
             aspect_ratio = (
                 asset.width / asset.height if asset.height and asset.width else 1.0
             )
-            local_datetime_offset = 0  # there is no local_datetime_offset in Gumnut
+            # get the local datetime offset in hours from UTC
+            utc_offset = asset.local_datetime.utcoffset()
+            if asset.local_datetime.tzinfo and utc_offset is not None:
+                local_datetime_offset = int(utc_offset.total_seconds() / 3600)
+            else:
+                local_datetime_offset = 0
 
             # Convert Gumnut asset ID to UUID format for response
             asset_ids.append(str(safe_uuid_from_asset_id(asset_id)))

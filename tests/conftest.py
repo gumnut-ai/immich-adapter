@@ -103,6 +103,8 @@ def multiple_gumnut_assets():
         asset.original_filename = f"test{i}.jpg"
         asset.duration_in_seconds = None
         asset.library_id = "library-789"
+        asset.width = 1920
+        asset.height = 1080
         assets.append(asset)
     return assets
 
