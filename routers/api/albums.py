@@ -63,7 +63,9 @@ async def get_all_albums(
 
         for album in gumnut_albums:
             # Convert Gumnut album to AlbumResponseDto format using utility function
-            immich_album = convert_gumnut_album_to_immich(album)
+            immich_album = convert_gumnut_album_to_immich(
+                album, asset_count=album.asset_count
+            )
             immich_albums.append(immich_album)
 
         return immich_albums
@@ -151,7 +153,7 @@ async def get_album_info(
         immich_album = convert_gumnut_album_to_immich(
             gumnut_album,
             assets=immich_assets,
-            asset_count=len(gumnut_assets),
+            asset_count=gumnut_album.asset_count,
             album_thumbnail_id=album_thumbnail_id,
         )
 
