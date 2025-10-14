@@ -106,6 +106,32 @@ class TestGetAllAlbums:
             mock_client.albums.list.assert_called_once_with(asset_id=expected_gumnut_id)
 
     @pytest.mark.anyio
+    async def test_get_all_albums_includes_asset_count(
+        self, multiple_gumnut_albums, mock_sync_cursor_page
+    ):
+        """Test that get_all_albums includes asset_count from Gumnut albums."""
+        # Setup - set specific asset counts on the mock albums
+        multiple_gumnut_albums[0].asset_count = 5
+        multiple_gumnut_albums[1].asset_count = 10
+        multiple_gumnut_albums[2].asset_count = 0
+
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
+            mock_client = Mock()
+            mock_get_client.return_value = mock_client
+            mock_client.albums.list.return_value = mock_sync_cursor_page(
+                multiple_gumnut_albums
+            )
+
+            # Execute
+            result = await get_all_albums(assetId=None, shared=None)  # type: ignore
+
+            # Assert - verify asset counts are preserved from Gumnut albums
+            assert len(result) == 3
+            assert result[0].assetCount == 5
+            assert result[1].assetCount == 10
+            assert result[2].assetCount == 0
+
+    @pytest.mark.anyio
     async def test_get_all_albums_shared_returns_empty(self):
         """Test that shared=True returns empty list."""
         # Execute
@@ -213,6 +239,29 @@ class TestGetAlbumInfo:
             assert result.albumName == "Test Album"  # From sample_gumnut_album.name
             mock_client.albums.retrieve.assert_called_once()
             mock_client.albums.assets.list.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_get_album_info_uses_gumnut_asset_count(
+        self,
+        sample_gumnut_album,
+        sample_uuid,
+    ):
+        """Test that get_album_info uses asset_count from Gumnut album object."""
+        # Setup - mock album with specific asset_count
+        sample_gumnut_album.asset_count = 42  # Set specific count
+
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
+            mock_client = Mock()
+            mock_get_client.return_value = mock_client
+            mock_client.albums.retrieve.return_value = sample_gumnut_album
+            # Return empty assets list
+            mock_client.albums.assets.list.return_value = []
+
+            # Execute
+            result = await get_album_info(sample_uuid)
+
+            # Assert - should use album.asset_count (42) from the Gumnut album object
+            assert result.assetCount == 42
 
     @pytest.mark.anyio
     async def test_get_album_info_without_assets(

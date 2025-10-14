@@ -62,7 +62,6 @@ def sample_gumnut_asset():
     asset.created_at = datetime.now(timezone.utc)
     asset.updated_at = datetime.now(timezone.utc)
     asset.mime_type = "image/jpeg"
-    asset.original_filename = "test.jpg"
     asset.original_file_name = "test.jpg"
     asset.duration_in_seconds = None
     asset.library_id = "library-789"
@@ -97,14 +96,19 @@ def multiple_gumnut_assets():
         asset.id = uuid_to_gumnut_asset_id(uuid4())
         asset.device_asset_id = f"device-{i}"
         asset.device_id = f"device-{i}"
-        asset.file_created_at = datetime.now(timezone.utc)
-        asset.file_modified_at = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        asset.file_created_at = now
+        asset.file_modified_at = now
+        asset.created_at = now
+        asset.updated_at = now
+        asset.local_datetime = now
         asset.mime_type = "image/jpeg"
-        asset.original_filename = f"test{i}.jpg"
+        asset.original_file_name = f"test{i}.jpg"
         asset.duration_in_seconds = None
         asset.library_id = "library-789"
         asset.width = 1920
         asset.height = 1080
+        asset.checksum = f"checksum-{i}"
         assets.append(asset)
     return assets
 
