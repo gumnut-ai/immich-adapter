@@ -132,6 +132,56 @@ class TestGetAllAlbums:
             assert result[2].assetCount == 0
 
     @pytest.mark.anyio
+    async def test_get_all_albums_with_asset_id(
+        self, multiple_gumnut_albums, mock_sync_cursor_page
+    ):
+        """Test retrieval of albums filtered by asset_id."""
+        # Setup - mock only the Gumnut client
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
+            mock_client = Mock()
+            mock_get_client.return_value = mock_client
+
+            # Return only one album when filtering by asset
+            mock_client.albums.list.return_value = mock_sync_cursor_page(
+                [multiple_gumnut_albums[0]]
+            )
+
+            # Execute with asset_id
+            test_asset_uuid = uuid4()
+            result = await get_all_albums(asset_id=test_asset_uuid, shared=None)  # type: ignore
+
+            # Assert
+            assert isinstance(result, list)
+            assert len(result) == 1
+
+            # Verify the client was called with the exact converted asset_id
+            expected_gumnut_id = uuid_to_gumnut_asset_id(test_asset_uuid)
+            mock_client.albums.list.assert_called_once_with(asset_id=expected_gumnut_id)
+
+    @pytest.mark.anyio
+    async def test_get_all_albums_with_asset_id_no_results(self, mock_sync_cursor_page):
+        """Test retrieval of albums with asset_id that has no albums."""
+        # Setup - mock only the Gumnut client
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
+            mock_client = Mock()
+            mock_get_client.return_value = mock_client
+
+            # Return empty list when no albums contain the asset
+            mock_client.albums.list.return_value = mock_sync_cursor_page([])
+
+            # Execute with asset_id
+            test_asset_uuid = uuid4()
+            result = await get_all_albums(asset_id=test_asset_uuid, shared=None)  # type: ignore
+
+            # Assert
+            assert isinstance(result, list)
+            assert len(result) == 0
+
+            # Verify the client was called with the exact converted asset_id
+            expected_gumnut_id = uuid_to_gumnut_asset_id(test_asset_uuid)
+            mock_client.albums.list.assert_called_once_with(asset_id=expected_gumnut_id)
+
+    @pytest.mark.anyio
     async def test_get_all_albums_shared_returns_empty(self):
         """Test that shared=True returns empty list."""
         # Execute
