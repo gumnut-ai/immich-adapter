@@ -23,6 +23,7 @@ from routers.immich_models import (
     AlbumsAddAssetsDto,
     Error2,
 )
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 
 
 class TestGetAllAlbums:
@@ -42,7 +43,7 @@ class TestGetAllAlbums:
             )
 
             # Execute
-            result = await get_all_albums(assetId=None, shared=None)  # type: ignore
+            result = await get_all_albums(asset_id=None, shared=None)  # type: ignore
 
             # Assert
             assert isinstance(result, list)
@@ -50,6 +51,8 @@ class TestGetAllAlbums:
             # Check that mocks were called
             mock_get_client.assert_called_once()
             mock_client.albums.list.assert_called_once()
+            # make sure that asset_id=None results in no parameter passed to albums.list()
+            mock_client.albums.list.assert_called_once_with()
             # Verify the real conversion happened by checking result structure
             assert all(hasattr(album, "id") for album in result)
             assert all(hasattr(album, "albumName") for album in result)
@@ -72,13 +75,63 @@ class TestGetAllAlbums:
             )
 
             # Execute
-            result = await get_all_albums(assetId=None, shared=None)  # type: ignore
+            result = await get_all_albums(asset_id=None, shared=None)  # type: ignore
 
             # Assert - verify asset counts are preserved from Gumnut albums
             assert len(result) == 3
             assert result[0].assetCount == 5
             assert result[1].assetCount == 10
             assert result[2].assetCount == 0
+
+    @pytest.mark.anyio
+    async def test_get_all_albums_with_asset_id(
+        self, multiple_gumnut_albums, mock_sync_cursor_page
+    ):
+        """Test retrieval of albums filtered by asset_id."""
+        # Setup - mock only the Gumnut client
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
+            mock_client = Mock()
+            mock_get_client.return_value = mock_client
+
+            # Return only one album when filtering by asset
+            mock_client.albums.list.return_value = mock_sync_cursor_page(
+                [multiple_gumnut_albums[0]]
+            )
+
+            # Execute with asset_id
+            test_asset_uuid = uuid4()
+            result = await get_all_albums(asset_id=test_asset_uuid, shared=None)  # type: ignore
+
+            # Assert
+            assert isinstance(result, list)
+            assert len(result) == 1
+
+            # Verify the client was called with the exact converted asset_id
+            expected_gumnut_id = uuid_to_gumnut_asset_id(test_asset_uuid)
+            mock_client.albums.list.assert_called_once_with(asset_id=expected_gumnut_id)
+
+    @pytest.mark.anyio
+    async def test_get_all_albums_with_asset_id_no_results(self, mock_sync_cursor_page):
+        """Test retrieval of albums with asset_id that has no albums."""
+        # Setup - mock only the Gumnut client
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
+            mock_client = Mock()
+            mock_get_client.return_value = mock_client
+
+            # Return empty list when no albums contain the asset
+            mock_client.albums.list.return_value = mock_sync_cursor_page([])
+
+            # Execute with asset_id
+            test_asset_uuid = uuid4()
+            result = await get_all_albums(asset_id=test_asset_uuid, shared=None)  # type: ignore
+
+            # Assert
+            assert isinstance(result, list)
+            assert len(result) == 0
+
+            # Verify the client was called with the exact converted asset_id
+            expected_gumnut_id = uuid_to_gumnut_asset_id(test_asset_uuid)
+            mock_client.albums.list.assert_called_once_with(asset_id=expected_gumnut_id)
 
     @pytest.mark.anyio
     async def test_get_all_albums_shared_returns_empty(self):
@@ -100,7 +153,7 @@ class TestGetAllAlbums:
 
             # Execute & Assert
             with pytest.raises(HTTPException) as exc_info:
-                await get_all_albums(assetId=None, shared=None)  # type: ignore
+                await get_all_albums(asset_id=None, shared=None)  # type: ignore
 
             assert exc_info.value.status_code == 500
             assert "Failed to fetch albums" in str(exc_info.value.detail)
