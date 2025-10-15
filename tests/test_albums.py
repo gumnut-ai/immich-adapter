@@ -43,7 +43,7 @@ class TestGetAllAlbums:
             )
 
             # Execute
-            result = await get_all_albums(asset_id=None, shared=None)  # type: ignore
+            result = await get_all_albums(asset_id=None, shared=None)
 
             # Assert
             assert isinstance(result, list)
@@ -75,7 +75,7 @@ class TestGetAllAlbums:
             )
 
             # Execute
-            result = await get_all_albums(asset_id=None, shared=None)  # type: ignore
+            result = await get_all_albums(asset_id=None, shared=None)
 
             # Assert - verify asset counts are preserved from Gumnut albums
             assert len(result) == 3
@@ -100,7 +100,7 @@ class TestGetAllAlbums:
 
             # Execute with asset_id
             test_asset_uuid = uuid4()
-            result = await get_all_albums(asset_id=test_asset_uuid, shared=None)  # type: ignore
+            result = await get_all_albums(asset_id=test_asset_uuid, shared=None)
 
             # Assert
             assert isinstance(result, list)
@@ -123,7 +123,7 @@ class TestGetAllAlbums:
 
             # Execute with asset_id
             test_asset_uuid = uuid4()
-            result = await get_all_albums(asset_id=test_asset_uuid, shared=None)  # type: ignore
+            result = await get_all_albums(asset_id=test_asset_uuid, shared=None)
 
             # Assert
             assert isinstance(result, list)
@@ -153,7 +153,7 @@ class TestGetAllAlbums:
 
             # Execute & Assert
             with pytest.raises(HTTPException) as exc_info:
-                await get_all_albums(asset_id=None, shared=None)  # type: ignore
+                await get_all_albums(asset_id=None, shared=None)
 
             assert exc_info.value.status_code == 500
             assert "Failed to fetch albums" in str(exc_info.value.detail)

@@ -1,4 +1,4 @@
-from typing import List
+from typing import Annotated, List
 from uuid import UUID
 import logging
 
@@ -26,6 +26,7 @@ from routers.utils.gumnut_id_conversion import (
 )
 from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
 from routers.utils.album_conversion import convert_gumnut_album_to_immich
+from pydantic.json_schema import SkipJsonSchema
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,8 @@ router = APIRouter(
 
 @router.get("")
 async def get_all_albums(
-    asset_id: UUID = Query(default=None, alias="assetId"),
-    shared: bool = Query(default=None, alias="shared"),
+    asset_id: Annotated[UUID | SkipJsonSchema[None], Query(alias="assetId")] = None,
+    shared: Annotated[bool | SkipJsonSchema[None], Query(alias="shared")] = None,
 ) -> List[AlbumResponseDto]:
     """
     Fetch albums from Gumnut and convert to AlbumResponseDto format.
