@@ -180,12 +180,24 @@ This is useful for:
 
 ### Immich API Integration
 
+Defining endpoint parameters:
+
+- Use `Annotated` to specify attributes, such as `Query()`, `Path()`, `Body()` functions, or numeric or string validations, but do not use `Default` - the default value should be specified as part of the Python declaration.
+- If a parameter is not required, use `| SkipJsonSchema[None]` after defining the type to allow Pydantic to accept the `None` type, but prevent `None` from being exposed in the OpenAPI schema. 
+- If the exposed parameter name needs to be camelCase, use `alias="camelCase"` within the function and then use an appropriate snake_case name for the parameter in the function signature.
+
+Example:
+```python
+asset_id: Annotated[UUID | SkipJsonSchema[None], Query(alias="assetId")] = None,
+```
+
 When implementing new endpoints:
 
 1. **Generate models**: Use `generate_immich_models.py` to create up-to-date Pydantic models
 2. **Import models**: Use generated models from `routers.immich_models` for type safety
-3. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
-4. **Test endpoints**: Verify responses match Immich API expectations
+3. **Defining parameters**: When declaring parameters, use `Annotated` to specify attributes, such as `Query` or numeric validations, but do not use `Default` within Annotated. If a type `asset_id: Annotated[UUID | SkipJsonSchema[None], Query(alias="assetId")] = None,`
+4. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
+5. **Test endpoints**: Verify responses match Immich API expectations
 
 ### Testing Guidelines
 
