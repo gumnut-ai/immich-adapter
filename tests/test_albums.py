@@ -23,7 +23,10 @@ from routers.immich_models import (
     AlbumsAddAssetsDto,
     Error2,
 )
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
+from routers.utils.gumnut_id_conversion import (
+    uuid_to_gumnut_asset_id,
+    safe_uuid_from_asset_id,
+)
 
 
 class TestGetAllAlbums:
@@ -132,6 +135,39 @@ class TestGetAllAlbums:
             # Verify the client was called with the exact converted asset_id
             expected_gumnut_id = uuid_to_gumnut_asset_id(test_asset_uuid)
             mock_client.albums.list.assert_called_once_with(asset_id=expected_gumnut_id)
+
+    @pytest.mark.anyio
+    async def test_get_all_albums_with_album_cover_asset_id(
+        self, multiple_gumnut_albums, mock_sync_cursor_page
+    ):
+        """Test that album_cover_asset_id is converted to albumThumbnailAssetId."""
+        # Setup - set album_cover_asset_id on one of the albums
+        cover_asset_id0 = uuid_to_gumnut_asset_id(uuid4())
+        cover_asset_id2 = uuid_to_gumnut_asset_id(uuid4())
+        multiple_gumnut_albums[0].album_cover_asset_id = cover_asset_id0
+        multiple_gumnut_albums[1].album_cover_asset_id = None
+        multiple_gumnut_albums[2].album_cover_asset_id = cover_asset_id2
+
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
+            mock_client = Mock()
+            mock_get_client.return_value = mock_client
+            mock_client.albums.list.return_value = mock_sync_cursor_page(
+                multiple_gumnut_albums
+            )
+
+            # Execute
+            result = await get_all_albums(asset_id=None, shared=None)
+
+            # Assert - verify albumThumbnailAssetId is set correctly
+            assert len(result) == 3
+            # First album should have the converted asset ID
+            expected_uuid0 = str(safe_uuid_from_asset_id(cover_asset_id0))
+            assert result[0].albumThumbnailAssetId == expected_uuid0
+            # Second album should have empty string (no cover)
+            assert result[1].albumThumbnailAssetId == ""
+            # Third album should have its converted asset ID
+            expected_uuid2 = str(safe_uuid_from_asset_id(cover_asset_id2))
+            assert result[2].albumThumbnailAssetId == expected_uuid2
 
     @pytest.mark.anyio
     async def test_get_all_albums_shared_returns_empty(self):
@@ -264,6 +300,28 @@ class TestGetAlbumInfo:
 
             # Assert - should use album.asset_count (42) from the Gumnut album object
             assert result.assetCount == 42
+
+    @pytest.mark.anyio
+    async def test_get_album_info_with_album_cover_asset_id(
+        self, sample_gumnut_album, sample_uuid
+    ):
+        """Test that album_cover_asset_id is converted to albumThumbnailAssetId in get_album_info."""
+        # Setup - set album_cover_asset_id on the album
+        cover_asset_id = uuid_to_gumnut_asset_id(uuid4())
+        sample_gumnut_album.album_cover_asset_id = cover_asset_id
+
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
+            mock_client = Mock()
+            mock_get_client.return_value = mock_client
+            mock_client.albums.retrieve.return_value = sample_gumnut_album
+            mock_client.albums.assets.list.return_value = []
+
+            # Execute
+            result = await get_album_info(sample_uuid)
+
+            # Assert - verify albumThumbnailAssetId is set correctly
+            expected_uuid = str(safe_uuid_from_asset_id(cover_asset_id))
+            assert result.albumThumbnailAssetId == expected_uuid
 
     @pytest.mark.anyio
     async def test_get_album_info_without_assets(
@@ -459,6 +517,34 @@ class TestUpdateAlbum:
             assert result.albumName == "Updated Album"
             mock_client.albums.retrieve.assert_called_once()
             mock_client.albums.update.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_update_album_with_album_cover_asset_id(
+        self, sample_gumnut_album, sample_uuid
+    ):
+        """Test that album_cover_asset_id is converted to albumThumbnailAssetId in update_album."""
+        # Setup - set album_cover_asset_id on the updated album
+        cover_asset_id = uuid_to_gumnut_asset_id(uuid4())
+        sample_gumnut_album.album_cover_asset_id = cover_asset_id
+
+        with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
+            mock_client = Mock()
+            mock_get_client.return_value = mock_client
+            mock_client.albums.retrieve.return_value = sample_gumnut_album
+            sample_gumnut_album.name = "Updated Album"
+            sample_gumnut_album.description = "Updated Description"
+            mock_client.albums.update.return_value = sample_gumnut_album
+
+            request = UpdateAlbumDto(
+                albumName="Updated Album", description="Updated Description"
+            )
+
+            # Execute
+            result = await update_album(sample_uuid, request)
+
+            # Assert - verify albumThumbnailAssetId is set correctly
+            expected_uuid = str(safe_uuid_from_asset_id(cover_asset_id))
+            assert result.albumThumbnailAssetId == expected_uuid
 
     @pytest.mark.anyio
     async def test_update_album_not_found(self, mock_gumnut_client, sample_uuid):

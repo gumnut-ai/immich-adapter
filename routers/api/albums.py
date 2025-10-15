@@ -143,15 +143,11 @@ async def get_album_info(
                         f"Warning: Could not convert asset {gumnut_asset}: {convert_error}"
                     )
 
-        # Set album thumbnail to first asset if available
-        album_thumbnail_id = immich_assets[0].id if immich_assets else None
-
         # Convert Gumnut album to AlbumResponseDto format using utility function
         immich_album = convert_gumnut_album_to_immich(
             gumnut_album,
             assets=immich_assets,
             asset_count=gumnut_album.asset_count,
-            album_thumbnail_id=album_thumbnail_id,
         )
 
         return immich_album
