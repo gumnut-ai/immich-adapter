@@ -103,14 +103,10 @@ class TestGetTimeBuckets:
 
         # Setup test assets
         assets = multiple_gumnut_assets
-        assets[0].local_datetime = datetime(
-            2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc
-        )
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         assets[0].created_at = assets[0].local_datetime
 
-        mock_client.albums.assets.list.return_value = mock_sync_cursor_page(
-            [assets[0]]
-        )
+        mock_client.albums.assets.list.return_value = mock_sync_cursor_page([assets[0]])
 
         # Execute
         result = await call_get_time_buckets(albumId=sample_uuid, client=mock_client)
@@ -131,9 +127,7 @@ class TestGetTimeBuckets:
 
         # Setup test assets
         assets = multiple_gumnut_assets
-        assets[0].local_datetime = datetime(
-            2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc
-        )
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         assets[0].created_at = assets[0].local_datetime
 
         mock_client.assets.list.return_value = mock_sync_cursor_page([assets[0]])
@@ -158,13 +152,9 @@ class TestGetTimeBuckets:
 
         # Setup test assets with different dates
         assets = multiple_gumnut_assets
-        assets[0].local_datetime = datetime(
-            2024, 2, 15, 10, 0, 0, tzinfo=timezone.utc
-        )
+        assets[0].local_datetime = datetime(2024, 2, 15, 10, 0, 0, tzinfo=timezone.utc)
         assets[0].created_at = assets[0].local_datetime
-        assets[1].local_datetime = datetime(
-            2024, 1, 20, 14, 0, 0, tzinfo=timezone.utc
-        )
+        assets[1].local_datetime = datetime(2024, 1, 20, 14, 0, 0, tzinfo=timezone.utc)
         assets[1].created_at = assets[1].local_datetime
 
         mock_client.assets.list.return_value = mock_sync_cursor_page(assets[:2])
@@ -280,9 +270,7 @@ class TestGetTimeBucket:
 
         # Asset 1: February 2024 (should NOT be included)
         assets[1].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[1].local_datetime = datetime(
-            2024, 2, 20, 14, 0, 0, tzinfo=timezone.utc
-        )
+        assets[1].local_datetime = datetime(2024, 2, 20, 14, 0, 0, tzinfo=timezone.utc)
         assets[1].created_at = assets[1].local_datetime
         assets[1].mime_type = "video/mp4"
         assets[1].width = 1920
@@ -305,7 +293,9 @@ class TestGetTimeBucket:
             mock_user_id.return_value = uuid4()
 
             # Execute - request January 2024 bucket
-            result = await call_get_time_bucket(timeBucket="2024-01-01T00:00:00", client=mock_client)
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
 
             # Assert
             assert isinstance(result, dict)
@@ -331,9 +321,7 @@ class TestGetTimeBucket:
             # Check fixed fields
             assert all(fav is False for fav in result["isFavorite"])
             assert all(trash is False for trash in result["isTrashed"])
-            assert all(
-                vis == AssetVisibility.timeline for vis in result["visibility"]
-            )
+            assert all(vis == AssetVisibility.timeline for vis in result["visibility"])
 
     @pytest.mark.anyio
     async def test_get_time_bucket_with_album_id(
@@ -346,17 +334,13 @@ class TestGetTimeBucket:
         # Setup test assets
         assets = multiple_gumnut_assets
         assets[0].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[0].local_datetime = datetime(
-            2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc
-        )
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         assets[0].created_at = assets[0].local_datetime
         assets[0].mime_type = "image/jpeg"
         assets[0].width = 1920
         assets[0].height = 1080
 
-        mock_client.albums.assets.list.return_value = mock_sync_cursor_page(
-            [assets[0]]
-        )
+        mock_client.albums.assets.list.return_value = mock_sync_cursor_page([assets[0]])
 
         # Mock get_current_user_id
         with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
@@ -364,7 +348,9 @@ class TestGetTimeBucket:
 
             # Execute
             result = await call_get_time_bucket(
-                timeBucket="2024-01-01T00:00:00", albumId=sample_uuid, client=mock_client
+                timeBucket="2024-01-01T00:00:00",
+                albumId=sample_uuid,
+                client=mock_client,
             )
 
             # Assert
@@ -382,9 +368,7 @@ class TestGetTimeBucket:
         # Setup test assets
         assets = multiple_gumnut_assets
         assets[0].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[0].local_datetime = datetime(
-            2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc
-        )
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         assets[0].created_at = assets[0].local_datetime
         assets[0].mime_type = "image/jpeg"
         assets[0].width = 1920
@@ -398,7 +382,9 @@ class TestGetTimeBucket:
 
             # Execute
             result = await call_get_time_bucket(
-                timeBucket="2024-01-01T00:00:00", personId=sample_uuid, client=mock_client
+                timeBucket="2024-01-01T00:00:00",
+                personId=sample_uuid,
+                client=mock_client,
             )
 
             # Assert
@@ -416,9 +402,7 @@ class TestGetTimeBucket:
 
         # Setup test assets from February 2024
         assets = multiple_gumnut_assets
-        assets[0].local_datetime = datetime(
-            2024, 2, 15, 10, 0, 0, tzinfo=timezone.utc
-        )
+        assets[0].local_datetime = datetime(2024, 2, 15, 10, 0, 0, tzinfo=timezone.utc)
         assets[0].created_at = assets[0].local_datetime
 
         mock_client.assets.list.return_value = mock_sync_cursor_page(assets[:1])
@@ -428,7 +412,9 @@ class TestGetTimeBucket:
             mock_user_id.return_value = uuid4()
 
             # Execute - request January 2024 bucket (no matching assets)
-            result = await call_get_time_bucket(timeBucket="2024-01-01T00:00:00", client=mock_client)
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
 
             # Assert
             assert len(result["id"]) == 0
@@ -460,7 +446,9 @@ class TestGetTimeBucket:
             mock_user_id.return_value = uuid4()
 
             # Execute
-            result = await call_get_time_bucket(timeBucket="2024-01-01T00:00:00", client=mock_client)
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
 
             # Assert
             assert len(result["id"]) == 1
@@ -477,9 +465,7 @@ class TestGetTimeBucket:
         # Create mock asset with minimal attributes
         mock_asset = Mock()
         mock_asset.id = uuid_to_gumnut_asset_id(uuid4())
-        mock_asset.local_datetime = datetime(
-            2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc
-        )
+        mock_asset.local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_asset.created_at = None
         # Set defaults for missing attributes to avoid Mock conversion errors
         mock_asset.mime_type = ""
@@ -493,7 +479,9 @@ class TestGetTimeBucket:
             mock_user_id.return_value = uuid4()
 
             # Execute
-            result = await call_get_time_bucket(timeBucket="2024-01-01T00:00:00", client=mock_client)
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
 
             # Assert
             assert len(result["id"]) == 1
@@ -513,7 +501,9 @@ class TestGetTimeBucket:
 
         # Execute & Assert - invalid date format should raise exception
         with pytest.raises(Exception):
-            await call_get_time_bucket(timeBucket="invalid-date-format", client=mock_client)
+            await call_get_time_bucket(
+                timeBucket="invalid-date-format", client=mock_client
+            )
 
     @pytest.mark.anyio
     async def test_get_time_bucket_gumnut_error(self):
@@ -524,7 +514,9 @@ class TestGetTimeBucket:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await call_get_time_bucket(timeBucket="2024-01-01T00:00:00", client=mock_client)
+            await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
 
         assert exc_info.value.status_code == 500
         assert "Failed to fetch timeline bucket" in str(exc_info.value.detail)
@@ -538,7 +530,9 @@ class TestGetTimeBucket:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await call_get_time_bucket(timeBucket="2024-01-01T00:00:00", client=mock_client)
+            await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
 
         assert exc_info.value.status_code == 401
 
@@ -604,7 +598,9 @@ class TestGetTimeBucket:
             mock_user_id.return_value = uuid4()
 
             # Execute
-            result = await call_get_time_bucket(timeBucket="2024-01-01T00:00:00", client=mock_client)
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
 
             # Assert - check timezone offsets are correctly calculated
             assert len(result["id"]) == 4
@@ -657,7 +653,9 @@ class TestGetTimeBucket:
             mock_user_id.return_value = uuid4()
 
             # Execute
-            result = await call_get_time_bucket(timeBucket="2024-01-01T00:00:00", client=mock_client)
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
 
             # Assert - naive datetimes should default to 0 offset
             assert len(result["id"]) == 2
@@ -726,7 +724,9 @@ class TestGetTimeBucket:
             mock_user_id.return_value = uuid4()
 
             # Execute
-            result = await call_get_time_bucket(timeBucket="2024-01-01T00:00:00", client=mock_client)
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
 
             # Assert - check mixed timezone handling
             assert len(result["id"]) == 4
