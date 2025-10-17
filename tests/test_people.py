@@ -1,7 +1,7 @@
 """Tests for people.py endpoints."""
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 from fastapi import HTTPException
 from uuid import uuid4
 from datetime import datetime
