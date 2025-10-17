@@ -1,7 +1,9 @@
 from collections import defaultdict
 from datetime import datetime
 from uuid import UUID
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+from gumnut import Gumnut
+from routers.utils.dependencies import get_authenticated_gumnut_client
 from routers.utils.gumnut_client import get_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error
 from routers.api.auth import get_current_user_id
@@ -40,9 +42,8 @@ async def get_time_buckets(
     withCoordinates: bool = Query(default=None),
     withPartners: bool = Query(default=None),
     withStacked: bool = Query(default=None),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[TimeBucketsResponseDto]:
-    client = get_gumnut_client()
-
     if (
         isFavorite
         or isTrashed
@@ -128,6 +129,7 @@ async def get_time_bucket(
     withCoordinates: bool = Query(default=None),
     withPartners: bool = Query(default=None),
     withStacked: bool = Query(default=None),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> Any:  # Should be TimeBucketAssetResponseDto, but using Any to bypass Pydantic validation. See comment below.
     """
     This endpoint retrieves assets that match the specified time bucket.
@@ -143,7 +145,6 @@ async def get_time_bucket(
     To work around this, we return a dict with the correct structure instead of using the DTO directly.
     However, this causes the OpenAPI Compatibility Validator to show a warning for this endpoint.
     """
-    client = get_gumnut_client()
 
     try:
         # Call assets.list() with optional albumId parameter
