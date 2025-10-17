@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from config.sentry import init_sentry
 from config.logging import init_logging
 
+from routers.middleware.auth_middleware import AuthMiddleware
 from routers import static
 from routers.api import (
     activities,
@@ -45,6 +46,9 @@ app = FastAPI(
     version="0.1.0",
     description="Adapts the Immich API to the Gumnut API",
 )
+
+# Add authentication middleware
+app.add_middleware(AuthMiddleware)
 
 # Mount Socket.IO app first
 app.mount("/api/socket.io", websockets.socket_app)

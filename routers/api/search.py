@@ -1,9 +1,10 @@
 from typing import List
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from uuid import UUID
 from datetime import datetime
+from gumnut import Gumnut
 
-from routers.utils.gumnut_client import get_gumnut_client
+from routers.utils.dependencies import get_authenticated_gumnut_client
 from routers.utils.error_mapping import check_for_error_by_code
 from routers.immich_models import (
     PersonResponseDto,
@@ -49,7 +50,9 @@ fake_search_response = SearchResponseDto(
 
 
 @router.get("/explore")
-async def get_explore_data() -> List[SearchExploreResponseDto]:
+async def get_explore_data(
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> List[SearchExploreResponseDto]:
     """
     Return a list of map markers.
     This is a stub implementation that returns an empty list.
@@ -91,6 +94,7 @@ async def search_large_assets(
     visibility: AssetVisibility = Query(default=None),
     withDeleted: bool = Query(default=None),
     withExif: bool = Query(default=None),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[AssetResponseDto]:
     """
     Search for large assets based on minimum file size.
@@ -105,6 +109,7 @@ async def search_large_assets(
 async def search_person(
     name: str,
     withHidden: bool = Query(default=None),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[PersonResponseDto]:
     """
     Return a list of people.
@@ -117,6 +122,7 @@ async def search_person(
 @router.get("/places")
 async def search_places(
     name: str = Query(),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[PlacesResponseDto]:
     """
     Search for places by name.
@@ -133,6 +139,7 @@ async def get_search_suggestions(
     make: str = Query(default=None),
     model: str = Query(default=None),
     state: str = Query(default=None),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[str]:
     """
     Get search suggestions.
@@ -144,6 +151,7 @@ async def get_search_suggestions(
 @router.post("/statistics")
 async def search_asset_statistics(
     request: StatisticsSearchDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> SearchStatisticsResponseDto:
     """
     Get search statistics.
@@ -153,7 +161,10 @@ async def search_asset_statistics(
 
 
 @router.post("/metadata")
-async def search_assets(request: MetadataSearchDto) -> SearchResponseDto:
+async def search_assets(
+    request: MetadataSearchDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> SearchResponseDto:
     """
     Search for assets by metadata.
     This is a stub implementation that returns empty results.
@@ -162,13 +173,15 @@ async def search_assets(request: MetadataSearchDto) -> SearchResponseDto:
 
 
 @router.post("/smart")
-async def search_smart(request: SmartSearchDto) -> SearchResponseDto:
+async def search_smart(
+    request: SmartSearchDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> SearchResponseDto:
     """
     Smart search for assets.
     This is a stub implementation that returns empty results.
     """
     try:
-        client = get_gumnut_client()
         gumnut_assets = client.search.search(query=request.query)
 
         # Convert Gumnut assets to Immich format
@@ -209,7 +222,9 @@ async def search_smart(request: SmartSearchDto) -> SearchResponseDto:
 
 
 @router.get("/cities")
-async def get_assets_by_city() -> List[AssetResponseDto]:
+async def get_assets_by_city(
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> List[AssetResponseDto]:
     """
     Get cities for search.
     This is a stub implementation that returns an empty list.
@@ -218,7 +233,10 @@ async def get_assets_by_city() -> List[AssetResponseDto]:
 
 
 @router.post("/random")
-async def search_random(request: RandomSearchDto) -> List[AssetResponseDto]:
+async def search_random(
+    request: RandomSearchDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> List[AssetResponseDto]:
     """
     Get random assets.
     This is a stub implementation that returns an empty list.
