@@ -1,13 +1,15 @@
 import pytest
+import httpx
 from unittest.mock import Mock
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from routers.middleware.auth_middleware import AuthMiddleware
 from routers.utils.gumnut_client import (
-    _capture_refresh_token_hook,
+    _response_hook,
     get_refreshed_token,
     clear_refreshed_token,
+    get_shared_http_client,
 )
 
 
@@ -24,7 +26,7 @@ class TestRefreshTokenHook:
         clear_refreshed_token()
 
         # Execute
-        _capture_refresh_token_hook(mock_response)
+        _response_hook(mock_response)
 
         # Assert
         assert get_refreshed_token() == "new-token-123"
@@ -40,7 +42,7 @@ class TestRefreshTokenHook:
         assert get_refreshed_token() is None
 
         # Execute
-        _capture_refresh_token_hook(mock_response)
+        _response_hook(mock_response)
 
         # Assert - should still be None
         assert get_refreshed_token() is None
@@ -50,7 +52,7 @@ class TestRefreshTokenHook:
         # Setup - set a token
         mock_response = Mock()
         mock_response.headers = {"x-new-access-token": "token-to-clear"}
-        _capture_refresh_token_hook(mock_response)
+        _response_hook(mock_response)
         assert get_refreshed_token() == "token-to-clear"
 
         # Execute
@@ -66,9 +68,6 @@ class TestTokenRefreshIntegration:
     @pytest.fixture
     def app(self):
         """Create a test FastAPI app with AuthMiddleware."""
-        from routers.utils.gumnut_client import _capture_refresh_token_hook
-        import httpx
-
         app = FastAPI()
         app.add_middleware(AuthMiddleware)
 
@@ -87,7 +86,7 @@ class TestTokenRefreshIntegration:
                 headers={"x-new-access-token": "refreshed-jwt-456"},
                 json={"albums": []},
             )
-            _capture_refresh_token_hook(mock_response)
+            _response_hook(mock_response)
 
             return {"albums": []}
 
@@ -177,9 +176,6 @@ class TestTokenRefreshWithMockedGumnut:
 
     def test_gumnut_response_with_refresh_header(self):
         """Test that httpx response hook captures refresh header from Gumnut."""
-        import httpx
-        from routers.utils.gumnut_client import get_shared_http_client
-
         # Clear any previous token
         clear_refreshed_token()
 
@@ -202,9 +198,6 @@ class TestTokenRefreshWithMockedGumnut:
 
     def test_multiple_requests_dont_interfere(self):
         """Test that clearing tokens between requests prevents interference."""
-        import httpx
-        from routers.utils.gumnut_client import get_shared_http_client
-
         client = get_shared_http_client()
 
         # First request with refresh

@@ -3,8 +3,8 @@ from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
 from main import app
-from routers.immich_models import OAuthCallbackDto
 from routers.api.auth import ImmichCookie
+from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 
 
 class TestOAuthCookieSecurity:
@@ -13,8 +13,6 @@ class TestOAuthCookieSecurity:
     @pytest.mark.anyio
     async def test_oauth_callback_cookies_have_security_flags(self):
         """Verify all cookies from OAuth callback have secure flags."""
-        from routers.utils.dependencies import get_unauthenticated_gumnut_client
-
         # Mock the Gumnut client
         mock_gumnut_client = Mock()
         mock_exchange_result = Mock()
@@ -151,40 +149,6 @@ class TestOAuthCookieSecurity:
                         "SameSite=lax" in cookie_header
                         or "SameSite=Lax" in cookie_header
                     ), f"refreshed token missing SameSite=Lax: {cookie_header}"
-
-    def test_cookie_flags_are_set_correctly_in_code(self):
-        """Verify the code explicitly sets security flags (code review check)."""
-        # Read the oauth.py file to verify flags are present
-        with open(
-            "/Users/taggart/src/gumnut/immich-adapter/routers/api/oauth.py", "r"
-        ) as f:
-            oauth_code = f.read()
-
-        # Verify secure=True is present
-        assert "secure=True" in oauth_code, "secure=True not found in oauth.py"
-
-        # Verify samesite is set
-        assert 'samesite="lax"' in oauth_code, 'samesite="lax" not found in oauth.py'
-
-        # Verify httponly is set for sensitive cookies
-        assert "httponly=True" in oauth_code, "httponly=True not found in oauth.py"
-
-        # Read the auth_middleware.py file
-        with open(
-            "/Users/taggart/src/gumnut/immich-adapter/routers/middleware/auth_middleware.py",
-            "r",
-        ) as f:
-            middleware_code = f.read()
-
-        # Verify secure=True is present in middleware
-        assert "secure=True" in middleware_code, (
-            "secure=True not found in auth_middleware.py"
-        )
-
-        # Verify samesite is set in middleware
-        assert 'samesite="lax"' in middleware_code, (
-            'samesite="lax" not found in auth_middleware.py'
-        )
 
     @pytest.mark.anyio
     async def test_no_cookies_set_without_security_flags(self):

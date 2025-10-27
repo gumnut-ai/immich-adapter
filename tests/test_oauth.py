@@ -1,5 +1,6 @@
 """Tests for OAuth endpoints."""
 
+from gumnut import omit
 import pytest
 from unittest.mock import Mock, patch
 from fastapi import HTTPException
@@ -43,6 +44,7 @@ class TestStartOAuth:
                 redirect_uri="http://localhost:3000/auth/callback",
                 code_challenge=None,
                 code_challenge_method=None,
+                extra_headers={"Authorization": omit},
             )
 
     @pytest.mark.anyio
@@ -77,6 +79,7 @@ class TestStartOAuth:
                 redirect_uri="http://localhost:3000/auth/callback",
                 code_challenge="test_challenge_string",
                 code_challenge_method="test_challenge_string",
+                extra_headers={"Authorization": omit},
             )
 
     @pytest.mark.anyio
@@ -192,6 +195,7 @@ class TestFinishOAuth:
                 state="xyz789",
                 error=None,
                 code_verifier=None,
+                extra_headers={"Authorization": omit},
             )
 
     @pytest.mark.anyio
@@ -234,6 +238,7 @@ class TestFinishOAuth:
                 state="xyz789",
                 error=None,
                 code_verifier="test_verifier_string",
+                extra_headers={"Authorization": omit},
             )
 
     @pytest.mark.anyio
@@ -275,6 +280,7 @@ class TestFinishOAuth:
                 state="xyz789",
                 error="access_denied",
                 code_verifier=None,
+                extra_headers={"Authorization": omit},
             )
 
     @pytest.mark.anyio

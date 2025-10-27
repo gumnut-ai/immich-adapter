@@ -94,7 +94,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 response.set_cookie(
                     key=self.COOKIE_NAME,
                     value=refreshed_token,
-                    value=refreshed_token,
                     httponly=True,
                     secure=request.url.scheme == "https",  # Only send over HTTPS
                     samesite="lax",  # CSRF protection (or "Strict" for more security)
