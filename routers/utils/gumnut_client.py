@@ -101,6 +101,86 @@ def _response_hook(response: httpx.Response) -> None:
 _client_lock = threading.Lock()
 
 
+def get_refreshed_token() -> str | None:
+    """
+    Get the refreshed token from either ContextVar or thread-local storage.
+
+    Checks ContextVar first (for async contexts), then falls back to thread-local
+    (for sync test contexts like TestClient).
+
+    Returns:
+        str | None: The refreshed token if available, None otherwise
+    """
+    # Try ContextVar first (async-safe)
+    token = _refreshed_token_var.get()
+    if token is not None:
+        return token
+
+    # Fall back to thread-local (for TestClient)
+    return getattr(_thread_local, "refreshed_token", None)
+
+
+def set_refreshed_token(token: str) -> None:
+    """
+    Store a refreshed token in both ContextVar and thread-local storage.
+
+    Sets both storage mechanisms to ensure the token is available in both
+    async (production) and sync (TestClient) environments.
+
+    Args:
+        token: The refreshed JWT token to store
+    """
+    _refreshed_token_var.set(token)
+    _thread_local.refreshed_token = token
+
+
+def clear_refreshed_token() -> None:
+    """
+    Clear the refreshed token from both storage mechanisms.
+
+    Should be called after the token has been propagated to the response
+    to prevent token leakage between requests.
+    """
+    _refreshed_token_var.set(None)
+    _thread_local.refreshed_token = None
+
+
+def _response_hook(response: httpx.Response) -> None:
+    """
+    HTTP response hook that captures refreshed tokens from Gumnut API responses.
+
+    When the Gumnut API refreshes a token, it returns the new token in the
+    'x-new-access-token' header. This hook captures that token and stores it
+    in both ContextVar and thread-local storage for later retrieval by middleware.
+
+    Args:
+        response: The httpx Response object from the Gumnut API
+    """
+    token = response.headers.get("x-new-access-token")
+    if token:
+        set_refreshed_token(token)
+
+
+_client_lock = threading.Lock()
+
+
+def _capture_refresh_token_hook(response: httpx.Response) -> None:
+    """
+    Response hook that captures x-new-access-token headers from Gumnut backend.
+
+    When the Gumnut backend refreshes a JWT token, it returns the new token
+    in the x-new-access-token response header. This hook captures that header
+    and stores it in thread-local storage so it can be propagated to the client.
+
+    Args:
+        response: The httpx Response object from Gumnut backend
+    """
+    refresh_header = "x-new-access-token"
+    if refresh_header in response.headers:
+        new_token = response.headers[refresh_header]
+        _thread_local.refreshed_token = new_token
+
+
 def get_shared_http_client() -> httpx.Client:
     """
     Get or create the shared HTTP client for Gumnut connections.
@@ -159,6 +239,29 @@ def get_gumnut_client(jwt_token: str) -> Gumnut:
         base_url=settings.gumnut_api_base_url,
         http_client=get_shared_http_client(),
     )
+
+
+def get_refreshed_token() -> str | None:
+    """
+    Get the refreshed token captured from the most recent Gumnut backend response.
+
+    This function retrieves the token stored by the response hook when the
+    Gumnut backend returns a refreshed JWT in the x-new-access-token header.
+
+    Returns:
+        str | None: The refreshed token if one was captured, None otherwise
+    """
+    return getattr(_thread_local, "refreshed_token", None)
+
+
+def clear_refreshed_token() -> None:
+    """
+    Clear the refreshed token from thread-local storage.
+
+    This should be called at the start of each request to ensure stale tokens
+    from previous requests don't leak into the current request.
+    """
+    _thread_local.refreshed_token = None
 
 
 async def get_authenticated_gumnut_client(request: Request) -> Gumnut:

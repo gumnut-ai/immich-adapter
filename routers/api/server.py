@@ -37,7 +37,7 @@ fake_features = {
     "sidecar": True,
     "search": True,
     "trash": True,
-    "oauth": False,
+    "oauth": True,
     "oauthAutoLaunch": False,
     "passwordLogin": True,
     "configFile": False,

@@ -71,15 +71,21 @@ async def post_login(body: LoginCredentialDto, response: Response) -> LoginRespo
         key=ImmichCookie.ACCESS_TOKEN.value,
         value=fake_auth_login["accessToken"],
         httponly=True,
+        secure=True,  # Only send over HTTPS
+        samesite="lax",  # CSRF protection (or "Strict" for more security)
     )
     response.set_cookie(
         key=ImmichCookie.AUTH_TYPE.value,
         value="password",
         httponly=True,
+        secure=True,
+        samesite="lax",
     )
     response.set_cookie(
         key=ImmichCookie.IS_AUTHENTICATED.value,
         value="true",
+        secure=True,
+        samesite="lax",
     )
 
     return LoginResponseDto(

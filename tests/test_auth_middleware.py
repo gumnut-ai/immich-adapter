@@ -1,5 +1,6 @@
 import pytest
 from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from routers.middleware.auth_middleware import AuthMiddleware
 
