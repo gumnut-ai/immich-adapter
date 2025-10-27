@@ -1,8 +1,12 @@
-"""Authentication middleware for JWT extraction and token refresh handling."""
+import logging
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
+
+from routers.utils.gumnut_client import get_refreshed_token, clear_refreshed_token
+
+logger = logging.getLogger(__name__)
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -42,8 +46,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         Returns:
             Response with potentially updated cookies or headers
         """
+        path = request.url.path
+
+        # Clear any stale refreshed token from previous requests
+        clear_refreshed_token()
+
         # Skip auth for unauthenticated endpoints
-        if request.url.path in self.UNAUTHENTICATED_PATHS:
+        if path in self.UNAUTHENTICATED_PATHS:
             return await call_next(request)
 
         # Detect client type and extract JWT
@@ -59,6 +68,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         elif self.COOKIE_NAME in request.cookies:
             jwt_token = request.cookies[self.COOKIE_NAME]
             is_web_client = True
+        else:
+            logger.warning(
+                "No JWT found in request",
+                extra={
+                    "path": path,
+                    "cookies": list(request.cookies.keys()),
+                },
+            )
 
         # Store JWT in request state for dependency injection
         request.state.jwt_token = jwt_token
@@ -67,19 +84,22 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Call the endpoint handler
         response: Response = await call_next(request)
 
-        # Handle token refresh if backend returned a new token
-        if self.REFRESH_HEADER in response.headers:
-            new_token = response.headers[self.REFRESH_HEADER]
+        # Check if Gumnut backend returned a refreshed token
+        # The response hook in gumnut_client.py captures this from backend responses
+        refreshed_token = get_refreshed_token()
 
+        if refreshed_token:
             if is_web_client:
-                # Web client: Update cookie and remove header
+                # Web client: Update cookie
                 response.set_cookie(
                     key=self.COOKIE_NAME,
-                    value=new_token,
+                    value=refreshed_token,
                     httponly=True,
+                    secure=True,  # Only send over HTTPS
+                    samesite="lax",  # CSRF protection (or "Strict" for more security)
                 )
-                # Remove the header so web client doesn't see it
-                del response.headers[self.REFRESH_HEADER]
-            # Mobile client: Keep header in response (client will read it)
+            else:
+                # Mobile client: Add header so client can read the new token
+                response.headers[self.REFRESH_HEADER] = refreshed_token
 
         return response

@@ -98,6 +98,9 @@ def _response_hook(response: httpx.Response) -> None:
         set_refreshed_token(token)
 
 
+_client_lock = threading.Lock()
+
+
 def get_shared_http_client() -> httpx.Client:
     """
     Get or create the shared HTTP client for Gumnut connections.
@@ -112,18 +115,28 @@ def get_shared_http_client() -> httpx.Client:
         httpx.Client: Shared HTTP client for connection pooling with response hook
     """
     global _shared_http_client
-
     if _shared_http_client is None:
-        _shared_http_client = httpx.Client(
-            timeout=30.0,
-            limits=httpx.Limits(
-                max_connections=100,
-                max_keepalive_connections=20,
-            ),
-            event_hooks={"response": [_response_hook]},
-        )
-
+        with _client_lock:
+            if _shared_http_client is None:
+                _shared_http_client = httpx.Client(
+                    timeout=30.0,
+                    limits=httpx.Limits(
+                        max_connections=100, max_keepalive_connections=20
+                    ),
+                    event_hooks={"response": [_response_hook]},
+                )
     return _shared_http_client
+
+
+async def close_shared_http_client() -> None:
+    """
+    Close and clean up the shared HTTP client.
+    Should be called on application shutdown to release resources.
+    """
+    global _shared_http_client
+    if _shared_http_client is not None:
+        _shared_http_client.close()
+        _shared_http_client = None
 
 
 def get_gumnut_client(jwt_token: str) -> Gumnut:

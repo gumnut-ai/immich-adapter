@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from config.sentry import init_sentry
 from config.logging import init_logging
+from contextlib import asynccontextmanager
 
 from routers.middleware.auth_middleware import AuthMiddleware
 from routers import static
@@ -37,14 +38,28 @@ from routers.api import (
     view,
     websockets,
 )
+from routers.utils.gumnut_client import close_shared_http_client
 
 init_logging()
 init_sentry()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager to handle startup and shutdown tasks.
+    Code before yield runs on startup, code after yield runs on shutdown.
+    """
+    yield
+    # Ensure the singleton HTTP client for Gumnut is closed on shutdown
+    await close_shared_http_client()
+
 
 app = FastAPI(
     title="Immich Adapter for Gumnut",
     version="0.1.0",
     description="Adapts the Immich API to the Gumnut API",
+    lifespan=lifespan,
 )
 
 # Add authentication middleware
