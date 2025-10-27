@@ -1,9 +1,11 @@
 from typing import List
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from uuid import UUID
 import logging
 
-from routers.utils.gumnut_client import get_gumnut_client
+from gumnut import Gumnut
+
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.immich_models import (
     AssetFaceUpdateDto,
@@ -31,13 +33,14 @@ logger = logging.getLogger(__name__)
 
 
 @router.post("", status_code=201)
-async def create_person(person_data: PersonCreateDto) -> PersonResponseDto:
+async def create_person(
+    person_data: PersonCreateDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> PersonResponseDto:
     """
     Create a new person.
     """
     try:
-        client = get_gumnut_client()
-
         gumnut_person = client.people.create(
             name=person_data.name,
             birth_date=person_data.birthDate,
@@ -52,11 +55,13 @@ async def create_person(person_data: PersonCreateDto) -> PersonResponseDto:
 
 
 @router.put("")
-async def update_people(people_data: PeopleUpdateDto) -> List[BulkIdResponseDto]:
+async def update_people(
+    people_data: PeopleUpdateDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> List[BulkIdResponseDto]:
     """
     Update multiple people by their ids.
     """
-    client = get_gumnut_client()
     results = []
 
     for person_item in people_data.people:
@@ -108,12 +113,14 @@ async def update_people(people_data: PeopleUpdateDto) -> List[BulkIdResponseDto]
 
 
 @router.put("/{id}")
-async def update_person(id: UUID, person_data: PersonUpdateDto) -> PersonResponseDto:
+async def update_person(
+    id: UUID,
+    person_data: PersonUpdateDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> PersonResponseDto:
     """
     Update a person by their id.
     """
-    client = get_gumnut_client()
-
     try:
         # Update the person using Gumnut SDK - only pass parameters that are not None
         update_kwargs = {}
@@ -143,13 +150,12 @@ async def get_all_people(
     page: int = Query(default=1, ge=1, type="number"),
     size: int = Query(default=500, ge=1, le=1000, type="number"),
     withHidden: bool = Query(default=None),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> PeopleResponseDto:
     """
     Get all people with optional pagination and filtering.
     """
     try:
-        client = get_gumnut_client()
-
         # Get all people from Gumnut
         gumnut_people = client.people.list()
 
@@ -186,13 +192,14 @@ async def get_all_people(
 
 
 @router.delete("", status_code=204)
-async def delete_people(request: BulkIdsDto) -> Response:
+async def delete_people(
+    request: BulkIdsDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> Response:
     """
     Delete multiple people by their ids.
     """
     try:
-        client = get_gumnut_client()
-
         for person_id in request.ids:
             client.people.delete(uuid_to_gumnut_person_id(person_id))
 
@@ -217,14 +224,13 @@ async def delete_people(request: BulkIdsDto) -> Response:
 )
 async def get_thumbnail(
     id: UUID,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> Response:
     """
     Get a thumbnail for a person.
     Uses the shared download logic with size defaulting to thumbnail if not specified.
     """
     try:
-        client = get_gumnut_client()
-
         gumnut_person = client.people.retrieve(uuid_to_gumnut_person_id(id))
 
         if not gumnut_person or not gumnut_person.thumbnail_face_id:
@@ -269,13 +275,14 @@ async def get_thumbnail(
 
 
 @router.get("/{id}")
-async def get_person(id: UUID) -> PersonResponseDto:
+async def get_person(
+    id: UUID,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> PersonResponseDto:
     """
     Get details for a specific person.
     """
     try:
-        client = get_gumnut_client()
-
         gumnut_person = client.people.retrieve(uuid_to_gumnut_person_id(id))
 
         if not gumnut_person:
@@ -291,13 +298,14 @@ async def get_person(id: UUID) -> PersonResponseDto:
 
 
 @router.get("/{id}/statistics")
-async def get_person_statistics(id: UUID) -> PersonStatisticsResponseDto:
+async def get_person_statistics(
+    id: UUID,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> PersonStatisticsResponseDto:
     """
     Get asset statistics for a specific person.
     """
     try:
-        client = get_gumnut_client()
-
         gumnut_assets = client.assets.list(person_id=uuid_to_gumnut_person_id(id))
 
         if not gumnut_assets:
@@ -310,13 +318,14 @@ async def get_person_statistics(id: UUID) -> PersonStatisticsResponseDto:
 
 
 @router.delete("/{id}", status_code=204)
-async def delete_person(id: UUID) -> Response:
+async def delete_person(
+    id: UUID,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> Response:
     """
     Delete a person by their id.
     """
     try:
-        client = get_gumnut_client()
-
         client.people.delete(uuid_to_gumnut_person_id(id))
 
         return Response(status_code=204)

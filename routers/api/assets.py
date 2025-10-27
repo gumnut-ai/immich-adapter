@@ -4,6 +4,7 @@ import logging
 
 from fastapi import (
     APIRouter,
+    Depends,
     HTTPException,
     Header,
     UploadFile,
@@ -14,7 +15,9 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from routers.utils.gumnut_client import get_gumnut_client
+from gumnut import Gumnut
+
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.immich_models import (
     AssetBulkDeleteDto,
@@ -51,19 +54,19 @@ router = APIRouter(
 
 
 async def _download_asset_content(
-    asset_uuid: UUID, size: AssetMediaSize = AssetMediaSize.fullsize
+    asset_uuid: UUID, client: Gumnut, size: AssetMediaSize = AssetMediaSize.fullsize
 ) -> Response:
     """
     Shared helper function to download asset content from Gumnut.
 
     Args:
         asset_uuid: The asset UUID to download
+        client: Authenticated Gumnut client
         size: The size variant to download (fullsize, preview, thumbnail)
 
     Returns:
         FastAPI Response with the asset content
     """
-    client = get_gumnut_client()
 
     try:
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
@@ -139,6 +142,7 @@ async def _download_asset_content(
 @router.post("/bulk-upload-check")
 async def bulk_upload_check(
     request: AssetBulkUploadCheckDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> AssetBulkUploadCheckResponseDto:
     """
     Check which assets from a bulk upload already exist in Gumnut. This is done via a checksum, which Gumnut does not
@@ -160,6 +164,7 @@ async def bulk_upload_check(
 @router.post("/exist")
 async def check_existing_assets(
     request: CheckExistingAssetsDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> CheckExistingAssetsResponseDto:
     """
     Check if multiple assets exist on the server and return all existing.
@@ -194,12 +199,12 @@ async def upload_asset(
     key: str = Query(default=None),
     slug: str = Query(default=None),
     x_immich_checksum: str = Header(default=None, alias="x-immich-checksum"),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> AssetMediaResponseDto:
     """
     Upload an asset using the Gumnut SDK.
     Creates a new asset in Gumnut from the provided asset data.
     """
-    client = get_gumnut_client()
 
     try:
         from datetime import datetime
@@ -265,7 +270,10 @@ async def upload_asset(
 
 
 @router.put("", status_code=204)
-async def update_assets(request: AssetBulkUpdateDto):
+async def update_assets(
+    request: AssetBulkUpdateDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+):
     """
     Update asset metadata.
     This is a stub implementation as Gumnut does not support asset metadata updates.
@@ -275,12 +283,14 @@ async def update_assets(request: AssetBulkUpdateDto):
 
 
 @router.delete("", status_code=204)
-async def delete_assets(request: AssetBulkDeleteDto) -> Response:
+async def delete_assets(
+    request: AssetBulkDeleteDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> Response:
     """
     Delete multiple assets using the Gumnut SDK.
     Deletes assets by their IDs. The force parameter is ignored as Gumnut handles deletion directly.
     """
-    client = get_gumnut_client()
 
     try:
         # Process each asset ID for deletion
@@ -316,7 +326,10 @@ async def delete_assets(request: AssetBulkDeleteDto) -> Response:
 
 
 @router.get("/device/{deviceId}")
-async def get_all_user_assets_by_device_id(deviceId: str) -> List[str]:
+async def get_all_user_assets_by_device_id(
+    deviceId: str,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> List[str]:
     """
     Retrieve assets by device ID.
     This is a stub implementation as Gumnut does not support querying by device ID directly.
@@ -330,12 +343,12 @@ async def get_asset_statistics(
     isFavorite: bool = Query(default=None, alias="isFavorite"),
     isTrashed: bool = Query(default=None, alias="isTrashed"),
     visibility: AssetVisibility = Query(default=None, alias="visibility"),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> AssetStatsResponseDto:
     """
     Get asset statistics from Gumnut.
     Counts total assets and categorizes them by type (images vs videos) using mime_type.
     """
-    client = get_gumnut_client()
 
     try:
         # Get all assets from Gumnut
@@ -370,6 +383,7 @@ async def get_asset_statistics(
 @router.get("/random")
 async def get_random(
     count: int = Query(default=None, ge=1, type="number"),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[AssetResponseDto]:
     """
     Get random assets.
@@ -381,7 +395,10 @@ async def get_random(
 
 
 @router.post("/jobs", status_code=204)
-async def run_asset_jobs(request: AssetJobsDto) -> Response:
+async def run_asset_jobs(
+    request: AssetJobsDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> Response:
     """
     Run asset jobs.
     This is a stub implementation as Gumnut does not support running asset jobs.
@@ -392,13 +409,17 @@ async def run_asset_jobs(request: AssetJobsDto) -> Response:
 
 
 @router.put("/{id}")
-async def update_asset(id: UUID, request: UpdateAssetDto) -> AssetResponseDto:
+async def update_asset(
+    id: UUID,
+    request: UpdateAssetDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> AssetResponseDto:
     """
     Update asset metadata.
     This is a stub implementation as Gumnut does not support asset metadata updates.
     Returns the asset as-is.
     """
-    return await get_asset_info(id)
+    return await get_asset_info(id, client=client)
 
 
 @router.get("/{id}")
@@ -406,9 +427,8 @@ async def get_asset_info(
     id: UUID,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> AssetResponseDto:
-    client = get_gumnut_client()
-
     try:
         gumnut_asset_id = uuid_to_gumnut_asset_id(id)
 
@@ -442,6 +462,7 @@ async def view_asset(
     size: AssetMediaSize = Query(default=None, alias="size"),
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> Response:
     """
     Get a thumbnail for an asset.
@@ -449,7 +470,7 @@ async def view_asset(
     """
     # Determine the size, defaulting to thumbnail if not specified
     preferred_size = size if size is not None else AssetMediaSize.thumbnail
-    return await _download_asset_content(id, preferred_size)
+    return await _download_asset_content(id, client, preferred_size)
 
 
 @router.get(
@@ -469,12 +490,13 @@ async def download_asset(
     id: UUID,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> Response:
     """
     Download the original asset file.
     Always downloads the full-size original asset using the shared download logic.
     """
-    return await _download_asset_content(id, AssetMediaSize.fullsize)
+    return await _download_asset_content(id, client, AssetMediaSize.fullsize)
 
 
 @router.put(
@@ -495,6 +517,7 @@ async def replace_asset(
     request: AssetMediaReplaceDto,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ):
     """
     Replace the asset with new file, without changing its id.
@@ -504,7 +527,10 @@ async def replace_asset(
 
 
 @router.get("/{id}/metadata")
-async def get_asset_metadata(id: UUID) -> List[AssetMetadataResponseDto]:
+async def get_asset_metadata(
+    id: UUID,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> List[AssetMetadataResponseDto]:
     """
     Retrieve metadata for a specific asset.
     This is a stub implementation as Gumnut does not support querying asset metadata.
@@ -515,7 +541,9 @@ async def get_asset_metadata(id: UUID) -> List[AssetMetadataResponseDto]:
 
 @router.put("/{id}/metadata")
 async def update_asset_metadata(
-    id: UUID, request: AssetMetadataUpsertDto
+    id: UUID,
+    request: AssetMetadataUpsertDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[AssetMetadataResponseDto]:
     """
     Update metadata for a specific asset.
@@ -526,7 +554,11 @@ async def update_asset_metadata(
 
 
 @router.delete("/{id}/metadata/{key}", status_code=204)
-async def delete_asset_metadata(id: UUID, key: AssetMetadataKey):
+async def delete_asset_metadata(
+    id: UUID,
+    key: AssetMetadataKey,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+):
     """
     Delete a specific metadata key for an asset.
     This is a stub implementation as Gumnut does not support deleting asset metadata.
@@ -536,7 +568,11 @@ async def delete_asset_metadata(id: UUID, key: AssetMetadataKey):
 
 
 @router.get("/{id}/metadata/{key}", response_model=AssetMetadataResponseDto)
-async def get_asset_metadata_by_key(id: UUID, key: AssetMetadataKey):
+async def get_asset_metadata_by_key(
+    id: UUID,
+    key: AssetMetadataKey,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+):
     """
     Retrieve a specific metadata key for an asset.
     This is a stub implementation as Gumnut does not support querying asset metadata.
@@ -550,6 +586,7 @@ async def play_asset_video(
     id: UUID,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ):
     """
     Play the video for a specific asset.

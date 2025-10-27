@@ -2,9 +2,10 @@ from typing import Annotated, List
 from uuid import UUID
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from gumnut import Gumnut
 
-from routers.utils.gumnut_client import get_gumnut_client
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.immich_models import (
     AlbumResponseDto,
@@ -41,12 +42,12 @@ router = APIRouter(
 async def get_all_albums(
     asset_id: Annotated[UUID | SkipJsonSchema[None], Query(alias="assetId")] = None,
     shared: Annotated[bool | SkipJsonSchema[None], Query(alias="shared")] = None,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[AlbumResponseDto]:
     """
     Fetch albums from Gumnut and convert to AlbumResponseDto format.
     Shared albums are not supported in this adapter and will return an empty list.
     """
-    client = get_gumnut_client()
 
     if shared:
         # Shared albums not supported in this adapter
@@ -72,12 +73,13 @@ async def get_all_albums(
 
 
 @router.get("/statistics")
-async def get_album_statistics() -> AlbumStatisticsResponseDto:
+async def get_album_statistics(
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> AlbumStatisticsResponseDto:
     """
     Get album statistics from Gumnut.
     Since Gumnut doesn't support shared albums, all albums are considered owned and not shared.
     """
-    client = get_gumnut_client()
 
     try:
         # Get all albums to count them
@@ -106,12 +108,12 @@ async def get_album_info(
     withoutAssets: bool = Query(default=None, alias="withoutAssets"),
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> AlbumResponseDto:
     """
     Fetch a specific album from Gumnut and convert to AlbumResponseDto format.
     If withoutAssets is False, also fetch and include the album's assets.
     """
-    client = get_gumnut_client()
 
     try:
         gumnut_album_id = uuid_to_gumnut_album_id(id)
@@ -157,12 +159,14 @@ async def get_album_info(
 
 
 @router.post("", status_code=201)
-async def create_album(request: CreateAlbumDto) -> AlbumResponseDto:
+async def create_album(
+    request: CreateAlbumDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> AlbumResponseDto:
     """
     Create a new album using the Gumnut SDK.
     Note: albumUsers and assetIds are not supported by the Gumnut SDK.
     """
-    client = get_gumnut_client()
 
     try:
         album_name = request.albumName or ""
@@ -189,12 +193,12 @@ async def add_assets_to_album(
     request: BulkIdsDto,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[BulkIdResponseDto]:
     """
     Add assets to an album using the Gumnut SDK.
     Returns a list of results indicating success/failure for each asset.
     """
-    client = get_gumnut_client()
 
     try:
         gumnut_album_id = uuid_to_gumnut_album_id(id)
@@ -262,12 +266,12 @@ async def add_assets_to_album(
 async def update_album(
     id: UUID,
     request: UpdateAlbumDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> AlbumResponseDto:
     """
     Update an album using the Gumnut SDK.
     Only name and description are supported by the Gumnut SDK.
     """
-    client = get_gumnut_client()
 
     try:
         gumnut_album_id = uuid_to_gumnut_album_id(id)
@@ -310,12 +314,12 @@ async def update_album(
 async def remove_asset_from_album(
     id: UUID,
     request: BulkIdsDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[BulkIdResponseDto]:
     """
     Remove assets from an album using the Gumnut SDK.
     Returns a list of results indicating success/failure for each asset removal.
     """
-    client = get_gumnut_client()
 
     try:
         gumnut_album_id = uuid_to_gumnut_album_id(id)
@@ -382,11 +386,13 @@ async def remove_asset_from_album(
 
 
 @router.delete("/{id}", status_code=204)
-async def delete_album(id: UUID) -> Response:
+async def delete_album(
+    id: UUID,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> Response:
     """
     Delete an album using the Gumnut SDK.
     """
-    client = get_gumnut_client()
 
     try:
         gumnut_album_id = uuid_to_gumnut_album_id(id)
@@ -417,12 +423,12 @@ async def add_assets_to_albums(
     request: AlbumsAddAssetsDto,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> AlbumsAddAssetsResponseDto:
     """
     Add assets to multiple albums using the Gumnut SDK.
     Returns a single result indicating overall success/failure.
     """
-    client = get_gumnut_client()
 
     try:
         gumnut_asset_ids = [

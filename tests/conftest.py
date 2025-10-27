@@ -1,7 +1,7 @@
 """Test configuration and shared fixtures."""
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import List, Any
@@ -25,10 +25,8 @@ def anyio_backend():
 @pytest.fixture
 def mock_gumnut_client():
     """Mock the Gumnut client to avoid actual API calls."""
-    with patch("routers.api.albums.get_gumnut_client") as mock_get_client:
-        client = Mock()
-        mock_get_client.return_value = client
-        yield client
+    client = Mock()
+    return client
 
 
 @pytest.fixture
