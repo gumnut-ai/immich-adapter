@@ -3,7 +3,6 @@ from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
 from main import app
-from routers.immich_models import OAuthCallbackDto
 from routers.api.auth import ImmichCookie
 
 
@@ -13,7 +12,7 @@ class TestOAuthCookieSecurity:
     @pytest.mark.anyio
     async def test_oauth_callback_cookies_have_security_flags(self):
         """Verify all cookies from OAuth callback have secure flags."""
-        from routers.utils.dependencies import get_unauthenticated_gumnut_client
+        from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 
         # Mock the Gumnut client
         mock_gumnut_client = Mock()

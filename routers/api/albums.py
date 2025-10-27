@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from gumnut import Gumnut
 
-from routers.utils.dependencies import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.immich_models import (
     AlbumResponseDto,

@@ -1,7 +1,7 @@
 """Tests for OAuth endpoints."""
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, ANY
 from fastapi import HTTPException
 
 from routers.api.oauth import start_oauth, finish_oauth
@@ -43,6 +43,7 @@ class TestStartOAuth:
                 redirect_uri="http://localhost:3000/auth/callback",
                 code_challenge=None,
                 code_challenge_method=None,
+                extra_headers=ANY,
             )
 
     @pytest.mark.anyio
@@ -77,6 +78,7 @@ class TestStartOAuth:
                 redirect_uri="http://localhost:3000/auth/callback",
                 code_challenge="test_challenge_string",
                 code_challenge_method="test_challenge_string",
+                extra_headers=ANY,
             )
 
     @pytest.mark.anyio
@@ -192,6 +194,7 @@ class TestFinishOAuth:
                 state="xyz789",
                 error=None,
                 code_verifier=None,
+                extra_headers=ANY,
             )
 
     @pytest.mark.anyio
@@ -234,6 +237,7 @@ class TestFinishOAuth:
                 state="xyz789",
                 error=None,
                 code_verifier="test_verifier_string",
+                extra_headers=ANY,
             )
 
     @pytest.mark.anyio
@@ -275,6 +279,7 @@ class TestFinishOAuth:
                 state="xyz789",
                 error="access_denied",
                 code_verifier=None,
+                extra_headers=ANY,
             )
 
     @pytest.mark.anyio

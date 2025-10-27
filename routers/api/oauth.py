@@ -13,7 +13,7 @@ from routers.immich_models import (
     UserLicense,
     UserStatus,
 )
-from routers.utils.dependencies import get_unauthenticated_gumnut_client
+from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 from routers.utils.oauth_utils import parse_callback_url
 from routers.api.auth import ImmichCookie
 from config.settings import get_settings
