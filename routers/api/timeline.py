@@ -3,7 +3,7 @@ from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from gumnut import Gumnut
-from routers.utils.dependencies import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error
 from routers.api.auth import get_current_user_id
 from routers.immich_models import (

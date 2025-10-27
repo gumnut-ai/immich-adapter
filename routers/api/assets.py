@@ -17,7 +17,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from gumnut import Gumnut
 
-from routers.utils.dependencies import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.immich_models import (
     AssetBulkDeleteDto,
@@ -419,13 +419,7 @@ async def update_asset(
     This is a stub implementation as Gumnut does not support asset metadata updates.
     Returns the asset as-is.
     """
-    try:
-        gumnut_asset_id = uuid_to_gumnut_asset_id(id)
-        gumnut_asset = client.assets.retrieve(gumnut_asset_id)
-        immich_asset = convert_gumnut_asset_to_immich(gumnut_asset)
-        return immich_asset
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch asset")
+    return await get_asset_info(id, client=client)
 
 
 @router.get("/{id}")
@@ -596,6 +590,7 @@ async def play_asset_video(
 ):
     """
     Play the video for a specific asset.
-    Downloads and streams the fullsize video asset.
+    This is a stub implementation as Gumnut does not support video playback.
+    Returns HTTP 200 (OK) as specified by the Immich API.
     """
-    return await _download_asset_content(id, client, AssetMediaSize.fullsize)
+    return Response(status_code=status.HTTP_200_OK)

@@ -4,7 +4,7 @@ from uuid import UUID
 from datetime import datetime
 from gumnut import Gumnut
 
-from routers.utils.dependencies import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import check_for_error_by_code
 from routers.immich_models import (
     PersonResponseDto,
