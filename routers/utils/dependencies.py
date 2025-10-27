@@ -4,6 +4,7 @@ from fastapi import HTTPException, Request, status
 from gumnut import Gumnut
 
 from routers.utils.gumnut_client import get_gumnut_client
+from config.settings import get_settings
 
 
 async def get_authenticated_gumnut_client(request: Request) -> Gumnut:
@@ -31,3 +32,21 @@ async def get_authenticated_gumnut_client(request: Request) -> Gumnut:
         )
 
     return get_gumnut_client(jwt_token)
+
+
+async def get_unauthenticated_gumnut_client() -> Gumnut:
+    """
+    Dependency that provides an unauthenticated Gumnut client for OAuth operations.
+
+    This is used for OAuth endpoints that don't require authentication (like
+    starting OAuth flow or handling callbacks) but still need to communicate
+    with the Gumnut backend.
+
+    Returns:
+        Gumnut: Unauthenticated Gumnut client instance
+    """
+    settings = get_settings()
+
+    return Gumnut(
+        base_url=settings.gumnut_api_base_url,
+    )

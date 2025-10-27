@@ -1,7 +1,5 @@
-"""Tests for the AuthMiddleware class."""
-
 import pytest
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from routers.middleware.auth_middleware import AuthMiddleware
 
@@ -22,10 +20,19 @@ def app():
 
     @app.get("/api/test/refresh")
     async def refresh_endpoint(request: Request):
-        """Test endpoint that simulates token refresh."""
-        response = Response(content='{"status": "ok"}', media_type="application/json")
-        response.headers["x-new-access-token"] = "new-jwt-token-123"
-        return response
+        """Test endpoint that simulates token refresh from Gumnut backend."""
+        from routers.utils.gumnut_client import _capture_refresh_token_hook
+        import httpx
+
+        # Simulate what happens when Gumnut backend returns a refresh header
+        mock_response = httpx.Response(
+            status_code=200,
+            headers={"x-new-access-token": "new-jwt-token-123"},
+            json={"status": "ok"},
+        )
+        _capture_refresh_token_hook(mock_response)
+
+        return {"status": "ok"}
 
     @app.get("/api/oauth/login")
     async def unauthenticated_endpoint():
@@ -113,9 +120,10 @@ class TestAuthMiddleware:
 
         assert response.status_code == 200
         # Check that cookie was updated
-        assert "immich_access_token" in response.cookies
-        assert response.cookies["immich_access_token"] == "new-jwt-token-123"
-        # Check that refresh header was removed
+        set_cookie_header = response.headers.get("set-cookie", "")
+        assert "immich_access_token=new-jwt-token-123" in set_cookie_header
+        assert "HttpOnly" in set_cookie_header
+        # Check that refresh header was not added (web client gets cookie instead)
         assert "x-new-access-token" not in response.headers
 
     def test_token_refresh_for_mobile_client(self, client):
