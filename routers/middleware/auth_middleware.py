@@ -90,16 +90,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         if refreshed_token:
             if is_web_client:
-                # Web client: Update cookie
+                # Web client: Update cookie and strip header to prevent token exposure
                 response.set_cookie(
                     key=self.COOKIE_NAME,
                     value=refreshed_token,
                     httponly=True,
-                    secure=True,  # Only send over HTTPS
+                    secure=request.url.scheme == "https",  # Only send over HTTPS
                     samesite="lax",  # CSRF protection (or "Strict" for more security)
                 )
+                # Remove the header since web client uses cookies, not headers
+                # This prevents accidental token exposure in response headers
+                if self.REFRESH_HEADER in response.headers:
+                    del response.headers[self.REFRESH_HEADER]
             else:
                 # Mobile client: Add header so client can read the new token
                 response.headers[self.REFRESH_HEADER] = refreshed_token
+
+            # Clear the stored token after handling to prevent leakage to subsequent requests
+            clear_refreshed_token()
 
         return response
