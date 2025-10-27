@@ -14,8 +14,8 @@ from routers.immich_models import (
     UserStatus,
 )
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
-from routers.utils.oauth_utils import parse_callback_url
-from routers.api.auth import ImmichCookie
+from routers.utils.oauth_utils import normalize_redirect_uri, parse_callback_url
+from routers.utils.cookies import set_auth_cookies
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,8 @@ async def start_oauth(
     settings = get_settings()
     allowed_uris = settings.oauth_allowed_redirect_uris_list
 
-    if oauth_config.redirectUri not in allowed_uris:
+    attempt = normalize_redirect_uri(oauth_config.redirectUri)
+    if attempt not in allowed_uris:
         logger.warning(
             "Invalid redirect_uri attempted",
             extra={
@@ -67,7 +68,7 @@ async def start_oauth(
         result = client.oauth.auth_url(
             redirect_uri=oauth_config.redirectUri,
             code_challenge=oauth_config.codeChallenge,
-            code_challenge_method=oauth_config.codeChallenge,
+            code_challenge_method="S256" if oauth_config.codeChallenge else None,
             extra_headers={"Authorization": omit},  # Omit auth for this request
         )
 
@@ -130,26 +131,7 @@ async def finish_oauth(
         )
 
         # Set authentication cookies for web client
-        response.set_cookie(
-            key=ImmichCookie.ACCESS_TOKEN.value,
-            value=result.access_token,
-            httponly=True,
-            secure=True,  # Only send over HTTPS
-            samesite="lax",  # CSRF protection (or "Strict" for more security)
-        )
-        response.set_cookie(
-            key=ImmichCookie.AUTH_TYPE.value,
-            value="oauth",
-            httponly=True,
-            secure=True,
-            samesite="lax",
-        )
-        response.set_cookie(
-            key=ImmichCookie.IS_AUTHENTICATED.value,
-            value="true",
-            secure=True,
-            samesite="lax",
-        )
+        set_auth_cookies(response, result.access_token, "oauth")
 
         # Return login response with JWT and user info
         return LoginResponseDto(

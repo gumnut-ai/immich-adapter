@@ -5,6 +5,8 @@ from functools import lru_cache
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from routers.utils.oauth_utils import normalize_redirect_uri
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,13 +36,8 @@ class Settings(BaseSettings):
         Returns a set of allowed redirect URIs. Returns set with default
         localhost URI if not configured.
         """
-        if not self.oauth_allowed_redirect_uris:
-            return {"http://localhost:3000/auth/callback"}
-        return {
-            uri.strip()
-            for uri in self.oauth_allowed_redirect_uris.split(",")
-            if uri.strip()
-        }
+        raw = self.oauth_allowed_redirect_uris or "http://localhost:3000/auth/callback"
+        return {normalize_redirect_uri(u.strip()) for u in raw.split(",") if u.strip()}
 
 
 class TestSettings(Settings):

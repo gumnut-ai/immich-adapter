@@ -1,4 +1,4 @@
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 
 def parse_callback_url(callback_url: str) -> dict[str, str | None]:
@@ -32,7 +32,7 @@ def parse_callback_url(callback_url: str) -> dict[str, str | None]:
         error = query_params.get("error", [None])[0]
 
         # State is required in OAuth flow
-        if state is None:
+        if not state:
             raise ValueError("Missing required 'state' parameter in callback URL")
 
         return {
@@ -43,3 +43,18 @@ def parse_callback_url(callback_url: str) -> dict[str, str | None]:
 
     except Exception as e:
         raise ValueError(f"Failed to parse OAuth callback URL: {str(e)}")
+
+
+def normalize_redirect_uri(uri: str) -> str:
+    """
+    Normalize a redirect URI for comparison.
+    """
+    p = urlparse(uri)
+    scheme = (p.scheme or "").lower()
+    host = (p.hostname or "").lower()
+    port = f":{p.port}" if p.port else ""
+    # Strip default ports
+    if (scheme == "http" and port == ":80") or (scheme == "https" and port == ":443"):
+        port = ""
+    path = (p.path or "/").rstrip("/") or "/"
+    return urlunparse((scheme, f"{host}{port}", path, "", "", ""))

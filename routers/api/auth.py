@@ -1,4 +1,3 @@
-from enum import Enum
 from uuid import UUID
 
 from fastapi import APIRouter, Response
@@ -16,19 +15,13 @@ from routers.immich_models import (
     UserAdminResponseDto,
     ValidateAccessTokenResponseDto,
 )
+from routers.utils.cookies import ImmichCookie, set_auth_cookies
 
 router = APIRouter(
     prefix="/api/auth",
     tags=["auth"],
     responses={404: {"description": "Not found"}},
 )
-
-
-class ImmichCookie(str, Enum):
-    ACCESS_TOKEN = "immich_access_token"
-    AUTH_TYPE = "immich_auth_type"
-    IS_AUTHENTICATED = "immich_is_authenticated"
-    SHARED_LINK_TOKEN = "immich_shared_link_token"
 
 
 fake_auth_login = {
@@ -67,26 +60,7 @@ async def change_password(request: ChangePasswordDto):
 
 @router.post("/login", status_code=201)
 async def post_login(body: LoginCredentialDto, response: Response) -> LoginResponseDto:
-    response.set_cookie(
-        key=ImmichCookie.ACCESS_TOKEN.value,
-        value=fake_auth_login["accessToken"],
-        httponly=True,
-        secure=True,  # Only send over HTTPS
-        samesite="lax",  # CSRF protection (or "Strict" for more security)
-    )
-    response.set_cookie(
-        key=ImmichCookie.AUTH_TYPE.value,
-        value="password",
-        httponly=True,
-        secure=True,
-        samesite="lax",
-    )
-    response.set_cookie(
-        key=ImmichCookie.IS_AUTHENTICATED.value,
-        value="true",
-        secure=True,
-        samesite="lax",
-    )
+    set_auth_cookies(response, fake_auth_login["accessToken"], "password")
 
     return LoginResponseDto(
         accessToken=fake_auth_login["accessToken"],

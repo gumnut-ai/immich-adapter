@@ -78,7 +78,7 @@ class TestStartOAuth:
             mock_client.oauth.auth_url.assert_called_once_with(
                 redirect_uri="http://localhost:3000/auth/callback",
                 code_challenge="test_challenge_string",
-                code_challenge_method="test_challenge_string",
+                code_challenge_method="S256",
                 extra_headers={"Authorization": omit},
             )
 

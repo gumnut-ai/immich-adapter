@@ -203,4 +203,5 @@ async def get_unauthenticated_gumnut_client() -> Gumnut:
 
     return Gumnut(
         base_url=settings.gumnut_api_base_url,
+        http_client=get_shared_http_client(),
     )

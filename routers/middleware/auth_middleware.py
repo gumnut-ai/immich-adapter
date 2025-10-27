@@ -5,6 +5,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from routers.utils.gumnut_client import get_refreshed_token, clear_refreshed_token
+from routers.utils.cookies import update_access_token_cookie
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +92,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if refreshed_token:
             if is_web_client:
                 # Web client: Update cookie and strip header to prevent token exposure
-                response.set_cookie(
-                    key=self.COOKIE_NAME,
-                    value=refreshed_token,
-                    httponly=True,
-                    secure=request.url.scheme == "https",  # Only send over HTTPS
-                    samesite="lax",  # CSRF protection (or "Strict" for more security)
+                update_access_token_cookie(
+                    response, refreshed_token, request.url.scheme == "https"
                 )
                 # Remove the header since web client uses cookies, not headers
                 # This prevents accidental token exposure in response headers
