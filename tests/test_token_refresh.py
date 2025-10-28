@@ -100,7 +100,7 @@ class TestTokenRefreshIntegration:
     def test_token_refresh_for_web_client(self, client):
         """Test that web client receives updated cookie when token is refreshed."""
         # Setup - web client with cookie
-        client.cookies = {"immich_access_token": "old-token-123"}
+        client.cookies.set("immich_access_token", "old-token-123")
 
         # Execute
         response = client.get("/api/test/albums")
@@ -158,7 +158,7 @@ class TestTokenRefreshIntegration:
             return {"data": "ok"}
 
         test_client = TestClient(app)
-        test_client.cookies = {"immich_access_token": "original-token"}
+        test_client.cookies.set("immich_access_token", "original-token")
 
         # Execute
         response = test_client.get("/api/test/normal")

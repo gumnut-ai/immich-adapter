@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
 from main import app
-from routers.api.auth import ImmichCookie
+from routers.utils.cookies import ImmichCookie
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 
 
@@ -38,8 +38,8 @@ class TestOAuthCookieSecurity:
                     "error": None,
                 }
 
-                # Use TestClient to make actual request
-                client = TestClient(app)
+                # Use TestClient to make actual request with HTTPS base URL
+                client = TestClient(app, base_url="https://testserver")
                 response = client.post(
                     "/api/oauth/callback",
                     json={
@@ -115,8 +115,8 @@ class TestOAuthCookieSecurity:
     @pytest.mark.anyio
     async def test_token_refresh_cookie_has_security_flags(self):
         """Verify refreshed token cookie has security flags."""
-        # Create test client
-        client = TestClient(app)
+        # Create test client with HTTPS base URL
+        client = TestClient(app, base_url="https://testserver")
 
         # Set cookie on client instance instead of per-request
         client.cookies.set(ImmichCookie.ACCESS_TOKEN.value, "original-jwt-token-123")
@@ -155,7 +155,7 @@ class TestOAuthCookieSecurity:
         """Ensure no cookies are set without proper security flags (negative test)."""
         # This test verifies that we're not accidentally setting cookies
         # through any other code path without security flags
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         # Make various requests and check that any cookies set have security flags
         test_endpoints = [

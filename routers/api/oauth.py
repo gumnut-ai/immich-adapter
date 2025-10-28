@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from gumnut import Gumnut, omit
 from routers.immich_models import (
     LoginResponseDto,
@@ -89,6 +89,7 @@ async def start_oauth(
 @router.post("/callback", status_code=201)
 async def finish_oauth(
     oauth_callback: OAuthCallbackDto,
+    request: Request,
     response: Response,
     client: Gumnut = Depends(get_unauthenticated_gumnut_client),
 ) -> LoginResponseDto:
@@ -131,7 +132,9 @@ async def finish_oauth(
         )
 
         # Set authentication cookies for web client
-        set_auth_cookies(response, result.access_token, "oauth")
+        set_auth_cookies(
+            response, result.access_token, "oauth", request.url.scheme == "https"
+        )
 
         # Return login response with JWT and user info
         return LoginResponseDto(

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
 from routers.immich_models import (
     AuthStatusResponseDto,
     ChangePasswordDto,
@@ -59,8 +59,15 @@ async def change_password(request: ChangePasswordDto):
 
 
 @router.post("/login", status_code=201)
-async def post_login(body: LoginCredentialDto, response: Response) -> LoginResponseDto:
-    set_auth_cookies(response, fake_auth_login["accessToken"], "password")
+async def post_login(
+    body: LoginCredentialDto, request: Request, response: Response
+) -> LoginResponseDto:
+    set_auth_cookies(
+        response,
+        fake_auth_login["accessToken"],
+        "password",
+        request.url.scheme == "https",
+    )
 
     return LoginResponseDto(
         accessToken=fake_auth_login["accessToken"],

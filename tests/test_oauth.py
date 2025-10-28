@@ -7,7 +7,15 @@ from fastapi import HTTPException
 
 from routers.api.oauth import start_oauth, finish_oauth
 from routers.immich_models import OAuthConfigDto, OAuthCallbackDto
-from routers.api.auth import ImmichCookie
+from routers.utils.cookies import ImmichCookie
+
+
+@pytest.fixture
+def mock_request():
+    """Create a mock Request object for testing."""
+    mock_req = Mock()
+    mock_req.url.scheme = "https"
+    return mock_req
 
 
 class TestStartOAuth:
@@ -129,7 +137,7 @@ class TestFinishOAuth:
     """Test the finish_oauth (POST /api/oauth/callback) endpoint."""
 
     @pytest.mark.anyio
-    async def test_finish_oauth_success(self):
+    async def test_finish_oauth_success(self, mock_request):
         """Test successful OAuth callback flow."""
         # Setup
         oauth_callback = OAuthCallbackDto(
@@ -156,7 +164,9 @@ class TestFinishOAuth:
             }
 
             # Execute
-            result = await finish_oauth(oauth_callback, mock_response, mock_client)
+            result = await finish_oauth(
+                oauth_callback, mock_request, mock_response, mock_client
+            )
 
             # Assert
             assert result.accessToken == "jwt_token_abc123"
@@ -199,7 +209,7 @@ class TestFinishOAuth:
             )
 
     @pytest.mark.anyio
-    async def test_finish_oauth_with_pkce_verifier(self):
+    async def test_finish_oauth_with_pkce_verifier(self, mock_request):
         """Test OAuth callback with PKCE code verifier."""
         # Setup
         oauth_callback = OAuthCallbackDto(
@@ -227,7 +237,9 @@ class TestFinishOAuth:
             }
 
             # Execute
-            result = await finish_oauth(oauth_callback, mock_response, mock_client)
+            result = await finish_oauth(
+                oauth_callback, mock_request, mock_response, mock_client
+            )
 
             # Assert
             assert result.accessToken == "jwt_token_abc123"
@@ -242,7 +254,7 @@ class TestFinishOAuth:
             )
 
     @pytest.mark.anyio
-    async def test_finish_oauth_with_error(self):
+    async def test_finish_oauth_with_error(self, mock_request):
         """Test OAuth callback when OAuth provider returned an error."""
         # Setup
         oauth_callback = OAuthCallbackDto(
@@ -269,7 +281,9 @@ class TestFinishOAuth:
             }
 
             # Execute
-            result = await finish_oauth(oauth_callback, mock_response, mock_client)
+            result = await finish_oauth(
+                oauth_callback, mock_request, mock_response, mock_client
+            )
 
             # Assert - SDK still processes the error
             assert result.accessToken == "jwt_token_abc123"
@@ -284,7 +298,7 @@ class TestFinishOAuth:
             )
 
     @pytest.mark.anyio
-    async def test_finish_oauth_invalid_url(self):
+    async def test_finish_oauth_invalid_url(self, mock_request):
         """Test handling of invalid callback URL."""
         # Setup
         oauth_callback = OAuthCallbackDto(
@@ -298,13 +312,15 @@ class TestFinishOAuth:
 
             # Execute & Assert
             with pytest.raises(HTTPException) as exc_info:
-                await finish_oauth(oauth_callback, mock_response, mock_client)
+                await finish_oauth(
+                    oauth_callback, mock_request, mock_response, mock_client
+                )
 
             assert exc_info.value.status_code == 400
             assert "Missing required 'state' parameter" in str(exc_info.value.detail)
 
     @pytest.mark.anyio
-    async def test_finish_oauth_backend_error(self):
+    async def test_finish_oauth_backend_error(self, mock_request):
         """Test handling of backend errors during token exchange."""
         # Setup
         oauth_callback = OAuthCallbackDto(
@@ -325,7 +341,9 @@ class TestFinishOAuth:
 
             # Execute & Assert
             with pytest.raises(HTTPException) as exc_info:
-                await finish_oauth(oauth_callback, mock_response, mock_client)
+                await finish_oauth(
+                    oauth_callback, mock_request, mock_response, mock_client
+                )
 
             assert exc_info.value.status_code == 500
             assert (
@@ -334,7 +352,7 @@ class TestFinishOAuth:
             )
 
     @pytest.mark.anyio
-    async def test_finish_oauth_defaults_optional_fields(self):
+    async def test_finish_oauth_defaults_optional_fields(self, mock_request):
         """Test that optional fields in backend response use defaults."""
         # Setup
         oauth_callback = OAuthCallbackDto(
@@ -361,7 +379,9 @@ class TestFinishOAuth:
             }
 
             # Execute
-            result = await finish_oauth(oauth_callback, mock_response, mock_client)
+            result = await finish_oauth(
+                oauth_callback, mock_request, mock_response, mock_client
+            )
 
             # Assert - optional fields should have default values
             assert result.accessToken == "jwt_token_abc123"
