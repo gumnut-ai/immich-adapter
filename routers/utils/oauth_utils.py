@@ -47,7 +47,34 @@ def parse_callback_url(callback_url: str) -> dict[str, str | None]:
 
 def normalize_redirect_uri(uri: str) -> str:
     """
-    Normalize a redirect URI for comparison.
+    Normalize a redirect URI for consistent comparison in OAuth security checks.
+
+    This function applies several transformations to ensure URIs can be compared
+    reliably regardless of formatting variations. Query parameters are preserved
+    as they are valid in OAuth redirect URIs, but fragments are stripped.
+
+    Transformations applied:
+    1. Scheme & hostname converted to lowercase (path remains case-sensitive)
+    2. Default ports stripped (`:80` for HTTP, `:443` for HTTPS)
+    3. Non-default ports preserved (`:8080`, `:8443`, etc.)
+    4. Trailing slashes removed from paths (except root `/`)
+    5. Query parameters preserved (allowed in OAuth redirect URIs)
+    6. Fragments stripped
+    7. Empty paths normalized to `/`
+
+    Examples:
+        - "HTTP://LocalHost:80/auth/callback/" → "http://localhost/auth/callback"
+        - "https://app.example.com:443/oauth" → "https://app.example.com/oauth"
+        - "http://localhost:8080/callback/" → "http://localhost:8080/callback"
+        - "http://example.com?state=abc" → "http://example.com/?state=abc"
+        - "http://example.com?state=abc#frag" → "http://example.com/?state=abc"
+        - "http://example.com#fragment" → "http://example.com/"
+
+    Args:
+        uri: The redirect URI to normalize
+
+    Returns:
+        Normalized URI string suitable for comparison
     """
     p = urlparse(uri)
     scheme = (p.scheme or "").lower()
@@ -57,4 +84,5 @@ def normalize_redirect_uri(uri: str) -> str:
     if (scheme == "http" and port == ":80") or (scheme == "https" and port == ":443"):
         port = ""
     path = (p.path or "/").rstrip("/") or "/"
-    return urlunparse((scheme, f"{host}{port}", path, "", "", ""))
+    query = p.query
+    return urlunparse((scheme, f"{host}{port}", path, "", query, ""))

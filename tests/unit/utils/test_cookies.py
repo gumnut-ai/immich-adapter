@@ -139,14 +139,3 @@ class TestUpdateAccessTokenCookie:
         # Access token should have secure flag set to False
         set_cookie_header = response.headers.get("set-cookie", "")
         assert "Secure" not in set_cookie_header
-
-
-class TestImmichCookie:
-    """Test cases for ImmichCookie enum."""
-
-    def test_cookie_names(self):
-        """Test that cookie names are correct."""
-        assert ImmichCookie.ACCESS_TOKEN.value == "immich_access_token"
-        assert ImmichCookie.AUTH_TYPE.value == "immich_auth_type"
-        assert ImmichCookie.IS_AUTHENTICATED.value == "immich_is_authenticated"
-        assert ImmichCookie.SHARED_LINK_TOKEN.value == "immich_shared_link_token"

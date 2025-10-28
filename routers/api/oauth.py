@@ -113,7 +113,13 @@ async def finish_oauth(
     try:
         # Parse callback URL to extract code, state, and error
         parsed = parse_callback_url(oauth_callback.url)
+    except ValueError as e:
+        logger.error("Failed to parse OAuth callback URL", extra={"error": str(e)})
+        raise HTTPException(
+            status_code=400, detail="OAuth authentication failed. Please try again."
+        )
 
+    try:
         logger.info(
             "OAuth callback received",
             extra={
@@ -136,24 +142,25 @@ async def finish_oauth(
             response, result.access_token, "oauth", request.url.scheme == "https"
         )
 
+        if result.user.first_name or result.user.last_name:
+            name = (
+                f"{result.user.first_name or ''} {result.user.last_name or ''}".strip()
+            )
+        else:
+            name = result.user.email or ""
+
         # Return login response with JWT and user info
         return LoginResponseDto(
             accessToken=result.access_token,
             userId=result.user.id,
             userEmail=result.user.email or "",
-            name=f"{result.user.first_name or ''} {result.user.last_name or ''}".strip()
-            if result.user.first_name or result.user.last_name
-            else result.user.email or "",
+            name=name,
             isAdmin=False,  # TODO: determine admin status
             isOnboarded=True,  # TODO: determine onboarding status
             profileImagePath="",
             shouldChangePassword=False,
         )
 
-    except ValueError as e:
-        # URL parsing error
-        logger.error("Failed to parse OAuth callback URL", extra={"error": str(e)})
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         # Backend communication error
         logger.error(
