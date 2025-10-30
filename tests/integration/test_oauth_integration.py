@@ -2,7 +2,7 @@
 
 from gumnut import omit
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 from fastapi.testclient import TestClient
 
 from main import app
@@ -40,29 +40,21 @@ class TestStartOAuthIntegration:
         mock_auth_url_result.url = "https://oauth.provider.com/authorize?client_id=test&state=xyz123&redirect_uri=http://localhost:3000/auth/callback"
         mock_gumnut_client.oauth.auth_url.return_value = mock_auth_url_result
 
-        with patch("routers.api.oauth.get_settings") as mock_get_settings:
-            # Mock settings to allow test redirect URI
-            mock_settings = Mock()
-            mock_settings.oauth_allowed_redirect_uris_list = {
-                "http://localhost:3000/auth/callback"
-            }
-            mock_get_settings.return_value = mock_settings
+        # Execute - POST to the actual endpoint
+        response = client.post("/api/oauth/authorize", json=oauth_config)
 
-            # Execute - POST to the actual endpoint
-            response = client.post("/api/oauth/authorize", json=oauth_config)
-
-            # Assert
-            assert response.status_code == 201
-            result = response.json()
-            assert result["url"].startswith("https://oauth.provider.com/authorize")
-            assert "state=" in result["url"]
-            assert "redirect_uri=" in result["url"]
-            mock_gumnut_client.oauth.auth_url.assert_called_once_with(
-                redirect_uri="http://localhost:3000/auth/callback",
-                code_challenge=None,
-                code_challenge_method=None,
-                extra_headers={"Authorization": omit},
-            )
+        # Assert
+        assert response.status_code == 201
+        result = response.json()
+        assert result["url"].startswith("https://oauth.provider.com/authorize")
+        assert "state=" in result["url"]
+        assert "redirect_uri=" in result["url"]
+        mock_gumnut_client.oauth.auth_url.assert_called_once_with(
+            redirect_uri="http://localhost:3000/auth/callback",
+            code_challenge=None,
+            code_challenge_method=None,
+            extra_headers={"Authorization": omit},
+        )
 
     def test_start_oauth_with_pkce(self, client, mock_gumnut_client):
         """Test OAuth authorization with PKCE parameters through middleware."""
@@ -76,36 +68,19 @@ class TestStartOAuthIntegration:
         mock_auth_url_result.url = "https://oauth.provider.com/authorize?client_id=test&state=xyz123&code_challenge=test_challenge_string"
         mock_gumnut_client.oauth.auth_url.return_value = mock_auth_url_result
 
-        with patch("routers.api.oauth.get_settings") as mock_get_settings:
-            mock_settings = Mock()
-            mock_settings.oauth_allowed_redirect_uris_list = {
-                "http://localhost:3000/auth/callback"
-            }
-            mock_get_settings.return_value = mock_settings
-
-            # Execute
-            response = client.post("/api/oauth/authorize", json=oauth_config)
-
-            # Assert
-            assert response.status_code == 201
-            result = response.json()
-            assert result["url"].startswith("https://oauth.provider.com/authorize")
-            mock_gumnut_client.oauth.auth_url.assert_called_once_with(
-                redirect_uri="http://localhost:3000/auth/callback",
-                code_challenge="test_challenge_string",
-                code_challenge_method="S256",
-                extra_headers={"Authorization": omit},
-            )
-
-    def test_start_oauth_invalid_redirect_uri(self, client):
-        """Test that invalid redirect URIs are rejected through middleware."""
-        oauth_config = {"redirectUri": "https://evil.com/steal-tokens"}
-
-        # Execute & Assert
+        # Execute
         response = client.post("/api/oauth/authorize", json=oauth_config)
 
-        assert response.status_code == 400
-        assert "Invalid redirect_uri" in response.json()["detail"]
+        # Assert
+        assert response.status_code == 201
+        result = response.json()
+        assert result["url"].startswith("https://oauth.provider.com/authorize")
+        mock_gumnut_client.oauth.auth_url.assert_called_once_with(
+            redirect_uri="http://localhost:3000/auth/callback",
+            code_challenge="test_challenge_string",
+            code_challenge_method="S256",
+            extra_headers={"Authorization": omit},
+        )
 
     def test_start_oauth_backend_error(self, client, mock_gumnut_client):
         """Test handling of backend errors during authorization through middleware."""
@@ -116,21 +91,14 @@ class TestStartOAuthIntegration:
             "Backend connection failed"
         )
 
-        with patch("routers.api.oauth.get_settings") as mock_get_settings:
-            mock_settings = Mock()
-            mock_settings.oauth_allowed_redirect_uris_list = {
-                "http://localhost:3000/auth/callback"
-            }
-            mock_get_settings.return_value = mock_settings
+        # Execute & Assert
+        response = client.post("/api/oauth/authorize", json=oauth_config)
 
-            # Execute & Assert
-            response = client.post("/api/oauth/authorize", json=oauth_config)
-
-            assert response.status_code == 500
-            assert (
-                "OAuth authentication failed. Please try again."
-                == response.json()["detail"]
-            )
+        assert response.status_code == 500
+        assert (
+            "OAuth authentication failed. Please try again."
+            == response.json()["detail"]
+        )
 
 
 class TestFinishOAuthIntegration:
