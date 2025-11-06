@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Script to extract web files from immich-server container
-# Usage: ./extract-immich-web.sh [OPTIONS] <tag> <output-directory>
-# Example: ./extract-immich-web.sh release ./web-files
+# Usage: ./extract-immich-web.sh [OPTIONS] <output-directory>
+# Example: ./extract-immich-web.sh -t release ./web-files
 
 set -e  # Exit on error
 set -u  # Exit on undefined variable

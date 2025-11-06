@@ -5,6 +5,7 @@ from starlette.responses import FileResponse
 from starlette.exceptions import HTTPException
 from starlette.datastructures import Headers
 import os
+import stat
 import mimetypes
 
 
@@ -83,15 +84,32 @@ class SPAStaticFiles(StaticFiles):
         # Securely resolve the requested path using StaticFiles' lookup_path
         full_path, stat_result = self.lookup_path(path)
 
+        # If path resolves to a directory (e.g., "/" or ""), look for index.html
+        if stat_result is not None and stat.S_ISDIR(stat_result.st_mode):
+            if self.html:
+                index_path, index_stat = self.lookup_path("index.html")
+                if index_stat is not None:
+                    return await self._serve_file(index_path, accept_encoding)
+            raise HTTPException(status_code=404, detail="Not found")
+
         # If file exists, serve it (possibly compressed)
         if stat_result is not None:
             return await self._serve_file(full_path, accept_encoding)
 
-        # SPA fallback only for GET/HEAD and when HTML is acceptable or path has no extension
+        # SPA fallback only for browser navigations (HTML) and non-API-like paths
         # This prevents serving index.html for missing CSS/JS/image files
+        path_lower = "/" + path.lstrip("/").lower()
+        last_segment = path.split("/")[-1]
+        is_asset = "." in last_segment
+        is_api_like = path_lower.startswith((
+            "/api",
+            "/openapi",
+            "/docs",
+            "/redoc",
+        ))
+
         if method in ("GET", "HEAD") and (
-            "text/html" in accept or "." not in path.split("/")[-1]
-        ):
+            "text/html" in accept) and not is_asset and not is_api_like:
             index_path, index_stat = self.lookup_path("index.html")
             if index_stat is not None:
                 return await self._serve_file(index_path, accept_encoding)
