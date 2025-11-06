@@ -34,6 +34,10 @@ cleanup() {
         print_info "Cleaning up container: $CONTAINER_ID"
         docker rm "$CONTAINER_ID" >/dev/null 2>&1 || true
     fi
+    if [ -n "${TEMP_DIR:-}" ] && [ -d "$TEMP_DIR" ]; then
+        print_info "Removing temporary directory: $TEMP_DIR"
+        rm -rf "$TEMP_DIR" || true
+    fi
     if [ $exit_code -ne 0 ]; then
         print_error "Script failed with exit code $exit_code"
     fi
@@ -68,6 +72,7 @@ trap cleanup EXIT INT TERM
 
 # Initialize variables
 CONTAINER_ID=""
+TEMP_DIR=""
 FORCE=false
 SKIP_PULL=false
 TAG=""
@@ -200,29 +205,23 @@ print_info "Using temporary directory: $TEMP_DIR"
 print_info "Extracting web files from /build/www"
 if ! docker cp "$CONTAINER_ID:/build/www" "$TEMP_DIR/"; then
     print_error "Failed to extract web files from container"
-    rm -rf "$TEMP_DIR"
     exit 1
 fi
 
 # Verify extraction - check for expected files
 if [ ! -f "$TEMP_DIR/www/index.html" ]; then
     print_error "Extracted files appear incomplete - index.html not found"
-    rm -rf "$TEMP_DIR"
     exit 1
 fi
 
 if [ ! -d "$TEMP_DIR/www/_app" ]; then
     print_error "Extracted files appear incomplete - _app directory not found"
-    rm -rf "$TEMP_DIR"
     exit 1
 fi
 
 # Move the contents of www to the output directory (not the www directory itself)
 print_info "Moving web files to $OUTPUT_DIR"
 mv "$TEMP_DIR/www" "$OUTPUT_DIR"
-
-# Clean up temp directory
-rm -rf "$TEMP_DIR"
 
 print_info "Removing temporary container: $CONTAINER_ID"
 if ! docker rm "$CONTAINER_ID" >/dev/null 2>&1; then

@@ -51,9 +51,9 @@ class SPAStaticFiles(StaticFiles):
         if "/_app/immutable" in file_path:
             headers = {"Cache-Control": "public,max-age=31536000,immutable"}
 
+        headers["Vary"] = "Accept-Encoding"
         if compressed_path and encoding:
             headers["Content-Encoding"] = encoding
-            headers["Vary"] = "Accept-Encoding"
 
             return FileResponse(
                 path=compressed_path,
@@ -75,18 +75,26 @@ class SPAStaticFiles(StaticFiles):
                 status_code=500, detail="Static files directory not configured"
             )
 
-        directory = str(self.directory)
-        full_path = os.path.join(directory, path)
-        accept_encoding = Headers(scope=scope).get("accept-encoding", "")
+        headers_obj = Headers(scope=scope)
+        accept_encoding = headers_obj.get("accept-encoding", "")
+        method = scope.get("method", "GET")
+        accept = headers_obj.get("accept", "")
 
-        # If requested file exists, serve it (possibly compressed)
-        if os.path.isfile(full_path):
+        # Securely resolve the requested path using StaticFiles' lookup_path
+        full_path, stat_result = self.lookup_path(path)
+
+        # If file exists, serve it (possibly compressed)
+        if stat_result is not None:
             return await self._serve_file(full_path, accept_encoding)
 
-        # File not found - serve index.html for SPA routing
-        index_path = os.path.join(directory, "index.html")
-        if os.path.isfile(index_path):
-            return await self._serve_file(index_path, accept_encoding)
+        # SPA fallback only for GET/HEAD and when HTML is acceptable or path has no extension
+        # This prevents serving index.html for missing CSS/JS/image files
+        if method in ("GET", "HEAD") and (
+            "text/html" in accept or "." not in path.split("/")[-1]
+        ):
+            index_path, index_stat = self.lookup_path("index.html")
+            if index_stat is not None:
+                return await self._serve_file(index_path, accept_encoding)
 
-        # No file and no index.html - return 404
+        # No file and no SPA fallback - return 404
         raise HTTPException(status_code=404, detail="Not found")
