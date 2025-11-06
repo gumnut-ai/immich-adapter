@@ -101,15 +101,21 @@ class SPAStaticFiles(StaticFiles):
         path_lower = "/" + path.lstrip("/").lower()
         last_segment = path.split("/")[-1]
         is_asset = "." in last_segment
-        is_api_like = path_lower.startswith((
-            "/api",
-            "/openapi",
-            "/docs",
-            "/redoc",
-        ))
+        is_api_like = path_lower.startswith(
+            (
+                "/api",
+                "/openapi",
+                "/docs",
+                "/redoc",
+            )
+        )
 
-        if method in ("GET", "HEAD") and (
-            "text/html" in accept) and not is_asset and not is_api_like:
+        if (
+            method in ("GET", "HEAD")
+            and ("text/html" in accept)
+            and not is_asset
+            and not is_api_like
+        ):
             index_path, index_stat = self.lookup_path("index.html")
             if index_stat is not None:
                 return await self._serve_file(index_path, accept_encoding)
