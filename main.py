@@ -104,4 +104,4 @@ app.include_router(view.router)
 
 # Mount static files at root - must be last to avoid conflicts with API routes
 # Use SPAStaticFiles to serve index.html for SPA routes (e.g., /auth/login)
-app.mount("/", SPAStaticFiles(directory="static", html=True), name="static")
+app.mount("/", SPAStaticFiles(directory="static", html=True), name="staticFileHosting")

@@ -80,17 +80,12 @@ def get_directory_size(path: Path) -> str | None:
     return None
 
 
-def count_files(path: Path) -> int | None:
-    """Count number of files in directory using find command."""
+def count_files(path: Path) -> int:
+    """Count number of files in directory recursively."""
     try:
-        result = run_command(
-            ["find", str(path), "-type", "f"], check=False, capture_output=True
-        )
-        if result.returncode == 0:
-            return len(result.stdout.strip().split("\n"))
+        return sum(1 for p in path.rglob("*") if p.is_file())
     except Exception:
-        pass
-    return None
+        return 0
 
 
 def main() -> int:
@@ -287,8 +282,7 @@ Examples:
             print_info(f"Total size: {size}")
 
         file_count = count_files(output_dir)
-        if file_count:
-            print_info(f"Total files: {file_count}")
+        print_info(f"Total files: {file_count}")
 
         # Verify key files
         if (output_dir / "index.html").exists() and (output_dir / "_app").is_dir():
