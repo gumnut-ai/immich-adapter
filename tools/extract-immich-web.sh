@@ -161,7 +161,18 @@ if [ -e "$OUTPUT_DIR" ]; then
         exit 1
     else
         print_info "Output directory exists, will overwrite due to --force flag"
+        # Preserve .gitkeep if it exists
+        GITKEEP_BACKUP=""
+        if [ -f "$OUTPUT_DIR/.gitkeep" ]; then
+            GITKEEP_BACKUP=$(mktemp)
+            cp "$OUTPUT_DIR/.gitkeep" "$GITKEEP_BACKUP"
+        fi
         rm -rf "$OUTPUT_DIR"
+        # Restore .gitkeep if it was backed up
+        if [ -n "$GITKEEP_BACKUP" ] && [ -f "$GITKEEP_BACKUP" ]; then
+            mkdir -p "$OUTPUT_DIR"
+            mv "$GITKEEP_BACKUP" "$OUTPUT_DIR/.gitkeep"
+        fi
     fi
 fi
 
@@ -221,7 +232,14 @@ fi
 
 # Move the contents of www to the output directory (not the www directory itself)
 print_info "Moving web files to $OUTPUT_DIR"
-mv "$TEMP_DIR/www" "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR"
+# Move all visible files and directories (e.g., index.html, _app/)
+mv "$TEMP_DIR/www/"* "$OUTPUT_DIR/"
+# Move hidden files (e.g., .well-known/) but ignore errors since:
+# 1. The .* pattern matches . and .. which can't be moved
+# 2. .gitkeep may already exist if --force was used
+# 3. There might not be any hidden files to move
+mv "$TEMP_DIR/www/".* "$OUTPUT_DIR/" 2>/dev/null || true
 
 print_info "Removing temporary container: $CONTAINER_ID"
 if ! docker rm "$CONTAINER_ID" >/dev/null 2>&1; then
@@ -249,6 +267,7 @@ if [ -f "$OUTPUT_DIR/index.html" ] && [ -d "$OUTPUT_DIR/_app" ]; then
     print_success "Verification passed: Key files found (index.html, _app/)"
 else
     print_error "Warning: Expected files may be missing"
+    exit 1
 fi
 
 print_success "Done! Container cleaned up."
