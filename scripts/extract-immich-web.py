@@ -1,10 +1,15 @@
-#!/usr/bin/env python3
-
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pathlib",
+# ]
+# ///
 """
 Script to extract web files from immich-server container.
 
-Usage: ./extract-immich-web.py [OPTIONS] <output-directory>
-Example: ./extract-immich-web.py -t release ./web-files
+Usage: ./scripts/extract-immich-web.py [OPTIONS] <output-directory>
+Example: ./scripts/extract-immich-web.py -t release ./web-files
 """
 
 import argparse
@@ -220,11 +225,12 @@ Examples:
         result = run_command(
             ["docker", "create", image_name], capture_output=True, check=False
         )
-        if result.returncode != 0 or not result.stdout.strip():
+        if result.returncode != 0 or not result.stdout or not result.stdout.strip():
             print_error("Failed to create container")
             return 1
 
         container_id = result.stdout.strip()
+        assert container_id  # Type narrowing: ensure container_id is non-empty string
         print_info(f"Container created: {container_id}")
 
         # Create temporary directory
