@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from routers.middleware.auth_middleware import AuthMiddleware
 from routers import static
+from routers.utils.spa_static_files import SPAStaticFiles
 from routers.api import (
     activities,
     admin,
@@ -100,3 +101,7 @@ app.include_router(timeline.router)
 app.include_router(trash.router)
 app.include_router(users.router)
 app.include_router(view.router)
+
+# Mount static files at root - must be last to avoid conflicts with API routes
+# Use SPAStaticFiles to serve index.html for SPA routes (e.g., /auth/login)
+app.mount("/", SPAStaticFiles(directory="static", html=True), name="staticFileHosting")
