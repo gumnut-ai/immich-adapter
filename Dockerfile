@@ -26,11 +26,6 @@ FROM python:3.12-slim AS builder
 # Version 0.9.8 released 2025-11-07
 COPY --from=ghcr.io/astral-sh/uv:0.9.8 /uv /usr/local/bin/uv
 
-# Install system dependencies needed for building Python packages
-# RUN apt-get update && apt-get install -y \
-#     build-essential \
-#     && rm -rf /var/lib/apt/lists/*
-
 # Set working directory
 WORKDIR /app
 
@@ -59,11 +54,6 @@ LABEL org.opencontainers.image.source="https://github.com/gumnut-ai/immich-adapt
 LABEL org.opencontainers.image.title="Immich Adapter"
 LABEL org.opencontainers.image.description="FastAPI server that adapts the Immich API to the Gumnut API"
 LABEL immich.version="${IMMICH_VERSION}"
-
-# Install runtime dependencies only (curl for health checks)
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#     curl \
-#     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser
