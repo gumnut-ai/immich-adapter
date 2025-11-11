@@ -30,12 +30,43 @@ The default should be good enough to get started with, but feel free to take a l
 
 ## Running the Application
 
+### Development Mode
+
 ```bash
 uv run fastapi dev --port 3001
 ```
 
 You can run the app on other ports, of course, but we picked 3001 here
 to avoid conflicting with other apps commonly run alongside `immich-adapter`.
+
+### Running with Docker
+
+Build and run the application in a Docker container:
+
+```bash
+# Build the image
+docker build -t immich-adapter .
+
+# Run the container
+docker run --rm -p 8080:8080 \
+  -e PORT=8080 \
+  -e GUMNUT_API_BASE_URL=http://host.docker.internal:8000 \
+  -e ENVIRONMENT=development \
+  immich-adapter
+```
+
+**Important:** Use `host.docker.internal` instead of `localhost` to access services running on your host machine from within the container.
+
+**Environment Variables:**
+- `PORT`: Port to bind to (default: 8080)
+- `GUMNUT_API_BASE_URL`: URL of the Gumnut API backend
+- `ENVIRONMENT`: Set to `development` or `production`
+- `LOG_LEVEL`: Log level (default: `info`, options: `debug`, `info`, `warning`, `error`)
+
+**Build with custom Immich version:**
+```bash
+docker build --build-arg IMMICH_VERSION=v2.2.2 -t immich-adapter .
+```
 
 ## Access the application
 
