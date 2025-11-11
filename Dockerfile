@@ -71,6 +71,10 @@ RUN useradd -m -u 1000 appuser
 # Set working directory
 WORKDIR /app
 
+# Copy installed dependencies from builder stage with proper ownership
+COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
+COPY --from=builder --chown=appuser:appuser /app/pyproject.toml /app/uv.lock ./
+
 # Copy application code
 COPY --chown=appuser:appuser . .
 
