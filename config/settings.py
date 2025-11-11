@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     gumnut_api_base_url: str = "http://localhost:8000"
     sentry_dsn: str | None = None
 
+    # External URL for this adapter (set to public URL in production)
+    adapter_external_url: str = "https://127.0.0.1:8001"
+
+    # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
+    oauth_mobile_redirect_uri: str = "app.immich:///oauth-callback"
+
     @field_validator("environment")
     def validate_environment(cls, v: str | None) -> str:
         if v is None or v not in ["development", "test", "production"]:

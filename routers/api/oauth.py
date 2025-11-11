@@ -16,6 +16,7 @@ from routers.immich_models import (
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 from routers.utils.oauth_utils import parse_callback_url
 from routers.utils.cookies import set_auth_cookies
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,29 @@ router = APIRouter(
     tags=["oauth"],
     responses={404: {"description": "Not found"}},
 )
+
+
+def rewrite_redirect_uri(uri: str) -> str:
+    """
+    Rewrite redirect URI to use custom scheme for mobile apps.
+
+    Some OAuth providers don't support custom URL schemes (app.immich:///).
+    This function rewrites the mobile redirect URI to use a standard HTTPS URL
+    that the adapter hosts, which then redirects back to the mobile app.
+
+    Args:
+        uri: Original redirect URI
+
+    Returns:
+        Rewritten redirect URI for mobile apps
+    """
+    settings = get_settings()
+    if uri.find(settings.oauth_mobile_redirect_uri) != -1:
+        return uri.replace(
+            settings.oauth_mobile_redirect_uri,
+            f"{settings.adapter_external_url}/api/oauth/mobile-redirect",
+        )
+    return uri
 
 
 @router.post("/authorize", status_code=201)
@@ -49,8 +73,9 @@ async def start_oauth(
         HTTPException: If backend request fails
     """
     try:
+        redirectUri = rewrite_redirect_uri(oauth_config.redirectUri)
         result = client.oauth.auth_url(
-            redirect_uri=oauth_config.redirectUri,
+            redirect_uri=redirectUri,
             code_challenge=oauth_config.codeChallenge,
             code_challenge_method="S256" if oauth_config.codeChallenge else None,
             extra_headers={"Authorization": omit},  # Omit auth for this request
@@ -191,12 +216,27 @@ async def link_oauth_account(oauth_callback: OAuthCallbackDto) -> UserAdminRespo
 
 
 @router.get("/mobile-redirect")
-async def redirect_oauth_to_mobile():
+async def redirect_oauth_to_mobile(request: Request):
     """
-    Redirect OAuth to mobile application
-    This is a stub implementation that does not perform any action.
+    Redirect OAuth to mobile application.
+
+    This endpoint is used when an OAuth provider cannot support custom URL schemes.
+    It receives the OAuth response at a standard HTTPS URL and redirects to the
+    mobile app using the configured mobile redirect URI (custom URL scheme).
     """
-    return {"message": "Redirecting to mobile app"}
+    from fastapi.responses import RedirectResponse
+
+    settings = get_settings()
+
+    # Get the query string from the request and append to mobile deep link
+    query_string = request.url.query
+    redirect_url = (
+        f"{settings.oauth_mobile_redirect_uri}?{query_string}"
+        if query_string
+        else settings.oauth_mobile_redirect_uri
+    )
+
+    return RedirectResponse(url=redirect_url)
 
 
 @router.post("/unlink")
