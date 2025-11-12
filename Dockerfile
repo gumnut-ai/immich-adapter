@@ -103,4 +103,8 @@ ENV LOG_LEVEL=info
 # Run the application with optimized uvicorn settings
 # Render sets PORT environment variable automatically (typically 10000)
 # Using exec form with shell for proper signal handling and variable substitution
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level ${LOG_LEVEL} --timeout-graceful-shutdown 60"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level ${LOG_LEVEL} \
+  --timeout-graceful-shutdown 60 \
+  --timeout-keep-alive ${TIMEOUT_KEEP_ALIVE:-75} \
+  --limit-concurrency ${LIMIT_CONCURRENCY:-1000} \
+  --backlog ${BACKLOG:-2048}"]

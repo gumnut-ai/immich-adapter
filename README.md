@@ -62,6 +62,7 @@ docker run --rm -p 8080:8080 \
 **Environment Variables:**
 - `PORT`: Port to bind to (default: 8080)
 - `GUMNUT_API_BASE_URL`: URL of the Gumnut API backend
+- `OAUTH_MOBILE_REDIRECT_URI`: Custom URL scheme for mobile app deep linking during OAuth flow (default: app.immich:///oauth-callback)
 - `ENVIRONMENT`: Set to `development` or `production`
 - `LOG_LEVEL`: Log level (default: `info`, options: `debug`, `info`, `warning`, `error`)
 
@@ -69,6 +70,29 @@ docker run --rm -p 8080:8080 \
 ```bash
 docker build --build-arg IMMICH_VERSION=v2.2.3 -t immich-adapter .
 ```
+
+### Production Mode
+
+For production deployments or when testing with mobile clients (iOS/Android), use these optimized settings:
+
+```bash
+uv run fastapi run --port 3001 \
+  --timeout-keep-alive 75 \
+  --limit-concurrency 1000 \
+  --backlog 2048
+```
+
+**Configuration Explanation:**
+
+- `--timeout-keep-alive 75`: Sets keep-alive timeout to 75 seconds (iOS-friendly, matches typical mobile client expectations)
+- `--limit-concurrency 1000`: Limits concurrent connections to prevent resource exhaustion
+- `--backlog 2048`: Sets the socket backlog queue size for pending connections (helps with bursts of rapid requests)
+
+**Why these settings matter for mobile clients:**
+
+Mobile clients (especially iOS/Flutter) often make rapid successive requests and use longer keep alive settings. The production configuration:
+- Keeps connections alive longer to enable HTTP connection reuse and prevent "Connection closed before full header was received" errors
+- Handles bursts of concurrent requests without connection queueing
 
 ## Access the application
 

@@ -211,3 +211,6 @@ __marimo__/
 static/*
 # But keep the directory itself
 !static/.gitkeep
+
+# PEM files should be ignored for security reasons
+*.pem
