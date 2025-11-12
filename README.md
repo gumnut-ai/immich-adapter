@@ -62,7 +62,6 @@ docker run --rm -p 8080:8080 \
 **Environment Variables:**
 - `PORT`: Port to bind to (default: 8080)
 - `GUMNUT_API_BASE_URL`: URL of the Gumnut API backend
-- `ADAPTER_EXTERNAL_URL`: The public URL where this adapter is accessible
 - `OAUTH_MOBILE_REDIRECT_URI`: Custom URL scheme for mobile app deep linking during OAuth flow (default: app.immich:///oauth-callback)
 - `ENVIRONMENT`: Set to `development` or `production`
 - `LOG_LEVEL`: Log level (default: `info`, options: `debug`, `info`, `warning`, `error`)

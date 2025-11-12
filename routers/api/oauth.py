@@ -28,7 +28,7 @@ router = APIRouter(
 )
 
 
-def rewrite_redirect_uri(uri: str) -> str:
+def rewrite_redirect_uri(uri: str, request: Request) -> str:
     """
     Rewrite redirect URI to use custom scheme for mobile apps.
 
@@ -43,17 +43,17 @@ def rewrite_redirect_uri(uri: str) -> str:
         Rewritten redirect URI for mobile apps
     """
     settings = get_settings()
-    if uri.find(settings.oauth_mobile_redirect_uri) != -1:
-        return uri.replace(
-            settings.oauth_mobile_redirect_uri,
-            f"{settings.adapter_external_url}/api/oauth/mobile-redirect",
-        )
+    mobile_scheme = settings.oauth_mobile_redirect_uri
+    if uri == mobile_scheme:
+        # Build an absolute URL based on the current request's scheme/host
+        return str(request.url_for("redirect_oauth_to_mobile"))
     return uri
 
 
 @router.post("/authorize", status_code=201)
 async def start_oauth(
     oauth_config: OAuthConfigDto,
+    request: Request,
     client: Gumnut = Depends(get_unauthenticated_gumnut_client),
 ) -> OAuthAuthorizeResponseDto:
     """
@@ -73,7 +73,7 @@ async def start_oauth(
         HTTPException: If backend request fails
     """
     try:
-        redirectUri = rewrite_redirect_uri(oauth_config.redirectUri)
+        redirectUri = rewrite_redirect_uri(oauth_config.redirectUri, request)
         result = client.oauth.auth_url(
             redirect_uri=redirectUri,
             code_challenge=oauth_config.codeChallenge,
