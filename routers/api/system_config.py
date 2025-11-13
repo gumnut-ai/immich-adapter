@@ -242,7 +242,7 @@ async def get_config() -> SystemConfigDto:
     notifications_config = SystemConfigNotificationsDto(smtp=smtp_config)
 
     oauth_config = SystemConfigOAuthDto(
-        autoLaunch=False,
+        autoLaunch=True,
         autoRegister=True,
         buttonText="Login with OAuth",
         clientId="",

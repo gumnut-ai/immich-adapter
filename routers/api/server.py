@@ -38,7 +38,7 @@ fake_features = {
     "search": True,
     "trash": True,
     "oauth": True,
-    "oauthAutoLaunch": False,
+    "oauthAutoLaunch": True,
     "passwordLogin": True,
     "configFile": False,
     "email": False,
