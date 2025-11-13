@@ -36,8 +36,8 @@ def rewrite_redirect_uri(uri: str, request: Request) -> str:
     This function rewrites the mobile redirect URI to use a standard HTTPS URL
     that the adapter hosts, which then redirects back to the mobile app.
 
-    Handles reverse proxy scenarios (like Render) by checking X-Forwarded-* headers
-    to build the correct public URL. Uses the request's URL if not behind a proxy.
+    Handles reverse proxy scenarios (like Render) by checking X-Forwarded-Proto header
+    to build the correct public URL with protocol. Uses the request's URL if not behind a proxy.
 
     Args:
         uri: Original redirect URI
@@ -55,17 +55,14 @@ def rewrite_redirect_uri(uri: str, request: Request) -> str:
 
         # Check for reverse proxy headers (e.g., from Render, nginx, etc.)
         forwarded_proto = request.headers.get("x-forwarded-proto")
-        forwarded_host = request.headers.get("x-forwarded-host")
-        logger.info(f"Rewriting redirect URI, forwarded_proto={forwarded_proto}, forwarded_host={forwarded_host}")
 
-        if forwarded_proto and forwarded_host:
+        if forwarded_proto:
             # Take the first value if multiple are present, and normalize
             proto = forwarded_proto.split(",")[0].strip().lower()
-            host = forwarded_host.split(",")[0].strip()
 
             # Only allow expected schemes; fall back otherwise
-            if proto in {"http", "https"} and host:
-                return str(url.replace(scheme=proto, netloc=host))
+            if proto in {"http", "https"}:
+                return str(url.replace(scheme=proto))
 
         # Default: no trusted proxy info available; use the app-built absolute URL
         return str(url)
