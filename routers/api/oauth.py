@@ -56,6 +56,7 @@ def rewrite_redirect_uri(uri: str, request: Request) -> str:
         # Check for reverse proxy headers (e.g., from Render, nginx, etc.)
         forwarded_proto = request.headers.get("x-forwarded-proto")
         forwarded_host = request.headers.get("x-forwarded-host")
+        logger.info(f"Rewriting redirect URI, forwarded_proto={forwarded_proto}, forwarded_host={forwarded_host}")
 
         if forwarded_proto and forwarded_host:
             # Take the first value if multiple are present, and normalize
