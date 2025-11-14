@@ -72,7 +72,10 @@ def fetch_spec(spec_path: str) -> tuple[str, bool, str | None]:
             tag_or_branch = ref
         elif "raw.githubusercontent.com" in parsed.netloc:
             # Only extract tag/branch from URL path if we have an immich-app repo URL
-            match = re.search(r"raw\.githubusercontent\.com\/immich-app\/immich\/([^\/]+)\/open-api\/immich-openapi-specs\.json", spec_path)
+            match = re.search(
+                r"raw\.githubusercontent\.com\/immich-app\/immich\/([^\/]+)\/open-api\/immich-openapi-specs\.json",
+                spec_path,
+            )
             if match:
                 tag_or_branch = match.group(1)
 
@@ -144,7 +147,7 @@ def main(immich_spec: str, output: str, verbose: bool):
 
         # Create custom header that replicates datamodel-codegen format
         timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        filename = f"From URL" if is_temp_file else Path(spec_file).name
+        filename = "From URL" if is_temp_file else Path(spec_file).name
 
         # Build header lines
         header_lines = [
