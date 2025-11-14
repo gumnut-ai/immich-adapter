@@ -53,6 +53,7 @@ async def get_all_jobs_status() -> AllJobStatusResponseDto:
         metadataExtraction=fake_status,
         migration=fake_status,
         notifications=fake_status,
+        ocr=fake_status,
         search=fake_status,
         sidecar=fake_status,
         smartSearch=fake_status,
