@@ -124,7 +124,7 @@ uv run tools/generate_immich_models.py
 
 # Generate from Immich repository URL with tag substitution - see below
 uv run tools/generate_immich_models.py \
-  --immich-spec https://raw.githubusercontent.com/immich-app/immich/main/open-api/immich-openapi-specs.json
+  --immich-spec https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json
 
 # Custom output location
 uv run tools/generate_immich_models.py \
