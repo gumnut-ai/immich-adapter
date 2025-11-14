@@ -17,6 +17,7 @@ It can fetch from URLs or local files and outputs comprehensive type-safe models
 """
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -59,13 +60,13 @@ def fetch_spec(spec_path: str) -> tuple[str, bool]:
     parsed = urlparse(spec_path)
     if parsed.scheme in ("http", "https"):
         # Handle GitHub raw URLs
-        if "github.com" in parsed.netloc and "/blob/main/" in spec_path:
-            # Convert GitHub blob URL to raw URL
+        if "github.com" in parsed.netloc and "/blob/" in spec_path:
             spec_path = spec_path.replace("github.com", "raw.githubusercontent.com")
-            # Use container tag from .immich-container-tag file (e.g., "v2.2.2")
+
+            # normalize any `/blob/<ref>/` to use the container tag (or main)
             container_tag = get_container_tag()
-            replacement = f"/{container_tag}/" if container_tag else "/main/"
-            spec_path = spec_path.replace("/blob/main/", replacement)
+            ref = container_tag or "main"
+            spec_path = re.sub(r"/blob/[^/]+/", f"/{ref}/", spec_path)
 
         try:
             print(f"Fetching spec from: {spec_path}")
