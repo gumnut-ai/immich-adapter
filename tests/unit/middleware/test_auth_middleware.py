@@ -62,6 +62,17 @@ class TestAuthMiddleware:
         assert data["jwt_token"] == "mobile-jwt-token-123"
         assert data["is_web_client"] is False
 
+    def test_mobile_client_with_immich_user_token(self, client):
+        """Test that mobile client with x-immich-user-token header is handled correctly."""
+        headers = {"x-immich-user-token": "immich-mobile-token-789"}
+
+        response = client.get("/api/test/protected", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["jwt_token"] == "immich-mobile-token-789"
+        assert data["is_web_client"] is False
+
     def test_web_client_with_cookie(self, client):
         """Test that web client with cookie is handled correctly."""
         client.cookies = {"immich_access_token": "web-jwt-token-456"}
@@ -105,6 +116,32 @@ class TestAuthMiddleware:
         assert data["jwt_token"] == "header-token-123"
         assert data["is_web_client"] is False
 
+    def test_bearer_takes_precedence_over_immich_user_token(self, client):
+        """Test that Authorization Bearer header takes precedence over x-immich-user-token."""
+        headers = {
+            "Authorization": "Bearer bearer-token-123",
+            "x-immich-user-token": "immich-token-456",
+        }
+
+        response = client.get("/api/test/protected", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["jwt_token"] == "bearer-token-123"
+        assert data["is_web_client"] is False
+
+    def test_immich_user_token_takes_precedence_over_cookie(self, client):
+        """Test that x-immich-user-token header takes precedence over cookie."""
+        headers = {"x-immich-user-token": "immich-token-789"}
+        client.cookies = {"immich_access_token": "cookie-token-456"}
+
+        response = client.get("/api/test/protected", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["jwt_token"] == "immich-token-789"
+        assert data["is_web_client"] is False
+
     def test_unauthenticated_paths_bypass_auth(self, client):
         """Test that unauthenticated paths bypass authentication middleware."""
         response = client.get("/api/oauth/login")
@@ -127,8 +164,20 @@ class TestAuthMiddleware:
         assert "x-new-access-token" not in response.headers
 
     def test_token_refresh_for_mobile_client(self, client):
-        """Test token refresh handling for mobile client."""
+        """Test token refresh handling for mobile client with Bearer token."""
         headers = {"Authorization": "Bearer old-mobile-token"}
+
+        response = client.get("/api/test/refresh", headers=headers)
+
+        assert response.status_code == 200
+        # Check that refresh header is preserved for mobile client
+        assert response.headers["x-new-access-token"] == "new-jwt-token-123"
+        # Check that no cookie was set
+        assert "immich_access_token" not in response.cookies
+
+    def test_token_refresh_for_immich_mobile_client(self, client):
+        """Test token refresh handling for mobile client with x-immich-user-token."""
+        headers = {"x-immich-user-token": "old-immich-mobile-token"}
 
         response = client.get("/api/test/refresh", headers=headers)
 

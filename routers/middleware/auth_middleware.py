@@ -30,7 +30,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
     UNAUTHENTICATED_PATHS = {
         "/api/oauth/authorize",
         "/api/oauth/callback",
+        "/api/oauth/mobile-redirect",
         "/api/auth/login",
+        "/api/server/ping",
     }
 
     def __init__(self, app: ASGIApp):
@@ -60,10 +62,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         jwt_token = None
         is_web_client = False
 
-        # Check for Authorization header (mobile client)
+        # Check for Authorization header (standard Bearer token)
         auth_header = request.headers.get(self.AUTH_HEADER)
         if auth_header and auth_header.lower().startswith("bearer "):
             jwt_token = auth_header[7:]  # Remove "Bearer " prefix
+            is_web_client = False
+        # Check for Immich mobile client custom header
+        elif "x-immich-user-token" in request.headers:
+            jwt_token = request.headers.get("x-immich-user-token")
             is_web_client = False
         # Check for cookie (web client)
         elif self.COOKIE_NAME in request.cookies:
@@ -75,6 +81,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 extra={
                     "path": path,
                     "cookies": list(request.cookies.keys()),
+                    "headers": dict(request.headers),
                 },
             )
 
