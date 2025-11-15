@@ -81,7 +81,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 extra={
                     "path": path,
                     "cookies": list(request.cookies.keys()),
-                    "headers": dict(request.headers),
                 },
             )
 
