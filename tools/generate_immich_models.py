@@ -30,7 +30,7 @@ import requests
 import yaml
 
 
-def get_container_tag() -> str | None:
+def get_container_tag() -> str:
     """
     Read the Immich container tag from .immich-container-tag file.
 
@@ -41,10 +41,18 @@ def get_container_tag() -> str | None:
         tag_file = Path(".immich-container-tag")
         if tag_file.exists():
             content = tag_file.read_text().strip()
-            return content if content else None
-        return None
+            if content:
+                return content
     except Exception:
-        return None
+        pass
+
+    # Quit since the .immich-container-tag file is missing or unreadable
+    print(
+        "Error: .immich-container-tag file is missing or unreadable. "
+        "Please ensure it exists and contains the Immich container tag.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def fetch_spec(spec_path: str) -> tuple[str, bool, str | None]:
