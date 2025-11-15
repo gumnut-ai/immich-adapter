@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Response
+from gumnut import Gumnut
 from uuid import UUID, uuid4
 from typing import List
+import logging
 
 from routers.immich_models import (
     AlbumsResponse,
@@ -31,6 +33,11 @@ from routers.immich_models import (
     LicenseResponseDto,
     LicenseKeyDto,
 )
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.error_mapping import map_gumnut_error
+from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/users",
@@ -90,12 +97,53 @@ userPreferencesResponse: UserPreferencesResponseDto = UserPreferencesResponseDto
 
 
 @router.get("/me")
-async def get_my_user() -> UserAdminResponseDto:
+async def get_my_user(
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> UserAdminResponseDto:
     """
-    Get current user details.
-    This is a stub implementation that returns fake user data.
+    Get current user details from Gumnut backend.
+
+    Fetches the authenticated user's information and converts it to Immich's
+    UserAdminResponseDto format.
     """
-    return userAdminResponse
+    try:
+        # Fetch user from Gumnut backend
+        user = client.users.me()
+
+        # Map Gumnut UserResponse to Immich UserAdminResponseDto
+        # Combine first_name and last_name into Immich's single "name" field
+        # Need to include fall back to "User" as names are not required in Gumnut or from OAuth sources
+        first_name = user.first_name or ""
+        last_name = user.last_name or ""
+        full_name = f"{first_name} {last_name}".strip() or "User"
+
+        # Convert Gumnut user ID to UUID
+        user_uuid = safe_uuid_from_user_id(user.id)
+
+        return UserAdminResponseDto(
+            id=str(user_uuid),
+            email=user.email or "",
+            name=full_name,
+            isAdmin=user.is_superuser,
+            createdAt=user.created_at,
+            updatedAt=user.updated_at,
+            # Immich-specific fields with sensible defaults
+            avatarColor=UserAvatarColor.primary,
+            profileImagePath="",
+            shouldChangePassword=False,
+            status=UserStatus.active if user.is_active else UserStatus.deleted,
+            storageLabel="",
+            quotaSizeInBytes=0,
+            quotaUsageInBytes=0,
+            deletedAt=None,
+            oauthId="",
+            profileChangedAt=user.updated_at,
+            license=None,
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to fetch user from Gumnut: {e}")
+        raise map_gumnut_error(e, "Failed to fetch user details")
 
 
 @router.put("/me")
