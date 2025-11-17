@@ -11,11 +11,13 @@ from routers.immich_models import (
     UserAdminResponseDto,
     UserAvatarColor,
     UserLicense,
+    UserResponseDto,
     UserStatus,
 )
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 from routers.utils.oauth_utils import parse_callback_url
 from routers.utils.cookies import set_auth_cookies
+from routers.utils.current_user import get_current_user
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -203,7 +205,10 @@ async def finish_oauth(
 
 
 @router.post("/link")
-async def link_oauth_account(oauth_callback: OAuthCallbackDto) -> UserAdminResponseDto:
+async def link_oauth_account(
+    oauth_callback: OAuthCallbackDto,
+    current_user: UserResponseDto = Depends(get_current_user),
+) -> UserAdminResponseDto:
     """
     Link OAuth account to existing user
     This is a stub implementation that returns a fake user response.
@@ -213,15 +218,15 @@ async def link_oauth_account(oauth_callback: OAuthCallbackDto) -> UserAdminRespo
         avatarColor=UserAvatarColor.primary,
         createdAt=now,
         deletedAt=now,
-        email="ted@immich.test",
-        id="d6773835-4b91-4c7d-8667-26bd5daa1a45",
+        email=current_user.email,
+        id=str(current_user.id),
         isAdmin=True,
         license=UserLicense(
             activatedAt=now,
             activationKey="dummy-activation-key",
             licenseKey="dummy-license-key",
         ),
-        name="Ted Mao",
+        name=current_user.name,
         oauthId="oauth-123456",
         profileChangedAt=now,
         profileImagePath="",
@@ -259,7 +264,9 @@ async def redirect_oauth_to_mobile(request: Request):
 
 
 @router.post("/unlink")
-async def unlink_oauth_account() -> UserAdminResponseDto:
+async def unlink_oauth_account(
+    current_user: UserResponseDto = Depends(get_current_user),
+) -> UserAdminResponseDto:
     """
     Unlink OAuth account from user
     This is a stub implementation that returns a fake user response.
@@ -269,15 +276,15 @@ async def unlink_oauth_account() -> UserAdminResponseDto:
         avatarColor=UserAvatarColor.primary,
         createdAt=now,
         deletedAt=now,
-        email="ted@immich.test",
-        id="d6773835-4b91-4c7d-8667-26bd5daa1a45",
+        email=current_user.email,
+        id=str(current_user.id),
         isAdmin=True,
         license=UserLicense(
             activatedAt=now,
             activationKey="dummy-activation-key",
             licenseKey="dummy-license-key",
         ),
-        name="Ted Mao",
+        name=current_user.name,
         oauthId="",
         profileChangedAt=now,
         profileImagePath="",

@@ -47,7 +47,9 @@ class TestGetMyUser:
         assert result.id == str(test_uuid)
         assert result.email == "test@example.com"
         assert result.name == "John Doe"
-        assert result.isAdmin is False
+        assert (
+            result.isAdmin is True
+        )  # Always True - Immich admin status is not like Gumnut superuser
         assert result.createdAt == datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         assert result.updatedAt == datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -56,9 +58,9 @@ class TestGetMyUser:
         assert result.profileImagePath == ""
         assert result.shouldChangePassword is False
         assert result.status == UserStatus.active
-        assert result.storageLabel == ""
-        assert result.quotaSizeInBytes == 0
-        assert result.quotaUsageInBytes == 0
+        assert result.storageLabel == "admin"  # Default storage label
+        assert result.quotaSizeInBytes == 1024 * 1024 * 1024 * 100  # 100GB default
+        assert result.quotaUsageInBytes == 1024 * 1024 * 1024  # 1GB default
 
     @pytest.mark.anyio
     async def test_get_my_user_admin(self):

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import List
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from routers.immich_models import (
     AssetIdsDto,
     AssetIdsResponseDto,
@@ -11,6 +11,7 @@ from routers.immich_models import (
     SharedLinkResponseDto,
     SharedLinkType,
 )
+from routers.utils.current_user import get_current_user_id
 
 
 router = APIRouter(
@@ -32,7 +33,10 @@ async def get_all_shared_links(
 
 
 @router.post("", status_code=201)
-async def create_shared_link(request: SharedLinkCreateDto) -> SharedLinkResponseDto:
+async def create_shared_link(
+    request: SharedLinkCreateDto,
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> SharedLinkResponseDto:
     """
     Create a shared link
     This is a stub implementation that returns a fake shared link response.
@@ -53,7 +57,7 @@ async def create_shared_link(request: SharedLinkCreateDto) -> SharedLinkResponse
         slug="dummy-slug",
         token="dummy-token",
         type=SharedLinkType.INDIVIDUAL,
-        userId="d6773835-4b91-4c7d-8667-26bd5daa1a45",
+        userId=str(current_user_id),
     )
 
 
@@ -63,6 +67,7 @@ async def get_my_shared_link(
     token: str = Query(default=None),
     key: str = Query(default=None),
     slug: str = Query(default=None),
+    current_user_id: UUID = Depends(get_current_user_id),
 ) -> SharedLinkResponseDto:
     """
     Get my shared link
@@ -77,19 +82,22 @@ async def get_my_shared_link(
         createdAt=now,
         description="My shared link",
         expiresAt=now,
-        id="d6773835-4b91-4c7d-8667-26bd5daa1a45",
+        id=str(current_user_id),
         key=key or "dummy-key",
         password="",
         showMetadata=True,
         slug=slug or "dummy-slug",
         token=token or "dummy-token",
         type=SharedLinkType.INDIVIDUAL,
-        userId="d6773835-4b91-4c7d-8667-26bd5daa1a45",
+        userId=str(current_user_id),
     )
 
 
 @router.get("/{id}")
-async def get_shared_link_by_id(id: UUID) -> SharedLinkResponseDto:
+async def get_shared_link_by_id(
+    id: UUID,
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> SharedLinkResponseDto:
     """
     Get a shared link by ID
     This is a stub implementation that returns a fake shared link response.
@@ -110,13 +118,15 @@ async def get_shared_link_by_id(id: UUID) -> SharedLinkResponseDto:
         slug="dummy-slug",
         token="dummy-token",
         type=SharedLinkType.INDIVIDUAL,
-        userId="d6773835-4b91-4c7d-8667-26bd5daa1a45",
+        userId=str(current_user_id),
     )
 
 
 @router.patch("/{id}")
 async def update_shared_link(
-    id: UUID, request: SharedLinkEditDto
+    id: UUID,
+    request: SharedLinkEditDto,
+    current_user_id: UUID = Depends(get_current_user_id),
 ) -> SharedLinkResponseDto:
     """
     Update a shared link
@@ -138,7 +148,7 @@ async def update_shared_link(
         slug="dummy-slug",
         token="dummy-token",
         type=SharedLinkType.INDIVIDUAL,
-        userId="d6773835-4b91-4c7d-8667-26bd5daa1a45",
+        userId=str(current_user_id),
     )
 
 

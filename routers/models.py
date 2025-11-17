@@ -51,7 +51,7 @@ class ImmichStackSummary(BaseModel):
 class ImmichAsset(BaseModel):
     id: UUID
     deviceAssetId: str
-    ownerId: str = "d6773835-4b91-4c7d-8667-26bd5daa1a45"  # TODO: placeholder
+    ownerId: str  # Populated by dependency injection
     deviceId: str
     libraryId: str | None = None
     type: str
@@ -187,7 +187,7 @@ class ImmichStack(BaseModel):
 #         albumThumbnailAssetId=album_cover_asset_id,
 #         createdAt=album.created_at,
 #         updatedAt=album.updated_at,
-#         ownerId=UUID("d6773835-4b91-4c7d-8667-26bd5daa1a45"),  # TODO: placeholder
+#         ownerId=...,  # Populated by dependency injection
 #         owner=None,
 #         albumUsers=[],
 #         shared=False,

@@ -7,6 +7,7 @@ from gumnut import Gumnut
 
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
+from routers.utils.current_user import get_current_user
 from routers.immich_models import (
     AlbumResponseDto,
     BulkIdResponseDto,
@@ -20,6 +21,7 @@ from routers.immich_models import (
     UpdateAlbumUserDto,
     AddUsersDto,
     Error2,
+    UserResponseDto,
 )
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
@@ -43,6 +45,7 @@ async def get_all_albums(
     asset_id: Annotated[UUID | SkipJsonSchema[None], Query(alias="assetId")] = None,
     shared: Annotated[bool | SkipJsonSchema[None], Query(alias="shared")] = None,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> List[AlbumResponseDto]:
     """
     Fetch albums from Gumnut and convert to AlbumResponseDto format.
@@ -62,7 +65,9 @@ async def get_all_albums(
 
         # Convert Gumnut albums to AlbumResponseDto format
         immich_albums = [
-            convert_gumnut_album_to_immich(album, asset_count=album.asset_count)
+            convert_gumnut_album_to_immich(
+                album, current_user, asset_count=album.asset_count
+            )
             for album in gumnut_albums
         ]
 
@@ -109,6 +114,7 @@ async def get_album_info(
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> AlbumResponseDto:
     """
     Fetch a specific album from Gumnut and convert to AlbumResponseDto format.
@@ -138,7 +144,9 @@ async def get_album_info(
         if not withoutAssets and gumnut_assets:
             for gumnut_asset in gumnut_assets:
                 try:
-                    immich_asset = convert_gumnut_asset_to_immich(gumnut_asset)
+                    immich_asset = convert_gumnut_asset_to_immich(
+                        gumnut_asset, current_user
+                    )
                     immich_assets.append(immich_asset)
                 except Exception as convert_error:
                     logger.warning(
@@ -148,6 +156,7 @@ async def get_album_info(
         # Convert Gumnut album to AlbumResponseDto format using utility function
         immich_album = convert_gumnut_album_to_immich(
             gumnut_album,
+            current_user,
             assets=immich_assets,
             asset_count=gumnut_album.asset_count,
         )
@@ -162,6 +171,7 @@ async def get_album_info(
 async def create_album(
     request: CreateAlbumDto,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> AlbumResponseDto:
     """
     Create a new album using the Gumnut SDK.
@@ -179,7 +189,9 @@ async def create_album(
         )
 
         # Convert Gumnut album to AlbumResponseDto format using utility function
-        immich_album = convert_gumnut_album_to_immich(gumnut_album, asset_count=0)
+        immich_album = convert_gumnut_album_to_immich(
+            gumnut_album, current_user, asset_count=0
+        )
 
         return immich_album
 
@@ -267,6 +279,7 @@ async def update_album(
     id: UUID,
     request: UpdateAlbumDto,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> AlbumResponseDto:
     """
     Update an album using the Gumnut SDK.
@@ -299,7 +312,9 @@ async def update_album(
             updated_album = current_album
 
         # Convert Gumnut album to AlbumResponseDto format using utility function
-        immich_album = convert_gumnut_album_to_immich(updated_album, asset_count=0)
+        immich_album = convert_gumnut_album_to_immich(
+            updated_album, current_user, asset_count=0
+        )
 
         return immich_album
 

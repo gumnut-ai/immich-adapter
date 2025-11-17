@@ -347,7 +347,9 @@ class TestUpdateAsset:
     """Test the update_asset endpoint."""
 
     @pytest.mark.anyio
-    async def test_update_asset_success(self, sample_gumnut_asset, sample_uuid):
+    async def test_update_asset_success(
+        self, sample_gumnut_asset, sample_uuid, mock_current_user
+    ):
         """Test successful asset update (calls get_asset_info)."""
         # Setup - create mock client
         mock_client = Mock()
@@ -356,7 +358,9 @@ class TestUpdateAsset:
         request = UpdateAssetDto(isFavorite=True)
 
         # Execute
-        result = await update_asset(sample_uuid, request, client=mock_client)
+        result = await update_asset(
+            sample_uuid, request, client=mock_client, current_user=mock_current_user
+        )
 
         # Assert
         # Should return a converted AssetResponseDto from get_asset_info
@@ -369,14 +373,18 @@ class TestGetAssetInfo:
     """Test the get_asset_info endpoint."""
 
     @pytest.mark.anyio
-    async def test_get_asset_info_success(self, sample_gumnut_asset, sample_uuid):
+    async def test_get_asset_info_success(
+        self, sample_gumnut_asset, sample_uuid, mock_current_user
+    ):
         """Test successful retrieval of asset info."""
         # Setup - create mock client
         mock_client = Mock()
         mock_client.assets.retrieve.return_value = sample_gumnut_asset
 
         # Execute
-        result = await get_asset_info(sample_uuid, client=mock_client)
+        result = await get_asset_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
 
         # Assert
         # Result should be a real AssetResponseDto from conversion
@@ -385,7 +393,7 @@ class TestGetAssetInfo:
         mock_client.assets.retrieve.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_get_asset_info_not_found(self, sample_uuid):
+    async def test_get_asset_info_not_found(self, sample_uuid, mock_current_user):
         """Test handling of asset not found."""
         # Setup - create mock client
         mock_client = Mock()
@@ -393,7 +401,9 @@ class TestGetAssetInfo:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await get_asset_info(sample_uuid, client=mock_client)
+            await get_asset_info(
+                sample_uuid, client=mock_client, current_user=mock_current_user
+            )
 
         assert exc_info.value.status_code == 404
 

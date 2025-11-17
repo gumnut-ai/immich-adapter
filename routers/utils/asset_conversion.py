@@ -8,14 +8,13 @@ to the Immich API format, including EXIF data processing.
 from datetime import datetime, timezone
 
 from gumnut.types.asset_response import AssetResponse
-from routers.api.auth import get_current_user_id
 from routers.immich_models import (
     AssetResponseDto,
     AssetTypeEnum,
     AssetVisibility,
     ExifResponseDto,
+    UserResponseDto,
 )
-from routers.utils.create_user_response import create_user_response_dto
 from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
 from routers.utils.person_conversion import convert_gumnut_person_to_immich_with_faces
 
@@ -81,6 +80,10 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
             time_zone = "Etc/UTC"
             date_time_original = date_time_original.replace(tzinfo=timezone.utc)
 
+    # Handle timezone for modify_date as well
+    if modify_date is not None and modify_date.tzname() is None:
+        modify_date = modify_date.replace(tzinfo=timezone.utc)
+
     return ExifResponseDto(
         # Image dimensions
         exifImageWidth=int(float(width)) if width else None,
@@ -113,12 +116,15 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     )
 
 
-def convert_gumnut_asset_to_immich(gumnut_asset: AssetResponse) -> AssetResponseDto:
+def convert_gumnut_asset_to_immich(
+    gumnut_asset: AssetResponse, current_user: UserResponseDto
+) -> AssetResponseDto:
     """
     Convert a Gumnut asset to AssetResponseDto format with comprehensive EXIF processing.
 
     Args:
         gumnut_asset: The Gumnut AssetResponse object
+        current_user: The current user's UserResponseDto
 
     Returns:
         AssetResponseDto object with processed data and EXIF information
@@ -192,8 +198,8 @@ def convert_gumnut_asset_to_immich(gumnut_asset: AssetResponse) -> AssetResponse
         isOffline=False,
         isTrashed=False,
         originalPath=f"/gumnut/assets/{asset_id}",
-        ownerId=str(get_current_user_id()),
-        owner=create_user_response_dto(),
+        ownerId=current_user.id,
+        owner=current_user,
         thumbhash="",
         visibility=AssetVisibility.timeline,
         people=people,

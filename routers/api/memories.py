@@ -1,10 +1,10 @@
 from typing import List
 from uuid import UUID
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from routers.api.auth import get_current_user_id
+from routers.utils.current_user import get_current_user_id
 from routers.immich_models import (
     BulkIdResponseDto,
     BulkIdsDto,
@@ -40,7 +40,9 @@ async def search_memories(
 
 
 @router.post("", status_code=201)
-async def create_memory(request: MemoryCreateDto) -> MemoryResponseDto:
+async def create_memory(
+    request: MemoryCreateDto, current_user_id: UUID = Depends(get_current_user_id)
+) -> MemoryResponseDto:
     """
     Create a new memory.
     This is a stub implementation that returns a fake memory response.
@@ -52,7 +54,7 @@ async def create_memory(request: MemoryCreateDto) -> MemoryResponseDto:
         data=OnThisDayDto(year=2024),
         isSaved=False,
         memoryAt=datetime.now(tz=ZoneInfo("Etc/UTC")),
-        ownerId=str(get_current_user_id()),
+        ownerId=str(current_user_id),
         type=MemoryType.on_this_day,
         updatedAt=datetime.now(tz=ZoneInfo("Etc/UTC")),
     )
@@ -73,7 +75,9 @@ async def memories_statistics(
 
 
 @router.get("/{id}")
-async def get_memory(id: UUID) -> MemoryResponseDto:
+async def get_memory(
+    id: UUID, current_user_id: UUID = Depends(get_current_user_id)
+) -> MemoryResponseDto:
     """
     Get a memory by ID.
     This is a stub implementation that returns a fake memory response.
@@ -85,14 +89,18 @@ async def get_memory(id: UUID) -> MemoryResponseDto:
         data=OnThisDayDto(year=2024),
         isSaved=False,
         memoryAt=datetime.now(tz=ZoneInfo("Etc/UTC")),
-        ownerId=str(get_current_user_id()),
+        ownerId=str(current_user_id),
         type=MemoryType.on_this_day,
         updatedAt=datetime.now(tz=ZoneInfo("Etc/UTC")),
     )
 
 
 @router.put("/{id}")
-async def update_memory(id: UUID, request: MemoryUpdateDto) -> MemoryResponseDto:
+async def update_memory(
+    id: UUID,
+    request: MemoryUpdateDto,
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> MemoryResponseDto:
     """
     Update a memory.
     This is a stub implementation that returns a fake memory response.
@@ -104,7 +112,7 @@ async def update_memory(id: UUID, request: MemoryUpdateDto) -> MemoryResponseDto
         data=OnThisDayDto(year=2024),
         isSaved=request.isSaved or False,
         memoryAt=request.memoryAt or datetime.now(tz=ZoneInfo("Etc/UTC")),
-        ownerId=str(get_current_user_id()),
+        ownerId=str(current_user_id),
         type=MemoryType.on_this_day,
         updatedAt=datetime.now(tz=ZoneInfo("Etc/UTC")),
     )

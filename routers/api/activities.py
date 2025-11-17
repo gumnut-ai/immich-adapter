@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+from routers.utils.current_user import get_current_user
 from routers.immich_models import (
     ActivityCreateDto,
     ActivityResponseDto,
@@ -37,23 +38,26 @@ async def get_activities(
 
 
 @router.post("", status_code=201)
-async def create_activity(request: ActivityCreateDto) -> ActivityResponseDto:
+async def create_activity(
+    request: ActivityCreateDto,
+    current_user: UserResponseDto = Depends(get_current_user),
+) -> ActivityResponseDto:
     """
     Create a new activity.
     This is a stub implementation that returns a fake activity response.
     """
     now = datetime.now(timezone.utc)
     return ActivityResponseDto(
-        assetId="d6773835-4b91-4c7d-8667-26bd5daa1a45",
+        assetId=str(current_user.id),
         comment="Test activity comment",
         createdAt=now,
         id="activity-id-123",
         type=ReactionType.comment,
         user=UserResponseDto(
             avatarColor=UserAvatarColor.primary,
-            email="ted@immich.test",
-            id="d6773835-4b91-4c7d-8667-26bd5daa1a45",
-            name="Ted Mao",
+            email=current_user.email,
+            id=str(current_user.id),
+            name=current_user.name,
             profileChangedAt=now,
             profileImagePath="",
         ),
