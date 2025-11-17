@@ -122,9 +122,9 @@ The `generate_immich_models.py` tool generates type-safe Pydantic v2 models from
 # Generate models from local file (default: immich.json)
 uv run tools/generate_immich_models.py
 
-# Generate from Immich repository URL
+# Generate from Immich repository URL with tag substitution - see below
 uv run tools/generate_immich_models.py \
-  --immich-spec https://raw.githubusercontent.com/immich-app/immich/main/open-api/immich-openapi-specs.json
+  --immich-spec https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json
 
 # Custom output location
 uv run tools/generate_immich_models.py \
@@ -150,6 +150,17 @@ async def get_features() -> ServerFeaturesDto:
 ```
 
 Always run linting and formatting on the generated model file before committing; the script will not do this by itself.
+
+#### Tag Substitution
+
+When fetching the OpenAPI spec from a GitHub URL, the generator automatically substitutes the Immich version tag from the `.immich-container-tag` file. This ensures the generated models match the specific Immich version you're targeting.
+
+**How it works:**
+
+- When using a GitHub blob URL like `https://github.com/immich-app/immich/blob/main/...`, the generator reads `.immich-container-tag` (e.g., containing `v2.2.2`)
+- It converts the URL to use the raw GitHub URL with the specific tag: `https://raw.githubusercontent.com/immich-app/immich/v2.2.2/...`
+- The generated file includes a comment header showing which version was used
+- If `.immich-container-tag` is missing or empty, it falls back to using `/main/` in the URL
 
 ### API Compatibility Tool
 

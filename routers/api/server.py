@@ -42,6 +42,7 @@ fake_features = {
     "passwordLogin": True,
     "configFile": False,
     "email": False,
+    "ocr": False,
 }
 
 fake_config = {

@@ -11,7 +11,9 @@ from routers.immich_models import (
     ImageFormat,
     JobSettingsDto,
     LogLevel,
+    MachineLearningAvailabilityChecksDto,
     OAuthTokenEndpointAuthMethod,
+    OcrConfig,
     SystemConfigBackupsDto,
     SystemConfigDto,
     SystemConfigFFmpegDto,
@@ -74,6 +76,7 @@ async def get_config() -> SystemConfigDto:
         password="",
         port=587,
         username="",
+        secure=False,
     )
 
     # Level 2 - Second level DTOs
@@ -94,6 +97,7 @@ async def get_config() -> SystemConfigDto:
     job_settings_smart = JobSettingsDto(concurrency=2)
     job_settings_thumb = JobSettingsDto(concurrency=5)
     job_settings_video = JobSettingsDto(concurrency=1)
+    job_settings_ocr = JobSettingsDto(concurrency=1)
 
     fullsize_image = SystemConfigGeneratedFullsizeImageDto(
         enabled=True,
@@ -200,6 +204,7 @@ async def get_config() -> SystemConfigDto:
         smartSearch=job_settings_smart,
         thumbnailGeneration=job_settings_thumb,
         videoConversion=job_settings_video,
+        ocr=job_settings_ocr,
     )
 
     library_config = SystemConfigLibraryDto(
@@ -212,12 +217,26 @@ async def get_config() -> SystemConfigDto:
         level=LogLevel.log,
     )
 
+    ml_availabilityChecks = MachineLearningAvailabilityChecksDto(
+        enabled=False, interval=1.0, timeout=1.0
+    )
+
+    ocr_config = OcrConfig(
+        enabled=False,
+        maxResolution=1,
+        minDetectionScore=0.5,
+        minRecognitionScore=0.5,
+        modelName="",
+    )
+
     ml_config = SystemConfigMachineLearningDto(
+        availabilityChecks=ml_availabilityChecks,
         clip=clip_config,
         duplicateDetection=duplicate_detection,
         enabled=True,
         facialRecognition=facial_recognition,
         urls=[],
+        ocr=ocr_config,
     )
 
     map_config = SystemConfigMapDto(
