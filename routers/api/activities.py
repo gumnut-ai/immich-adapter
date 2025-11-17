@@ -48,7 +48,7 @@ async def create_activity(
     """
     now = datetime.now(timezone.utc)
     return ActivityResponseDto(
-        assetId=str(current_user.id),
+        assetId="d6773835-4b91-4c7d-8667-26bd5daa1a45",  # still a dummy asset id
         comment="Test activity comment",
         createdAt=now,
         id="activity-id-123",

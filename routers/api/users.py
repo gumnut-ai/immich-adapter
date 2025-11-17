@@ -34,9 +34,8 @@ from routers.immich_models import (
     LicenseKeyDto,
 )
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.error_mapping import map_gumnut_error
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
-from routers.utils.current_user import get_current_user_id
+from routers.utils.current_user import get_current_user_admin, get_current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -66,56 +65,10 @@ userPreferencesResponse: UserPreferencesResponseDto = UserPreferencesResponseDto
 
 @router.get("/me")
 async def get_my_user(
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    user_admin: UserAdminResponseDto = Depends(get_current_user_admin),
 ) -> UserAdminResponseDto:
-    """
-    Get current user details from Gumnut backend.
-
-    Fetches the authenticated user's information and converts it to Immich's
-    UserAdminResponseDto format.
-    """
-    try:
-        # Fetch user from Gumnut backend
-        user = client.users.me()
-
-        # Map Gumnut UserResponse to Immich UserAdminResponseDto
-        # Combine first_name and last_name into Immich's single "name" field
-        # Need to include fall back to "User" as names are not required in Gumnut or from OAuth sources
-        first_name = user.first_name or ""
-        last_name = user.last_name or ""
-        full_name = f"{first_name} {last_name}".strip() or "User"
-
-        # Convert Gumnut user ID to UUID
-        user_uuid = safe_uuid_from_user_id(user.id)
-
-        return UserAdminResponseDto(
-            id=str(user_uuid),
-            email=user.email or "",
-            name=full_name,
-            isAdmin=True,  # Immich admin status is not like Gumnut superuser, so set to True
-            createdAt=user.created_at,
-            updatedAt=user.updated_at,
-            # Immich-specific fields with sensible defaults
-            avatarColor=UserAvatarColor.primary,
-            profileImagePath="",
-            shouldChangePassword=False,
-            status=UserStatus.active if user.is_active else UserStatus.deleted,
-            storageLabel="admin",
-            quotaSizeInBytes=1024 * 1024 * 1024 * 100,
-            quotaUsageInBytes=1024 * 1024 * 1024,
-            deletedAt=None,
-            oauthId="",
-            profileChangedAt=user.updated_at,
-            license=UserLicense(
-                activatedAt=datetime.now(tz=timezone.utc),
-                activationKey=str(uuid4()),
-                licenseKey="/IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA/",
-            ),
-        )
-
-    except Exception as e:
-        logger.error(f"Failed to fetch user from Gumnut: {e}")
-        raise map_gumnut_error(e, "Failed to fetch user details")
+    """Get current user details from Gumnut backend via shared dependency."""
+    return user_admin
 
 
 @router.put("/me")
