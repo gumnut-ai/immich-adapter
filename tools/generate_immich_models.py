@@ -37,22 +37,15 @@ def get_container_tag() -> str:
     Returns:
         The container tag (e.g., "v2.2.2") or empty string if file is missing/empty.
     """
-    try:
-        tag_file = Path(".immich-container-tag")
-        if tag_file.exists():
-            content = tag_file.read_text().strip()
-            if content:
-                return content
-    except Exception:
-        pass
-
-    # Quit since the .immich-container-tag file is missing or unreadable
-    print(
-        "Error: .immich-container-tag file is missing or unreadable. "
-        "Please ensure it exists and contains the Immich container tag.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+    tag_file = Path(".immich-container-tag")
+    if tag_file.exists():
+        content = tag_file.read_text().strip()
+        if content:
+            return content
+        else:
+            raise Exception(".immich-container-tag file is empty")
+    else:
+        raise Exception(".immich-container-tag file not found")
 
 
 def fetch_spec(spec_path: str) -> tuple[str, bool, str | None]:
@@ -73,8 +66,13 @@ def fetch_spec(spec_path: str) -> tuple[str, bool, str | None]:
         if "github.com" in parsed.netloc and "/blob/" in spec_path:
             spec_path = spec_path.replace("github.com", "raw.githubusercontent.com")
 
+            try:
+                container_tag = get_container_tag()
+            except Exception as e:
+                print(f"Could not read retrieve Immich tag from file: {e}")
+                sys.exit(1)
+
             # normalize any `/blob/<ref>/` to use the container tag (or main)
-            container_tag = get_container_tag()
             ref = container_tag or "main"
             spec_path = re.sub(r"/blob/[^/]+/", f"/{ref}/", spec_path)
             tag_or_branch = ref
