@@ -64,7 +64,7 @@ async def get_current_user_admin(
         id=str(user_uuid),
         email=user.email or "",
         name=full_name,
-        isAdmin=True,  # Immich admin status is not like Gumnut superuser, so set to True
+        isAdmin=False,  # Always False - no need to show Immich admin controls
         createdAt=user.created_at,
         updatedAt=user.updated_at,
         # Immich-specific fields with sensible defaults
