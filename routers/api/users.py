@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Response
+from gumnut import Gumnut
 from uuid import UUID, uuid4
 from typing import List
+import logging
 
 from routers.immich_models import (
     AlbumsResponse,
@@ -31,6 +33,11 @@ from routers.immich_models import (
     LicenseResponseDto,
     LicenseKeyDto,
 )
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
+from routers.utils.current_user import get_current_user_admin, get_current_user_id
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/users",
@@ -38,39 +45,6 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-
-userAdminResponse: UserAdminResponseDto = UserAdminResponseDto(
-    avatarColor=UserAvatarColor.primary,
-    createdAt=datetime.now(tz=timezone.utc),
-    deletedAt=datetime.now(tz=timezone.utc),
-    email="ted@immich.test",
-    id="d6773835-4b91-4c7d-8667-26bd5daa1a45",
-    isAdmin=True,
-    license=UserLicense(
-        activatedAt=datetime.now(tz=timezone.utc),
-        activationKey=str(uuid4()),
-        licenseKey="/IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA/",
-    ),
-    name="Ted Mao",
-    oauthId="",
-    profileChangedAt=datetime.now(tz=timezone.utc),
-    profileImagePath="",
-    quotaSizeInBytes=1024 * 1024 * 1024 * 100,
-    quotaUsageInBytes=1024 * 1024 * 1024,
-    shouldChangePassword=False,
-    status=UserStatus.active,
-    storageLabel="admin",
-    updatedAt=datetime.now(tz=timezone.utc),
-)
-
-userResponse: UserResponseDto = UserResponseDto(
-    avatarColor=UserAvatarColor.primary,
-    email="ted@immich.test",
-    id="d6773835-4b91-4c7d-8667-26bd5daa1a45",
-    name="Ted Mao",
-    profileChangedAt=datetime.now(tz=timezone.utc),
-    profileImagePath="",
-)
 
 userPreferencesResponse: UserPreferencesResponseDto = UserPreferencesResponseDto(
     albums=AlbumsResponse(defaultAssetOrder=AssetOrder.desc),
@@ -90,21 +64,52 @@ userPreferencesResponse: UserPreferencesResponseDto = UserPreferencesResponseDto
 
 
 @router.get("/me")
-async def get_my_user() -> UserAdminResponseDto:
-    """
-    Get current user details.
-    This is a stub implementation that returns fake user data.
-    """
-    return userAdminResponse
+async def get_my_user(
+    user_admin: UserAdminResponseDto = Depends(get_current_user_admin),
+) -> UserAdminResponseDto:
+    """Get current user details from Gumnut backend via shared dependency."""
+    return user_admin
 
 
 @router.put("/me")
-async def update_my_user(request: UserUpdateMeDto) -> UserAdminResponseDto:
+async def update_my_user(
+    request: UserUpdateMeDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> UserAdminResponseDto:
     """
     Update current user details.
-    This is a stub implementation that returns fake updated user data.
+    This is a stub implementation that returns current user data.
     """
-    return userAdminResponse
+    # Re-fetch current user to ensure we have latest data
+    user = client.users.me()
+    first_name = user.first_name or ""
+    last_name = user.last_name or ""
+    full_name = f"{first_name} {last_name}".strip() or "User"
+    user_uuid = safe_uuid_from_user_id(user.id)
+
+    return UserAdminResponseDto(
+        id=str(user_uuid),
+        email=user.email or "",
+        name=full_name,
+        isAdmin=True,
+        createdAt=user.created_at,
+        updatedAt=user.updated_at,
+        avatarColor=UserAvatarColor.primary,
+        profileImagePath="",
+        shouldChangePassword=False,
+        status=UserStatus.active if user.is_active else UserStatus.deleted,
+        storageLabel="admin",
+        quotaSizeInBytes=1024 * 1024 * 1024 * 100,
+        quotaUsageInBytes=1024 * 1024 * 1024,
+        deletedAt=None,
+        oauthId="",
+        profileChangedAt=user.updated_at,
+        license=UserLicense(
+            activatedAt=datetime.now(tz=timezone.utc),
+            activationKey=str(uuid4()),
+            licenseKey="/IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA/",
+        ),
+    )
 
 
 @router.get("/me/license")
@@ -204,6 +209,7 @@ async def update_my_preferences(
 )
 async def create_profile_image(
     request: CreateProfileImageDto,
+    current_user_id: UUID = Depends(get_current_user_id),
 ) -> CreateProfileImageResponseDto:
     """
     Upload profile image.
@@ -212,7 +218,7 @@ async def create_profile_image(
     return CreateProfileImageResponseDto(
         profileChangedAt=datetime.now(tz=timezone.utc),
         profileImagePath="path/to/new/profile/image.jpg",
-        userId="d6773835-4b91-4c7d-8667-26bd5daa1a45",
+        userId=str(current_user_id),
     )
 
 
@@ -231,7 +237,14 @@ async def get_user(id: UUID) -> UserResponseDto:
     Get user by ID.
     This is a stub implementation that returns fake user data.
     """
-    return userResponse
+    return UserResponseDto(
+        avatarColor=UserAvatarColor.primary,
+        email="user@immich.test",
+        id=str(id),
+        name="User",
+        profileChangedAt=datetime.now(tz=timezone.utc),
+        profileImagePath="",
+    )
 
 
 @router.get("/{id}/profile-image")

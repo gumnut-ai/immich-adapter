@@ -5,6 +5,7 @@ from datetime import datetime
 from gumnut import Gumnut
 
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.current_user import get_current_user
 from routers.utils.error_mapping import check_for_error_by_code
 from routers.immich_models import (
     PersonResponseDto,
@@ -22,6 +23,7 @@ from routers.immich_models import (
     RandomSearchDto,
     PlacesResponseDto,
     StatisticsSearchDto,
+    UserResponseDto,
 )
 from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
 
@@ -176,6 +178,7 @@ async def search_assets(
 async def search_smart(
     request: SmartSearchDto,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> SearchResponseDto:
     """
     Smart search for assets.
@@ -190,7 +193,7 @@ async def search_smart(
         if gumnut_assets:
             for item in gumnut_assets.data:
                 # Convert Gumnut asset to AssetResponseDto format using utility function
-                immich_asset = convert_gumnut_asset_to_immich(item.asset)
+                immich_asset = convert_gumnut_asset_to_immich(item.asset, current_user)
                 immich_assets.append(immich_asset)
 
         return SearchResponseDto(

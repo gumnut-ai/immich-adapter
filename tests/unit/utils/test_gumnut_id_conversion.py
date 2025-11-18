@@ -15,6 +15,8 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
     safe_uuid_from_person_id,
     uuid_to_gumnut_person_id,
+    safe_uuid_from_user_id,
+    uuid_to_gumnut_user_id,
 )
 
 
@@ -51,6 +53,17 @@ class TestSafeUuidFromGumnutId:
         gumnut_id = f"person_{short_uuid}"
 
         result = safe_uuid_from_gumnut_id(gumnut_id, "person")
+
+        assert result == test_uuid
+        assert isinstance(result, UUID)
+
+    def test_valid_user_id_conversion(self):
+        """Test converting valid user ID to UUID."""
+        test_uuid = uuid4()
+        short_uuid = shortuuid.encode(test_uuid)
+        gumnut_id = f"intuser_{short_uuid}"
+
+        result = safe_uuid_from_gumnut_id(gumnut_id, "intuser")
 
         assert result == test_uuid
         assert isinstance(result, UUID)
@@ -132,6 +145,19 @@ class TestUuidToGumnutId:
         decoded = safe_uuid_from_gumnut_id(result, "person")
         assert decoded == test_uuid
 
+    def test_user_id_generation(self):
+        """Test generating user ID from UUID."""
+        test_uuid = uuid4()
+
+        result = uuid_to_gumnut_id(test_uuid, "intuser")
+
+        assert result.startswith("intuser_")
+        assert isinstance(result, str)
+
+        # Should be reversible
+        decoded = safe_uuid_from_gumnut_id(result, "intuser")
+        assert decoded == test_uuid
+
     def test_known_uuid_conversion(self):
         """Test with a known UUID for consistent results."""
         known_uuid = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -183,6 +209,18 @@ class TestConvenienceFunctions:
         recovered_uuid = safe_uuid_from_person_id(person_id)
         assert recovered_uuid == test_uuid
 
+    def test_user_convenience_functions(self):
+        """Test user-specific convenience functions."""
+        test_uuid = uuid4()
+
+        # UUID to user ID
+        user_id = uuid_to_gumnut_user_id(test_uuid)
+        assert user_id.startswith("intuser_")
+
+        # User ID back to UUID
+        recovered_uuid = safe_uuid_from_user_id(user_id)
+        assert recovered_uuid == test_uuid
+
     def test_convenience_functions_equivalence(self):
         """Test that convenience functions are equivalent to generic functions."""
         test_uuid = uuid4()
@@ -215,6 +253,16 @@ class TestConvenienceFunctions:
         person_id = f"person_{shortuuid.encode(test_uuid)}"
         assert safe_uuid_from_person_id(person_id) == safe_uuid_from_gumnut_id(
             person_id, "person"
+        )
+
+        # User functions
+        assert uuid_to_gumnut_user_id(test_uuid) == uuid_to_gumnut_id(
+            test_uuid, "intuser"
+        )
+
+        user_id = f"intuser_{shortuuid.encode(test_uuid)}"
+        assert safe_uuid_from_user_id(user_id) == safe_uuid_from_gumnut_id(
+            user_id, "intuser"
         )
 
 

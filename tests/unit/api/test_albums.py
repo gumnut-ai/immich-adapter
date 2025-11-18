@@ -34,7 +34,7 @@ class TestGetAllAlbums:
 
     @pytest.mark.anyio
     async def test_get_all_albums_success(
-        self, multiple_gumnut_albums, mock_sync_cursor_page
+        self, multiple_gumnut_albums, mock_sync_cursor_page, mock_current_user
     ):
         """Test successful retrieval of albums."""
         # Setup - create mock client
@@ -44,7 +44,12 @@ class TestGetAllAlbums:
         )
 
         # Execute - pass client directly via dependency injection
-        result = await get_all_albums(asset_id=None, shared=None, client=mock_client)
+        result = await get_all_albums(
+            asset_id=None,
+            shared=None,
+            client=mock_client,
+            current_user=mock_current_user,
+        )
 
         # Assert
         assert isinstance(result, list)
@@ -59,7 +64,7 @@ class TestGetAllAlbums:
 
     @pytest.mark.anyio
     async def test_get_all_albums_includes_asset_count(
-        self, multiple_gumnut_albums, mock_sync_cursor_page
+        self, multiple_gumnut_albums, mock_sync_cursor_page, mock_current_user
     ):
         """Test that get_all_albums includes asset_count from Gumnut albums."""
         # Setup - set specific asset counts on the mock albums
@@ -73,7 +78,12 @@ class TestGetAllAlbums:
         )
 
         # Execute
-        result = await get_all_albums(asset_id=None, shared=None, client=mock_client)
+        result = await get_all_albums(
+            asset_id=None,
+            shared=None,
+            client=mock_client,
+            current_user=mock_current_user,
+        )
 
         # Assert - verify asset counts are preserved from Gumnut albums
         assert len(result) == 3
@@ -83,7 +93,7 @@ class TestGetAllAlbums:
 
     @pytest.mark.anyio
     async def test_get_all_albums_with_asset_id(
-        self, multiple_gumnut_albums, mock_sync_cursor_page
+        self, multiple_gumnut_albums, mock_sync_cursor_page, mock_current_user
     ):
         """Test retrieval of albums filtered by asset_id."""
         # Setup - create mock client
@@ -97,7 +107,10 @@ class TestGetAllAlbums:
         # Execute with asset_id
         test_asset_uuid = uuid4()
         result = await get_all_albums(
-            asset_id=test_asset_uuid, shared=None, client=mock_client
+            asset_id=test_asset_uuid,
+            shared=None,
+            client=mock_client,
+            current_user=mock_current_user,
         )
 
         # Assert
@@ -109,7 +122,9 @@ class TestGetAllAlbums:
         mock_client.albums.list.assert_called_once_with(asset_id=expected_gumnut_id)
 
     @pytest.mark.anyio
-    async def test_get_all_albums_with_asset_id_no_results(self, mock_sync_cursor_page):
+    async def test_get_all_albums_with_asset_id_no_results(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
         """Test retrieval of albums with asset_id that has no albums."""
         # Setup - create mock client
         mock_client = Mock()
@@ -120,7 +135,10 @@ class TestGetAllAlbums:
         # Execute with asset_id
         test_asset_uuid = uuid4()
         result = await get_all_albums(
-            asset_id=test_asset_uuid, shared=None, client=mock_client
+            asset_id=test_asset_uuid,
+            shared=None,
+            client=mock_client,
+            current_user=mock_current_user,
         )
 
         # Assert
@@ -133,7 +151,7 @@ class TestGetAllAlbums:
 
     @pytest.mark.anyio
     async def test_get_all_albums_with_album_cover_asset_id(
-        self, multiple_gumnut_albums, mock_sync_cursor_page
+        self, multiple_gumnut_albums, mock_sync_cursor_page, mock_current_user
     ):
         """Test that album_cover_asset_id is converted to albumThumbnailAssetId."""
         # Setup - set album_cover_asset_id on one of the albums
@@ -149,7 +167,12 @@ class TestGetAllAlbums:
         )
 
         # Execute
-        result = await get_all_albums(asset_id=None, shared=None, client=mock_client)
+        result = await get_all_albums(
+            asset_id=None,
+            shared=None,
+            client=mock_client,
+            current_user=mock_current_user,
+        )
 
         # Assert - verify albumThumbnailAssetId is set correctly
         assert len(result) == 3
@@ -172,7 +195,7 @@ class TestGetAllAlbums:
         assert result == []
 
     @pytest.mark.anyio
-    async def test_get_all_albums_gumnut_error(self):
+    async def test_get_all_albums_gumnut_error(self, mock_current_user):
         """Test handling of Gumnut API errors."""
         # Setup - create mock client
         mock_client = Mock()
@@ -180,7 +203,12 @@ class TestGetAllAlbums:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await get_all_albums(asset_id=None, shared=None, client=mock_client)
+            await get_all_albums(
+                asset_id=None,
+                shared=None,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
 
         assert exc_info.value.status_code == 500
         assert "Failed to fetch albums" in str(exc_info.value.detail)
@@ -247,6 +275,7 @@ class TestGetAlbumInfo:
         multiple_gumnut_assets,
         mock_sync_cursor_page,
         sample_uuid,
+        mock_current_user,
     ):
         """Test successful retrieval of album info."""
         # Setup - create mock client
@@ -257,7 +286,9 @@ class TestGetAlbumInfo:
         )
 
         # Execute
-        result = await get_album_info(sample_uuid, client=mock_client)
+        result = await get_album_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
 
         # Assert
         # Now result is a real AlbumResponseDto, so use attribute access
@@ -272,6 +303,7 @@ class TestGetAlbumInfo:
         self,
         sample_gumnut_album,
         sample_uuid,
+        mock_current_user,
     ):
         """Test that get_album_info uses asset_count from Gumnut album object."""
         # Setup - mock album with specific asset_count
@@ -283,14 +315,16 @@ class TestGetAlbumInfo:
         mock_client.albums.assets.list.return_value = []
 
         # Execute
-        result = await get_album_info(sample_uuid, client=mock_client)
+        result = await get_album_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
 
         # Assert - should use album.asset_count (42) from the Gumnut album object
         assert result.assetCount == 42
 
     @pytest.mark.anyio
     async def test_get_album_info_with_album_cover_asset_id(
-        self, sample_gumnut_album, sample_uuid
+        self, sample_gumnut_album, sample_uuid, mock_current_user
     ):
         """Test that album_cover_asset_id is converted to albumThumbnailAssetId in get_album_info."""
         # Setup - set album_cover_asset_id on the album
@@ -302,7 +336,9 @@ class TestGetAlbumInfo:
         mock_client.albums.assets.list.return_value = []
 
         # Execute
-        result = await get_album_info(sample_uuid, client=mock_client)
+        result = await get_album_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
 
         # Assert - verify albumThumbnailAssetId is set correctly
         expected_uuid = str(safe_uuid_from_asset_id(cover_asset_id))
@@ -310,7 +346,7 @@ class TestGetAlbumInfo:
 
     @pytest.mark.anyio
     async def test_get_album_info_without_assets(
-        self, sample_gumnut_album, sample_uuid
+        self, sample_gumnut_album, sample_uuid, mock_current_user
     ):
         """Test retrieval of album info without assets."""
         # Setup - create mock client
@@ -321,7 +357,10 @@ class TestGetAlbumInfo:
 
         # Execute
         result = await get_album_info(
-            sample_uuid, withoutAssets=True, client=mock_client
+            sample_uuid,
+            withoutAssets=True,
+            client=mock_client,
+            current_user=mock_current_user,
         )
 
         # Assert
@@ -333,7 +372,7 @@ class TestGetAlbumInfo:
         mock_client.albums.assets.list.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_get_album_info_not_found(self, sample_uuid):
+    async def test_get_album_info_not_found(self, sample_uuid, mock_current_user):
         """Test handling of album not found."""
         # Setup - create mock client
         mock_client = Mock()
@@ -341,7 +380,9 @@ class TestGetAlbumInfo:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await get_album_info(sample_uuid, client=mock_client)
+            await get_album_info(
+                sample_uuid, client=mock_client, current_user=mock_current_user
+            )
 
         assert exc_info.value.status_code == 404
 
@@ -350,7 +391,7 @@ class TestCreateAlbum:
     """Test the create_album endpoint."""
 
     @pytest.mark.anyio
-    async def test_create_album_success(self, sample_gumnut_album):
+    async def test_create_album_success(self, sample_gumnut_album, mock_current_user):
         """Test successful album creation."""
         # Setup - create mock client
         mock_client = Mock()
@@ -362,7 +403,9 @@ class TestCreateAlbum:
         request = CreateAlbumDto(albumName="New Album", description="New Description")
 
         # Execute
-        result = await create_album(request, client=mock_client)
+        result = await create_album(
+            request, client=mock_client, current_user=mock_current_user
+        )
 
         # Assert
         # Now result is a real AlbumResponseDto, so use attribute access
@@ -373,7 +416,7 @@ class TestCreateAlbum:
         )
 
     @pytest.mark.anyio
-    async def test_create_album_gumnut_error(self):
+    async def test_create_album_gumnut_error(self, mock_current_user):
         """Test handling of Gumnut API errors during creation."""
         # Setup - create mock client
         mock_client = Mock()
@@ -383,7 +426,9 @@ class TestCreateAlbum:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await create_album(request, client=mock_client)
+            await create_album(
+                request, client=mock_client, current_user=mock_current_user
+            )
 
         assert exc_info.value.status_code == 500
 
@@ -465,7 +510,9 @@ class TestUpdateAlbum:
     """Test the update_album endpoint."""
 
     @pytest.mark.anyio
-    async def test_update_album_success(self, sample_gumnut_album, sample_uuid):
+    async def test_update_album_success(
+        self, sample_gumnut_album, sample_uuid, mock_current_user
+    ):
         """Test successful album update."""
         # Setup - create mock client
         mock_client = Mock()
@@ -480,7 +527,9 @@ class TestUpdateAlbum:
         )
 
         # Execute
-        result = await update_album(sample_uuid, request, client=mock_client)
+        result = await update_album(
+            sample_uuid, request, client=mock_client, current_user=mock_current_user
+        )
 
         # Assert
         # Now result is a real AlbumResponseDto, so use attribute access
@@ -491,7 +540,7 @@ class TestUpdateAlbum:
 
     @pytest.mark.anyio
     async def test_update_album_with_album_cover_asset_id(
-        self, sample_gumnut_album, sample_uuid
+        self, sample_gumnut_album, sample_uuid, mock_current_user
     ):
         """Test that album_cover_asset_id is converted to albumThumbnailAssetId in update_album."""
         # Setup - set album_cover_asset_id on the updated album
@@ -509,14 +558,18 @@ class TestUpdateAlbum:
         )
 
         # Execute
-        result = await update_album(sample_uuid, request, client=mock_client)
+        result = await update_album(
+            sample_uuid, request, client=mock_client, current_user=mock_current_user
+        )
 
         # Assert - verify albumThumbnailAssetId is set correctly
         expected_uuid = str(safe_uuid_from_asset_id(cover_asset_id))
         assert result.albumThumbnailAssetId == expected_uuid
 
     @pytest.mark.anyio
-    async def test_update_album_not_found(self, mock_gumnut_client, sample_uuid):
+    async def test_update_album_not_found(
+        self, mock_gumnut_client, sample_uuid, mock_current_user
+    ):
         """Test updating non-existent album."""
         # Setup
         request = UpdateAlbumDto(albumName="Updated Album")
@@ -524,7 +577,12 @@ class TestUpdateAlbum:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await update_album(sample_uuid, request, client=mock_gumnut_client)
+            await update_album(
+                sample_uuid,
+                request,
+                client=mock_gumnut_client,
+                current_user=mock_current_user,
+            )
 
         assert exc_info.value.status_code == 404
 

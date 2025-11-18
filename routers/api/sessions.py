@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 from typing import List
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from routers.utils.current_user import get_current_user_id
 from routers.immich_models import (
     SessionCreateDto,
     SessionCreateResponseDto,
@@ -19,7 +20,9 @@ router = APIRouter(
 
 
 @router.get("")
-async def get_sessions() -> List[SessionResponseDto]:
+async def get_sessions(
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> List[SessionResponseDto]:
     """
     Get all sessions
     This is a stub implementation that returns a fake session.
@@ -32,7 +35,7 @@ async def get_sessions() -> List[SessionResponseDto]:
             deviceOS="Web",
             deviceType="WEB",
             expiresAt=None,
-            id="d6773835-4b91-4c7d-8667-26bd5daa1a45",
+            id=str(current_user_id),
             isPendingSyncReset=False,
             updatedAt=now,
         )

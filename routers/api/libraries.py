@@ -1,9 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from uuid import UUID
 from datetime import datetime, timezone
 from typing import List
 
-from routers.api.auth import get_current_user_id
+from routers.utils.current_user import get_current_user_id
 from routers.immich_models import (
     CreateLibraryDto,
     LibraryResponseDto,
@@ -31,7 +31,9 @@ async def get_all_libraries() -> List[LibraryResponseDto]:
 
 
 @router.post("", status_code=201)
-async def create_library(request: CreateLibraryDto) -> LibraryResponseDto:
+async def create_library(
+    request: CreateLibraryDto, current_user_id: UUID = Depends(get_current_user_id)
+) -> LibraryResponseDto:
     """
     Create a library.
     This is a stub implementation that returns a fake library response.
@@ -39,7 +41,7 @@ async def create_library(request: CreateLibraryDto) -> LibraryResponseDto:
     return LibraryResponseDto(
         id="library-id",
         name=request.name or "New Library",
-        ownerId=str(get_current_user_id()),
+        ownerId=str(current_user_id),
         assetCount=0,
         importPaths=request.importPaths or [],
         exclusionPatterns=request.exclusionPatterns or [],
@@ -50,7 +52,9 @@ async def create_library(request: CreateLibraryDto) -> LibraryResponseDto:
 
 
 @router.get("/{id}")
-async def get_library(id: UUID) -> LibraryResponseDto:
+async def get_library(
+    id: UUID, current_user_id: UUID = Depends(get_current_user_id)
+) -> LibraryResponseDto:
     """
     Get library by ID.
     This is a stub implementation that returns a fake library response.
@@ -58,7 +62,7 @@ async def get_library(id: UUID) -> LibraryResponseDto:
     return LibraryResponseDto(
         id=str(id),
         name="Sample Library",
-        ownerId=str(get_current_user_id()),
+        ownerId=str(current_user_id),
         assetCount=0,
         importPaths=[],
         exclusionPatterns=[],
@@ -69,7 +73,11 @@ async def get_library(id: UUID) -> LibraryResponseDto:
 
 
 @router.put("/{id}")
-async def update_library(id: UUID, request: UpdateLibraryDto) -> LibraryResponseDto:
+async def update_library(
+    id: UUID,
+    request: UpdateLibraryDto,
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> LibraryResponseDto:
     """
     Update library.
     This is a stub implementation that returns a fake updated library response.
@@ -77,7 +85,7 @@ async def update_library(id: UUID, request: UpdateLibraryDto) -> LibraryResponse
     return LibraryResponseDto(
         id=str(id),
         name=request.name or "Updated Library",
-        ownerId=str(get_current_user_id()),
+        ownerId=str(current_user_id),
         assetCount=0,
         importPaths=request.importPaths or [],
         exclusionPatterns=request.exclusionPatterns or [],

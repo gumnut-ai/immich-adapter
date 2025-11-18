@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from gumnut import Gumnut
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error
-from routers.api.auth import get_current_user_id
+from routers.utils.current_user import get_current_user_id
 from routers.immich_models import (
     AssetOrder,
     TimeBucketsResponseDto,
@@ -129,6 +129,7 @@ async def get_time_bucket(
     withPartners: bool = Query(default=None),
     withStacked: bool = Query(default=None),
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user_id: UUID = Depends(get_current_user_id),
 ) -> Any:  # Should be TimeBucketAssetResponseDto, but using Any to bypass Pydantic validation. See comment below.
     """
     This endpoint retrieves assets that match the specified time bucket.
@@ -236,7 +237,7 @@ async def get_time_bucket(
             # Fixed values as specified
             "isFavorite": [False] * asset_count,  # Always False
             "isTrashed": [False] * asset_count,  # Always False
-            "ownerId": [str(get_current_user_id())] * asset_count,  # Fixed owner ID
+            "ownerId": [str(current_user_id)] * asset_count,  # Current user as owner
             "thumbhash": ["FBgGFYRQjHbAZpiWWpeEhWPANQZr"]
             * asset_count,  # Fixed thumbhash
             # Optional fields with reasonable defaults

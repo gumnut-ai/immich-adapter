@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from typing import List, Any
 
+from routers.immich_models import UserResponseDto, UserAvatarColor
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
@@ -58,6 +59,7 @@ def sample_gumnut_asset():
     asset.device_id = "device-456"
     asset.file_created_at = datetime.now(timezone.utc)
     asset.file_modified_at = datetime.now(timezone.utc)
+    asset.local_datetime = datetime.now(timezone.utc)
     asset.created_at = datetime.now(timezone.utc)
     asset.updated_at = datetime.now(timezone.utc)
     asset.mime_type = "image/jpeg"
@@ -169,3 +171,16 @@ def multiple_gumnut_people():
         person.updated_at = datetime.now(timezone.utc)
         people.append(person)
     return people
+
+
+@pytest.fixture
+def mock_current_user():
+    """Create a mock current user for testing."""
+    return UserResponseDto(
+        id=str(uuid4()),
+        email="test@example.com",
+        name="Test User",
+        avatarColor=UserAvatarColor.primary,
+        profileImagePath="",
+        profileChangedAt=datetime.now(timezone.utc),
+    )

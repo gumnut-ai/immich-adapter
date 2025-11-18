@@ -19,6 +19,7 @@ from gumnut import Gumnut
 
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
+from routers.utils.current_user import get_current_user
 from routers.immich_models import (
     AssetBulkDeleteDto,
     AssetBulkUpdateDto,
@@ -36,6 +37,7 @@ from routers.immich_models import (
     AssetStatsResponseDto,
     AssetVisibility,
     CheckExistingAssetsDto,
+    UserResponseDto,
     CheckExistingAssetsResponseDto,
     UpdateAssetDto,
 )
@@ -413,13 +415,14 @@ async def update_asset(
     id: UUID,
     request: UpdateAssetDto,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetResponseDto:
     """
     Update asset metadata.
     This is a stub implementation as Gumnut does not support asset metadata updates.
     Returns the asset as-is.
     """
-    return await get_asset_info(id, client=client)
+    return await get_asset_info(id, client=client, current_user=current_user)
 
 
 @router.get("/{id}")
@@ -428,6 +431,7 @@ async def get_asset_info(
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetResponseDto:
     try:
         gumnut_asset_id = uuid_to_gumnut_asset_id(id)
@@ -436,7 +440,7 @@ async def get_asset_info(
         gumnut_asset = client.assets.retrieve(gumnut_asset_id)
 
         # Convert Gumnut asset to AssetResponseDto format
-        immich_asset = convert_gumnut_asset_to_immich(gumnut_asset)
+        immich_asset = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
 
         return immich_asset
 

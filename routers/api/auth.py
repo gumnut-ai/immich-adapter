@@ -36,10 +36,6 @@ fake_auth_login = {
 }
 
 
-def get_current_user_id() -> UUID:
-    return fake_auth_login["userId"]
-
-
 @router.post("/admin-sign-up", status_code=201, response_model=UserAdminResponseDto)
 async def sign_up_admin(request: SignUpDto):
     """

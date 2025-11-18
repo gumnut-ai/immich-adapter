@@ -6,9 +6,12 @@ to the Immich API format, including handling of datetime fields and album metada
 """
 
 from gumnut.types.album_response import AlbumResponse
-from routers.api.auth import get_current_user_id
-from routers.immich_models import AlbumResponseDto, AssetOrder, AssetResponseDto
-from routers.utils.create_user_response import create_user_response_dto
+from routers.immich_models import (
+    AlbumResponseDto,
+    AssetOrder,
+    AssetResponseDto,
+    UserResponseDto,
+)
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_album_id,
     safe_uuid_from_asset_id,
@@ -17,6 +20,7 @@ from routers.utils.gumnut_id_conversion import (
 
 def convert_gumnut_album_to_immich(
     gumnut_album: AlbumResponse,
+    current_user: UserResponseDto,
     assets: list[AssetResponseDto] | None = None,
     asset_count: int | None = None,
 ) -> AlbumResponseDto:
@@ -25,6 +29,7 @@ def convert_gumnut_album_to_immich(
 
     Args:
         gumnut_album: The Gumnut AlbumResponse object
+        current_user: The current user's UserResponseDto
         assets: Optional list of AssetResponseDto objects to include
         asset_count: Optional asset count (if None, will use len(assets) or album's asset_count)
 
@@ -62,8 +67,8 @@ def convert_gumnut_album_to_immich(
         startDate=None,
         endDate=None,
         lastModifiedAssetTimestamp=None,
-        ownerId=str(get_current_user_id()),
-        owner=create_user_response_dto(),
+        ownerId=current_user.id,
+        owner=current_user,
         albumUsers=[],
         shared=False,
         hasSharedLink=False,
