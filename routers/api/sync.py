@@ -120,34 +120,34 @@ async def get_delta_sync(
         logger.info(f"Delta sync requested for timestamp: {request.updatedAfter}")
 
         upserted_assets = []
+        page_size = 100
+        starting_after_id = None
 
-        # Helper to process a batch of assets
-        def process_batch(batch_assets):
-            for batched_asset in batch_assets:
-                if (
-                    batched_asset.updated_at
-                    and batched_asset.updated_at > request.updatedAfter
-                ):
-                    asset_dto = convert_gumnut_asset_to_immich(
-                        batched_asset, current_user
-                    )
+        # Paginate through all assets using cursor-based pagination
+        while True:
+            # Fetch a page of assets
+            assets_page = gumnut_client.assets.list(
+                limit=page_size,
+                starting_after_id=starting_after_id,
+            )
+
+            # Convert to list to process the page
+            page_assets = list(assets_page)
+            if not page_assets:
+                break
+
+            # Filter and convert assets from this page
+            for asset in page_assets:
+                if asset.updated_at and asset.updated_at > request.updatedAfter:
+                    asset_dto = convert_gumnut_asset_to_immich(asset, current_user)
                     upserted_assets.append(asset_dto)
 
-        # Paginate through all assets and filter by updated_at
-        page_size = 100
-        batch = []
+            # Check if there are more pages
+            if not assets_page.has_more:
+                break
 
-        for asset in gumnut_client.assets.list():
-            batch.append(asset)
-
-            # Process batch when it reaches page_size
-            if len(batch) >= page_size:
-                process_batch(batch)
-                batch = []
-
-        # Process remaining assets in the last batch
-        if batch:
-            process_batch(batch)
+            # Update cursor for next page
+            starting_after_id = page_assets[-1].id
 
         logger.info(
             f"Delta sync found {len(upserted_assets)} updated assets",
@@ -167,7 +167,7 @@ async def get_delta_sync(
         logger.error(f"Error during delta sync: {str(e)}", exc_info=True)
         return AssetDeltaSyncResponseDto(
             deleted=[],
-            needsFullSync=False,
+            needsFullSync=True,
             upserted=[],
         )
 
@@ -521,48 +521,112 @@ async def generate_sync_stream(
 
             logger.info("Streamed 1 user", extra={"user_id": owner_id})
 
-        # Stream assets if requested
-        if SyncRequestType.AssetsV1 in requested_types:
-            logger.info("Streaming assets...", extra={"user_id": owner_id})
+        # Stream asset-related data in a single pass to avoid multiple iterations
+        asset_related_types = {
+            SyncRequestType.AssetsV1,
+            SyncRequestType.AssetExifsV1,
+            SyncRequestType.AssetFacesV1,
+        }
+
+        if any(t in requested_types for t in asset_related_types):
+            logger.info("Streaming asset-related data...", extra={"user_id": owner_id})
             asset_count = 0
-
-            for asset in gumnut_client.assets.list():
-                sync_asset = gumnut_asset_to_sync_asset_v1(asset, owner_id)
-
-                event = {
-                    "type": SyncRequestType.AssetsV1.value,
-                    "data": sync_asset.model_dump(mode="json"),
-                    "ack": generate_checkpoint_id(),
-                }
-                yield json.dumps(event) + "\n"
-                asset_count += 1
-
-            logger.info(
-                f"Streamed {asset_count} assets",
-                extra={"user_id": owner_id, "asset_count": asset_count},
-            )
-
-        # Stream asset EXIF data if requested
-        if SyncRequestType.AssetExifsV1 in requested_types:
-            logger.info("Streaming asset EXIF...", extra={"user_id": owner_id})
             exif_count = 0
+            face_count = 0
+            page_size = 100
+            starting_after_id = None
 
-            for asset in gumnut_client.assets.list():
-                sync_exif = gumnut_asset_to_sync_exif_v1(asset)
+            try:
+                # Paginate through all assets using cursor-based pagination
+                while True:
+                    # Fetch a page of assets
+                    assets_page = gumnut_client.assets.list(
+                        limit=page_size,
+                        starting_after_id=starting_after_id,
+                    )
 
-                if sync_exif:  # Only stream if EXIF data exists
-                    event = {
-                        "type": SyncRequestType.AssetExifsV1.value,
-                        "data": sync_exif.model_dump(mode="json"),
-                        "ack": generate_checkpoint_id(),
-                    }
-                    yield json.dumps(event) + "\n"
-                    exif_count += 1
+                    # Convert to list to process the page
+                    page_assets = list(assets_page)
+                    if not page_assets:
+                        break
 
-            logger.info(
-                f"Streamed {exif_count} EXIF records",
-                extra={"user_id": owner_id, "exif_count": exif_count},
-            )
+                    # Process each asset in the page
+                    for asset in page_assets:
+                        # Stream asset if requested
+                        if SyncRequestType.AssetsV1 in requested_types:
+                            sync_asset = gumnut_asset_to_sync_asset_v1(asset, owner_id)
+                            event = {
+                                "type": SyncRequestType.AssetsV1.value,
+                                "data": sync_asset.model_dump(mode="json"),
+                                "ack": generate_checkpoint_id(),
+                            }
+                            yield json.dumps(event) + "\n"
+                            asset_count += 1
+
+                        # Stream EXIF if requested and available
+                        if SyncRequestType.AssetExifsV1 in requested_types:
+                            sync_exif = gumnut_asset_to_sync_exif_v1(asset)
+                            if sync_exif:
+                                event = {
+                                    "type": SyncRequestType.AssetExifsV1.value,
+                                    "data": sync_exif.model_dump(mode="json"),
+                                    "ack": generate_checkpoint_id(),
+                                }
+                                yield json.dumps(event) + "\n"
+                                exif_count += 1
+
+                        # Stream faces if requested and available
+                        if (
+                            SyncRequestType.AssetFacesV1 in requested_types
+                            and asset.people
+                        ):
+                            for person_index, person in enumerate(asset.people):
+                                sync_face = gumnut_asset_face_to_sync_v1(
+                                    asset, person, person_index
+                                )
+                                event = {
+                                    "type": SyncRequestType.AssetFacesV1.value,
+                                    "data": sync_face.model_dump(mode="json"),
+                                    "ack": generate_checkpoint_id(),
+                                }
+                                yield json.dumps(event) + "\n"
+                                face_count += 1
+
+                    # Check if there are more pages
+                    if not assets_page.has_more:
+                        break
+
+                    # Update cursor for next page
+                    starting_after_id = page_assets[-1].id
+
+                    # Log progress after each page
+                    logger.debug(
+                        f"Progress: fetched page with {len(page_assets)} assets",
+                        extra={
+                            "user_id": owner_id,
+                            "page_size": len(page_assets),
+                            "total_assets": asset_count,
+                        },
+                    )
+
+                # Log results for requested types
+                if SyncRequestType.AssetsV1 in requested_types:
+                    logger.info(
+                        f"Streamed {asset_count} assets",
+                        extra={"user_id": owner_id, "asset_count": asset_count},
+                    )
+                if SyncRequestType.AssetExifsV1 in requested_types:
+                    logger.info(
+                        f"Streamed {exif_count} EXIF records",
+                        extra={"user_id": owner_id, "exif_count": exif_count},
+                    )
+                if SyncRequestType.AssetFacesV1 in requested_types:
+                    logger.info(
+                        f"Streamed {face_count} faces",
+                        extra={"user_id": owner_id, "face_count": face_count},
+                    )
+            except Exception as e:
+                logger.warning(f"Error streaming asset-related data: {str(e)}")
 
         # Stream people if requested
         if SyncRequestType.PeopleV1 in requested_types:
@@ -587,34 +651,6 @@ async def generate_sync_stream(
                 )
             except Exception as e:
                 logger.warning(f"Error streaming people: {str(e)}")
-
-        # Stream asset faces if requested
-        if SyncRequestType.AssetFacesV1 in requested_types:
-            try:
-                logger.info("Streaming asset faces...", extra={"user_id": owner_id})
-                face_count = 0
-
-                for asset in gumnut_client.assets.list():
-                    if asset.people:
-                        for person_index, person in enumerate(asset.people):
-                            sync_face = gumnut_asset_face_to_sync_v1(
-                                asset, person, person_index
-                            )
-
-                            event = {
-                                "type": SyncRequestType.AssetFacesV1.value,
-                                "data": sync_face.model_dump(mode="json"),
-                                "ack": generate_checkpoint_id(),
-                            }
-                            yield json.dumps(event) + "\n"
-                            face_count += 1
-
-                logger.info(
-                    f"Streamed {face_count} faces",
-                    extra={"user_id": owner_id, "face_count": face_count},
-                )
-            except Exception as e:
-                logger.warning(f"Error streaming faces: {str(e)}")
 
         # Stream completion event
         complete_event = {
