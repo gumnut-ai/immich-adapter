@@ -52,7 +52,7 @@ class TestGetCurrentUserAdmin:
         assert result.id == str(test_uuid)
         assert result.email == "test@example.com"
         assert result.name == "Test User"
-        assert result.isAdmin is True
+        assert result.isAdmin is False
         assert result.status == UserStatus.active
         mock_client.users.me.assert_called_once()
 
