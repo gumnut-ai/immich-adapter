@@ -3,6 +3,7 @@ from typing import List
 from fastapi import APIRouter
 from shortuuid import uuid
 
+from config.settings import get_settings
 from routers.immich_models import (
     LicenseKeyDto,
     LicenseResponseDto,
@@ -58,16 +59,22 @@ fake_config = {
     "mapLightStyleUrl": "https://tiles.immich.cloud/v1/style/light.json",
 }
 
-fake_about = {
-    "version": "v1.142.0",
-    "versionUrl": "https://github.com/immich-app/immich/releases/tag/v1.142.0",
-    "licensed": False,
-    "nodejs": "v20.18.1",
-    "exiftool": "13.00",
-    "ffmpeg": "7.0.2-7",
-    "libvips": "8.15.3",
-    "imagemagick": "7.1.1-40",
-}
+
+def get_fake_about() -> dict:
+    """Generate fake about data with dynamic version."""
+    version = get_settings().immich_version
+    version_str = f"v{version}"
+    return {
+        "version": version_str,
+        "versionUrl": f"https://github.com/immich-app/immich/releases/tag/{version_str}",
+        "licensed": False,
+        "nodejs": "v20.18.1",
+        "exiftool": "13.00",
+        "ffmpeg": "7.0.2-7",
+        "libvips": "8.15.3",
+        "imagemagick": "7.1.1-40",
+    }
+
 
 fake_storage = {
     "diskSize": "14.6 TiB",
@@ -79,13 +86,18 @@ fake_storage = {
     "diskUsagePercentage": 77.27,
 }
 
-fake_version_history = [
-    {
-        "id": "b86ef90c-3973-4aae-8b74-2f24ac71fdd4",
-        "createdAt": "2025-01-13T21:28:34.519+00:00",
-        "version": "1.142.0",
-    }
-]
+
+def get_fake_version_history() -> list:
+    """Generate fake version history with dynamic version."""
+    version = get_settings().immich_version
+    return [
+        {
+            "id": "b86ef90c-3973-4aae-8b74-2f24ac71fdd4",
+            "createdAt": "2025-01-13T21:28:34.519+00:00",
+            "version": str(version),
+        }
+    ]
+
 
 fake_media_types = {
     "video": [
@@ -172,7 +184,7 @@ async def get_config() -> ServerConfigDto:
 
 @router.get("/about")
 async def get_about() -> ServerAboutResponseDto:
-    return ServerAboutResponseDto(**fake_about)
+    return ServerAboutResponseDto(**get_fake_about())
 
 
 @router.get("/storage")
@@ -188,7 +200,7 @@ async def get_version_history() -> List[ServerVersionHistoryResponseDto]:
             version=item["version"],
             createdAt=datetime.fromisoformat(item["createdAt"]),
         )
-        for item in fake_version_history
+        for item in get_fake_version_history()
     ]
 
 
@@ -203,11 +215,13 @@ async def get_apk_links() -> ServerApkLinksDto:
     Get APK links for the Immich mobile app.
     This is a stub implementation returning fake download links.
     """
+    version = get_settings().immich_version
+    version_str = f"v{version}"
     return ServerApkLinksDto(
-        arm64v8a="https://github.com/immich-app/immich/releases/download/v1.142.0/immich-v1.142.0-arm64-v8a.apk",
-        armeabiv7a="https://github.com/immich-app/immich/releases/download/v1.142.0/immich-v1.142.0-armeabi-v7a.apk",
-        universal="https://github.com/immich-app/immich/releases/download/v1.142.0/immich-v1.142.0-universal.apk",
-        x86_64="https://github.com/immich-app/immich/releases/download/v1.142.0/immich-v1.142.0-x86_64.apk",
+        arm64v8a=f"https://github.com/immich-app/immich/releases/download/{version_str}/immich-{version_str}-arm64-v8a.apk",
+        armeabiv7a=f"https://github.com/immich-app/immich/releases/download/{version_str}/immich-{version_str}-armeabi-v7a.apk",
+        universal=f"https://github.com/immich-app/immich/releases/download/{version_str}/immich-{version_str}-universal.apk",
+        x86_64=f"https://github.com/immich-app/immich/releases/download/{version_str}/immich-{version_str}-x86_64.apk",
     )
 
 
@@ -235,20 +249,26 @@ async def get_server_statistics() -> ServerStatsResponseDto:
 async def get_server_version() -> ServerVersionResponseDto:
     """
     Get server version information.
-    This is a stub implementation returning version 1.142.0.
+    Returns the Immich version from .immich-container-tag file.
     """
-    return ServerVersionResponseDto(major=1, minor=142, patch=0)
+    version = get_settings().immich_version
+    return ServerVersionResponseDto(
+        major=version.major,
+        minor=version.minor,
+        patch=version.patch,
+    )
 
 
 @router.get("/version-check")
 async def get_version_check() -> VersionCheckStateResponseDto:
     """
     Check for version updates.
-    This is a stub implementation returning version 1.142.0.
+    Returns the current version from .immich-container-tag file.
     """
+    version = get_settings().immich_version
     return VersionCheckStateResponseDto(
         checkedAt=str(datetime.now(timezone.utc)),
-        releaseVersion="1.142.0",
+        releaseVersion=str(version),
     )
 
 

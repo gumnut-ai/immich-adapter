@@ -5,6 +5,8 @@ from functools import lru_cache
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from config.immich_version import ImmichVersion, load_immich_version
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,6 +19,19 @@ class Settings(BaseSettings):
 
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
     oauth_mobile_redirect_uri: str = "app.immich:///oauth-callback"
+
+    # Private field to cache the loaded Immich version
+    _immich_version: ImmichVersion | None = None
+
+    @property
+    def immich_version(self) -> ImmichVersion:
+        """
+        Get the Immich version loaded from .immich-container-tag file.
+        Loads lazily and caches the result.
+        """
+        if self._immich_version is None:
+            self._immich_version = load_immich_version()
+        return self._immich_version
 
     @field_validator("environment")
     def validate_environment(cls, v: str | None) -> str:

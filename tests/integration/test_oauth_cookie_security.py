@@ -128,7 +128,7 @@ class TestOAuthCookieSecurity:
             mock_get_refreshed.return_value = "refreshed-jwt-token-789"
 
             # Make a request with existing auth cookie
-            response = client.get("/api/server/version")
+            response = client.get("/api/server/about")
 
             # Should be successful
             assert response.status_code == 200
@@ -159,7 +159,7 @@ class TestOAuthCookieSecurity:
 
         # Make various requests and check that any cookies set have security flags
         test_endpoints = [
-            ("/api/server/version", "GET"),
+            ("/api/server/about", "GET"),
             ("/api/server/config", "GET"),
         ]
 
