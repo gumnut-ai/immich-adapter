@@ -10,6 +10,15 @@ from config.immich_version import ImmichVersion, load_immich_version
 logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=1)
+def get_immich_version() -> ImmichVersion:
+    try:
+        return load_immich_version()
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error("Failed to load Immich version: %s", exc)
+        return ImmichVersion(major=0, minor=0, patch=0)
+
+
 class Settings(BaseSettings):
     environment: str | None = None
 
@@ -25,13 +34,7 @@ class Settings(BaseSettings):
 
     @property
     def immich_version(self) -> ImmichVersion:
-        """
-        Get the Immich version loaded from .immich-container-tag file.
-        Loads lazily and caches the result.
-        """
-        if self._immich_version is None:
-            self._immich_version = load_immich_version()
-        return self._immich_version
+        return get_immich_version()
 
     @field_validator("environment")
     def validate_environment(cls, v: str | None) -> str:

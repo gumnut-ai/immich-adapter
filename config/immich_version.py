@@ -36,8 +36,8 @@ def load_immich_version() -> ImmichVersion:
     # Remove 'v' prefix if present (e.g., "v2.2.2" -> "2.2.2")
     version_string = version_string.lstrip("v")
 
-    # Parse version using regex: major.minor.patch
-    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version_string)
+    # Parse version using regex: strictly major.minor.patch
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version_string)
 
     if not match:
         raise ValueError(f"Invalid version format in {version_file}: {version_string}")
