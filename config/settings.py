@@ -5,7 +5,18 @@ from functools import lru_cache
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from config.immich_version import ImmichVersion, load_immich_version
+
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def get_immich_version() -> ImmichVersion:
+    try:
+        return load_immich_version()
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error("Failed to load Immich version: %s", exc)
+        return ImmichVersion(major=0, minor=0, patch=0)
 
 
 class Settings(BaseSettings):
@@ -17,6 +28,13 @@ class Settings(BaseSettings):
 
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
     oauth_mobile_redirect_uri: str = "app.immich:///oauth-callback"
+
+    # Private field to cache the loaded Immich version
+    _immich_version: ImmichVersion | None = None
+
+    @property
+    def immich_version(self) -> ImmichVersion:
+        return get_immich_version()
 
     @field_validator("environment")
     def validate_environment(cls, v: str | None) -> str:

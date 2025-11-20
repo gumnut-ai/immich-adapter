@@ -2,6 +2,8 @@ import logging
 
 import socketio
 
+from config.settings import get_settings
+
 logger = logging.getLogger(__name__)
 
 # Create Socket.IO server
@@ -22,6 +24,7 @@ socket_app = socketio.ASGIApp(socketio_server=sio, socketio_path="/")
 async def connect(sid, environ):
     logger.debug(f"Connect attempt - SID: {sid}")
     logger.debug(f"Environment: {environ}")
+    version = get_settings().immich_version
     try:
         await sio.emit(
             "on_server_version",
@@ -29,13 +32,13 @@ async def connect(sid, environ):
                 "options": {},
                 "loose": False,
                 "includePrerelease": False,
-                "raw": "1.142.3",
-                "major": 1,
-                "minor": 142,
-                "patch": 3,
+                "raw": str(version),
+                "major": version.major,
+                "minor": version.minor,
+                "patch": version.patch,
                 "prerelease": [],
                 "build": [],
-                "version": "1.142.3",
+                "version": str(version),
             },
             room=sid,
         )
