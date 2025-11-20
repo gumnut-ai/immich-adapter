@@ -1,16 +1,16 @@
 """Integration tests for server version endpoints."""
 
 import pytest
+from datetime import datetime
 from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 from config.immich_version import ImmichVersion
+from main import app
 
 
 @pytest.fixture
 def client():
     """Create a test client with mocked version."""
-    from main import app
-
     # Mock get_settings() to return a settings object with our test version
     mock_settings = Mock()
     mock_settings.immich_version = ImmichVersion(major=2, minor=2, patch=2)
@@ -79,6 +79,4 @@ class TestVersionCheckEndpoint:
         assert len(data["checkedAt"]) > 0
 
         # Should be able to parse as datetime
-        from datetime import datetime
-
         datetime.fromisoformat(data["checkedAt"].replace("Z", "+00:00"))
