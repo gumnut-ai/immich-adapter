@@ -32,6 +32,7 @@ from routers.immich_models import (
     SyncAssetFaceV1,
     SyncAssetV1,
     SyncAuthUserV1,
+    SyncEntityType,
     SyncPersonV1,
     SyncRequestType,
     SyncStreamDto,
@@ -499,7 +500,7 @@ async def generate_sync_stream(
 
             sync_auth_user = gumnut_user_to_sync_auth_user_v1(current_user)
             event = {
-                "type": SyncRequestType.AuthUsersV1.value,
+                "type": SyncEntityType.AuthUserV1.value,
                 "data": sync_auth_user.model_dump(mode="json"),
                 "ack": generate_checkpoint_id(),
             }
@@ -513,13 +514,37 @@ async def generate_sync_stream(
 
             sync_user = gumnut_user_to_sync_user_v1(current_user)
             event = {
-                "type": SyncRequestType.UsersV1.value,
+                "type": SyncEntityType.UserV1.value,
                 "data": sync_user.model_dump(mode="json"),
                 "ack": generate_checkpoint_id(),
             }
             yield json.dumps(event) + "\n"
 
             logger.info("Streamed 1 user", extra={"user_id": owner_id})
+
+        # Stream people if requested
+        if SyncRequestType.PeopleV1 in requested_types:
+            try:
+                logger.info("Streaming people...", extra={"user_id": owner_id})
+                people_count = 0
+
+                for person in gumnut_client.people.list():
+                    sync_person = gumnut_person_to_sync_person_v1(person, owner_id)
+
+                    event = {
+                        "type": SyncEntityType.PersonV1.value,
+                        "data": sync_person.model_dump(mode="json"),
+                        "ack": generate_checkpoint_id(),
+                    }
+                    yield json.dumps(event) + "\n"
+                    people_count += 1
+
+                logger.info(
+                    f"Streamed {people_count} people",
+                    extra={"user_id": owner_id, "people_count": people_count},
+                )
+            except Exception as e:
+                logger.warning(f"Error streaming people: {str(e)}")
 
         # Stream asset-related data in a single pass to avoid multiple iterations
         asset_related_types = {
@@ -556,7 +581,7 @@ async def generate_sync_stream(
                         if SyncRequestType.AssetsV1 in requested_types:
                             sync_asset = gumnut_asset_to_sync_asset_v1(asset, owner_id)
                             event = {
-                                "type": SyncRequestType.AssetsV1.value,
+                                "type": SyncEntityType.AssetV1.value,
                                 "data": sync_asset.model_dump(mode="json"),
                                 "ack": generate_checkpoint_id(),
                             }
@@ -568,7 +593,7 @@ async def generate_sync_stream(
                             sync_exif = gumnut_asset_to_sync_exif_v1(asset)
                             if sync_exif:
                                 event = {
-                                    "type": SyncRequestType.AssetExifsV1.value,
+                                    "type": SyncEntityType.AssetExifV1.value,
                                     "data": sync_exif.model_dump(mode="json"),
                                     "ack": generate_checkpoint_id(),
                                 }
@@ -585,7 +610,7 @@ async def generate_sync_stream(
                                     asset, person, person_index
                                 )
                                 event = {
-                                    "type": SyncRequestType.AssetFacesV1.value,
+                                    "type": SyncEntityType.AssetFaceV1.value,
                                     "data": sync_face.model_dump(mode="json"),
                                     "ack": generate_checkpoint_id(),
                                 }
@@ -628,33 +653,9 @@ async def generate_sync_stream(
             except Exception as e:
                 logger.warning(f"Error streaming asset-related data: {str(e)}")
 
-        # Stream people if requested
-        if SyncRequestType.PeopleV1 in requested_types:
-            try:
-                logger.info("Streaming people...", extra={"user_id": owner_id})
-                people_count = 0
-
-                for person in gumnut_client.people.list():
-                    sync_person = gumnut_person_to_sync_person_v1(person, owner_id)
-
-                    event = {
-                        "type": SyncRequestType.PeopleV1.value,
-                        "data": sync_person.model_dump(mode="json"),
-                        "ack": generate_checkpoint_id(),
-                    }
-                    yield json.dumps(event) + "\n"
-                    people_count += 1
-
-                logger.info(
-                    f"Streamed {people_count} people",
-                    extra={"user_id": owner_id, "people_count": people_count},
-                )
-            except Exception as e:
-                logger.warning(f"Error streaming people: {str(e)}")
-
         # Stream completion event
         complete_event = {
-            "type": "SyncCompleteV1",
+            "type": SyncEntityType.SyncCompleteV1.value,
             "data": {},
             "ack": generate_checkpoint_id(),
         }
