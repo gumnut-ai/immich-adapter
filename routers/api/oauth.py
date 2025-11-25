@@ -16,7 +16,7 @@ from routers.immich_models import (
 )
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 from routers.utils.oauth_utils import parse_callback_url
-from routers.utils.cookies import set_auth_cookies
+from routers.utils.cookies import AuthType, set_auth_cookies
 from routers.utils.current_user import get_current_user
 from config.settings import get_settings
 
@@ -169,7 +169,7 @@ async def finish_oauth(
 
         # Set authentication cookies for web client
         set_auth_cookies(
-            response, result.access_token, "oauth", request.url.scheme == "https"
+            response, result.access_token, AuthType.OAUTH, request.url.scheme == "https"
         )
 
         if result.user.first_name or result.user.last_name:

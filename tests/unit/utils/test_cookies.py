@@ -3,6 +3,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.testclient import TestClient
 
 from routers.utils.cookies import (
+    AuthType,
     ImmichCookie,
     set_auth_cookies,
     update_access_token_cookie,
@@ -17,13 +18,13 @@ def app():
     @app.get("/test/set-auth-cookies")
     def test_set_auth_cookies(response: Response):
         """Endpoint to test set_auth_cookies."""
-        set_auth_cookies(response, "test-token-123", "oauth")
+        set_auth_cookies(response, "test-token-123", AuthType.OAUTH)
         return {"status": "ok"}
 
     @app.get("/test/set-auth-cookies-with-secure")
     def test_set_auth_cookies_with_secure(request: Request, response: Response):
         """Endpoint to test set_auth_cookies with secure flag."""
-        set_auth_cookies(response, "test-token-456", "password", False)
+        set_auth_cookies(response, "test-token-456", AuthType.PASSWORD, False)
         return {"status": "ok"}
 
     @app.get("/test/update-token")
