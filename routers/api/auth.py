@@ -105,7 +105,7 @@ async def post_logout(
             redirect_uri = logout_response.logout_endpoint
         except GumnutError:
             logger.warning(
-                "OAuth provider does not support logout endpoint", exc_info=True
+                "OAuth provider does not support logout endpoint"
             )
         except Exception:
             logger.error(
