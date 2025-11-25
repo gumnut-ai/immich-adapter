@@ -2,7 +2,7 @@ from uuid import UUID
 import logging
 
 from fastapi import APIRouter, Depends, Request, Response
-from gumnut import Gumnut
+from gumnut import Gumnut, GumnutError
 from routers.immich_models import (
     AuthStatusResponseDto,
     ChangePasswordDto,
@@ -18,7 +18,9 @@ from routers.immich_models import (
     ValidateAccessTokenResponseDto,
 )
 from routers.utils.cookies import AuthType, ImmichCookie, set_auth_cookies
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client_optional,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +88,7 @@ async def post_login(
 async def post_logout(
     request: Request,
     response: Response,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: Gumnut | None = Depends(get_authenticated_gumnut_client_optional),
 ) -> LogoutResponseDto:
     auth_type = request.cookies.get(ImmichCookie.AUTH_TYPE.value)
 
@@ -97,12 +99,18 @@ async def post_logout(
     # By setting autoLaunch=0, we prevent the Immich web client from immediately launching
     # the login flow again after logout.
     redirect_uri = "/auth/login?autoLaunch=0"
-    if auth_type == AuthType.OAUTH.value:
+    if auth_type == AuthType.OAUTH.value and client is not None:
         try:
             logout_response = client.oauth.logout_endpoint()
             redirect_uri = logout_response.logout_endpoint
+        except GumnutError:
+            logger.warning(
+                "OAuth provider does not support logout endpoint", exc_info=True
+            )
         except Exception:
-            logger.warning("OAuth provider does not support logout endpoint")
+            logger.error(
+                "Unexpected error while calling OAuth logout endpoint", exc_info=True
+            )
 
     return LogoutResponseDto(
         redirectUri=redirect_uri,
