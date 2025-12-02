@@ -1,6 +1,8 @@
 from uuid import UUID
+import logging
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
+from gumnut import Gumnut, GumnutError
 from routers.immich_models import (
     AuthStatusResponseDto,
     ChangePasswordDto,
@@ -15,7 +17,12 @@ from routers.immich_models import (
     UserAdminResponseDto,
     ValidateAccessTokenResponseDto,
 )
-from routers.utils.cookies import ImmichCookie, set_auth_cookies
+from routers.utils.cookies import AuthType, ImmichCookie, set_auth_cookies
+from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client_optional,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/auth",
@@ -61,7 +68,7 @@ async def post_login(
     set_auth_cookies(
         response,
         fake_auth_login["accessToken"],
-        "password",
+        AuthType.PASSWORD,
         request.url.scheme == "https",
     )
 
@@ -78,13 +85,35 @@ async def post_login(
 
 
 @router.post("/logout")
-async def post_logout(response: Response) -> LogoutResponseDto:
+async def post_logout(
+    request: Request,
+    response: Response,
+    client: Gumnut | None = Depends(get_authenticated_gumnut_client_optional),
+) -> LogoutResponseDto:
+    auth_type = request.cookies.get(ImmichCookie.AUTH_TYPE.value)
+
     response.delete_cookie(ImmichCookie.ACCESS_TOKEN.value)
     response.delete_cookie(ImmichCookie.AUTH_TYPE.value)
     response.delete_cookie(ImmichCookie.IS_AUTHENTICATED.value)
 
+    # By setting autoLaunch=0, we prevent the Immich web client from immediately launching
+    # the login flow again after logout.
+    redirect_uri = "/auth/login?autoLaunch=0"
+    if auth_type == AuthType.OAUTH.value and client is not None:
+        try:
+            logout_response = client.oauth.logout_endpoint()
+            redirect_uri = logout_response.logout_endpoint
+        except GumnutError:
+            logger.warning(
+                "OAuth provider does not support logout endpoint", exc_info=True
+            )
+        except Exception:
+            logger.error(
+                "Unexpected error while calling OAuth logout endpoint", exc_info=True
+            )
+
     return LogoutResponseDto(
-        redirectUri="/auth/login",
+        redirectUri=redirect_uri,
         successful=True,
     )
 

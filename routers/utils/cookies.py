@@ -9,10 +9,15 @@ class ImmichCookie(str, Enum):
     SHARED_LINK_TOKEN = "immich_shared_link_token"
 
 
+class AuthType(str, Enum):
+    OAUTH = "oauth"
+    PASSWORD = "password"
+
+
 def set_auth_cookies(
     response: Response,
     access_token: str,
-    auth_type: str,
+    auth_type: AuthType,
     secure: bool = True,
 ) -> None:
     """
@@ -45,7 +50,7 @@ def set_auth_cookies(
     # Set auth type cookie (indicates how user authenticated)
     response.set_cookie(
         key=ImmichCookie.AUTH_TYPE.value,
-        value=auth_type,
+        value=auth_type.value,
         httponly=True,
         secure=secure,
         samesite="lax",

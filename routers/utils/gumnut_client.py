@@ -188,6 +188,30 @@ async def get_authenticated_gumnut_client(request: Request) -> Gumnut:
     return get_gumnut_client(jwt_token)
 
 
+async def get_authenticated_gumnut_client_optional(request: Request) -> Gumnut | None:
+    """
+    Dependency that provides an authenticated Gumnut client for the current request
+    if a JWT is present. Otherwise, returns None without raising an exception.
+
+    Used during logout to prevent errors when no JWT is present.
+
+    Args:
+        request: FastAPI request object containing state set by middleware
+
+    Returns:
+        Gumnut: Authenticated Gumnut client instance for the current user
+
+    Raises:
+        HTTPException: 401 if no JWT is present in request state
+    """
+    jwt_token = getattr(request.state, "jwt_token", None)
+
+    if jwt_token:
+        return get_gumnut_client(jwt_token)
+
+    return None
+
+
 async def get_unauthenticated_gumnut_client() -> Gumnut:
     """
     Dependency that provides an unauthenticated Gumnut client for OAuth operations.
