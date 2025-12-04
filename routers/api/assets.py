@@ -173,27 +173,29 @@ async def bulk_upload_check(
 
     try:
         results = []
-        # Convert Immich checksums (hex) to base64 for Gumnut
-        checksums_b64 = [
-            _immich_checksum_to_base64(asset.checksum) for asset in request.assets
-        ]
+        # Convert Immich checksums (hex or base64) to base64 for Gumnut
+        # Build a map to avoid converting each checksum twice
+        checksum_to_b64 = {
+            asset.checksum: _immich_checksum_to_base64(asset.checksum)
+            for asset in request.assets
+        }
 
         existing_assets_response = client.assets.check_existence(
-            checksum_sha1s=checksums_b64
+            checksum_sha1s=list(checksum_to_b64.values())
         )
         existing_assets = existing_assets_response.assets
 
         # Build a lookup map from base64 checksum to existing asset
-        checksum_to_asset = {
+        b64_to_existing_asset = {
             existing_asset.checksum_sha1: existing_asset
             for existing_asset in existing_assets
             if existing_asset.checksum_sha1
         }
 
         for asset in request.assets:
-            # Convert the incoming checksum to base64 for comparison
-            checksum_b64 = _immich_checksum_to_base64(asset.checksum)
-            existing_asset = checksum_to_asset.get(checksum_b64)
+            # Look up the pre-computed base64 checksum
+            checksum_b64 = checksum_to_b64[asset.checksum]
+            existing_asset = b64_to_existing_asset.get(checksum_b64)
 
             if existing_asset:
                 results.append(
