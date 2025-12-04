@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     gumnut_api_base_url: str = "http://localhost:8000"
     sentry_dsn: str | None = None
 
+    # Redis settings (uses db 1 for isolation from photos-api which uses db 0)
+    redis_url: str = "redis://localhost:6379/1"
+
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
     oauth_mobile_redirect_uri: str = "app.immich:///oauth-callback"
 
