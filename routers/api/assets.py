@@ -227,7 +227,6 @@ async def check_existing_assets(
     """
     Check if multiple assets exist on the server and return all existing.
     """
-    existing_ids = []
     try:
         existing_assets_response = client.assets.check_existence(
             device_id=request.deviceId, device_asset_ids=request.deviceAssetIds

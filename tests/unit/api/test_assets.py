@@ -98,7 +98,6 @@ class TestBulkUploadCheck:
         mock_existing_asset = Mock()
         mock_existing_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         # The checksum is stored as base64 in Gumnut
-
         mock_existing_asset.checksum_sha1 = base64.b64encode(
             bytes.fromhex(checksum1)
         ).decode("ascii")
@@ -119,6 +118,46 @@ class TestBulkUploadCheck:
         # Second asset should be accepted
         assert result.results[1].id == "asset2"
         assert result.results[1].action == Action.accept
+
+    @pytest.mark.anyio
+    async def test_bulk_upload_check_with_base64_checksum(self, sample_uuid):
+        """Test bulk upload check with base64-encoded checksums (mobile client format)."""
+        # SHA-1 is 20 bytes, which encodes to 28 base64 characters
+        # Create a valid 20-byte value and encode it
+        sha1_bytes = b"\xaa" * 20  # 20 bytes of 0xaa
+        checksum_b64 = base64.b64encode(sha1_bytes).decode("ascii")  # 28 chars
+        assert len(checksum_b64) == 28  # Verify it's the expected length
+
+        request = AssetBulkUploadCheckDto(
+            assets=[
+                AssetBulkUploadCheckItem(id="mobile-asset-1", checksum=checksum_b64),
+            ]
+        )
+
+        # Mock the Gumnut client - asset exists with matching base64 checksum
+        mock_client = Mock()
+        mock_existing_asset = Mock()
+        mock_existing_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        # Gumnut stores checksums as base64, should match exactly
+        mock_existing_asset.checksum_sha1 = checksum_b64
+
+        mock_response = Mock()
+        mock_response.assets = [mock_existing_asset]
+        mock_client.assets.check_existence.return_value = mock_response
+
+        # Execute
+        result = await bulk_upload_check(request, client=mock_client)
+
+        # Assert - should detect as duplicate
+        assert len(result.results) == 1
+        assert result.results[0].id == "mobile-asset-1"
+        assert result.results[0].action == Action.reject
+        assert result.results[0].assetId == str(sample_uuid)
+
+        # Verify the base64 checksum was passed to Gumnut as-is
+        mock_client.assets.check_existence.assert_called_once()
+        call_args = mock_client.assets.check_existence.call_args
+        assert checksum_b64 in call_args.kwargs["checksum_sha1s"]
 
 
 class TestCheckExistingAssets:
