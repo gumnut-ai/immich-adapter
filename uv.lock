@@ -159,7 +159,7 @@ wheels = [
 
 [[package]]
 name = "gumnut-sdk"
-version = "0.26.0"
+version = "0.28.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -169,9 +169,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/89/f3/aae58062718d24cf0bb9404847231cb9f69c647e876902623e2ede644923/gumnut_sdk-0.26.0.tar.gz", hash = "sha256:48402494a7f933111fa1324e6b676f8a63020bc95e829ae0d63bc283a673c8ae", size = 128571, upload-time = "2025-11-20T01:23:15.364Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/50/3ffa189a3109c2e148ea5a73307e2bb0cf7fe8ecfdbaefa241390ba4ba60/gumnut_sdk-0.28.0.tar.gz", hash = "sha256:648bd2c2af8cc0eea2f39d2566a927a4dac8a1e58404033698df254165a527d1", size = 130494, upload-time = "2025-12-04T05:28:42.309Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/a2/023fd5049556df8d7eff6b4896b58db7f7eafdab437a2fa398ac76b3936a/gumnut_sdk-0.26.0-py3-none-any.whl", hash = "sha256:3e892007c9435022954167d9affc44e4bb3f02d8cfe31f5d5b647165d0c7fbec", size = 116716, upload-time = "2025-11-20T01:23:14.238Z" },
+    { url = "https://files.pythonhosted.org/packages/63/fd/426e10b3fc53abf885ff4e135e5eea2f4ca1eb17de722df0e4c52e66ee51/gumnut_sdk-0.28.0-py3-none-any.whl", hash = "sha256:7a300bd66790c135ba5f4701784efd51fa0f01de0c377e3187ecd8db6de57685", size = 118631, upload-time = "2025-12-04T05:28:41.02Z" },
 ]
 
 [[package]]

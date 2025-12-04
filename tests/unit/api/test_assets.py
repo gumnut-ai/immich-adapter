@@ -1,9 +1,10 @@
 """Tests for assets.py endpoints."""
 
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, AsyncMock
 from fastapi import HTTPException
 from uuid import uuid4
+import base64
 
 from routers.api.assets import (
     bulk_upload_check,
@@ -26,6 +27,7 @@ from routers.api.assets import (
     get_asset_metadata_by_key,
     play_asset_video,
 )
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 from routers.immich_models import (
     Action,
     AssetBulkUploadCheckDto,
@@ -48,24 +50,75 @@ class TestBulkUploadCheck:
     """Test the bulk_upload_check endpoint."""
 
     @pytest.mark.anyio
-    async def test_bulk_upload_check_success(self):
-        """Test successful bulk upload check."""
+    async def test_bulk_upload_check_all_new(self):
+        """Test bulk upload check when all assets are new."""
+        # Valid SHA-1 checksums (40 hex characters)
+        checksum1 = "a" * 40
+        checksum2 = "b" * 40
+
         request = AssetBulkUploadCheckDto(
             assets=[
-                AssetBulkUploadCheckItem(id="asset1", checksum="checksum1"),
-                AssetBulkUploadCheckItem(id="asset2", checksum="checksum2"),
+                AssetBulkUploadCheckItem(id="asset1", checksum=checksum1),
+                AssetBulkUploadCheckItem(id="asset2", checksum=checksum2),
             ]
         )
 
+        # Mock the Gumnut client - no existing assets
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.assets = []
+        mock_client.assets.check_existence.return_value = mock_response
+
         # Execute
-        result = await bulk_upload_check(request)
+        result = await bulk_upload_check(request, client=mock_client)
 
         # Assert
-        # NOTE: Pydantic converts the dictionaries from assets.py to AssetBulkUploadCheckResult objects
         assert len(result.results) == 2
         assert all(item.action == Action.accept for item in result.results)
         assert result.results[0].id == "asset1"
         assert result.results[1].id == "asset2"
+        mock_client.assets.check_existence.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_bulk_upload_check_with_duplicates(self, sample_uuid):
+        """Test bulk upload check when some assets already exist."""
+        # Valid SHA-1 checksums (40 hex characters)
+        checksum1 = "a" * 40
+        checksum2 = "b" * 40
+
+        request = AssetBulkUploadCheckDto(
+            assets=[
+                AssetBulkUploadCheckItem(id="asset1", checksum=checksum1),
+                AssetBulkUploadCheckItem(id="asset2", checksum=checksum2),
+            ]
+        )
+
+        # Mock the Gumnut client - first asset exists
+        mock_client = Mock()
+        mock_existing_asset = Mock()
+        mock_existing_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        # The checksum is stored as base64 in Gumnut
+
+        mock_existing_asset.checksum_sha1 = base64.b64encode(
+            bytes.fromhex(checksum1)
+        ).decode("ascii")
+
+        mock_response = Mock()
+        mock_response.assets = [mock_existing_asset]
+        mock_client.assets.check_existence.return_value = mock_response
+
+        # Execute
+        result = await bulk_upload_check(request, client=mock_client)
+
+        # Assert
+        assert len(result.results) == 2
+        # First asset should be rejected as duplicate
+        assert result.results[0].id == "asset1"
+        assert result.results[0].action == Action.reject
+        assert result.results[0].assetId == str(sample_uuid)
+        # Second asset should be accepted
+        assert result.results[1].id == "asset2"
+        assert result.results[1].action == Action.accept
 
 
 class TestCheckExistingAssets:
@@ -73,17 +126,54 @@ class TestCheckExistingAssets:
 
     @pytest.mark.anyio
     async def test_check_existing_assets_returns_empty(self):
-        """Test that check_existing_assets returns empty list."""
+        """Test that check_existing_assets returns empty list when no assets exist."""
         # Setup
         request = CheckExistingAssetsDto(
             deviceAssetIds=["asset1", "asset2"], deviceId="device-123"
         )
 
+        # Mock the Gumnut client - no existing assets
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.assets = []
+        mock_client.assets.check_existence.return_value = mock_response
+
         # Execute
-        result = await check_existing_assets(request)
+        result = await check_existing_assets(request, client=mock_client)
 
         # Assert
         assert result.existingIds == []
+        mock_client.assets.check_existence.assert_called_once_with(
+            device_id="device-123", device_asset_ids=["asset1", "asset2"]
+        )
+
+    @pytest.mark.anyio
+    async def test_check_existing_assets_returns_existing(self, sample_uuid):
+        """Test that check_existing_assets returns IDs of existing assets."""
+        # Setup
+        request = CheckExistingAssetsDto(
+            deviceAssetIds=["asset1", "asset2", "asset3"], deviceId="device-123"
+        )
+
+        # Mock the Gumnut client - some assets exist
+        mock_client = Mock()
+        mock_asset1 = Mock()
+        mock_asset1.id = uuid_to_gumnut_asset_id(sample_uuid)
+        second_uuid = uuid4()
+        mock_asset2 = Mock()
+        mock_asset2.id = uuid_to_gumnut_asset_id(second_uuid)
+
+        mock_response = Mock()
+        mock_response.assets = [mock_asset1, mock_asset2]
+        mock_client.assets.check_existence.return_value = mock_response
+
+        # Execute
+        result = await check_existing_assets(request, client=mock_client)
+
+        # Assert
+        assert len(result.existingIds) == 2
+        assert str(sample_uuid) in result.existingIds
+        assert str(second_uuid) in result.existingIds
 
 
 class TestUploadAsset:
@@ -95,9 +185,9 @@ class TestUploadAsset:
         # Setup - create mock client
         mock_client = Mock()
 
-        # Mock the gumnut asset response
+        # Mock the gumnut asset response with proper Gumnut ID format
         mock_gumnut_asset = Mock()
-        mock_gumnut_asset.id = "gumnut-asset-123"
+        mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_client.assets.create.return_value = mock_gumnut_asset
 
         # Mock the file data
@@ -106,28 +196,22 @@ class TestUploadAsset:
         mock_file.content_type = "image/jpeg"
         mock_file.read = AsyncMock(return_value=b"fake image data")
 
-        # Mock safe_uuid_from_asset_id
-        with patch(
-            "routers.utils.gumnut_id_conversion.safe_uuid_from_asset_id"
-        ) as mock_safe_uuid:
-            mock_safe_uuid.return_value = sample_uuid
+        # Execute
+        result = await upload_asset(
+            assetData=mock_file,
+            deviceAssetId="device-123",
+            deviceId="device-456",
+            fileCreatedAt="2023-01-01T12:00:00Z",
+            fileModifiedAt="2023-01-01T12:00:00Z",
+            isFavorite=False,
+            duration="",
+            client=mock_client,
+        )
 
-            # Execute
-            result = await upload_asset(
-                assetData=mock_file,
-                deviceAssetId="device-123",
-                deviceId="device-456",
-                fileCreatedAt="2023-01-01T12:00:00Z",
-                fileModifiedAt="2023-01-01T12:00:00Z",
-                isFavorite=False,
-                duration="",
-                client=mock_client,
-            )
-
-            # Assert
-            assert result.id == str(sample_uuid)
-            assert result.status == AssetMediaStatus.created
-            mock_client.assets.create.assert_called_once()
+        # Assert
+        assert result.id == str(sample_uuid)
+        assert result.status == AssetMediaStatus.created
+        mock_client.assets.create.assert_called_once()
 
     @pytest.mark.anyio
     async def test_upload_asset_duplicate(self, sample_uuid):
