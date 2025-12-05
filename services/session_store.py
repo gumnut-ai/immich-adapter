@@ -68,8 +68,10 @@ class AsyncRedisClient(Protocol):
 _REQUIRED_SESSION_FIELDS = frozenset(
     [
         "user_id",
+        "library_id",
         "device_type",
         "device_os",
+        "app_version",
         "created_at",
         "updated_at",
         "is_pending_sync_reset",
@@ -220,6 +222,10 @@ class SessionStore:
 
         if expires_at is not None:
             ttl_seconds = int((expires_at - now).total_seconds())
+            if ttl_seconds <= 0:
+                # Should have been caught by the earlier `expires_at <= now` check,
+                # but guard against rounding issues.
+                ttl_seconds = 1
             pipe.expire(f"session:{session_id}", ttl_seconds)
 
         await pipe.execute()

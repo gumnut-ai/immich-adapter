@@ -34,5 +34,9 @@ async def close_redis_client() -> None:
     """Close the singleton Redis client if it exists."""
     global _redis_client
     if _redis_client is not None:
-        await _redis_client.aclose()
-        _redis_client = None
+        try:
+            await _redis_client.aclose()
+        except Exception:
+            pass
+        finally:
+            _redis_client = None
