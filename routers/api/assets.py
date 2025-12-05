@@ -1,12 +1,13 @@
 from typing import List
 from uuid import UUID
+import base64
 import logging
+from datetime import datetime
 
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
-    Header,
     UploadFile,
     File,
     Form,
@@ -42,6 +43,7 @@ from routers.immich_models import (
     UpdateAssetDto,
 )
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
     uuid_to_gumnut_asset_id,
 )
 from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
@@ -141,26 +143,96 @@ async def _download_asset_content(
         raise map_gumnut_error(e, "Failed to fetch asset")
 
 
+def _immich_checksum_to_base64(checksum: str) -> str:
+    """
+    Convert an Immich checksum (hex or base64) to base64 format for Gumnut.
+
+    Immich clients send SHA-1 checksums as either:
+    - 40-character hex strings (from web client)
+    - 28-character base64 strings (from mobile clients)
+
+    Gumnut expects base64-encoded checksums.
+
+    Note: Invalid hex checksums are handled silently to match Immich server behavior.
+    JavaScript's Buffer.from(str, 'hex') silently produces empty/garbage output for
+    invalid input, so we do the same here. This results in false negatives (failing
+    to detect duplicates) rather than request failures.
+    """
+    if len(checksum) == 28:
+        # Already base64 encoded
+        return checksum
+    else:
+        # Hex encoded - convert to base64
+        try:
+            checksum_bytes = bytes.fromhex(checksum)
+        except ValueError as e:
+            # Match Immich server behavior: invalid hex produces empty buffer
+            # This will cause duplicate detection to fail silently (false negative)
+            logger.warning(
+                f"Invalid hex checksum '{checksum}': {e}. "
+                "Returning empty checksum to match Immich server behavior."
+            )
+            checksum_bytes = b""
+        return base64.b64encode(checksum_bytes).decode("ascii")
+
+
 @router.post("/bulk-upload-check")
 async def bulk_upload_check(
     request: AssetBulkUploadCheckDto,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> AssetBulkUploadCheckResponseDto:
     """
-    Check which assets from a bulk upload already exist in Gumnut. This is done via a checksum, which Gumnut does not
-    support, so all uploads are accepted.
+    Check which assets from a bulk upload already exist in Gumnut.
     """
-    results = []
 
-    for asset in request.assets:
-        results.append(
-            {
-                "id": asset.id,
-                "action": "accept",  # Gumnut SDK does not have the right API for an existence check, so always return "accept"
-            }
+    try:
+        results = []
+        # Convert Immich checksums (hex or base64) to base64 for Gumnut
+        # Build a map to avoid converting each checksum twice
+        checksum_to_b64 = {
+            asset.checksum: _immich_checksum_to_base64(asset.checksum)
+            for asset in request.assets
+        }
+
+        existing_assets_response = client.assets.check_existence(
+            checksum_sha1s=list(checksum_to_b64.values())
         )
+        existing_assets = existing_assets_response.assets
 
-    return AssetBulkUploadCheckResponseDto(results=results)
+        # Build a lookup map from base64 checksum to existing asset
+        b64_to_existing_asset = {
+            existing_asset.checksum_sha1: existing_asset
+            for existing_asset in existing_assets
+            if existing_asset.checksum_sha1
+        }
+
+        for asset in request.assets:
+            # Look up the pre-computed base64 checksum
+            checksum_b64 = checksum_to_b64[asset.checksum]
+            existing_asset = b64_to_existing_asset.get(checksum_b64)
+
+            if existing_asset:
+                results.append(
+                    {
+                        "id": asset.id,
+                        "action": "reject",
+                        "reason": "duplicate",
+                        "assetId": str(safe_uuid_from_asset_id(existing_asset.id)),
+                        "isTrashed": False,
+                    }
+                )
+            else:
+                results.append(
+                    {
+                        "id": asset.id,
+                        "action": "accept",
+                    }
+                )
+
+        return AssetBulkUploadCheckResponseDto(results=results)
+
+    except Exception as e:
+        raise map_gumnut_error(e, "Failed to check bulk upload assets")
 
 
 @router.post("/exist")
@@ -170,11 +242,19 @@ async def check_existing_assets(
 ) -> CheckExistingAssetsResponseDto:
     """
     Check if multiple assets exist on the server and return all existing.
-    This is a stub implementation as Gumnut does not support checking asset existence by device asset IDs.
-    Returns an empty list (no existing assets found).
     """
-    # Stub implementation: return empty list since Gumnut doesn't support existence checking
-    return CheckExistingAssetsResponseDto(existingIds=[])
+    try:
+        existing_assets_response = client.assets.check_existence(
+            device_id=request.deviceId, device_asset_ids=request.deviceAssetIds
+        )
+        existing_ids = [
+            str(safe_uuid_from_asset_id(asset.id))
+            for asset in existing_assets_response.assets
+        ]
+    except Exception as e:
+        raise map_gumnut_error(e, "Failed to check existing assets")
+
+    return CheckExistingAssetsResponseDto(existingIds=existing_ids)
 
 
 @router.post(
@@ -200,7 +280,6 @@ async def upload_asset(
     duration: str = Form(None),
     key: str = Query(default=None),
     slug: str = Query(default=None),
-    x_immich_checksum: str = Header(default=None, alias="x-immich-checksum"),
     client: Gumnut = Depends(get_authenticated_gumnut_client),
 ) -> AssetMediaResponseDto:
     """
@@ -209,8 +288,6 @@ async def upload_asset(
     """
 
     try:
-        from datetime import datetime
-
         # Parse datetime from form data
         try:
             file_created_at = datetime.fromisoformat(
@@ -244,8 +321,6 @@ async def upload_asset(
         asset_id = gumnut_asset.id
 
         # Convert to UUID format for response
-        from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
-
         asset_uuid = safe_uuid_from_asset_id(asset_id)
 
         return AssetMediaResponseDto(
