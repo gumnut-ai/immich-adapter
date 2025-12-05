@@ -4,6 +4,7 @@ from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
+from utils.redis_client import get_redis_client
 
 
 class SessionDataError(Exception):
@@ -543,7 +544,5 @@ async def get_session_store() -> SessionStore:
     Returns:
         SessionStore configured with the singleton Redis client
     """
-    from utils.redis_client import get_redis_client
-
     redis_client = await get_redis_client()
     return SessionStore(redis_client)
