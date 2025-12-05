@@ -7,6 +7,7 @@ from uuid import uuid4
 import base64
 
 from routers.api.assets import (
+    _immich_checksum_to_base64,
     bulk_upload_check,
     check_existing_assets,
     upload_asset,
@@ -158,6 +159,104 @@ class TestBulkUploadCheck:
         mock_client.assets.check_existence.assert_called_once()
         call_args = mock_client.assets.check_existence.call_args
         assert checksum_b64 in call_args.kwargs["checksum_sha1s"]
+
+    @pytest.mark.anyio
+    async def test_bulk_upload_check_with_malformed_checksum(self):
+        """Test bulk upload check with malformed hex checksum.
+
+        Matches Immich server behavior: invalid checksums produce empty buffers
+        silently, causing duplicate detection to fail (false negative) rather
+        than throwing an error.
+        """
+        # Mix of valid and invalid checksums
+        valid_checksum = "a" * 40  # Valid hex
+        invalid_checksum = "invalidhex!!!"  # Invalid hex characters
+
+        request = AssetBulkUploadCheckDto(
+            assets=[
+                AssetBulkUploadCheckItem(id="valid-asset", checksum=valid_checksum),
+                AssetBulkUploadCheckItem(id="invalid-asset", checksum=invalid_checksum),
+            ]
+        )
+
+        # Mock the Gumnut client - no existing assets
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.assets = []
+        mock_client.assets.check_existence.return_value = mock_response
+
+        # Execute - should NOT raise an exception
+        result = await bulk_upload_check(request, client=mock_client)
+
+        # Assert - both assets should be accepted (invalid one has false negative)
+        assert len(result.results) == 2
+        assert all(item.action == Action.accept for item in result.results)
+
+
+class TestImmichChecksumToBase64:
+    """Test the _immich_checksum_to_base64 helper function.
+
+    These tests verify that the function matches Immich server behavior:
+    - Valid hex checksums are converted to base64
+    - Valid base64 checksums (28 chars) are passed through unchanged
+    - Invalid hex checksums produce empty base64 strings (silent failure)
+    """
+
+    def test_valid_hex_checksum(self):
+        """Test conversion of valid 40-character hex checksum."""
+        hex_checksum = "aabbccdd11223344556677889900aabbccddeeff"
+        result = _immich_checksum_to_base64(hex_checksum)
+
+        # Verify it's valid base64 that decodes to the original bytes
+        decoded = base64.b64decode(result)
+        assert decoded == bytes.fromhex(hex_checksum)
+
+    def test_valid_base64_checksum(self):
+        """Test that 28-character base64 checksums are passed through unchanged."""
+        # SHA-1 is 20 bytes, which encodes to 28 base64 characters
+        sha1_bytes = b"\xaa" * 20
+        checksum_b64 = base64.b64encode(sha1_bytes).decode("ascii")
+        assert len(checksum_b64) == 28
+
+        result = _immich_checksum_to_base64(checksum_b64)
+        assert result == checksum_b64
+
+    def test_invalid_hex_characters(self):
+        """Test that invalid hex characters produce empty base64 (matches Immich)."""
+        result = _immich_checksum_to_base64("invalidhex!!!")
+
+        # Should return empty base64 (base64 encoding of empty bytes)
+        assert result == ""
+        assert base64.b64decode(result) == b""
+
+    def test_mixed_valid_invalid_hex(self):
+        """Test hex string with valid prefix but invalid characters."""
+        result = _immich_checksum_to_base64("aabb!!ccdd")
+
+        # Should return empty base64 (matches Immich's silent failure)
+        assert result == ""
+
+    def test_odd_length_hex(self):
+        """Test odd-length hex string (invalid)."""
+        result = _immich_checksum_to_base64("aabbccdde")  # 9 chars, odd
+
+        # Should return empty base64
+        assert result == ""
+
+    def test_empty_string(self):
+        """Test empty string input."""
+        result = _immich_checksum_to_base64("")
+
+        # Empty hex produces empty base64
+        assert result == ""
+
+    def test_short_valid_hex(self):
+        """Test short but valid hex string."""
+        result = _immich_checksum_to_base64("aabbccdd")
+
+        # Should convert successfully
+        decoded = base64.b64decode(result)
+        assert decoded == bytes.fromhex("aabbccdd")
 
 
 class TestCheckExistingAssets:

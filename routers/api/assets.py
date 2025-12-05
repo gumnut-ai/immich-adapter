@@ -152,13 +152,27 @@ def _immich_checksum_to_base64(checksum: str) -> str:
     - 28-character base64 strings (from mobile clients)
 
     Gumnut expects base64-encoded checksums.
+
+    Note: Invalid hex checksums are handled silently to match Immich server behavior.
+    JavaScript's Buffer.from(str, 'hex') silently produces empty/garbage output for
+    invalid input, so we do the same here. This results in false negatives (failing
+    to detect duplicates) rather than request failures.
     """
     if len(checksum) == 28:
         # Already base64 encoded
         return checksum
     else:
         # Hex encoded - convert to base64
-        checksum_bytes = bytes.fromhex(checksum)
+        try:
+            checksum_bytes = bytes.fromhex(checksum)
+        except ValueError as e:
+            # Match Immich server behavior: invalid hex produces empty buffer
+            # This will cause duplicate detection to fail silently (false negative)
+            logger.warning(
+                f"Invalid hex checksum '{checksum}': {e}. "
+                "Returning empty checksum to match Immich server behavior."
+            )
+            checksum_bytes = b""
         return base64.b64encode(checksum_bytes).decode("ascii")
 
 
