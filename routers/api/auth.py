@@ -3,6 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends, Request, Response
 from gumnut import Gumnut, GumnutError
+
 from routers.immich_models import (
     AuthStatusResponseDto,
     ChangePasswordDto,
@@ -21,6 +22,7 @@ from routers.utils.cookies import AuthType, ImmichCookie, set_auth_cookies
 from routers.utils.gumnut_client import (
     get_authenticated_gumnut_client_optional,
 )
+from services.session_store import SessionStore, get_session_store
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +91,26 @@ async def post_logout(
     request: Request,
     response: Response,
     client: Gumnut | None = Depends(get_authenticated_gumnut_client_optional),
+    session_store: SessionStore = Depends(get_session_store),
 ) -> LogoutResponseDto:
     auth_type = request.cookies.get(ImmichCookie.AUTH_TYPE.value)
+
+    # Delete session from SessionStore before clearing cookies
+    # Try request.state.jwt_token first (set by auth middleware), fall back to cookie
+    jwt_token = getattr(request.state, "jwt_token", None)
+    if not jwt_token:
+        jwt_token = request.cookies.get(ImmichCookie.ACCESS_TOKEN.value)
+
+    if jwt_token:
+        try:
+            await session_store.delete(jwt_token)
+        except Exception as e:
+            # Log error but don't fail the logout - cookie clearing is more important
+            logger.error(
+                "Failed to delete session on logout",
+                extra={"error": str(e)},
+                exc_info=True,
+            )
 
     response.delete_cookie(ImmichCookie.ACCESS_TOKEN.value)
     response.delete_cookie(ImmichCookie.AUTH_TYPE.value)

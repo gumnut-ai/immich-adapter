@@ -3,6 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from gumnut import Gumnut, omit
+
 from routers.immich_models import (
     LoginResponseDto,
     OAuthAuthorizeResponseDto,
@@ -15,10 +16,13 @@ from routers.immich_models import (
     UserStatus,
 )
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
+from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
 from routers.utils.oauth_utils import parse_callback_url
 from routers.utils.cookies import AuthType, set_auth_cookies
 from routers.utils.current_user import get_current_user
 from config.settings import get_settings
+from services.session_store import SessionStore, get_session_store
+from utils.user_agent import extract_device_info
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +126,7 @@ async def finish_oauth(
     request: Request,
     response: Response,
     client: Gumnut = Depends(get_unauthenticated_gumnut_client),
+    session_store: SessionStore = Depends(get_session_store),
 ) -> LoginResponseDto:
     """
     Finish OAuth authentication process.
@@ -166,6 +171,31 @@ async def finish_oauth(
             code_verifier=oauth_callback.codeVerifier,
             extra_headers={"Authorization": omit},  # Omit auth for this request
         )
+
+        # Create session in SessionStore
+        # Parse User-Agent for device info
+        ua_string = request.headers.get("user-agent", "")
+        device_info = extract_device_info(ua_string)
+
+        try:
+            # Convert Gumnut user ID to UUID format for consistency with get_current_user_id
+            user_uuid = safe_uuid_from_user_id(result.user.id)
+
+            await session_store.create(
+                jwt_token=result.access_token,
+                user_id=str(user_uuid),
+                library_id="",  # Not available from OAuth, use placeholder
+                device_type=device_info.device_type,
+                device_os=device_info.device_os,
+                app_version=device_info.app_version,
+            )
+        except Exception as e:
+            # Log error but don't fail the login - session tracking is optional
+            logger.error(
+                "Failed to create session after OAuth login",
+                extra={"error": str(e), "user_id": result.user.id},
+                exc_info=True,
+            )
 
         # Set authentication cookies for web client
         set_auth_cookies(
