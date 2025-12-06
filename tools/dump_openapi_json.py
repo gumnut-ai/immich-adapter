@@ -10,6 +10,7 @@
 #     "b64uuid>=0.1",
 #     "shortuuid>=1.0.13",
 #     "redis~=5.0",
+#     "user-agents>=2.2.0",
 # ]
 # ///
 

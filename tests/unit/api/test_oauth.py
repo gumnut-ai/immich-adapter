@@ -1,10 +1,19 @@
 """Unit tests for OAuth API functions."""
 
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock, patch
+from uuid import UUID
+
 from fastapi import Request
 from starlette.datastructures import URL
+import pytest
 
-from routers.api.oauth import rewrite_redirect_uri
+from routers.api.oauth import finish_oauth, rewrite_redirect_uri
+from routers.immich_models import OAuthCallbackDto
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_user_id
+from services.session_store import SessionStore
+
+TEST_USER_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
+TEST_GUMNUT_USER_ID = uuid_to_gumnut_user_id(TEST_USER_UUID)
 
 
 class TestRewriteRedirectUri:
@@ -129,3 +138,134 @@ class TestRewriteRedirectUri:
         # Should normalize to lowercase scheme
         assert result == "https://adapter.gumnut.com/api/oauth/mobile-redirect"
         request.url_for.assert_called_once_with("redirect_oauth_to_mobile")
+
+
+class TestFinishOAuth:
+    """Tests for OAuth callback session creation."""
+
+    @pytest.fixture
+    def mock_session_store(self):
+        """Create a mock SessionStore."""
+        store = AsyncMock(spec=SessionStore)
+        return store
+
+    @pytest.fixture
+    def mock_gumnut_client(self):
+        """Create a mock Gumnut client."""
+        client = Mock()
+        client.oauth = Mock()
+        return client
+
+    @pytest.fixture
+    def mock_request(self):
+        """Create a mock request."""
+        request = Mock()
+        request.headers = {}
+        request.url = Mock()
+        request.url.scheme = "https"
+        return request
+
+    @pytest.fixture
+    def mock_response(self):
+        """Create a mock response."""
+        return Mock()
+
+    @pytest.mark.anyio
+    async def test_creates_session_on_successful_oauth(
+        self, mock_request, mock_response, mock_gumnut_client, mock_session_store
+    ):
+        """Test that session is created on successful OAuth callback."""
+        # Setup mock OAuth exchange result
+        mock_user = Mock()
+        mock_user.id = TEST_GUMNUT_USER_ID
+        mock_user.email = "test@example.com"
+        mock_user.first_name = "Test"
+        mock_user.last_name = "User"
+
+        mock_exchange_result = Mock()
+        mock_exchange_result.access_token = "test-jwt-token"
+        mock_exchange_result.user = mock_user
+
+        mock_gumnut_client.oauth.exchange.return_value = mock_exchange_result
+        # Use realistic Chrome on Mac UA string
+        mock_request.headers = {
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+
+        callback_dto = OAuthCallbackDto(
+            url="http://localhost/callback?code=auth_code&state=state_token"
+        )
+
+        with patch("routers.api.oauth.parse_callback_url") as mock_parse:
+            mock_parse.return_value = {
+                "code": "auth_code",
+                "state": "state_token",
+                "error": None,
+            }
+
+            await finish_oauth(
+                oauth_callback=callback_dto,
+                request=mock_request,
+                response=mock_response,
+                client=mock_gumnut_client,
+                session_store=mock_session_store,
+            )
+
+        # Verify session was created with correct device info
+        # user-agents library parses this UA as: browser.family=Chrome, os.family=Mac OS X
+        # Our code normalizes "Mac OS X" to "macOS" for Immich frontend compatibility
+        mock_session_store.create.assert_called_once()
+        call_kwargs = mock_session_store.create.call_args.kwargs
+        assert call_kwargs["jwt_token"] == "test-jwt-token"
+        assert call_kwargs["user_id"] == str(TEST_USER_UUID)
+        assert call_kwargs["library_id"] == ""
+        assert call_kwargs["device_type"] == "Chrome"
+        assert call_kwargs["device_os"] == "macOS"
+        assert call_kwargs["app_version"] == ""
+
+    @pytest.mark.anyio
+    async def test_login_succeeds_even_if_session_creation_fails(
+        self, mock_request, mock_response, mock_gumnut_client, mock_session_store
+    ):
+        """Test that login succeeds even if session creation fails."""
+        mock_user = Mock()
+        mock_user.id = TEST_GUMNUT_USER_ID
+        mock_user.email = "test@example.com"
+        mock_user.first_name = "Test"
+        mock_user.last_name = "User"
+
+        mock_exchange_result = Mock()
+        mock_exchange_result.access_token = "test-jwt-token"
+        mock_exchange_result.user = mock_user
+
+        mock_gumnut_client.oauth.exchange.return_value = mock_exchange_result
+        mock_request.headers = {
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+
+        # Session creation will fail
+        mock_session_store.create.side_effect = Exception("Redis connection failed")
+
+        callback_dto = OAuthCallbackDto(
+            url="http://localhost/callback?code=auth_code&state=state_token"
+        )
+
+        with patch("routers.api.oauth.parse_callback_url") as mock_parse:
+            mock_parse.return_value = {
+                "code": "auth_code",
+                "state": "state_token",
+                "error": None,
+            }
+
+            # Should not raise an exception
+            result = await finish_oauth(
+                oauth_callback=callback_dto,
+                request=mock_request,
+                response=mock_response,
+                client=mock_gumnut_client,
+                session_store=mock_session_store,
+            )
+
+        # Login should still succeed
+        assert result.accessToken == "test-jwt-token"
+        assert result.userId == TEST_GUMNUT_USER_ID
