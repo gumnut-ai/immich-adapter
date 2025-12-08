@@ -8,7 +8,6 @@ import pytest
 from fastapi import HTTPException
 
 from routers.api.sessions import (
-    _find_session_by_immich_id,
     _get_jwt_token,
     _session_to_response_dto,
     create_session,
@@ -28,67 +27,6 @@ TEST_IMMICH_ID_2 = UUID("650e8400-e29b-41d4-a716-446655440001")
 
 class TestHelperFunctions:
     """Tests for helper functions."""
-
-    def test_find_session_by_immich_id_found(self):
-        """Test finding a session by its Immich UUID."""
-        now = datetime.now(timezone.utc)
-        # Create sessions with known IDs
-        session1 = Session(
-            id="abc123def456789012345678901234567890123456789012345678901234",
-            immich_id=TEST_IMMICH_ID,
-            user_id="user_1",
-            library_id="lib_1",
-            device_type="iOS",
-            device_os="iOS 17",
-            app_version="1.0",
-            created_at=now,
-            updated_at=now,
-            is_pending_sync_reset=False,
-        )
-        session2 = Session(
-            id="def456789012345678901234567890123456789012345678901234567890",
-            immich_id=TEST_IMMICH_ID_2,
-            user_id="user_1",
-            library_id="lib_1",
-            device_type="Android",
-            device_os="Android 14",
-            app_version="1.0",
-            created_at=now,
-            updated_at=now,
-            is_pending_sync_reset=False,
-        )
-
-        sessions = [session1, session2]
-
-        result = _find_session_by_immich_id(sessions, TEST_IMMICH_ID)
-
-        assert result is not None
-        assert result.id == session1.id
-        assert result.immich_id == TEST_IMMICH_ID
-
-    def test_find_session_by_immich_id_not_found(self):
-        """Test finding a session that doesn't exist."""
-        now = datetime.now(timezone.utc)
-        session = Session(
-            id="abc123def456789012345678901234567890123456789012345678901234",
-            immich_id=TEST_IMMICH_ID,
-            user_id="user_1",
-            library_id="lib_1",
-            device_type="iOS",
-            device_os="iOS 17",
-            app_version="1.0",
-            created_at=now,
-            updated_at=now,
-            is_pending_sync_reset=False,
-        )
-
-        sessions = [session]
-        # Random UUID that won't match
-        random_uuid = uuid4()
-
-        result = _find_session_by_immich_id(sessions, random_uuid)
-
-        assert result is None
 
     def test_session_to_response_dto_current_true(self):
         """Test converting session to DTO when it's the current session."""
@@ -432,7 +370,7 @@ class TestUpdateSession:
             is_pending_sync_reset=True,
         )
 
-        mock_session_store.get_by_user.return_value = [session]
+        mock_session_store.get_by_immich_id.return_value = session
         mock_session_store.set_pending_sync_reset.return_value = True
         mock_session_store.get_by_id.return_value = updated_session
 
@@ -449,6 +387,9 @@ class TestUpdateSession:
 
         assert result.isPendingSyncReset is True
         assert result.id == str(TEST_IMMICH_ID)
+        mock_session_store.get_by_immich_id.assert_called_once_with(
+            str(user_id), TEST_IMMICH_ID
+        )
         mock_session_store.set_pending_sync_reset.assert_called_once_with(
             session_id, True
         )
@@ -456,7 +397,7 @@ class TestUpdateSession:
     @pytest.mark.anyio
     async def test_update_session_not_found(self, mock_request, mock_session_store):
         """Test update session returns 400 when not found."""
-        mock_session_store.get_by_user.return_value = []
+        mock_session_store.get_by_immich_id.return_value = None
 
         user_id = UUID("550e8400-e29b-41d4-a716-446655440000")
         random_uuid = uuid4()
@@ -492,7 +433,7 @@ class TestUpdateSession:
             is_pending_sync_reset=False,
         )
 
-        mock_session_store.get_by_user.return_value = [session]
+        mock_session_store.get_by_immich_id.return_value = session
 
         user_id = UUID("550e8400-e29b-41d4-a716-446655440000")
         dto = SessionUpdateDto()  # No changes
@@ -544,7 +485,7 @@ class TestDeleteSession:
             is_pending_sync_reset=False,
         )
 
-        mock_session_store.get_by_user.return_value = [session]
+        mock_session_store.get_by_immich_id.return_value = session
         mock_session_store.delete_by_id.return_value = True
 
         user_id = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -557,12 +498,15 @@ class TestDeleteSession:
         )
 
         assert result is None
+        mock_session_store.get_by_immich_id.assert_called_once_with(
+            str(user_id), TEST_IMMICH_ID
+        )
         mock_session_store.delete_by_id.assert_called_once_with(session_id)
 
     @pytest.mark.anyio
     async def test_delete_session_not_found(self, mock_request, mock_session_store):
         """Test delete session returns 400 when not found."""
-        mock_session_store.get_by_user.return_value = []
+        mock_session_store.get_by_immich_id.return_value = None
 
         user_id = UUID("550e8400-e29b-41d4-a716-446655440000")
         random_uuid = uuid4()

@@ -313,6 +313,23 @@ class SessionStore:
 
         return sessions
 
+    async def get_by_immich_id(self, user_id: str, immich_id: UUID) -> Session | None:
+        """
+        Get a session by user ID and Immich session ID.
+
+        Args:
+            user_id: Gumnut user ID
+            immich_id: The Immich session UUID
+
+        Returns:
+            Session if found, None otherwise
+        """
+        sessions = await self.get_by_user(user_id)
+        for session in sessions:
+            if session.immich_id == immich_id:
+                return session
+        return None
+
     async def _cleanup_orphaned_indexes(
         self, user_id: str, session_ids: list[str]
     ) -> None:

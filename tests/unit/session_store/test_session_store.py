@@ -468,6 +468,95 @@ class TestSessionStoreGetByUser:
         cleanup_pipeline.zrem.assert_called()
 
 
+class TestSessionStoreGetByImmichId:
+    """Tests for SessionStore.get_by_immich_id()."""
+
+    @pytest.fixture
+    def mock_redis(self):
+        """Create a mock async Redis client with pipeline support."""
+        mock = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock()
+        mock.pipeline = MagicMock(return_value=mock_pipeline)
+        return mock
+
+    @pytest.fixture
+    def session_store(self, mock_redis):
+        """Create SessionStore with mocked Redis."""
+        return SessionStore(mock_redis)
+
+    @pytest.mark.anyio
+    async def test_get_by_immich_id_found(self, session_store, mock_redis):
+        """Test finding a session by user ID and Immich ID."""
+        mock_redis.smembers.return_value = {"session_1", "session_2"}
+
+        mock_pipeline = mock_redis.pipeline.return_value
+        mock_pipeline.execute.return_value = [
+            {
+                "immich_id": str(TEST_IMMICH_ID),
+                "user_id": "user_123",
+                "library_id": "lib_456",
+                "device_type": "iOS",
+                "device_os": "iOS 17.4",
+                "app_version": "1.94.0",
+                "created_at": "2025-01-20T10:00:00+00:00",
+                "updated_at": "2025-01-20T10:30:00+00:00",
+                "is_pending_sync_reset": "0",
+            },
+            {
+                "immich_id": str(TEST_IMMICH_ID_2),
+                "user_id": "user_123",
+                "library_id": "lib_456",
+                "device_type": "Chrome",
+                "device_os": "macOS 14",
+                "app_version": "",
+                "created_at": "2025-01-20T11:00:00+00:00",
+                "updated_at": "2025-01-20T11:30:00+00:00",
+                "is_pending_sync_reset": "0",
+            },
+        ]
+
+        session = await session_store.get_by_immich_id("user_123", TEST_IMMICH_ID)
+
+        assert session is not None
+        assert session.immich_id == TEST_IMMICH_ID
+        assert session.device_type == "iOS"
+
+    @pytest.mark.anyio
+    async def test_get_by_immich_id_not_found(self, session_store, mock_redis):
+        """Test getting session by Immich ID when not found."""
+        mock_redis.smembers.return_value = {"session_1"}
+
+        mock_pipeline = mock_redis.pipeline.return_value
+        mock_pipeline.execute.return_value = [
+            {
+                "immich_id": str(TEST_IMMICH_ID),
+                "user_id": "user_123",
+                "library_id": "lib_456",
+                "device_type": "iOS",
+                "device_os": "iOS 17.4",
+                "app_version": "1.94.0",
+                "created_at": "2025-01-20T10:00:00+00:00",
+                "updated_at": "2025-01-20T10:30:00+00:00",
+                "is_pending_sync_reset": "0",
+            },
+        ]
+
+        # Search for a different Immich ID
+        session = await session_store.get_by_immich_id("user_123", TEST_IMMICH_ID_2)
+
+        assert session is None
+
+    @pytest.mark.anyio
+    async def test_get_by_immich_id_no_sessions(self, session_store, mock_redis):
+        """Test getting session by Immich ID when user has no sessions."""
+        mock_redis.smembers.return_value = set()
+
+        session = await session_store.get_by_immich_id("user_123", TEST_IMMICH_ID)
+
+        assert session is None
+
+
 class TestSessionStoreDelete:
     """Tests for SessionStore.delete() and delete_by_id()."""
 

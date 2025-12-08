@@ -22,25 +22,6 @@ router = APIRouter(
 )
 
 
-def _find_session_by_immich_id(
-    sessions: list[Session], immich_id: UUID
-) -> Session | None:
-    """
-    Find a session by its Immich UUID.
-
-    Args:
-        sessions: List of sessions to search
-        immich_id: The Immich UUID to match
-
-    Returns:
-        The matching Session, or None if not found
-    """
-    for session in sessions:
-        if session.immich_id == immich_id:
-            return session
-    return None
-
-
 def _session_to_response_dto(
     session: Session,
     current_session_id: str,
@@ -140,7 +121,6 @@ async def delete_all_sessions(
                     extra={"session_id": session.id, "error": str(e)},
                     exc_info=True,
                 )
-                pass
 
     return None
 
@@ -161,10 +141,7 @@ async def update_session(
     jwt_token = _get_jwt_token(request)
     current_session_id = SessionStore.hash_jwt(jwt_token)
 
-    # Get user's sessions and find the one matching the ID
-    sessions = await session_store.get_by_user(str(current_user_id))
-    session = _find_session_by_immich_id(sessions, id)
-
+    session = await session_store.get_by_immich_id(str(current_user_id), id)
     if not session:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -196,10 +173,7 @@ async def delete_session(
     """
     _get_jwt_token(request)  # Ensure authenticated
 
-    # Get user's sessions and find the one matching the ID
-    sessions = await session_store.get_by_user(str(current_user_id))
-    session = _find_session_by_immich_id(sessions, id)
-
+    session = await session_store.get_by_immich_id(str(current_user_id), id)
     if not session:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
