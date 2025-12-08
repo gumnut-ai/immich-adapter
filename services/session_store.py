@@ -4,6 +4,8 @@ from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
+from uuid import UUID, uuid4
+
 from utils.redis_client import get_redis_client
 
 
@@ -68,6 +70,7 @@ class AsyncRedisClient(Protocol):
 
 _REQUIRED_SESSION_FIELDS = frozenset(
     [
+        "immich_id",
         "user_id",
         "library_id",
         "device_type",
@@ -85,6 +88,7 @@ class Session:
     """Session data."""
 
     id: str
+    immich_id: UUID
     user_id: str
     library_id: str
     device_type: str
@@ -97,6 +101,7 @@ class Session:
     def to_dict(self) -> dict[str, str]:
         """Convert to Redis hash format."""
         return {
+            "immich_id": str(self.immich_id),
             "user_id": self.user_id,
             "library_id": self.library_id,
             "device_type": self.device_type,
@@ -131,6 +136,7 @@ class Session:
         try:
             return cls(
                 id=session_id,
+                immich_id=UUID(data["immich_id"]),
                 user_id=data["user_id"],
                 library_id=data["library_id"],
                 device_type=data["device_type"],
@@ -197,6 +203,7 @@ class SessionStore:
             SessionExpiredError: If expires_at is in the past
         """
         session_id = self.hash_jwt(jwt_token)
+        immich_id = uuid4()
         now = datetime.now(timezone.utc)
 
         if expires_at is not None and expires_at <= now:
@@ -206,6 +213,7 @@ class SessionStore:
 
         session = Session(
             id=session_id,
+            immich_id=immich_id,
             user_id=user_id,
             library_id=library_id,
             device_type=device_type,
@@ -304,6 +312,23 @@ class SessionStore:
             await self._cleanup_orphaned_indexes(user_id, orphaned_ids)
 
         return sessions
+
+    async def get_by_immich_id(self, user_id: str, immich_id: UUID) -> Session | None:
+        """
+        Get a session by user ID and Immich session ID.
+
+        Args:
+            user_id: Gumnut user ID
+            immich_id: The Immich session UUID
+
+        Returns:
+            Session if found, None otherwise
+        """
+        sessions = await self.get_by_user(user_id)
+        for session in sessions:
+            if session.immich_id == immich_id:
+                return session
+        return None
 
     async def _cleanup_orphaned_indexes(
         self, user_id: str, session_ids: list[str]

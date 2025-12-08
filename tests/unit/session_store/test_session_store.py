@@ -3,6 +3,7 @@
 import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
 
 from services.session_store import (
     Session,
@@ -10,6 +11,10 @@ from services.session_store import (
     SessionExpiredError,
     SessionStore,
 )
+
+# Test UUID for consistent testing
+TEST_IMMICH_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+TEST_IMMICH_ID_2 = UUID("650e8400-e29b-41d4-a716-446655440001")
 
 
 class TestSessionDataclass:
@@ -20,6 +25,7 @@ class TestSessionDataclass:
         now = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
         session = Session(
             id="abc123",
+            immich_id=TEST_IMMICH_ID,
             user_id="user_123",
             library_id="lib_456",
             device_type="iOS",
@@ -32,6 +38,7 @@ class TestSessionDataclass:
 
         result = session.to_dict()
 
+        assert result["immich_id"] == str(TEST_IMMICH_ID)
         assert result["user_id"] == "user_123"
         assert result["library_id"] == "lib_456"
         assert result["device_type"] == "iOS"
@@ -46,6 +53,7 @@ class TestSessionDataclass:
         now = datetime.now(timezone.utc)
         session = Session(
             id="abc123",
+            immich_id=TEST_IMMICH_ID,
             user_id="user_123",
             library_id="lib_456",
             device_type="iOS",
@@ -63,6 +71,7 @@ class TestSessionDataclass:
     def test_from_dict(self):
         """Test Session.from_dict() creates Session from Redis hash data."""
         data = {
+            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
             "device_type": "iOS",
@@ -76,6 +85,7 @@ class TestSessionDataclass:
         session = Session.from_dict("abc123", data)
 
         assert session.id == "abc123"
+        assert session.immich_id == TEST_IMMICH_ID
         assert session.user_id == "user_123"
         assert session.library_id == "lib_456"
         assert session.device_type == "iOS"
@@ -92,6 +102,7 @@ class TestSessionDataclass:
     def test_from_dict_with_pending_sync_reset(self):
         """Test from_dict with is_pending_sync_reset='1'."""
         data = {
+            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
             "device_type": "iOS",
@@ -122,6 +133,7 @@ class TestSessionDataclass:
     def test_from_dict_malformed_datetime_raises_error(self):
         """Test from_dict raises SessionDataError for invalid datetime."""
         data = {
+            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
             "device_type": "iOS",
@@ -206,6 +218,9 @@ class TestSessionStoreCreate:
         assert session.app_version == "1.94.0"
         assert session.is_pending_sync_reset is False
         assert session.id == SessionStore.hash_jwt("test.jwt")
+        # immich_id should be a valid UUID (generated at creation)
+        assert session.immich_id is not None
+        assert isinstance(session.immich_id, UUID)
 
         # Verify pipeline was executed
         mock_redis.pipeline.return_value.execute.assert_called_once()
@@ -297,6 +312,7 @@ class TestSessionStoreGet:
     async def test_get_session_found(self, session_store, mock_redis):
         """Test getting an existing session."""
         mock_redis.hgetall.return_value = {
+            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
             "device_type": "iOS",
@@ -312,6 +328,7 @@ class TestSessionStoreGet:
         assert session is not None
         assert session.user_id == "user_123"
         assert session.library_id == "lib_456"
+        assert session.immich_id == TEST_IMMICH_ID
 
     @pytest.mark.anyio
     async def test_get_session_not_found(self, session_store, mock_redis):
@@ -326,6 +343,7 @@ class TestSessionStoreGet:
     async def test_get_by_id(self, session_store, mock_redis):
         """Test getting session by ID."""
         mock_redis.hgetall.return_value = {
+            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
             "device_type": "iOS",
@@ -340,6 +358,7 @@ class TestSessionStoreGet:
 
         assert session is not None
         assert session.id == "session_id_123"
+        assert session.immich_id == TEST_IMMICH_ID
 
 
 class TestSessionStoreGetByUser:
@@ -368,6 +387,7 @@ class TestSessionStoreGetByUser:
         mock_pipeline = mock_redis.pipeline.return_value
         mock_pipeline.execute.return_value = [
             {
+                "immich_id": str(TEST_IMMICH_ID),
                 "user_id": "user_123",
                 "library_id": "lib_456",
                 "device_type": "iOS",
@@ -378,6 +398,7 @@ class TestSessionStoreGetByUser:
                 "is_pending_sync_reset": "0",
             },
             {
+                "immich_id": str(TEST_IMMICH_ID_2),
                 "user_id": "user_123",
                 "library_id": "lib_456",
                 "device_type": "Chrome",
@@ -416,6 +437,7 @@ class TestSessionStoreGetByUser:
         fetch_pipeline.execute = AsyncMock(
             return_value=[
                 {
+                    "immich_id": str(TEST_IMMICH_ID),
                     "user_id": "user_123",
                     "library_id": "lib_456",
                     "device_type": "iOS",
@@ -446,6 +468,95 @@ class TestSessionStoreGetByUser:
         cleanup_pipeline.zrem.assert_called()
 
 
+class TestSessionStoreGetByImmichId:
+    """Tests for SessionStore.get_by_immich_id()."""
+
+    @pytest.fixture
+    def mock_redis(self):
+        """Create a mock async Redis client with pipeline support."""
+        mock = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock()
+        mock.pipeline = MagicMock(return_value=mock_pipeline)
+        return mock
+
+    @pytest.fixture
+    def session_store(self, mock_redis):
+        """Create SessionStore with mocked Redis."""
+        return SessionStore(mock_redis)
+
+    @pytest.mark.anyio
+    async def test_get_by_immich_id_found(self, session_store, mock_redis):
+        """Test finding a session by user ID and Immich ID."""
+        mock_redis.smembers.return_value = {"session_1", "session_2"}
+
+        mock_pipeline = mock_redis.pipeline.return_value
+        mock_pipeline.execute.return_value = [
+            {
+                "immich_id": str(TEST_IMMICH_ID),
+                "user_id": "user_123",
+                "library_id": "lib_456",
+                "device_type": "iOS",
+                "device_os": "iOS 17.4",
+                "app_version": "1.94.0",
+                "created_at": "2025-01-20T10:00:00+00:00",
+                "updated_at": "2025-01-20T10:30:00+00:00",
+                "is_pending_sync_reset": "0",
+            },
+            {
+                "immich_id": str(TEST_IMMICH_ID_2),
+                "user_id": "user_123",
+                "library_id": "lib_456",
+                "device_type": "Chrome",
+                "device_os": "macOS 14",
+                "app_version": "",
+                "created_at": "2025-01-20T11:00:00+00:00",
+                "updated_at": "2025-01-20T11:30:00+00:00",
+                "is_pending_sync_reset": "0",
+            },
+        ]
+
+        session = await session_store.get_by_immich_id("user_123", TEST_IMMICH_ID)
+
+        assert session is not None
+        assert session.immich_id == TEST_IMMICH_ID
+        assert session.device_type == "iOS"
+
+    @pytest.mark.anyio
+    async def test_get_by_immich_id_not_found(self, session_store, mock_redis):
+        """Test getting session by Immich ID when not found."""
+        mock_redis.smembers.return_value = {"session_1"}
+
+        mock_pipeline = mock_redis.pipeline.return_value
+        mock_pipeline.execute.return_value = [
+            {
+                "immich_id": str(TEST_IMMICH_ID),
+                "user_id": "user_123",
+                "library_id": "lib_456",
+                "device_type": "iOS",
+                "device_os": "iOS 17.4",
+                "app_version": "1.94.0",
+                "created_at": "2025-01-20T10:00:00+00:00",
+                "updated_at": "2025-01-20T10:30:00+00:00",
+                "is_pending_sync_reset": "0",
+            },
+        ]
+
+        # Search for a different Immich ID
+        session = await session_store.get_by_immich_id("user_123", TEST_IMMICH_ID_2)
+
+        assert session is None
+
+    @pytest.mark.anyio
+    async def test_get_by_immich_id_no_sessions(self, session_store, mock_redis):
+        """Test getting session by Immich ID when user has no sessions."""
+        mock_redis.smembers.return_value = set()
+
+        session = await session_store.get_by_immich_id("user_123", TEST_IMMICH_ID)
+
+        assert session is None
+
+
 class TestSessionStoreDelete:
     """Tests for SessionStore.delete() and delete_by_id()."""
 
@@ -468,6 +579,7 @@ class TestSessionStoreDelete:
     async def test_delete_session_exists(self, session_store, mock_redis):
         """Test deleting an existing session."""
         mock_redis.hgetall.return_value = {
+            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
             "device_type": "iOS",
@@ -497,6 +609,7 @@ class TestSessionStoreDelete:
         """Test that delete issues correct pipeline commands without checkpoint."""
         session_id = SessionStore.hash_jwt("test.jwt")
         mock_redis.hgetall.return_value = {
+            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
             "device_type": "iOS",
@@ -763,6 +876,7 @@ class TestSessionStoreStaleCleanup:
         fetch_pipeline.execute = AsyncMock(
             return_value=[
                 {
+                    "immich_id": str(TEST_IMMICH_ID),
                     "user_id": "user_123",
                     "library_id": "lib_456",
                     "device_type": "iOS",
@@ -800,6 +914,7 @@ class TestSessionStoreStaleCleanup:
         fetch_pipeline.execute = AsyncMock(
             return_value=[
                 {
+                    "immich_id": str(TEST_IMMICH_ID),
                     "user_id": "user_123",
                     "library_id": "lib_456",
                     "device_type": "iOS",
