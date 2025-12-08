@@ -520,7 +520,7 @@ class TestDeleteSession:
             )
 
         assert exc_info.value.status_code == 400
-        assert "Not found or no session.delete access" in exc_info.value.detail
+        assert "Not found" in exc_info.value.detail
 
 
 class TestLockSession:

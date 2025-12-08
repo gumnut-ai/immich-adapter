@@ -177,7 +177,7 @@ async def delete_session(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Not found or no session.delete access",
+            detail="Not found",
         )
 
     await session_store.delete_by_id(session.id)

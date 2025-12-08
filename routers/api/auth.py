@@ -105,8 +105,8 @@ async def post_logout(
         try:
             await session_store.delete(jwt_token)
         except Exception as e:
-            # Log error but don't fail the logout - cookie clearing is more important
-            logger.error(
+            # Log but don't fail the logout - cookie clearing is more important
+            logger.warning(
                 "Failed to delete session on logout",
                 extra={"error": str(e)},
                 exc_info=True,
