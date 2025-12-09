@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
     oauth_mobile_redirect_uri: str = "app.immich:///oauth-callback"
 
+    # Session encryption key for Fernet (base64-encoded 32-byte key)
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    session_encryption_key: str | None = None
+
     # Private field to cache the loaded Immich version
     _immich_version: ImmichVersion | None = None
 
@@ -44,6 +48,15 @@ class Settings(BaseSettings):
         if v is None or v not in ["development", "test", "production"]:
             raise ValueError(
                 "ENVIRONMENT must be 'development', 'test', or 'production'"
+            )
+        return v
+
+    @field_validator("session_encryption_key")
+    def validate_session_encryption_key(cls, v: str | None) -> str:
+        if v is None or v.strip() == "":
+            raise ValueError(
+                "SESSION_ENCRYPTION_KEY is required. "
+                'Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
             )
         return v
 

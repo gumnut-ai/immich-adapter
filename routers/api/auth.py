@@ -96,14 +96,14 @@ async def post_logout(
     auth_type = request.cookies.get(ImmichCookie.AUTH_TYPE.value)
 
     # Delete session from SessionStore before clearing cookies
-    # Try request.state.jwt_token first (set by auth middleware), fall back to cookie
-    jwt_token = getattr(request.state, "jwt_token", None)
-    if not jwt_token:
-        jwt_token = request.cookies.get(ImmichCookie.ACCESS_TOKEN.value)
+    # Use session_token from request.state (set by auth middleware), fall back to cookie
+    session_token = getattr(request.state, "session_token", None)
+    if not session_token:
+        session_token = request.cookies.get(ImmichCookie.ACCESS_TOKEN.value)
 
-    if jwt_token:
+    if session_token:
         try:
-            await session_store.delete(jwt_token)
+            await session_store.delete(session_token)
         except Exception as e:
             # Log but don't fail the logout - cookie clearing is more important
             logger.warning(

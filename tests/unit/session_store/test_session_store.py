@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 from services.session_store import (
@@ -12,9 +12,10 @@ from services.session_store import (
     SessionStore,
 )
 
-# Test UUID for consistent testing
-TEST_IMMICH_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
-TEST_IMMICH_ID_2 = UUID("650e8400-e29b-41d4-a716-446655440001")
+# Test UUIDs for consistent testing
+TEST_SESSION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+TEST_SESSION_ID_2 = UUID("650e8400-e29b-41d4-a716-446655440001")
+TEST_ENCRYPTED_JWT = "gAAAAABh..."  # Mock encrypted JWT
 
 
 class TestSessionDataclass:
@@ -24,10 +25,10 @@ class TestSessionDataclass:
         """Test Session.to_dict() converts to Redis hash format."""
         now = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
         session = Session(
-            id="abc123",
-            immich_id=TEST_IMMICH_ID,
+            id=TEST_SESSION_ID,
             user_id="user_123",
             library_id="lib_456",
+            stored_jwt=TEST_ENCRYPTED_JWT,
             device_type="iOS",
             device_os="iOS 17.4",
             app_version="1.94.0",
@@ -38,9 +39,9 @@ class TestSessionDataclass:
 
         result = session.to_dict()
 
-        assert result["immich_id"] == str(TEST_IMMICH_ID)
         assert result["user_id"] == "user_123"
         assert result["library_id"] == "lib_456"
+        assert result["stored_jwt"] == TEST_ENCRYPTED_JWT
         assert result["device_type"] == "iOS"
         assert result["device_os"] == "iOS 17.4"
         assert result["app_version"] == "1.94.0"
@@ -52,10 +53,10 @@ class TestSessionDataclass:
         """Test to_dict with is_pending_sync_reset=True."""
         now = datetime.now(timezone.utc)
         session = Session(
-            id="abc123",
-            immich_id=TEST_IMMICH_ID,
+            id=TEST_SESSION_ID,
             user_id="user_123",
             library_id="lib_456",
+            stored_jwt=TEST_ENCRYPTED_JWT,
             device_type="iOS",
             device_os="iOS 17.4",
             app_version="1.94.0",
@@ -71,9 +72,9 @@ class TestSessionDataclass:
     def test_from_dict(self):
         """Test Session.from_dict() creates Session from Redis hash data."""
         data = {
-            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
+            "stored_jwt": TEST_ENCRYPTED_JWT,
             "device_type": "iOS",
             "device_os": "iOS 17.4",
             "app_version": "1.94.0",
@@ -82,12 +83,12 @@ class TestSessionDataclass:
             "is_pending_sync_reset": "0",
         }
 
-        session = Session.from_dict("abc123", data)
+        session = Session.from_dict(TEST_SESSION_ID, data)
 
-        assert session.id == "abc123"
-        assert session.immich_id == TEST_IMMICH_ID
+        assert session.id == TEST_SESSION_ID
         assert session.user_id == "user_123"
         assert session.library_id == "lib_456"
+        assert session.stored_jwt == TEST_ENCRYPTED_JWT
         assert session.device_type == "iOS"
         assert session.device_os == "iOS 17.4"
         assert session.app_version == "1.94.0"
@@ -102,9 +103,9 @@ class TestSessionDataclass:
     def test_from_dict_with_pending_sync_reset(self):
         """Test from_dict with is_pending_sync_reset='1'."""
         data = {
-            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
+            "stored_jwt": TEST_ENCRYPTED_JWT,
             "device_type": "iOS",
             "device_os": "iOS 17.4",
             "app_version": "1.94.0",
@@ -113,7 +114,7 @@ class TestSessionDataclass:
             "is_pending_sync_reset": "1",
         }
 
-        session = Session.from_dict("abc123", data)
+        session = Session.from_dict(TEST_SESSION_ID, data)
 
         assert session.is_pending_sync_reset is True
 
@@ -125,17 +126,17 @@ class TestSessionDataclass:
         }
 
         with pytest.raises(SessionDataError) as exc_info:
-            Session.from_dict("abc123", data)
+            Session.from_dict(TEST_SESSION_ID, data)
 
         assert "missing required fields" in str(exc_info.value)
-        assert "abc123" in str(exc_info.value)
+        assert str(TEST_SESSION_ID) in str(exc_info.value)
 
     def test_from_dict_malformed_datetime_raises_error(self):
         """Test from_dict raises SessionDataError for invalid datetime."""
         data = {
-            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
+            "stored_jwt": TEST_ENCRYPTED_JWT,
             "device_type": "iOS",
             "device_os": "iOS 17.4",
             "app_version": "1.94.0",
@@ -145,40 +146,33 @@ class TestSessionDataclass:
         }
 
         with pytest.raises(SessionDataError) as exc_info:
-            Session.from_dict("abc123", data)
+            Session.from_dict(TEST_SESSION_ID, data)
 
         assert "malformed data" in str(exc_info.value)
-        assert "abc123" in str(exc_info.value)
+        assert str(TEST_SESSION_ID) in str(exc_info.value)
 
+    def test_get_jwt_decrypts_stored_jwt(self):
+        """Test get_jwt() decrypts the stored JWT."""
+        now = datetime.now(timezone.utc)
+        session = Session(
+            id=TEST_SESSION_ID,
+            user_id="user_123",
+            library_id="lib_456",
+            stored_jwt=TEST_ENCRYPTED_JWT,
+            device_type="iOS",
+            device_os="iOS 17.4",
+            app_version="1.94.0",
+            created_at=now,
+            updated_at=now,
+            is_pending_sync_reset=False,
+        )
 
-class TestHashJwt:
-    """Tests for SessionStore.hash_jwt()."""
+        with patch("services.session_store.decrypt_jwt") as mock_decrypt:
+            mock_decrypt.return_value = "decrypted.jwt.token"
+            result = session.get_jwt()
 
-    def test_hash_jwt_returns_sha256_hex(self):
-        """Test hash_jwt returns a 64-character hex string (SHA-256)."""
-        jwt = "test.jwt.token"
-        result = SessionStore.hash_jwt(jwt)
-
-        assert len(result) == 64
-        assert all(c in "0123456789abcdef" for c in result)
-
-    def test_hash_jwt_is_consistent(self):
-        """Test hash_jwt returns same hash for same input."""
-        jwt = "test.jwt.token"
-        result1 = SessionStore.hash_jwt(jwt)
-        result2 = SessionStore.hash_jwt(jwt)
-
-        assert result1 == result2
-
-    def test_hash_jwt_different_tokens_different_hashes(self):
-        """Test different JWTs produce different hashes."""
-        jwt1 = "test.jwt.token1"
-        jwt2 = "test.jwt.token2"
-
-        result1 = SessionStore.hash_jwt(jwt1)
-        result2 = SessionStore.hash_jwt(jwt2)
-
-        assert result1 != result2
+            mock_decrypt.assert_called_once_with(TEST_ENCRYPTED_JWT)
+            assert result == "decrypted.jwt.token"
 
 
 class TestSessionStoreCreate:
@@ -202,48 +196,56 @@ class TestSessionStoreCreate:
     @pytest.mark.anyio
     async def test_create_session(self, session_store, mock_redis):
         """Test creating a new session."""
-        session = await session_store.create(
-            jwt_token="test.jwt",
-            user_id="user_123",
-            library_id="lib_456",
-            device_type="iOS",
-            device_os="iOS 17.4",
-            app_version="1.94.0",
-        )
+        with patch("services.session_store.encrypt_jwt") as mock_encrypt:
+            mock_encrypt.return_value = TEST_ENCRYPTED_JWT
 
-        assert session.user_id == "user_123"
-        assert session.library_id == "lib_456"
-        assert session.device_type == "iOS"
-        assert session.device_os == "iOS 17.4"
-        assert session.app_version == "1.94.0"
-        assert session.is_pending_sync_reset is False
-        assert session.id == SessionStore.hash_jwt("test.jwt")
-        # immich_id should be a valid UUID (generated at creation)
-        assert session.immich_id is not None
-        assert isinstance(session.immich_id, UUID)
+            session = await session_store.create(
+                jwt_token="test.jwt",
+                user_id="user_123",
+                library_id="lib_456",
+                device_type="iOS",
+                device_os="iOS 17.4",
+                app_version="1.94.0",
+            )
 
-        # Verify pipeline was executed
-        mock_redis.pipeline.return_value.execute.assert_called_once()
+            assert session.user_id == "user_123"
+            assert session.library_id == "lib_456"
+            assert session.stored_jwt == TEST_ENCRYPTED_JWT
+            assert session.device_type == "iOS"
+            assert session.device_os == "iOS 17.4"
+            assert session.app_version == "1.94.0"
+            assert session.is_pending_sync_reset is False
+            # Session ID should be a UUID
+            assert isinstance(session.id, UUID)
+
+            # Verify encrypt_jwt was called
+            mock_encrypt.assert_called_once_with("test.jwt")
+
+            # Verify pipeline was executed
+            mock_redis.pipeline.return_value.execute.assert_called_once()
 
     @pytest.mark.anyio
     async def test_create_session_with_expiry(self, session_store, mock_redis):
         """Test creating a session with TTL."""
-        # Set expiry to 1 hour in the future
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        with patch("services.session_store.encrypt_jwt") as mock_encrypt:
+            mock_encrypt.return_value = TEST_ENCRYPTED_JWT
 
-        await session_store.create(
-            jwt_token="test.jwt",
-            user_id="user_123",
-            library_id="lib_456",
-            device_type="iOS",
-            device_os="iOS 17.4",
-            app_version="1.94.0",
-            expires_at=expires_at,
-        )
+            # Set expiry to 1 hour in the future
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
-        # Verify expire was called on pipeline
-        mock_pipeline = mock_redis.pipeline.return_value
-        mock_pipeline.expire.assert_called()
+            await session_store.create(
+                jwt_token="test.jwt",
+                user_id="user_123",
+                library_id="lib_456",
+                device_type="iOS",
+                device_os="iOS 17.4",
+                app_version="1.94.0",
+                expires_at=expires_at,
+            )
+
+            # Verify expire was called on pipeline
+            mock_pipeline = mock_redis.pipeline.return_value
+            mock_pipeline.expire.assert_called()
 
     @pytest.mark.anyio
     async def test_create_session_with_past_expiry_raises_error(
@@ -270,29 +272,33 @@ class TestSessionStoreCreate:
         self, session_store, mock_redis
     ):
         """Test that create issues correct pipeline commands."""
-        session = await session_store.create(
-            jwt_token="test.jwt",
-            user_id="user_123",
-            library_id="lib_456",
-            device_type="iOS",
-            device_os="iOS 17.4",
-            app_version="1.94.0",
-        )
+        with patch("services.session_store.encrypt_jwt") as mock_encrypt:
+            mock_encrypt.return_value = TEST_ENCRYPTED_JWT
 
-        mock_pipeline = mock_redis.pipeline.return_value
+            session = await session_store.create(
+                jwt_token="test.jwt",
+                user_id="user_123",
+                library_id="lib_456",
+                device_type="iOS",
+                device_os="iOS 17.4",
+                app_version="1.94.0",
+            )
 
-        # Verify hset was called with session data
-        mock_pipeline.hset.assert_called()
-        hset_call = mock_pipeline.hset.call_args
-        assert f"session:{session.id}" == hset_call[0][0]
+            mock_pipeline = mock_redis.pipeline.return_value
+            session_key = str(session.id)
 
-        # Verify sadd was called to add to user's session set
-        mock_pipeline.sadd.assert_called_with(
-            f"user:{session.user_id}:sessions", session.id
-        )
+            # Verify hset was called with session data
+            mock_pipeline.hset.assert_called()
+            hset_call = mock_pipeline.hset.call_args
+            assert f"session:{session_key}" == hset_call[0][0]
 
-        # Verify zadd was called for the activity index
-        mock_pipeline.zadd.assert_called()
+            # Verify sadd was called to add to user's session set
+            mock_pipeline.sadd.assert_called_with(
+                f"user:{session.user_id}:sessions", session_key
+            )
+
+            # Verify zadd was called for the activity index
+            mock_pipeline.zadd.assert_called()
 
 
 class TestSessionStoreGet:
@@ -312,9 +318,9 @@ class TestSessionStoreGet:
     async def test_get_session_found(self, session_store, mock_redis):
         """Test getting an existing session."""
         mock_redis.hgetall.return_value = {
-            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
+            "stored_jwt": TEST_ENCRYPTED_JWT,
             "device_type": "iOS",
             "device_os": "iOS 17.4",
             "app_version": "1.94.0",
@@ -323,19 +329,20 @@ class TestSessionStoreGet:
             "is_pending_sync_reset": "0",
         }
 
-        session = await session_store.get("test.jwt")
+        session = await session_store.get_by_id(str(TEST_SESSION_ID))
 
         assert session is not None
+        assert session.id == TEST_SESSION_ID
         assert session.user_id == "user_123"
         assert session.library_id == "lib_456"
-        assert session.immich_id == TEST_IMMICH_ID
+        assert session.stored_jwt == TEST_ENCRYPTED_JWT
 
     @pytest.mark.anyio
     async def test_get_session_not_found(self, session_store, mock_redis):
         """Test getting a non-existent session."""
         mock_redis.hgetall.return_value = {}
 
-        session = await session_store.get("nonexistent.jwt")
+        session = await session_store.get_by_id(str(TEST_SESSION_ID))
 
         assert session is None
 
@@ -343,9 +350,9 @@ class TestSessionStoreGet:
     async def test_get_by_id(self, session_store, mock_redis):
         """Test getting session by ID."""
         mock_redis.hgetall.return_value = {
-            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
+            "stored_jwt": TEST_ENCRYPTED_JWT,
             "device_type": "iOS",
             "device_os": "iOS 17.4",
             "app_version": "1.94.0",
@@ -354,11 +361,30 @@ class TestSessionStoreGet:
             "is_pending_sync_reset": "0",
         }
 
-        session = await session_store.get_by_id("session_id_123")
+        session = await session_store.get_by_id(str(TEST_SESSION_ID))
 
         assert session is not None
-        assert session.id == "session_id_123"
-        assert session.immich_id == TEST_IMMICH_ID
+        assert session.id == TEST_SESSION_ID
+
+    @pytest.mark.anyio
+    async def test_get_by_id_invalid_uuid_returns_none(self, session_store, mock_redis):
+        """Test getting session with invalid UUID returns None."""
+        mock_redis.hgetall.return_value = {
+            "user_id": "user_123",
+            "library_id": "lib_456",
+            "stored_jwt": TEST_ENCRYPTED_JWT,
+            "device_type": "iOS",
+            "device_os": "iOS 17.4",
+            "app_version": "1.94.0",
+            "created_at": "2025-01-20T10:00:00+00:00",
+            "updated_at": "2025-01-20T10:30:00+00:00",
+            "is_pending_sync_reset": "0",
+        }
+
+        # Invalid UUID string
+        session = await session_store.get_by_id("not-a-valid-uuid")
+
+        assert session is None
 
 
 class TestSessionStoreGetByUser:
@@ -381,15 +407,18 @@ class TestSessionStoreGetByUser:
     @pytest.mark.anyio
     async def test_get_by_user_with_sessions(self, session_store, mock_redis):
         """Test getting all sessions for a user using pipeline."""
-        mock_redis.smembers.return_value = {"session_1", "session_2"}
+        mock_redis.smembers.return_value = {
+            str(TEST_SESSION_ID),
+            str(TEST_SESSION_ID_2),
+        }
 
         # Pipeline returns list of hgetall results
         mock_pipeline = mock_redis.pipeline.return_value
         mock_pipeline.execute.return_value = [
             {
-                "immich_id": str(TEST_IMMICH_ID),
                 "user_id": "user_123",
                 "library_id": "lib_456",
+                "stored_jwt": TEST_ENCRYPTED_JWT,
                 "device_type": "iOS",
                 "device_os": "iOS 17.4",
                 "app_version": "1.94.0",
@@ -398,9 +427,9 @@ class TestSessionStoreGetByUser:
                 "is_pending_sync_reset": "0",
             },
             {
-                "immich_id": str(TEST_IMMICH_ID_2),
                 "user_id": "user_123",
                 "library_id": "lib_456",
+                "stored_jwt": TEST_ENCRYPTED_JWT,
                 "device_type": "Chrome",
                 "device_os": "macOS 14",
                 "app_version": "",
@@ -430,16 +459,21 @@ class TestSessionStoreGetByUser:
         self, session_store, mock_redis
     ):
         """Test that get_by_user cleans up orphaned index entries."""
-        mock_redis.smembers.return_value = {"session_1", "orphaned_session"}
+        # Use a valid UUID for the orphaned session token (will still be orphaned due to empty data)
+        orphaned_uuid = "660e8400-e29b-41d4-a716-446655440001"
+        mock_redis.smembers.return_value = {str(TEST_SESSION_ID), orphaned_uuid}
 
         # First pipeline for fetching - one valid session, one expired (empty dict)
         fetch_pipeline = MagicMock()
+        fetch_pipeline.hgetall = MagicMock(
+            return_value=fetch_pipeline
+        )  # Chain returns self
         fetch_pipeline.execute = AsyncMock(
             return_value=[
                 {
-                    "immich_id": str(TEST_IMMICH_ID),
                     "user_id": "user_123",
                     "library_id": "lib_456",
+                    "stored_jwt": TEST_ENCRYPTED_JWT,
                     "device_type": "iOS",
                     "device_os": "iOS 17.4",
                     "app_version": "1.94.0",
@@ -453,6 +487,8 @@ class TestSessionStoreGetByUser:
 
         # Second pipeline for cleanup
         cleanup_pipeline = MagicMock()
+        cleanup_pipeline.srem = MagicMock(return_value=cleanup_pipeline)
+        cleanup_pipeline.zrem = MagicMock(return_value=cleanup_pipeline)
         cleanup_pipeline.execute = AsyncMock(return_value=[])
 
         mock_redis.pipeline = MagicMock(side_effect=[fetch_pipeline, cleanup_pipeline])
@@ -466,95 +502,6 @@ class TestSessionStoreGetByUser:
         # Cleanup pipeline should have been called
         cleanup_pipeline.srem.assert_called()
         cleanup_pipeline.zrem.assert_called()
-
-
-class TestSessionStoreGetByImmichId:
-    """Tests for SessionStore.get_by_immich_id()."""
-
-    @pytest.fixture
-    def mock_redis(self):
-        """Create a mock async Redis client with pipeline support."""
-        mock = AsyncMock()
-        mock_pipeline = MagicMock()
-        mock_pipeline.execute = AsyncMock()
-        mock.pipeline = MagicMock(return_value=mock_pipeline)
-        return mock
-
-    @pytest.fixture
-    def session_store(self, mock_redis):
-        """Create SessionStore with mocked Redis."""
-        return SessionStore(mock_redis)
-
-    @pytest.mark.anyio
-    async def test_get_by_immich_id_found(self, session_store, mock_redis):
-        """Test finding a session by user ID and Immich ID."""
-        mock_redis.smembers.return_value = {"session_1", "session_2"}
-
-        mock_pipeline = mock_redis.pipeline.return_value
-        mock_pipeline.execute.return_value = [
-            {
-                "immich_id": str(TEST_IMMICH_ID),
-                "user_id": "user_123",
-                "library_id": "lib_456",
-                "device_type": "iOS",
-                "device_os": "iOS 17.4",
-                "app_version": "1.94.0",
-                "created_at": "2025-01-20T10:00:00+00:00",
-                "updated_at": "2025-01-20T10:30:00+00:00",
-                "is_pending_sync_reset": "0",
-            },
-            {
-                "immich_id": str(TEST_IMMICH_ID_2),
-                "user_id": "user_123",
-                "library_id": "lib_456",
-                "device_type": "Chrome",
-                "device_os": "macOS 14",
-                "app_version": "",
-                "created_at": "2025-01-20T11:00:00+00:00",
-                "updated_at": "2025-01-20T11:30:00+00:00",
-                "is_pending_sync_reset": "0",
-            },
-        ]
-
-        session = await session_store.get_by_immich_id("user_123", TEST_IMMICH_ID)
-
-        assert session is not None
-        assert session.immich_id == TEST_IMMICH_ID
-        assert session.device_type == "iOS"
-
-    @pytest.mark.anyio
-    async def test_get_by_immich_id_not_found(self, session_store, mock_redis):
-        """Test getting session by Immich ID when not found."""
-        mock_redis.smembers.return_value = {"session_1"}
-
-        mock_pipeline = mock_redis.pipeline.return_value
-        mock_pipeline.execute.return_value = [
-            {
-                "immich_id": str(TEST_IMMICH_ID),
-                "user_id": "user_123",
-                "library_id": "lib_456",
-                "device_type": "iOS",
-                "device_os": "iOS 17.4",
-                "app_version": "1.94.0",
-                "created_at": "2025-01-20T10:00:00+00:00",
-                "updated_at": "2025-01-20T10:30:00+00:00",
-                "is_pending_sync_reset": "0",
-            },
-        ]
-
-        # Search for a different Immich ID
-        session = await session_store.get_by_immich_id("user_123", TEST_IMMICH_ID_2)
-
-        assert session is None
-
-    @pytest.mark.anyio
-    async def test_get_by_immich_id_no_sessions(self, session_store, mock_redis):
-        """Test getting session by Immich ID when user has no sessions."""
-        mock_redis.smembers.return_value = set()
-
-        session = await session_store.get_by_immich_id("user_123", TEST_IMMICH_ID)
-
-        assert session is None
 
 
 class TestSessionStoreDelete:
@@ -579,9 +526,9 @@ class TestSessionStoreDelete:
     async def test_delete_session_exists(self, session_store, mock_redis):
         """Test deleting an existing session."""
         mock_redis.hgetall.return_value = {
-            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
+            "stored_jwt": TEST_ENCRYPTED_JWT,
             "device_type": "iOS",
             "device_os": "iOS 17.4",
             "app_version": "1.94.0",
@@ -590,7 +537,7 @@ class TestSessionStoreDelete:
             "is_pending_sync_reset": "0",
         }
 
-        result = await session_store.delete("test.jwt")
+        result = await session_store.delete(str(TEST_SESSION_ID))
 
         assert result is True
         mock_redis.pipeline.return_value.execute.assert_called_once()
@@ -600,18 +547,18 @@ class TestSessionStoreDelete:
         """Test deleting a non-existent session."""
         mock_redis.hgetall.return_value = {}
 
-        result = await session_store.delete("nonexistent.jwt")
+        result = await session_store.delete(str(TEST_SESSION_ID))
 
         assert result is False
 
     @pytest.mark.anyio
     async def test_delete_verifies_pipeline_commands(self, session_store, mock_redis):
-        """Test that delete issues correct pipeline commands without checkpoint."""
-        session_id = SessionStore.hash_jwt("test.jwt")
+        """Test that delete issues correct pipeline commands."""
+        session_token = str(TEST_SESSION_ID)
         mock_redis.hgetall.return_value = {
-            "immich_id": str(TEST_IMMICH_ID),
             "user_id": "user_123",
             "library_id": "lib_456",
+            "stored_jwt": TEST_ENCRYPTED_JWT,
             "device_type": "iOS",
             "device_os": "iOS 17.4",
             "app_version": "1.94.0",
@@ -620,18 +567,18 @@ class TestSessionStoreDelete:
             "is_pending_sync_reset": "0",
         }
 
-        await session_store.delete("test.jwt")
+        await session_store.delete(session_token)
 
         mock_pipeline = mock_redis.pipeline.return_value
 
         # Verify delete was called for session
-        mock_pipeline.delete.assert_called_once_with(f"session:{session_id}")
+        mock_pipeline.delete.assert_called_once_with(f"session:{session_token}")
 
         # Verify srem was called to remove from user's session set
-        mock_pipeline.srem.assert_called_with("user:user_123:sessions", session_id)
+        mock_pipeline.srem.assert_called_with("user:user_123:sessions", session_token)
 
         # Verify zrem was called for the activity index
-        mock_pipeline.zrem.assert_called_with("sessions:by_updated_at", session_id)
+        mock_pipeline.zrem.assert_called_with("sessions:by_updated_at", session_token)
 
 
 class TestSessionStoreUpdateActivity:
@@ -657,7 +604,7 @@ class TestSessionStoreUpdateActivity:
         """Test updating activity for existing session."""
         mock_redis.exists.return_value = True
 
-        result = await session_store.update_activity("test.jwt")
+        result = await session_store.update_activity(str(TEST_SESSION_ID))
 
         assert result is True
         mock_redis.pipeline.return_value.execute.assert_called_once()
@@ -667,7 +614,52 @@ class TestSessionStoreUpdateActivity:
         """Test updating activity for non-existent session."""
         mock_redis.exists.return_value = False
 
-        result = await session_store.update_activity("nonexistent.jwt")
+        result = await session_store.update_activity(str(TEST_SESSION_ID))
+
+        assert result is False
+
+
+class TestSessionStoreUpdateStoredJwt:
+    """Tests for SessionStore.update_stored_jwt()."""
+
+    @pytest.fixture
+    def mock_redis(self):
+        """Create a mock async Redis client."""
+        mock = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock()
+        mock.pipeline = MagicMock(return_value=mock_pipeline)
+        return mock
+
+    @pytest.fixture
+    def session_store(self, mock_redis):
+        """Create SessionStore with mocked Redis."""
+        return SessionStore(mock_redis)
+
+    @pytest.mark.anyio
+    async def test_update_stored_jwt_success(self, session_store, mock_redis):
+        """Test updating stored JWT for existing session."""
+        mock_redis.exists.return_value = True
+
+        with patch("services.session_store.encrypt_jwt") as mock_encrypt:
+            mock_encrypt.return_value = "new_encrypted_jwt"
+
+            result = await session_store.update_stored_jwt(
+                str(TEST_SESSION_ID), "new.jwt.token"
+            )
+
+            assert result is True
+            mock_encrypt.assert_called_once_with("new.jwt.token")
+            mock_redis.pipeline.return_value.execute.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_update_stored_jwt_session_not_found(self, session_store, mock_redis):
+        """Test updating stored JWT for non-existent session."""
+        mock_redis.exists.return_value = False
+
+        result = await session_store.update_stored_jwt(
+            str(TEST_SESSION_ID), "new.jwt.token"
+        )
 
         assert result is False
 
@@ -689,24 +681,26 @@ class TestSessionStoreSyncReset:
     async def test_set_pending_sync_reset_true(self, session_store, mock_redis):
         """Test setting sync reset flag to true."""
         mock_redis.exists.return_value = True
+        session_token = str(TEST_SESSION_ID)
 
-        result = await session_store.set_pending_sync_reset("session_123", True)
+        result = await session_store.set_pending_sync_reset(session_token, True)
 
         assert result is True
         mock_redis.hset.assert_called_with(
-            "session:session_123", "is_pending_sync_reset", "1"
+            f"session:{session_token}", "is_pending_sync_reset", "1"
         )
 
     @pytest.mark.anyio
     async def test_set_pending_sync_reset_false(self, session_store, mock_redis):
         """Test setting sync reset flag to false."""
         mock_redis.exists.return_value = True
+        session_token = str(TEST_SESSION_ID)
 
-        result = await session_store.set_pending_sync_reset("session_123", False)
+        result = await session_store.set_pending_sync_reset(session_token, False)
 
         assert result is True
         mock_redis.hset.assert_called_with(
-            "session:session_123", "is_pending_sync_reset", "0"
+            f"session:{session_token}", "is_pending_sync_reset", "0"
         )
 
     @pytest.mark.anyio
@@ -739,7 +733,7 @@ class TestSessionStoreExists:
         """Test exists returns True for existing session."""
         mock_redis.exists.return_value = 1
 
-        result = await session_store.exists("test.jwt")
+        result = await session_store.exists(str(TEST_SESSION_ID))
 
         assert result is True
 
@@ -748,7 +742,7 @@ class TestSessionStoreExists:
         """Test exists returns False for non-existent session."""
         mock_redis.exists.return_value = 0
 
-        result = await session_store.exists("nonexistent.jwt")
+        result = await session_store.exists(str(TEST_SESSION_ID))
 
         assert result is False
 
@@ -771,7 +765,7 @@ class TestSessionStoreGetTtl:
         """Test get_ttl returns seconds remaining."""
         mock_redis.ttl.return_value = 3600
 
-        result = await session_store.get_ttl("test.jwt")
+        result = await session_store.get_ttl(str(TEST_SESSION_ID))
 
         assert result == 3600
 
@@ -780,7 +774,7 @@ class TestSessionStoreGetTtl:
         """Test get_ttl returns None when no TTL set."""
         mock_redis.ttl.return_value = -1
 
-        result = await session_store.get_ttl("test.jwt")
+        result = await session_store.get_ttl(str(TEST_SESSION_ID))
 
         assert result is None
 
@@ -789,7 +783,7 @@ class TestSessionStoreGetTtl:
         """Test get_ttl returns None when key doesn't exist."""
         mock_redis.ttl.return_value = -2
 
-        result = await session_store.get_ttl("nonexistent.jwt")
+        result = await session_store.get_ttl("nonexistent")
 
         assert result is None
 
@@ -815,7 +809,10 @@ class TestSessionStoreDeleteAllForUser:
     @pytest.mark.anyio
     async def test_delete_all_for_user(self, session_store, mock_redis):
         """Test deleting all sessions for a user using pipeline."""
-        mock_redis.smembers.return_value = {"session_1", "session_2"}
+        mock_redis.smembers.return_value = {
+            str(TEST_SESSION_ID),
+            str(TEST_SESSION_ID_2),
+        }
 
         count = await session_store.delete_all_for_user("user_123")
 
@@ -857,28 +854,31 @@ class TestSessionStoreStaleCleanup:
 
     @pytest.mark.anyio
     async def test_get_stale_sessions(self, session_store, mock_redis):
-        """Test getting stale session IDs."""
-        mock_redis.zrangebyscore.return_value = ["session_1", "session_2"]
+        """Test getting stale session tokens."""
+        mock_redis.zrangebyscore.return_value = [
+            str(TEST_SESSION_ID),
+            str(TEST_SESSION_ID_2),
+        ]
 
-        stale_ids = await session_store.get_stale_sessions(days=90)
+        stale_tokens = await session_store.get_stale_sessions(days=90)
 
-        assert len(stale_ids) == 2
-        assert "session_1" in stale_ids
-        assert "session_2" in stale_ids
+        assert len(stale_tokens) == 2
+        assert str(TEST_SESSION_ID) in stale_tokens
+        assert str(TEST_SESSION_ID_2) in stale_tokens
 
     @pytest.mark.anyio
     async def test_cleanup_stale_sessions(self, session_store, mock_redis):
         """Test cleaning up stale sessions using pipeline."""
-        mock_redis.zrangebyscore.return_value = ["session_1"]
+        mock_redis.zrangebyscore.return_value = [str(TEST_SESSION_ID)]
 
         # First pipeline for fetching session data
         fetch_pipeline = MagicMock()
         fetch_pipeline.execute = AsyncMock(
             return_value=[
                 {
-                    "immich_id": str(TEST_IMMICH_ID),
                     "user_id": "user_123",
                     "library_id": "lib_456",
+                    "stored_jwt": TEST_ENCRYPTED_JWT,
                     "device_type": "iOS",
                     "device_os": "iOS 17.4",
                     "app_version": "1.94.0",
@@ -907,16 +907,19 @@ class TestSessionStoreStaleCleanup:
         self, session_store, mock_redis
     ):
         """Test cleanup handles sessions that expired via TTL."""
-        mock_redis.zrangebyscore.return_value = ["session_1", "already_expired"]
+        mock_redis.zrangebyscore.return_value = [
+            str(TEST_SESSION_ID),
+            "already_expired",
+        ]
 
         # First pipeline - one valid, one already expired (empty)
         fetch_pipeline = MagicMock()
         fetch_pipeline.execute = AsyncMock(
             return_value=[
                 {
-                    "immich_id": str(TEST_IMMICH_ID),
                     "user_id": "user_123",
                     "library_id": "lib_456",
+                    "stored_jwt": TEST_ENCRYPTED_JWT,
                     "device_type": "iOS",
                     "device_os": "iOS 17.4",
                     "app_version": "1.94.0",

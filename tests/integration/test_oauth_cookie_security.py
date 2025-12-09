@@ -1,10 +1,19 @@
 import pytest
-from unittest.mock import Mock, patch
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, Mock, patch
+from uuid import UUID
 from fastapi.testclient import TestClient
 
 from main import app
 from routers.utils.cookies import ImmichCookie
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_user_id
+from services.session_store import Session, SessionStore, get_session_store
+
+# Test UUIDs
+TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
+TEST_USER_UUID = UUID("660e8400-e29b-41d4-a716-446655440001")
+TEST_GUMNUT_USER_ID = uuid_to_gumnut_user_id(TEST_USER_UUID)
 
 
 class TestOAuthCookieSecurity:
@@ -18,17 +27,35 @@ class TestOAuthCookieSecurity:
         mock_exchange_result = Mock()
         mock_exchange_result.access_token = "jwt_token_abc123"
         mock_exchange_result.user = Mock()
-        mock_exchange_result.user.id = "user-uuid-123"
+        mock_exchange_result.user.id = TEST_GUMNUT_USER_ID
         mock_exchange_result.user.email = "test@example.com"
         mock_exchange_result.user.first_name = "Test"
         mock_exchange_result.user.last_name = "User"
         mock_gumnut_client.oauth.exchange.return_value = mock_exchange_result
 
-        # Override the dependency
+        # Mock the SessionStore
+        mock_session_store = AsyncMock(spec=SessionStore)
+        now = datetime.now(timezone.utc)
+        mock_session = Session(
+            id=TEST_SESSION_UUID,
+            user_id=str(TEST_USER_UUID),
+            library_id="",
+            stored_jwt="encrypted-jwt",
+            device_type="Other",
+            device_os="Other",
+            app_version="",
+            created_at=now,
+            updated_at=now,
+            is_pending_sync_reset=False,
+        )
+        mock_session_store.create.return_value = mock_session
+
+        # Override the dependencies
         async def mock_get_client():
             return mock_gumnut_client
 
         app.dependency_overrides[get_unauthenticated_gumnut_client] = mock_get_client
+        app.dependency_overrides[get_session_store] = lambda: mock_session_store
 
         try:
             with patch("routers.api.oauth.parse_callback_url") as mock_parse:
@@ -49,7 +76,7 @@ class TestOAuthCookieSecurity:
 
                 # Assert response is successful
                 assert response.status_code == 201
-                assert response.json()["accessToken"] == "jwt_token_abc123"
+                assert response.json()["accessToken"] == str(TEST_SESSION_UUID)
 
                 # Parse Set-Cookie headers from response
                 set_cookie_headers = response.headers.get_list("set-cookie")
@@ -115,40 +142,67 @@ class TestOAuthCookieSecurity:
     @pytest.mark.anyio
     async def test_token_refresh_cookie_has_security_flags(self):
         """Verify refreshed token cookie has security flags."""
-        # Create test client with HTTPS base URL
-        client = TestClient(app, base_url="https://testserver")
+        # Mock the SessionStore to return a valid session
+        mock_session_store = AsyncMock(spec=SessionStore)
+        now = datetime.now(timezone.utc)
+        mock_session = Session(
+            id=TEST_SESSION_UUID,
+            user_id=str(TEST_USER_UUID),
+            library_id="",
+            stored_jwt="encrypted-jwt",
+            device_type="Other",
+            device_os="Other",
+            app_version="",
+            created_at=now,
+            updated_at=now,
+            is_pending_sync_reset=False,
+        )
+        mock_session.get_jwt = Mock(return_value="decrypted-jwt-token")
+        mock_session_store.get_by_id.return_value = mock_session
+        mock_session_store.update_stored_jwt.return_value = True
 
-        # Set cookie on client instance instead of per-request
-        client.cookies.set(ImmichCookie.ACCESS_TOKEN.value, "original-jwt-token-123")
+        async def mock_get_session_store():
+            return mock_session_store
 
-        # Mock a request that would trigger token refresh
+        # Patch the middleware's get_session_store (called directly, not via DI)
         with patch(
-            "routers.utils.gumnut_client.get_refreshed_token"
-        ) as mock_get_refreshed:
-            mock_get_refreshed.return_value = "refreshed-jwt-token-789"
+            "routers.middleware.auth_middleware.get_session_store",
+            mock_get_session_store,
+        ):
+            # Create test client with HTTPS base URL
+            client = TestClient(app, base_url="https://testserver")
 
-            # Make a request with existing auth cookie
-            response = client.get("/api/server/version")
+            # Set cookie with the session token
+            client.cookies.set(ImmichCookie.ACCESS_TOKEN.value, str(TEST_SESSION_UUID))
 
-            # Should be successful
-            assert response.status_code == 200
+            # Mock a request that would trigger token refresh
+            with patch(
+                "routers.utils.gumnut_client.get_refreshed_token"
+            ) as mock_get_refreshed:
+                mock_get_refreshed.return_value = "refreshed-jwt-token-789"
 
-            # Check if refresh cookie was set (if middleware detected refresh)
-            set_cookie_headers = response.headers.get_list("set-cookie")
+                # Make a request with existing auth cookie
+                response = client.get("/api/server/version")
 
-            # If token was refreshed, verify security flags
-            for cookie_header in set_cookie_headers:
-                if f"{ImmichCookie.ACCESS_TOKEN.value}=" in cookie_header:
-                    assert "HttpOnly" in cookie_header, (
-                        f"refreshed token missing HttpOnly: {cookie_header}"
-                    )
-                    assert "Secure" in cookie_header or "secure" in cookie_header, (
-                        f"refreshed token missing Secure: {cookie_header}"
-                    )
-                    assert (
-                        "SameSite=lax" in cookie_header
-                        or "SameSite=Lax" in cookie_header
-                    ), f"refreshed token missing SameSite=Lax: {cookie_header}"
+                # Should be successful
+                assert response.status_code == 200
+
+                # Check if refresh cookie was set (if middleware detected refresh)
+                set_cookie_headers = response.headers.get_list("set-cookie")
+
+                # If token was refreshed, verify security flags
+                for cookie_header in set_cookie_headers:
+                    if f"{ImmichCookie.ACCESS_TOKEN.value}=" in cookie_header:
+                        assert "HttpOnly" in cookie_header, (
+                            f"refreshed token missing HttpOnly: {cookie_header}"
+                        )
+                        assert "Secure" in cookie_header or "secure" in cookie_header, (
+                            f"refreshed token missing Secure: {cookie_header}"
+                        )
+                        assert (
+                            "SameSite=lax" in cookie_header
+                            or "SameSite=Lax" in cookie_header
+                        ), f"refreshed token missing SameSite=Lax: {cookie_header}"
 
     @pytest.mark.anyio
     async def test_no_cookies_set_without_security_flags(self):
