@@ -38,6 +38,7 @@ jobs:
       - name: Generate OpenAPI specification
         env:
           ENVIRONMENT: "test"
+          SESSION_ENCRYPTION_KEY: "jpe3C0eHHKfCwSSu5cvjmR9xpiImYYyiIvD_yqxME7U="
         run: |
           echo "Generating OpenAPI specification..."
           uv run tools/dump_openapi_json.py > adapter-openapi.json
