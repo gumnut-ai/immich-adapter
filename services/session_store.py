@@ -265,13 +265,15 @@ class SessionStore:
         Returns:
             Session if found, None otherwise
         """
-        data = await self._redis.hgetall(f"session:{session_token}")
-        if not data:
-            return None
         try:
             session_uuid = UUID(session_token)
         except ValueError:
             return None
+
+        data = await self._redis.hgetall(f"session:{session_token}")
+        if not data:
+            return None
+
         return Session.from_dict(session_uuid, data)
 
     async def get_by_user(self, user_id: str) -> list[Session]:

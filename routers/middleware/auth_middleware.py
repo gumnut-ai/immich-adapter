@@ -121,7 +121,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     extra={"path": path},
                     exc_info=True,
                 )
-                return self._invalid_token_response()
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "detail": "Authentication service temporarily unavailable"
+                    },
+                )
 
         # Store in request state for dependency injection
         request.state.jwt_token = jwt_token

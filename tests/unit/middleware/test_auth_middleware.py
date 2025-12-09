@@ -347,5 +347,8 @@ class TestSessionLookupErrors:
 
             response = client.get("/api/test/protected", headers=headers)
 
-            assert response.status_code == 401
-            assert response.json()["detail"] == "Invalid user token"
+            assert response.status_code == 503
+            assert (
+                response.json()["detail"]
+                == "Authentication service temporarily unavailable"
+            )

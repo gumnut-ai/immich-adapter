@@ -34,7 +34,7 @@ class Settings(BaseSettings):
 
     # Session encryption key for Fernet (base64-encoded 32-byte key)
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-    session_encryption_key: str | None = None
+    session_encryption_key: str = ""
 
     # Private field to cache the loaded Immich version
     _immich_version: ImmichVersion | None = None
