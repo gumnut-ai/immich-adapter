@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import Request, Response
+from fastapi import Request, Response, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
@@ -43,7 +43,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     def _invalid_token_response(self) -> JSONResponse:
         """Return a 401 response for invalid user token."""
         return JSONResponse(
-            status_code=401,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             content={"detail": "Invalid user token"},
         )
 
@@ -108,23 +108,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         extra={"path": path},
                     )
                     return self._invalid_token_response()
-            except JWTEncryptionError:
-                logger.error(
-                    "Failed to decrypt JWT from session",
-                    extra={"path": path},
-                    exc_info=True,
-                )
-                return self._invalid_token_response()
             except Exception:
                 logger.error(
-                    "Failed to look up session",
-                    extra={"path": path},
+                    "Error during session lookup",
                     exc_info=True,
                 )
                 return JSONResponse(
-                    status_code=503,
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     content={
-                        "detail": "Authentication service temporarily unavailable"
+                        "detail": "Internal server error"
                     },
                 )
 

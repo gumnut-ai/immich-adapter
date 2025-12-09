@@ -272,4 +272,4 @@ class TestFinishOAuth:
                 )
 
             assert exc_info.value.status_code == 500
-            assert "Login failed" in exc_info.value.detail
+            assert "OAuth authentication failed" in exc_info.value.detail

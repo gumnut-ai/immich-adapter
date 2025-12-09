@@ -305,8 +305,8 @@ class TestSessionLookupErrors:
 
         return app
 
-    def test_jwt_decryption_error_returns_401(self, app_for_errors):
-        """Test that JWT decryption errors return 401."""
+    def test_jwt_decryption_error_returns_500(self, app_for_errors):
+        """Test that JWT decryption errors return 500."""
 
         mock_session_store = AsyncMock()
         session = create_test_session()
@@ -326,11 +326,11 @@ class TestSessionLookupErrors:
 
             response = client.get("/api/test/protected", headers=headers)
 
-            assert response.status_code == 401
-            assert response.json()["detail"] == "Invalid user token"
+            assert response.status_code == 500
+            assert response.json()["detail"] == "Internal server error"
 
-    def test_redis_error_returns_401(self, app_for_errors):
-        """Test that Redis errors return 401."""
+    def test_redis_error_returns_500(self, app_for_errors):
+        """Test that Redis errors return 500."""
         mock_session_store = AsyncMock()
         mock_session_store.get_by_id.side_effect = Exception("Redis connection error")
 
@@ -347,8 +347,8 @@ class TestSessionLookupErrors:
 
             response = client.get("/api/test/protected", headers=headers)
 
-            assert response.status_code == 503
+            assert response.status_code == 500
             assert (
                 response.json()["detail"]
-                == "Authentication service temporarily unavailable"
+                == "Internal server error"
             )

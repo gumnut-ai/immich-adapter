@@ -38,7 +38,8 @@ jobs:
       - name: Generate OpenAPI specification
         env:
           ENVIRONMENT: "test"
-          SESSION_ENCRYPTION_KEY: "jpe3C0eHHKfCwSSu5cvjmR9xpiImYYyiIvD_yqxME7U="
+          # Settings requires a session encryption key to initialize, but dump_openapi_json does not use it, so we set a dummy value here.
+          SESSION_ENCRYPTION_KEY: "dummy-key"
         run: |
           echo "Generating OpenAPI specification..."
           uv run tools/dump_openapi_json.py > adapter-openapi.json
