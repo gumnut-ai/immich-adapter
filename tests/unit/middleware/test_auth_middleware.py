@@ -348,7 +348,4 @@ class TestSessionLookupErrors:
             response = client.get("/api/test/protected", headers=headers)
 
             assert response.status_code == 500
-            assert (
-                response.json()["detail"]
-                == "Internal server error"
-            )
+            assert response.json()["detail"] == "Internal server error"

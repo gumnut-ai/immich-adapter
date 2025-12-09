@@ -7,7 +7,6 @@ from starlette.types import ASGIApp
 
 from routers.utils.gumnut_client import get_refreshed_token, clear_refreshed_token
 from services.session_store import get_session_store
-from utils.jwt_encryption import JWTEncryptionError
 
 logger = logging.getLogger(__name__)
 
@@ -115,9 +114,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 )
                 return JSONResponse(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    content={
-                        "detail": "Internal server error"
-                    },
+                    content={"detail": "Internal server error"},
                 )
 
         # Store in request state for dependency injection

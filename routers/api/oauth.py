@@ -222,7 +222,7 @@ async def finish_oauth(
             shouldChangePassword=False,
         )
 
-    except JWTEncryptionError as e:
+    except JWTEncryptionError:
         logger.error(
             "Failed to encrypt JWT for session storage",
             extra={"user_id": result.user.id},
@@ -232,7 +232,7 @@ async def finish_oauth(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="OAuth authentication failed. Please try again.",
         )
-    except Exception as e:
+    except Exception:
         logger.error(
             "Failed to complete OAuth authentication",
             exc_info=True,
