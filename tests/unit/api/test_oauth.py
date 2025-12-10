@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from starlette.datastructures import URL
 import pytest
 
@@ -224,10 +224,14 @@ class TestFinishOAuth:
         assert call_kwargs["app_version"] == ""
 
     @pytest.mark.anyio
-    async def test_login_succeeds_even_if_session_creation_fails(
+    async def test_login_fails_if_session_creation_fails(
         self, mock_request, mock_response, mock_gumnut_client, mock_session_store
     ):
-        """Test that login succeeds even if session creation fails."""
+        """Test that login fails if session creation fails.
+
+        Session creation is required because we return the session token to clients.
+        If we can't create a session, we can't authenticate the user.
+        """
         mock_user = Mock()
         mock_user.id = TEST_GUMNUT_USER_ID
         mock_user.email = "test@example.com"
@@ -257,15 +261,15 @@ class TestFinishOAuth:
                 "error": None,
             }
 
-            # Should not raise an exception
-            result = await finish_oauth(
-                oauth_callback=callback_dto,
-                request=mock_request,
-                response=mock_response,
-                client=mock_gumnut_client,
-                session_store=mock_session_store,
-            )
+            # Should raise an HTTPException since session creation is required
+            with pytest.raises(HTTPException) as exc_info:
+                await finish_oauth(
+                    oauth_callback=callback_dto,
+                    request=mock_request,
+                    response=mock_response,
+                    client=mock_gumnut_client,
+                    session_store=mock_session_store,
+                )
 
-        # Login should still succeed
-        assert result.accessToken == "test-jwt-token"
-        assert result.userId == TEST_GUMNUT_USER_ID
+            assert exc_info.value.status_code == 500
+            assert "OAuth authentication failed" in exc_info.value.detail

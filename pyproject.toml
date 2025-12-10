@@ -5,6 +5,7 @@ description = "FastAPI server that adapts the Immich API to the Gumnut API"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "cryptography>=46.0.0",
     "fastapi[standard]>=0.116.1",
     "gumnut-sdk",
     "pydantic-settings>=2.10.1",

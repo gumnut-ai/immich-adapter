@@ -23,7 +23,7 @@ class TestPostLogout:
         """Create a mock request."""
         request = Mock()
         request.cookies = {}
-        request.state = Mock(spec=[])  # No jwt_token attribute by default
+        request.state = Mock(spec=[])  # No session_token attribute by default
         return request
 
     @pytest.fixture
@@ -35,8 +35,8 @@ class TestPostLogout:
     async def test_deletes_session_from_request_state(
         self, mock_request, mock_response, mock_session_store
     ):
-        """Test that session is deleted when JWT is in request.state."""
-        mock_request.state.jwt_token = "test-jwt-token"
+        """Test that session is deleted when session token is in request.state."""
+        mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
         result = await post_logout(
@@ -47,17 +47,17 @@ class TestPostLogout:
         )
 
         # Verify session was deleted
-        mock_session_store.delete.assert_called_once_with("test-jwt-token")
+        mock_session_store.delete.assert_called_once_with("test-session-token")
         assert result.successful is True
 
     @pytest.mark.anyio
     async def test_deletes_session_from_cookie_when_not_in_state(
         self, mock_request, mock_response, mock_session_store
     ):
-        """Test that session is deleted when JWT is in cookie but not in state."""
-        mock_request.state = Mock(spec=[])  # No jwt_token attribute
+        """Test that session is deleted when session token is in cookie but not in state."""
+        mock_request.state = Mock(spec=[])  # No session_token attribute
         mock_request.cookies = {
-            ImmichCookie.ACCESS_TOKEN.value: "cookie-jwt-token",
+            ImmichCookie.ACCESS_TOKEN.value: "cookie-session-token",
         }
 
         result = await post_logout(
@@ -68,15 +68,15 @@ class TestPostLogout:
         )
 
         # Verify session was deleted using cookie value
-        mock_session_store.delete.assert_called_once_with("cookie-jwt-token")
+        mock_session_store.delete.assert_called_once_with("cookie-session-token")
         assert result.successful is True
 
     @pytest.mark.anyio
     async def test_logout_succeeds_when_no_jwt_present(
         self, mock_request, mock_response, mock_session_store
     ):
-        """Test that logout succeeds even when no JWT is present."""
-        mock_request.state = Mock(spec=[])  # No jwt_token attribute
+        """Test that logout succeeds even when no session token is present."""
+        mock_request.state = Mock(spec=[])  # No session_token attribute
         mock_request.cookies = {}
 
         result = await post_logout(
@@ -96,7 +96,7 @@ class TestPostLogout:
         self, mock_request, mock_response, mock_session_store
     ):
         """Test that logout succeeds even if session deletion fails."""
-        mock_request.state.jwt_token = "test-jwt-token"
+        mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
         # Session deletion will fail
@@ -121,7 +121,7 @@ class TestPostLogout:
         self, mock_request, mock_response, mock_session_store
     ):
         """Test that logout always deletes auth cookies."""
-        mock_request.state.jwt_token = "test-jwt-token"
+        mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
         await post_logout(

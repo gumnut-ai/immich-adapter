@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from gumnut import Gumnut, omit
 
 from routers.immich_models import (
@@ -22,6 +22,7 @@ from routers.utils.cookies import AuthType, set_auth_cookies
 from routers.utils.current_user import get_current_user
 from config.settings import get_settings
 from services.session_store import SessionStore, get_session_store
+from utils.jwt_encryption import JWTEncryptionError
 from utils.user_agent import extract_device_info
 
 logger = logging.getLogger(__name__)
@@ -133,14 +134,19 @@ async def finish_oauth(
 
     Parses the OAuth callback URL to extract the authorization code and state,
     forwards them to the backend for token exchange, receives the JWT and user
-    info, sets authentication cookies, and returns the login response.
+    info, creates a session with encrypted JWT storage, sets authentication
+    cookies with the session token, and returns the login response.
+
+    The session token (UUID) is returned as the accessToken.
+    This decouples client authentication from the JWT, allowing JWT refresh
+    without invalidating the client's session.
 
     Args:
         oauth_callback: Contains the callback URL with OAuth response parameters
         response: FastAPI response object for setting cookies
 
     Returns:
-        LoginResponseDto with JWT and user information
+        LoginResponseDto with session token and user information
 
     Raises:
         HTTPException: If URL parsing fails or backend request fails
@@ -177,29 +183,24 @@ async def finish_oauth(
         ua_string = request.headers.get("user-agent", "")
         device_info = extract_device_info(ua_string)
 
-        try:
-            # Convert Gumnut user ID to UUID format for consistency with get_current_user_id
-            user_uuid = safe_uuid_from_user_id(result.user.id)
+        # Convert Gumnut user ID to UUID format for consistency with get_current_user_id
+        user_uuid = safe_uuid_from_user_id(result.user.id)
 
-            await session_store.create(
-                jwt_token=result.access_token,
-                user_id=str(user_uuid),
-                library_id="",  # Not available from OAuth, use placeholder
-                device_type=device_info.device_type,
-                device_os=device_info.device_os,
-                app_version=device_info.app_version,
-            )
-        except Exception as e:
-            # Log error but don't fail the login - session tracking is optional
-            logger.error(
-                "Failed to create session after OAuth login",
-                extra={"error": str(e), "user_id": result.user.id},
-                exc_info=True,
-            )
+        # Create session with encrypted JWT - returns session with UUID token
+        session = await session_store.create(
+            jwt_token=result.access_token,
+            user_id=str(user_uuid),
+            library_id="",  # Not available from OAuth, use placeholder
+            device_type=device_info.device_type,
+            device_os=device_info.device_os,
+            app_version=device_info.app_version,
+        )
+        # Use session token (UUID) as the access token for clients
+        session_token = str(session.id)
 
-        # Set authentication cookies for web client
+        # Set authentication cookies with session token
         set_auth_cookies(
-            response, result.access_token, AuthType.OAUTH, request.url.scheme == "https"
+            response, session_token, AuthType.OAUTH, request.url.scheme == "https"
         )
 
         if result.user.first_name or result.user.last_name:
@@ -209,9 +210,9 @@ async def finish_oauth(
         else:
             name = result.user.email or ""
 
-        # Return login response with JWT and user info
+        # Return login response with session token
         return LoginResponseDto(
-            accessToken=result.access_token,
+            accessToken=session_token,
             userId=result.user.id,
             userEmail=result.user.email or "",
             name=name,
@@ -221,15 +222,23 @@ async def finish_oauth(
             shouldChangePassword=False,
         )
 
-    except Exception as e:
-        # Backend communication error
+    except JWTEncryptionError:
         logger.error(
-            "Failed to complete OAuth authentication",
-            extra={"error": str(e)},
+            "Failed to encrypt JWT for session storage",
+            extra={"user_id": result.user.id},
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OAuth authentication failed. Please try again.",
+        )
+    except Exception:
+        logger.error(
+            "Failed to complete OAuth authentication",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="OAuth authentication failed. Please try again.",
         )
 

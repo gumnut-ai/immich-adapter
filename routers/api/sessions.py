@@ -24,7 +24,7 @@ router = APIRouter(
 
 def _session_to_response_dto(
     session: Session,
-    current_session_id: str,
+    current_session_token: str,
     expires_at: str | None = None,
 ) -> SessionResponseDto:
     """
@@ -32,17 +32,18 @@ def _session_to_response_dto(
 
     Args:
         session: The internal Session object
-        current_session_id: The session ID of the current request (for setting current=True)
+        current_session_token: The session token of the current request (for setting current=True)
         expires_at: Optional expiration time as ISO string
 
     Returns:
         SessionResponseDto for the Immich API response
     """
+    session_id_str = str(session.id)
     return SessionResponseDto(
-        id=str(session.immich_id),
+        id=session_id_str,
         createdAt=session.created_at.isoformat(),
         updatedAt=session.updated_at.isoformat(),
-        current=(session.id == current_session_id),
+        current=(session_id_str == current_session_token),
         deviceOS=session.device_os,
         deviceType=session.device_type,
         appVersion=session.app_version if session.app_version else None,
@@ -51,15 +52,15 @@ def _session_to_response_dto(
     )
 
 
-def _get_jwt_token(request: Request) -> str:
-    """Extract JWT token from request state."""
-    jwt_token = getattr(request.state, "jwt_token", None)
-    if not jwt_token:
+def _get_session_token(request: Request) -> str:
+    """Extract session token from request state."""
+    session_token = getattr(request.state, "session_token", None)
+    if not session_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
         )
-    return jwt_token
+    return session_token
 
 
 @router.get("")
@@ -74,13 +75,12 @@ async def get_sessions(
     Returns a list of all active sessions, with `current=True` for the
     session making this request.
     """
-    jwt_token = _get_jwt_token(request)
-    current_session_id = SessionStore.hash_jwt(jwt_token)
+    current_session_token = _get_session_token(request)
 
     sessions = await session_store.get_by_user(str(current_user_id))
 
     return [
-        _session_to_response_dto(session, current_session_id) for session in sessions
+        _session_to_response_dto(session, current_session_token) for session in sessions
     ]
 
 
@@ -106,19 +106,19 @@ async def delete_all_sessions(
 
     This logs out all other devices while keeping the current session active.
     """
-    jwt_token = _get_jwt_token(request)
-    current_session_id = SessionStore.hash_jwt(jwt_token)
+    current_session_token = _get_session_token(request)
 
     sessions = await session_store.get_by_user(str(current_user_id))
 
     for session in sessions:
-        if session.id != current_session_id:
+        session_token = str(session.id)
+        if session_token != current_session_token:
             try:
-                await session_store.delete_by_id(session.id)
+                await session_store.delete_by_id(session_token)
             except Exception as e:
                 logger.warning(
                     "Failed to delete session during delete_all_sessions",
-                    extra={"session_id": session.id, "error": str(e)},
+                    extra={"session_id": session_token, "error": str(e)},
                     exc_info=True,
                 )
 
@@ -138,11 +138,13 @@ async def update_session(
 
     Currently only supports updating the isPendingSyncReset flag.
     """
-    jwt_token = _get_jwt_token(request)
-    current_session_id = SessionStore.hash_jwt(jwt_token)
+    current_session_token = _get_session_token(request)
 
-    session = await session_store.get_by_immich_id(str(current_user_id), id)
-    if not session:
+    session_token = str(id)
+    session = await session_store.get_by_id(session_token)
+
+    # Verify session exists and belongs to current user
+    if not session or session.user_id != str(current_user_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Not found",
@@ -151,14 +153,14 @@ async def update_session(
     # Update the session if isPendingSyncReset is provided
     if session_update.isPendingSyncReset is not None:
         await session_store.set_pending_sync_reset(
-            session.id, session_update.isPendingSyncReset
+            session_token, session_update.isPendingSyncReset
         )
         # Refresh session data after update
-        updated_session = await session_store.get_by_id(session.id)
+        updated_session = await session_store.get_by_id(session_token)
         if updated_session:
             session = updated_session
 
-    return _session_to_response_dto(session, current_session_id)
+    return _session_to_response_dto(session, current_session_token)
 
 
 @router.delete("/{id}", status_code=204)
@@ -171,16 +173,19 @@ async def delete_session(
     """
     Delete a specific session by ID.
     """
-    _get_jwt_token(request)  # Ensure authenticated
+    _get_session_token(request)  # Ensure authenticated
 
-    session = await session_store.get_by_immich_id(str(current_user_id), id)
-    if not session:
+    session_token = str(id)
+    session = await session_store.get_by_id(session_token)
+
+    # Verify session exists and belongs to current user
+    if not session or session.user_id != str(current_user_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Not found",
         )
 
-    await session_store.delete_by_id(session.id)
+    await session_store.delete_by_id(session_token)
     return None
 
 

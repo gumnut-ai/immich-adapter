@@ -2,6 +2,7 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
+#     "cryptography>=46.0.0",
 #     "fastapi[standard]>=0.116.1",
 #     "pydantic-settings>=2.10.1",
 #     "python-socketio>=5.13.0",
