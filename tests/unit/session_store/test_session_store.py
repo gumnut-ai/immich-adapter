@@ -226,14 +226,14 @@ class TestSessionStoreCreate:
 
     @pytest.mark.anyio
     async def test_create_session_with_expiry(self, session_store, mock_redis):
-        """Test creating a session with TTL."""
+        """Test creating a session with TTL sets TTL on both session and checkpoint keys."""
         with patch("services.session_store.encrypt_jwt") as mock_encrypt:
             mock_encrypt.return_value = TEST_ENCRYPTED_JWT
 
             # Set expiry to 1 hour in the future
             expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
-            await session_store.create(
+            session = await session_store.create(
                 jwt_token="test.jwt",
                 user_id="user_123",
                 library_id="lib_456",
@@ -243,9 +243,13 @@ class TestSessionStoreCreate:
                 expires_at=expires_at,
             )
 
-            # Verify expire was called on pipeline
+            # Verify expire was called on pipeline for both session and checkpoint keys
             mock_pipeline = mock_redis.pipeline.return_value
-            mock_pipeline.expire.assert_called()
+            assert mock_pipeline.expire.call_count == 2
+            expire_calls = [call[0][0] for call in mock_pipeline.expire.call_args_list]
+            session_key = str(session.id)
+            assert f"session:{session_key}" in expire_calls
+            assert f"session:{session_key}:checkpoints" in expire_calls
 
     @pytest.mark.anyio
     async def test_create_session_with_past_expiry_raises_error(
@@ -553,7 +557,7 @@ class TestSessionStoreDelete:
 
     @pytest.mark.anyio
     async def test_delete_verifies_pipeline_commands(self, session_store, mock_redis):
-        """Test that delete issues correct pipeline commands."""
+        """Test that delete issues correct pipeline commands including checkpoint cleanup."""
         session_token = str(TEST_SESSION_ID)
         mock_redis.hgetall.return_value = {
             "user_id": "user_123",
@@ -571,8 +575,11 @@ class TestSessionStoreDelete:
 
         mock_pipeline = mock_redis.pipeline.return_value
 
-        # Verify delete was called for session
-        mock_pipeline.delete.assert_called_once_with(f"session:{session_token}")
+        # Verify delete was called for session and checkpoints
+        assert mock_pipeline.delete.call_count == 2
+        delete_calls = [call[0][0] for call in mock_pipeline.delete.call_args_list]
+        assert f"session:{session_token}" in delete_calls
+        assert f"session:{session_token}:checkpoints" in delete_calls
 
         # Verify srem was called to remove from user's session set
         mock_pipeline.srem.assert_called_with("user:user_123:sessions", session_token)
@@ -808,7 +815,7 @@ class TestSessionStoreDeleteAllForUser:
 
     @pytest.mark.anyio
     async def test_delete_all_for_user(self, session_store, mock_redis):
-        """Test deleting all sessions for a user using pipeline."""
+        """Test deleting all sessions and checkpoints for a user using pipeline."""
         mock_redis.smembers.return_value = {
             str(TEST_SESSION_ID),
             str(TEST_SESSION_ID_2),
@@ -820,7 +827,13 @@ class TestSessionStoreDeleteAllForUser:
 
         # Verify pipeline commands
         mock_pipeline = mock_redis.pipeline.return_value
-        assert mock_pipeline.delete.call_count >= 2  # sessions + user set
+        # Should delete: 2 sessions + 2 checkpoints + 1 user set = 5 deletes
+        assert mock_pipeline.delete.call_count == 5
+        delete_calls = [call[0][0] for call in mock_pipeline.delete.call_args_list]
+        assert f"session:{TEST_SESSION_ID}" in delete_calls
+        assert f"session:{TEST_SESSION_ID}:checkpoints" in delete_calls
+        assert f"session:{TEST_SESSION_ID_2}" in delete_calls
+        assert f"session:{TEST_SESSION_ID_2}:checkpoints" in delete_calls
         mock_pipeline.zrem.assert_called()
         mock_pipeline.execute.assert_called_once()
 
@@ -868,7 +881,7 @@ class TestSessionStoreStaleCleanup:
 
     @pytest.mark.anyio
     async def test_cleanup_stale_sessions(self, session_store, mock_redis):
-        """Test cleaning up stale sessions using pipeline."""
+        """Test cleaning up stale sessions and checkpoints using pipeline."""
         mock_redis.zrangebyscore.return_value = [str(TEST_SESSION_ID)]
 
         # First pipeline for fetching session data
@@ -898,7 +911,11 @@ class TestSessionStoreStaleCleanup:
         count = await session_store.cleanup_stale_sessions(days=90)
 
         assert count == 1
-        delete_pipeline.delete.assert_called()
+        # Verify both session and checkpoints are deleted
+        assert delete_pipeline.delete.call_count == 2
+        delete_calls = [call[0][0] for call in delete_pipeline.delete.call_args_list]
+        assert f"session:{TEST_SESSION_ID}" in delete_calls
+        assert f"session:{TEST_SESSION_ID}:checkpoints" in delete_calls
         delete_pipeline.srem.assert_called()
         delete_pipeline.zrem.assert_called()
 

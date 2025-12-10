@@ -1,12 +1,12 @@
 import time
-from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any
 from uuid import UUID, uuid4
 
 from utils.jwt_encryption import decrypt_jwt, encrypt_jwt
 from utils.redis_client import get_redis_client
+from utils.redis_protocols import AsyncRedisClient
 
 
 class SessionDataError(Exception):
@@ -19,53 +19,6 @@ class SessionExpiredError(ValueError):
     """Raised when attempting to create a session with an expiration time in the past."""
 
     pass
-
-
-# Protocol classes define the Redis interface used by SessionStore. This allows
-# type checking without tight coupling to redis-py, and enables easy mocking in tests.
-# redis-py uses union return types (e.g., Awaitable[T] | T) to support both sync and
-# async clients, which makes strict Protocol matching difficult. We use permissive
-# types (Any, Awaitable[Any]) to work around this.
-
-
-class AsyncRedisPipeline(Protocol):
-    """Protocol for async Redis pipeline operations."""
-
-    def hset(
-        self,
-        name: str,
-        key: str | None = None,
-        value: str | None = None,
-        mapping: dict[str, str] | None = None,
-    ) -> Any: ...
-    def hgetall(self, name: str) -> Any: ...
-    def sadd(self, name: str, *values: str) -> Any: ...
-    def zadd(self, name: str, mapping: dict[str, float]) -> Any: ...
-    def expire(self, name: str, time: int) -> Any: ...
-    def delete(self, *names: str) -> Any: ...
-    def srem(self, name: str, *values: str) -> Any: ...
-    def zrem(self, name: str, *values: str) -> Any: ...
-    async def execute(self) -> list[Any]: ...
-
-
-class AsyncRedisClient(Protocol):
-    """Protocol for async Redis client operations used by SessionStore."""
-
-    def pipeline(self) -> AsyncRedisPipeline: ...
-    def hgetall(self, name: str) -> Awaitable[dict[Any, Any]]: ...
-    def hset(
-        self,
-        name: str,
-        key: str | None = None,
-        value: str | None = None,
-        mapping: dict[str, str] | None = None,
-    ) -> Awaitable[int]: ...
-    def smembers(self, name: str) -> Awaitable[set[Any]]: ...
-    def exists(self, *names: str) -> Awaitable[int]: ...
-    def ttl(self, name: str) -> Awaitable[int]: ...
-    def zrangebyscore(
-        self, name: str, min: float, max: float
-    ) -> Awaitable[list[Any]]: ...
 
 
 _REQUIRED_SESSION_FIELDS = frozenset(
@@ -251,6 +204,8 @@ class SessionStore:
                 # but guard against rounding issues.
                 ttl_seconds = 1
             pipe.expire(f"session:{session_key}", ttl_seconds)
+            # Set same TTL on checkpoint key so it expires with the session
+            pipe.expire(f"session:{session_key}:checkpoints", ttl_seconds)
 
         await pipe.execute()
         return session
@@ -434,6 +389,8 @@ class SessionStore:
         """
         Delete a session by token.
 
+        Removes session data, checkpoint data, and all index entries.
+
         Args:
             session_token: The session token (UUID string)
 
@@ -446,6 +403,7 @@ class SessionStore:
 
         pipe = self._redis.pipeline()
         pipe.delete(f"session:{session_token}")
+        pipe.delete(f"session:{session_token}:checkpoints")
         pipe.srem(f"user:{session.user_id}:sessions", session_token)
         pipe.zrem("sessions:by_updated_at", session_token)
         await pipe.execute()
@@ -455,7 +413,7 @@ class SessionStore:
         """
         Delete all sessions for a user.
 
-        Uses pipelining to delete all sessions efficiently.
+        Uses pipelining to delete all sessions and their checkpoints efficiently.
 
         Args:
             user_id: Gumnut user ID
@@ -469,10 +427,11 @@ class SessionStore:
 
         session_token_list = list(session_tokens)
 
-        # Delete all session data and indexes in one pipeline
+        # Delete all session data, checkpoints, and indexes in one pipeline
         pipe = self._redis.pipeline()
         for session_token in session_token_list:
             pipe.delete(f"session:{session_token}")
+            pipe.delete(f"session:{session_token}:checkpoints")
             pipe.zrem("sessions:by_updated_at", session_token)
         # Clear the entire user sessions set
         pipe.delete(f"user:{user_id}:sessions")
@@ -500,6 +459,7 @@ class SessionStore:
         Delete sessions inactive for N days.
 
         Uses pipelining to fetch session data efficiently before deletion.
+        Also deletes associated checkpoint data.
 
         Args:
             days: Number of days of inactivity threshold
@@ -527,16 +487,19 @@ class SessionStore:
                     session_uuid = UUID(session_token)
                     session = Session.from_dict(session_uuid, data)
                     delete_pipe.delete(f"session:{session_token}")
+                    delete_pipe.delete(f"session:{session_token}:checkpoints")
                     delete_pipe.srem(f"user:{session.user_id}:sessions", session_token)
                     delete_pipe.zrem("sessions:by_updated_at", session_token)
                     count += 1
                 except (SessionDataError, ValueError):
                     # Session data is corrupted, just remove what we can
                     delete_pipe.delete(f"session:{session_token}")
+                    delete_pipe.delete(f"session:{session_token}:checkpoints")
                     delete_pipe.zrem("sessions:by_updated_at", session_token)
                     count += 1
             else:
                 # Session already expired via TTL, just clean up the sorted set entry
+                # Checkpoint key would have expired with same TTL
                 delete_pipe.zrem("sessions:by_updated_at", session_token)
 
         if count > 0:
