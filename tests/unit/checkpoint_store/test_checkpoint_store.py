@@ -133,46 +133,40 @@ class TestCheckpointStoreGetAll:
         assert checkpoints == []
 
     @pytest.mark.anyio
-    async def test_get_all_returns_empty_for_invalid_uuid(
+    async def test_get_all_raises_for_invalid_uuid(
         self, checkpoint_store, mock_redis
     ):
-        """Test get_all returns empty list for invalid UUID."""
-        checkpoints = await checkpoint_store.get_all("not-a-valid-uuid")
+        """Test get_all raises ValueError for invalid UUID."""
+        with pytest.raises(ValueError):
+            await checkpoint_store.get_all("not-a-valid-uuid")
 
-        assert checkpoints == []
         mock_redis.hgetall.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_get_all_skips_malformed_checkpoints(
+    async def test_get_all_raises_on_malformed_checkpoints(
         self, checkpoint_store, mock_redis
     ):
-        """Test get_all skips malformed checkpoint values."""
+        """Test get_all raises CheckpointDataError for malformed checkpoint values."""
         mock_redis.hgetall.return_value = {
             "AssetV1": "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00",
             "AlbumV1": "malformed-data",  # Invalid format
         }
 
-        checkpoints = await checkpoint_store.get_all(TEST_SESSION_TOKEN)
-
-        # Only valid checkpoint should be returned
-        assert len(checkpoints) == 1
-        assert checkpoints[0].entity_type == SyncEntityType.AssetV1
+        with pytest.raises(CheckpointDataError):
+            await checkpoint_store.get_all(TEST_SESSION_TOKEN)
 
     @pytest.mark.anyio
-    async def test_get_all_skips_unknown_entity_types(
+    async def test_get_all_raises_on_unknown_entity_types(
         self, checkpoint_store, mock_redis
     ):
-        """Test get_all skips unknown entity types."""
+        """Test get_all raises ValueError for unknown entity types."""
         mock_redis.hgetall.return_value = {
             "AssetV1": "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00",
             "UnknownTypeV1": "2025-01-20T09:30:00.000000+00:00|2025-01-20T09:30:00+00:00",
         }
 
-        checkpoints = await checkpoint_store.get_all(TEST_SESSION_TOKEN)
-
-        # Only known entity type should be returned
-        assert len(checkpoints) == 1
-        assert checkpoints[0].entity_type == SyncEntityType.AssetV1
+        with pytest.raises(ValueError, match="UnknownTypeV1"):
+            await checkpoint_store.get_all(TEST_SESSION_TOKEN)
 
 
 class TestCheckpointStoreGet:
@@ -217,29 +211,15 @@ class TestCheckpointStoreGet:
         assert checkpoint is None
 
     @pytest.mark.anyio
-    async def test_get_returns_none_for_invalid_uuid(
+    async def test_get_raises_for_invalid_uuid(
         self, checkpoint_store, mock_redis
     ):
-        """Test get returns None for invalid session UUID."""
-        checkpoint = await checkpoint_store.get(
-            "not-a-valid-uuid", SyncEntityType.AssetV1
-        )
+        """Test get raises ValueError for invalid session UUID."""
+        with pytest.raises(ValueError):
+            await checkpoint_store.get("not-a-valid-uuid", SyncEntityType.AssetV1)
 
-        assert checkpoint is None
         mock_redis.hget.assert_not_called()
 
-    @pytest.mark.anyio
-    async def test_get_returns_none_for_malformed_data(
-        self, checkpoint_store, mock_redis
-    ):
-        """Test get returns None for malformed checkpoint data."""
-        mock_redis.hget.return_value = "malformed-data"
-
-        checkpoint = await checkpoint_store.get(
-            TEST_SESSION_TOKEN, SyncEntityType.AssetV1
-        )
-
-        assert checkpoint is None
 
 
 class TestCheckpointStoreSet:
@@ -276,17 +256,17 @@ class TestCheckpointStoreSet:
         assert value.startswith("2025-01-20T10:30:45+00:00|")
 
     @pytest.mark.anyio
-    async def test_set_returns_false_for_invalid_uuid(
+    async def test_set_raises_for_invalid_uuid(
         self, checkpoint_store, mock_redis
     ):
-        """Test set returns False for invalid session UUID."""
+        """Test set raises ValueError for invalid session UUID."""
         last_synced_at = datetime(2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc)
 
-        result = await checkpoint_store.set(
-            "not-a-valid-uuid", SyncEntityType.AssetV1, last_synced_at
-        )
+        with pytest.raises(ValueError):
+            await checkpoint_store.set(
+                "not-a-valid-uuid", SyncEntityType.AssetV1, last_synced_at
+            )
 
-        assert result is False
         mock_redis.hset.assert_not_called()
 
 
@@ -343,10 +323,10 @@ class TestCheckpointStoreSetMany:
         mock_redis.hset.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_set_many_returns_false_for_invalid_uuid(
+    async def test_set_many_raises_for_invalid_uuid(
         self, checkpoint_store, mock_redis
     ):
-        """Test set_many returns False for invalid session UUID."""
+        """Test set_many raises ValueError for invalid session UUID."""
         checkpoints = [
             (
                 SyncEntityType.AssetV1,
@@ -354,9 +334,9 @@ class TestCheckpointStoreSetMany:
             ),
         ]
 
-        result = await checkpoint_store.set_many("not-a-valid-uuid", checkpoints)
+        with pytest.raises(ValueError):
+            await checkpoint_store.set_many("not-a-valid-uuid", checkpoints)
 
-        assert result is False
         mock_redis.hset.assert_not_called()
 
 
@@ -398,15 +378,15 @@ class TestCheckpointStoreDelete:
         mock_redis.hdel.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_delete_returns_false_for_invalid_uuid(
+    async def test_delete_raises_for_invalid_uuid(
         self, checkpoint_store, mock_redis
     ):
-        """Test delete returns False for invalid session UUID."""
-        result = await checkpoint_store.delete(
-            "not-a-valid-uuid", [SyncEntityType.AssetV1]
-        )
+        """Test delete raises ValueError for invalid session UUID."""
+        with pytest.raises(ValueError):
+            await checkpoint_store.delete(
+                "not-a-valid-uuid", [SyncEntityType.AssetV1]
+            )
 
-        assert result is False
         mock_redis.hdel.assert_not_called()
 
 

@@ -4,10 +4,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
+import logging
 
 from routers.immich_models import SyncEntityType
 from utils.redis_client import get_redis_client
 from utils.redis_protocols import AsyncRedisClient
+
+
+logger = logging.getLogger(__name__)
 
 
 class CheckpointDataError(Exception):
@@ -58,7 +62,7 @@ class Checkpoint:
         parts = value.split("|")
         if len(parts) != 2:
             raise CheckpointDataError(
-                f"Checkpoint for {entity_type.value} has invalid format: expected 2 parts, got {len(parts)}"
+                f"Checkpoint for {entity_type.value} with value {value} has invalid format: expected 2 parts, got {len(parts)}"
             )
 
         try:
@@ -120,7 +124,7 @@ class CheckpointStore:
         try:
             UUID(session_token)
         except ValueError:
-            return []
+            raise
 
         data = await self._redis.hgetall(_checkpoint_key(session_token))
         if not data:
@@ -128,13 +132,9 @@ class CheckpointStore:
 
         checkpoints = []
         for entity_type_str, value in data.items():
-            try:
-                entity_type = SyncEntityType(entity_type_str)
-                checkpoint = Checkpoint.from_redis_value(entity_type, value)
-                checkpoints.append(checkpoint)
-            except (ValueError, CheckpointDataError):
-                # Skip unknown entity types or malformed checkpoints
-                continue
+            entity_type = SyncEntityType(entity_type_str)
+            checkpoint = Checkpoint.from_redis_value(entity_type, value)
+            checkpoints.append(checkpoint)
 
         return checkpoints
 
@@ -154,7 +154,7 @@ class CheckpointStore:
         try:
             UUID(session_token)
         except ValueError:
-            return None
+            raise
 
         value = await self._redis.hget(
             _checkpoint_key(session_token), entity_type.value
@@ -162,10 +162,7 @@ class CheckpointStore:
         if not value:
             return None
 
-        try:
-            return Checkpoint.from_redis_value(entity_type, value)
-        except CheckpointDataError:
-            return None
+        return Checkpoint.from_redis_value(entity_type, value)
 
     async def set(
         self, session_token: str, entity_type: SyncEntityType, last_synced_at: datetime
@@ -184,7 +181,7 @@ class CheckpointStore:
         try:
             UUID(session_token)
         except ValueError:
-            return False
+            raise
 
         now = datetime.now(timezone.utc)
         checkpoint = Checkpoint(
@@ -216,7 +213,7 @@ class CheckpointStore:
         try:
             UUID(session_token)
         except ValueError:
-            return False
+            raise
 
         if not checkpoints:
             return True
@@ -251,7 +248,7 @@ class CheckpointStore:
         try:
             UUID(session_token)
         except ValueError:
-            return False
+            raise
 
         if not entity_types:
             return True
