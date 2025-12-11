@@ -133,9 +133,7 @@ class TestCheckpointStoreGetAll:
         assert checkpoints == []
 
     @pytest.mark.anyio
-    async def test_get_all_raises_for_invalid_uuid(
-        self, checkpoint_store, mock_redis
-    ):
+    async def test_get_all_raises_for_invalid_uuid(self, checkpoint_store, mock_redis):
         """Test get_all raises ValueError for invalid UUID."""
         with pytest.raises(ValueError):
             await checkpoint_store.get_all("not-a-valid-uuid")
@@ -211,15 +209,12 @@ class TestCheckpointStoreGet:
         assert checkpoint is None
 
     @pytest.mark.anyio
-    async def test_get_raises_for_invalid_uuid(
-        self, checkpoint_store, mock_redis
-    ):
+    async def test_get_raises_for_invalid_uuid(self, checkpoint_store, mock_redis):
         """Test get raises ValueError for invalid session UUID."""
         with pytest.raises(ValueError):
             await checkpoint_store.get("not-a-valid-uuid", SyncEntityType.AssetV1)
 
         mock_redis.hget.assert_not_called()
-
 
 
 class TestCheckpointStoreSet:
@@ -256,9 +251,7 @@ class TestCheckpointStoreSet:
         assert value.startswith("2025-01-20T10:30:45+00:00|")
 
     @pytest.mark.anyio
-    async def test_set_raises_for_invalid_uuid(
-        self, checkpoint_store, mock_redis
-    ):
+    async def test_set_raises_for_invalid_uuid(self, checkpoint_store, mock_redis):
         """Test set raises ValueError for invalid session UUID."""
         last_synced_at = datetime(2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc)
 
@@ -323,9 +316,7 @@ class TestCheckpointStoreSetMany:
         mock_redis.hset.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_set_many_raises_for_invalid_uuid(
-        self, checkpoint_store, mock_redis
-    ):
+    async def test_set_many_raises_for_invalid_uuid(self, checkpoint_store, mock_redis):
         """Test set_many raises ValueError for invalid session UUID."""
         checkpoints = [
             (
@@ -378,14 +369,10 @@ class TestCheckpointStoreDelete:
         mock_redis.hdel.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_delete_raises_for_invalid_uuid(
-        self, checkpoint_store, mock_redis
-    ):
+    async def test_delete_raises_for_invalid_uuid(self, checkpoint_store, mock_redis):
         """Test delete raises ValueError for invalid session UUID."""
         with pytest.raises(ValueError):
-            await checkpoint_store.delete(
-                "not-a-valid-uuid", [SyncEntityType.AssetV1]
-            )
+            await checkpoint_store.delete("not-a-valid-uuid", [SyncEntityType.AssetV1])
 
         mock_redis.hdel.assert_not_called()
 
