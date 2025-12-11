@@ -4,14 +4,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
-import logging
 
 from routers.immich_models import SyncEntityType
 from utils.redis_client import get_redis_client
 from utils.redis_protocols import AsyncRedisClient
-
-
-logger = logging.getLogger(__name__)
 
 
 class CheckpointDataError(Exception):
@@ -80,7 +76,7 @@ class Checkpoint:
         )
 
 
-def _checkpoint_key(session_token: str) -> str:
+def _checkpoint_key(session_token: UUID) -> str:
     """
     Generate Redis key for session checkpoints.
 
@@ -111,21 +107,16 @@ class CheckpointStore:
         """
         self._redis: AsyncRedisClient = redis_client
 
-    async def get_all(self, session_token: str) -> list[Checkpoint]:
+    async def get_all(self, session_token: UUID) -> list[Checkpoint]:
         """
         Get all checkpoints for a session.
 
         Args:
-            session_token: The session token (UUID string)
+            session_token: The session token (UUID)
 
         Returns:
             List of Checkpoint objects, empty if none exist
         """
-        try:
-            UUID(session_token)
-        except ValueError:
-            raise
-
         data = await self._redis.hgetall(_checkpoint_key(session_token))
         if not data:
             return []
@@ -139,23 +130,18 @@ class CheckpointStore:
         return checkpoints
 
     async def get(
-        self, session_token: str, entity_type: SyncEntityType
+        self, session_token: UUID, entity_type: SyncEntityType
     ) -> Checkpoint | None:
         """
         Get a specific checkpoint for a session.
 
         Args:
-            session_token: The session token (UUID string)
+            session_token: The session token (UUID)
             entity_type: The entity type
 
         Returns:
             Checkpoint if found, None otherwise
         """
-        try:
-            UUID(session_token)
-        except ValueError:
-            raise
-
         value = await self._redis.hget(
             _checkpoint_key(session_token), entity_type.value
         )
@@ -165,24 +151,19 @@ class CheckpointStore:
         return Checkpoint.from_redis_value(entity_type, value)
 
     async def set(
-        self, session_token: str, entity_type: SyncEntityType, last_synced_at: datetime
+        self, session_token: UUID, entity_type: SyncEntityType, last_synced_at: datetime
     ) -> bool:
         """
         Set a checkpoint for a session.
 
         Args:
-            session_token: The session token (UUID string)
+            session_token: The session token (UUID)
             entity_type: The entity type
             last_synced_at: The sync timestamp from client ack
 
         Returns:
             True if checkpoint was set successfully
         """
-        try:
-            UUID(session_token)
-        except ValueError:
-            raise
-
         now = datetime.now(timezone.utc)
         checkpoint = Checkpoint(
             entity_type=entity_type,
@@ -198,23 +179,18 @@ class CheckpointStore:
         return True
 
     async def set_many(
-        self, session_token: str, checkpoints: list[tuple[SyncEntityType, datetime]]
+        self, session_token: UUID, checkpoints: list[tuple[SyncEntityType, datetime]]
     ) -> bool:
         """
         Set multiple checkpoints for a session atomically.
 
         Args:
-            session_token: The session token (UUID string)
+            session_token: The session token (UUID)
             checkpoints: List of (entity_type, last_synced_at) tuples
 
         Returns:
             True if checkpoints were set successfully
         """
-        try:
-            UUID(session_token)
-        except ValueError:
-            raise
-
         if not checkpoints:
             return True
 
@@ -233,23 +209,18 @@ class CheckpointStore:
         return True
 
     async def delete(
-        self, session_token: str, entity_types: list[SyncEntityType]
+        self, session_token: UUID, entity_types: list[SyncEntityType]
     ) -> bool:
         """
         Delete specific checkpoints for a session.
 
         Args:
-            session_token: The session token (UUID string)
+            session_token: The session token (UUID)
             entity_types: List of entity types to delete
 
         Returns:
             True if operation completed (even if no checkpoints existed)
         """
-        try:
-            UUID(session_token)
-        except ValueError:
-            raise
-
         if not entity_types:
             return True
 
@@ -257,21 +228,16 @@ class CheckpointStore:
         await self._redis.hdel(_checkpoint_key(session_token), *entity_type_values)
         return True
 
-    async def delete_all(self, session_token: str) -> bool:
+    async def delete_all(self, session_token: UUID) -> bool:
         """
         Delete all checkpoints for a session.
 
         Args:
-            session_token: The session token (UUID string)
+            session_token: The session token (UUID)
 
         Returns:
             True if operation completed (even if no checkpoints existed)
         """
-        try:
-            UUID(session_token)
-        except ValueError:
-            return False
-
         await self._redis.delete(_checkpoint_key(session_token))
         return True
 

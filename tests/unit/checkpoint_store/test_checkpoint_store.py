@@ -3,6 +3,7 @@
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 from routers.immich_models import SyncEntityType
 from services.checkpoint_store import (
@@ -12,8 +13,8 @@ from services.checkpoint_store import (
 )
 
 # Test UUIDs for consistent testing
-TEST_SESSION_TOKEN = "550e8400-e29b-41d4-a716-446655440000"
-TEST_SESSION_TOKEN_2 = "650e8400-e29b-41d4-a716-446655440001"
+TEST_SESSION_TOKEN = UUID("550e8400-e29b-41d4-a716-446655440000")
+TEST_SESSION_TOKEN_2 = UUID("650e8400-e29b-41d4-a716-446655440001")
 
 
 class TestCheckpointDataclass:
@@ -133,14 +134,6 @@ class TestCheckpointStoreGetAll:
         assert checkpoints == []
 
     @pytest.mark.anyio
-    async def test_get_all_raises_for_invalid_uuid(self, checkpoint_store, mock_redis):
-        """Test get_all raises ValueError for invalid UUID."""
-        with pytest.raises(ValueError):
-            await checkpoint_store.get_all("not-a-valid-uuid")
-
-        mock_redis.hgetall.assert_not_called()
-
-    @pytest.mark.anyio
     async def test_get_all_raises_on_malformed_checkpoints(
         self, checkpoint_store, mock_redis
     ):
@@ -208,14 +201,6 @@ class TestCheckpointStoreGet:
 
         assert checkpoint is None
 
-    @pytest.mark.anyio
-    async def test_get_raises_for_invalid_uuid(self, checkpoint_store, mock_redis):
-        """Test get raises ValueError for invalid session UUID."""
-        with pytest.raises(ValueError):
-            await checkpoint_store.get("not-a-valid-uuid", SyncEntityType.AssetV1)
-
-        mock_redis.hget.assert_not_called()
-
 
 class TestCheckpointStoreSet:
     """Tests for CheckpointStore.set()."""
@@ -249,18 +234,6 @@ class TestCheckpointStoreSet:
         # Value should be pipe-delimited with last_synced_at and updated_at
         value = call_args[0][2]
         assert value.startswith("2025-01-20T10:30:45+00:00|")
-
-    @pytest.mark.anyio
-    async def test_set_raises_for_invalid_uuid(self, checkpoint_store, mock_redis):
-        """Test set raises ValueError for invalid session UUID."""
-        last_synced_at = datetime(2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc)
-
-        with pytest.raises(ValueError):
-            await checkpoint_store.set(
-                "not-a-valid-uuid", SyncEntityType.AssetV1, last_synced_at
-            )
-
-        mock_redis.hset.assert_not_called()
 
 
 class TestCheckpointStoreSetMany:
@@ -315,21 +288,6 @@ class TestCheckpointStoreSetMany:
         assert result is True
         mock_redis.hset.assert_not_called()
 
-    @pytest.mark.anyio
-    async def test_set_many_raises_for_invalid_uuid(self, checkpoint_store, mock_redis):
-        """Test set_many raises ValueError for invalid session UUID."""
-        checkpoints = [
-            (
-                SyncEntityType.AssetV1,
-                datetime(2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc),
-            ),
-        ]
-
-        with pytest.raises(ValueError):
-            await checkpoint_store.set_many("not-a-valid-uuid", checkpoints)
-
-        mock_redis.hset.assert_not_called()
-
 
 class TestCheckpointStoreDelete:
     """Tests for CheckpointStore.delete()."""
@@ -368,14 +326,6 @@ class TestCheckpointStoreDelete:
         assert result is True
         mock_redis.hdel.assert_not_called()
 
-    @pytest.mark.anyio
-    async def test_delete_raises_for_invalid_uuid(self, checkpoint_store, mock_redis):
-        """Test delete raises ValueError for invalid session UUID."""
-        with pytest.raises(ValueError):
-            await checkpoint_store.delete("not-a-valid-uuid", [SyncEntityType.AssetV1])
-
-        mock_redis.hdel.assert_not_called()
-
 
 class TestCheckpointStoreDeleteAll:
     """Tests for CheckpointStore.delete_all()."""
@@ -401,13 +351,3 @@ class TestCheckpointStoreDeleteAll:
         mock_redis.delete.assert_called_once_with(
             f"session:{TEST_SESSION_TOKEN}:checkpoints"
         )
-
-    @pytest.mark.anyio
-    async def test_delete_all_returns_false_for_invalid_uuid(
-        self, checkpoint_store, mock_redis
-    ):
-        """Test delete_all returns False for invalid session UUID."""
-        result = await checkpoint_store.delete_all("not-a-valid-uuid")
-
-        assert result is False
-        mock_redis.delete.assert_not_called()
