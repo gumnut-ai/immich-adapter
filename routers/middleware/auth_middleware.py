@@ -27,13 +27,22 @@ class AuthMiddleware(BaseHTTPMiddleware):
     AUTH_HEADER = "authorization"
     REFRESH_HEADER = "x-new-access-token"
 
+    # Only apply auth middleware to API paths, with exceptions noted below
+    API_PREFIXES = ("/api/",)
+
     # Endpoints that don't require authentication
     UNAUTHENTICATED_PATHS = {
+        "/api/auth/login",
         "/api/oauth/authorize",
         "/api/oauth/callback",
         "/api/oauth/mobile-redirect",
-        "/api/auth/login",
+        "/api/server/config",
+        "/api/server/features",
+        "/api/server/media-types",
         "/api/server/ping",
+        "/api/server/theme",
+        "/api/server/version",
+        "/api/server/version-history",
     }
 
     def __init__(self, app: ASGIApp):
@@ -62,7 +71,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Clear any stale refreshed token from previous requests
         clear_refreshed_token()
 
-        # Skip auth for unauthenticated endpoints
+        # Skip auth middleware entirely for non-API paths (static files, SPA routes)
+        if not path.startswith(self.API_PREFIXES):
+            return await call_next(request)
+
+        # Skip auth for specific unauthenticated API endpoints
         if path in self.UNAUTHENTICATED_PATHS:
             return await call_next(request)
 

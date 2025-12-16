@@ -91,6 +91,35 @@ def client_with_mocks(app_with_mocks, mock_session_store):
 class TestAuthMiddleware:
     """Test cases for AuthMiddleware with session lookup."""
 
+    def test_non_api_paths_bypass_auth_entirely(self, mock_session_store):
+        """Test that non-API paths (static files, SPA routes) bypass auth middleware entirely."""
+        app = FastAPI()
+        app.add_middleware(AuthMiddleware)
+
+        @app.get("/photos")
+        async def spa_route():
+            """Simulates an SPA route that should bypass auth."""
+            return {"page": "photos"}
+
+        async def mock_get_session_store():
+            return mock_session_store
+
+        with patch(
+            "routers.middleware.auth_middleware.get_session_store",
+            mock_get_session_store,
+        ):
+            client = TestClient(app)
+
+            # Request with an invalid session token - should still succeed
+            # because non-API paths bypass auth entirely
+            headers = {"Authorization": "Bearer invalid-session-token"}
+            response = client.get("/photos", headers=headers)
+
+            assert response.status_code == 200
+            assert response.json() == {"page": "photos"}
+            # Session store should NOT be called for non-API paths
+            mock_session_store.get_by_id.assert_not_called()
+
     def test_mobile_client_with_bearer_token(
         self, client_with_mocks, mock_session_store
     ):
