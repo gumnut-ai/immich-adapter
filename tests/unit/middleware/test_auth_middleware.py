@@ -101,8 +101,7 @@ class TestAuthMiddleware:
             """Simulates an SPA route that should bypass auth."""
             return {"page": "photos"}
 
-        async def mock_get_session_store():
-            return mock_session_store
+        mock_get_session_store = AsyncMock(return_value=mock_session_store)
 
         with patch(
             "routers.middleware.auth_middleware.get_session_store",
@@ -117,8 +116,8 @@ class TestAuthMiddleware:
 
             assert response.status_code == 200
             assert response.json() == {"page": "photos"}
-            # Session store should NOT be called for non-API paths
-            mock_session_store.get_by_id.assert_not_called()
+            # get_session_store should NOT be called for non-API paths
+            mock_get_session_store.assert_not_awaited()
 
     def test_mobile_client_with_bearer_token(
         self, client_with_mocks, mock_session_store
