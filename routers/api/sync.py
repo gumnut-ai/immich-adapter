@@ -331,27 +331,20 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     fileModifiedAt = asset.file_modified_at
     localDateTime = asset.local_datetime
 
-    if asset.exif:
-        fileCreatedAt = asset.exif.original_datetime or fileCreatedAt
-        fileModifiedAt = asset.exif.modified_datetime or fileModifiedAt
-        localDateTime = asset.exif.original_datetime or localDateTime
-
-    def ensure_tz_aware(dt):
-        if dt and dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
-        return dt
+    if asset.checksum_sha1 is None:
+        logger.warning(f"Asset {asset.id} has no checksum_sha1, using checksum instead", extra={"asset_id": asset.id, "checksum": asset.checksum})
 
     return SyncAssetV1(
         id=str(safe_uuid_from_asset_id(asset.id)),
-        checksum=asset.checksum,
+        checksum=asset.checksum_sha1 or asset.checksum,
         isFavorite=False,  # Gumnut doesn't track favorites
         originalFileName=asset.original_file_name,
         ownerId=owner_id,
         type=asset_type,
         visibility=AssetVisibility.timeline,
-        fileCreatedAt=ensure_tz_aware(fileCreatedAt),
-        fileModifiedAt=ensure_tz_aware(fileModifiedAt),
-        localDateTime=ensure_tz_aware(localDateTime),
+        fileCreatedAt=fileCreatedAt,
+        fileModifiedAt=fileModifiedAt,
+        localDateTime=localDateTime,
         # Optional fields - use None when not available
         deletedAt=None,
         duration=None,
@@ -480,17 +473,6 @@ def gumnut_asset_face_to_sync_v1(
 # These convert photos-api event data (dicts) to Immich sync models
 
 
-def _ensure_tz_aware(dt: datetime | str | None) -> datetime | None:
-    """Ensure datetime is timezone-aware, parsing string if needed."""
-    if dt is None:
-        return None
-    if isinstance(dt, str):
-        dt = datetime.fromisoformat(dt)
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
-
-
 def _parse_datetime(value: str | datetime | None) -> datetime | None:
     """Parse a datetime value from event data."""
     if value is None:
@@ -527,9 +509,9 @@ def event_asset_to_sync_asset_v1(asset_data: dict, owner_id: str) -> SyncAssetV1
         originalFileName=asset_data.get("original_file_name", "unknown"),
         type=asset_type,
         checksum=asset_data.get("checksum") or "",
-        fileCreatedAt=_ensure_tz_aware(asset_data.get("file_created_at")),
-        fileModifiedAt=_ensure_tz_aware(asset_data.get("file_modified_at")),
-        localDateTime=_ensure_tz_aware(asset_data.get("local_datetime")),
+        fileCreatedAt=_parse_datetime(asset_data.get("file_created_at")),
+        fileModifiedAt=_parse_datetime(asset_data.get("file_modified_at")),
+        localDateTime=_parse_datetime(asset_data.get("local_datetime")),
         isFavorite=False,
         visibility=AssetVisibility.timeline,
         deletedAt=None,
@@ -597,8 +579,8 @@ def event_album_to_sync_album_v1(album_data: dict, owner_id: str) -> SyncAlbumV1
             safe_uuid_from_asset_id(album_data["album_cover_asset_id"])
         )
 
-    created_at = _ensure_tz_aware(album_data.get("created_at"))
-    updated_at = _ensure_tz_aware(album_data.get("updated_at"))
+    created_at = _parse_datetime(album_data.get("created_at"))
+    updated_at = _parse_datetime(album_data.get("updated_at"))
     now = datetime.now(timezone.utc)
 
     return SyncAlbumV1(
@@ -643,8 +625,8 @@ def event_person_to_sync_person_v1(person_data: dict, owner_id: str) -> SyncPers
     Returns:
         SyncPersonV1 for sync stream
     """
-    created_at = _ensure_tz_aware(person_data.get("created_at"))
-    updated_at = _ensure_tz_aware(person_data.get("updated_at"))
+    created_at = _parse_datetime(person_data.get("created_at"))
+    updated_at = _parse_datetime(person_data.get("updated_at"))
     now = datetime.now(timezone.utc)
 
     return SyncPersonV1(
