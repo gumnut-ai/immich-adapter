@@ -3,13 +3,17 @@ Immich sync endpoints for mobile client synchronization.
 
 This module implements the Immich sync protocol, providing both streaming sync
 (for beta timeline mode) and full/delta sync (for legacy timeline mode).
+
+The streaming sync uses the photos-api /api/events endpoint to fetch entity
+changes in priority order, ensuring proper entity dependencies (assets before
+exif, albums before album_assets, etc.).
 """
 
 import json
 import logging
 import uuid
-from typing import AsyncGenerator, List
-from datetime import timezone
+from datetime import datetime, timezone
+from typing import Any, AsyncGenerator, List, cast
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -22,12 +26,15 @@ from routers.immich_models import (
     AssetDeltaSyncDto,
     AssetDeltaSyncResponseDto,
     AssetFullSyncDto,
+    AssetOrder,
     AssetResponseDto,
     AssetTypeEnum,
     AssetVisibility,
     SyncAckDeleteDto,
     SyncAckDto,
     SyncAckSetDto,
+    SyncAlbumToAssetV1,
+    SyncAlbumV1,
     SyncAssetExifV1,
     SyncAssetFaceV1,
     SyncAssetV1,
@@ -46,6 +53,7 @@ from routers.utils.asset_conversion import (
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_album_id,
     safe_uuid_from_asset_id,
     safe_uuid_from_person_id,
     safe_uuid_from_user_id,
@@ -468,6 +476,319 @@ def gumnut_asset_face_to_sync_v1(
     )
 
 
+# --- Event-based conversion functions ---
+# These convert photos-api event data (dicts) to Immich sync models
+
+
+def _ensure_tz_aware(dt: datetime | str | None) -> datetime | None:
+    """Ensure datetime is timezone-aware, parsing string if needed."""
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _parse_datetime(value: str | datetime | None) -> datetime | None:
+    """Parse a datetime value from event data."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def event_asset_to_sync_asset_v1(asset_data: dict, owner_id: str) -> SyncAssetV1:
+    """
+    Convert photos-api asset event data to Immich SyncAssetV1 format.
+
+    Args:
+        asset_data: Asset data from events endpoint
+        owner_id: UUID of the asset owner
+
+    Returns:
+        SyncAssetV1 for sync stream
+    """
+    mime_type = asset_data.get("mime_type", "application/octet-stream")
+    if mime_type.startswith("image/"):
+        asset_type = AssetTypeEnum.IMAGE
+    elif mime_type.startswith("video/"):
+        asset_type = AssetTypeEnum.VIDEO
+    elif mime_type.startswith("audio/"):
+        asset_type = AssetTypeEnum.AUDIO
+    else:
+        asset_type = AssetTypeEnum.OTHER
+
+    return SyncAssetV1(
+        id=str(safe_uuid_from_asset_id(asset_data["id"])),
+        ownerId=owner_id,
+        originalFileName=asset_data.get("original_file_name", "unknown"),
+        type=asset_type,
+        checksum=asset_data.get("checksum") or "",
+        fileCreatedAt=_ensure_tz_aware(asset_data.get("file_created_at")),
+        fileModifiedAt=_ensure_tz_aware(asset_data.get("file_modified_at")),
+        localDateTime=_ensure_tz_aware(asset_data.get("local_datetime")),
+        isFavorite=False,
+        visibility=AssetVisibility.timeline,
+        deletedAt=None,
+        duration=None,
+        libraryId=None,
+        livePhotoVideoId=None,
+        stackId=None,
+        thumbhash=None,
+    )
+
+
+def event_exif_to_sync_exif_v1(exif_data: dict) -> SyncAssetExifV1:
+    """
+    Convert photos-api exif event data to Immich SyncAssetExifV1 format.
+
+    Args:
+        exif_data: Exif data from events endpoint
+
+    Returns:
+        SyncAssetExifV1 for sync stream
+    """
+    return SyncAssetExifV1(
+        assetId=str(safe_uuid_from_asset_id(exif_data["asset_id"])),
+        city=exif_data.get("city"),
+        country=exif_data.get("country"),
+        dateTimeOriginal=_parse_datetime(exif_data.get("original_datetime")),
+        description=exif_data.get("description"),
+        exifImageHeight=exif_data.get("height"),
+        exifImageWidth=exif_data.get("width"),
+        exposureTime=exif_data.get("exposure_time"),
+        fNumber=exif_data.get("f_number"),
+        fileSizeInByte=exif_data.get("file_size"),
+        focalLength=exif_data.get("focal_length"),
+        fps=None,
+        iso=exif_data.get("iso"),
+        latitude=exif_data.get("latitude"),
+        lensModel=exif_data.get("lens_model"),
+        longitude=exif_data.get("longitude"),
+        make=exif_data.get("make"),
+        model=exif_data.get("model"),
+        modifyDate=_parse_datetime(exif_data.get("modified_datetime")),
+        orientation=exif_data.get("orientation"),
+        profileDescription=None,
+        projectionType=exif_data.get("projection_type"),
+        rating=exif_data.get("rating"),
+        state=exif_data.get("state"),
+        timeZone=exif_data.get("timezone"),
+    )
+
+
+def event_album_to_sync_album_v1(album_data: dict, owner_id: str) -> SyncAlbumV1:
+    """
+    Convert photos-api album event data to Immich SyncAlbumV1 format.
+
+    Args:
+        album_data: Album data from events endpoint
+        owner_id: UUID of the album owner
+
+    Returns:
+        SyncAlbumV1 for sync stream
+    """
+    thumbnail_asset_id = None
+    if album_data.get("album_cover_asset_id"):
+        thumbnail_asset_id = str(
+            safe_uuid_from_asset_id(album_data["album_cover_asset_id"])
+        )
+
+    created_at = _ensure_tz_aware(album_data.get("created_at"))
+    updated_at = _ensure_tz_aware(album_data.get("updated_at"))
+    now = datetime.now(timezone.utc)
+
+    return SyncAlbumV1(
+        id=str(safe_uuid_from_album_id(album_data["id"])),
+        ownerId=owner_id,
+        name=album_data["name"],
+        description=album_data.get("description") or "",
+        createdAt=created_at or now,
+        updatedAt=updated_at or now,
+        thumbnailAssetId=thumbnail_asset_id,
+        isActivityEnabled=True,
+        order=AssetOrder.desc,
+    )
+
+
+def event_album_asset_to_sync_album_to_asset_v1(
+    album_asset_data: dict,
+) -> SyncAlbumToAssetV1:
+    """
+    Convert photos-api album_asset event data to Immich SyncAlbumToAssetV1 format.
+
+    Args:
+        album_asset_data: AlbumAsset data from events endpoint
+
+    Returns:
+        SyncAlbumToAssetV1 for sync stream
+    """
+    return SyncAlbumToAssetV1(
+        albumId=str(safe_uuid_from_album_id(album_asset_data["album_id"])),
+        assetId=str(safe_uuid_from_asset_id(album_asset_data["asset_id"])),
+    )
+
+
+def event_person_to_sync_person_v1(person_data: dict, owner_id: str) -> SyncPersonV1:
+    """
+    Convert photos-api person event data to Immich SyncPersonV1 format.
+
+    Args:
+        person_data: Person data from events endpoint
+        owner_id: UUID of the person owner
+
+    Returns:
+        SyncPersonV1 for sync stream
+    """
+    created_at = _ensure_tz_aware(person_data.get("created_at"))
+    updated_at = _ensure_tz_aware(person_data.get("updated_at"))
+    now = datetime.now(timezone.utc)
+
+    return SyncPersonV1(
+        id=str(safe_uuid_from_person_id(person_data["id"])),
+        ownerId=owner_id,
+        name=person_data.get("name") or "",
+        createdAt=created_at or now,
+        updatedAt=updated_at or now,
+        isFavorite=person_data.get("is_favorite", False),
+        isHidden=person_data.get("is_hidden", False),
+        birthDate=None,
+        color=None,
+        faceAssetId=None,
+    )
+
+
+def event_face_to_sync_face_v1(face_data: dict) -> SyncAssetFaceV1:
+    """
+    Convert photos-api face event data to Immich SyncAssetFaceV1 format.
+
+    Args:
+        face_data: Face data from events endpoint
+
+    Returns:
+        SyncAssetFaceV1 for sync stream
+    """
+    # Get bounding box data
+    bounding_box = face_data.get("bounding_box") or {}
+
+    # Get person_id if linked
+    person_id = None
+    if face_data.get("person_id"):
+        person_id = str(safe_uuid_from_person_id(face_data["person_id"]))
+
+    return SyncAssetFaceV1(
+        id=face_data["id"],
+        assetId=str(safe_uuid_from_asset_id(face_data["asset_id"])),
+        boundingBoxX1=bounding_box.get("x1", 0),
+        boundingBoxX2=bounding_box.get("x2", 0),
+        boundingBoxY1=bounding_box.get("y1", 0),
+        boundingBoxY2=bounding_box.get("y2", 0),
+        imageHeight=face_data.get("image_height", 0),
+        imageWidth=face_data.get("image_width", 0),
+        sourceType="machine-learning",
+        personId=person_id,
+    )
+
+
+def _map_request_types_to_entity_types(
+    requested_types: set[SyncRequestType],
+) -> list[str]:
+    """
+    Map Immich SyncRequestTypes to photos-api entity_types.
+
+    Args:
+        requested_types: Set of Immich sync request types
+
+    Returns:
+        List of photos-api entity type strings
+    """
+    entity_types = []
+
+    if SyncRequestType.AssetsV1 in requested_types:
+        entity_types.append("asset")
+    if SyncRequestType.AssetExifsV1 in requested_types:
+        entity_types.append("exif")
+    if SyncRequestType.AlbumsV1 in requested_types:
+        entity_types.append("album")
+    if SyncRequestType.AlbumToAssetsV1 in requested_types:
+        entity_types.append("album_asset")
+    if SyncRequestType.PeopleV1 in requested_types:
+        entity_types.append("person")
+    if SyncRequestType.AssetFacesV1 in requested_types:
+        entity_types.append("face")
+
+    return entity_types
+
+
+def _convert_event_to_sync_entity(
+    event: dict, owner_id: str
+) -> tuple[SyncEntityType, dict] | None:
+    """
+    Convert a photos-api event to Immich sync entity.
+
+    Args:
+        event: Event from photos-api events endpoint
+        owner_id: UUID of the owner
+
+    Returns:
+        Tuple of (SyncEntityType, data_dict) or None if unsupported entity type
+    """
+    entity_type = event["entity_type"]
+    data = event["data"]
+
+    if entity_type == "asset":
+        sync_model = event_asset_to_sync_asset_v1(data, owner_id)
+        return (SyncEntityType.AssetV1, sync_model.model_dump(mode="json"))
+
+    elif entity_type == "exif":
+        sync_model = event_exif_to_sync_exif_v1(data)
+        return (SyncEntityType.AssetExifV1, sync_model.model_dump(mode="json"))
+
+    elif entity_type == "album":
+        sync_model = event_album_to_sync_album_v1(data, owner_id)
+        return (SyncEntityType.AlbumV1, sync_model.model_dump(mode="json"))
+
+    elif entity_type == "album_asset":
+        sync_model = event_album_asset_to_sync_album_to_asset_v1(data)
+        return (SyncEntityType.AlbumToAssetV1, sync_model.model_dump(mode="json"))
+
+    elif entity_type == "person":
+        sync_model = event_person_to_sync_person_v1(data, owner_id)
+        return (SyncEntityType.PersonV1, sync_model.model_dump(mode="json"))
+
+    elif entity_type == "face":
+        sync_model = event_face_to_sync_face_v1(data)
+        return (SyncEntityType.AssetFaceV1, sync_model.model_dump(mode="json"))
+
+    return None
+
+
+def _make_sync_event(entity_type: SyncEntityType, data: dict) -> str:
+    """
+    Create a sync event JSON line.
+
+    Args:
+        entity_type: The Immich sync entity type
+        data: The entity data dict
+
+    Returns:
+        JSON line string with newline
+    """
+    return (
+        json.dumps(
+            {
+                "type": entity_type.value,
+                "data": data,
+                "ack": f"{entity_type.value}|{uuid.uuid4()}",
+            }
+        )
+        + "\n"
+    )
+
+
 async def generate_sync_stream(
     gumnut_client: Gumnut,
     request: SyncStreamDto,
@@ -475,192 +796,143 @@ async def generate_sync_stream(
     """
     Generate sync stream as JSON Lines (newline-delimited JSON).
 
-    Streams various entity types requested by the client.
+    Uses the photos-api /api/events endpoint to fetch entity changes in
+    priority order. Events are returned ordered by entity type priority
+    (assets before exif, albums before album_assets, etc.), then by
+    updated_at timestamp.
+
     Each line is a JSON object with: type, data, and ack (checkpoint ID).
     """
     try:
-        # Get current user ONCE at the start (stateless - one call per stream)
+        # Get current user for owner_id
         current_user = gumnut_client.users.me()
         owner_id = str(safe_uuid_from_user_id(current_user.id))
 
         requested_types = set(request.types)
 
         logger.info(
-            f"Starting sync stream with {len(requested_types)} entity types",
-            extra={"user_id": owner_id, "types": [t.value for t in requested_types]},
+            "Starting sync stream",
+            extra={
+                "user_id": owner_id,
+                "types": [t.value for t in requested_types],
+                "reset": request.reset,
+            },
         )
 
-        # Helper to generate checkpoint IDs
-        def generate_checkpoint_id() -> str:
-            return str(uuid.uuid4())
-
-        # Stream auth users if requested (MUST be before assets for FK constraint)
+        # Stream auth user if requested (not in events endpoint)
         if SyncRequestType.AuthUsersV1 in requested_types:
-            logger.info("Streaming auth users...", extra={"user_id": owner_id})
-
             sync_auth_user = gumnut_user_to_sync_auth_user_v1(current_user)
-            event = {
-                "type": SyncEntityType.AuthUserV1.value,
-                "data": sync_auth_user.model_dump(mode="json"),
-                "ack": generate_checkpoint_id(),
-            }
-            yield json.dumps(event) + "\n"
+            yield _make_sync_event(
+                SyncEntityType.AuthUserV1,
+                sync_auth_user.model_dump(mode="json"),
+            )
+            logger.debug("Streamed auth user", extra={"user_id": owner_id})
 
-            logger.info("Streamed 1 auth user", extra={"user_id": owner_id})
-
-        # Stream users if requested (MUST be before assets for FK constraint)
+        # Stream user if requested (not in events endpoint)
         if SyncRequestType.UsersV1 in requested_types:
-            logger.info("Streaming users...", extra={"user_id": owner_id})
-
             sync_user = gumnut_user_to_sync_user_v1(current_user)
-            event = {
-                "type": SyncEntityType.UserV1.value,
-                "data": sync_user.model_dump(mode="json"),
-                "ack": generate_checkpoint_id(),
-            }
-            yield json.dumps(event) + "\n"
+            yield _make_sync_event(
+                SyncEntityType.UserV1,
+                sync_user.model_dump(mode="json"),
+            )
+            logger.debug("Streamed user", extra={"user_id": owner_id})
 
-            logger.info("Streamed 1 user", extra={"user_id": owner_id})
+        # Map requested types to photos-api entity_types
+        entity_types = _map_request_types_to_entity_types(requested_types)
 
-        # Stream people if requested
-        if SyncRequestType.PeopleV1 in requested_types:
-            try:
-                logger.info("Streaming people...", extra={"user_id": owner_id})
-                people_count = 0
+        if entity_types:
+            # Capture sync start time to bound the query window
+            sync_started_at = datetime.now(timezone.utc)
 
-                for person in gumnut_client.people.list():
-                    sync_person = gumnut_person_to_sync_person_v1(person, owner_id)
+            # Counters for logging
+            event_counts: dict[str, int] = {}
+            total_events = 0
 
-                    event = {
-                        "type": SyncEntityType.PersonV1.value,
-                        "data": sync_person.model_dump(mode="json"),
-                        "ack": generate_checkpoint_id(),
-                    }
-                    yield json.dumps(event) + "\n"
-                    people_count += 1
+            # Paginate through events using time-based cursor
+            last_updated_at: datetime | None = None
 
-                logger.info(
-                    f"Streamed {people_count} people",
-                    extra={"user_id": owner_id, "people_count": people_count},
+            while True:
+                # Fetch page of events from photos-api
+                events_response = gumnut_client.events.get(
+                    updated_at_gte=last_updated_at,
+                    updated_at_lt=sync_started_at,
+                    entity_types=",".join(entity_types),
+                    limit=500,
                 )
-            except Exception as e:
-                logger.warning(f"Error streaming people: {str(e)}")
 
-        # Stream asset-related data in a single pass to avoid multiple iterations
-        asset_related_types = {
-            SyncRequestType.AssetsV1,
-            SyncRequestType.AssetExifsV1,
-            SyncRequestType.AssetFacesV1,
-        }
+                # Access the data attribute (list of events)
+                events = events_response.data
+                if not events:
+                    break
 
-        if any(t in requested_types for t in asset_related_types):
-            logger.info("Streaming asset-related data...", extra={"user_id": owner_id})
-            asset_count = 0
-            exif_count = 0
-            face_count = 0
-            page_size = 100
-            starting_after_id = None
+                # Stream each event
+                for event in events:
+                    # Convert event dict - handle both dict and object access
+                    event_dict: dict[str, Any]
+                    if hasattr(event, "model_dump"):
+                        event_dict = event.model_dump()
+                    elif hasattr(event, "__dict__"):
+                        event_dict = {
+                            "entity_type": event.entity_type,
+                            "data": (
+                                event.data.model_dump()
+                                if hasattr(event.data, "model_dump")
+                                else event.data
+                            ),
+                        }
+                    else:
+                        event_dict = cast(dict[str, Any], event)
 
-            try:
-                # Paginate through all assets using cursor-based pagination
-                while True:
-                    # Fetch a page of assets
-                    assets_page = gumnut_client.assets.list(
-                        limit=page_size,
-                        starting_after_id=starting_after_id,
+                    result = _convert_event_to_sync_entity(event_dict, owner_id)
+                    if result:
+                        entity_type, data = result
+                        yield _make_sync_event(entity_type, data)
+
+                        # Track counts
+                        entity_type_str = entity_type.value
+                        event_counts[entity_type_str] = (
+                            event_counts.get(entity_type_str, 0) + 1
+                        )
+                        total_events += 1
+
+                # Get updated_at from last event for pagination cursor
+                last_event = events[-1]
+                if hasattr(last_event, "data"):
+                    last_data = last_event.data
+                    if hasattr(last_data, "updated_at"):
+                        last_updated_at = last_data.updated_at
+                    elif isinstance(last_data, dict):
+                        last_updated_at = _parse_datetime(last_data.get("updated_at"))
+                elif isinstance(last_event, dict):
+                    last_updated_at = _parse_datetime(
+                        last_event.get("data", {}).get("updated_at")
                     )
 
-                    # Convert to list to process the page
-                    page_assets = list(assets_page)
-                    if not page_assets:
-                        break
+                # Check if this was the last page
+                if len(events) < 500:
+                    break
 
-                    # Process each asset in the page
-                    for asset in page_assets:
-                        # Stream asset if requested
-                        if SyncRequestType.AssetsV1 in requested_types:
-                            sync_asset = gumnut_asset_to_sync_asset_v1(asset, owner_id)
-                            event = {
-                                "type": SyncEntityType.AssetV1.value,
-                                "data": sync_asset.model_dump(mode="json"),
-                                "ack": generate_checkpoint_id(),
-                            }
-                            yield json.dumps(event) + "\n"
-                            asset_count += 1
+                logger.debug(
+                    "Fetched events page",
+                    extra={
+                        "user_id": owner_id,
+                        "page_size": len(events),
+                        "total_events": total_events,
+                    },
+                )
 
-                        # Stream EXIF if requested and available
-                        if SyncRequestType.AssetExifsV1 in requested_types:
-                            sync_exif = gumnut_asset_to_sync_exif_v1(asset)
-                            if sync_exif:
-                                event = {
-                                    "type": SyncEntityType.AssetExifV1.value,
-                                    "data": sync_exif.model_dump(mode="json"),
-                                    "ack": generate_checkpoint_id(),
-                                }
-                                yield json.dumps(event) + "\n"
-                                exif_count += 1
-
-                        # Stream faces if requested and available
-                        if (
-                            SyncRequestType.AssetFacesV1 in requested_types
-                            and asset.people
-                        ):
-                            for person_index, person in enumerate(asset.people):
-                                sync_face = gumnut_asset_face_to_sync_v1(
-                                    asset, person, person_index
-                                )
-                                event = {
-                                    "type": SyncEntityType.AssetFaceV1.value,
-                                    "data": sync_face.model_dump(mode="json"),
-                                    "ack": generate_checkpoint_id(),
-                                }
-                                yield json.dumps(event) + "\n"
-                                face_count += 1
-
-                    # Check if there are more pages
-                    if not assets_page.has_more:
-                        break
-
-                    # Update cursor for next page
-                    starting_after_id = page_assets[-1].id
-
-                    # Log progress after each page
-                    logger.debug(
-                        f"Progress: fetched page with {len(page_assets)} assets",
-                        extra={
-                            "user_id": owner_id,
-                            "page_size": len(page_assets),
-                            "total_assets": asset_count,
-                        },
-                    )
-
-                # Log results for requested types
-                if SyncRequestType.AssetsV1 in requested_types:
-                    logger.info(
-                        f"Streamed {asset_count} assets",
-                        extra={"user_id": owner_id, "asset_count": asset_count},
-                    )
-                if SyncRequestType.AssetExifsV1 in requested_types:
-                    logger.info(
-                        f"Streamed {exif_count} EXIF records",
-                        extra={"user_id": owner_id, "exif_count": exif_count},
-                    )
-                if SyncRequestType.AssetFacesV1 in requested_types:
-                    logger.info(
-                        f"Streamed {face_count} faces",
-                        extra={"user_id": owner_id, "face_count": face_count},
-                    )
-            except Exception as e:
-                logger.warning(f"Error streaming asset-related data: {str(e)}")
+            # Log summary
+            logger.info(
+                "Streamed events from photos-api",
+                extra={
+                    "user_id": owner_id,
+                    "total_events": total_events,
+                    "event_counts": event_counts,
+                },
+            )
 
         # Stream completion event
-        complete_event = {
-            "type": SyncEntityType.SyncCompleteV1.value,
-            "data": {},
-            "ack": generate_checkpoint_id(),
-        }
-        yield json.dumps(complete_event) + "\n"
-
+        yield _make_sync_event(SyncEntityType.SyncCompleteV1, {})
         logger.info("Sync stream completed", extra={"user_id": owner_id})
 
     except Exception as e:
@@ -682,7 +954,9 @@ async def get_sync_stream(
     """
     Get sync stream as JSON Lines (application/jsonlines+json).
 
-    Streams sync events for all requested entity types.
+    Streams sync events for all requested entity types using the photos-api
+    events endpoint. Events are returned in priority order to ensure proper
+    entity dependencies (e.g., assets before exif data).
     """
     return StreamingResponse(
         generate_sync_stream(gumnut_client, request),
