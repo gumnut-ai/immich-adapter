@@ -485,7 +485,7 @@ def _ensure_tz_aware(dt: datetime | str | None) -> datetime | None:
     if dt is None:
         return None
     if isinstance(dt, str):
-        dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(dt)
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
@@ -497,7 +497,7 @@ def _parse_datetime(value: str | datetime | None) -> datetime | None:
         return None
     if isinstance(value, datetime):
         return value
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.fromisoformat(value)
 
 
 def event_asset_to_sync_asset_v1(asset_data: dict, owner_id: str) -> SyncAssetV1:
