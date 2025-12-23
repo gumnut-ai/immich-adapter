@@ -13,12 +13,25 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, List, cast
+from typing import AsyncGenerator, List
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from gumnut import Gumnut
+from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
+from gumnut.types.events_response import (
+    Data,
+    DataAlbumAssetEventPayload,
+    DataAlbumAssetEventPayloadData,
+    DataAlbumEventPayload,
+    DataAssetEventPayload,
+    DataExifEventPayload,
+    DataExifEventPayloadData,
+    DataFaceEventPayload,
+    DataPersonEventPayload,
+)
+from gumnut.types.face_response import FaceResponse
 from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
 
@@ -470,30 +483,12 @@ def gumnut_asset_face_to_sync_v1(
 
 
 # --- Event-based conversion functions ---
-# These convert photos-api event data (dicts) to Immich sync models
+# These convert photos-api event data to Immich sync models
 
 
-def _parse_datetime(value: str | datetime | None) -> datetime | None:
-    """Parse a datetime value from event data."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value
-    return datetime.fromisoformat(value)
-
-
-def event_asset_to_sync_asset_v1(asset_data: dict, owner_id: str) -> SyncAssetV1:
-    """
-    Convert photos-api asset event data to Immich SyncAssetV1 format.
-
-    Args:
-        asset_data: Asset data from events endpoint
-        owner_id: UUID of the asset owner
-
-    Returns:
-        SyncAssetV1 for sync stream
-    """
-    mime_type = asset_data.get("mime_type", "application/octet-stream")
+def event_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAssetV1:
+    """Convert photos-api AssetResponse to Immich SyncAssetV1 format."""
+    mime_type = asset.mime_type
     if mime_type.startswith("image/"):
         asset_type = AssetTypeEnum.IMAGE
     elif mime_type.startswith("video/"):
@@ -504,14 +499,14 @@ def event_asset_to_sync_asset_v1(asset_data: dict, owner_id: str) -> SyncAssetV1
         asset_type = AssetTypeEnum.OTHER
 
     return SyncAssetV1(
-        id=str(safe_uuid_from_asset_id(asset_data["id"])),
+        id=str(safe_uuid_from_asset_id(asset.id)),
         ownerId=owner_id,
-        originalFileName=asset_data.get("original_file_name", "unknown"),
+        originalFileName=asset.original_file_name,
         type=asset_type,
-        checksum=asset_data.get("checksum") or "",
-        fileCreatedAt=_parse_datetime(asset_data.get("file_created_at")),
-        fileModifiedAt=_parse_datetime(asset_data.get("file_modified_at")),
-        localDateTime=_parse_datetime(asset_data.get("local_datetime")),
+        checksum=asset.checksum,
+        fileCreatedAt=asset.file_created_at,
+        fileModifiedAt=asset.file_modified_at,
+        localDateTime=asset.local_datetime,
         isFavorite=False,
         visibility=AssetVisibility.timeline,
         deletedAt=None,
@@ -523,73 +518,50 @@ def event_asset_to_sync_asset_v1(asset_data: dict, owner_id: str) -> SyncAssetV1
     )
 
 
-def event_exif_to_sync_exif_v1(exif_data: dict) -> SyncAssetExifV1:
-    """
-    Convert photos-api exif event data to Immich SyncAssetExifV1 format.
-
-    Args:
-        exif_data: Exif data from events endpoint
-
-    Returns:
-        SyncAssetExifV1 for sync stream
-    """
+def event_exif_to_sync_exif_v1(exif: DataExifEventPayloadData) -> SyncAssetExifV1:
+    """Convert photos-api exif event data to Immich SyncAssetExifV1 format."""
     return SyncAssetExifV1(
-        assetId=str(safe_uuid_from_asset_id(exif_data["asset_id"])),
-        city=exif_data.get("city"),
-        country=exif_data.get("country"),
-        dateTimeOriginal=_parse_datetime(exif_data.get("original_datetime")),
-        description=exif_data.get("description"),
-        exifImageHeight=exif_data.get("height"),
-        exifImageWidth=exif_data.get("width"),
-        exposureTime=exif_data.get("exposure_time"),
-        fNumber=exif_data.get("f_number"),
-        fileSizeInByte=exif_data.get("file_size"),
-        focalLength=exif_data.get("focal_length"),
-        fps=None,
-        iso=exif_data.get("iso"),
-        latitude=exif_data.get("latitude"),
-        lensModel=exif_data.get("lens_model"),
-        longitude=exif_data.get("longitude"),
-        make=exif_data.get("make"),
-        model=exif_data.get("model"),
-        modifyDate=_parse_datetime(exif_data.get("modified_datetime")),
-        orientation=exif_data.get("orientation"),
-        profileDescription=None,
-        projectionType=exif_data.get("projection_type"),
-        rating=exif_data.get("rating"),
-        state=exif_data.get("state"),
-        timeZone=exif_data.get("timezone"),
+        assetId=str(safe_uuid_from_asset_id(exif.asset_id)),
+        city=exif.city,
+        country=exif.country,
+        dateTimeOriginal=exif.original_datetime,
+        description=exif.description,
+        exifImageHeight=None,
+        exifImageWidth=None,
+        exposureTime=str(exif.exposure_time) if exif.exposure_time is not None else None,
+        fNumber=exif.f_number,
+        fileSizeInByte=None,
+        focalLength=exif.focal_length,
+        fps=exif.fps,
+        iso=exif.iso,
+        latitude=exif.latitude,
+        lensModel=exif.lens_model,
+        longitude=exif.longitude,
+        make=exif.make,
+        model=exif.model,
+        modifyDate=exif.modified_datetime,
+        orientation=str(exif.orientation) if exif.orientation is not None else None,
+        profileDescription=exif.profile_description,
+        projectionType=exif.projection_type,
+        rating=exif.rating,
+        state=exif.state,
+        timeZone=None,
     )
 
 
-def event_album_to_sync_album_v1(album_data: dict, owner_id: str) -> SyncAlbumV1:
-    """
-    Convert photos-api album event data to Immich SyncAlbumV1 format.
-
-    Args:
-        album_data: Album data from events endpoint
-        owner_id: UUID of the album owner
-
-    Returns:
-        SyncAlbumV1 for sync stream
-    """
+def event_album_to_sync_album_v1(album: AlbumResponse, owner_id: str) -> SyncAlbumV1:
+    """Convert photos-api AlbumResponse to Immich SyncAlbumV1 format."""
     thumbnail_asset_id = None
-    if album_data.get("album_cover_asset_id"):
-        thumbnail_asset_id = str(
-            safe_uuid_from_asset_id(album_data["album_cover_asset_id"])
-        )
-
-    created_at = _parse_datetime(album_data.get("created_at"))
-    updated_at = _parse_datetime(album_data.get("updated_at"))
-    now = datetime.now(timezone.utc)
+    if album.album_cover_asset_id:
+        thumbnail_asset_id = str(safe_uuid_from_asset_id(album.album_cover_asset_id))
 
     return SyncAlbumV1(
-        id=str(safe_uuid_from_album_id(album_data["id"])),
+        id=str(safe_uuid_from_album_id(album.id)),
         ownerId=owner_id,
-        name=album_data["name"],
-        description=album_data.get("description") or "",
-        createdAt=created_at or now,
-        updatedAt=updated_at or now,
+        name=album.name,
+        description=album.description or "",
+        createdAt=album.created_at,
+        updatedAt=album.updated_at,
         thumbnailAssetId=thumbnail_asset_id,
         isActivityEnabled=True,
         order=AssetOrder.desc,
@@ -597,79 +569,50 @@ def event_album_to_sync_album_v1(album_data: dict, owner_id: str) -> SyncAlbumV1
 
 
 def event_album_asset_to_sync_album_to_asset_v1(
-    album_asset_data: dict,
+    album_asset: DataAlbumAssetEventPayloadData,
 ) -> SyncAlbumToAssetV1:
-    """
-    Convert photos-api album_asset event data to Immich SyncAlbumToAssetV1 format.
-
-    Args:
-        album_asset_data: AlbumAsset data from events endpoint
-
-    Returns:
-        SyncAlbumToAssetV1 for sync stream
-    """
+    """Convert photos-api album_asset event data to Immich SyncAlbumToAssetV1 format."""
     return SyncAlbumToAssetV1(
-        albumId=str(safe_uuid_from_album_id(album_asset_data["album_id"])),
-        assetId=str(safe_uuid_from_asset_id(album_asset_data["asset_id"])),
+        albumId=str(safe_uuid_from_album_id(album_asset.album_id)),
+        assetId=str(safe_uuid_from_asset_id(album_asset.asset_id)),
     )
 
 
-def event_person_to_sync_person_v1(person_data: dict, owner_id: str) -> SyncPersonV1:
-    """
-    Convert photos-api person event data to Immich SyncPersonV1 format.
-
-    Args:
-        person_data: Person data from events endpoint
-        owner_id: UUID of the person owner
-
-    Returns:
-        SyncPersonV1 for sync stream
-    """
-    created_at = _parse_datetime(person_data.get("created_at"))
-    updated_at = _parse_datetime(person_data.get("updated_at"))
-    now = datetime.now(timezone.utc)
-
+def event_person_to_sync_person_v1(
+    person: PersonResponse, owner_id: str
+) -> SyncPersonV1:
+    """Convert photos-api PersonResponse to Immich SyncPersonV1 format."""
     return SyncPersonV1(
-        id=str(safe_uuid_from_person_id(person_data["id"])),
+        id=str(safe_uuid_from_person_id(person.id)),
         ownerId=owner_id,
-        name=person_data.get("name") or "",
-        createdAt=created_at or now,
-        updatedAt=updated_at or now,
-        isFavorite=person_data.get("is_favorite", False),
-        isHidden=person_data.get("is_hidden", False),
+        name=person.name or "",
+        createdAt=person.created_at,
+        updatedAt=person.updated_at,
+        isFavorite=person.is_favorite,
+        isHidden=person.is_hidden,
         birthDate=None,
         color=None,
         faceAssetId=None,
     )
 
 
-def event_face_to_sync_face_v1(face_data: dict) -> SyncAssetFaceV1:
-    """
-    Convert photos-api face event data to Immich SyncAssetFaceV1 format.
+def event_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
+    """Convert photos-api FaceResponse to Immich SyncAssetFaceV1 format."""
+    bounding_box = face.bounding_box
 
-    Args:
-        face_data: Face data from events endpoint
-
-    Returns:
-        SyncAssetFaceV1 for sync stream
-    """
-    # Get bounding box data
-    bounding_box = face_data.get("bounding_box") or {}
-
-    # Get person_id if linked
     person_id = None
-    if face_data.get("person_id"):
-        person_id = str(safe_uuid_from_person_id(face_data["person_id"]))
+    if face.person_id:
+        person_id = str(safe_uuid_from_person_id(face.person_id))
 
     return SyncAssetFaceV1(
-        id=face_data["id"],
-        assetId=str(safe_uuid_from_asset_id(face_data["asset_id"])),
-        boundingBoxX1=bounding_box.get("x1", 0),
-        boundingBoxX2=bounding_box.get("x2", 0),
-        boundingBoxY1=bounding_box.get("y1", 0),
-        boundingBoxY2=bounding_box.get("y2", 0),
-        imageHeight=face_data.get("image_height", 0),
-        imageWidth=face_data.get("image_width", 0),
+        id=face.id,
+        assetId=str(safe_uuid_from_asset_id(face.asset_id)),
+        boundingBoxX1=bounding_box.get("x", 0),
+        boundingBoxX2=bounding_box.get("x", 0) + bounding_box.get("w", 0),
+        boundingBoxY1=bounding_box.get("y", 0),
+        boundingBoxY2=bounding_box.get("y", 0) + bounding_box.get("h", 0),
+        imageHeight=0,
+        imageWidth=0,
         sourceType="machine-learning",
         personId=person_id,
     )
@@ -706,43 +649,40 @@ def _map_request_types_to_entity_types(
 
 
 def _convert_event_to_sync_entity(
-    event: dict, owner_id: str
+    event: Data, owner_id: str
 ) -> tuple[SyncEntityType, dict] | None:
     """
     Convert a photos-api event to Immich sync entity.
 
     Args:
-        event: Event from photos-api events endpoint
+        event: Typed event from photos-api events endpoint
         owner_id: UUID of the owner
 
     Returns:
         Tuple of (SyncEntityType, data_dict) or None if unsupported entity type
     """
-    entity_type = event["entity_type"]
-    data = event["data"]
-
-    if entity_type == "asset":
-        sync_model = event_asset_to_sync_asset_v1(data, owner_id)
+    if isinstance(event, DataAssetEventPayload):
+        sync_model = event_asset_to_sync_asset_v1(event.data, owner_id)
         return (SyncEntityType.AssetV1, sync_model.model_dump(mode="json"))
 
-    elif entity_type == "exif":
-        sync_model = event_exif_to_sync_exif_v1(data)
+    elif isinstance(event, DataExifEventPayload):
+        sync_model = event_exif_to_sync_exif_v1(event.data)
         return (SyncEntityType.AssetExifV1, sync_model.model_dump(mode="json"))
 
-    elif entity_type == "album":
-        sync_model = event_album_to_sync_album_v1(data, owner_id)
+    elif isinstance(event, DataAlbumEventPayload):
+        sync_model = event_album_to_sync_album_v1(event.data, owner_id)
         return (SyncEntityType.AlbumV1, sync_model.model_dump(mode="json"))
 
-    elif entity_type == "album_asset":
-        sync_model = event_album_asset_to_sync_album_to_asset_v1(data)
+    elif isinstance(event, DataAlbumAssetEventPayload):
+        sync_model = event_album_asset_to_sync_album_to_asset_v1(event.data)
         return (SyncEntityType.AlbumToAssetV1, sync_model.model_dump(mode="json"))
 
-    elif entity_type == "person":
-        sync_model = event_person_to_sync_person_v1(data, owner_id)
+    elif isinstance(event, DataPersonEventPayload):
+        sync_model = event_person_to_sync_person_v1(event.data, owner_id)
         return (SyncEntityType.PersonV1, sync_model.model_dump(mode="json"))
 
-    elif entity_type == "face":
-        sync_model = event_face_to_sync_face_v1(data)
+    elif isinstance(event, DataFaceEventPayload):
+        sync_model = event_face_to_sync_face_v1(event.data)
         return (SyncEntityType.AssetFaceV1, sync_model.model_dump(mode="json"))
 
     return None
@@ -849,23 +789,7 @@ async def generate_sync_stream(
 
                 # Stream each event
                 for event in events:
-                    # Convert event dict - handle both dict and object access
-                    event_dict: dict[str, Any]
-                    if hasattr(event, "model_dump"):
-                        event_dict = event.model_dump()
-                    elif hasattr(event, "__dict__"):
-                        event_dict = {
-                            "entity_type": event.entity_type,
-                            "data": (
-                                event.data.model_dump()
-                                if hasattr(event.data, "model_dump")
-                                else event.data
-                            ),
-                        }
-                    else:
-                        event_dict = cast(dict[str, Any], event)
-
-                    result = _convert_event_to_sync_entity(event_dict, owner_id)
+                    result = _convert_event_to_sync_entity(event, owner_id)
                     if result:
                         entity_type, data = result
                         yield _make_sync_event(entity_type, data)
@@ -879,16 +803,7 @@ async def generate_sync_stream(
 
                 # Get updated_at from last event for pagination cursor
                 last_event = events[-1]
-                if hasattr(last_event, "data"):
-                    last_data = last_event.data
-                    if hasattr(last_data, "updated_at"):
-                        last_updated_at = last_data.updated_at
-                    elif isinstance(last_data, dict):
-                        last_updated_at = _parse_datetime(last_data.get("updated_at"))
-                elif isinstance(last_event, dict):
-                    last_updated_at = _parse_datetime(
-                        last_event.get("data", {}).get("updated_at")
-                    )
+                last_updated_at = last_event.data.updated_at
 
                 # Check if this was the last page
                 if len(events) < 500:
