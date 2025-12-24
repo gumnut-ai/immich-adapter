@@ -644,7 +644,8 @@ def _make_sync_event(
     Args:
         entity_type: The Immich sync entity type
         data: The entity data dict
-        updated_at: Timestamp for the checkpoint (uses current time if not provided)
+        updated_at: Timestamp for the checkpoint. If not provided, uses current
+            time. This is only None for SyncCompleteV1 (synthetic completion marker).
 
     Returns:
         JSON line string with newline
@@ -701,6 +702,7 @@ async def generate_sync_stream(
             yield _make_sync_event(
                 SyncEntityType.AuthUserV1,
                 sync_auth_user.model_dump(mode="json"),
+                current_user.updated_at,
             )
             logger.debug("Streamed auth user", extra={"user_id": owner_id})
 
@@ -710,6 +712,7 @@ async def generate_sync_stream(
             yield _make_sync_event(
                 SyncEntityType.UserV1,
                 sync_user.model_dump(mode="json"),
+                current_user.updated_at,
             )
             logger.debug("Streamed user", extra={"user_id": owner_id})
 
