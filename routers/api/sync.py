@@ -414,27 +414,6 @@ def gumnut_exif_to_sync_exif_v1(
     )
 
 
-def gumnut_asset_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1 | None:
-    """
-    Convert Gumnut AssetResponse EXIF data to Immich SyncAssetExifV1 format.
-
-    Args:
-        asset: Gumnut asset with EXIF data
-
-    Returns:
-        SyncAssetExifV1 if EXIF exists, None otherwise
-    """
-    if asset.exif is None:
-        return None
-
-    return gumnut_exif_to_sync_exif_v1(
-        asset.exif,
-        height=asset.height,
-        width=asset.width,
-        file_size_bytes=asset.file_size_bytes,
-    )
-
-
 def gumnut_person_to_sync_person_v1(
     person: PersonResponse, owner_id: str
 ) -> SyncPersonV1:
