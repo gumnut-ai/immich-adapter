@@ -18,20 +18,18 @@ from typing import AsyncGenerator, List
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from gumnut import Gumnut
-from gumnut.types.album_response import AlbumResponse
-from gumnut.types.asset_response import AssetResponse
+from gumnut.types.album_asset_event_payload import AlbumAssetEventPayload
 from gumnut.types.album_asset_response import AlbumAssetResponse
-from gumnut.types.events_response import (
-    Data,
-    DataAlbumAssetEventPayload,
-    DataAlbumEventPayload,
-    DataAssetEventPayload,
-    DataExifEventPayload,
-    DataFaceEventPayload,
-    DataPersonEventPayload,
-)
+from gumnut.types.album_event_payload import AlbumEventPayload
+from gumnut.types.album_response import AlbumResponse
+from gumnut.types.asset_event_payload import AssetEventPayload
+from gumnut.types.asset_response import AssetResponse
+from gumnut.types.events_response import Data
+from gumnut.types.exif_event_payload import ExifEventPayload
 from gumnut.types.exif_response import ExifResponse
+from gumnut.types.face_event_payload import FaceEventPayload
 from gumnut.types.face_response import FaceResponse
+from gumnut.types.person_event_payload import PersonEventPayload
 from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
 
@@ -614,27 +612,27 @@ def _convert_event_to_sync_entity(
     Returns:
         Tuple of (SyncEntityType, data_dict) or None if unsupported entity type
     """
-    if isinstance(event, DataAssetEventPayload):
+    if isinstance(event, AssetEventPayload):
         sync_model = gumnut_asset_to_sync_asset_v1(event.data, owner_id)
         return (SyncEntityType.AssetV1, sync_model.model_dump(mode="json"))
 
-    elif isinstance(event, DataExifEventPayload):
+    elif isinstance(event, ExifEventPayload):
         sync_model = gumnut_exif_to_sync_exif_v1(event.data)
         return (SyncEntityType.AssetExifV1, sync_model.model_dump(mode="json"))
 
-    elif isinstance(event, DataAlbumEventPayload):
+    elif isinstance(event, AlbumEventPayload):
         sync_model = gumnut_album_to_sync_album_v1(event.data, owner_id)
         return (SyncEntityType.AlbumV1, sync_model.model_dump(mode="json"))
 
-    elif isinstance(event, DataAlbumAssetEventPayload):
+    elif isinstance(event, AlbumAssetEventPayload):
         sync_model = gumnut_album_asset_to_sync_album_to_asset_v1(event.data)
         return (SyncEntityType.AlbumToAssetV1, sync_model.model_dump(mode="json"))
 
-    elif isinstance(event, DataPersonEventPayload):
+    elif isinstance(event, PersonEventPayload):
         sync_model = gumnut_person_to_sync_person_v1(event.data, owner_id)
         return (SyncEntityType.PersonV1, sync_model.model_dump(mode="json"))
 
-    elif isinstance(event, DataFaceEventPayload):
+    elif isinstance(event, FaceEventPayload):
         sync_model = gumnut_face_to_sync_face_v1(event.data)
         return (SyncEntityType.AssetFaceV1, sync_model.model_dump(mode="json"))
 
