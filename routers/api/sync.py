@@ -481,7 +481,7 @@ def gumnut_asset_face_to_sync_v1(
 
 def _format_exposure_time(exposure_time: float | None) -> str | None:
     """Format exposure time as a fraction string (e.g., '1/66')."""
-    if exposure_time is None:
+    if exposure_time is None or exposure_time <= 0:
         return None
     if exposure_time >= 1:
         return str(exposure_time)
