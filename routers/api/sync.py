@@ -489,6 +489,24 @@ def gumnut_asset_face_to_sync_v1(
 # gumnut_person_to_sync_person_v1) as they are more robust.
 
 
+def _format_exposure_time(exposure_time: float | None) -> str | None:
+    """Format exposure time as a fraction string (e.g., '1/66')."""
+    if exposure_time is None:
+        return None
+    if exposure_time >= 1:
+        return str(exposure_time)
+    denominator = round(1 / exposure_time)
+    return f"1/{denominator}"
+
+
+def _extract_timezone(dt: datetime | None) -> str | None:
+    """Extract timezone name from datetime."""
+    if dt is None:
+        return None
+    tz_name = dt.tzname()
+    return tz_name if tz_name else None
+
+
 def event_exif_to_sync_exif_v1(exif: DataExifEventPayloadData) -> SyncAssetExifV1:
     """Convert photos-api exif event data to Immich SyncAssetExifV1 format."""
     return SyncAssetExifV1(
@@ -497,11 +515,11 @@ def event_exif_to_sync_exif_v1(exif: DataExifEventPayloadData) -> SyncAssetExifV
         country=exif.country,
         dateTimeOriginal=exif.original_datetime,
         description=exif.description,
-        exifImageHeight=None,
-        exifImageWidth=None,
-        exposureTime=str(exif.exposure_time) if exif.exposure_time is not None else None,
+        exifImageHeight=None,  # Not available in exif event, only in asset
+        exifImageWidth=None,  # Not available in exif event, only in asset
+        exposureTime=_format_exposure_time(exif.exposure_time),
         fNumber=exif.f_number,
-        fileSizeInByte=None,
+        fileSizeInByte=None,  # Not available in exif event, only in asset
         focalLength=exif.focal_length,
         fps=exif.fps,
         iso=exif.iso,
@@ -516,7 +534,7 @@ def event_exif_to_sync_exif_v1(exif: DataExifEventPayloadData) -> SyncAssetExifV
         projectionType=exif.projection_type,
         rating=exif.rating,
         state=exif.state,
-        timeZone=None,
+        timeZone=_extract_timezone(exif.original_datetime),
     )
 
 
