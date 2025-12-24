@@ -366,21 +366,12 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     )
 
 
-def gumnut_exif_to_sync_exif_v1(
-    exif: ExifResponse,
-    *,
-    height: int | None = None,
-    width: int | None = None,
-    file_size_bytes: int | None = None,
-) -> SyncAssetExifV1:
+def gumnut_exif_to_sync_exif_v1(exif: ExifResponse) -> SyncAssetExifV1:
     """
     Convert Gumnut ExifResponse to Immich SyncAssetExifV1 format.
 
     Args:
         exif: Gumnut EXIF data
-        height: Optional asset height (not available in EXIF events)
-        width: Optional asset width (not available in EXIF events)
-        file_size_bytes: Optional file size (not available in EXIF events)
 
     Returns:
         SyncAssetExifV1 for sync stream
@@ -391,11 +382,11 @@ def gumnut_exif_to_sync_exif_v1(
         country=exif.country,
         dateTimeOriginal=exif.original_datetime,
         description=exif.description,
-        exifImageHeight=height,
-        exifImageWidth=width,
+        exifImageHeight=None,  # Not available in ExifResponse
+        exifImageWidth=None,  # Not available in ExifResponse
         exposureTime=_format_exposure_time(exif.exposure_time),
         fNumber=exif.f_number,
-        fileSizeInByte=file_size_bytes,
+        fileSizeInByte=None,  # Not available in ExifResponse
         focalLength=exif.focal_length,
         fps=exif.fps,
         iso=exif.iso,
