@@ -20,17 +20,17 @@ from fastapi.responses import StreamingResponse
 from gumnut import Gumnut
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
+from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.events_response import (
     Data,
     DataAlbumAssetEventPayload,
-    DataAlbumAssetEventPayloadData,
     DataAlbumEventPayload,
     DataAssetEventPayload,
     DataExifEventPayload,
-    DataExifEventPayloadData,
     DataFaceEventPayload,
     DataPersonEventPayload,
 )
+from gumnut.types.exif_response import ExifResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
@@ -59,10 +59,7 @@ from routers.immich_models import (
     SyncUserV1,
     UserResponseDto,
 )
-from routers.utils.asset_conversion import (
-    convert_gumnut_asset_to_immich,
-    extract_exif_info,
-)
+from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
@@ -345,7 +342,10 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     localDateTime = asset.local_datetime
 
     if asset.checksum_sha1 is None:
-        logger.warning(f"Asset {asset.id} has no checksum_sha1, using checksum instead", extra={"asset_id": asset.id, "checksum": asset.checksum})
+        logger.warning(
+            f"Asset {asset.id} has no checksum_sha1, using checksum instead",
+            extra={"asset_id": asset.id, "checksum": asset.checksum},
+        )
 
     return SyncAssetV1(
         id=str(safe_uuid_from_asset_id(asset.id)),
@@ -368,6 +368,54 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     )
 
 
+def gumnut_exif_to_sync_exif_v1(
+    exif: ExifResponse,
+    *,
+    height: int | None = None,
+    width: int | None = None,
+    file_size_bytes: int | None = None,
+) -> SyncAssetExifV1:
+    """
+    Convert Gumnut ExifResponse to Immich SyncAssetExifV1 format.
+
+    Args:
+        exif: Gumnut EXIF data
+        height: Optional asset height (not available in EXIF events)
+        width: Optional asset width (not available in EXIF events)
+        file_size_bytes: Optional file size (not available in EXIF events)
+
+    Returns:
+        SyncAssetExifV1 for sync stream
+    """
+    return SyncAssetExifV1(
+        assetId=str(safe_uuid_from_asset_id(exif.asset_id)),
+        city=exif.city,
+        country=exif.country,
+        dateTimeOriginal=exif.original_datetime,
+        description=exif.description,
+        exifImageHeight=height,
+        exifImageWidth=width,
+        exposureTime=_format_exposure_time(exif.exposure_time),
+        fNumber=exif.f_number,
+        fileSizeInByte=file_size_bytes,
+        focalLength=exif.focal_length,
+        fps=exif.fps,
+        iso=exif.iso,
+        latitude=exif.latitude,
+        lensModel=exif.lens_model,
+        longitude=exif.longitude,
+        make=exif.make,
+        model=exif.model,
+        modifyDate=exif.modified_datetime,
+        orientation=str(exif.orientation) if exif.orientation is not None else None,
+        profileDescription=exif.profile_description,
+        projectionType=exif.projection_type,
+        rating=exif.rating,
+        state=exif.state,
+        timeZone=_extract_timezone(exif.original_datetime),
+    )
+
+
 def gumnut_asset_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1 | None:
     """
     Convert Gumnut AssetResponse EXIF data to Immich SyncAssetExifV1 format.
@@ -381,39 +429,11 @@ def gumnut_asset_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1 | None
     if asset.exif is None:
         return None
 
-    # Use existing EXIF extraction utility
-    exif_dto = extract_exif_info(asset)
-
-    return SyncAssetExifV1(
-        assetId=str(safe_uuid_from_asset_id(asset.id)),
-        city=exif_dto.city,
-        country=exif_dto.country,
-        dateTimeOriginal=exif_dto.dateTimeOriginal,
-        description=exif_dto.description,
-        exifImageHeight=int(exif_dto.exifImageHeight)
-        if exif_dto.exifImageHeight
-        else None,
-        exifImageWidth=int(exif_dto.exifImageWidth)
-        if exif_dto.exifImageWidth
-        else None,
-        exposureTime=exif_dto.exposureTime,
-        fNumber=exif_dto.fNumber,
-        fileSizeInByte=exif_dto.fileSizeInByte,
-        focalLength=exif_dto.focalLength,
-        fps=None,  # Not available in Gumnut
-        iso=int(exif_dto.iso) if exif_dto.iso else None,
-        latitude=exif_dto.latitude,
-        lensModel=exif_dto.lensModel,
-        longitude=exif_dto.longitude,
-        make=exif_dto.make,
-        model=exif_dto.model,
-        modifyDate=exif_dto.modifyDate,
-        orientation=exif_dto.orientation,
-        profileDescription=None,  # Not available in Gumnut
-        projectionType=exif_dto.projectionType,
-        rating=int(exif_dto.rating) if exif_dto.rating else None,
-        state=exif_dto.state,
-        timeZone=exif_dto.timeZone,
+    return gumnut_exif_to_sync_exif_v1(
+        asset.exif,
+        height=asset.height,
+        width=asset.width,
+        file_size_bytes=asset.file_size_bytes,
     )
 
 
@@ -482,13 +502,6 @@ def gumnut_asset_face_to_sync_v1(
     )
 
 
-# --- Event-based conversion functions ---
-# These convert photos-api event data to Immich sync models
-# Note: For types that have both gumnut_* and event_* versions with the same
-# input type, we use the gumnut_* version (e.g., gumnut_asset_to_sync_asset_v1,
-# gumnut_person_to_sync_person_v1) as they are more robust.
-
-
 def _format_exposure_time(exposure_time: float | None) -> str | None:
     """Format exposure time as a fraction string (e.g., '1/66')."""
     if exposure_time is None:
@@ -507,39 +520,8 @@ def _extract_timezone(dt: datetime | None) -> str | None:
     return tz_name if tz_name else None
 
 
-def event_exif_to_sync_exif_v1(exif: DataExifEventPayloadData) -> SyncAssetExifV1:
-    """Convert photos-api exif event data to Immich SyncAssetExifV1 format."""
-    return SyncAssetExifV1(
-        assetId=str(safe_uuid_from_asset_id(exif.asset_id)),
-        city=exif.city,
-        country=exif.country,
-        dateTimeOriginal=exif.original_datetime,
-        description=exif.description,
-        exifImageHeight=None,  # Not available in exif event, only in asset
-        exifImageWidth=None,  # Not available in exif event, only in asset
-        exposureTime=_format_exposure_time(exif.exposure_time),
-        fNumber=exif.f_number,
-        fileSizeInByte=None,  # Not available in exif event, only in asset
-        focalLength=exif.focal_length,
-        fps=exif.fps,
-        iso=exif.iso,
-        latitude=exif.latitude,
-        lensModel=exif.lens_model,
-        longitude=exif.longitude,
-        make=exif.make,
-        model=exif.model,
-        modifyDate=exif.modified_datetime,
-        orientation=str(exif.orientation) if exif.orientation is not None else None,
-        profileDescription=exif.profile_description,
-        projectionType=exif.projection_type,
-        rating=exif.rating,
-        state=exif.state,
-        timeZone=_extract_timezone(exif.original_datetime),
-    )
-
-
-def event_album_to_sync_album_v1(album: AlbumResponse, owner_id: str) -> SyncAlbumV1:
-    """Convert photos-api AlbumResponse to Immich SyncAlbumV1 format."""
+def gumnut_album_to_sync_album_v1(album: AlbumResponse, owner_id: str) -> SyncAlbumV1:
+    """Convert Gumnut AlbumResponse to Immich SyncAlbumV1 format."""
     thumbnail_asset_id = None
     if album.album_cover_asset_id:
         thumbnail_asset_id = str(safe_uuid_from_asset_id(album.album_cover_asset_id))
@@ -557,18 +539,18 @@ def event_album_to_sync_album_v1(album: AlbumResponse, owner_id: str) -> SyncAlb
     )
 
 
-def event_album_asset_to_sync_album_to_asset_v1(
-    album_asset: DataAlbumAssetEventPayloadData,
+def gumnut_album_asset_to_sync_album_to_asset_v1(
+    album_asset: AlbumAssetResponse,
 ) -> SyncAlbumToAssetV1:
-    """Convert photos-api album_asset event data to Immich SyncAlbumToAssetV1 format."""
+    """Convert Gumnut AlbumAssetResponse to Immich SyncAlbumToAssetV1 format."""
     return SyncAlbumToAssetV1(
         albumId=str(safe_uuid_from_album_id(album_asset.album_id)),
         assetId=str(safe_uuid_from_asset_id(album_asset.asset_id)),
     )
 
 
-def event_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
-    """Convert photos-api FaceResponse to Immich SyncAssetFaceV1 format."""
+def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
+    """Convert Gumnut FaceResponse to Immich SyncAssetFaceV1 format."""
     bounding_box = face.bounding_box
 
     person_id = None
@@ -637,15 +619,15 @@ def _convert_event_to_sync_entity(
         return (SyncEntityType.AssetV1, sync_model.model_dump(mode="json"))
 
     elif isinstance(event, DataExifEventPayload):
-        sync_model = event_exif_to_sync_exif_v1(event.data)
+        sync_model = gumnut_exif_to_sync_exif_v1(event.data)
         return (SyncEntityType.AssetExifV1, sync_model.model_dump(mode="json"))
 
     elif isinstance(event, DataAlbumEventPayload):
-        sync_model = event_album_to_sync_album_v1(event.data, owner_id)
+        sync_model = gumnut_album_to_sync_album_v1(event.data, owner_id)
         return (SyncEntityType.AlbumV1, sync_model.model_dump(mode="json"))
 
     elif isinstance(event, DataAlbumAssetEventPayload):
-        sync_model = event_album_asset_to_sync_album_to_asset_v1(event.data)
+        sync_model = gumnut_album_asset_to_sync_album_to_asset_v1(event.data)
         return (SyncEntityType.AlbumToAssetV1, sync_model.model_dump(mode="json"))
 
     elif isinstance(event, DataPersonEventPayload):
@@ -653,7 +635,7 @@ def _convert_event_to_sync_entity(
         return (SyncEntityType.PersonV1, sync_model.model_dump(mode="json"))
 
     elif isinstance(event, DataFaceEventPayload):
-        sync_model = event_face_to_sync_face_v1(event.data)
+        sync_model = gumnut_face_to_sync_face_v1(event.data)
         return (SyncEntityType.AssetFaceV1, sync_model.model_dump(mode="json"))
 
     return None
