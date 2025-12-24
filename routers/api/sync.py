@@ -433,8 +433,8 @@ def gumnut_person_to_sync_person_v1(
     return SyncPersonV1(
         id=str(safe_uuid_from_person_id(person.id)),
         createdAt=person.created_at,
-        isFavorite=False,
-        isHidden=False,
+        isFavorite=person.is_favorite,
+        isHidden=person.is_hidden,
         name=person.name or "",
         ownerId=owner_id,
         updatedAt=person.updated_at,
@@ -484,38 +484,9 @@ def gumnut_asset_face_to_sync_v1(
 
 # --- Event-based conversion functions ---
 # These convert photos-api event data to Immich sync models
-
-
-def event_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAssetV1:
-    """Convert photos-api AssetResponse to Immich SyncAssetV1 format."""
-    mime_type = asset.mime_type
-    if mime_type.startswith("image/"):
-        asset_type = AssetTypeEnum.IMAGE
-    elif mime_type.startswith("video/"):
-        asset_type = AssetTypeEnum.VIDEO
-    elif mime_type.startswith("audio/"):
-        asset_type = AssetTypeEnum.AUDIO
-    else:
-        asset_type = AssetTypeEnum.OTHER
-
-    return SyncAssetV1(
-        id=str(safe_uuid_from_asset_id(asset.id)),
-        ownerId=owner_id,
-        originalFileName=asset.original_file_name,
-        type=asset_type,
-        checksum=asset.checksum,
-        fileCreatedAt=asset.file_created_at,
-        fileModifiedAt=asset.file_modified_at,
-        localDateTime=asset.local_datetime,
-        isFavorite=False,
-        visibility=AssetVisibility.timeline,
-        deletedAt=None,
-        duration=None,
-        libraryId=None,
-        livePhotoVideoId=None,
-        stackId=None,
-        thumbhash=None,
-    )
+# Note: For types that have both gumnut_* and event_* versions with the same
+# input type, we use the gumnut_* version (e.g., gumnut_asset_to_sync_asset_v1,
+# gumnut_person_to_sync_person_v1) as they are more robust.
 
 
 def event_exif_to_sync_exif_v1(exif: DataExifEventPayloadData) -> SyncAssetExifV1:
@@ -575,24 +546,6 @@ def event_album_asset_to_sync_album_to_asset_v1(
     return SyncAlbumToAssetV1(
         albumId=str(safe_uuid_from_album_id(album_asset.album_id)),
         assetId=str(safe_uuid_from_asset_id(album_asset.asset_id)),
-    )
-
-
-def event_person_to_sync_person_v1(
-    person: PersonResponse, owner_id: str
-) -> SyncPersonV1:
-    """Convert photos-api PersonResponse to Immich SyncPersonV1 format."""
-    return SyncPersonV1(
-        id=str(safe_uuid_from_person_id(person.id)),
-        ownerId=owner_id,
-        name=person.name or "",
-        createdAt=person.created_at,
-        updatedAt=person.updated_at,
-        isFavorite=person.is_favorite,
-        isHidden=person.is_hidden,
-        birthDate=None,
-        color=None,
-        faceAssetId=None,
     )
 
 
@@ -662,7 +615,7 @@ def _convert_event_to_sync_entity(
         Tuple of (SyncEntityType, data_dict) or None if unsupported entity type
     """
     if isinstance(event, DataAssetEventPayload):
-        sync_model = event_asset_to_sync_asset_v1(event.data, owner_id)
+        sync_model = gumnut_asset_to_sync_asset_v1(event.data, owner_id)
         return (SyncEntityType.AssetV1, sync_model.model_dump(mode="json"))
 
     elif isinstance(event, DataExifEventPayload):
@@ -678,7 +631,7 @@ def _convert_event_to_sync_entity(
         return (SyncEntityType.AlbumToAssetV1, sync_model.model_dump(mode="json"))
 
     elif isinstance(event, DataPersonEventPayload):
-        sync_model = event_person_to_sync_person_v1(event.data, owner_id)
+        sync_model = gumnut_person_to_sync_person_v1(event.data, owner_id)
         return (SyncEntityType.PersonV1, sync_model.model_dump(mode="json"))
 
     elif isinstance(event, DataFaceEventPayload):
