@@ -580,7 +580,7 @@ def _map_request_types_to_entity_types(
 
 def _convert_event_to_sync_entity(
     event: Data, owner_id: str
-) -> tuple[SyncEntityType, dict] | None:
+) -> tuple[SyncEntityType, dict, datetime] | None:
     """
     Convert a photos-api event to Immich sync entity.
 
@@ -589,52 +589,85 @@ def _convert_event_to_sync_entity(
         owner_id: UUID of the owner
 
     Returns:
-        Tuple of (SyncEntityType, data_dict) or None if unsupported entity type
+        Tuple of (SyncEntityType, data_dict, updated_at) or None if unsupported
     """
     if isinstance(event, AssetEventPayload):
         sync_model = gumnut_asset_to_sync_asset_v1(event.data, owner_id)
-        return (SyncEntityType.AssetV1, sync_model.model_dump(mode="json"))
+        return (
+            SyncEntityType.AssetV1,
+            sync_model.model_dump(mode="json"),
+            event.data.updated_at,
+        )
 
     elif isinstance(event, ExifEventPayload):
         sync_model = gumnut_exif_to_sync_exif_v1(event.data)
-        return (SyncEntityType.AssetExifV1, sync_model.model_dump(mode="json"))
+        return (
+            SyncEntityType.AssetExifV1,
+            sync_model.model_dump(mode="json"),
+            event.data.updated_at,
+        )
 
     elif isinstance(event, AlbumEventPayload):
         sync_model = gumnut_album_to_sync_album_v1(event.data, owner_id)
-        return (SyncEntityType.AlbumV1, sync_model.model_dump(mode="json"))
+        return (
+            SyncEntityType.AlbumV1,
+            sync_model.model_dump(mode="json"),
+            event.data.updated_at,
+        )
 
     elif isinstance(event, AlbumAssetEventPayload):
         sync_model = gumnut_album_asset_to_sync_album_to_asset_v1(event.data)
-        return (SyncEntityType.AlbumToAssetV1, sync_model.model_dump(mode="json"))
+        return (
+            SyncEntityType.AlbumToAssetV1,
+            sync_model.model_dump(mode="json"),
+            event.data.updated_at,
+        )
 
     elif isinstance(event, PersonEventPayload):
         sync_model = gumnut_person_to_sync_person_v1(event.data, owner_id)
-        return (SyncEntityType.PersonV1, sync_model.model_dump(mode="json"))
+        return (
+            SyncEntityType.PersonV1,
+            sync_model.model_dump(mode="json"),
+            event.data.updated_at,
+        )
 
     elif isinstance(event, FaceEventPayload):
         sync_model = gumnut_face_to_sync_face_v1(event.data)
-        return (SyncEntityType.AssetFaceV1, sync_model.model_dump(mode="json"))
+        return (
+            SyncEntityType.AssetFaceV1,
+            sync_model.model_dump(mode="json"),
+            event.data.updated_at,
+        )
 
     return None
 
 
-def _make_sync_event(entity_type: SyncEntityType, data: dict) -> str:
+def _make_sync_event(
+    entity_type: SyncEntityType,
+    data: dict,
+    updated_at: datetime | None = None,
+) -> str:
     """
     Create a sync event JSON line.
 
     Args:
         entity_type: The Immich sync entity type
         data: The entity data dict
+        updated_at: Timestamp for the checkpoint (uses current time if not provided)
 
     Returns:
         JSON line string with newline
     """
+    # Ack format: SyncEntityType|timestamp| (trailing | for future additions)
+    timestamp = updated_at or datetime.now(timezone.utc)
+    ack = f"{entity_type.value}|{timestamp.isoformat()}|"
+
     return (
         json.dumps(
             {
                 "type": entity_type.value,
                 "data": data,
-                "ack": f"{entity_type.value}|{uuid.uuid4()}",
+                "ack": ack,
             }
         )
         + "\n"
@@ -721,8 +754,8 @@ async def generate_sync_stream(
                 for event in events:
                     result = _convert_event_to_sync_entity(event, owner_id)
                     if result:
-                        entity_type, data = result
-                        yield _make_sync_event(entity_type, data)
+                        entity_type, data, updated_at = result
+                        yield _make_sync_event(entity_type, data, updated_at)
 
                         # Track counts
                         entity_type_str = entity_type.value
