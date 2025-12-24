@@ -636,7 +636,7 @@ def _convert_event_to_sync_entity(
 def _make_sync_event(
     entity_type: SyncEntityType,
     data: dict,
-    updated_at: datetime | None = None,
+    updated_at: datetime,
 ) -> str:
     """
     Create a sync event JSON line.
@@ -644,15 +644,13 @@ def _make_sync_event(
     Args:
         entity_type: The Immich sync entity type
         data: The entity data dict
-        updated_at: Timestamp for the checkpoint. If not provided, uses current
-            time. This is only None for SyncCompleteV1 (synthetic completion marker).
+        updated_at: Timestamp for the checkpoint
 
     Returns:
         JSON line string with newline
     """
     # Ack format: SyncEntityType|timestamp| (trailing | for future additions)
-    timestamp = updated_at or datetime.now(timezone.utc)
-    ack = f"{entity_type.value}|{timestamp.isoformat()}|"
+    ack = f"{entity_type.value}|{updated_at.isoformat()}|"
 
     return (
         json.dumps(
@@ -786,7 +784,9 @@ async def generate_sync_stream(
             )
 
         # Stream completion event
-        yield _make_sync_event(SyncEntityType.SyncCompleteV1, {})
+        yield _make_sync_event(
+            SyncEntityType.SyncCompleteV1, {}, datetime.now(timezone.utc)
+        )
         logger.info("Sync stream completed", extra={"user_id": owner_id})
 
     except Exception as e:
