@@ -1,5 +1,12 @@
 """Test configuration and shared fixtures."""
 
+# IMPORTANT: Set TESTING env var before any imports that might trigger settings loading.
+# This ensures TestSettings (which loads .env.test) is used instead of DefaultSettings
+# when main.py is imported during test collection.
+import os
+
+os.environ["TESTING"] = "1"
+
 import pytest
 from unittest.mock import Mock
 from datetime import datetime, timezone
@@ -47,6 +54,8 @@ def sample_gumnut_album():
     album.updated_at = datetime.now(timezone.utc)
     album.asset_count = 5
     album.album_cover_asset_id = None
+    album.start_date = None
+    album.end_date = None
     return album
 
 
@@ -85,6 +94,8 @@ def multiple_gumnut_albums():
         album.updated_at = datetime.now(timezone.utc)
         album.asset_count = i + 1
         album.album_cover_asset_id = None
+        album.start_date = None
+        album.end_date = None
         albums.append(album)
     return albums
 
