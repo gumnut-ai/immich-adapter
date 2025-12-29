@@ -687,7 +687,7 @@ async def generate_sync_stream(
         requested_types = set(request.types)
 
         logger.info(
-            "Starting sync stream",
+            f"Starting sync stream with {len(requested_types)} entity types",
             extra={
                 "user_id": owner_id,
                 "types": [t.value for t in requested_types],
