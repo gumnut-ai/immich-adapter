@@ -54,6 +54,8 @@ def sample_gumnut_album():
     album.updated_at = datetime.now(timezone.utc)
     album.asset_count = 5
     album.album_cover_asset_id = None
+    album.start_date = None
+    album.end_date = None
     return album
 
 
@@ -92,6 +94,8 @@ def multiple_gumnut_albums():
         album.updated_at = datetime.now(timezone.utc)
         album.asset_count = i + 1
         album.album_cover_asset_id = None
+        album.start_date = None
+        album.end_date = None
         albums.append(album)
     return albums
 
