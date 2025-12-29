@@ -37,7 +37,6 @@ class TestSafeUuidFromGumnutId:
         assert result == test_uuid
         assert isinstance(result, UUID)
 
-
     def test_invalid_prefix_fallback(self):
         """Test handling of invalid prefix - should fall back to UUID parsing."""
         test_uuid = uuid4()
@@ -88,7 +87,6 @@ class TestUuidToGumnutId:
         # Should be reversible
         decoded = safe_uuid_from_gumnut_id(result, "prefix")
         assert decoded == test_uuid
-
 
     def test_known_uuid_conversion(self):
         """Test with a known UUID for consistent results."""
@@ -200,9 +198,7 @@ class TestConvenienceFunctions:
         )
 
         # Face functions
-        assert uuid_to_gumnut_face_id(test_uuid) == uuid_to_gumnut_id(
-            test_uuid, "face"
-        )
+        assert uuid_to_gumnut_face_id(test_uuid) == uuid_to_gumnut_id(test_uuid, "face")
 
         face_id = f"face_{shortuuid.encode(test_uuid)}"
         assert safe_uuid_from_face_id(face_id) == safe_uuid_from_gumnut_id(
