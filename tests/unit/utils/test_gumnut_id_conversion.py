@@ -15,6 +15,8 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
     safe_uuid_from_person_id,
     uuid_to_gumnut_person_id,
+    safe_uuid_from_face_id,
+    uuid_to_gumnut_face_id,
     safe_uuid_from_user_id,
     uuid_to_gumnut_user_id,
 )
@@ -23,50 +25,18 @@ from routers.utils.gumnut_id_conversion import (
 class TestSafeUuidFromGumnutId:
     """Test the safe_uuid_from_gumnut_id function."""
 
-    def test_valid_album_id_conversion(self):
+    def test_valid_id_conversion(self):
         """Test converting valid album ID to UUID."""
         # Create a test UUID and encode it
         test_uuid = uuid4()
         short_uuid = shortuuid.encode(test_uuid)
-        gumnut_id = f"album_{short_uuid}"
+        gumnut_id = f"prefix_{short_uuid}"
 
-        result = safe_uuid_from_gumnut_id(gumnut_id, "album")
-
-        assert result == test_uuid
-        assert isinstance(result, UUID)
-
-    def test_valid_asset_id_conversion(self):
-        """Test converting valid asset ID to UUID."""
-        test_uuid = uuid4()
-        short_uuid = shortuuid.encode(test_uuid)
-        gumnut_id = f"asset_{short_uuid}"
-
-        result = safe_uuid_from_gumnut_id(gumnut_id, "asset")
+        result = safe_uuid_from_gumnut_id(gumnut_id, "prefix")
 
         assert result == test_uuid
         assert isinstance(result, UUID)
 
-    def test_valid_person_id_conversion(self):
-        """Test converting valid person ID to UUID."""
-        test_uuid = uuid4()
-        short_uuid = shortuuid.encode(test_uuid)
-        gumnut_id = f"person_{short_uuid}"
-
-        result = safe_uuid_from_gumnut_id(gumnut_id, "person")
-
-        assert result == test_uuid
-        assert isinstance(result, UUID)
-
-    def test_valid_user_id_conversion(self):
-        """Test converting valid user ID to UUID."""
-        test_uuid = uuid4()
-        short_uuid = shortuuid.encode(test_uuid)
-        gumnut_id = f"intuser_{short_uuid}"
-
-        result = safe_uuid_from_gumnut_id(gumnut_id, "intuser")
-
-        assert result == test_uuid
-        assert isinstance(result, UUID)
 
     def test_invalid_prefix_fallback(self):
         """Test handling of invalid prefix - should fall back to UUID parsing."""
@@ -75,7 +45,7 @@ class TestSafeUuidFromGumnutId:
 
         # Since gumnut_id does not have a prefix, a ValueError should be raised
         with pytest.raises(ValueError):
-            safe_uuid_from_gumnut_id(gumnut_id, "album")
+            safe_uuid_from_gumnut_id(gumnut_id, "prefix_not_found")
 
     def test_wrong_prefix_fallback(self):
         """Test handling of wrong prefix - should fall back to UUID parsing."""
@@ -85,7 +55,7 @@ class TestSafeUuidFromGumnutId:
 
         # Since gumnut_id has a different prefix than what we call safe_uuid_from_gumnut_id() with, a ValueError should be raised
         with pytest.raises(ValueError):
-            safe_uuid_from_gumnut_id(gumnut_id, "album")
+            safe_uuid_from_gumnut_id(gumnut_id, "different_prefix")
 
     def test_empty_string_handling(self):
         """Test handling of empty string."""
@@ -96,9 +66,9 @@ class TestSafeUuidFromGumnutId:
         """Test with a known UUID to ensure consistent behavior."""
         known_uuid = UUID("550e8400-e29b-41d4-a716-446655440000")
         short_uuid = shortuuid.encode(known_uuid)
-        gumnut_id = f"album_{short_uuid}"
+        gumnut_id = f"prefix_{short_uuid}"
 
-        result = safe_uuid_from_gumnut_id(gumnut_id, "album")
+        result = safe_uuid_from_gumnut_id(gumnut_id, "prefix")
 
         assert result == known_uuid
 
@@ -106,57 +76,19 @@ class TestSafeUuidFromGumnutId:
 class TestUuidToGumnutId:
     """Test the uuid_to_gumnut_id function."""
 
-    def test_album_id_generation(self):
-        """Test generating album ID from UUID."""
+    def test_id_generation(self):
+        """Test generating ID from UUID."""
         test_uuid = uuid4()
 
-        result = uuid_to_gumnut_id(test_uuid, "album")
+        result = uuid_to_gumnut_id(test_uuid, "prefix")
 
-        assert result.startswith("album_")
+        assert result.startswith("prefix_")
         assert isinstance(result, str)
 
         # Should be reversible
-        decoded = safe_uuid_from_gumnut_id(result, "album")
+        decoded = safe_uuid_from_gumnut_id(result, "prefix")
         assert decoded == test_uuid
 
-    def test_asset_id_generation(self):
-        """Test generating asset ID from UUID."""
-        test_uuid = uuid4()
-
-        result = uuid_to_gumnut_id(test_uuid, "asset")
-
-        assert result.startswith("asset_")
-        assert isinstance(result, str)
-
-        # Should be reversible
-        decoded = safe_uuid_from_gumnut_id(result, "asset")
-        assert decoded == test_uuid
-
-    def test_person_id_generation(self):
-        """Test generating person ID from UUID."""
-        test_uuid = uuid4()
-
-        result = uuid_to_gumnut_id(test_uuid, "person")
-
-        assert result.startswith("person_")
-        assert isinstance(result, str)
-
-        # Should be reversible
-        decoded = safe_uuid_from_gumnut_id(result, "person")
-        assert decoded == test_uuid
-
-    def test_user_id_generation(self):
-        """Test generating user ID from UUID."""
-        test_uuid = uuid4()
-
-        result = uuid_to_gumnut_id(test_uuid, "intuser")
-
-        assert result.startswith("intuser_")
-        assert isinstance(result, str)
-
-        # Should be reversible
-        decoded = safe_uuid_from_gumnut_id(result, "intuser")
-        assert decoded == test_uuid
 
     def test_known_uuid_conversion(self):
         """Test with a known UUID for consistent results."""
@@ -209,6 +141,18 @@ class TestConvenienceFunctions:
         recovered_uuid = safe_uuid_from_person_id(person_id)
         assert recovered_uuid == test_uuid
 
+    def test_face_convenience_functions(self):
+        """Test face-specific convenience functions."""
+        test_uuid = uuid4()
+
+        # UUID to face ID
+        face_id = uuid_to_gumnut_face_id(test_uuid)
+        assert face_id.startswith("face_")
+
+        # Face ID back to UUID
+        recovered_uuid = safe_uuid_from_face_id(face_id)
+        assert recovered_uuid == test_uuid
+
     def test_user_convenience_functions(self):
         """Test user-specific convenience functions."""
         test_uuid = uuid4()
@@ -253,6 +197,16 @@ class TestConvenienceFunctions:
         person_id = f"person_{shortuuid.encode(test_uuid)}"
         assert safe_uuid_from_person_id(person_id) == safe_uuid_from_gumnut_id(
             person_id, "person"
+        )
+
+        # Face functions
+        assert uuid_to_gumnut_face_id(test_uuid) == uuid_to_gumnut_id(
+            test_uuid, "face"
+        )
+
+        face_id = f"face_{shortuuid.encode(test_uuid)}"
+        assert safe_uuid_from_face_id(face_id) == safe_uuid_from_gumnut_id(
+            face_id, "face"
         )
 
         # User functions

@@ -63,6 +63,7 @@ from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_album_id,
     safe_uuid_from_asset_id,
+    safe_uuid_from_face_id,
     safe_uuid_from_person_id,
     safe_uuid_from_user_id,
 )
@@ -526,7 +527,7 @@ def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
         person_id = str(safe_uuid_from_person_id(face.person_id))
 
     return SyncAssetFaceV1(
-        id=face.id,
+        id=str(safe_uuid_from_face_id(face.id)),
         assetId=str(safe_uuid_from_asset_id(face.asset_id)),
         boundingBoxX1=bounding_box.get("x", 0),
         boundingBoxX2=bounding_box.get("x", 0) + bounding_box.get("w", 0),
