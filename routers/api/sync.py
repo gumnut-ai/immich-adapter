@@ -314,6 +314,39 @@ def gumnut_user_to_sync_user_v1(user: UserResponse) -> SyncUserV1:
     )
 
 
+def _to_immich_local_datetime(dt: datetime | None) -> datetime | None:
+    """
+    Convert a datetime to Immich's "keepLocalTime" format.
+
+    Immich stores localDateTime as a UTC timestamp that preserves local time values.
+    For example, 10:00 AM PST becomes 10:00:00Z (not 18:00:00Z). This allows the
+    mobile client to display the original local time regardless of viewer timezone.
+
+    See immich/server/src/services/metadata.service.ts:870
+    """
+    if dt is None:
+        return None
+    # Strip timezone info, then mark as UTC to preserve the local time appearance
+    return dt.replace(tzinfo=None).replace(tzinfo=timezone.utc)
+
+
+def _to_actual_utc(dt: datetime | None) -> datetime | None:
+    """
+    Convert a datetime to actual UTC timestamp.
+
+    If the datetime has timezone info, convert to UTC. If naive, assume UTC.
+    This is used for fileCreatedAt which should be actual UTC (not keepLocalTime)
+    so that the mobile client can correctly convert it to the user's local timezone.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        # Naive datetime - assume it's meant to be UTC
+        return dt.replace(tzinfo=timezone.utc)
+    # Convert timezone-aware datetime to UTC
+    return dt.astimezone(timezone.utc)
+
+
 def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAssetV1:
     """
     Convert Gumnut AssetResponse to Immich SyncAssetV1 format.
@@ -336,9 +369,14 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     else:
         asset_type = AssetTypeEnum.OTHER
 
-    fileCreatedAt = asset.file_created_at
+    # fileCreatedAt: Use local_datetime (EXIF capture time) converted to actual UTC.
+    # The mobile client applies SQLite's 'localtime' modifier to display in local time.
+    # For a photo taken at 10:30 AM PST: fileCreatedAt = 18:30:00Z, mobile shows 10:30 AM.
+    fileCreatedAt = _to_actual_utc(asset.local_datetime)
     fileModifiedAt = asset.file_modified_at
-    localDateTime = asset.local_datetime
+    # localDateTime: Use Immich's "keepLocalTime" format (local time values as UTC).
+    # For a photo taken at 10:30 AM PST: localDateTime = 10:30:00Z (preserves local time).
+    localDateTime = _to_immich_local_datetime(asset.local_datetime)
 
     if asset.checksum_sha1 is None:
         logger.warning(
@@ -377,11 +415,19 @@ def gumnut_exif_to_sync_exif_v1(exif: ExifResponse) -> SyncAssetExifV1:
     Returns:
         SyncAssetExifV1 for sync stream
     """
+    original_datetime = exif.original_datetime
+    if original_datetime is not None and original_datetime.tzinfo is None:
+        original_datetime = original_datetime.replace(tzinfo=timezone.utc)
+
+    modified_datetime = exif.modified_datetime
+    if modified_datetime is not None and modified_datetime.tzinfo is None:
+        modified_datetime = modified_datetime.replace(tzinfo=timezone.utc)
+
     return SyncAssetExifV1(
         assetId=str(safe_uuid_from_asset_id(exif.asset_id)),
         city=exif.city,
         country=exif.country,
-        dateTimeOriginal=exif.original_datetime,
+        dateTimeOriginal=original_datetime,
         description=exif.description,
         exifImageHeight=None,  # Not available in ExifResponse
         exifImageWidth=None,  # Not available in ExifResponse
@@ -396,7 +442,7 @@ def gumnut_exif_to_sync_exif_v1(exif: ExifResponse) -> SyncAssetExifV1:
         longitude=exif.longitude,
         make=exif.make,
         model=exif.model,
-        modifyDate=exif.modified_datetime,
+        modifyDate=modified_datetime,
         orientation=str(exif.orientation) if exif.orientation is not None else None,
         profileDescription=exif.profile_description,
         projectionType=exif.projection_type,
@@ -482,11 +528,32 @@ def _format_exposure_time(exposure_time: float | None) -> str | None:
 
 
 def _extract_timezone(dt: datetime | None) -> str | None:
-    """Extract timezone name from datetime."""
-    if dt is None:
+    """Extract timezone in Immich's format (e.g., 'UTC+9', 'UTC-8', 'UTC+5:30').
+
+    Immich stores timezone from exiftool which uses 'UTC+X' format without
+    leading zeros. We need to match this format for consistency.
+
+    Returns None if no timezone info, matching Immich's behavior.
+    """
+    if dt is None or dt.tzinfo is None:
         return None
-    tz_name = dt.tzname()
-    return tz_name if tz_name else None
+
+    # Get the UTC offset as a timedelta
+    offset = dt.utcoffset()
+    if offset is None:
+        return None
+
+    # Calculate total seconds and convert to hours/minutes
+    total_seconds = int(offset.total_seconds())
+    hours, remainder = divmod(abs(total_seconds), 3600)
+    minutes = remainder // 60
+
+    # Build the timezone string in Immich's format
+    sign = "+" if total_seconds >= 0 else "-"
+    if minutes:
+        return f"UTC{sign}{hours}:{minutes:02d}"
+    else:
+        return f"UTC{sign}{hours}"
 
 
 def gumnut_album_to_sync_album_v1(album: AlbumResponse, owner_id: str) -> SyncAlbumV1:
