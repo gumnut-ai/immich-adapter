@@ -690,44 +690,6 @@ def gumnut_person_to_sync_person_v1(
     )
 
 
-def gumnut_asset_face_to_sync_v1(
-    asset: AssetResponse, person: PersonResponse, person_index: int
-) -> SyncAssetFaceV1:
-    """
-    Convert Gumnut asset person data to Immich SyncAssetFaceV1 format.
-
-    Note: Gumnut doesn't provide bounding box data, so we use placeholders.
-
-    Args:
-        asset: Gumnut asset containing the face
-        person: Gumnut person detected in the asset
-        person_index: Index of this person in the asset's people list
-
-    Returns:
-        SyncAssetFaceV1 for sync stream
-    """
-    # Generate deterministic face ID from asset + person + index
-    face_id = str(
-        uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"{asset.id}-{person.id}-{person_index}",
-        )
-    )
-
-    return SyncAssetFaceV1(
-        id=face_id,
-        assetId=str(safe_uuid_from_asset_id(asset.id)),
-        boundingBoxX1=0,
-        boundingBoxX2=0,
-        boundingBoxY1=0,
-        boundingBoxY2=0,
-        imageHeight=asset.height or 0,
-        imageWidth=asset.width or 0,
-        sourceType="machine-learning",
-        personId=str(safe_uuid_from_person_id(person.id)),
-    )
-
-
 def _format_exposure_time(exposure_time: float | None) -> str | None:
     """Format exposure time as a fraction string (e.g., '1/66')."""
     if exposure_time is None or exposure_time <= 0:
