@@ -16,6 +16,7 @@ from gumnut.types.person_event_payload import PersonEventPayload
 
 from routers.api.sync import (
     _extract_timezone,
+    _generate_reset_stream,
     _get_session_token,
     _parse_ack,
     _to_ack_string,
@@ -29,7 +30,7 @@ from routers.api.sync import (
     send_sync_ack,
 )
 from services.checkpoint_store import Checkpoint, CheckpointStore
-from services.session_store import SessionStore
+from services.session_store import Session, SessionStore
 from routers.immich_models import (
     SyncAckDeleteDto,
     SyncAckSetDto,
@@ -71,7 +72,7 @@ class TestGetSessionToken:
             _get_session_token(mock_request)
 
         assert exc_info.value.status_code == 403
-        assert "Invalid session token" in exc_info.value.detail
+        assert "Session required" in exc_info.value.detail
 
     def test_invalid_uuid_string_raises_403(self):
         """Invalid UUID string raises 403."""
@@ -1032,6 +1033,21 @@ class TestGetSyncStreamEndpoint:
         client.events.get.return_value = events_response
         return client
 
+    def _create_mock_session(self, is_pending_sync_reset: bool = False) -> Session:
+        """Create a mock Session object."""
+        return Session(
+            id=TEST_SESSION_UUID,
+            user_id="user-123",
+            library_id="lib-123",
+            stored_jwt="encrypted-jwt",
+            device_type="iOS",
+            device_os="iOS 17",
+            app_version="1.94.0",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            is_pending_sync_reset=is_pending_sync_reset,
+        )
+
     @pytest.mark.anyio
     async def test_returns_streaming_response_with_correct_media_type(self):
         """Endpoint returns StreamingResponse with jsonlines media type."""
@@ -1047,6 +1063,9 @@ class TestGetSyncStreamEndpoint:
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_checkpoint_store.get_all.return_value = []
 
+        mock_session_store = AsyncMock(spec=SessionStore)
+        mock_session_store.get_by_id.return_value = None
+
         request = SyncStreamDto(types=[])
 
         result = await get_sync_stream(
@@ -1054,6 +1073,7 @@ class TestGetSyncStreamEndpoint:
             http_request=mock_request,
             gumnut_client=mock_client,
             checkpoint_store=mock_checkpoint_store,
+            session_store=mock_session_store,
         )
 
         assert isinstance(result, StreamingResponse)
@@ -1078,6 +1098,9 @@ class TestGetSyncStreamEndpoint:
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_checkpoint_store.get_all.return_value = [checkpoint]
 
+        mock_session_store = AsyncMock(spec=SessionStore)
+        mock_session_store.get_by_id.return_value = self._create_mock_session()
+
         request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1])
 
         result = await get_sync_stream(
@@ -1085,6 +1108,7 @@ class TestGetSyncStreamEndpoint:
             http_request=mock_request,
             gumnut_client=mock_client,
             checkpoint_store=mock_checkpoint_store,
+            session_store=mock_session_store,
         )
 
         # Verify checkpoint store was called with correct session UUID
@@ -1099,6 +1123,149 @@ class TestGetSyncStreamEndpoint:
         # Only SyncCompleteV1 (auth user skipped because checkpoint is newer)
         assert len(events) == 1
         assert events[0]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_pending_sync_reset_sends_only_reset_event(self):
+        """When session has isPendingSyncReset, only SyncResetV1 is sent.
+
+        This matches immich behavior: when a reset is pending, the server
+        sends SyncResetV1 and ends the stream immediately. No other entity
+        types are sent, regardless of what was requested.
+        """
+        mock_request = Mock()
+        mock_request.state.session_token = str(TEST_SESSION_UUID)
+
+        mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
+
+        # Session has pending reset flag set
+        mock_session_store = AsyncMock(spec=SessionStore)
+        mock_session_store.get_by_id.return_value = self._create_mock_session(
+            is_pending_sync_reset=True
+        )
+
+        # Request multiple entity types - none should be returned
+        request = SyncStreamDto(
+            types=[SyncRequestType.AuthUsersV1, SyncRequestType.AssetsV1]
+        )
+
+        result = await get_sync_stream(
+            request=request,
+            http_request=mock_request,
+            gumnut_client=Mock(),  # Should not be called
+            checkpoint_store=mock_checkpoint_store,
+            session_store=mock_session_store,
+        )
+
+        # Consume stream
+        events = []
+        async for chunk in result.body_iterator:
+            line = bytes(chunk).decode() if not isinstance(chunk, str) else chunk
+            events.append(json.loads(line.strip()))
+
+        # Only SyncResetV1 should be returned
+        assert len(events) == 1
+        assert events[0]["type"] == "SyncResetV1"
+        assert events[0]["data"] == {}
+        assert events[0]["ack"] == "SyncResetV1|reset"
+
+        # Checkpoint store should not be called (no loading/clearing)
+        mock_checkpoint_store.get_all.assert_not_called()
+        mock_checkpoint_store.delete_all.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_request_reset_clears_checkpoints(self):
+        """When request.reset=True, all checkpoints are cleared before streaming.
+
+        This triggers a full sync from the beginning. The client sends reset=True
+        when it wants to start fresh (e.g., user manually requested full re-sync).
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = self._create_mock_user(updated_at)
+        mock_client = self._create_mock_gumnut_client(mock_user)
+
+        mock_request = Mock()
+        mock_request.state.session_token = str(TEST_SESSION_UUID)
+
+        mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
+
+        mock_session_store = AsyncMock(spec=SessionStore)
+        mock_session_store.get_by_id.return_value = self._create_mock_session()
+
+        # Request with reset=True
+        request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1], reset=True)
+
+        result = await get_sync_stream(
+            request=request,
+            http_request=mock_request,
+            gumnut_client=mock_client,
+            checkpoint_store=mock_checkpoint_store,
+            session_store=mock_session_store,
+        )
+
+        # Verify checkpoints were deleted
+        mock_checkpoint_store.delete_all.assert_called_once_with(TEST_SESSION_UUID)
+
+        # Verify checkpoints were NOT loaded (since they were cleared)
+        mock_checkpoint_store.get_all.assert_not_called()
+
+        # Consume stream and verify auth user is returned (full sync)
+        events = []
+        async for chunk in result.body_iterator:
+            line = bytes(chunk).decode() if not isinstance(chunk, str) else chunk
+            events.append(json.loads(line.strip()))
+
+        # AuthUserV1 should be streamed (no checkpoint to skip it)
+        assert len(events) == 2
+        assert events[0]["type"] == "AuthUserV1"
+        assert events[1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_request_reset_without_session_does_not_clear(self):
+        """When request.reset=True but no session, checkpoints are not cleared.
+
+        This handles the edge case where someone calls the endpoint without
+        a valid session token. No error is raised, but no clearing occurs.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = self._create_mock_user(updated_at)
+        mock_client = self._create_mock_gumnut_client(mock_user)
+
+        mock_request = Mock()
+        mock_request.state.session_token = None  # No session
+
+        mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
+
+        mock_session_store = AsyncMock(spec=SessionStore)
+
+        request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1], reset=True)
+
+        await get_sync_stream(
+            request=request,
+            http_request=mock_request,
+            gumnut_client=mock_client,
+            checkpoint_store=mock_checkpoint_store,
+            session_store=mock_session_store,
+        )
+
+        # No checkpoint operations should occur without a session
+        mock_checkpoint_store.delete_all.assert_not_called()
+        mock_checkpoint_store.get_all.assert_not_called()
+
+
+class TestGenerateResetStream:
+    """Tests for _generate_reset_stream helper function."""
+
+    @pytest.mark.anyio
+    async def test_generates_single_reset_event(self):
+        """Reset stream contains only SyncResetV1 with correct format."""
+        events = []
+        async for line in _generate_reset_stream():
+            events.append(json.loads(line.strip()))
+
+        assert len(events) == 1
+        assert events[0]["type"] == "SyncResetV1"
+        assert events[0]["data"] == {}
+        assert events[0]["ack"] == "SyncResetV1|reset"
 
 
 class TestGetSyncAck:

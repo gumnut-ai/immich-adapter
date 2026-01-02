@@ -103,9 +103,14 @@ def _get_session_token(request: Request) -> UUID:
         HTTPException: If session token is missing or invalid
     """
     session_token = getattr(request.state, "session_token", None)
+    if not session_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Session required",
+        )
     try:
         return UUID(session_token)
-    except (ValueError, TypeError):
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid session token",
@@ -1098,12 +1103,32 @@ async def generate_sync_stream(
         yield json.dumps(error_event) + "\n"
 
 
+async def _generate_reset_stream() -> AsyncGenerator[str, None]:
+    """
+    Generate a sync stream containing only SyncResetV1.
+
+    Used when the session has isPendingSyncReset flag set.
+    Matches immich behavior: send SyncResetV1 and end immediately.
+    """
+    yield (
+        json.dumps(
+            {
+                "type": SyncEntityType.SyncResetV1.value,
+                "data": {},
+                "ack": "SyncResetV1|reset",
+            }
+        )
+        + "\n"
+    )
+
+
 @router.post("/stream")
 async def get_sync_stream(
     request: SyncStreamDto,
     http_request: Request,
     gumnut_client: Gumnut = Depends(get_authenticated_gumnut_client),
     checkpoint_store: CheckpointStore = Depends(get_checkpoint_store),
+    session_store: SessionStore = Depends(get_session_store),
 ):
     """
     Get sync stream as JSON Lines (application/jsonlines+json).
@@ -1114,25 +1139,55 @@ async def get_sync_stream(
 
     Uses stored checkpoints to resume sync from last acknowledged position,
     only returning entities updated after the checkpoint timestamp.
+
+    If request.reset is True, clears all checkpoints before streaming (full sync).
+    If session has isPendingSyncReset flag, sends SyncResetV1 and ends immediately.
     """
-    # Load checkpoints for delta sync (empty dict if no session or no checkpoints)
-    checkpoint_map: dict[SyncEntityType, datetime] = {}
     session_token = getattr(http_request.state, "session_token", None)
+    session_uuid: UUID | None = None
+
     if session_token:
         try:
             session_uuid = UUID(session_token)
-            checkpoints = await checkpoint_store.get_all(session_uuid)
-            checkpoint_map = {cp.entity_type: cp.last_synced_at for cp in checkpoints}
-            logger.debug(
-                f"Loaded {len(checkpoint_map)} checkpoints for sync stream",
-                extra={
-                    "session_id": session_token,
-                    "checkpoint_types": [t.value for t in checkpoint_map.keys()],
-                },
-            )
         except (ValueError, TypeError):
-            # Invalid session token - continue without checkpoints
+            # Invalid session token - continue without session features
             pass
+
+    # Check if session has isPendingSyncReset flag set
+    # If so, send SyncResetV1 and end immediately (matches immich behavior)
+    if session_uuid:
+        session = await session_store.get_by_id(str(session_uuid))
+        if session and session.is_pending_sync_reset:
+            logger.info(
+                "Session has isPendingSyncReset flag - sending SyncResetV1",
+                extra={"session_id": session_token},
+            )
+            return StreamingResponse(
+                _generate_reset_stream(),
+                media_type="application/jsonlines+json",
+            )
+
+    # Handle request.reset flag - clear all checkpoints before streaming
+    # This triggers a full sync from the beginning
+    if request.reset and session_uuid:
+        logger.info(
+            "request.reset=True - clearing all checkpoints for full sync",
+            extra={"session_id": session_token},
+        )
+        await checkpoint_store.delete_all(session_uuid)
+
+    # Load checkpoints for delta sync (empty dict if no session or no checkpoints)
+    checkpoint_map: dict[SyncEntityType, datetime] = {}
+    if session_uuid and not request.reset:
+        checkpoints = await checkpoint_store.get_all(session_uuid)
+        checkpoint_map = {cp.entity_type: cp.last_synced_at for cp in checkpoints}
+        logger.debug(
+            f"Loaded {len(checkpoint_map)} checkpoints for sync stream",
+            extra={
+                "session_id": session_token,
+                "checkpoint_types": [t.value for t in checkpoint_map.keys()],
+            },
+        )
 
     return StreamingResponse(
         generate_sync_stream(gumnut_client, request, checkpoint_map),
