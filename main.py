@@ -4,7 +4,7 @@ from config.logging import init_logging
 from contextlib import asynccontextmanager
 
 from routers.middleware.auth_middleware import AuthMiddleware
-from routers import static
+from routers import static, well_known
 from routers.utils.spa_static_files import SPAStaticFiles
 from routers.api import (
     activities,
@@ -95,6 +95,7 @@ app.include_router(server.router)
 app.include_router(sessions.router)
 app.include_router(shared_links.router)
 app.include_router(static.router)
+app.include_router(well_known.router)
 app.include_router(stacks.router)
 app.include_router(sync.router)
 app.include_router(system_config.router)
