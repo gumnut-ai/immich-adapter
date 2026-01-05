@@ -140,7 +140,10 @@ def _parse_ack(ack: str) -> tuple[SyncEntityType, datetime | None] | None:
     """
     parts = ack.split("|")
     if len(parts) < 2:
-        logger.warning(f"Skipping malformed ack (too few parts): {ack}")
+        logger.warning(
+            "Skipping malformed ack (too few parts)",
+            extra={"ack": ack},
+        )
         return None
 
     entity_type_str = parts[0]
@@ -161,7 +164,10 @@ def _parse_ack(ack: str) -> tuple[SyncEntityType, datetime | None] | None:
         try:
             last_synced_at = datetime.fromisoformat(timestamp_str)
         except ValueError:
-            logger.warning(f"Skipping ack with invalid timestamp: {ack}")
+            logger.warning(
+                "Skipping ack with invalid timestamp",
+                extra={"ack": ack},
+            )
             return None
 
     return entity_type, last_synced_at
@@ -245,7 +251,7 @@ async def send_sync_ack(
     # Parse all acks and collect checkpoints to store
     checkpoints_to_store: dict[SyncEntityType, datetime] = {}
 
-    for ack in request.acks:
+    for idx, ack in enumerate(request.acks):
         parsed = _parse_ack(ack)
         if parsed is None:
             # Malformed ack - skip it (already logged)
@@ -255,6 +261,18 @@ async def send_sync_ack(
 
         # Handle SyncResetV1 specially - reset sync progress and return
         if entity_type == SyncEntityType.SyncResetV1:
+            # Warn if there are other acks that will be ignored
+            remaining_acks = len(request.acks) - idx - 1
+            ignored_count = len(checkpoints_to_store) + remaining_acks
+            if ignored_count > 0:
+                logger.warning(
+                    "SyncResetV1 encountered - ignoring other acks",
+                    extra={
+                        "session_id": session_token,
+                        "ignored_checkpoint_count": len(checkpoints_to_store),
+                        "ignored_remaining_count": remaining_acks,
+                    },
+                )
             logger.info(
                 "SyncResetV1 acknowledged - resetting sync progress",
                 extra={"session_id": session_token},
