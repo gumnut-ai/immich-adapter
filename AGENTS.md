@@ -29,6 +29,11 @@
 - Never edit historical database migration files
 - Place imports at the top of files (inline imports only to prevent circular dependencies)
 
+### Logging
+
+- Always use structured logging with key/value metadata in the `extra` dict
+- Example: `logger.info("User logged in", extra={"user_id": user_id, "session_id": session_id})`
+
 ### Pull Requests
 
 - When updating pull requests with additional commits, update the PR description to include the latest changes
