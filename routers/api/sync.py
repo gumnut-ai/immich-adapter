@@ -933,6 +933,9 @@ _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.AssetFacesV1, "face", SyncEntityType.AssetFaceV1),
 ]
 
+# Page size for events API pagination
+EVENTS_PAGE_SIZE = 500
+
 
 def _get_entity_id_for_pagination(event: Data) -> str:
     """
@@ -981,15 +984,13 @@ async def _stream_entity_type(
     last_entity_id = checkpoint.last_entity_id if checkpoint else None
     count = 0
 
-    PAGE_SIZE = 500
-
     while True:
         # Build params, only including starting_after_id when we have a cursor
         params: dict = {
             "updated_at_gte": last_updated_at,
             "updated_at_lt": sync_started_at,
             "entity_types": gumnut_entity_type,
-            "limit": PAGE_SIZE,
+            "limit": EVENTS_PAGE_SIZE,
         }
         if last_entity_id is not None:
             params["starting_after_id"] = last_entity_id
@@ -1014,7 +1015,7 @@ async def _stream_entity_type(
         last_updated_at = last_event.data.updated_at
         last_entity_id = _get_entity_id_for_pagination(last_event)
 
-        if len(events) < PAGE_SIZE:
+        if len(events) < EVENTS_PAGE_SIZE:
             break
 
     if count > 0:

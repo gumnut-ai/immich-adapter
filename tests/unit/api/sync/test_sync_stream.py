@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from routers.api.sync import (
+    EVENTS_PAGE_SIZE,
     _generate_reset_stream,
     _get_entity_id_for_pagination,
     _stream_entity_type,
@@ -732,7 +733,7 @@ class TestStreamEntityTypePagination:
             updated_at_gte=updated_at,
             updated_at_lt=sync_started_at,
             entity_types="asset",
-            limit=500,
+            limit=EVENTS_PAGE_SIZE,
             starting_after_id=checkpoint_entity_id,
         )
 
@@ -766,7 +767,7 @@ class TestStreamEntityTypePagination:
             updated_at_gte=None,
             updated_at_lt=sync_started_at,
             entity_types="asset",
-            limit=500,
+            limit=EVENTS_PAGE_SIZE,
         )
 
     @pytest.mark.anyio
@@ -780,10 +781,10 @@ class TestStreamEntityTypePagination:
         mock_user = create_mock_user(updated_at_1)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        # Create 500 assets for first page (triggers pagination)
+        # Create EVENTS_PAGE_SIZE assets for first page (triggers pagination)
         first_page_assets = []
         last_asset_id = None
-        for i in range(500):
+        for i in range(EVENTS_PAGE_SIZE):
             asset_data = create_mock_asset_data(updated_at_1)
             # Generate valid Gumnut IDs using unique UUIDs
             asset_uuid = UUID(f"00000000-0000-0000-0000-{i:012d}")
@@ -819,8 +820,8 @@ class TestStreamEntityTypePagination:
         ):
             results.append(item)
 
-        # Verify we got 501 events
-        assert len(results) == 501
+        # Verify we got EVENTS_PAGE_SIZE + 1 events
+        assert len(results) == EVENTS_PAGE_SIZE + 1
 
         # Verify second call used cursor from last event of first page
         calls = mock_client.events.get.call_args_list
@@ -832,7 +833,7 @@ class TestStreamEntityTypePagination:
             updated_at_gte=updated_at_1,  # from last event of page 1
             updated_at_lt=sync_started_at,
             entity_types="asset",
-            limit=500,
+            limit=EVENTS_PAGE_SIZE,
             starting_after_id=last_asset_id,  # from last event of page 1
         )
 
@@ -846,10 +847,10 @@ class TestStreamEntityTypePagination:
         mock_user = create_mock_user(same_timestamp)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        # Create first page of 500 assets all with same timestamp
+        # Create first page of EVENTS_PAGE_SIZE assets all with same timestamp
         first_page_assets = []
         last_asset_id = None
-        for i in range(500):
+        for i in range(EVENTS_PAGE_SIZE):
             asset_data = create_mock_asset_data(same_timestamp)
             # Generate valid Gumnut IDs using unique UUIDs
             asset_uuid = UUID(f"00000000-0000-0000-0000-{i:012d}")
@@ -861,7 +862,7 @@ class TestStreamEntityTypePagination:
 
         # Second page - more assets with SAME timestamp
         second_page_assets = []
-        for i in range(500, 502):
+        for i in range(EVENTS_PAGE_SIZE, EVENTS_PAGE_SIZE + 2):
             asset_data = create_mock_asset_data(same_timestamp)
             asset_uuid = UUID(f"00000000-0000-0000-0000-{i:012d}")
             asset_data.id = uuid_to_gumnut_asset_id(asset_uuid)
@@ -888,8 +889,8 @@ class TestStreamEntityTypePagination:
         ):
             results.append(item)
 
-        # Should get all 502 entities despite same timestamp
-        assert len(results) == 502
+        # Should get all EVENTS_PAGE_SIZE + 2 entities despite same timestamp
+        assert len(results) == EVENTS_PAGE_SIZE + 2
 
         # Verify second call uses same timestamp but with entity_id cursor
         calls = mock_client.events.get.call_args_list
@@ -902,7 +903,7 @@ class TestStreamEntityTypePagination:
             updated_at_gte=same_timestamp,
             updated_at_lt=sync_started_at,
             entity_types="asset",
-            limit=500,
+            limit=EVENTS_PAGE_SIZE,
             starting_after_id=last_asset_id,  # Last entity from first page
         )
 
@@ -917,10 +918,10 @@ class TestStreamEntityTypePagination:
         mock_user = create_mock_user(updated_at_1)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        # First page of 500 exif events
+        # First page of EVENTS_PAGE_SIZE exif events
         first_page_exifs = []
         last_asset_id = None
-        for i in range(500):
+        for i in range(EVENTS_PAGE_SIZE):
             exif_data = create_mock_exif_data(updated_at_1)
             # Generate valid Gumnut asset IDs using unique UUIDs
             asset_uuid = UUID(f"00000000-0000-0000-0000-{i:012d}")
@@ -956,8 +957,8 @@ class TestStreamEntityTypePagination:
         ):
             results.append(item)
 
-        # Should get all 501 exif events
-        assert len(results) == 501
+        # Should get all EVENTS_PAGE_SIZE + 1 exif events
+        assert len(results) == EVENTS_PAGE_SIZE + 1
 
         # Verify second call uses asset_id from last exif event
         calls = mock_client.events.get.call_args_list
@@ -966,6 +967,6 @@ class TestStreamEntityTypePagination:
             updated_at_gte=updated_at_1,
             updated_at_lt=sync_started_at,
             entity_types="exif",
-            limit=500,
+            limit=EVENTS_PAGE_SIZE,
             starting_after_id=last_asset_id,  # asset_id from last exif
         )
