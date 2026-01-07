@@ -82,7 +82,9 @@ class TestGenerateSyncStream:
 
         # Verify ack format: "SyncEntityType|timestamp|entity_id|"
         ack_parts = auth_event["ack"].split("|")
-        assert len(ack_parts) == 4, f"Expected 4 parts in ack, got {len(ack_parts)}: {auth_event['ack']}"
+        assert len(ack_parts) == 4, (
+            f"Expected 4 parts in ack, got {len(ack_parts)}: {auth_event['ack']}"
+        )
         assert ack_parts[0] == "AuthUserV1"
         assert ack_parts[1] == user_updated_at.isoformat()
         assert ack_parts[2] == mock_user.id  # entity_id should be the user ID
@@ -117,7 +119,9 @@ class TestGenerateSyncStream:
 
         # Verify ack format: "SyncEntityType|timestamp|entity_id|"
         ack_parts = asset_event_output["ack"].split("|")
-        assert len(ack_parts) == 4, f"Expected 4 parts in ack, got {len(ack_parts)}: {asset_event_output['ack']}"
+        assert len(ack_parts) == 4, (
+            f"Expected 4 parts in ack, got {len(ack_parts)}: {asset_event_output['ack']}"
+        )
         assert ack_parts[0] == "AssetV1"
         assert ack_parts[1] == updated_at.isoformat()
         assert ack_parts[2] == asset_data.id  # entity_id should be the asset ID
