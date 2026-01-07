@@ -36,6 +36,7 @@ from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
 
 from services.checkpoint_store import (
+    Checkpoint,
     CheckpointStore,
     get_checkpoint_store,
 )
@@ -117,23 +118,27 @@ def _get_session_token(request: Request) -> UUID:
         )
 
 
-def _parse_ack(ack: str) -> tuple[SyncEntityType, datetime | None] | None:
+def _parse_ack(ack: str) -> tuple[SyncEntityType, datetime, str] | None:
     """
-    Parse an ack string into entity type and timestamp.
+    Parse an ack string into entity type, timestamp, and entity ID.
 
-    Ack format for immich-adapter: "SyncEntityType|timestamp|"
+    Ack format for immich-adapter: "SyncEntityType|timestamp|entity_id|"
     - SyncEntityType: Entity type string (e.g., "AssetV1", "AlbumV1")
     - timestamp: ISO 8601 datetime string
+    - entity_id: The entity ID for keyset pagination
     - Trailing pipe for future additions
 
     Matches immich behavior: only throws for invalid entity types, skips
     malformed acks otherwise.
 
+    Note:
+        Backward compatible with old format without entity_id (entity_id will be empty string).
+
     Args:
         ack: The ack string to parse
 
     Returns:
-        Tuple of (entity_type, last_synced_at), or None if ack is malformed
+        Tuple of (entity_type, last_synced_at, entity_id), or None if ack is malformed.
 
     Raises:
         HTTPException: If entity type is invalid (matches immich behavior)
@@ -147,7 +152,7 @@ def _parse_ack(ack: str) -> tuple[SyncEntityType, datetime | None] | None:
         return None
 
     entity_type_str = parts[0]
-    timestamp_str = parts[1] if parts[1] else None
+    timestamp_str = parts[1]
 
     # Validate entity type - immich throws BadRequestException for invalid types
     try:
@@ -158,35 +163,47 @@ def _parse_ack(ack: str) -> tuple[SyncEntityType, datetime | None] | None:
             detail=f"Invalid ack type: {entity_type_str}",
         )
 
-    # Parse timestamp if present - skip if malformed (don't throw)
-    last_synced_at = None
-    if timestamp_str:
-        try:
-            last_synced_at = datetime.fromisoformat(timestamp_str)
-        except ValueError:
-            logger.warning(
-                "Skipping ack with invalid timestamp",
-                extra={"ack": ack},
-            )
-            return None
+    # Parse timestamp - skip ack if missing or malformed
+    if not timestamp_str:
+        logger.warning(
+            "Skipping ack with missing timestamp",
+            extra={"ack": ack},
+        )
+        return None
 
-    return entity_type, last_synced_at
+    try:
+        last_synced_at = datetime.fromisoformat(timestamp_str)
+    except ValueError:
+        logger.warning(
+            "Skipping ack with invalid timestamp",
+            extra={"ack": ack},
+        )
+        return None
+
+    entity_id = parts[2] if len(parts) >= 3 and parts[2] else ""
+
+    return entity_type, last_synced_at, entity_id
 
 
-def _to_ack_string(entity_type: SyncEntityType, last_synced_at: datetime) -> str:
+def _to_ack_string(
+    entity_type: SyncEntityType,
+    last_synced_at: datetime,
+    entity_id: str,
+) -> str:
     """
-    Convert entity type and timestamp to ack string.
+    Convert entity type, timestamp, and entity ID to ack string.
 
-    Ack format for immich-adapter: "SyncEntityType|timestamp|"
+    Ack format for immich-adapter: "SyncEntityType|timestamp|entity_id|"
 
     Args:
         entity_type: The sync entity type
         last_synced_at: The timestamp from the last sync
+        entity_id: The entity ID for keyset pagination
 
     Returns:
         Formatted ack string
     """
-    return f"{entity_type.value}|{last_synced_at.isoformat()}|"
+    return f"{entity_type.value}|{last_synced_at.isoformat()}|{entity_id}|"
 
 
 @router.get("/ack")
@@ -199,7 +216,7 @@ async def get_sync_ack(
 
     Returns all stored checkpoints for the session, each containing:
     - type: The sync entity type (e.g., "AssetV1", "AlbumV1")
-    - ack: The ack string in format "SyncEntityType|timestamp|"
+    - ack: The ack string in format "SyncEntityType|timestamp|entity_id|"
 
     Requires a session token - API keys are not allowed.
     """
@@ -210,7 +227,11 @@ async def get_sync_ack(
     ack_dtos = [
         SyncAckDto(
             type=checkpoint.entity_type,
-            ack=_to_ack_string(checkpoint.entity_type, checkpoint.last_synced_at),
+            ack=_to_ack_string(
+                checkpoint.entity_type,
+                checkpoint.last_synced_at,
+                checkpoint.last_entity_id or "",
+            ),
         )
         for checkpoint in checkpoints
     ]
@@ -241,7 +262,7 @@ async def send_sync_ack(
     If any ack is for SyncResetV1, resets the session's sync progress
     (clears is_pending_sync_reset flag and deletes all checkpoints).
 
-    Ack format for immich-adapter: "SyncEntityType|timestamp|"
+    Ack format for immich-adapter: "SyncEntityType|timestamp|entity_id|"
 
     Requires a session token - API keys are not allowed.
     """
@@ -249,7 +270,8 @@ async def send_sync_ack(
     session_token = str(session_uuid)
 
     # Parse all acks and collect checkpoints to store
-    checkpoints_to_store: dict[SyncEntityType, datetime] = {}
+    # Value is (timestamp, entity_id) tuple
+    checkpoints_to_store: dict[SyncEntityType, tuple[datetime, str]] = {}
 
     for idx, ack in enumerate(request.acks):
         parsed = _parse_ack(ack)
@@ -257,7 +279,7 @@ async def send_sync_ack(
             # Malformed ack - skip it (already logged)
             continue
 
-        entity_type, last_synced_at = parsed
+        entity_type, last_synced_at, entity_id = parsed
 
         # Handle SyncResetV1 specially - reset sync progress and return
         if entity_type == SyncEntityType.SyncResetV1:
@@ -286,16 +308,15 @@ async def send_sync_ack(
             return
 
         # Store checkpoint (last one wins if duplicates)
-        if last_synced_at:
-            checkpoints_to_store[entity_type] = last_synced_at
+        checkpoints_to_store[entity_type] = (last_synced_at, entity_id)
 
     # Store all checkpoints atomically
     if checkpoints_to_store:
         await checkpoint_store.set_many(
             session_uuid,
             [
-                (entity_type, timestamp)
-                for entity_type, timestamp in checkpoints_to_store.items()
+                (entity_type, timestamp, entity_id)
+                for entity_type, (timestamp, entity_id) in checkpoints_to_store.items()
             ],
         )
 
@@ -800,7 +821,7 @@ def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
 
 def _convert_event_to_sync_entity(
     event: Data, owner_id: str
-) -> tuple[SyncEntityType, dict, datetime] | None:
+) -> tuple[SyncEntityType, dict, datetime, str] | None:
     """
     Convert a photos-api event to Immich sync entity.
 
@@ -809,7 +830,7 @@ def _convert_event_to_sync_entity(
         owner_id: UUID of the owner
 
     Returns:
-        Tuple of (SyncEntityType, data_dict, updated_at) or None if unsupported
+        Tuple of (SyncEntityType, data_dict, updated_at, entity_id) or None if unsupported
     """
     if isinstance(event, AssetEventPayload):
         sync_model = gumnut_asset_to_sync_asset_v1(event.data, owner_id)
@@ -817,6 +838,7 @@ def _convert_event_to_sync_entity(
             SyncEntityType.AssetV1,
             sync_model.model_dump(mode="json"),
             event.data.updated_at,
+            event.data.id,
         )
 
     elif isinstance(event, ExifEventPayload):
@@ -825,6 +847,7 @@ def _convert_event_to_sync_entity(
             SyncEntityType.AssetExifV1,
             sync_model.model_dump(mode="json"),
             event.data.updated_at,
+            event.data.asset_id,
         )
 
     elif isinstance(event, AlbumEventPayload):
@@ -833,6 +856,7 @@ def _convert_event_to_sync_entity(
             SyncEntityType.AlbumV1,
             sync_model.model_dump(mode="json"),
             event.data.updated_at,
+            event.data.id,
         )
 
     elif isinstance(event, AlbumAssetEventPayload):
@@ -841,6 +865,7 @@ def _convert_event_to_sync_entity(
             SyncEntityType.AlbumToAssetV1,
             sync_model.model_dump(mode="json"),
             event.data.updated_at,
+            event.data.id,
         )
 
     elif isinstance(event, PersonEventPayload):
@@ -849,6 +874,7 @@ def _convert_event_to_sync_entity(
             SyncEntityType.PersonV1,
             sync_model.model_dump(mode="json"),
             event.data.updated_at,
+            event.data.id,
         )
 
     elif isinstance(event, FaceEventPayload):
@@ -857,6 +883,7 @@ def _convert_event_to_sync_entity(
             SyncEntityType.AssetFaceV1,
             sync_model.model_dump(mode="json"),
             event.data.updated_at,
+            event.data.id,
         )
 
     return None
@@ -866,6 +893,7 @@ def _make_sync_event(
     entity_type: SyncEntityType,
     data: dict,
     updated_at: datetime,
+    entity_id: str,
 ) -> str:
     """
     Create a sync event JSON line.
@@ -874,12 +902,13 @@ def _make_sync_event(
         entity_type: The Immich sync entity type
         data: The entity data dict
         updated_at: Timestamp for the checkpoint
+        entity_id: The entity ID for keyset pagination
 
     Returns:
         JSON line string with newline
     """
-    # Ack format: SyncEntityType|timestamp| (trailing | for future additions)
-    ack = f"{entity_type.value}|{updated_at.isoformat()}|"
+    # Ack format: SyncEntityType|timestamp|entity_id| (trailing | for future additions)
+    ack = f"{entity_type.value}|{updated_at.isoformat()}|{entity_id}|"
 
     return (
         json.dumps(
@@ -910,7 +939,7 @@ async def _stream_entity_type(
     gumnut_entity_type: str,
     sync_entity_type: SyncEntityType,
     owner_id: str,
-    checkpoint: datetime | None,
+    checkpoint: Checkpoint | None,
     sync_started_at: datetime,
 ) -> AsyncGenerator[tuple[str, int], None]:
     """
@@ -921,13 +950,15 @@ async def _stream_entity_type(
         gumnut_entity_type: The entity type string for the Gumnut API (e.g., "asset")
         sync_entity_type: The Immich sync entity type (e.g., SyncEntityType.AssetV1)
         owner_id: The owner UUID string
-        checkpoint: The last synced timestamp (None for full sync)
+        checkpoint: The checkpoint with last_synced_at and last_entity_id (None for full sync)
         sync_started_at: Upper bound for the query window
 
     Yields:
         Tuples of (json_line, count) for each event
     """
-    last_updated_at = checkpoint
+    # TODO: Use checkpoint.last_entity_id for keyset pagination when Gumnut API supports it.
+    # Currently only using timestamp-based pagination.
+    last_updated_at = checkpoint.last_synced_at if checkpoint else None
     count = 0
 
     while True:
@@ -945,10 +976,10 @@ async def _stream_entity_type(
         for event in events:
             result = _convert_event_to_sync_entity(event, owner_id)
             if result:
-                entity_type, data, updated_at = result
+                entity_type, data, updated_at, entity_id = result
                 # Only yield if the entity type matches (safety check)
                 if entity_type == sync_entity_type:
-                    yield _make_sync_event(entity_type, data, updated_at), 1
+                    yield _make_sync_event(entity_type, data, updated_at, entity_id), 1
                     count += 1
 
         # Get updated_at from last event for pagination cursor
@@ -968,7 +999,7 @@ async def _stream_entity_type(
 async def generate_sync_stream(
     gumnut_client: Gumnut,
     request: SyncStreamDto,
-    checkpoint_map: dict[SyncEntityType, datetime],
+    checkpoint_map: dict[SyncEntityType, Checkpoint],
 ) -> AsyncGenerator[str, None]:
     """
     Generate sync stream as JSON Lines (newline-delimited JSON).
@@ -1004,12 +1035,16 @@ async def generate_sync_stream(
         if SyncRequestType.AuthUsersV1 in requested_types:
             # Check checkpoint - only stream if user updated after checkpoint
             checkpoint = checkpoint_map.get(SyncEntityType.AuthUserV1)
-            if checkpoint is None or current_user.updated_at > checkpoint:
+            if (
+                checkpoint is None
+                or current_user.updated_at > checkpoint.last_synced_at
+            ):
                 sync_auth_user = gumnut_user_to_sync_auth_user_v1(current_user)
                 yield _make_sync_event(
                     SyncEntityType.AuthUserV1,
                     sync_auth_user.model_dump(mode="json"),
                     current_user.updated_at,
+                    current_user.id,
                 )
                 logger.debug("Streamed auth user", extra={"user_id": owner_id})
 
@@ -1017,12 +1052,16 @@ async def generate_sync_stream(
         if SyncRequestType.UsersV1 in requested_types:
             # Check checkpoint - only stream if user updated after checkpoint
             checkpoint = checkpoint_map.get(SyncEntityType.UserV1)
-            if checkpoint is None or current_user.updated_at > checkpoint:
+            if (
+                checkpoint is None
+                or current_user.updated_at > checkpoint.last_synced_at
+            ):
                 sync_user = gumnut_user_to_sync_user_v1(current_user)
                 yield _make_sync_event(
                     SyncEntityType.UserV1,
                     sync_user.model_dump(mode="json"),
                     current_user.updated_at,
+                    current_user.id,
                 )
                 logger.debug("Streamed user", extra={"user_id": owner_id})
 
@@ -1067,9 +1106,9 @@ async def generate_sync_stream(
                 },
             )
 
-        # Stream completion event
+        # Stream completion event (no entity_id for marker events)
         yield _make_sync_event(
-            SyncEntityType.SyncCompleteV1, {}, datetime.now(timezone.utc)
+            SyncEntityType.SyncCompleteV1, {}, datetime.now(timezone.utc), ""
         )
         logger.info("Sync stream completed", extra={"user_id": owner_id})
 
@@ -1157,10 +1196,10 @@ async def get_sync_stream(
         await checkpoint_store.delete_all(session_uuid)
 
     # Load checkpoints for delta sync (empty dict if no session or no checkpoints)
-    checkpoint_map: dict[SyncEntityType, datetime] = {}
+    checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
     if session_uuid and not request.reset:
         checkpoints = await checkpoint_store.get_all(session_uuid)
-        checkpoint_map = {cp.entity_type: cp.last_synced_at for cp in checkpoints}
+        checkpoint_map = {cp.entity_type: cp for cp in checkpoints}
         logger.debug(
             f"Loaded {len(checkpoint_map)} checkpoints for sync stream",
             extra={

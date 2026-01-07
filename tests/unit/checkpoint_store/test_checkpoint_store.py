@@ -29,15 +29,35 @@ class TestCheckpointDataclass:
             entity_type=SyncEntityType.AssetV1,
             last_synced_at=last_synced,
             updated_at=updated,
+            last_entity_id="asset-123",
         )
 
         result = checkpoint.to_redis_value()
 
-        assert result == "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00"
+        assert (
+            result
+            == "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00|asset-123"
+        )
+
+    def test_to_redis_value_without_entity_id(self):
+        """Test to_redis_value with no entity_id outputs empty string."""
+        last_synced = datetime(2025, 1, 20, 10, 30, 45, 123456, tzinfo=timezone.utc)
+        updated = datetime(2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc)
+
+        checkpoint = Checkpoint(
+            entity_type=SyncEntityType.AssetV1,
+            last_synced_at=last_synced,
+            updated_at=updated,
+            last_entity_id=None,
+        )
+
+        result = checkpoint.to_redis_value()
+
+        assert result == "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00|"
 
     def test_from_redis_value(self):
         """Test Checkpoint.from_redis_value() parses pipe-delimited format."""
-        value = "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00"
+        value = "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00|asset-123"
 
         checkpoint = Checkpoint.from_redis_value(SyncEntityType.AssetV1, value)
 
@@ -48,6 +68,27 @@ class TestCheckpointDataclass:
         assert checkpoint.updated_at == datetime(
             2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc
         )
+        assert checkpoint.last_entity_id == "asset-123"
+
+    def test_from_redis_value_backward_compatible(self):
+        """Test from_redis_value handles old 2-field format (backward compatible)."""
+        value = "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00"
+
+        checkpoint = Checkpoint.from_redis_value(SyncEntityType.AssetV1, value)
+
+        assert checkpoint.entity_type == SyncEntityType.AssetV1
+        assert checkpoint.last_synced_at == datetime(
+            2025, 1, 20, 10, 30, 45, 123456, tzinfo=timezone.utc
+        )
+        assert checkpoint.last_entity_id is None
+
+    def test_from_redis_value_empty_entity_id(self):
+        """Test from_redis_value handles empty entity_id field."""
+        value = "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00|"
+
+        checkpoint = Checkpoint.from_redis_value(SyncEntityType.AssetV1, value)
+
+        assert checkpoint.last_entity_id is None  # Empty string becomes None
 
     def test_from_redis_value_invalid_format_raises_error(self):
         """Test from_redis_value raises CheckpointDataError for invalid format."""
@@ -62,7 +103,7 @@ class TestCheckpointDataclass:
 
     def test_from_redis_value_too_many_parts_raises_error(self):
         """Test from_redis_value raises CheckpointDataError for too many parts."""
-        value = "2025-01-20T10:30:45+00:00|2025-01-20T10:30:45+00:00|extra"
+        value = "2025-01-20T10:30:45+00:00|2025-01-20T10:30:45+00:00|entity|extra"
 
         with pytest.raises(CheckpointDataError) as exc_info:
             Checkpoint.from_redis_value(SyncEntityType.AssetV1, value)
@@ -71,7 +112,7 @@ class TestCheckpointDataclass:
 
     def test_from_redis_value_invalid_timestamp_raises_error(self):
         """Test from_redis_value raises CheckpointDataError for invalid timestamp."""
-        value = "not-a-timestamp|2025-01-20T10:30:45+00:00"
+        value = "not-a-timestamp|2025-01-20T10:30:45+00:00|entity-123"
 
         with pytest.raises(CheckpointDataError) as exc_info:
             Checkpoint.from_redis_value(SyncEntityType.AssetV1, value)
@@ -85,6 +126,7 @@ class TestCheckpointDataclass:
             entity_type=SyncEntityType.PersonV1,
             last_synced_at=datetime(2025, 1, 19, 14, 0, 0, tzinfo=timezone.utc),
             updated_at=datetime(2025, 1, 19, 14, 0, 0, tzinfo=timezone.utc),
+            last_entity_id="person-456",
         )
 
         redis_value = original.to_redis_value()
@@ -93,6 +135,7 @@ class TestCheckpointDataclass:
         assert restored.entity_type == original.entity_type
         assert restored.last_synced_at == original.last_synced_at
         assert restored.updated_at == original.updated_at
+        assert restored.last_entity_id == original.last_entity_id
 
 
 class TestCheckpointStoreGetAll:
@@ -112,8 +155,8 @@ class TestCheckpointStoreGetAll:
     async def test_get_all_returns_checkpoints(self, checkpoint_store, mock_redis):
         """Test getting all checkpoints for a session."""
         mock_redis.hgetall.return_value = {
-            "AssetV1": "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00",
-            "AlbumV1": "2025-01-20T09:30:00.000000+00:00|2025-01-20T09:30:00+00:00",
+            "AssetV1": "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00|asset-123",
+            "AlbumV1": "2025-01-20T09:30:00.000000+00:00|2025-01-20T09:30:00+00:00|album-456",
         }
 
         checkpoints = await checkpoint_store.get_all(TEST_SESSION_TOKEN)
@@ -139,7 +182,7 @@ class TestCheckpointStoreGetAll:
     ):
         """Test get_all raises CheckpointDataError for malformed checkpoint values."""
         mock_redis.hgetall.return_value = {
-            "AssetV1": "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00",
+            "AssetV1": "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00|asset-123",
             "AlbumV1": "malformed-data",  # Invalid format
         }
 
@@ -152,8 +195,8 @@ class TestCheckpointStoreGetAll:
     ):
         """Test get_all raises ValueError for unknown entity types."""
         mock_redis.hgetall.return_value = {
-            "AssetV1": "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00",
-            "UnknownTypeV1": "2025-01-20T09:30:00.000000+00:00|2025-01-20T09:30:00+00:00",
+            "AssetV1": "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00|asset-123",
+            "UnknownTypeV1": "2025-01-20T09:30:00.000000+00:00|2025-01-20T09:30:00+00:00|unknown-123",
         }
 
         with pytest.raises(ValueError, match="UnknownTypeV1"):
@@ -177,7 +220,7 @@ class TestCheckpointStoreGet:
     async def test_get_returns_checkpoint(self, checkpoint_store, mock_redis):
         """Test getting a specific checkpoint."""
         mock_redis.hget.return_value = (
-            "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00"
+            "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00|asset-123"
         )
 
         checkpoint = await checkpoint_store.get(
@@ -189,6 +232,7 @@ class TestCheckpointStoreGet:
         assert checkpoint.last_synced_at == datetime(
             2025, 1, 20, 10, 30, 45, 123456, tzinfo=timezone.utc
         )
+        assert checkpoint.last_entity_id == "asset-123"
 
     @pytest.mark.anyio
     async def test_get_returns_none_when_not_found(self, checkpoint_store, mock_redis):
@@ -221,7 +265,7 @@ class TestCheckpointStoreSet:
         last_synced_at = datetime(2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc)
 
         result = await checkpoint_store.set(
-            TEST_SESSION_TOKEN, SyncEntityType.AssetV1, last_synced_at
+            TEST_SESSION_TOKEN, SyncEntityType.AssetV1, last_synced_at, "asset-123"
         )
 
         assert result is True
@@ -231,9 +275,10 @@ class TestCheckpointStoreSet:
         call_args = mock_redis.hset.call_args
         assert call_args[0][0] == f"session:{TEST_SESSION_TOKEN}:checkpoints"
         assert call_args[0][1] == "AssetV1"
-        # Value should be pipe-delimited with last_synced_at and updated_at
+        # Value should be pipe-delimited with last_synced_at, updated_at, and entity_id
         value = call_args[0][2]
         assert value.startswith("2025-01-20T10:30:45+00:00|")
+        assert "|asset-123" in value
 
 
 class TestCheckpointStoreSetMany:
@@ -258,10 +303,12 @@ class TestCheckpointStoreSetMany:
             (
                 SyncEntityType.AssetV1,
                 datetime(2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc),
+                "asset-123",
             ),
             (
                 SyncEntityType.AlbumV1,
                 datetime(2025, 1, 20, 9, 30, 0, tzinfo=timezone.utc),
+                "album-456",
             ),
         ]
 
