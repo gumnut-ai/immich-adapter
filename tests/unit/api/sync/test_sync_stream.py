@@ -50,7 +50,7 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         request = SyncStreamDto(types=[])
-        checkpoint_map: dict[SyncEntityType, datetime] = {}
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -61,14 +61,17 @@ class TestGenerateSyncStream:
         assert events[0]["data"] == {}
 
     @pytest.mark.anyio
-    async def test_event_format_includes_ack(self):
-        """Each event includes an ack string for checkpointing."""
+    async def test_event_format_includes_ack_with_entity_id(self):
+        """Each event includes an ack string with entity_id for checkpointing.
+
+        Ack format: "SyncEntityType|timestamp|entity_id|"
+        """
         user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(user_updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
         request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1])
-        checkpoint_map: dict[SyncEntityType, datetime] = {}
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -76,8 +79,53 @@ class TestGenerateSyncStream:
 
         auth_event = events[0]
         assert "ack" in auth_event
-        assert auth_event["ack"].startswith("AuthUserV1|")
-        assert auth_event["ack"].endswith("|")
+
+        # Verify ack format: "SyncEntityType|timestamp|entity_id|"
+        ack_parts = auth_event["ack"].split("|")
+        assert len(ack_parts) == 4, (
+            f"Expected 4 parts in ack, got {len(ack_parts)}: {auth_event['ack']}"
+        )
+        assert ack_parts[0] == "AuthUserV1"
+        assert ack_parts[1] == user_updated_at.isoformat()
+        assert ack_parts[2] == mock_user.id  # entity_id should be the user ID
+        assert ack_parts[3] == ""  # trailing empty string from trailing pipe
+
+    @pytest.mark.anyio
+    async def test_asset_event_ack_includes_entity_id(self):
+        """Asset events from events API include entity_id in ack.
+
+        Ack format: "SyncEntityType|timestamp|entity_id|"
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        asset_data = create_mock_asset_data(updated_at)
+        asset_event = create_mock_event(AssetEventPayload, asset_data)
+
+        events_response = Mock()
+        events_response.data = [asset_event]
+        mock_client.events.get.return_value = events_response
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetsV1])
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        asset_event_output = events[0]
+        assert asset_event_output["type"] == "AssetV1"
+
+        # Verify ack format: "SyncEntityType|timestamp|entity_id|"
+        ack_parts = asset_event_output["ack"].split("|")
+        assert len(ack_parts) == 4, (
+            f"Expected 4 parts in ack, got {len(ack_parts)}: {asset_event_output['ack']}"
+        )
+        assert ack_parts[0] == "AssetV1"
+        assert ack_parts[1] == updated_at.isoformat()
+        assert ack_parts[2] == asset_data.id  # entity_id should be the asset ID
+        assert ack_parts[3] == ""  # trailing empty string from trailing pipe
 
     @pytest.mark.anyio
     async def test_streams_error_on_exception(self):
@@ -86,7 +134,7 @@ class TestGenerateSyncStream:
         mock_client.users.me.side_effect = Exception("API error")
 
         request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1])
-        checkpoint_map: dict[SyncEntityType, datetime] = {}
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -108,7 +156,7 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1])
-        checkpoint_map: dict[SyncEntityType, datetime] = {}
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -127,7 +175,7 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         request = SyncStreamDto(types=[SyncRequestType.UsersV1])
-        checkpoint_map: dict[SyncEntityType, datetime] = {}
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -151,7 +199,12 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1])
-        checkpoint_map = {SyncEntityType.AuthUserV1: checkpoint_time}
+        checkpoint = Checkpoint(
+            entity_type=SyncEntityType.AuthUserV1,
+            last_synced_at=checkpoint_time,
+            updated_at=checkpoint_time,
+        )
+        checkpoint_map = {SyncEntityType.AuthUserV1: checkpoint}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -169,7 +222,12 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1])
-        checkpoint_map = {SyncEntityType.AuthUserV1: checkpoint_time}
+        checkpoint = Checkpoint(
+            entity_type=SyncEntityType.AuthUserV1,
+            last_synced_at=checkpoint_time,
+            updated_at=checkpoint_time,
+        )
+        checkpoint_map = {SyncEntityType.AuthUserV1: checkpoint}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -197,7 +255,7 @@ class TestGenerateSyncStream:
         mock_client.events.get.return_value = events_response
 
         request = SyncStreamDto(types=[SyncRequestType.AssetsV1])
-        checkpoint_map: dict[SyncEntityType, datetime] = {}
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -223,7 +281,7 @@ class TestGenerateSyncStream:
         mock_client.events.get.return_value = events_response
 
         request = SyncStreamDto(types=[SyncRequestType.AlbumsV1])
-        checkpoint_map: dict[SyncEntityType, datetime] = {}
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -249,7 +307,7 @@ class TestGenerateSyncStream:
         mock_client.events.get.return_value = events_response
 
         request = SyncStreamDto(types=[SyncRequestType.AlbumToAssetsV1])
-        checkpoint_map: dict[SyncEntityType, datetime] = {}
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -276,7 +334,7 @@ class TestGenerateSyncStream:
         mock_client.events.get.return_value = events_response
 
         request = SyncStreamDto(types=[SyncRequestType.AssetExifsV1])
-        checkpoint_map: dict[SyncEntityType, datetime] = {}
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -302,7 +360,7 @@ class TestGenerateSyncStream:
         mock_client.events.get.return_value = events_response
 
         request = SyncStreamDto(types=[SyncRequestType.PeopleV1])
-        checkpoint_map: dict[SyncEntityType, datetime] = {}
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
@@ -328,7 +386,7 @@ class TestGenerateSyncStream:
         mock_client.events.get.return_value = events_response
 
         request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
-        checkpoint_map: dict[SyncEntityType, datetime] = {}
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
             generate_sync_stream(mock_client, request, checkpoint_map)
