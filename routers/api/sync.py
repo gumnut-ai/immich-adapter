@@ -934,6 +934,23 @@ _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
 ]
 
 
+def _get_entity_id_for_pagination(event: Data) -> str:
+    """
+    Extract entity ID from event for keyset pagination.
+
+    Args:
+        event: The event from the Gumnut API
+
+    Returns:
+        The entity ID to use for pagination
+    """
+    # Exif events use asset_id as the primary key for pagination
+    if isinstance(event, ExifEventPayload):
+        return event.data.asset_id
+    # All other event types use id
+    return event.data.id
+
+
 async def _stream_entity_type(
     gumnut_client: Gumnut,
     gumnut_entity_type: str,
@@ -944,6 +961,9 @@ async def _stream_entity_type(
 ) -> AsyncGenerator[tuple[str, int], None]:
     """
     Stream events for a single entity type.
+
+    Uses composite keyset pagination with (updated_at, entity_id) to handle
+    entities that share the same timestamp without duplicates.
 
     Args:
         gumnut_client: The Gumnut API client
@@ -956,17 +976,20 @@ async def _stream_entity_type(
     Yields:
         Tuples of (json_line, count) for each event
     """
-    # TODO: Use checkpoint.last_entity_id for keyset pagination when Gumnut API supports it.
-    # Currently only using timestamp-based pagination.
+    # Initialize pagination cursors from checkpoint
     last_updated_at = checkpoint.last_synced_at if checkpoint else None
+    last_entity_id = checkpoint.last_entity_id if checkpoint else None
     count = 0
+
+    PAGE_SIZE = 500
 
     while True:
         events_response = gumnut_client.events.get(
             updated_at_gte=last_updated_at,
             updated_at_lt=sync_started_at,
             entity_types=gumnut_entity_type,
-            limit=500,
+            limit=PAGE_SIZE,
+            starting_after_id=last_entity_id,
         )
 
         events = events_response.data
@@ -982,11 +1005,12 @@ async def _stream_entity_type(
                     yield _make_sync_event(entity_type, data, updated_at, entity_id), 1
                     count += 1
 
-        # Get updated_at from last event for pagination cursor
+        # Update pagination cursors from last event for next iteration
         last_event = events[-1]
         last_updated_at = last_event.data.updated_at
+        last_entity_id = _get_entity_id_for_pagination(last_event)
 
-        if len(events) < 500:
+        if len(events) < PAGE_SIZE:
             break
 
     if count > 0:

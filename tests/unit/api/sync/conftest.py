@@ -144,6 +144,7 @@ def create_mock_album_data(updated_at: datetime) -> Mock:
 def create_mock_album_asset_data(updated_at: datetime) -> Mock:
     """Create mock album asset data for AlbumAssetEventPayload."""
     album_asset = Mock()
+    album_asset.id = f"album_asset_{TEST_UUID}"
     album_asset.album_id = uuid_to_gumnut_album_id(TEST_UUID)
     album_asset.asset_id = uuid_to_gumnut_asset_id(TEST_UUID)
     album_asset.updated_at = updated_at
