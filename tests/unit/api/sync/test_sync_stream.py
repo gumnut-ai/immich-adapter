@@ -737,8 +737,8 @@ class TestStreamEntityTypePagination:
         )
 
     @pytest.mark.anyio
-    async def test_first_call_without_checkpoint_uses_none(self):
-        """First API call without checkpoint uses None for starting_after_id."""
+    async def test_first_call_without_checkpoint_omits_starting_after_id(self):
+        """First API call without checkpoint omits starting_after_id parameter."""
         sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
         mock_user = create_mock_user(sync_started_at)
@@ -761,13 +761,12 @@ class TestStreamEntityTypePagination:
         ):
             results.append(item)
 
-        # Verify the API was called with starting_after_id=None
+        # Verify the API was called WITHOUT starting_after_id (not included when None)
         mock_client.events.get.assert_called_once_with(
             updated_at_gte=None,
             updated_at_lt=sync_started_at,
             entity_types="asset",
             limit=500,
-            starting_after_id=None,
         )
 
     @pytest.mark.anyio

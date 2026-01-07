@@ -984,13 +984,17 @@ async def _stream_entity_type(
     PAGE_SIZE = 500
 
     while True:
-        events_response = gumnut_client.events.get(
-            updated_at_gte=last_updated_at,
-            updated_at_lt=sync_started_at,
-            entity_types=gumnut_entity_type,
-            limit=PAGE_SIZE,
-            starting_after_id=last_entity_id,
-        )
+        # Build params, only including starting_after_id when we have a cursor
+        params: dict = {
+            "updated_at_gte": last_updated_at,
+            "updated_at_lt": sync_started_at,
+            "entity_types": gumnut_entity_type,
+            "limit": PAGE_SIZE,
+        }
+        if last_entity_id is not None:
+            params["starting_after_id"] = last_entity_id
+
+        events_response = gumnut_client.events.get(**params)
 
         events = events_response.data
         if not events:
