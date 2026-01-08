@@ -248,7 +248,27 @@ This is useful for:
 
 ### Immich API Integration
 
-Defining endpoint parameters:
+#### Error Response Format
+
+All HTTP error responses must use Immich's expected format, not FastAPI's default:
+
+```json
+{
+  "message": "Human-readable error description",
+  "statusCode": 401,
+  "error": "Unauthorized"
+}
+```
+
+- `message`: Description of what went wrong
+- `statusCode`: HTTP status code (duplicated in body for client convenience)
+- `error`: HTTP status phrase (e.g., "Bad Request", "Unauthorized", "Internal Server Error")
+
+This format is enforced by the global exception handler in `config/exceptions.py`. Raise `HTTPException` with a `detail` message and the handler will format it correctly.
+
+**Note:** In middleware (e.g., `auth_middleware.py`), you must return `JSONResponse` directly with this format, as `HTTPException` raised in `BaseHTTPMiddleware.dispatch()` is not caught by FastAPI's exception handlers due to Starlette's middleware architecture.
+
+#### Defining Endpoint Parameters
 
 - Use `Annotated` to specify attributes, such as `Query()`, `Path()`, `Body()` functions, or numeric or string validations, but do not use `Default` - the default value should be specified as part of the Python declaration.
 - If a parameter is not required, use `| SkipJsonSchema[None]` after defining the type to allow Pydantic to accept the `None` type, but prevent `None` from being exposed in the OpenAPI schema. 

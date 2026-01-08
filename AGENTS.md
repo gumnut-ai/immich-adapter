@@ -34,6 +34,21 @@
 - Always use structured logging with key/value metadata in the `extra` dict
 - Example: `logger.info("User logged in", extra={"user_id": user_id, "session_id": session_id})`
 
+### Error Responses
+
+All HTTP errors must use Immich's expected format:
+
+```json
+{
+  "message": "Human-readable error description",
+  "statusCode": 401,
+  "error": "Unauthorized"
+}
+```
+
+- In route handlers: Raise `HTTPException(status_code=..., detail="...")` - the global handler formats it
+- In middleware: Return `JSONResponse` directly with the above format (HTTPException doesn't work in BaseHTTPMiddleware)
+
 ### Pull Requests
 
 - When updating pull requests with additional commits, update the PR description to include the latest changes
