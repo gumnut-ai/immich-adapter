@@ -43,10 +43,19 @@ def map_gumnut_error(e: Exception, context: str) -> HTTPException:
     # Log the original error for debugging
     logger.warning(f"Gumnut SDK error in {context}: {msg}")
 
+    # Try to extract clean message from SDK exception body
+    detail = None
+    body = getattr(e, "body", None)
+    if isinstance(body, dict):
+        detail = body.get("detail") or body.get("message") or body.get("error")
+
+    if not detail:
+        detail = msg
+
     # If the SDK exposes HTTP status, use it
     if hasattr(e, "status_code"):
         code = int(getattr(e, "status_code"))
-        return HTTPException(status_code=code, detail=f"{context}: {msg}")
+        return HTTPException(status_code=code, detail=detail)
 
     # Fallback to string matching for common HTTP errors
     # This is still brittle but better than duplicating everywhere

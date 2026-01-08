@@ -1,4 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import HTTPException
+from fastapi.responses import JSONResponse
 from config.sentry import init_sentry
 from config.logging import init_logging
 from contextlib import asynccontextmanager
@@ -65,6 +67,30 @@ app = FastAPI(
     description="Adapts the Immich API to the Gumnut API",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(HTTPException)
+async def immich_http_exception_handler(request: Request, exc: HTTPException):
+    """
+    Custom exception handler to format HTTP errors in Immich's expected format.
+    """
+    error_names = {
+        400: "Bad Request",
+        401: "Unauthorized",
+        403: "Forbidden",
+        404: "Not Found",
+        500: "Internal Server Error",
+    }
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "message": exc.detail,
+            "statusCode": exc.status_code,
+            "error": error_names.get(exc.status_code, "Error"),
+        },
+    )
+
 
 # Add authentication middleware
 app.add_middleware(AuthMiddleware)

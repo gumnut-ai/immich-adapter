@@ -54,7 +54,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """Return a 401 response for invalid user token."""
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"detail": "Invalid user token"},
+            content={
+                "message": "Invalid user token",
+                "statusCode": 401,
+                "error": "Unauthorized",
+            },
         )
 
     async def dispatch(self, request: Request, call_next):
@@ -129,7 +133,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 )
                 return JSONResponse(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    content={"detail": "Internal server error"},
+                    content={
+                        "message": "Internal server error",
+                        "statusCode": 500,
+                        "error": "Internal Server Error",
+                    },
                 )
 
         # Store in request state for dependency injection
