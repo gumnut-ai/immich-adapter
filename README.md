@@ -248,9 +248,24 @@ This is useful for:
 
 ### Immich API Integration
 
+#### HTTP Response Status Codes
+
+Always use `fastapi.status` constants for `statusCode` - never use just the numeric value
+
+```python
+# In route handlers:
+raise HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Human-readable error description"
+)
+
+# Resulting JSON response:
+# {"message": "...", "statusCode": 401, "error": "Unauthorized"}
+```
+
 #### Error Response Format
 
-All HTTP error responses must use Immich's expected format, not FastAPI's default:
+- All HTTP error responses must use Immich's expected format, not FastAPI's default:
 
 ```json
 {

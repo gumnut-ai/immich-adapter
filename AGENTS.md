@@ -34,6 +34,21 @@
 - Always use structured logging with key/value metadata in the `extra` dict
 - Example: `logger.info("User logged in", extra={"user_id": user_id, "session_id": session_id})`
 
+### HTTP Response Status Codes
+
+- Always use `fastapi.status` constants for `statusCode` - never use just the numeric value
+
+```python
+# In route handlers:
+raise HTTPException(
+   status_code=status.HTTP_401_UNAUTHORIZED,
+   detail="Human-readable error description"
+)
+
+# Resulting JSON response:
+# {"message": "...", "statusCode": 401, "error": "Unauthorized"}
+```
+
 ### Error Responses
 
 All HTTP errors must use Immich's expected format:

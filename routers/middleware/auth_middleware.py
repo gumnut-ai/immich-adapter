@@ -56,7 +56,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={
                 "message": "Invalid user token",
-                "statusCode": 401,
+                "statusCode": status.HTTP_401_UNAUTHORIZED,
                 "error": "Unauthorized",
             },
         )
