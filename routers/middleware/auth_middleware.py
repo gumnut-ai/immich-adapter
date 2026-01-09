@@ -131,11 +131,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     "Error during session lookup",
                     exc_info=True,
                 )
+                # An exception thrown inside dispatch will get wrapped
+                # by Starlette and not handled by our global exception handler.
+                # We need the response to be in the expected Immich format,
+                # so we return it directly here.
                 return JSONResponse(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     content={
                         "message": "Internal server error",
-                        "statusCode": 500,
+                        "statusCode": status.HTTP_500_INTERNAL_SERVER_ERROR,
                         "error": "Internal Server Error",
                     },
                 )
