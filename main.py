@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from config.exceptions import configure_exception_handlers
 from config.sentry import init_sentry
 from config.logging import init_logging
 from contextlib import asynccontextmanager
@@ -65,6 +66,8 @@ app = FastAPI(
     description="Adapts the Immich API to the Gumnut API",
     lifespan=lifespan,
 )
+
+configure_exception_handlers(app)
 
 # Add authentication middleware
 app.add_middleware(AuthMiddleware)

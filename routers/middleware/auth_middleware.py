@@ -54,7 +54,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """Return a 401 response for invalid user token."""
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"detail": "Invalid user token"},
+            content={
+                "message": "Invalid user token",
+                "statusCode": status.HTTP_401_UNAUTHORIZED,
+                "error": "Unauthorized",
+            },
         )
 
     async def dispatch(self, request: Request, call_next):
@@ -127,9 +131,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     "Error during session lookup",
                     exc_info=True,
                 )
+                # An exception thrown inside dispatch will get wrapped
+                # by Starlette and not handled by our global exception handler.
+                # We need the response to be in the expected Immich format,
+                # so we return it directly here.
                 return JSONResponse(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    content={"detail": "Internal server error"},
+                    content={
+                        "message": "Internal server error",
+                        "statusCode": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        "error": "Internal Server Error",
+                    },
                 )
 
         # Store in request state for dependency injection

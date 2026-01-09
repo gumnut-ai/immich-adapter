@@ -180,7 +180,7 @@ class TestAuthMiddleware:
         response = client_with_mocks.get("/api/test/protected", headers=headers)
 
         assert response.status_code == 401
-        assert response.json()["detail"] == "Invalid user token"
+        assert response.json()["message"] == "Invalid user token"
 
     def test_bearer_takes_precedence_over_cookie(
         self, client_with_mocks, mock_session_store
@@ -355,7 +355,7 @@ class TestSessionLookupErrors:
             response = client.get("/api/test/protected", headers=headers)
 
             assert response.status_code == 500
-            assert response.json()["detail"] == "Internal server error"
+            assert response.json()["message"] == "Internal server error"
 
     def test_redis_error_returns_500(self, app_for_errors):
         """Test that Redis errors return 500."""
@@ -376,4 +376,4 @@ class TestSessionLookupErrors:
             response = client.get("/api/test/protected", headers=headers)
 
             assert response.status_code == 500
-            assert response.json()["detail"] == "Internal server error"
+            assert response.json()["message"] == "Internal server error"

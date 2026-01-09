@@ -88,26 +88,26 @@ class TestMapGumnutError:
                 super().__init__(message)
                 self.status_code = status_code
 
-        # Test 404 error
+        # Test 404 error - context is not included, just the error message
         error_404 = MockSDKError("Resource not found", 404)
         result = map_gumnut_error(error_404, "Failed to fetch resource")
         assert isinstance(result, HTTPException)
         assert result.status_code == 404
-        assert "Failed to fetch resource: Resource not found" in result.detail
+        assert result.detail == "Resource not found"
 
         # Test 401 error
         error_401 = MockSDKError("Invalid credentials", 401)
         result = map_gumnut_error(error_401, "Failed to authenticate")
         assert isinstance(result, HTTPException)
         assert result.status_code == 401
-        assert "Failed to authenticate: Invalid credentials" in result.detail
+        assert result.detail == "Invalid credentials"
 
         # Test 403 error
         error_403 = MockSDKError("Access denied", 403)
         result = map_gumnut_error(error_403, "Failed to access resource")
         assert isinstance(result, HTTPException)
         assert result.status_code == 403
-        assert "Failed to access resource: Access denied" in result.detail
+        assert result.detail == "Access denied"
 
     def test_map_error_with_string_patterns(self):
         """Test mapping error using string pattern matching fallback."""
@@ -249,10 +249,63 @@ class TestMapGumnutError:
         result = map_gumnut_error(error, "Failed to process")
         assert isinstance(result, HTTPException)
         assert result.status_code == 500  # Should use status_code, not string pattern
-        assert "Failed to process: 404 Not found in server error" in result.detail
+        assert result.detail == "404 Not found in server error"
 
         # Error has status_code 401 but message contains "403"
         error = MockSDKError("403 Forbidden but auth issue", 401)
         result = map_gumnut_error(error, "Failed to authenticate")
         assert isinstance(result, HTTPException)
         assert result.status_code == 401  # Should use status_code, not string pattern
+
+    def test_map_error_extracts_message_from_body(self):
+        """Test that clean messages are extracted from SDK exception body attribute."""
+
+        class MockSDKErrorWithBody(Exception):
+            def __init__(self, message, status_code, body):
+                super().__init__(message)
+                self.status_code = status_code
+                self.body = body
+
+        # Test extracting 'detail' from body (like Gumnut SDK responses)
+        error_with_detail = MockSDKErrorWithBody(
+            "Error code: 401 - {'detail': 'JWT has expired'}",
+            401,
+            {"detail": "JWT has expired"},
+        )
+        result = map_gumnut_error(error_with_detail, "Failed to fetch user details")
+        assert isinstance(result, HTTPException)
+        assert result.status_code == 401
+        assert result.detail == "JWT has expired"
+
+        # Test extracting 'message' from body
+        error_with_message = MockSDKErrorWithBody(
+            "Error code: 404 - {'message': 'Asset not found'}",
+            404,
+            {"message": "Asset not found"},
+        )
+        result = map_gumnut_error(error_with_message, "Failed to fetch asset")
+        assert isinstance(result, HTTPException)
+        assert result.status_code == 404
+        assert result.detail == "Asset not found"
+
+        # Test extracting 'error' from body
+        error_with_error = MockSDKErrorWithBody(
+            "Error code: 403 - {'error': 'Access denied'}",
+            403,
+            {"error": "Access denied"},
+        )
+        result = map_gumnut_error(error_with_error, "Failed to access resource")
+        assert isinstance(result, HTTPException)
+        assert result.status_code == 403
+        assert result.detail == "Access denied"
+
+        # Test fallback when body is not a dict
+        error_without_dict_body = MockSDKErrorWithBody(
+            "Plain error message",
+            500,
+            "not a dict",
+        )
+        result = map_gumnut_error(error_without_dict_body, "Failed to process")
+        assert isinstance(result, HTTPException)
+        assert result.status_code == 500
+        assert result.detail == "Plain error message"

@@ -128,7 +128,7 @@ class TestStartOAuthIntegration:
         assert response.status_code == 500
         assert (
             "OAuth authentication failed. Please try again."
-            == response.json()["detail"]
+            == response.json()["message"]
         )
 
 
@@ -241,7 +241,7 @@ class TestFinishOAuthIntegration:
         assert response.status_code == 500
         assert (
             "OAuth authentication failed. Please try again."
-            == response.json()["detail"]
+            == response.json()["message"]
         )
 
         # Verify error was passed to SDK
@@ -265,7 +265,7 @@ class TestFinishOAuthIntegration:
         assert response.status_code == 400
         assert (
             "OAuth authentication failed. Please try again."
-            in response.json()["detail"]
+            in response.json()["message"]
         )
 
     def test_finish_oauth_backend_error(self, client, mock_gumnut_client):
@@ -285,7 +285,7 @@ class TestFinishOAuthIntegration:
         assert response.status_code == 500
         assert (
             "OAuth authentication failed. Please try again."
-            == response.json()["detail"]
+            == response.json()["message"]
         )
 
     def test_finish_oauth_defaults_optional_fields(
