@@ -66,7 +66,8 @@ def _extract_session_token(environ: dict) -> str | None:
     # Check Bearer token
     if auth := environ.get("HTTP_AUTHORIZATION", ""):
         if auth.lower().startswith("bearer "):
-            return auth[7:]
+            token = auth[7:].strip()
+            return token or None
 
     # Check cookie
     if cookie_str := environ.get("HTTP_COOKIE"):
@@ -178,7 +179,7 @@ async def emit_event(
 
     Args:
         event: The event type (from WebSocketEvent enum)
-        user_id: The Gumnut user ID (room name), or socket ID for targeted emission
+        user_id: The Gumnut user ID (room name)
         payload: Event data - Pydantic model (auto-serialized), string, list, or None
     """
     if isinstance(payload, BaseModel):

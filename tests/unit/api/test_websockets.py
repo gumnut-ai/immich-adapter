@@ -143,10 +143,10 @@ class TestExtractSessionToken:
         assert result is None
 
     def test_handles_bearer_only_no_token(self):
-        """Test that 'Bearer ' without a token returns empty string."""
+        """Test that 'Bearer ' without a token returns None."""
         environ = {"HTTP_AUTHORIZATION": "Bearer "}
         result = _extract_session_token(environ)
-        assert result == ""
+        assert result is None
 
 
 class TestConnectHandler:
