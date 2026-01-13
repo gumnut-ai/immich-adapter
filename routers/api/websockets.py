@@ -7,6 +7,7 @@ import socketio
 from pydantic import BaseModel
 
 from config.settings import get_settings
+from routers.immich_models import SyncAssetExifV1, SyncAssetV1
 from services.session_store import (
     SessionDataError,
     SessionStoreError,
@@ -43,6 +44,14 @@ class WebSocketEvent(Enum):
 
 
 EventPayload: TypeAlias = BaseModel | str | list[str] | None
+
+
+class AssetUploadReadyV1Payload(BaseModel):
+    """Payload for the AssetUploadReadyV1 WebSocket event (mobile v2 sync)."""
+
+    asset: SyncAssetV1
+    exif: SyncAssetExifV1
+
 
 # Maps socket ID -> user ID (for disconnect cleanup)
 _sid_to_user: dict[str, str] = {}

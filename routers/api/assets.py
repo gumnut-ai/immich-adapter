@@ -20,7 +20,12 @@ from gumnut import Gumnut
 
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
-from routers.utils.current_user import get_current_user
+from routers.utils.current_user import get_current_user, get_current_user_id
+from routers.api.websockets import (
+    emit_event,
+    WebSocketEvent,
+    AssetUploadReadyV1Payload,
+)
 from routers.immich_models import (
     AssetBulkDeleteDto,
     AssetBulkUpdateDto,
@@ -36,11 +41,14 @@ from routers.immich_models import (
     AssetMetadataUpsertDto,
     AssetResponseDto,
     AssetStatsResponseDto,
+    AssetTypeEnum,
     AssetVisibility,
     CheckExistingAssetsDto,
     UserResponseDto,
     CheckExistingAssetsResponseDto,
     UpdateAssetDto,
+    SyncAssetV1,
+    SyncAssetExifV1,
 )
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
@@ -281,6 +289,7 @@ async def upload_asset(
     key: str = Query(default=None),
     slug: str = Query(default=None),
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetMediaResponseDto:
     """
     Upload an asset using the Gumnut SDK.
@@ -323,6 +332,68 @@ async def upload_asset(
         # Convert to UUID format for response
         asset_uuid = safe_uuid_from_asset_id(asset_id)
 
+        # Emit WebSocket events for real-time updates
+        try:
+            # Build AssetResponseDto for on_upload_success event
+            asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
+            await emit_event(
+                WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response
+            )
+
+            # Build SyncAssetV1 and SyncAssetExifV1 for AssetUploadReadyV1 event
+            sync_asset = SyncAssetV1(
+                id=str(asset_uuid),
+                ownerId=current_user.id,
+                thumbhash=None,
+                checksum=gumnut_asset.checksum or "",
+                deletedAt=None,
+                fileCreatedAt=gumnut_asset.created_at,
+                fileModifiedAt=gumnut_asset.updated_at,
+                isFavorite=False,
+                localDateTime=gumnut_asset.created_at,
+                originalFileName=gumnut_asset.original_file_name or "",
+                type=AssetTypeEnum.IMAGE
+                if (gumnut_asset.mime_type or "").startswith("image/")
+                else AssetTypeEnum.VIDEO,
+                visibility=AssetVisibility.timeline,
+            )
+            sync_exif = SyncAssetExifV1(
+                assetId=str(asset_uuid),
+                city=None,
+                country=None,
+                dateTimeOriginal=gumnut_asset.created_at,
+                description=None,
+                exifImageHeight=gumnut_asset.height,
+                exifImageWidth=gumnut_asset.width,
+                exposureTime=None,
+                fNumber=None,
+                fileSizeInByte=gumnut_asset.file_size_bytes,
+                focalLength=None,
+                fps=None,
+                iso=None,
+                latitude=None,
+                lensModel=None,
+                longitude=None,
+                make=None,
+                model=None,
+                modifyDate=gumnut_asset.updated_at,
+                orientation=None,
+                profileDescription=None,
+                projectionType=None,
+                rating=None,
+                state=None,
+                timeZone=None,
+            )
+            payload = AssetUploadReadyV1Payload(asset=sync_asset, exif=sync_exif)
+            await emit_event(
+                WebSocketEvent.ASSET_UPLOAD_READY_V1, current_user.id, payload
+            )
+        except Exception as ws_error:
+            logger.warning(
+                "Failed to emit WebSocket event after upload",
+                extra={"asset_id": str(asset_uuid), "error": str(ws_error)},
+            )
+
         return AssetMediaResponseDto(
             id=str(asset_uuid), status=AssetMediaStatus.created
         )
@@ -363,6 +434,7 @@ async def update_assets(
 async def delete_assets(
     request: AssetBulkDeleteDto,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user_id: UUID = Depends(get_current_user_id),
 ) -> Response:
     """
     Delete multiple assets using the Gumnut SDK.
@@ -376,6 +448,19 @@ async def delete_assets(
                 gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
                 client.assets.delete(gumnut_asset_id)
+
+                # Emit WebSocket event for real-time timeline sync
+                try:
+                    await emit_event(
+                        WebSocketEvent.ASSET_DELETE,
+                        str(current_user_id),
+                        str(asset_uuid),
+                    )
+                except Exception as ws_error:
+                    logger.warning(
+                        "Failed to emit WebSocket event after asset delete",
+                        extra={"asset_id": str(asset_uuid), "error": str(ws_error)},
+                    )
 
             except Exception as asset_error:
                 # Log individual asset errors but continue with other deletions

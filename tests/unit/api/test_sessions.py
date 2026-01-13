@@ -1,7 +1,7 @@
 """Unit tests for Sessions API endpoints."""
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -17,6 +17,7 @@ from routers.api.sessions import (
     lock_session,
     update_session,
 )
+from routers.api.websockets import WebSocketEvent
 from routers.immich_models import SessionCreateDto, SessionUpdateDto
 from services.session_store import Session, SessionStore
 
@@ -272,11 +273,12 @@ class TestDeleteAllSessions:
         mock_session_store.get_by_user.return_value = sessions
         mock_session_store.delete_by_id.return_value = True
 
-        result = await delete_all_sessions(
-            request=mock_request,
-            current_user_id=TEST_USER_ID,
-            session_store=mock_session_store,
-        )
+        with patch("routers.api.sessions.emit_event", new_callable=AsyncMock):
+            result = await delete_all_sessions(
+                request=mock_request,
+                current_user_id=TEST_USER_ID,
+                session_store=mock_session_store,
+            )
 
         assert result is None
         # Should only delete the other session, not the current one
@@ -306,15 +308,69 @@ class TestDeleteAllSessions:
 
         mock_session_store.get_by_user.return_value = sessions
 
-        result = await delete_all_sessions(
-            request=mock_request,
-            current_user_id=TEST_USER_ID,
-            session_store=mock_session_store,
-        )
+        with patch("routers.api.sessions.emit_event", new_callable=AsyncMock):
+            result = await delete_all_sessions(
+                request=mock_request,
+                current_user_id=TEST_USER_ID,
+                session_store=mock_session_store,
+            )
 
         assert result is None
         # Should not call delete_by_id at all
         mock_session_store.delete_by_id.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_delete_all_sessions_emits_websocket_events(
+        self, mock_request, mock_session_store
+    ):
+        """Test that delete_all_sessions emits on_session_delete for each deleted session."""
+        now = datetime.now(timezone.utc)
+
+        sessions = [
+            Session(
+                id=TEST_SESSION_ID,
+                user_id=str(TEST_USER_ID),
+                library_id="lib_456",
+                stored_jwt=TEST_ENCRYPTED_JWT,
+                device_type="iOS",
+                device_os="iOS 17",
+                app_version="1.0",
+                created_at=now,
+                updated_at=now,
+                is_pending_sync_reset=False,
+            ),
+            Session(
+                id=TEST_SESSION_ID_2,
+                user_id=str(TEST_USER_ID),
+                library_id="lib_456",
+                stored_jwt=TEST_ENCRYPTED_JWT,
+                device_type="Android",
+                device_os="Android 14",
+                app_version="1.0",
+                created_at=now,
+                updated_at=now,
+                is_pending_sync_reset=False,
+            ),
+        ]
+
+        mock_session_store.get_by_user.return_value = sessions
+        mock_session_store.delete_by_id.return_value = True
+
+        with patch(
+            "routers.api.sessions.emit_event", new_callable=AsyncMock
+        ) as mock_emit:
+            await delete_all_sessions(
+                request=mock_request,
+                current_user_id=TEST_USER_ID,
+                session_store=mock_session_store,
+            )
+
+            # Should emit for the deleted session (not the current one)
+            mock_emit.assert_called_once()
+            call = mock_emit.call_args
+            assert call[0][0] == WebSocketEvent.SESSION_DELETE
+            assert call[0][1] == str(TEST_SESSION_ID_2)
+            assert call[0][2] == str(TEST_SESSION_ID_2)
 
 
 class TestUpdateSession:
@@ -506,12 +562,13 @@ class TestDeleteSession:
         mock_session_store.get_by_id.return_value = session
         mock_session_store.delete_by_id.return_value = True
 
-        result = await delete_session(
-            id=TEST_SESSION_ID,
-            request=mock_request,
-            current_user_id=TEST_USER_ID,
-            session_store=mock_session_store,
-        )
+        with patch("routers.api.sessions.emit_event", new_callable=AsyncMock):
+            result = await delete_session(
+                id=TEST_SESSION_ID,
+                request=mock_request,
+                current_user_id=TEST_USER_ID,
+                session_store=mock_session_store,
+            )
 
         assert result is None
         mock_session_store.get_by_id.assert_called_once_with(str(TEST_SESSION_ID))
@@ -564,6 +621,82 @@ class TestDeleteSession:
 
         assert exc_info.value.status_code == 400
         assert "Not found" in exc_info.value.detail
+
+    @pytest.mark.anyio
+    async def test_delete_session_emits_websocket_event(
+        self, mock_request, mock_session_store
+    ):
+        """Test that delete_session emits on_session_delete event."""
+        now = datetime.now(timezone.utc)
+        session = Session(
+            id=TEST_SESSION_ID,
+            user_id=str(TEST_USER_ID),
+            library_id="lib_456",
+            stored_jwt=TEST_ENCRYPTED_JWT,
+            device_type="iOS",
+            device_os="iOS 17",
+            app_version="1.0",
+            created_at=now,
+            updated_at=now,
+            is_pending_sync_reset=False,
+        )
+
+        mock_session_store.get_by_id.return_value = session
+        mock_session_store.delete_by_id.return_value = True
+
+        with patch(
+            "routers.api.sessions.emit_event", new_callable=AsyncMock
+        ) as mock_emit:
+            await delete_session(
+                id=TEST_SESSION_ID,
+                request=mock_request,
+                current_user_id=TEST_USER_ID,
+                session_store=mock_session_store,
+            )
+
+            mock_emit.assert_called_once()
+            call = mock_emit.call_args
+            assert call[0][0] == WebSocketEvent.SESSION_DELETE
+            assert call[0][1] == str(TEST_SESSION_ID)
+            assert call[0][2] == str(TEST_SESSION_ID)
+
+    @pytest.mark.anyio
+    async def test_delete_session_websocket_error_does_not_fail_deletion(
+        self, mock_request, mock_session_store
+    ):
+        """Test that WebSocket emission errors don't fail the session deletion."""
+        now = datetime.now(timezone.utc)
+        session = Session(
+            id=TEST_SESSION_ID,
+            user_id=str(TEST_USER_ID),
+            library_id="lib_456",
+            stored_jwt=TEST_ENCRYPTED_JWT,
+            device_type="iOS",
+            device_os="iOS 17",
+            app_version="1.0",
+            created_at=now,
+            updated_at=now,
+            is_pending_sync_reset=False,
+        )
+
+        mock_session_store.get_by_id.return_value = session
+        mock_session_store.delete_by_id.return_value = True
+
+        with patch(
+            "routers.api.sessions.emit_event",
+            new_callable=AsyncMock,
+            side_effect=Exception("WebSocket error"),
+        ):
+            result = await delete_session(
+                id=TEST_SESSION_ID,
+                request=mock_request,
+                current_user_id=TEST_USER_ID,
+                session_store=mock_session_store,
+            )
+
+            # Deletion should still succeed despite WebSocket error
+            assert result is None
+            mock_session_store.delete_by_id.assert_called_once()
 
 
 class TestLockSession:
