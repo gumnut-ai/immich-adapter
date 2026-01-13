@@ -29,10 +29,21 @@
 - Never edit historical database migration files
 - Place imports at the top of files (inline imports only to prevent circular dependencies)
 
+### Exception Handling
+
+- Don't expose implementation details in exceptions thrown to consumers
+- Wrap low-level exceptions (e.g., Redis, HTTP client errors) in domain-specific exceptions
+- Example: `SessionStore` catches `redis.exceptions.RedisError` and raises `SessionStoreError`
+
+### Type Annotations
+
+- Add type annotations to all function parameters and return types
+
 ### Logging
 
 - Always use structured logging with key/value metadata in the `extra` dict
-- Example: `logger.info("User logged in", extra={"user_id": user_id, "session_id": session_id})`
+- Include relevant identifiers for traceability: `user_id`, `session_token`, `sid`, `asset_id`, etc.
+- Example: `logger.info("WebSocket connected", extra={"sid": sid, "user_id": user_id, "device_type": session.device_type})`
 
 ### HTTP Response Status Codes
 
