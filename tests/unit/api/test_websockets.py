@@ -16,7 +16,7 @@ from routers.api.websockets import (
     sio,
     WebSocketEvent,
 )
-from services.session_store import Session
+from services.session_store import Session, SessionStoreError
 
 
 # Test UUIDs for consistent testing
@@ -206,7 +206,9 @@ class TestConnectHandler:
         self, mock_session_store, mock_sio
     ):
         """Test that connections are rejected when session lookup fails."""
-        mock_session_store.get_by_id.side_effect = Exception("Redis error")
+        mock_session_store.get_by_id.side_effect = SessionStoreError(
+            "Failed to retrieve session"
+        )
 
         async def mock_get_session_store():
             return mock_session_store

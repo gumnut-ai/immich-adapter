@@ -4,9 +4,17 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+import redis.exceptions
+
 from utils.jwt_encryption import decrypt_jwt, encrypt_jwt
 from utils.redis_client import get_redis_client
 from utils.redis_protocols import AsyncRedisClient
+
+
+class SessionStoreError(Exception):
+    """Raised when session store operations fail (e.g., connectivity issues)."""
+
+    pass
 
 
 class SessionDataError(Exception):
@@ -219,13 +227,21 @@ class SessionStore:
 
         Returns:
             Session if found, None otherwise
+
+        Raises:
+            SessionStoreError: If Redis operation fails
+            SessionDataError: If session data is corrupted
         """
         try:
             session_uuid = UUID(session_token)
         except ValueError:
             return None
 
-        data = await self._redis.hgetall(f"session:{session_token}")
+        try:
+            data = await self._redis.hgetall(f"session:{session_token}")
+        except redis.exceptions.RedisError as e:
+            raise SessionStoreError(f"Failed to retrieve session: {e}") from e
+
         if not data:
             return None
 

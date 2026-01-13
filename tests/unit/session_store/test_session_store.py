@@ -5,11 +5,14 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
+import redis.exceptions
+
 from services.session_store import (
     Session,
     SessionDataError,
     SessionExpiredError,
     SessionStore,
+    SessionStoreError,
 )
 
 # Test UUIDs for consistent testing
@@ -389,6 +392,21 @@ class TestSessionStoreGet:
         session = await session_store.get_by_id("not-a-valid-uuid")
 
         assert session is None
+
+    @pytest.mark.anyio
+    async def test_get_by_id_redis_error_raises_session_store_error(
+        self, session_store, mock_redis
+    ):
+        """Test that Redis errors are wrapped in SessionStoreError."""
+        mock_redis.hgetall.side_effect = redis.exceptions.ConnectionError(
+            "Connection refused"
+        )
+
+        with pytest.raises(SessionStoreError) as exc_info:
+            await session_store.get_by_id(str(TEST_SESSION_ID))
+
+        assert "Failed to retrieve session" in str(exc_info.value)
+        assert isinstance(exc_info.value.__cause__, redis.exceptions.ConnectionError)
 
 
 class TestSessionStoreGetByUser:

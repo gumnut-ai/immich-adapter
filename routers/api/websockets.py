@@ -1,13 +1,17 @@
 import logging
 from enum import Enum
 from http.cookies import SimpleCookie
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import socketio
 from pydantic import BaseModel
 
 from config.settings import get_settings
-from services.session_store import get_session_store
+from services.session_store import (
+    SessionDataError,
+    SessionStoreError,
+    get_session_store,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +48,7 @@ EventPayload: TypeAlias = BaseModel | str | list[str] | None
 _sid_to_user: dict[str, str] = {}
 
 
-def _extract_session_token(environ: dict) -> str | None:
+def _extract_session_token(environ: dict[str, Any]) -> str | None:
     """
     Extract session token from Socket.IO connection environment.
 
@@ -80,7 +84,7 @@ def _extract_session_token(environ: dict) -> str | None:
 
 
 @sio.event
-async def connect(sid, environ):
+async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
     """
     Handle new WebSocket connection.
 
@@ -104,17 +108,17 @@ async def connect(sid, environ):
     try:
         session_store = await get_session_store()
         session = await session_store.get_by_id(session_token)
-    except Exception:
+    except (SessionStoreError, SessionDataError):
         logger.exception(
             "WebSocket auth failed - session lookup error",
-            extra={"sid": sid},
+            extra={"sid": sid, "session_token": session_token},
         )
         return False
 
     if not session:
         logger.warning(
             "WebSocket auth failed - session not found",
-            extra={"sid": sid},
+            extra={"sid": sid, "session_token": session_token},
         )
         return False  # Reject connection
 
@@ -155,12 +159,12 @@ async def connect(sid, environ):
 
 
 @sio.event
-def connect_error(data):
+def connect_error(data: Any) -> None:
     logger.warning("Connection error", extra={"data": data})
 
 
 @sio.event
-async def disconnect(sid):
+async def disconnect(sid: str) -> None:
     """Handle WebSocket disconnection."""
     user_id = _sid_to_user.pop(sid, None)
     logger.debug(
