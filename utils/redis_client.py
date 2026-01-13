@@ -30,6 +30,17 @@ async def get_redis_client() -> redis.Redis:
     return _redis_client
 
 
+async def check_redis_connection() -> None:
+    """
+    Verify Redis is reachable by sending a PING command.
+
+    Raises:
+        redis.exceptions.RedisError: If Redis is unreachable
+    """
+    client = await get_redis_client()
+    await client.ping()
+
+
 async def close_redis_client() -> None:
     """Close the singleton Redis client if it exists."""
     global _redis_client

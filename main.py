@@ -41,7 +41,7 @@ from routers.api import (
     websockets,
 )
 from routers.utils.gumnut_client import close_shared_http_client
-from utils.redis_client import close_redis_client
+from utils.redis_client import check_redis_connection, close_redis_client
 
 init_logging()
 init_sentry()
@@ -53,6 +53,9 @@ async def lifespan(app: FastAPI):
     Lifespan context manager to handle startup and shutdown tasks.
     Code before yield runs on startup, code after yield runs on shutdown.
     """
+    # Startup: verify required services are available
+    await check_redis_connection()
+
     yield
     # Ensure the singleton HTTP client for Gumnut is closed on shutdown
     await close_shared_http_client()
