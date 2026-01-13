@@ -3,9 +3,10 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from socketio.exceptions import SocketIOError
 
 from routers.api.auth import post_logout
-from routers.api.websockets import WebSocketEvent
+from services.websockets import WebSocketEvent
 from routers.utils.cookies import ImmichCookie
 from services.session_store import SessionStore
 
@@ -193,7 +194,7 @@ class TestPostLogout:
         with patch(
             "routers.api.auth.emit_event",
             new_callable=AsyncMock,
-            side_effect=Exception("WebSocket error"),
+            side_effect=SocketIOError("WebSocket error"),
         ):
             result = await post_logout(
                 request=mock_request,

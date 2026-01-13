@@ -17,7 +17,7 @@ from routers.api.sessions import (
     lock_session,
     update_session,
 )
-from routers.api.websockets import WebSocketEvent
+from services.websockets import WebSocketEvent
 from routers.immich_models import SessionCreateDto, SessionUpdateDto
 from services.session_store import Session, SessionStore
 

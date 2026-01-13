@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from routers.api.websockets import (
+from services.websockets import (
     _extract_session_token,
     _sid_to_user,
     connect,
@@ -193,7 +193,7 @@ class TestConnectHandler:
             return mock_session_store
 
         with patch(
-            "routers.api.websockets.get_session_store",
+            "services.websockets.get_session_store",
             mock_get_session_store,
         ):
             environ = {"HTTP_X_IMMICH_USER_TOKEN": "invalid-token"}
@@ -214,7 +214,7 @@ class TestConnectHandler:
             return mock_session_store
 
         with patch(
-            "routers.api.websockets.get_session_store",
+            "services.websockets.get_session_store",
             mock_get_session_store,
         ):
             environ = {"HTTP_X_IMMICH_USER_TOKEN": "some-token"}
@@ -232,7 +232,7 @@ class TestConnectHandler:
             return mock_session_store
 
         with patch(
-            "routers.api.websockets.get_session_store",
+            "services.websockets.get_session_store",
             mock_get_session_store,
         ):
             environ = {"HTTP_X_IMMICH_USER_TOKEN": str(TEST_SESSION_ID)}
@@ -253,7 +253,7 @@ class TestConnectHandler:
             return mock_session_store
 
         with patch(
-            "routers.api.websockets.get_session_store",
+            "services.websockets.get_session_store",
             mock_get_session_store,
         ):
             environ = {"HTTP_X_IMMICH_USER_TOKEN": str(TEST_SESSION_ID)}
@@ -280,7 +280,7 @@ class TestConnectHandler:
             return mock_session_store
 
         with patch(
-            "routers.api.websockets.get_session_store",
+            "services.websockets.get_session_store",
             mock_get_session_store,
         ):
             environ = {"HTTP_AUTHORIZATION": f"Bearer {TEST_SESSION_ID}"}
@@ -296,7 +296,7 @@ class TestConnectHandler:
             return mock_session_store
 
         with patch(
-            "routers.api.websockets.get_session_store",
+            "services.websockets.get_session_store",
             mock_get_session_store,
         ):
             environ = {"HTTP_COOKIE": f"immich_access_token={TEST_SESSION_ID}"}

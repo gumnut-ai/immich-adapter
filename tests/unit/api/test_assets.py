@@ -7,7 +7,10 @@ from fastapi import HTTPException
 from uuid import uuid4
 import base64
 
-from routers.api.websockets import WebSocketEvent
+from gumnut import GumnutError
+from socketio.exceptions import SocketIOError
+
+from services.websockets import WebSocketEvent
 
 from routers.api.assets import (
     _immich_checksum_to_base64,
@@ -505,11 +508,11 @@ class TestUploadAsset:
         mock_file.content_type = "image/jpeg"
         mock_file.read = AsyncMock(return_value=b"fake image data")
 
-        # Execute with emit_event that raises an exception
+        # Execute with emit_event that raises a SocketIOError
         with patch(
             "routers.api.assets.emit_event",
             new_callable=AsyncMock,
-            side_effect=Exception("WebSocket error"),
+            side_effect=SocketIOError("WebSocket error"),
         ):
             result = await upload_asset(
                 assetData=mock_file,
@@ -576,7 +579,7 @@ class TestDeleteAssets:
         # First delete succeeds, second fails with 404
         mock_client.assets.delete.side_effect = [
             None,  # Success
-            Exception("404 Not found"),  # Failure
+            GumnutError("404 Not found"),  # Failure
         ]
 
         asset_ids = [uuid4(), uuid4()]
@@ -632,11 +635,11 @@ class TestDeleteAssets:
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
         current_user_id = uuid4()
 
-        # Execute with emit_event that raises an exception
+        # Execute with emit_event that raises a SocketIOError
         with patch(
             "routers.api.assets.emit_event",
             new_callable=AsyncMock,
-            side_effect=Exception("WebSocket error"),
+            side_effect=SocketIOError("WebSocket error"),
         ):
             result = await delete_assets(
                 request, client=mock_client, current_user_id=current_user_id

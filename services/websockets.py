@@ -194,6 +194,10 @@ async def emit_event(
         event: The event type (from WebSocketEvent enum)
         user_id: The Gumnut user ID (room name)
         payload: Event data - Pydantic model (auto-serialized), string, list, or None
+
+    Raises:
+        pydantic.ValidationError: If payload is a Pydantic model that fails serialization
+        socketio.exceptions.SocketIOError: If the socket emission fails
     """
     if isinstance(payload, BaseModel):
         data = payload.model_dump(mode="json")

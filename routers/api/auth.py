@@ -22,7 +22,9 @@ from routers.utils.cookies import AuthType, ImmichCookie, set_auth_cookies
 from routers.utils.gumnut_client import (
     get_authenticated_gumnut_client_optional,
 )
-from routers.api.websockets import emit_event, WebSocketEvent
+from socketio.exceptions import SocketIOError
+
+from services.websockets import emit_event, WebSocketEvent
 from services.session_store import SessionStore, get_session_store
 
 logger = logging.getLogger(__name__)
@@ -110,7 +112,7 @@ async def post_logout(
                 await emit_event(
                     WebSocketEvent.SESSION_DELETE, session_token, session_token
                 )
-            except Exception as ws_error:
+            except SocketIOError as ws_error:
                 logger.warning(
                     "Failed to emit WebSocket event after logout",
                     extra={"session_id": session_token, "error": str(ws_error)},

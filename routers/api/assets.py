@@ -16,16 +16,15 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from gumnut import Gumnut
+from gumnut import Gumnut, GumnutError
 
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.utils.current_user import get_current_user, get_current_user_id
-from routers.api.websockets import (
-    emit_event,
-    WebSocketEvent,
-    AssetUploadReadyV1Payload,
-)
+from pydantic import ValidationError
+from socketio.exceptions import SocketIOError
+
+from services.websockets import emit_event, WebSocketEvent
 from routers.immich_models import (
     AssetBulkDeleteDto,
     AssetBulkUpdateDto,
@@ -41,20 +40,20 @@ from routers.immich_models import (
     AssetMetadataUpsertDto,
     AssetResponseDto,
     AssetStatsResponseDto,
-    AssetTypeEnum,
     AssetVisibility,
     CheckExistingAssetsDto,
     UserResponseDto,
     CheckExistingAssetsResponseDto,
     UpdateAssetDto,
-    SyncAssetV1,
-    SyncAssetExifV1,
 )
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     uuid_to_gumnut_asset_id,
 )
-from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
+from routers.utils.asset_conversion import (
+    build_asset_upload_ready_payload,
+    convert_gumnut_asset_to_immich,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -340,55 +339,14 @@ async def upload_asset(
                 WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response
             )
 
-            # Build SyncAssetV1 and SyncAssetExifV1 for AssetUploadReadyV1 event
-            sync_asset = SyncAssetV1(
-                id=str(asset_uuid),
-                ownerId=current_user.id,
-                thumbhash=None,
-                checksum=gumnut_asset.checksum or "",
-                deletedAt=None,
-                fileCreatedAt=gumnut_asset.created_at,
-                fileModifiedAt=gumnut_asset.updated_at,
-                isFavorite=False,
-                localDateTime=gumnut_asset.created_at,
-                originalFileName=gumnut_asset.original_file_name or "",
-                type=AssetTypeEnum.IMAGE
-                if (gumnut_asset.mime_type or "").startswith("image/")
-                else AssetTypeEnum.VIDEO,
-                visibility=AssetVisibility.timeline,
+            # Build payload for AssetUploadReadyV1 event
+            payload = build_asset_upload_ready_payload(
+                gumnut_asset, str(asset_uuid), current_user.id
             )
-            sync_exif = SyncAssetExifV1(
-                assetId=str(asset_uuid),
-                city=None,
-                country=None,
-                dateTimeOriginal=gumnut_asset.created_at,
-                description=None,
-                exifImageHeight=gumnut_asset.height,
-                exifImageWidth=gumnut_asset.width,
-                exposureTime=None,
-                fNumber=None,
-                fileSizeInByte=gumnut_asset.file_size_bytes,
-                focalLength=None,
-                fps=None,
-                iso=None,
-                latitude=None,
-                lensModel=None,
-                longitude=None,
-                make=None,
-                model=None,
-                modifyDate=gumnut_asset.updated_at,
-                orientation=None,
-                profileDescription=None,
-                projectionType=None,
-                rating=None,
-                state=None,
-                timeZone=None,
-            )
-            payload = AssetUploadReadyV1Payload(asset=sync_asset, exif=sync_exif)
             await emit_event(
                 WebSocketEvent.ASSET_UPLOAD_READY_V1, current_user.id, payload
             )
-        except Exception as ws_error:
+        except (ValidationError, SocketIOError) as ws_error:
             logger.warning(
                 "Failed to emit WebSocket event after upload",
                 extra={"asset_id": str(asset_uuid), "error": str(ws_error)},
@@ -456,13 +414,13 @@ async def delete_assets(
                         str(current_user_id),
                         str(asset_uuid),
                     )
-                except Exception as ws_error:
+                except SocketIOError as ws_error:
                     logger.warning(
                         "Failed to emit WebSocket event after asset delete",
                         extra={"asset_id": str(asset_uuid), "error": str(ws_error)},
                     )
 
-            except Exception as asset_error:
+            except GumnutError as asset_error:
                 # Log individual asset errors but continue with other deletions
                 if (
                     check_for_error_by_code(asset_error, 404)

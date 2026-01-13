@@ -10,7 +10,7 @@ from routers.immich_models import (
     SessionUpdateDto,
 )
 from routers.utils.current_user import get_current_user_id
-from routers.api.websockets import emit_event, WebSocketEvent
+from services.websockets import emit_event, WebSocketEvent
 from services.session_store import Session, SessionStore, get_session_store
 
 logger = logging.getLogger(__name__)
