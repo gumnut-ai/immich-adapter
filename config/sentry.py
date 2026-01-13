@@ -24,6 +24,4 @@ def init_sentry():
             environment=get_settings().environment,
         )
     else:
-        logger.info(
-            "Sentry disabled", extra={"reason": "SENTRY_DSN is empty or not set"}
-        )
+        logger.info("Sentry disabled: SENTRY_DSN is empty or not set")
