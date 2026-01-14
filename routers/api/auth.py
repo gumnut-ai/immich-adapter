@@ -108,15 +108,14 @@ async def post_logout(
         try:
             await session_store.delete(session_token)
             # Emit WebSocket event to notify the session's client
-            try:
-                await emit_event(
-                    WebSocketEvent.SESSION_DELETE, session_token, session_token
-                )
-            except SocketIOError as ws_error:
-                logger.warning(
-                    "Failed to emit WebSocket event after logout",
-                    extra={"session_id": session_token, "error": str(ws_error)},
-                )
+            await emit_event(
+                WebSocketEvent.SESSION_DELETE, session_token, session_token
+            )
+        except SocketIOError as ws_error:
+            logger.warning(
+                "Failed to emit WebSocket event after logout",
+                extra={"session_id": session_token, "error": str(ws_error)},
+            )
         except Exception as e:
             # Log but don't fail the logout - cookie clearing is more important
             logger.warning(

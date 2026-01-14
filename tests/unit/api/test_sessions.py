@@ -20,6 +20,7 @@ from routers.api.sessions import (
 from services.websockets import WebSocketEvent
 from routers.immich_models import SessionCreateDto, SessionUpdateDto
 from services.session_store import Session, SessionStore
+from socketio.exceptions import SocketIOError
 
 # Test UUIDs for consistent testing
 TEST_SESSION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -685,7 +686,7 @@ class TestDeleteSession:
         with patch(
             "routers.api.sessions.emit_event",
             new_callable=AsyncMock,
-            side_effect=Exception("WebSocket error"),
+            side_effect=SocketIOError("WebSocket error"),
         ):
             result = await delete_session(
                 id=TEST_SESSION_ID,

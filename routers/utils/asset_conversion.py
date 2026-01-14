@@ -205,19 +205,20 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
 
 
 def build_asset_upload_ready_payload(
-    gumnut_asset: AssetResponse, asset_uuid: str, owner_id: str
+    gumnut_asset: AssetResponse, owner_id: str
 ) -> AssetUploadReadyV1Payload:
     """
     Build an AssetUploadReadyV1Payload from a Gumnut asset for WebSocket sync events.
 
     Args:
         gumnut_asset: The Gumnut AssetResponse object
-        asset_uuid: The asset UUID string
         owner_id: The owner's user ID string
 
     Returns:
         AssetUploadReadyV1Payload containing SyncAssetV1 and SyncAssetExifV1
     """
+    asset_uuid = str(safe_uuid_from_asset_id(gumnut_asset.id))
+
     mime_type = gumnut_asset.mime_type or ""
 
     sync_asset = SyncAssetV1(

@@ -340,16 +340,18 @@ async def upload_asset(
             )
 
             # Build payload for AssetUploadReadyV1 event
-            payload = build_asset_upload_ready_payload(
-                gumnut_asset, str(asset_uuid), current_user.id
-            )
+            payload = build_asset_upload_ready_payload(gumnut_asset, current_user.id)
             await emit_event(
                 WebSocketEvent.ASSET_UPLOAD_READY_V1, current_user.id, payload
             )
         except (ValidationError, SocketIOError) as ws_error:
             logger.warning(
                 "Failed to emit WebSocket event after upload",
-                extra={"asset_id": str(asset_uuid), "error": str(ws_error)},
+                extra={
+                    "gumnut_id": str(asset_uuid),
+                    "immich_id": str(asset_uuid),
+                    "error": str(ws_error),
+                },
             )
 
         return AssetMediaResponseDto(
