@@ -8,6 +8,11 @@ to the Immich API format, including EXIF data processing.
 from datetime import datetime, timezone
 
 from gumnut.types.asset_response import AssetResponse
+from routers.utils.datetime_utils import (
+    format_timezone_immich,
+    to_actual_utc,
+    to_immich_local_datetime,
+)
 from routers.immich_models import (
     AssetResponseDto,
     AssetTypeEnum,
@@ -67,25 +72,16 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
         exposure_time = exposure_time_str
 
     # Map Gumnut datetime fields to our expected names
-    date_time_original = exif.original_datetime
-    modify_date = exif.modified_datetime
+    # Extract timezone before converting to UTC (need original offset for Immich format)
+    time_zone = format_timezone_immich(exif.original_datetime)
+
+    # Convert EXIF datetimes to actual UTC for Immich compatibility
+    date_time_original = to_actual_utc(exif.original_datetime)
+    modify_date = to_actual_utc(exif.modified_datetime)
 
     width = gumnut_asset.width
     height = gumnut_asset.height
     file_size = gumnut_asset.file_size_bytes
-
-    time_zone = None
-
-    # Pydantic will throw an error if date_time_original does not have a timezone
-    if date_time_original is not None:
-        time_zone = date_time_original.tzname()
-        if not time_zone:
-            time_zone = "Etc/UTC"
-            date_time_original = date_time_original.replace(tzinfo=timezone.utc)
-
-    # Handle timezone for modify_date as well
-    if modify_date is not None and modify_date.tzname() is None:
-        modify_date = modify_date.replace(tzinfo=timezone.utc)
 
     return ExifResponseDto(
         # Image dimensions
@@ -113,7 +109,7 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
         dateTimeOriginal=date_time_original,
         modifyDate=modify_date,
         orientation=str(orientation) if orientation else None,
-        timeZone=str(time_zone),
+        timeZone=time_zone,
         rating=int(float(rating)) if rating else None,
         projectionType=str(projection_type) if projection_type else None,
     )
@@ -161,17 +157,12 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
             denominator = round(1 / exposure_time)
             exposure_time_str = f"1/{denominator}"
 
-    # Handle timezone for dateTimeOriginal
-    time_zone = None
-    if date_time_original is not None:
-        time_zone = date_time_original.tzname()
-        if not time_zone:
-            time_zone = "Etc/UTC"
-            date_time_original = date_time_original.replace(tzinfo=timezone.utc)
+    # Extract timezone before converting to UTC (need original offset for Immich format)
+    time_zone = format_timezone_immich(date_time_original)
 
-    # Handle timezone for modify_date
-    if modify_date is not None and modify_date.tzname() is None:
-        modify_date = modify_date.replace(tzinfo=timezone.utc)
+    # Convert EXIF datetimes to actual UTC for Immich compatibility
+    date_time_original = to_actual_utc(date_time_original)
+    modify_date = to_actual_utc(modify_date)
 
     return SyncAssetExifV1(
         assetId=asset_uuid,
@@ -200,7 +191,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
         projectionType=str(projection_type) if projection_type else None,
         rating=int(rating) if rating else None,
         state=str(state) if state else None,
-        timeZone=str(time_zone) if time_zone else None,
+        timeZone=time_zone,
     )
 
 
@@ -221,16 +212,33 @@ def build_asset_upload_ready_payload(
 
     mime_type = gumnut_asset.mime_type or ""
 
+    # Extract EXIF datetimes for proper Immich compatibility
+    exif_original_dt = (
+        gumnut_asset.exif.original_datetime if gumnut_asset.exif else None
+    )
+    exif_modified_dt = (
+        gumnut_asset.exif.modified_datetime if gumnut_asset.exif else None
+    )
+
+    # fileCreatedAt: EXIF capture time in actual UTC, fallback to upload time
+    file_created_at = to_actual_utc(exif_original_dt) or gumnut_asset.created_at
+    # fileModifiedAt: EXIF modify time in actual UTC, fallback to upload time
+    file_modified_at = to_actual_utc(exif_modified_dt) or gumnut_asset.updated_at
+    # localDateTime: EXIF capture time in keepLocalTime format, fallback to upload time
+    local_date_time = (
+        to_immich_local_datetime(exif_original_dt) or gumnut_asset.created_at
+    )
+
     sync_asset = SyncAssetV1(
         id=asset_uuid,
         ownerId=owner_id,
         thumbhash=None,
         checksum=gumnut_asset.checksum or "",
         deletedAt=None,
-        fileCreatedAt=gumnut_asset.created_at,
-        fileModifiedAt=gumnut_asset.updated_at,
+        fileCreatedAt=file_created_at,
+        fileModifiedAt=file_modified_at,
         isFavorite=False,
-        localDateTime=gumnut_asset.created_at,
+        localDateTime=local_date_time,
         originalFileName=gumnut_asset.original_file_name or "",
         type=AssetTypeEnum.VIDEO
         if mime_type.startswith("video/")
@@ -259,37 +267,26 @@ def convert_gumnut_asset_to_immich(
     asset_id = gumnut_asset.id
     original_filename = gumnut_asset.original_file_name or "unknown"
     mime_type = gumnut_asset.mime_type or "application/octet-stream"
-    file_created_at = gumnut_asset.created_at
-    file_modified_at = gumnut_asset.updated_at
     checksum = gumnut_asset.checksum or ""
 
-    # Ensure timestamps are datetime objects
-    # AssetResponse should already have datetime objects, but handle edge cases
-    if file_created_at is None:
-        file_created_at = datetime.now()
-    elif not isinstance(file_created_at, datetime):
-        # If it's not already a datetime (e.g., it's a string), parse it
-        try:
-            if isinstance(file_created_at, str):
-                iso_string: str = file_created_at.replace("Z", "+00:00")
-                file_created_at = datetime.fromisoformat(iso_string)
-            else:
-                file_created_at = datetime.now()
-        except (ValueError, AttributeError):
-            file_created_at = datetime.now()
+    # Extract EXIF datetimes for proper Immich compatibility
+    exif_original_dt = (
+        gumnut_asset.exif.original_datetime if gumnut_asset.exif else None
+    )
+    exif_modified_dt = (
+        gumnut_asset.exif.modified_datetime if gumnut_asset.exif else None
+    )
 
-    if file_modified_at is None:
-        file_modified_at = datetime.now()
-    elif not isinstance(file_modified_at, datetime):
-        # If it's not already a datetime (e.g., it's a string), parse it
-        try:
-            if isinstance(file_modified_at, str):
-                iso_string: str = file_modified_at.replace("Z", "+00:00")
-                file_modified_at = datetime.fromisoformat(iso_string)
-            else:
-                file_modified_at = datetime.now()
-        except (ValueError, AttributeError):
-            file_modified_at = datetime.now()
+    # Get fallback timestamps from upload times
+    created_at_fallback = gumnut_asset.created_at or datetime.now(timezone.utc)
+    updated_at_fallback = gumnut_asset.updated_at or datetime.now(timezone.utc)
+
+    # fileCreatedAt: EXIF capture time in actual UTC, fallback to upload time
+    file_created_at = to_actual_utc(exif_original_dt) or created_at_fallback
+    # fileModifiedAt: EXIF modify time in actual UTC, fallback to upload time
+    file_modified_at = to_actual_utc(exif_modified_dt) or updated_at_fallback
+    # localDateTime: EXIF capture time in keepLocalTime format, fallback to upload time
+    local_date_time = to_immich_local_datetime(exif_original_dt) or created_at_fallback
 
     # Determine asset type based on MIME type
     asset_type = (
@@ -313,11 +310,11 @@ def convert_gumnut_asset_to_immich(
         originalMimeType=mime_type,
         fileCreatedAt=file_created_at,
         fileModifiedAt=file_modified_at,
-        localDateTime=file_created_at,
-        updatedAt=file_modified_at,
+        localDateTime=local_date_time,
+        updatedAt=updated_at_fallback,
         checksum=checksum or "placeholder-checksum",
         exifInfo=exif_info,  # Now includes processed EXIF data
-        createdAt=file_created_at,
+        createdAt=created_at_fallback,
         duration="00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else "",
         hasMetadata=True,
         isArchived=False,
