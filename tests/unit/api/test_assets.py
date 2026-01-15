@@ -1,10 +1,16 @@
 """Tests for assets.py endpoints."""
 
 import pytest
-from unittest.mock import Mock, AsyncMock
+from datetime import datetime, timezone
+from unittest.mock import Mock, AsyncMock, patch
 from fastapi import HTTPException
 from uuid import uuid4
 import base64
+
+from gumnut import GumnutError
+from socketio.exceptions import SocketIOError
+
+from services.websockets import WebSocketEvent
 
 from routers.api.assets import (
     _immich_checksum_to_base64,
@@ -318,7 +324,7 @@ class TestUploadAsset:
     """Test the upload_asset endpoint."""
 
     @pytest.mark.anyio
-    async def test_upload_asset_success(self, sample_uuid):
+    async def test_upload_asset_success(self, sample_uuid, mock_current_user):
         """Test successful asset upload."""
         # Setup - create mock client
         mock_client = Mock()
@@ -326,6 +332,16 @@ class TestUploadAsset:
         # Mock the gumnut asset response with proper Gumnut ID format
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.original_file_name = "test.jpg"
+        mock_gumnut_asset.created_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.mime_type = "image/jpeg"
+        mock_gumnut_asset.width = 1920
+        mock_gumnut_asset.height = 1080
+        mock_gumnut_asset.file_size_bytes = 1024
+        mock_gumnut_asset.exif = None
+        mock_gumnut_asset.people = []
         mock_client.assets.create.return_value = mock_gumnut_asset
 
         # Mock the file data
@@ -335,16 +351,18 @@ class TestUploadAsset:
         mock_file.read = AsyncMock(return_value=b"fake image data")
 
         # Execute
-        result = await upload_asset(
-            assetData=mock_file,
-            deviceAssetId="device-123",
-            deviceId="device-456",
-            fileCreatedAt="2023-01-01T12:00:00Z",
-            fileModifiedAt="2023-01-01T12:00:00Z",
-            isFavorite=False,
-            duration="",
-            client=mock_client,
-        )
+        with patch("routers.api.assets.emit_event", new_callable=AsyncMock):
+            result = await upload_asset(
+                assetData=mock_file,
+                deviceAssetId="device-123",
+                deviceId="device-456",
+                fileCreatedAt="2023-01-01T12:00:00Z",
+                fileModifiedAt="2023-01-01T12:00:00Z",
+                isFavorite=False,
+                duration="",
+                client=mock_client,
+                current_user=mock_current_user,
+            )
 
         # Assert
         assert result.id == str(sample_uuid)
@@ -352,7 +370,7 @@ class TestUploadAsset:
         mock_client.assets.create.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_upload_asset_duplicate(self, sample_uuid):
+    async def test_upload_asset_duplicate(self, sample_uuid, mock_current_user):
         """Test upload asset with duplicate error."""
         # Setup - create mock client
         mock_client = Mock()
@@ -365,20 +383,22 @@ class TestUploadAsset:
         mock_file.read = AsyncMock(return_value=b"fake image data")
 
         # Execute
-        result = await upload_asset(
-            assetData=mock_file,
-            deviceAssetId="device-123",
-            deviceId="device-456",
-            fileCreatedAt="2023-01-01T12:00:00Z",
-            client=mock_client,
-        )
+        with patch("routers.api.assets.emit_event", new_callable=AsyncMock):
+            result = await upload_asset(
+                assetData=mock_file,
+                deviceAssetId="device-123",
+                deviceId="device-456",
+                fileCreatedAt="2023-01-01T12:00:00Z",
+                client=mock_client,
+                current_user=mock_current_user,
+            )
 
         # Assert
         assert result.status == AssetMediaStatus.duplicate
         assert result.id == "00000000-0000-0000-0000-000000000000"
 
     @pytest.mark.anyio
-    async def test_upload_asset_api_error(self):
+    async def test_upload_asset_api_error(self, mock_current_user):
         """Test upload asset with API error."""
         # Setup - create mock client
         mock_client = Mock()
@@ -392,15 +412,120 @@ class TestUploadAsset:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
+            with patch("routers.api.assets.emit_event", new_callable=AsyncMock):
+                await upload_asset(
+                    assetData=mock_file,
+                    deviceAssetId="device-123",
+                    deviceId="device-456",
+                    fileCreatedAt="2023-01-01T12:00:00Z",
+                    client=mock_client,
+                    current_user=mock_current_user,
+                )
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_upload_asset_emits_websocket_events(
+        self, sample_uuid, mock_current_user
+    ):
+        """Test that upload_asset emits on_upload_success and AssetUploadReadyV1 events."""
+        # Setup - create mock client
+        mock_client = Mock()
+
+        # Mock the gumnut asset response
+        mock_gumnut_asset = Mock()
+        mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.original_file_name = "test.jpg"
+        mock_gumnut_asset.created_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.mime_type = "image/jpeg"
+        mock_gumnut_asset.width = 1920
+        mock_gumnut_asset.height = 1080
+        mock_gumnut_asset.file_size_bytes = 1024
+        mock_gumnut_asset.exif = None
+        mock_gumnut_asset.people = []
+        mock_client.assets.create.return_value = mock_gumnut_asset
+
+        # Mock the file data
+        mock_file = Mock()
+        mock_file.filename = "test.jpg"
+        mock_file.content_type = "image/jpeg"
+        mock_file.read = AsyncMock(return_value=b"fake image data")
+
+        # Execute with mocked emit_event
+        with patch(
+            "routers.api.assets.emit_event", new_callable=AsyncMock
+        ) as mock_emit:
             await upload_asset(
                 assetData=mock_file,
                 deviceAssetId="device-123",
                 deviceId="device-456",
                 fileCreatedAt="2023-01-01T12:00:00Z",
                 client=mock_client,
+                current_user=mock_current_user,
             )
 
-        assert exc_info.value.status_code == 401
+            # Assert - emit_event should be called twice
+            assert mock_emit.call_count == 2
+
+            # First call should be on_upload_success
+            first_call = mock_emit.call_args_list[0]
+            assert first_call[0][0] == WebSocketEvent.UPLOAD_SUCCESS
+            assert first_call[0][1] == mock_current_user.id
+
+            # Second call should be AssetUploadReadyV1
+            second_call = mock_emit.call_args_list[1]
+            assert second_call[0][0] == WebSocketEvent.ASSET_UPLOAD_READY_V1
+            assert second_call[0][1] == mock_current_user.id
+
+    @pytest.mark.anyio
+    async def test_upload_asset_websocket_error_does_not_fail_upload(
+        self, sample_uuid, mock_current_user
+    ):
+        """Test that WebSocket emission errors don't fail the upload."""
+        # Setup - create mock client
+        mock_client = Mock()
+
+        # Mock the gumnut asset response
+        mock_gumnut_asset = Mock()
+        mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.original_file_name = "test.jpg"
+        mock_gumnut_asset.created_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.mime_type = "image/jpeg"
+        mock_gumnut_asset.width = 1920
+        mock_gumnut_asset.height = 1080
+        mock_gumnut_asset.file_size_bytes = 1024
+        mock_gumnut_asset.exif = None
+        mock_gumnut_asset.people = []
+        mock_client.assets.create.return_value = mock_gumnut_asset
+
+        # Mock the file data
+        mock_file = Mock()
+        mock_file.filename = "test.jpg"
+        mock_file.content_type = "image/jpeg"
+        mock_file.read = AsyncMock(return_value=b"fake image data")
+
+        # Execute with emit_event that raises a SocketIOError
+        with patch(
+            "routers.api.assets.emit_event",
+            new_callable=AsyncMock,
+            side_effect=SocketIOError("WebSocket error"),
+        ):
+            result = await upload_asset(
+                assetData=mock_file,
+                deviceAssetId="device-123",
+                deviceId="device-456",
+                fileCreatedAt="2023-01-01T12:00:00Z",
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+            # Upload should still succeed despite WebSocket error
+            assert result.id == str(sample_uuid)
+            assert result.status == AssetMediaStatus.created
 
 
 class TestUpdateAssets:
@@ -433,9 +558,13 @@ class TestDeleteAssets:
 
         asset_ids = [uuid4(), uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
+        current_user_id = uuid4()
 
         # Execute
-        result = await delete_assets(request, client=mock_client)
+        with patch("routers.api.assets.emit_event", new_callable=AsyncMock):
+            result = await delete_assets(
+                request, client=mock_client, current_user_id=current_user_id
+            )
 
         # Assert
         assert result.status_code == 204
@@ -450,18 +579,74 @@ class TestDeleteAssets:
         # First delete succeeds, second fails with 404
         mock_client.assets.delete.side_effect = [
             None,  # Success
-            Exception("404 Not found"),  # Failure
+            GumnutError("404 Not found"),  # Failure
         ]
 
         asset_ids = [uuid4(), uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
+        current_user_id = uuid4()
 
         # Execute
-        result = await delete_assets(request, client=mock_client)
+        with patch("routers.api.assets.emit_event", new_callable=AsyncMock):
+            result = await delete_assets(
+                request, client=mock_client, current_user_id=current_user_id
+            )
 
         # Assert - should still return 204 even with partial failures
         assert result.status_code == 204
         assert mock_client.assets.delete.call_count == 2
+
+    @pytest.mark.anyio
+    async def test_delete_assets_emits_websocket_events(self):
+        """Test that delete_assets emits on_asset_delete for each deleted asset."""
+        # Setup - create mock client
+        mock_client = Mock()
+        mock_client.assets.delete.return_value = None
+
+        asset_ids = [uuid4(), uuid4(), uuid4()]
+        request = AssetBulkDeleteDto(ids=asset_ids, force=False)
+        current_user_id = uuid4()
+
+        # Execute
+        with patch(
+            "routers.api.assets.emit_event", new_callable=AsyncMock
+        ) as mock_emit:
+            await delete_assets(
+                request, client=mock_client, current_user_id=current_user_id
+            )
+
+            # Assert - emit_event should be called for each deleted asset
+            assert mock_emit.call_count == 3
+
+            # Verify each call has correct event type and user ID
+            for i, call in enumerate(mock_emit.call_args_list):
+                assert call[0][0] == WebSocketEvent.ASSET_DELETE
+                assert call[0][1] == str(current_user_id)
+                assert call[0][2] == str(asset_ids[i])
+
+    @pytest.mark.anyio
+    async def test_delete_assets_websocket_error_does_not_fail_deletion(self):
+        """Test that WebSocket emission errors don't fail the deletion."""
+        # Setup - create mock client
+        mock_client = Mock()
+        mock_client.assets.delete.return_value = None
+
+        asset_ids = [uuid4()]
+        request = AssetBulkDeleteDto(ids=asset_ids, force=False)
+        current_user_id = uuid4()
+
+        # Execute with emit_event that raises a SocketIOError
+        with patch(
+            "routers.api.assets.emit_event",
+            new_callable=AsyncMock,
+            side_effect=SocketIOError("WebSocket error"),
+        ):
+            result = await delete_assets(
+                request, client=mock_client, current_user_id=current_user_id
+            )
+
+            # Deletion should still succeed despite WebSocket error
+            assert result.status_code == 204
 
 
 class TestGetAllUserAssetsByDeviceId:

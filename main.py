@@ -38,8 +38,8 @@ from routers.api import (
     trash,
     users,
     view,
-    websockets,
 )
+from services import websockets
 from routers.utils.gumnut_client import close_shared_http_client
 from utils.redis_client import check_redis_connection, close_redis_client
 

@@ -16,11 +16,15 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from gumnut import Gumnut
+from gumnut import Gumnut, GumnutError
 
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
-from routers.utils.current_user import get_current_user
+from routers.utils.current_user import get_current_user, get_current_user_id
+from pydantic import ValidationError
+from socketio.exceptions import SocketIOError
+
+from services.websockets import emit_event, WebSocketEvent
 from routers.immich_models import (
     AssetBulkDeleteDto,
     AssetBulkUpdateDto,
@@ -46,7 +50,10 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     uuid_to_gumnut_asset_id,
 )
-from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
+from routers.utils.asset_conversion import (
+    build_asset_upload_ready_payload,
+    convert_gumnut_asset_to_immich,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +288,7 @@ async def upload_asset(
     key: str = Query(default=None),
     slug: str = Query(default=None),
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetMediaResponseDto:
     """
     Upload an asset using the Gumnut SDK.
@@ -323,6 +331,29 @@ async def upload_asset(
         # Convert to UUID format for response
         asset_uuid = safe_uuid_from_asset_id(asset_id)
 
+        # Emit WebSocket events for real-time updates
+        try:
+            # Build AssetResponseDto for on_upload_success event
+            asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
+            await emit_event(
+                WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response
+            )
+
+            # Build payload for AssetUploadReadyV1 event
+            payload = build_asset_upload_ready_payload(gumnut_asset, current_user.id)
+            await emit_event(
+                WebSocketEvent.ASSET_UPLOAD_READY_V1, current_user.id, payload
+            )
+        except (ValidationError, SocketIOError) as ws_error:
+            logger.warning(
+                "Failed to emit WebSocket event after upload",
+                extra={
+                    "gumnut_id": str(asset_id),
+                    "immich_id": str(asset_uuid),
+                    "error": str(ws_error),
+                },
+            )
+
         return AssetMediaResponseDto(
             id=str(asset_uuid), status=AssetMediaStatus.created
         )
@@ -363,6 +394,7 @@ async def update_assets(
 async def delete_assets(
     request: AssetBulkDeleteDto,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
+    current_user_id: UUID = Depends(get_current_user_id),
 ) -> Response:
     """
     Delete multiple assets using the Gumnut SDK.
@@ -377,7 +409,24 @@ async def delete_assets(
 
                 client.assets.delete(gumnut_asset_id)
 
-            except Exception as asset_error:
+                # Emit WebSocket event for real-time timeline sync
+                try:
+                    await emit_event(
+                        WebSocketEvent.ASSET_DELETE,
+                        str(current_user_id),
+                        str(asset_uuid),
+                    )
+                except SocketIOError as ws_error:
+                    logger.warning(
+                        "Failed to emit WebSocket event after asset delete",
+                        extra={
+                            "asset_id": str(asset_uuid),
+                            "gumnut_id": str(gumnut_asset_id),
+                            "error": str(ws_error),
+                        },
+                    )
+
+            except GumnutError as asset_error:
                 # Log individual asset errors but continue with other deletions
                 if (
                     check_for_error_by_code(asset_error, 404)
@@ -385,13 +434,23 @@ async def delete_assets(
                 ):
                     # Asset already deleted or doesn't exist, continue
                     logger.warning(
-                        f"Warning: Asset {asset_uuid} not found during deletion"
+                        f"Warning: Asset {asset_uuid} not found during deletion",
+                        extra={
+                            "asset_id": str(asset_uuid),
+                            "gumnut_id": str(gumnut_asset_id),
+                            "error": str(asset_error),
+                        },
                     )
                     continue
                 else:
                     # For other errors, log but continue
                     logger.warning(
-                        f"Warning: Failed to delete asset {asset_uuid}: {asset_error}"
+                        f"Warning: Failed to delete asset {asset_uuid}",
+                        extra={
+                            "asset_id": str(asset_uuid),
+                            "gumnut_id": str(gumnut_asset_id),
+                            "error": str(asset_error),
+                        },
                     )
                     continue
 

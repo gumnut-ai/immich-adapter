@@ -1,10 +1,12 @@
 """Unit tests for Auth API functions."""
 
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from socketio.exceptions import SocketIOError
 
 from routers.api.auth import post_logout
+from services.websockets import WebSocketEvent
 from routers.utils.cookies import ImmichCookie
 from services.session_store import SessionStore
 
@@ -39,12 +41,13 @@ class TestPostLogout:
         mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
-        result = await post_logout(
-            request=mock_request,
-            response=mock_response,
-            client=None,
-            session_store=mock_session_store,
-        )
+        with patch("routers.api.auth.emit_event", new_callable=AsyncMock):
+            result = await post_logout(
+                request=mock_request,
+                response=mock_response,
+                client=None,
+                session_store=mock_session_store,
+            )
 
         # Verify session was deleted
         mock_session_store.delete.assert_called_once_with("test-session-token")
@@ -60,12 +63,13 @@ class TestPostLogout:
             ImmichCookie.ACCESS_TOKEN.value: "cookie-session-token",
         }
 
-        result = await post_logout(
-            request=mock_request,
-            response=mock_response,
-            client=None,
-            session_store=mock_session_store,
-        )
+        with patch("routers.api.auth.emit_event", new_callable=AsyncMock):
+            result = await post_logout(
+                request=mock_request,
+                response=mock_response,
+                client=None,
+                session_store=mock_session_store,
+            )
 
         # Verify session was deleted using cookie value
         mock_session_store.delete.assert_called_once_with("cookie-session-token")
@@ -79,12 +83,13 @@ class TestPostLogout:
         mock_request.state = Mock(spec=[])  # No session_token attribute
         mock_request.cookies = {}
 
-        result = await post_logout(
-            request=mock_request,
-            response=mock_response,
-            client=None,
-            session_store=mock_session_store,
-        )
+        with patch("routers.api.auth.emit_event", new_callable=AsyncMock):
+            result = await post_logout(
+                request=mock_request,
+                response=mock_response,
+                client=None,
+                session_store=mock_session_store,
+            )
 
         # Session delete should not be called
         mock_session_store.delete.assert_not_called()
@@ -124,12 +129,13 @@ class TestPostLogout:
         mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
-        await post_logout(
-            request=mock_request,
-            response=mock_response,
-            client=None,
-            session_store=mock_session_store,
-        )
+        with patch("routers.api.auth.emit_event", new_callable=AsyncMock):
+            await post_logout(
+                request=mock_request,
+                response=mock_response,
+                client=None,
+                session_store=mock_session_store,
+            )
 
         # All auth cookies should be deleted
         mock_response.delete_cookie.assert_any_call(ImmichCookie.ACCESS_TOKEN.value)
@@ -144,12 +150,59 @@ class TestPostLogout:
         mock_request.state = Mock(spec=[])
         mock_request.cookies = {}
 
-        result = await post_logout(
-            request=mock_request,
-            response=mock_response,
-            client=None,
-            session_store=mock_session_store,
-        )
+        with patch("routers.api.auth.emit_event", new_callable=AsyncMock):
+            result = await post_logout(
+                request=mock_request,
+                response=mock_response,
+                client=None,
+                session_store=mock_session_store,
+            )
 
         assert result.redirectUri == "/auth/login?autoLaunch=0"
         assert result.successful is True
+
+    @pytest.mark.anyio
+    async def test_logout_emits_websocket_event(
+        self, mock_request, mock_response, mock_session_store
+    ):
+        """Test that logout emits on_session_delete WebSocket event."""
+        mock_request.state.session_token = "test-session-token"
+        mock_request.cookies = {}
+
+        with patch("routers.api.auth.emit_event", new_callable=AsyncMock) as mock_emit:
+            await post_logout(
+                request=mock_request,
+                response=mock_response,
+                client=None,
+                session_store=mock_session_store,
+            )
+
+            mock_emit.assert_called_once()
+            call = mock_emit.call_args
+            assert call[0][0] == WebSocketEvent.SESSION_DELETE
+            assert call[0][1] == "test-session-token"
+            assert call[0][2] == "test-session-token"
+
+    @pytest.mark.anyio
+    async def test_logout_websocket_error_does_not_fail_logout(
+        self, mock_request, mock_response, mock_session_store
+    ):
+        """Test that WebSocket emission errors don't fail logout."""
+        mock_request.state.session_token = "test-session-token"
+        mock_request.cookies = {}
+
+        with patch(
+            "routers.api.auth.emit_event",
+            new_callable=AsyncMock,
+            side_effect=SocketIOError("WebSocket error"),
+        ):
+            result = await post_logout(
+                request=mock_request,
+                response=mock_response,
+                client=None,
+                session_store=mock_session_store,
+            )
+
+            # Logout should still succeed despite WebSocket error
+            assert result.successful is True
+            mock_session_store.delete.assert_called_once()

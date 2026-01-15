@@ -7,6 +7,7 @@ import socketio
 from pydantic import BaseModel
 
 from config.settings import get_settings
+from routers.immich_models import SyncAssetExifV1, SyncAssetV1
 from services.session_store import (
     SessionDataError,
     SessionStoreError,
@@ -43,6 +44,14 @@ class WebSocketEvent(Enum):
 
 
 EventPayload: TypeAlias = BaseModel | str | list[str] | None
+
+
+class AssetUploadReadyV1Payload(BaseModel):
+    """Payload for the AssetUploadReadyV1 WebSocket event (mobile v2 sync)."""
+
+    asset: SyncAssetV1
+    exif: SyncAssetExifV1
+
 
 # Maps socket ID -> user ID (for disconnect cleanup)
 _sid_to_user: dict[str, str] = {}
@@ -185,6 +194,10 @@ async def emit_event(
         event: The event type (from WebSocketEvent enum)
         user_id: The Gumnut user ID (room name)
         payload: Event data - Pydantic model (auto-serialized), string, list, or None
+
+    Raises:
+        pydantic.ValidationError: If payload is a Pydantic model that fails serialization
+        socketio.exceptions.SocketIOError: If the socket emission fails
     """
     if isinstance(payload, BaseModel):
         data = payload.model_dump(mode="json")
