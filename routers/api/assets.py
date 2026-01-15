@@ -348,7 +348,7 @@ async def upload_asset(
             logger.warning(
                 "Failed to emit WebSocket event after upload",
                 extra={
-                    "gumnut_id": str(asset_uuid),
+                    "gumnut_id": str(asset_id),
                     "immich_id": str(asset_uuid),
                     "error": str(ws_error),
                 },
@@ -419,7 +419,11 @@ async def delete_assets(
                 except SocketIOError as ws_error:
                     logger.warning(
                         "Failed to emit WebSocket event after asset delete",
-                        extra={"asset_id": str(asset_uuid), "error": str(ws_error)},
+                        extra={
+                            "asset_id": str(asset_uuid),
+                            "gumnut_id": str(gumnut_asset_id),
+                            "error": str(ws_error),
+                        },
                     )
 
             except GumnutError as asset_error:
@@ -430,13 +434,23 @@ async def delete_assets(
                 ):
                     # Asset already deleted or doesn't exist, continue
                     logger.warning(
-                        f"Warning: Asset {asset_uuid} not found during deletion"
+                        f"Warning: Asset {asset_uuid} not found during deletion",
+                        extra={
+                            "asset_id": str(asset_uuid),
+                            "gumnut_id": str(gumnut_asset_id),
+                            "error": str(asset_error),
+                        },
                     )
                     continue
                 else:
                     # For other errors, log but continue
                     logger.warning(
-                        f"Warning: Failed to delete asset {asset_uuid}: {asset_error}"
+                        f"Warning: Failed to delete asset {asset_uuid}",
+                        extra={
+                            "asset_id": str(asset_uuid),
+                            "gumnut_id": str(gumnut_asset_id),
+                            "error": str(asset_error),
+                        },
                     )
                     continue
 
