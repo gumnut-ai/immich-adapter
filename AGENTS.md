@@ -29,6 +29,11 @@
 - Never edit historical database migration files
 - Place imports at the top of files (inline imports only to prevent circular dependencies)
 
+### Datetime handling
+
+- When working with datetimes as strings, ensure the proper format is used, as Immich has different formats for different use cases
+- If you cannot determine the proper format to use, ask for clarification
+
 ### Exception Handling
 
 - Don't expose implementation details in exceptions thrown to consumers

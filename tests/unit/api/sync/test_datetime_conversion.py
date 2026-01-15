@@ -1,20 +1,20 @@
-"""Tests for sync.py date conversion functions."""
+"""Tests for datetime conversion functions."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
-from routers.api.sync import (
-    _extract_timezone,
-    _to_actual_utc,
-    _to_immich_local_datetime,
-    gumnut_asset_to_sync_asset_v1,
+from routers.api.sync import gumnut_asset_to_sync_asset_v1
+from routers.utils.datetime_utils import (
+    format_timezone_immich,
+    to_actual_utc,
+    to_immich_local_datetime,
 )
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 from tests.unit.api.sync.conftest import TEST_UUID
 
 
 class TestToImmichLocalDatetime:
-    """Tests for _to_immich_local_datetime helper function.
+    """Tests for to_immich_local_datetime helper function.
 
     This function converts datetimes to Immich's "keepLocalTime" format,
     where local time values are stored as if they were UTC.
@@ -22,12 +22,12 @@ class TestToImmichLocalDatetime:
 
     def test_none_input_returns_none(self):
         """None input should return None."""
-        assert _to_immich_local_datetime(None) is None
+        assert to_immich_local_datetime(None) is None
 
     def test_utc_datetime_preserves_time_values(self):
         """UTC datetime should preserve the time values as UTC."""
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
-        result = _to_immich_local_datetime(dt)
+        result = to_immich_local_datetime(dt)
 
         assert result is not None
         assert result.year == 2024
@@ -47,7 +47,7 @@ class TestToImmichLocalDatetime:
         # 10:30 AM in PST (UTC-8) - this is the photo's LOCAL time
         pst = timezone(timedelta(hours=-8))
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=pst)
-        result = _to_immich_local_datetime(dt)
+        result = to_immich_local_datetime(dt)
 
         # The result should be 10:30:45 UTC (not 18:30:45 UTC)
         # This preserves the local time appearance
@@ -65,7 +65,7 @@ class TestToImmichLocalDatetime:
         # 3:00 PM in Tokyo (UTC+9)
         tokyo = timezone(timedelta(hours=9))
         dt = datetime(2024, 6, 20, 15, 0, 0, tzinfo=tokyo)
-        result = _to_immich_local_datetime(dt)
+        result = to_immich_local_datetime(dt)
 
         # Should be 15:00:00 UTC (not 06:00:00 UTC)
         assert result is not None
@@ -76,7 +76,7 @@ class TestToImmichLocalDatetime:
         """Test with half-hour timezone offset (e.g., UTC+5:30 India)."""
         india = timezone(timedelta(hours=5, minutes=30))
         dt = datetime(2024, 3, 10, 14, 45, 0, tzinfo=india)
-        result = _to_immich_local_datetime(dt)
+        result = to_immich_local_datetime(dt)
 
         # Should preserve 14:45:00
         assert result is not None
@@ -87,7 +87,7 @@ class TestToImmichLocalDatetime:
     def test_naive_datetime(self):
         """Naive datetime (no tzinfo) should be marked as UTC."""
         dt = datetime(2024, 1, 15, 10, 30, 45)  # No tzinfo
-        result = _to_immich_local_datetime(dt)
+        result = to_immich_local_datetime(dt)
 
         assert result is not None
         assert result.hour == 10
@@ -96,19 +96,19 @@ class TestToImmichLocalDatetime:
 
 
 class TestToActualUtc:
-    """Tests for _to_actual_utc helper function.
+    """Tests for to_actual_utc helper function.
 
     This function converts datetimes to actual UTC timestamps.
     """
 
     def test_none_input_returns_none(self):
         """None input should return None."""
-        assert _to_actual_utc(None) is None
+        assert to_actual_utc(None) is None
 
     def test_utc_datetime_unchanged(self):
         """UTC datetime should remain unchanged."""
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
-        result = _to_actual_utc(dt)
+        result = to_actual_utc(dt)
 
         assert result is not None
         assert result.hour == 10
@@ -122,7 +122,7 @@ class TestToActualUtc:
         """
         pst = timezone(timedelta(hours=-8))
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=pst)
-        result = _to_actual_utc(dt)
+        result = to_actual_utc(dt)
 
         # 10:30 PST = 18:30 UTC
         assert result is not None
@@ -138,7 +138,7 @@ class TestToActualUtc:
         """
         tokyo = timezone(timedelta(hours=9))
         dt = datetime(2024, 6, 20, 15, 0, 0, tzinfo=tokyo)
-        result = _to_actual_utc(dt)
+        result = to_actual_utc(dt)
 
         # 15:00 Tokyo = 06:00 UTC
         assert result is not None
@@ -148,7 +148,7 @@ class TestToActualUtc:
     def test_naive_datetime_assumed_utc(self):
         """Naive datetime should be assumed to be UTC."""
         dt = datetime(2024, 1, 15, 10, 30, 45)  # No tzinfo
-        result = _to_actual_utc(dt)
+        result = to_actual_utc(dt)
 
         assert result is not None
         assert result.hour == 10
@@ -160,7 +160,7 @@ class TestToActualUtc:
         # 11:00 PM in UTC+5 (e.g., Pakistan) on Jan 15
         pkt = timezone(timedelta(hours=5))
         dt = datetime(2024, 1, 15, 23, 0, 0, tzinfo=pkt)
-        result = _to_actual_utc(dt)
+        result = to_actual_utc(dt)
 
         # 23:00 PKT = 18:00 UTC (same day)
         assert result is not None
@@ -169,7 +169,7 @@ class TestToActualUtc:
 
         # 2:00 AM in UTC+5 on Jan 16
         dt2 = datetime(2024, 1, 16, 2, 0, 0, tzinfo=pkt)
-        result2 = _to_actual_utc(dt2)
+        result2 = to_actual_utc(dt2)
 
         # 02:00 PKT Jan 16 = 21:00 UTC Jan 15
         assert result2 is not None
@@ -178,66 +178,66 @@ class TestToActualUtc:
 
 
 class TestExtractTimezone:
-    """Tests for _extract_timezone helper function.
+    """Tests for format_timezone_immich helper function.
 
     This function extracts timezone in Immich's format (e.g., 'UTC+9', 'UTC-8').
     """
 
     def test_none_input_returns_none(self):
         """None input should return None."""
-        assert _extract_timezone(None) is None
+        assert format_timezone_immich(None) is None
 
     def test_naive_datetime_returns_none(self):
         """Naive datetime (no tzinfo) should return None."""
         dt = datetime(2024, 1, 15, 10, 30, 45)  # No tzinfo
-        assert _extract_timezone(dt) is None
+        assert format_timezone_immich(dt) is None
 
     def test_utc_returns_utc_plus_zero(self):
         """UTC timezone should return 'UTC+0'."""
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
-        assert _extract_timezone(dt) == "UTC+0"
+        assert format_timezone_immich(dt) == "UTC+0"
 
     def test_positive_offset_no_leading_zero(self):
         """Positive offset should not have leading zero (e.g., 'UTC+9' not 'UTC+09')."""
         tokyo = timezone(timedelta(hours=9))
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=tokyo)
-        assert _extract_timezone(dt) == "UTC+9"
+        assert format_timezone_immich(dt) == "UTC+9"
 
     def test_negative_offset_no_leading_zero(self):
         """Negative offset should not have leading zero (e.g., 'UTC-8' not 'UTC-08')."""
         pst = timezone(timedelta(hours=-8))
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=pst)
-        assert _extract_timezone(dt) == "UTC-8"
+        assert format_timezone_immich(dt) == "UTC-8"
 
     def test_half_hour_offset_with_minutes(self):
         """Half-hour offset should include minutes (e.g., 'UTC+5:30')."""
         india = timezone(timedelta(hours=5, minutes=30))
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=india)
-        assert _extract_timezone(dt) == "UTC+5:30"
+        assert format_timezone_immich(dt) == "UTC+5:30"
 
     def test_negative_half_hour_offset(self):
         """Negative half-hour offset should format correctly."""
         newfoundland = timezone(timedelta(hours=-3, minutes=-30))
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=newfoundland)
-        assert _extract_timezone(dt) == "UTC-3:30"
+        assert format_timezone_immich(dt) == "UTC-3:30"
 
     def test_large_positive_offset(self):
         """Large positive offset should work (e.g., UTC+14)."""
         kiritimati = timezone(timedelta(hours=14))
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=kiritimati)
-        assert _extract_timezone(dt) == "UTC+14"
+        assert format_timezone_immich(dt) == "UTC+14"
 
     def test_large_negative_offset(self):
         """Large negative offset should work (e.g., UTC-12)."""
         baker_island = timezone(timedelta(hours=-12))
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=baker_island)
-        assert _extract_timezone(dt) == "UTC-12"
+        assert format_timezone_immich(dt) == "UTC-12"
 
     def test_quarter_hour_offset(self):
         """Quarter-hour offset should include minutes (e.g., 'UTC+5:45')."""
         nepal = timezone(timedelta(hours=5, minutes=45))
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=nepal)
-        assert _extract_timezone(dt) == "UTC+5:45"
+        assert format_timezone_immich(dt) == "UTC+5:45"
 
     def test_parsed_iso_datetime_format(self):
         """Test with datetime parsed from ISO format (simulating SDK deserialization).
@@ -255,7 +255,7 @@ class TestExtractTimezone:
         parsed = TestModel.model_validate_json(json_str)
 
         # Even after JSON parsing, we should get Immich's format
-        assert _extract_timezone(parsed.dt) == "UTC+9"
+        assert format_timezone_immich(parsed.dt) == "UTC+9"
 
 
 class TestGumnutAssetToSyncAssetV1DateHandling:
