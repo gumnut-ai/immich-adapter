@@ -24,7 +24,7 @@ from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
 from socketio.exceptions import SocketIOError
 
-from services.websockets import emit_event, WebSocketEvent
+from services.websockets import emit_user_event, WebSocketEvent
 from routers.immich_models import (
     AssetBulkDeleteDto,
     AssetBulkUpdateDto,
@@ -337,13 +337,13 @@ async def upload_asset(
         try:
             # Build AssetResponseDto for on_upload_success event
             asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
-            await emit_event(
+            await emit_user_event(
                 WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response
             )
 
             # Build payload for AssetUploadReadyV1 event
             payload = build_asset_upload_ready_payload(gumnut_asset, current_user.id)
-            await emit_event(
+            await emit_user_event(
                 WebSocketEvent.ASSET_UPLOAD_READY_V1, current_user.id, payload
             )
         except (ValidationError, SocketIOError) as ws_error:
@@ -413,7 +413,7 @@ async def delete_assets(
 
                 # Emit WebSocket event for real-time timeline sync
                 try:
-                    await emit_event(
+                    await emit_user_event(
                         WebSocketEvent.ASSET_DELETE,
                         str(current_user_id),
                         str(asset_uuid),

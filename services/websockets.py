@@ -53,8 +53,8 @@ class AssetUploadReadyV1Payload(BaseModel):
     exif: SyncAssetExifV1
 
 
-# Maps socket ID -> user ID (for disconnect cleanup)
-_sid_to_user: dict[str, str] = {}
+# Maps socket ID -> (user_id, session_id) for disconnect cleanup
+_sid_to_user: dict[str, tuple[str, str]] = {}
 
 
 def _extract_session_token(environ: dict[str, Any]) -> str | None:
@@ -131,10 +131,12 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
         )
         return False  # Reject connection
 
-    # Join user room and track session
+    # Join user room and session room, and track session
     user_id = session.user_id
+    session_id = str(session.id)
     await sio.enter_room(sid, user_id)
-    _sid_to_user[sid] = user_id
+    await sio.enter_room(sid, session_id)
+    _sid_to_user[sid] = (user_id, session_id)
 
     logger.debug(
         "WebSocket authenticated",
@@ -175,14 +177,35 @@ def connect_error(data: Any) -> None:
 @sio.event
 async def disconnect(sid: str) -> None:
     """Handle WebSocket disconnection."""
-    user_id = _sid_to_user.pop(sid, None)
+    ids = _sid_to_user.pop(sid, None)
+    if ids is None:
+        user_id = None
+    else:
+        user_id, _ = ids
     logger.debug(
         "WebSocket disconnected",
         extra={"sid": sid, "user_id": user_id},
     )
 
 
-async def emit_event(
+async def _emit_event(
+    event: WebSocketEvent,
+    room: str,
+    payload: EventPayload = None,
+) -> None:
+    """
+    Internal: Emit a WebSocket event to a specific room.
+
+    Use emit_user_event() or emit_session_event() instead of calling this directly.
+    """
+    if isinstance(payload, BaseModel):
+        data = payload.model_dump(mode="json")
+    else:
+        data = payload
+    await sio.emit(event.value, data, room=room)
+
+
+async def emit_user_event(
     event: WebSocketEvent,
     user_id: str,
     payload: EventPayload = None,
@@ -190,17 +213,39 @@ async def emit_event(
     """
     Emit a WebSocket event to all of a user's connected clients.
 
+    Use this for events that should reach all sessions for a user:
+    UPLOAD_SUCCESS, ASSET_UPLOAD_READY_V1, ASSET_DELETE, etc.
+
     Args:
         event: The event type (from WebSocketEvent enum)
-        user_id: The Gumnut user ID (room name)
+        user_id: The Gumnut user ID
         payload: Event data - Pydantic model (auto-serialized), string, list, or None
 
     Raises:
         pydantic.ValidationError: If payload is a Pydantic model that fails serialization
         socketio.exceptions.SocketIOError: If the socket emission fails
     """
-    if isinstance(payload, BaseModel):
-        data = payload.model_dump(mode="json")
-    else:
-        data = payload
-    await sio.emit(event.value, data, room=user_id)
+    await _emit_event(event, user_id, payload)
+
+
+async def emit_session_event(
+    event: WebSocketEvent,
+    session_id: str,
+    payload: EventPayload = None,
+) -> None:
+    """
+    Emit a WebSocket event to a specific session.
+
+    Use this for events that should reach only one session:
+    SESSION_DELETE, etc.
+
+    Args:
+        event: The event type (from WebSocketEvent enum)
+        session_id: The session ID (session token)
+        payload: Event data - Pydantic model (auto-serialized), string, list, or None
+
+    Raises:
+        pydantic.ValidationError: If payload is a Pydantic model that fails serialization
+        socketio.exceptions.SocketIOError: If the socket emission fails
+    """
+    await _emit_event(event, session_id, payload)

@@ -12,7 +12,8 @@ from services.websockets import (
     _sid_to_user,
     connect,
     disconnect,
-    emit_event,
+    emit_user_event,
+    emit_session_event,
     sio,
     WebSocketEvent,
 )
@@ -240,10 +241,12 @@ class TestConnectHandler:
 
             # Should not return False (implicit True)
             assert result is None
-            # Should join user room
-            mock_sio["enter_room"].assert_called_once_with("test-sid", TEST_USER_ID)
-            # Should track session
-            assert _sid_to_user["test-sid"] == TEST_USER_ID
+            # Should join both user room and session room
+            assert mock_sio["enter_room"].call_count == 2
+            mock_sio["enter_room"].assert_any_call("test-sid", TEST_USER_ID)
+            mock_sio["enter_room"].assert_any_call("test-sid", str(TEST_SESSION_ID))
+            # Should track session with tuple (user_id, session_id)
+            assert _sid_to_user["test-sid"] == (TEST_USER_ID, str(TEST_SESSION_ID))
 
     @pytest.mark.anyio
     async def test_emits_server_version_on_connect(self, mock_session_store, mock_sio):
@@ -286,7 +289,7 @@ class TestConnectHandler:
             environ = {"HTTP_AUTHORIZATION": f"Bearer {TEST_SESSION_ID}"}
             result = await connect("test-sid", environ)
             assert result is None  # Not False = accepted
-            assert _sid_to_user["test-sid"] == TEST_USER_ID
+            assert _sid_to_user["test-sid"] == (TEST_USER_ID, str(TEST_SESSION_ID))
 
     @pytest.mark.anyio
     async def test_accepts_cookie_auth(self, mock_session_store, mock_sio):
@@ -302,7 +305,38 @@ class TestConnectHandler:
             environ = {"HTTP_COOKIE": f"immich_access_token={TEST_SESSION_ID}"}
             result = await connect("test-sid", environ)
             assert result is None  # Not False = accepted
-            assert _sid_to_user["test-sid"] == TEST_USER_ID
+            assert _sid_to_user["test-sid"] == (TEST_USER_ID, str(TEST_SESSION_ID))
+
+    @pytest.mark.anyio
+    async def test_joins_session_room_for_session_delete_events(
+        self, mock_session_store, mock_sio
+    ):
+        """Test that client joins session_id room to receive on_session_delete events.
+
+        This ensures that when a session is deleted from another client (e.g., user
+        logs out Browser B from Browser A's settings), Browser B receives the
+        on_session_delete event via the session_id room.
+        """
+
+        async def mock_get_session_store():
+            return mock_session_store
+
+        with patch(
+            "services.websockets.get_session_store",
+            mock_get_session_store,
+        ):
+            environ = {"HTTP_X_IMMICH_USER_TOKEN": str(TEST_SESSION_ID)}
+            await connect("test-sid", environ)
+
+            # Verify client joined the session_id room
+            session_room_call = [
+                call
+                for call in mock_sio["enter_room"].call_args_list
+                if call[0][1] == str(TEST_SESSION_ID)
+            ]
+            assert len(session_room_call) == 1, (
+                "Client should join session_id room to receive on_session_delete events"
+            )
 
 
 class TestDisconnectHandler:
@@ -318,7 +352,7 @@ class TestDisconnectHandler:
     @pytest.mark.anyio
     async def test_removes_socket_from_tracking(self):
         """Test that disconnected sockets are removed from tracking."""
-        _sid_to_user["test-sid"] = "user_123"
+        _sid_to_user["test-sid"] = ("user_123", "session_456")
 
         await disconnect("test-sid")
 
@@ -334,8 +368,8 @@ class TestDisconnectHandler:
         assert "unknown-sid" not in _sid_to_user
 
 
-class TestEmitEvent:
-    """Unit tests for emit_event()."""
+class TestEmitUserEvent:
+    """Unit tests for emit_user_event()."""
 
     @pytest.fixture
     def mock_sio_emit(self):
@@ -346,7 +380,7 @@ class TestEmitEvent:
     @pytest.mark.anyio
     async def test_emits_with_string_payload(self, mock_sio_emit):
         """Test emission with a string payload."""
-        await emit_event(WebSocketEvent.ASSET_DELETE, "user_123", "asset-id-456")
+        await emit_user_event(WebSocketEvent.ASSET_DELETE, "user_123", "asset-id-456")
 
         mock_sio_emit.assert_called_once_with(
             "on_asset_delete",
@@ -358,33 +392,11 @@ class TestEmitEvent:
     async def test_emits_with_list_payload(self, mock_sio_emit):
         """Test emission with a list payload."""
         asset_ids = ["asset-1", "asset-2", "asset-3"]
-        await emit_event(WebSocketEvent.ASSET_DELETE, "user_123", asset_ids)
+        await emit_user_event(WebSocketEvent.ASSET_DELETE, "user_123", asset_ids)
 
         mock_sio_emit.assert_called_once_with(
             "on_asset_delete",
             asset_ids,
-            room="user_123",
-        )
-
-    @pytest.mark.anyio
-    async def test_emits_with_none_payload(self, mock_sio_emit):
-        """Test emission with no payload."""
-        await emit_event(WebSocketEvent.SESSION_DELETE, "user_123", None)
-
-        mock_sio_emit.assert_called_once_with(
-            "on_session_delete",
-            None,
-            room="user_123",
-        )
-
-    @pytest.mark.anyio
-    async def test_emits_with_none_payload_default(self, mock_sio_emit):
-        """Test emission with payload defaulting to None."""
-        await emit_event(WebSocketEvent.SESSION_DELETE, "user_123")
-
-        mock_sio_emit.assert_called_once_with(
-            "on_session_delete",
-            None,
             room="user_123",
         )
 
@@ -398,7 +410,7 @@ class TestEmitEvent:
             count: int
 
         payload = TestPayload(asset_id="abc-123", status="success", count=42)
-        await emit_event(WebSocketEvent.UPLOAD_SUCCESS, "user_123", payload)
+        await emit_user_event(WebSocketEvent.UPLOAD_SUCCESS, "user_123", payload)
 
         mock_sio_emit.assert_called_once_with(
             "on_upload_success",
@@ -416,16 +428,16 @@ class TestEmitEvent:
         payload = TimestampPayload(
             event_time=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
         )
-        await emit_event(WebSocketEvent.UPLOAD_SUCCESS, "user_123", payload)
+        await emit_user_event(WebSocketEvent.UPLOAD_SUCCESS, "user_123", payload)
 
         mock_sio_emit.assert_called_once()
         call_data = mock_sio_emit.call_args[0][1]
         assert call_data["event_time"] == "2024-01-15T10:30:00Z"
 
     @pytest.mark.anyio
-    async def test_emits_to_correct_room(self, mock_sio_emit):
+    async def test_emits_to_correct_user_room(self, mock_sio_emit):
         """Test that events are emitted to the correct user room."""
-        await emit_event(WebSocketEvent.UPLOAD_SUCCESS, "specific-user-id", "data")
+        await emit_user_event(WebSocketEvent.UPLOAD_SUCCESS, "specific-user-id", "data")
 
         mock_sio_emit.assert_called_once()
         assert mock_sio_emit.call_args[1]["room"] == "specific-user-id"
@@ -433,13 +445,58 @@ class TestEmitEvent:
     @pytest.mark.anyio
     async def test_uses_correct_event_name(self, mock_sio_emit):
         """Test that the correct event name is used from the enum."""
-        await emit_event(WebSocketEvent.SERVER_VERSION, "user_123", "data")
+        await emit_user_event(WebSocketEvent.SERVER_VERSION, "user_123", "data")
         assert mock_sio_emit.call_args[0][0] == "on_server_version"
 
         mock_sio_emit.reset_mock()
 
-        await emit_event(WebSocketEvent.ASSET_UPLOAD_READY_V1, "user_123", "data")
+        await emit_user_event(WebSocketEvent.ASSET_UPLOAD_READY_V1, "user_123", "data")
         assert mock_sio_emit.call_args[0][0] == "AssetUploadReadyV1"
+
+
+class TestEmitSessionEvent:
+    """Unit tests for emit_session_event()."""
+
+    @pytest.fixture
+    def mock_sio_emit(self):
+        """Mock the sio.emit method."""
+        with patch.object(sio, "emit", new_callable=AsyncMock) as mock_emit:
+            yield mock_emit
+
+    @pytest.mark.anyio
+    async def test_emits_session_delete_to_session_room(self, mock_sio_emit):
+        """Test that SESSION_DELETE is emitted to the session room."""
+        await emit_session_event(
+            WebSocketEvent.SESSION_DELETE, "session-token-123", "session-token-123"
+        )
+
+        mock_sio_emit.assert_called_once_with(
+            "on_session_delete",
+            "session-token-123",
+            room="session-token-123",
+        )
+
+    @pytest.mark.anyio
+    async def test_emits_with_none_payload(self, mock_sio_emit):
+        """Test emission with no payload."""
+        await emit_session_event(WebSocketEvent.SESSION_DELETE, "session_123", None)
+
+        mock_sio_emit.assert_called_once_with(
+            "on_session_delete",
+            None,
+            room="session_123",
+        )
+
+    @pytest.mark.anyio
+    async def test_emits_with_none_payload_default(self, mock_sio_emit):
+        """Test emission with payload defaulting to None."""
+        await emit_session_event(WebSocketEvent.SESSION_DELETE, "session_123")
+
+        mock_sio_emit.assert_called_once_with(
+            "on_session_delete",
+            None,
+            room="session_123",
+        )
 
 
 class TestWebSocketEventEnum:

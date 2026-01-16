@@ -41,7 +41,7 @@ class TestPostLogout:
         mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -63,7 +63,7 @@ class TestPostLogout:
             ImmichCookie.ACCESS_TOKEN.value: "cookie-session-token",
         }
 
-        with patch("routers.api.auth.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -83,7 +83,7 @@ class TestPostLogout:
         mock_request.state = Mock(spec=[])  # No session_token attribute
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -129,7 +129,7 @@ class TestPostLogout:
         mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
             await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -150,7 +150,7 @@ class TestPostLogout:
         mock_request.state = Mock(spec=[])
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -169,7 +169,9 @@ class TestPostLogout:
         mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_event", new_callable=AsyncMock) as mock_emit:
+        with patch(
+            "routers.api.auth.emit_session_event", new_callable=AsyncMock
+        ) as mock_emit:
             await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -192,7 +194,7 @@ class TestPostLogout:
         mock_request.cookies = {}
 
         with patch(
-            "routers.api.auth.emit_event",
+            "routers.api.auth.emit_session_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("WebSocket error"),
         ):

@@ -351,7 +351,7 @@ class TestUploadAsset:
         mock_file.read = AsyncMock(return_value=b"fake image data")
 
         # Execute
-        with patch("routers.api.assets.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
             result = await upload_asset(
                 assetData=mock_file,
                 deviceAssetId="device-123",
@@ -383,7 +383,7 @@ class TestUploadAsset:
         mock_file.read = AsyncMock(return_value=b"fake image data")
 
         # Execute
-        with patch("routers.api.assets.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
             result = await upload_asset(
                 assetData=mock_file,
                 deviceAssetId="device-123",
@@ -412,7 +412,7 @@ class TestUploadAsset:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
-            with patch("routers.api.assets.emit_event", new_callable=AsyncMock):
+            with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
                 await upload_asset(
                     assetData=mock_file,
                     deviceAssetId="device-123",
@@ -455,7 +455,7 @@ class TestUploadAsset:
 
         # Execute with mocked emit_event
         with patch(
-            "routers.api.assets.emit_event", new_callable=AsyncMock
+            "routers.api.assets.emit_user_event", new_callable=AsyncMock
         ) as mock_emit:
             await upload_asset(
                 assetData=mock_file,
@@ -510,7 +510,7 @@ class TestUploadAsset:
 
         # Execute with emit_event that raises a SocketIOError
         with patch(
-            "routers.api.assets.emit_event",
+            "routers.api.assets.emit_user_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("WebSocket error"),
         ):
@@ -561,7 +561,7 @@ class TestDeleteAssets:
         current_user_id = uuid4()
 
         # Execute
-        with patch("routers.api.assets.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
             result = await delete_assets(
                 request, client=mock_client, current_user_id=current_user_id
             )
@@ -587,7 +587,7 @@ class TestDeleteAssets:
         current_user_id = uuid4()
 
         # Execute
-        with patch("routers.api.assets.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
             result = await delete_assets(
                 request, client=mock_client, current_user_id=current_user_id
             )
@@ -609,7 +609,7 @@ class TestDeleteAssets:
 
         # Execute
         with patch(
-            "routers.api.assets.emit_event", new_callable=AsyncMock
+            "routers.api.assets.emit_user_event", new_callable=AsyncMock
         ) as mock_emit:
             await delete_assets(
                 request, client=mock_client, current_user_id=current_user_id
@@ -637,7 +637,7 @@ class TestDeleteAssets:
 
         # Execute with emit_event that raises a SocketIOError
         with patch(
-            "routers.api.assets.emit_event",
+            "routers.api.assets.emit_user_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("WebSocket error"),
         ):
