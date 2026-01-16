@@ -274,7 +274,7 @@ class TestDeleteAllSessions:
         mock_session_store.get_by_user.return_value = sessions
         mock_session_store.delete_by_id.return_value = True
 
-        with patch("routers.api.sessions.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.sessions.emit_session_event", new_callable=AsyncMock):
             result = await delete_all_sessions(
                 request=mock_request,
                 current_user_id=TEST_USER_ID,
@@ -309,7 +309,7 @@ class TestDeleteAllSessions:
 
         mock_session_store.get_by_user.return_value = sessions
 
-        with patch("routers.api.sessions.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.sessions.emit_session_event", new_callable=AsyncMock):
             result = await delete_all_sessions(
                 request=mock_request,
                 current_user_id=TEST_USER_ID,
@@ -358,7 +358,7 @@ class TestDeleteAllSessions:
         mock_session_store.delete_by_id.return_value = True
 
         with patch(
-            "routers.api.sessions.emit_event", new_callable=AsyncMock
+            "routers.api.sessions.emit_session_event", new_callable=AsyncMock
         ) as mock_emit:
             await delete_all_sessions(
                 request=mock_request,
@@ -563,7 +563,7 @@ class TestDeleteSession:
         mock_session_store.get_by_id.return_value = session
         mock_session_store.delete_by_id.return_value = True
 
-        with patch("routers.api.sessions.emit_event", new_callable=AsyncMock):
+        with patch("routers.api.sessions.emit_session_event", new_callable=AsyncMock):
             result = await delete_session(
                 id=TEST_SESSION_ID,
                 request=mock_request,
@@ -646,7 +646,7 @@ class TestDeleteSession:
         mock_session_store.delete_by_id.return_value = True
 
         with patch(
-            "routers.api.sessions.emit_event", new_callable=AsyncMock
+            "routers.api.sessions.emit_session_event", new_callable=AsyncMock
         ) as mock_emit:
             await delete_session(
                 id=TEST_SESSION_ID,
@@ -684,7 +684,7 @@ class TestDeleteSession:
         mock_session_store.delete_by_id.return_value = True
 
         with patch(
-            "routers.api.sessions.emit_event",
+            "routers.api.sessions.emit_session_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("WebSocket error"),
         ):

@@ -24,7 +24,7 @@ from routers.utils.gumnut_client import (
 )
 from socketio.exceptions import SocketIOError
 
-from services.websockets import emit_event, WebSocketEvent
+from services.websockets import emit_session_event, WebSocketEvent
 from services.session_store import SessionStore, get_session_store
 
 logger = logging.getLogger(__name__)
@@ -108,7 +108,7 @@ async def post_logout(
         try:
             await session_store.delete(session_token)
             # Emit WebSocket event to notify the session's client
-            await emit_event(
+            await emit_session_event(
                 WebSocketEvent.SESSION_DELETE, session_token, session_token
             )
         except SocketIOError as ws_error:

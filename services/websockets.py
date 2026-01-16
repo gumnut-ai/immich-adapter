@@ -178,32 +178,74 @@ def connect_error(data: Any) -> None:
 async def disconnect(sid: str) -> None:
     """Handle WebSocket disconnection."""
     ids = _sid_to_user.pop(sid, None)
-    user_id, _ = ids if ids else (None, None)
+    if ids is None:
+        user_id = None
+    else:
+        user_id, _ = ids
     logger.debug(
         "WebSocket disconnected",
         extra={"sid": sid, "user_id": user_id},
     )
 
 
-async def emit_event(
+async def _emit_event(
     event: WebSocketEvent,
     room: str,
     payload: EventPayload = None,
 ) -> None:
     """
-    Emit a WebSocket event to a specific room.
+    Internal: Emit a WebSocket event to a specific room.
 
-    Args:
-        event: The event type (from WebSocketEvent enum)
-        room: The room to emit to (user_id for most events, session_id for SESSION_DELETE)
-        payload: Event data - Pydantic model (auto-serialized), string, list, or None
-
-    Raises:
-        pydantic.ValidationError: If payload is a Pydantic model that fails serialization
-        socketio.exceptions.SocketIOError: If the socket emission fails
+    Use emit_user_event() or emit_session_event() instead of calling this directly.
     """
     if isinstance(payload, BaseModel):
         data = payload.model_dump(mode="json")
     else:
         data = payload
     await sio.emit(event.value, data, room=room)
+
+
+async def emit_user_event(
+    event: WebSocketEvent,
+    user_id: str,
+    payload: EventPayload = None,
+) -> None:
+    """
+    Emit a WebSocket event to all of a user's connected clients.
+
+    Use this for events that should reach all sessions for a user:
+    UPLOAD_SUCCESS, ASSET_UPLOAD_READY_V1, ASSET_DELETE, etc.
+
+    Args:
+        event: The event type (from WebSocketEvent enum)
+        user_id: The Gumnut user ID
+        payload: Event data - Pydantic model (auto-serialized), string, list, or None
+
+    Raises:
+        pydantic.ValidationError: If payload is a Pydantic model that fails serialization
+        socketio.exceptions.SocketIOError: If the socket emission fails
+    """
+    await _emit_event(event, user_id, payload)
+
+
+async def emit_session_event(
+    event: WebSocketEvent,
+    session_id: str,
+    payload: EventPayload = None,
+) -> None:
+    """
+    Emit a WebSocket event to a specific session.
+
+    Use this for events that should reach only one session:
+    SESSION_DELETE, etc.
+
+    Args:
+        event: The event type (from WebSocketEvent enum)
+        session_id: The session ID (session token)
+        payload: Event data - Pydantic model (auto-serialized), string, list, or None
+
+    Raises:
+        pydantic.ValidationError: If payload is a Pydantic model that fails serialization
+        socketio.exceptions.SocketIOError: If the socket emission fails
+    """
+    await _emit_event(event, session_id, payload)
