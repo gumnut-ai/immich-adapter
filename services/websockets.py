@@ -53,8 +53,8 @@ class AssetUploadReadyV1Payload(BaseModel):
     exif: SyncAssetExifV1
 
 
-# Maps socket ID -> user ID (for disconnect cleanup)
-_sid_to_user: dict[str, str] = {}
+# Maps socket ID -> (user_id, session_id) for disconnect cleanup
+_sid_to_user: dict[str, tuple[str, str]] = {}
 
 
 def _extract_session_token(environ: dict[str, Any]) -> str | None:
@@ -131,10 +131,12 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
         )
         return False  # Reject connection
 
-    # Join user room and track session
+    # Join user room and session room, and track session
     user_id = session.user_id
+    session_id = str(session.id)
     await sio.enter_room(sid, user_id)
-    _sid_to_user[sid] = user_id
+    await sio.enter_room(sid, session_id)
+    _sid_to_user[sid] = (user_id, session_id)
 
     logger.debug(
         "WebSocket authenticated",
@@ -175,7 +177,8 @@ def connect_error(data: Any) -> None:
 @sio.event
 async def disconnect(sid: str) -> None:
     """Handle WebSocket disconnection."""
-    user_id = _sid_to_user.pop(sid, None)
+    ids = _sid_to_user.pop(sid, None)
+    user_id, _ = ids if ids else (None, None)
     logger.debug(
         "WebSocket disconnected",
         extra={"sid": sid, "user_id": user_id},
@@ -184,15 +187,15 @@ async def disconnect(sid: str) -> None:
 
 async def emit_event(
     event: WebSocketEvent,
-    user_id: str,
+    room: str,
     payload: EventPayload = None,
 ) -> None:
     """
-    Emit a WebSocket event to all of a user's connected clients.
+    Emit a WebSocket event to a specific room.
 
     Args:
         event: The event type (from WebSocketEvent enum)
-        user_id: The Gumnut user ID (room name)
+        room: The room to emit to (user_id for most events, session_id for SESSION_DELETE)
         payload: Event data - Pydantic model (auto-serialized), string, list, or None
 
     Raises:
@@ -203,4 +206,4 @@ async def emit_event(
         data = payload.model_dump(mode="json")
     else:
         data = payload
-    await sio.emit(event.value, data, room=user_id)
+    await sio.emit(event.value, data, room=room)

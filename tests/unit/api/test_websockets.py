@@ -240,10 +240,12 @@ class TestConnectHandler:
 
             # Should not return False (implicit True)
             assert result is None
-            # Should join user room
-            mock_sio["enter_room"].assert_called_once_with("test-sid", TEST_USER_ID)
-            # Should track session
-            assert _sid_to_user["test-sid"] == TEST_USER_ID
+            # Should join both user room and session room
+            assert mock_sio["enter_room"].call_count == 2
+            mock_sio["enter_room"].assert_any_call("test-sid", TEST_USER_ID)
+            mock_sio["enter_room"].assert_any_call("test-sid", str(TEST_SESSION_ID))
+            # Should track session with tuple (user_id, session_id)
+            assert _sid_to_user["test-sid"] == (TEST_USER_ID, str(TEST_SESSION_ID))
 
     @pytest.mark.anyio
     async def test_emits_server_version_on_connect(self, mock_session_store, mock_sio):
@@ -286,7 +288,7 @@ class TestConnectHandler:
             environ = {"HTTP_AUTHORIZATION": f"Bearer {TEST_SESSION_ID}"}
             result = await connect("test-sid", environ)
             assert result is None  # Not False = accepted
-            assert _sid_to_user["test-sid"] == TEST_USER_ID
+            assert _sid_to_user["test-sid"] == (TEST_USER_ID, str(TEST_SESSION_ID))
 
     @pytest.mark.anyio
     async def test_accepts_cookie_auth(self, mock_session_store, mock_sio):
@@ -302,7 +304,38 @@ class TestConnectHandler:
             environ = {"HTTP_COOKIE": f"immich_access_token={TEST_SESSION_ID}"}
             result = await connect("test-sid", environ)
             assert result is None  # Not False = accepted
-            assert _sid_to_user["test-sid"] == TEST_USER_ID
+            assert _sid_to_user["test-sid"] == (TEST_USER_ID, str(TEST_SESSION_ID))
+
+    @pytest.mark.anyio
+    async def test_joins_session_room_for_session_delete_events(
+        self, mock_session_store, mock_sio
+    ):
+        """Test that client joins session_id room to receive on_session_delete events.
+
+        This ensures that when a session is deleted from another client (e.g., user
+        logs out Browser B from Browser A's settings), Browser B receives the
+        on_session_delete event via the session_id room.
+        """
+
+        async def mock_get_session_store():
+            return mock_session_store
+
+        with patch(
+            "services.websockets.get_session_store",
+            mock_get_session_store,
+        ):
+            environ = {"HTTP_X_IMMICH_USER_TOKEN": str(TEST_SESSION_ID)}
+            await connect("test-sid", environ)
+
+            # Verify client joined the session_id room
+            session_room_call = [
+                call
+                for call in mock_sio["enter_room"].call_args_list
+                if call[0][1] == str(TEST_SESSION_ID)
+            ]
+            assert len(session_room_call) == 1, (
+                "Client should join session_id room to receive on_session_delete events"
+            )
 
 
 class TestDisconnectHandler:
@@ -318,7 +351,7 @@ class TestDisconnectHandler:
     @pytest.mark.anyio
     async def test_removes_socket_from_tracking(self):
         """Test that disconnected sockets are removed from tracking."""
-        _sid_to_user["test-sid"] = "user_123"
+        _sid_to_user["test-sid"] = ("user_123", "session_456")
 
         await disconnect("test-sid")
 
