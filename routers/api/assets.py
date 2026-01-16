@@ -53,7 +53,9 @@ from routers.utils.gumnut_id_conversion import (
 from routers.utils.asset_conversion import (
     build_asset_upload_ready_payload,
     convert_gumnut_asset_to_immich,
+    mime_type_to_asset_type,
 )
+from routers.immich_models import AssetTypeEnum
 
 logger = logging.getLogger(__name__)
 
@@ -499,10 +501,10 @@ async def get_asset_statistics(
             total_assets += 1
 
             # Check mime_type to determine if it's an image or video
-            mime_type = asset.mime_type or ""
-            if mime_type.startswith("image/"):
+            asset_type = mime_type_to_asset_type(asset.mime_type)
+            if asset_type == AssetTypeEnum.IMAGE:
                 image_count += 1
-            elif mime_type.startswith("video/"):
+            elif asset_type == AssetTypeEnum.VIDEO:
                 video_count += 1
             # Note: Other types (audio, etc.) are not counted separately but are included in total
 
