@@ -27,6 +27,42 @@ from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
 from routers.utils.person_conversion import convert_gumnut_person_to_immich_with_faces
 
 
+def mime_type_to_asset_type(mime_type: str) -> AssetTypeEnum:
+    """
+    Convert a MIME type string to an Immich AssetTypeEnum.
+
+    Args:
+        mime_type: The MIME type string (e.g., "image/jpeg", "video/mp4")
+
+    Returns:
+        AssetTypeEnum.IMAGE for image/* MIME types
+        AssetTypeEnum.VIDEO for video/* MIME types
+        AssetTypeEnum.AUDIO for audio/* MIME types
+        AssetTypeEnum.OTHER for all other types
+    """
+    if mime_type.startswith("image/"):
+        return AssetTypeEnum.IMAGE
+    elif mime_type.startswith("video/"):
+        return AssetTypeEnum.VIDEO
+    elif mime_type.startswith("audio/"):
+        return AssetTypeEnum.AUDIO
+    else:
+        return AssetTypeEnum.OTHER
+
+
+def is_image_mime_type(mime_type: str) -> bool:
+    """
+    Check if a MIME type represents an image.
+
+    Args:
+        mime_type: The MIME type string (e.g., "image/jpeg", "video/mp4")
+
+    Returns:
+        True if the MIME type starts with "image/", False otherwise
+    """
+    return mime_type.startswith("image/")
+
+
 def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     """
     Extract EXIF information from a Gumnut AssetResponse object.
@@ -210,8 +246,6 @@ def build_asset_upload_ready_payload(
     """
     asset_uuid = str(safe_uuid_from_asset_id(gumnut_asset.id))
 
-    mime_type = gumnut_asset.mime_type or ""
-
     # Extract EXIF datetimes for proper Immich compatibility
     exif_original_dt = (
         gumnut_asset.exif.original_datetime if gumnut_asset.exif else None
@@ -240,9 +274,7 @@ def build_asset_upload_ready_payload(
         isFavorite=False,
         localDateTime=local_date_time,
         originalFileName=gumnut_asset.original_file_name or "",
-        type=AssetTypeEnum.VIDEO
-        if mime_type.startswith("video/")
-        else AssetTypeEnum.IMAGE,
+        type=mime_type_to_asset_type(gumnut_asset.mime_type),
         visibility=AssetVisibility.timeline,
     )
 
@@ -289,9 +321,7 @@ def convert_gumnut_asset_to_immich(
     local_date_time = to_immich_local_datetime(exif_original_dt) or created_at_fallback
 
     # Determine asset type based on MIME type
-    asset_type = (
-        AssetTypeEnum.IMAGE if mime_type.startswith("image/") else AssetTypeEnum.VIDEO
-    )
+    asset_type = mime_type_to_asset_type(mime_type)
 
     people = []
     if gumnut_asset.people:

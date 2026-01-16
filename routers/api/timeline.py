@@ -17,6 +17,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_person_id,
 )
+from routers.utils.asset_conversion import is_image_mime_type
 from gumnut.types.asset_response import AssetResponse
 
 router = APIRouter(
@@ -187,7 +188,6 @@ async def get_time_bucket(
         for asset in filtered_assets:
             asset_id = asset.id
             created_at = asset.local_datetime
-            mime_type = asset.mime_type
             aspect_ratio = (
                 asset.width / asset.height if asset.height and asset.width else 1.0
             )
@@ -209,7 +209,7 @@ async def get_time_bucket(
             )
 
             # Determine if asset is an image (vs video) based on MIME type
-            is_image_list.append(mime_type.startswith("image/"))
+            is_image_list.append(is_image_mime_type(asset.mime_type))
 
             ratio_list.append(float(aspect_ratio))
 

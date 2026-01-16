@@ -48,7 +48,6 @@ from routers.immich_models import (
     AssetFullSyncDto,
     AssetOrder,
     AssetResponseDto,
-    AssetTypeEnum,
     AssetVisibility,
     SyncAckDeleteDto,
     SyncAckDto,
@@ -66,7 +65,10 @@ from routers.immich_models import (
     SyncUserV1,
     UserResponseDto,
 )
-from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
+from routers.utils.asset_conversion import (
+    convert_gumnut_asset_to_immich,
+    mime_type_to_asset_type,
+)
 from routers.utils.current_user import get_current_user
 from routers.utils.datetime_utils import (
     format_timezone_immich,
@@ -581,15 +583,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         SyncAssetV1 for sync stream
     """
     # Determine asset type from MIME type
-    mime_type = asset.mime_type or "application/octet-stream"
-    if mime_type.startswith("image/"):
-        asset_type = AssetTypeEnum.IMAGE
-    elif mime_type.startswith("video/"):
-        asset_type = AssetTypeEnum.VIDEO
-    elif mime_type.startswith("audio/"):
-        asset_type = AssetTypeEnum.AUDIO
-    else:
-        asset_type = AssetTypeEnum.OTHER
+    asset_type = mime_type_to_asset_type(asset.mime_type)
 
     # fileCreatedAt: Use local_datetime (EXIF capture time) converted to actual UTC.
     # The mobile client applies SQLite's 'localtime' modifier to display in local time.
