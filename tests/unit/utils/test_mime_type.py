@@ -1,10 +1,7 @@
 """Unit tests for MIME type utility functions."""
 
 from routers.immich_models import AssetTypeEnum
-from routers.utils.asset_conversion import (
-    is_image_mime_type,
-    mime_type_to_asset_type,
-)
+from routers.utils.asset_conversion import mime_type_to_asset_type
 
 
 class TestMimeTypeToAssetType:
@@ -65,36 +62,3 @@ class TestMimeTypeToAssetType:
         # Standard MIME types are lowercase, uppercase should return OTHER
         assert mime_type_to_asset_type("IMAGE/JPEG") == AssetTypeEnum.OTHER
         assert mime_type_to_asset_type("Video/mp4") == AssetTypeEnum.OTHER
-
-
-class TestIsImageMimeType:
-    """Tests for is_image_mime_type()."""
-
-    def test_image_jpeg(self):
-        """Test that image/jpeg returns True."""
-        assert is_image_mime_type("image/jpeg") is True
-
-    def test_image_png(self):
-        """Test that image/png returns True."""
-        assert is_image_mime_type("image/png") is True
-
-    def test_image_heic(self):
-        """Test that image/heic returns True."""
-        assert is_image_mime_type("image/heic") is True
-
-    def test_video_mp4(self):
-        """Test that video/mp4 returns False."""
-        assert is_image_mime_type("video/mp4") is False
-
-    def test_audio_mpeg(self):
-        """Test that audio/mpeg returns False."""
-        assert is_image_mime_type("audio/mpeg") is False
-
-    def test_application_octet_stream(self):
-        """Test that application/octet-stream returns False."""
-        assert is_image_mime_type("application/octet-stream") is False
-
-    def test_case_sensitive(self):
-        """Test that MIME type matching is case-sensitive (lowercase expected)."""
-        assert is_image_mime_type("IMAGE/JPEG") is False
-        assert is_image_mime_type("Image/png") is False

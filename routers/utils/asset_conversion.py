@@ -50,19 +50,6 @@ def mime_type_to_asset_type(mime_type: str) -> AssetTypeEnum:
         return AssetTypeEnum.OTHER
 
 
-def is_image_mime_type(mime_type: str) -> bool:
-    """
-    Check if a MIME type represents an image.
-
-    Args:
-        mime_type: The MIME type string (e.g., "image/jpeg", "video/mp4")
-
-    Returns:
-        True if the MIME type starts with "image/", False otherwise
-    """
-    return mime_type.startswith("image/")
-
-
 def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     """
     Extract EXIF information from a Gumnut AssetResponse object.
