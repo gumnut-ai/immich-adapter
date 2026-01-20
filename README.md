@@ -317,3 +317,19 @@ logger.info(f"Created library {library.id}", extra={"library_id": library.id})
 ```
 
 This enables better searching and correlation in Sentry.
+
+## Immich Monitoring and Logging
+
+The goal of the adapter is to implement the Immich OpenAPI as accurately as possible. At times you will find that the Immich documentation does not deeply describe the format of data returned by endpoints or the actual data itself (such as `/sync/stream`).
+
+### Immich Web Client
+
+The Immich web client is easy to monitor - use the developer tools in the web browser of your choice.
+
+### Immich Mobile Clients
+
+To monitor a mobile client, you will need a proxy server to be "in the middle" between the mobile client and the server. Unfortunately Immich uses the Flutter framework which is able to bypass the system proxy settings - your proxy server will not see any of calls from the client to the server.
+
+To get around this, you'll need to set up a reverse proxy - the mobile client thinks it is talking to the Immich server, but it is actually talking to a proxy server on your development machine (which logs the traffic) which then forwards the traffic on to the actual Immich server.
+
+The actual setup of a reverse proxy will depend on the tool you use (some are free, others are paid), but at a high level, you will define a port on your development machine that you then use for the Server Endpoint URL in the Immich mobile client. The other half of the configuration is to define where the traffic is redirected to after being intercepted by your proxy.
