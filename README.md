@@ -332,4 +332,21 @@ To monitor a mobile client, you will need a proxy server to be "in the middle" b
 
 To get around this, you'll need to set up a reverse proxy - the mobile client thinks it is talking to the Immich server, but it is actually talking to a proxy server on your development machine (which logs the traffic) which then forwards the traffic on to the actual Immich server.
 
-The actual setup of a reverse proxy will depend on the tool you use (some are free, others are paid), but at a high level, you will define a port on your development machine that you then use for the Server Endpoint URL in the Immich mobile client. The other half of the configuration is to define where the traffic is redirected to after being intercepted by your proxy.
+#### Example Generic Reverse Proxy Setup
+
+* Choose local listen endpoint: `http://<dev-machine-ip>:<port>`
+* Configure upstream: `https://<real-immich-host>:<port>`
+* Set Immich mobile "Server Endpoint URL" to the local listen endpoint
+* Ensure device can reach dev machine IP (same Wi‑Fi/VPN)
+* _TLS note:_ if intercepting HTTPS, you may need to trust a local CA on the device and set "Allow self-signed SSL certificates" in the Advanced section of the mobile client Settings; if not intercepting, use simple pass-through/forwarding mode
+
+#### Example Proxyman Setup
+
+* Select "Reverse Proxy..." from the "Tools Menu"
+* Check "Enable Reverse Proxy Tool" if not already checked
+* Click "+" in the lower left to create a new reverse proxy
+* Specify a name for the proxy, the local port, the remote host or IP address, and the remote port
+* If you are using OAuth with the Immich mobile client, you will need to run immich-adapter with a SSL certificate, and you will need to check "Force Using SSL when connecting to Remote Port"
+* Click "Add" to create and start the reverse proxy
+
+With Proxyman, if you are using OAuth, you will not specify https for the protocol of the immich-adapter server as the SSL connection is handled by Proxyman.
