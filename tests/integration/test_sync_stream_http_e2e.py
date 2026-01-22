@@ -160,6 +160,15 @@ TEST_ASSETS_DATA = [
     },
 ]
 
+# Expected exposure time outputs for Immich (input float -> output string)
+# These are the known correct transformations for the test data above
+EXPECTED_EXPOSURE_TIMES = {
+    "asset_EVDYwYYmiDoCVZiZnA5k5w": "1/4000",  # 0.00025
+    "asset_mgeB2TaTirHHP5HFZyspud": "1/640",  # 0.0015625
+    "asset_exqhM8woUg6HB6C9G2sLNq": "1/200",  # 0.005
+    "asset_W6vgV5FDoWHuKN7Ao95VVJ": "1/640",  # 0.0015625
+}
+
 
 def parse_datetime(dt_str: str) -> datetime:
     """Parse a datetime string handling various formats."""
@@ -422,18 +431,34 @@ def client(mock_gumnut_client, mock_checkpoint_store, mock_session_store):
 
     # IMPORTANT: Auth middleware calls get_session_store() directly,
     # not via Depends(), so we need to patch it at the module level too
-    with patch(
-        "routers.middleware.auth_middleware.get_session_store",
-        return_value=mock_session_store,
-    ):
-        yield TestClient(app, base_url="https://testserver")
-
-    app.dependency_overrides.clear()
+    try:
+        with patch(
+            "routers.middleware.auth_middleware.get_session_store",
+            return_value=mock_session_store,
+        ):
+            yield TestClient(app, base_url="https://testserver")
+    finally:
+        app.dependency_overrides.clear()
 
 
 def parse_jsonl_response(response_text: str) -> list[dict]:
     """Parse JSONL response text into list of event dicts."""
     return [json.loads(line) for line in response_text.strip().split("\n") if line]
+
+
+def post_sync_stream(client: TestClient, types: list[str]) -> list[dict]:
+    """POST to /api/sync/stream and return parsed events.
+
+    Asserts status_code == 200 before parsing to provide actionable
+    error output if the request fails (401/422/500).
+    """
+    response = client.post(
+        "/api/sync/stream",
+        json={"types": types},
+        headers={"Authorization": f"Bearer {TEST_SESSION_UUID}"},
+    )
+    assert response.status_code == 200, response.text
+    return parse_jsonl_response(response.text)
 
 
 class TestSyncStreamHTTPE2E:
@@ -456,13 +481,7 @@ class TestSyncStreamHTTPE2E:
         - isFavorite: default False
         - deletedAt: null for non-deleted assets
         """
-        response = client.post(
-            "/api/sync/stream",
-            json={"types": ["AuthUsersV1", "AssetsV1"]},
-            headers={"Authorization": f"Bearer {TEST_SESSION_UUID}"},
-        )
-
-        events = parse_jsonl_response(response.text)
+        events = post_sync_stream(client, ["AuthUsersV1", "AssetsV1"])
         asset_events = [e for e in events if e["type"] == "AssetV1"]
 
         # Build expected values from test data
@@ -495,29 +514,19 @@ class TestSyncStreamHTTPE2E:
             assert event["data"]["deletedAt"] is None
 
     def test_sync_stream_exif_data(self, client):
-        """Test that EXIF data is returned correctly."""
-        response = client.post(
-            "/api/sync/stream",
-            json={"types": ["AuthUsersV1", "AssetsV1", "AssetExifsV1"]},
-            headers={"Authorization": f"Bearer {TEST_SESSION_UUID}"},
-        )
+        """Test that EXIF data is returned correctly.
 
-        events = parse_jsonl_response(response.text)
+        Uses explicit expected values to validate the contract rather than
+        re-implementing the transformation logic.
+        """
+        events = post_sync_stream(client, ["AuthUsersV1", "AssetsV1", "AssetExifsV1"])
         exif_events = [e for e in events if e["type"] == "AssetExifV1"]
 
         assert len(exif_events) == len(TEST_ASSETS_DATA)
 
-        def format_exposure_time(exposure_time: float) -> str:
-            """Convert exposure time from decimal to fractional string.
-
-            This mirrors the transformation in routers/api/sync.py:_format_exposure_time
-            """
-            denominator = round(1 / exposure_time)
-            return f"1/{denominator}"
-
         # Build expected EXIF values from test data (all 7 fields)
         # Note: snake_case in test data maps to camelCase in Immich output
-        # Note: exposure_time is transformed from float to fractional string
+        # Note: exposure time uses EXPECTED_EXPOSURE_TIMES for known outputs
         expected_exif = {
             (
                 a["exif"]["make"],
@@ -526,7 +535,7 @@ class TestSyncStreamHTTPE2E:
                 a["exif"]["f_number"],
                 a["exif"]["focal_length"],
                 a["exif"]["iso"],
-                format_exposure_time(a["exif"]["exposure_time"]),
+                EXPECTED_EXPOSURE_TIMES[a["id"]],
             )
             for a in TEST_ASSETS_DATA
             if a.get("exif")
@@ -555,13 +564,7 @@ class TestSyncStreamHTTPE2E:
         - X2 = x + w
         - Y2 = y + h
         """
-        response = client.post(
-            "/api/sync/stream",
-            json={"types": ["AuthUsersV1", "AssetsV1", "AssetFacesV1"]},
-            headers={"Authorization": f"Bearer {TEST_SESSION_UUID}"},
-        )
-
-        events = parse_jsonl_response(response.text)
+        events = post_sync_stream(client, ["AuthUsersV1", "AssetsV1", "AssetFacesV1"])
         face_events = [e for e in events if e["type"] == "AssetFaceV1"]
 
         # Count faces in test data
@@ -607,13 +610,7 @@ class TestSyncStreamHTTPE2E:
         - isActivityEnabled: hardcoded True
         - order: hardcoded "desc"
         """
-        response = client.post(
-            "/api/sync/stream",
-            json={"types": ["AuthUsersV1", "AlbumsV1"]},
-            headers={"Authorization": f"Bearer {TEST_SESSION_UUID}"},
-        )
-
-        events = parse_jsonl_response(response.text)
+        events = post_sync_stream(client, ["AuthUsersV1", "AlbumsV1"])
         album_events = [e for e in events if e["type"] == "AlbumV1"]
 
         assert len(album_events) == len(TEST_ALBUMS_DATA)
@@ -662,25 +659,18 @@ class TestSyncStreamHTTPE2E:
         - Correct count for each entity type
         - SyncCompleteV1 is last with correct format
         """
-        response = client.post(
-            "/api/sync/stream",
-            json={
-                "types": [
-                    "AuthUsersV1",
-                    "AssetsV1",
-                    "AssetExifsV1",
-                    "AssetFacesV1",
-                    "AlbumsV1",
-                    "AlbumToAssetsV1",
-                    "PeopleV1",
-                ]
-            },
-            headers={"Authorization": f"Bearer {TEST_SESSION_UUID}"},
+        events = post_sync_stream(
+            client,
+            [
+                "AuthUsersV1",
+                "AssetsV1",
+                "AssetExifsV1",
+                "AssetFacesV1",
+                "AlbumsV1",
+                "AlbumToAssetsV1",
+                "PeopleV1",
+            ],
         )
-
-        assert response.status_code == 200
-
-        events = parse_jsonl_response(response.text)
 
         # Count events by type
         event_counts: dict[str, int] = {}
@@ -694,12 +684,15 @@ class TestSyncStreamHTTPE2E:
         )
 
         # Verify counts match expected values
+        # Compute expected album-to-asset count (albums × assets)
+        expected_album_asset_count = len(TEST_ALBUMS_DATA) * len(TEST_ASSETS_DATA)
+
         assert event_counts.get("AuthUserV1") == 1
         assert event_counts.get("AssetV1") == len(TEST_ASSETS_DATA)
         assert event_counts.get("AssetExifV1") == len(TEST_ASSETS_DATA)
         assert event_counts.get("AssetFaceV1") == expected_face_count
-        assert event_counts.get("AlbumV1") == 1
-        assert event_counts.get("AlbumToAssetV1") == len(TEST_ASSETS_DATA)
+        assert event_counts.get("AlbumV1") == len(TEST_ALBUMS_DATA)
+        assert event_counts.get("AlbumToAssetV1") == expected_album_asset_count
         assert event_counts.get("PersonV1") == 1
         assert event_counts.get("SyncCompleteV1") == 1
 
@@ -737,23 +730,18 @@ class TestSyncStreamHTTPE2E:
         - timestamp: ISO 8601 format
         - gumnut_entity_id: the actual Gumnut ID from test data
         """
-        response = client.post(
-            "/api/sync/stream",
-            json={
-                "types": [
-                    "AuthUsersV1",
-                    "AssetsV1",
-                    "AssetExifsV1",
-                    "AlbumsV1",
-                    "AlbumToAssetsV1",
-                    "PeopleV1",
-                    "AssetFacesV1",
-                ]
-            },
-            headers={"Authorization": f"Bearer {TEST_SESSION_UUID}"},
+        events = post_sync_stream(
+            client,
+            [
+                "AuthUsersV1",
+                "AssetsV1",
+                "AssetExifsV1",
+                "AlbumsV1",
+                "AlbumToAssetsV1",
+                "PeopleV1",
+                "AssetFacesV1",
+            ],
         )
-
-        events = parse_jsonl_response(response.text)
 
         # Build expected entity IDs from test data
         expected_entity_ids = {
