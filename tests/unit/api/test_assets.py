@@ -852,21 +852,29 @@ class TestViewAsset:
         )
 
     @pytest.mark.anyio
-    async def test_view_asset_fullsize(self, sample_uuid):
-        """Test asset view with fullsize."""
+    async def test_view_asset_fullsize_uses_thumbnail_api(self, sample_uuid):
+        """Test that /thumbnail?size=fullsize uses download_thumbnail, not download.
+
+        This is critical for HEIC support: Immich requests fullsize thumbnails
+        expecting browser-compatible formats (WEBP), not the original HEIC.
+        See GUM-223 for details.
+        """
         # Setup - create mock client
         mock_client = Mock()
 
         # Mock the streaming response context manager
         mock_response = Mock()
-        mock_response.headers = {"content-type": "image/jpeg"}
+        mock_response.headers = {"content-type": "image/webp"}
         mock_response.iter_bytes.return_value = iter([b"fake image data"])
 
         mock_context = Mock()
         mock_context.__enter__ = Mock(return_value=mock_response)
         mock_context.__exit__ = Mock(return_value=None)
 
-        mock_client.assets.with_streaming_response.download.return_value = mock_context
+        # Mock download_thumbnail, NOT download
+        mock_client.assets.with_streaming_response.download_thumbnail.return_value = (
+            mock_context
+        )
 
         # Execute
         result = await view_asset(
@@ -874,10 +882,15 @@ class TestViewAsset:
         )
 
         # Assert
-        assert result.media_type == "image/jpeg"
+        assert result.media_type == "image/webp"
         assert hasattr(result, "body_iterator")  # StreamingResponse has body_iterator
+        # Verify download_thumbnail was called with size="fullsize", NOT download()
         # Called twice: once for headers, once for streaming
-        assert mock_client.assets.with_streaming_response.download.call_count == 2
+        assert (
+            mock_client.assets.with_streaming_response.download_thumbnail.call_count
+            == 2
+        )
+        mock_client.assets.with_streaming_response.download.assert_not_called()
 
     @pytest.mark.anyio
     async def test_view_asset_not_found(self, sample_uuid):
@@ -927,6 +940,41 @@ class TestDownloadAsset:
         assert "Content-Disposition" in result.headers
         # Called twice: once for headers, once for streaming
         assert mock_client.assets.with_streaming_response.download.call_count == 2
+
+    @pytest.mark.anyio
+    async def test_download_asset_uses_download_not_thumbnail(self, sample_uuid):
+        """Test that /original endpoint uses download(), not download_thumbnail().
+
+        The /original endpoint should always return the actual original file
+        (JPEG, HEIC, RAW, etc.), not a converted thumbnail. This preserves the
+        original format for downloads.
+        See GUM-223 for details on the distinction from /thumbnail endpoint.
+        """
+        # Setup - create mock client
+        mock_client = Mock()
+
+        # Mock the streaming response context manager
+        mock_response = Mock()
+        mock_response.headers = {
+            "content-type": "image/heic",
+            "content-disposition": 'attachment; filename="IMG_1234.heic"',
+        }
+        mock_response.iter_bytes.return_value = iter([b"fake heic data"])
+
+        mock_context = Mock()
+        mock_context.__enter__ = Mock(return_value=mock_response)
+        mock_context.__exit__ = Mock(return_value=None)
+
+        mock_client.assets.with_streaming_response.download.return_value = mock_context
+
+        # Execute
+        result = await download_asset(sample_uuid, client=mock_client)
+
+        # Assert - download() was called, NOT download_thumbnail()
+        assert result.media_type == "image/heic"
+        # Called twice: once for headers, once for streaming
+        assert mock_client.assets.with_streaming_response.download.call_count == 2
+        mock_client.assets.with_streaming_response.download_thumbnail.assert_not_called()
 
 
 class TestReplaceAsset:
