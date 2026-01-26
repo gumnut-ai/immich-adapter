@@ -67,7 +67,10 @@ router = APIRouter(
 
 
 async def _download_asset_content(
-    asset_uuid: UUID, client: Gumnut, size: AssetMediaSize = AssetMediaSize.fullsize
+    asset_uuid: UUID,
+    client: Gumnut,
+    size: AssetMediaSize = AssetMediaSize.fullsize,
+    force_original: bool = False,
 ) -> Response:
     """
     Shared helper function to download asset content from Gumnut.
@@ -76,9 +79,19 @@ async def _download_asset_content(
         asset_uuid: The asset UUID to download
         client: Authenticated Gumnut client
         size: The size variant to download (fullsize, preview, thumbnail)
+        force_original: If True, always download the original file via download().
+                       If False, use download_thumbnail() for all sizes.
 
     Returns:
         FastAPI Response with the asset content
+
+    Note on HEIC handling:
+        The /thumbnail endpoint should always use download_thumbnail(), even for
+        fullsize requests. This returns browser-compatible formats (WEBP) for
+        non-web-native formats like HEIC. See GUM-223 for details.
+
+        The /original endpoint should always use download() to return the actual
+        original file regardless of format.
     """
 
     try:
@@ -126,27 +139,31 @@ async def _download_asset_content(
                 headers=response_headers,
             )
 
-        # Determine the size and use appropriate Gumnut SDK function with streaming
-        if size == AssetMediaSize.fullsize:
-            # Use streaming download for original size
+        # For /original endpoint: always return the actual original file
+        # This preserves the original format (JPEG, HEIC, etc.) for download
+        if force_original:
+
             def streaming_factory():
                 return client.assets.with_streaming_response.download(gumnut_asset_id)
 
             return create_streaming_response(streaming_factory)
-        else:
-            # Use streaming download_thumbnail for thumbnail and preview sizes
-            # Map Immich size to Gumnut size parameter
-            if size == AssetMediaSize.preview:
-                gumnut_size = "preview"
-            else:  # default to thumbnail
-                gumnut_size = "thumbnail"
 
-            def streaming_factory():
-                return client.assets.with_streaming_response.download_thumbnail(
-                    gumnut_asset_id, size=gumnut_size
-                )
+        # For /thumbnail endpoint: use download_thumbnail for ALL sizes
+        # This ensures browser-compatible formats are served for non-web-native
+        # formats like HEIC (photos-api converts HEIC to WEBP for fullsize thumbnails)
+        size_map = {
+            AssetMediaSize.fullsize: "fullsize",
+            AssetMediaSize.preview: "preview",
+            AssetMediaSize.thumbnail: "thumbnail",
+        }
+        gumnut_size = size_map.get(size, "thumbnail")
 
-            return create_streaming_response(streaming_factory)
+        def streaming_factory():
+            return client.assets.with_streaming_response.download_thumbnail(
+                gumnut_asset_id, size=gumnut_size
+            )
+
+        return create_streaming_response(streaming_factory)
 
     except Exception as e:
         raise map_gumnut_error(e, "Failed to fetch asset")
@@ -634,9 +651,17 @@ async def download_asset(
 ) -> Response:
     """
     Download the original asset file.
-    Always downloads the full-size original asset using the shared download logic.
+
+    Always downloads the original file using download(), preserving the original
+    format (JPEG, HEIC, RAW, etc.) for actual downloads.
+
+    Note: force_original=True ensures we call download() instead of download_thumbnail().
+    This is important for preserving the original format when users explicitly
+    request the original file (e.g., for editing or archival purposes).
     """
-    return await _download_asset_content(id, client, AssetMediaSize.fullsize)
+    return await _download_asset_content(
+        id, client, AssetMediaSize.fullsize, force_original=True
+    )
 
 
 @router.put(
