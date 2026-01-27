@@ -54,6 +54,7 @@ fake_config = {
     "isInitialized": True,
     "isOnboarded": True,
     "externalDomain": "",
+    "maintenanceMode": False,
     "publicUsers": True,
     "mapDarkStyleUrl": "https://tiles.immich.cloud/v1/style/dark.json",
     "mapLightStyleUrl": "https://tiles.immich.cloud/v1/style/light.json",

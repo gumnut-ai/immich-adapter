@@ -249,7 +249,7 @@ async def get_user_preferences_admin(id: UUID) -> UserPreferencesResponseDto:
             albumInvite=False, albumUpdate=False, enabled=False
         ),
         folders=FoldersResponse(enabled=False, sidebarWeb=False),
-        memories=MemoriesResponse(enabled=False),
+        memories=MemoriesResponse(duration=7, enabled=False),
         people=PeopleResponse(enabled=False, sidebarWeb=False),
         purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
         ratings=RatingsResponse(enabled=False),
@@ -274,7 +274,7 @@ async def update_user_preferences_admin(
             albumInvite=False, albumUpdate=False, enabled=False
         ),
         folders=FoldersResponse(enabled=False, sidebarWeb=False),
-        memories=MemoriesResponse(enabled=False),
+        memories=MemoriesResponse(duration=7, enabled=False),
         people=PeopleResponse(enabled=False, sidebarWeb=False),
         purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
         ratings=RatingsResponse(enabled=False),

@@ -54,7 +54,7 @@ userPreferencesResponse: UserPreferencesResponseDto = UserPreferencesResponseDto
         albumInvite=False, albumUpdate=False, enabled=False
     ),
     folders=FoldersResponse(enabled=False, sidebarWeb=False),
-    memories=MemoriesResponse(enabled=False),
+    memories=MemoriesResponse(duration=7, enabled=False),
     people=PeopleResponse(enabled=False, sidebarWeb=False),
     purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
     ratings=RatingsResponse(enabled=False),

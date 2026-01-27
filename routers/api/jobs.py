@@ -1,13 +1,13 @@
 from fastapi import APIRouter
 
 from routers.immich_models import (
-    AllJobStatusResponseDto,
-    JobCommandDto,
-    JobCountsDto,
     JobCreateDto,
     JobName,
-    JobStatusDto,
-    QueueStatusDto,
+    QueueCommandDto,
+    QueueResponseLegacyDto,
+    QueueStatisticsDto,
+    QueueStatusLegacyDto,
+    QueuesResponseLegacyDto,
 )
 
 router = APIRouter(
@@ -17,10 +17,10 @@ router = APIRouter(
 )
 
 
-def create_fake_job_status() -> JobStatusDto:
+def create_fake_job_status() -> QueueResponseLegacyDto:
     """Helper function to create a fake job status for stub responses."""
-    return JobStatusDto(
-        jobCounts=JobCountsDto(
+    return QueueResponseLegacyDto(
+        jobCounts=QueueStatisticsDto(
             active=0,
             completed=0,
             delayed=0,
@@ -28,7 +28,7 @@ def create_fake_job_status() -> JobStatusDto:
             paused=0,
             waiting=0,
         ),
-        queueStatus=QueueStatusDto(
+        queueStatus=QueueStatusLegacyDto(
             isActive=False,
             isPaused=False,
         ),
@@ -36,14 +36,14 @@ def create_fake_job_status() -> JobStatusDto:
 
 
 @router.get("")
-async def get_all_jobs_status() -> AllJobStatusResponseDto:
+async def get_all_jobs_status() -> QueuesResponseLegacyDto:
     """
     Get all jobs status.
     This is a stub implementation that returns fake job statuses.
     """
     fake_status = create_fake_job_status()
 
-    return AllJobStatusResponseDto(
+    return QueuesResponseLegacyDto(
         backgroundTask=fake_status,
         backupDatabase=fake_status,
         duplicateDetection=fake_status,
@@ -60,6 +60,7 @@ async def get_all_jobs_status() -> AllJobStatusResponseDto:
         storageTemplateMigration=fake_status,
         thumbnailGeneration=fake_status,
         videoConversion=fake_status,
+        workflow=fake_status,
     )
 
 
@@ -73,7 +74,9 @@ async def create_job(request: JobCreateDto):
 
 
 @router.put("/{id}")
-async def send_job_command(id: JobName, request: JobCommandDto) -> JobStatusDto:
+async def send_job_command(
+    id: JobName, request: QueueCommandDto
+) -> QueueResponseLegacyDto:
     """
     Send job command.
     This is a stub implementation that returns a fake job status.

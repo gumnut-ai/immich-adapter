@@ -98,6 +98,7 @@ async def get_config() -> SystemConfigDto:
     job_settings_thumb = JobSettingsDto(concurrency=5)
     job_settings_video = JobSettingsDto(concurrency=1)
     job_settings_ocr = JobSettingsDto(concurrency=1)
+    job_settings_workflow = JobSettingsDto(concurrency=5)
 
     fullsize_image = SystemConfigGeneratedFullsizeImageDto(
         enabled=True,
@@ -205,6 +206,7 @@ async def get_config() -> SystemConfigDto:
         thumbnailGeneration=job_settings_thumb,
         videoConversion=job_settings_video,
         ocr=job_settings_ocr,
+        workflow=job_settings_workflow,
     )
 
     library_config = SystemConfigLibraryDto(
