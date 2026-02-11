@@ -1,18 +1,12 @@
 """Shared fixtures and helpers for sync tests."""
 
 import json
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
 import pytest
-
-from gumnut.types.album_asset_event_payload import AlbumAssetEventPayload
-from gumnut.types.album_event_payload import AlbumEventPayload
-from gumnut.types.asset_event_payload import AssetEventPayload
-from gumnut.types.exif_event_payload import ExifEventPayload
-from gumnut.types.face_event_payload import FaceEventPayload
-from gumnut.types.person_event_payload import PersonEventPayload
 
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
@@ -57,10 +51,18 @@ def create_mock_gumnut_client(user: Mock) -> Mock:
     """Create a mock Gumnut client with the given user."""
     client = Mock()
     client.users.me.return_value = user
-    # Default: no events
+    # Default: no v2 events
     events_response = Mock()
     events_response.data = []
-    client.events.get.return_value = events_response
+    events_response.has_more = False
+    client.events_v2.get.return_value = events_response
+    # Default: empty entity list responses for batch fetching
+    empty_page = Mock()
+    empty_page.__iter__ = Mock(return_value=iter([]))
+    client.assets.list.return_value = empty_page
+    client.albums.list.return_value = empty_page
+    client.people.list.return_value = empty_page
+    client.faces.list.return_value = empty_page
     return client
 
 
@@ -97,7 +99,7 @@ def create_mock_session_store(session: Session | None = None) -> AsyncMock:
     return store
 
 
-async def collect_stream(stream) -> list[dict]:
+async def collect_stream(stream: AsyncGenerator[str, None]) -> list[dict]:
     """Collect all events from an async generator into a list of dicts."""
     events = []
     async for line in stream:
@@ -105,15 +107,33 @@ async def collect_stream(stream) -> list[dict]:
     return events
 
 
-def create_mock_event(payload_class, data: Mock) -> Mock:
-    """Create a mock event that passes isinstance checks."""
-    event = Mock(spec=payload_class)
-    event.data = data
+def create_mock_v2_event(
+    entity_type: str,
+    entity_id: str,
+    event_type: str,
+    created_at: datetime,
+    cursor: str = "cursor_1",
+) -> Mock:
+    """Create a mock v2 event."""
+    event = Mock()
+    event.entity_type = entity_type
+    event.entity_id = entity_id
+    event.event_type = event_type
+    event.created_at = created_at
+    event.cursor = cursor
     return event
 
 
+def create_mock_v2_events_response(events: list, has_more: bool = False) -> Mock:
+    """Create a mock v2 events response."""
+    resp = Mock()
+    resp.data = events
+    resp.has_more = has_more
+    return resp
+
+
 def create_mock_asset_data(updated_at: datetime) -> Mock:
-    """Create mock asset data for AssetEventPayload."""
+    """Create mock asset data for entity fetch."""
     asset = Mock()
     asset.id = uuid_to_gumnut_asset_id(TEST_UUID)
     asset.mime_type = "image/jpeg"
@@ -126,11 +146,12 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     asset.checksum_sha1 = "sha1checksum"
     asset.width = 1920
     asset.height = 1080
+    asset.exif = None
     return asset
 
 
 def create_mock_album_data(updated_at: datetime) -> Mock:
-    """Create mock album data for AlbumEventPayload."""
+    """Create mock album data for entity fetch."""
     album = Mock()
     album.id = uuid_to_gumnut_album_id(TEST_UUID)
     album.name = "Test Album"
@@ -141,18 +162,8 @@ def create_mock_album_data(updated_at: datetime) -> Mock:
     return album
 
 
-def create_mock_album_asset_data(updated_at: datetime) -> Mock:
-    """Create mock album asset data for AlbumAssetEventPayload."""
-    album_asset = Mock()
-    album_asset.id = f"album_asset_{TEST_UUID}"
-    album_asset.album_id = uuid_to_gumnut_album_id(TEST_UUID)
-    album_asset.asset_id = uuid_to_gumnut_asset_id(TEST_UUID)
-    album_asset.updated_at = updated_at
-    return album_asset
-
-
 def create_mock_exif_data(updated_at: datetime) -> Mock:
-    """Create mock exif data for ExifEventPayload."""
+    """Create mock exif data for entity fetch."""
     exif = Mock()
     exif.asset_id = uuid_to_gumnut_asset_id(TEST_UUID)
     exif.city = "San Francisco"
@@ -180,7 +191,7 @@ def create_mock_exif_data(updated_at: datetime) -> Mock:
 
 
 def create_mock_person_data(updated_at: datetime) -> Mock:
-    """Create mock person data for PersonEventPayload."""
+    """Create mock person data for entity fetch."""
     person = Mock()
     person.id = uuid_to_gumnut_person_id(TEST_UUID)
     person.name = "Test Person"
@@ -192,7 +203,7 @@ def create_mock_person_data(updated_at: datetime) -> Mock:
 
 
 def create_mock_face_data(updated_at: datetime) -> Mock:
-    """Create mock face data for FaceEventPayload."""
+    """Create mock face data for entity fetch."""
     face = Mock()
     face.id = uuid_to_gumnut_face_id(TEST_UUID)
     face.asset_id = uuid_to_gumnut_asset_id(TEST_UUID)
@@ -202,7 +213,13 @@ def create_mock_face_data(updated_at: datetime) -> Mock:
     return face
 
 
-# Re-export event payload classes for convenience
+def create_mock_entity_page(entities: list) -> Mock:
+    """Create a mock paginated entity response that is iterable."""
+    page = Mock()
+    page.__iter__ = Mock(return_value=iter(entities))
+    return page
+
+
 __all__ = [
     "TEST_UUID",
     "TEST_SESSION_UUID",
@@ -212,17 +229,12 @@ __all__ = [
     "create_mock_checkpoint_store",
     "create_mock_session_store",
     "collect_stream",
-    "create_mock_event",
+    "create_mock_v2_event",
+    "create_mock_v2_events_response",
     "create_mock_asset_data",
     "create_mock_album_data",
-    "create_mock_album_asset_data",
     "create_mock_exif_data",
     "create_mock_person_data",
     "create_mock_face_data",
-    "AssetEventPayload",
-    "AlbumEventPayload",
-    "AlbumAssetEventPayload",
-    "ExifEventPayload",
-    "PersonEventPayload",
-    "FaceEventPayload",
+    "create_mock_entity_page",
 ]

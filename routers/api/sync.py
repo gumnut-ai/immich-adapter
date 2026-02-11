@@ -4,34 +4,27 @@ Immich sync endpoints for mobile client synchronization.
 This module implements the Immich sync protocol, providing both streaming sync
 (for beta timeline mode) and full/delta sync (for legacy timeline mode).
 
-The streaming sync uses the photos-api /api/events endpoint to fetch entity
-changes in priority order, ensuring proper entity dependencies (assets before
-exif, albums before album_assets, etc.).
+The streaming sync uses the photos-api v2 events endpoint (/api/v2/events) to
+fetch lightweight event records, then batch-fetches full entities as needed.
+Events are processed in priority order (assets before exif, etc.).
 """
 
 import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List
+from typing import Any, AsyncGenerator, List, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from gumnut import Gumnut
 
-from gumnut.types.album_asset_event_payload import AlbumAssetEventPayload
-from gumnut.types.album_asset_response import AlbumAssetResponse
-from gumnut.types.album_event_payload import AlbumEventPayload
 from gumnut.types.album_response import AlbumResponse
-from gumnut.types.asset_event_payload import AssetEventPayload
 from gumnut.types.asset_response import AssetResponse
-from gumnut.types.events_response import Data
-from gumnut.types.exif_event_payload import ExifEventPayload
+from gumnut.types.events_v2_response import Data as EventV2Data
 from gumnut.types.exif_response import ExifResponse
-from gumnut.types.face_event_payload import FaceEventPayload
 from gumnut.types.face_response import FaceResponse
-from gumnut.types.person_event_payload import PersonEventPayload
 from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
 
@@ -52,13 +45,16 @@ from routers.immich_models import (
     SyncAckDeleteDto,
     SyncAckDto,
     SyncAckSetDto,
-    SyncAlbumToAssetV1,
+    SyncAlbumDeleteV1,
     SyncAlbumV1,
+    SyncAssetDeleteV1,
     SyncAssetExifV1,
+    SyncAssetFaceDeleteV1,
     SyncAssetFaceV1,
     SyncAssetV1,
     SyncAuthUserV1,
     SyncEntityType,
+    SyncPersonDeleteV1,
     SyncPersonV1,
     SyncRequestType,
     SyncStreamDto,
@@ -125,27 +121,23 @@ def _get_session_token(request: Request) -> UUID:
         )
 
 
-def _parse_ack(ack: str) -> tuple[SyncEntityType, datetime, str] | None:
+def _parse_ack(ack: str) -> tuple[SyncEntityType, str] | None:
     """
-    Parse an ack string into entity type, timestamp, and entity ID.
+    Parse an ack string into entity type and cursor.
 
-    Ack format for immich-adapter: "SyncEntityType|timestamp|entity_id|"
+    Ack format for immich-adapter: "SyncEntityType|cursor|"
     - SyncEntityType: Entity type string (e.g., "AssetV1", "AlbumV1")
-    - timestamp: ISO 8601 datetime string
-    - entity_id: The entity ID for keyset pagination
+    - cursor: Opaque v2 events cursor
     - Trailing pipe for future additions
 
     Matches immich behavior: only throws for invalid entity types, skips
     malformed acks otherwise.
 
-    Note:
-        Backward compatible with old format without entity_id (entity_id will be empty string).
-
     Args:
         ack: The ack string to parse
 
     Returns:
-        Tuple of (entity_type, last_synced_at, entity_id), or None if ack is malformed.
+        Tuple of (entity_type, cursor), or None if ack is malformed.
 
     Raises:
         HTTPException: If entity type is invalid (matches immich behavior)
@@ -159,7 +151,6 @@ def _parse_ack(ack: str) -> tuple[SyncEntityType, datetime, str] | None:
         return None
 
     entity_type_str = parts[0]
-    timestamp_str = parts[1]
 
     # Validate entity type - immich throws BadRequestException for invalid types
     try:
@@ -170,47 +161,28 @@ def _parse_ack(ack: str) -> tuple[SyncEntityType, datetime, str] | None:
             detail=f"Invalid ack type: {entity_type_str}",
         )
 
-    # Parse timestamp - skip ack if missing or malformed
-    if not timestamp_str:
-        logger.warning(
-            "Skipping ack with missing timestamp",
-            extra={"ack": ack},
-        )
-        return None
+    cursor = parts[1] if parts[1] else ""
 
-    try:
-        last_synced_at = datetime.fromisoformat(timestamp_str)
-    except ValueError:
-        logger.warning(
-            "Skipping ack with invalid timestamp",
-            extra={"ack": ack},
-        )
-        return None
-
-    entity_id = parts[2] if len(parts) >= 3 and parts[2] else ""
-
-    return entity_type, last_synced_at, entity_id
+    return entity_type, cursor
 
 
 def _to_ack_string(
     entity_type: SyncEntityType,
-    last_synced_at: datetime,
-    entity_id: str,
+    cursor: str,
 ) -> str:
     """
-    Convert entity type, timestamp, and entity ID to ack string.
+    Convert entity type and cursor to ack string.
 
-    Ack format for immich-adapter: "SyncEntityType|timestamp|entity_id|"
+    Ack format for immich-adapter: "SyncEntityType|cursor|"
 
     Args:
         entity_type: The sync entity type
-        last_synced_at: The timestamp from the last sync
-        entity_id: The entity ID for keyset pagination
+        cursor: The opaque v2 events cursor
 
     Returns:
         Formatted ack string
     """
-    return f"{entity_type.value}|{last_synced_at.isoformat()}|{entity_id}|"
+    return f"{entity_type.value}|{cursor}|"
 
 
 @router.get("/ack")
@@ -223,7 +195,7 @@ async def get_sync_ack(
 
     Returns all stored checkpoints for the session, each containing:
     - type: The sync entity type (e.g., "AssetV1", "AlbumV1")
-    - ack: The ack string in format "SyncEntityType|timestamp|entity_id|"
+    - ack: The ack string in format "SyncEntityType|cursor|"
 
     Requires a session token - API keys are not allowed.
     """
@@ -236,8 +208,7 @@ async def get_sync_ack(
             type=checkpoint.entity_type,
             ack=_to_ack_string(
                 checkpoint.entity_type,
-                checkpoint.last_synced_at,
-                checkpoint.last_entity_id or "",
+                checkpoint.cursor or "",
             ),
         )
         for checkpoint in checkpoints
@@ -269,7 +240,7 @@ async def send_sync_ack(
     If any ack is for SyncResetV1, resets the session's sync progress
     (clears is_pending_sync_reset flag and deletes all checkpoints).
 
-    Ack format for immich-adapter: "SyncEntityType|timestamp|entity_id|"
+    Ack format for immich-adapter: "SyncEntityType|cursor|"
 
     Requires a session token - API keys are not allowed.
     """
@@ -277,8 +248,8 @@ async def send_sync_ack(
     session_token = str(session_uuid)
 
     # Parse all acks and collect checkpoints to store
-    # Value is (timestamp, entity_id) tuple
-    checkpoints_to_store: dict[SyncEntityType, tuple[datetime, str]] = {}
+    # Value is cursor string
+    checkpoints_to_store: dict[SyncEntityType, str] = {}
 
     for idx, ack in enumerate(request.acks):
         parsed = _parse_ack(ack)
@@ -286,7 +257,7 @@ async def send_sync_ack(
             # Malformed ack - skip it (already logged)
             continue
 
-        entity_type, last_synced_at, entity_id = parsed
+        entity_type, cursor = parsed
 
         # Handle SyncResetV1 specially - reset sync progress and return
         if entity_type == SyncEntityType.SyncResetV1:
@@ -315,15 +286,15 @@ async def send_sync_ack(
             return
 
         # Store checkpoint (last one wins if duplicates)
-        checkpoints_to_store[entity_type] = (last_synced_at, entity_id)
+        checkpoints_to_store[entity_type] = cursor
 
     # Store all checkpoints atomically
     if checkpoints_to_store:
         await checkpoint_store.set_many(
             session_uuid,
             [
-                (entity_type, timestamp, entity_id)
-                for entity_type, (timestamp, entity_id) in checkpoints_to_store.items()
+                (entity_type, cursor)
+                for entity_type, cursor in checkpoints_to_store.items()
             ],
         )
 
@@ -720,16 +691,6 @@ def gumnut_album_to_sync_album_v1(album: AlbumResponse, owner_id: str) -> SyncAl
     )
 
 
-def gumnut_album_asset_to_sync_album_to_asset_v1(
-    album_asset: AlbumAssetResponse,
-) -> SyncAlbumToAssetV1:
-    """Convert Gumnut AlbumAssetResponse to Immich SyncAlbumToAssetV1 format."""
-    return SyncAlbumToAssetV1(
-        albumId=str(safe_uuid_from_album_id(album_asset.album_id)),
-        assetId=str(safe_uuid_from_asset_id(album_asset.asset_id)),
-    )
-
-
 def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
     """Convert Gumnut FaceResponse to Immich SyncAssetFaceV1 format."""
     bounding_box = face.bounding_box
@@ -752,81 +713,10 @@ def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
     )
 
 
-def _convert_event_to_sync_entity(
-    event: Data, owner_id: str
-) -> tuple[SyncEntityType, dict, datetime, str] | None:
-    """
-    Convert a photos-api event to Immich sync entity.
-
-    Args:
-        event: Typed event from photos-api events endpoint
-        owner_id: UUID of the owner
-
-    Returns:
-        Tuple of (SyncEntityType, data_dict, updated_at, entity_id) or None if unsupported
-    """
-    if isinstance(event, AssetEventPayload):
-        sync_model = gumnut_asset_to_sync_asset_v1(event.data, owner_id)
-        return (
-            SyncEntityType.AssetV1,
-            sync_model.model_dump(mode="json"),
-            event.data.updated_at,
-            event.data.id,
-        )
-
-    elif isinstance(event, ExifEventPayload):
-        sync_model = gumnut_exif_to_sync_exif_v1(event.data)
-        return (
-            SyncEntityType.AssetExifV1,
-            sync_model.model_dump(mode="json"),
-            event.data.updated_at,
-            event.data.asset_id,
-        )
-
-    elif isinstance(event, AlbumEventPayload):
-        sync_model = gumnut_album_to_sync_album_v1(event.data, owner_id)
-        return (
-            SyncEntityType.AlbumV1,
-            sync_model.model_dump(mode="json"),
-            event.data.updated_at,
-            event.data.id,
-        )
-
-    elif isinstance(event, AlbumAssetEventPayload):
-        sync_model = gumnut_album_asset_to_sync_album_to_asset_v1(event.data)
-        return (
-            SyncEntityType.AlbumToAssetV1,
-            sync_model.model_dump(mode="json"),
-            event.data.updated_at,
-            event.data.id,
-        )
-
-    elif isinstance(event, PersonEventPayload):
-        sync_model = gumnut_person_to_sync_person_v1(event.data, owner_id)
-        return (
-            SyncEntityType.PersonV1,
-            sync_model.model_dump(mode="json"),
-            event.data.updated_at,
-            event.data.id,
-        )
-
-    elif isinstance(event, FaceEventPayload):
-        sync_model = gumnut_face_to_sync_face_v1(event.data)
-        return (
-            SyncEntityType.AssetFaceV1,
-            sync_model.model_dump(mode="json"),
-            event.data.updated_at,
-            event.data.id,
-        )
-
-    return None
-
-
 def _make_sync_event(
     entity_type: SyncEntityType,
     data: dict,
-    updated_at: datetime,
-    entity_id: str,
+    cursor: str,
 ) -> str:
     """
     Create a sync event JSON line.
@@ -834,14 +724,12 @@ def _make_sync_event(
     Args:
         entity_type: The Immich sync entity type
         data: The entity data dict
-        updated_at: Timestamp for the checkpoint
-        entity_id: The entity ID for keyset pagination
+        cursor: The opaque v2 events cursor for checkpointing
 
     Returns:
         JSON line string with newline
     """
-    # Ack format: SyncEntityType|timestamp|entity_id| (trailing | for future additions)
-    ack = f"{entity_type.value}|{updated_at.isoformat()}|{entity_id}|"
+    ack = _to_ack_string(entity_type, cursor)
 
     return (
         json.dumps(
@@ -860,7 +748,7 @@ def _make_sync_event(
 _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.AssetsV1, "asset", SyncEntityType.AssetV1),
     (SyncRequestType.AlbumsV1, "album", SyncEntityType.AlbumV1),
-    (SyncRequestType.AlbumToAssetsV1, "album_asset", SyncEntityType.AlbumToAssetV1),
+    # album_asset skipped — no bulk fetch endpoint yet (GUM-254)
     (SyncRequestType.AssetExifsV1, "exif", SyncEntityType.AssetExifV1),
     (SyncRequestType.PeopleV1, "person", SyncEntityType.PersonV1),
     (SyncRequestType.AssetFacesV1, "face", SyncEntityType.AssetFaceV1),
@@ -869,22 +757,196 @@ _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
 # Page size for events API pagination
 EVENTS_PAGE_SIZE = 500
 
+# Event types that represent deletions
+_DELETE_EVENT_TYPES = frozenset(
+    {
+        "asset_deleted",
+        "album_deleted",
+        "person_deleted",
+        "face_deleted",
+        "exif_deleted",
+        "album_asset_removed",
+    }
+)
 
-def _get_entity_id_for_pagination(event: Data) -> str:
+
+def _fetch_entities_map(
+    gumnut_client: Gumnut,
+    gumnut_entity_type: str,
+    entity_ids: list[str],
+) -> dict[
+    str, AssetResponse | AlbumResponse | PersonResponse | FaceResponse | ExifResponse
+]:
     """
-    Extract entity ID from event for keyset pagination.
+    Batch-fetch entities by ID and return a dict keyed by entity ID.
+
+    Missing entities (deleted between event and fetch) result in fewer entries.
 
     Args:
-        event: The event from the Gumnut API
+        gumnut_client: The Gumnut API client
+        gumnut_entity_type: The entity type string (e.g., "asset", "album")
+        entity_ids: List of entity IDs to fetch
 
     Returns:
-        The entity ID to use for pagination
+        Dict mapping entity_id -> entity object
     """
-    # Exif events use asset_id as the primary key for pagination
-    if isinstance(event, ExifEventPayload):
-        return event.data.asset_id
-    # All other event types use id
-    return event.data.id
+    if not entity_ids:
+        return {}
+
+    unique_ids = list(dict.fromkeys(entity_ids))  # Deduplicate, preserve order
+
+    if gumnut_entity_type == "asset":
+        page = gumnut_client.assets.list(ids=unique_ids, limit=len(unique_ids))
+        return {entity.id: entity for entity in page}
+
+    elif gumnut_entity_type == "album":
+        page = gumnut_client.albums.list(ids=unique_ids, limit=len(unique_ids))
+        return {entity.id: entity for entity in page}
+
+    elif gumnut_entity_type == "person":
+        page = gumnut_client.people.list(ids=unique_ids, limit=len(unique_ids))
+        return {entity.id: entity for entity in page}
+
+    elif gumnut_entity_type == "face":
+        page = gumnut_client.faces.list(ids=unique_ids, limit=len(unique_ids))
+        return {entity.id: entity for entity in page}
+
+    elif gumnut_entity_type == "exif":
+        # Exif is 1:1 with asset; v2 exif events use entity_id = asset_id
+        page = gumnut_client.assets.list(ids=unique_ids, limit=len(unique_ids))
+        exif_result: dict[
+            str,
+            AssetResponse
+            | AlbumResponse
+            | PersonResponse
+            | FaceResponse
+            | ExifResponse,
+        ] = {}
+        for asset in page:
+            if asset.exif:
+                exif_result[asset.exif.asset_id] = asset.exif
+        return exif_result
+
+    logger.warning(
+        "Unknown entity type in _fetch_entities_map",
+        extra={"gumnut_entity_type": gumnut_entity_type},
+    )
+    return {}
+
+
+def _make_delete_sync_event(
+    event: EventV2Data,
+) -> tuple[str, SyncEntityType] | None:
+    """
+    Convert a v2 delete event to an Immich delete sync event JSON line.
+
+    Args:
+        event: The v2 event with a delete event_type
+
+    Returns:
+        Tuple of (json_line, sync_entity_type) or None if event should be skipped
+    """
+    if event.event_type == "asset_deleted":
+        data = SyncAssetDeleteV1(assetId=str(safe_uuid_from_asset_id(event.entity_id)))
+        return (
+            _make_sync_event(
+                SyncEntityType.AssetDeleteV1,
+                data.model_dump(mode="json"),
+                event.cursor,
+            ),
+            SyncEntityType.AssetDeleteV1,
+        )
+
+    elif event.event_type == "album_deleted":
+        data = SyncAlbumDeleteV1(albumId=str(safe_uuid_from_album_id(event.entity_id)))
+        return (
+            _make_sync_event(
+                SyncEntityType.AlbumDeleteV1,
+                data.model_dump(mode="json"),
+                event.cursor,
+            ),
+            SyncEntityType.AlbumDeleteV1,
+        )
+
+    elif event.event_type == "person_deleted":
+        data = SyncPersonDeleteV1(
+            personId=str(safe_uuid_from_person_id(event.entity_id))
+        )
+        return (
+            _make_sync_event(
+                SyncEntityType.PersonDeleteV1,
+                data.model_dump(mode="json"),
+                event.cursor,
+            ),
+            SyncEntityType.PersonDeleteV1,
+        )
+
+    elif event.event_type == "face_deleted":
+        data = SyncAssetFaceDeleteV1(
+            assetFaceId=str(safe_uuid_from_face_id(event.entity_id))
+        )
+        return (
+            _make_sync_event(
+                SyncEntityType.AssetFaceDeleteV1,
+                data.model_dump(mode="json"),
+                event.cursor,
+            ),
+            SyncEntityType.AssetFaceDeleteV1,
+        )
+
+    # exif_deleted: Immich handles via asset deletion, skip
+    # album_asset_removed: No bulk fetch endpoint yet (GUM-254), skip
+    return None
+
+
+def _convert_entity_to_sync_event(
+    gumnut_entity_type: str,
+    entity: AssetResponse
+    | AlbumResponse
+    | PersonResponse
+    | FaceResponse
+    | ExifResponse,
+    owner_id: str,
+    cursor: str,
+    sync_entity_type: SyncEntityType,
+) -> str:
+    """
+    Convert a fetched entity to an Immich sync event JSON line.
+
+    Args:
+        gumnut_entity_type: The entity type string (e.g., "asset", "album")
+        entity: The fetched entity object
+        owner_id: UUID of the owner
+        cursor: The v2 event cursor for the ack string
+        sync_entity_type: The Immich sync entity type
+
+    Returns:
+        JSON line string with newline
+    """
+    if gumnut_entity_type == "asset":
+        sync_model = gumnut_asset_to_sync_asset_v1(
+            cast(AssetResponse, entity), owner_id
+        )
+    elif gumnut_entity_type == "album":
+        sync_model = gumnut_album_to_sync_album_v1(
+            cast(AlbumResponse, entity), owner_id
+        )
+    elif gumnut_entity_type == "person":
+        sync_model = gumnut_person_to_sync_person_v1(
+            cast(PersonResponse, entity), owner_id
+        )
+    elif gumnut_entity_type == "face":
+        sync_model = gumnut_face_to_sync_face_v1(cast(FaceResponse, entity))
+    elif gumnut_entity_type == "exif":
+        sync_model = gumnut_exif_to_sync_exif_v1(cast(ExifResponse, entity))
+    else:
+        raise ValueError(f"Unsupported entity type: {gumnut_entity_type}")
+
+    return _make_sync_event(
+        sync_entity_type,
+        sync_model.model_dump(mode="json"),
+        cursor,
+    )
 
 
 async def _stream_entity_type(
@@ -896,59 +958,79 @@ async def _stream_entity_type(
     sync_started_at: datetime,
 ) -> AsyncGenerator[tuple[str, int], None]:
     """
-    Stream events for a single entity type.
+    Stream events for a single entity type using the v2 events API.
 
-    Uses composite keyset pagination with (updated_at, entity_id) to handle
-    entities that share the same timestamp without duplicates.
+    Fetches lightweight v2 events, then batch-fetches full entities for
+    upsert events. Delete events are converted directly to Immich delete
+    sync events.
 
     Args:
         gumnut_client: The Gumnut API client
         gumnut_entity_type: The entity type string for the Gumnut API (e.g., "asset")
         sync_entity_type: The Immich sync entity type (e.g., SyncEntityType.AssetV1)
         owner_id: The owner UUID string
-        checkpoint: The checkpoint with last_synced_at and last_entity_id (None for full sync)
+        checkpoint: The checkpoint with cursor (None for full sync)
         sync_started_at: Upper bound for the query window
 
     Yields:
         Tuples of (json_line, count) for each event
     """
-    # Initialize pagination cursors from checkpoint
-    last_updated_at = checkpoint.last_synced_at if checkpoint else None
-    last_entity_id = checkpoint.last_entity_id if checkpoint else None
+    last_cursor = checkpoint.cursor if checkpoint else None
     count = 0
 
     while True:
-        # Build params, only including starting_after_id when we have a cursor
-        params: dict = {
-            "updated_at_gte": last_updated_at,
-            "updated_at_lt": sync_started_at,
+        # Build params for v2 events API
+        params: dict[str, Any] = {
+            "created_at_lt": sync_started_at,
             "entity_types": gumnut_entity_type,
             "limit": EVENTS_PAGE_SIZE,
         }
-        if last_entity_id is not None:
-            params["starting_after_id"] = last_entity_id
+        if last_cursor is not None:
+            params["after_cursor"] = last_cursor
 
-        events_response = gumnut_client.events.get(**params)
+        events_response = gumnut_client.events_v2.get(**params)
 
         events = events_response.data
         if not events:
             break
 
+        # Collect entity IDs from upsert events (non-delete)
+        upsert_ids = [
+            event.entity_id
+            for event in events
+            if event.event_type not in _DELETE_EVENT_TYPES
+        ]
+
+        # Batch-fetch entities for upserts
+        entities_map = _fetch_entities_map(
+            gumnut_client, gumnut_entity_type, upsert_ids
+        )
+
+        # Process events in order
         for event in events:
-            result = _convert_event_to_sync_entity(event, owner_id)
-            if result:
-                entity_type, data, updated_at, entity_id = result
-                # Only yield if the entity type matches (safety check)
-                if entity_type == sync_entity_type:
-                    yield _make_sync_event(entity_type, data, updated_at, entity_id), 1
+            if event.event_type in _DELETE_EVENT_TYPES:
+                # Delete event — convert directly
+                result = _make_delete_sync_event(event)
+                if result:
+                    json_line, _ = result
+                    yield json_line, 1
                     count += 1
+            else:
+                # Upsert event — look up fetched entity
+                entity = entities_map.get(event.entity_id)
+                if entity is None:
+                    # Entity was deleted between event and fetch — skip
+                    continue
+                json_line = _convert_entity_to_sync_event(
+                    gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type
+                )
+                yield json_line, 1
+                count += 1
 
-        # Update pagination cursors from last event for next iteration
-        last_event = events[-1]
-        last_updated_at = last_event.data.updated_at
-        last_entity_id = _get_entity_id_for_pagination(last_event)
+        # Update cursor from last event
+        last_cursor = events[-1].cursor
 
-        if len(events) < EVENTS_PAGE_SIZE:
+        if not events_response.has_more:
             break
 
     if count > 0:
@@ -966,15 +1048,13 @@ async def generate_sync_stream(
     """
     Generate sync stream as JSON Lines (newline-delimited JSON).
 
-    Uses the photos-api /api/events endpoint to fetch entity changes in
-    priority order. Events are returned ordered by entity type priority
-    (assets before exif, albums before album_assets, etc.), then by
-    updated_at timestamp.
+    Uses the photos-api v2 events endpoint to fetch lightweight event records
+    in priority order, then batch-fetches full entities for upsert events.
 
-    Each entity type uses its own checkpoint for delta sync, only returning
-    entities updated after the last acknowledged timestamp.
+    Each entity type uses its own checkpoint with an opaque cursor for
+    cursor-based pagination.
 
-    Each line is a JSON object with: type, data, and ack (checkpoint ID).
+    Each line is a JSON object with: type, data, and ack (checkpoint cursor).
     """
     try:
         # Get current user for owner_id
@@ -993,36 +1073,29 @@ async def generate_sync_stream(
             },
         )
 
-        # Stream auth user if requested (not in events endpoint)
+        # Stream auth user if requested (not from events API)
         if SyncRequestType.AuthUsersV1 in requested_types:
-            # Check checkpoint - only stream if user updated after checkpoint
+            # Check checkpoint — only stream if no checkpoint exists
+            # (user entities don't go through v2 events, always stream on full sync)
             checkpoint = checkpoint_map.get(SyncEntityType.AuthUserV1)
-            if (
-                checkpoint is None
-                or current_user.updated_at > checkpoint.last_synced_at
-            ):
+            if checkpoint is None:
                 sync_auth_user = gumnut_user_to_sync_auth_user_v1(current_user)
                 yield _make_sync_event(
                     SyncEntityType.AuthUserV1,
                     sync_auth_user.model_dump(mode="json"),
-                    current_user.updated_at,
                     current_user.id,
                 )
                 logger.debug("Streamed auth user", extra={"user_id": owner_id})
 
-        # Stream user if requested (not in events endpoint)
+        # Stream user if requested (not from events API)
         if SyncRequestType.UsersV1 in requested_types:
-            # Check checkpoint - only stream if user updated after checkpoint
+            # Check checkpoint — only stream if no checkpoint exists
             checkpoint = checkpoint_map.get(SyncEntityType.UserV1)
-            if (
-                checkpoint is None
-                or current_user.updated_at > checkpoint.last_synced_at
-            ):
+            if checkpoint is None:
                 sync_user = gumnut_user_to_sync_user_v1(current_user)
                 yield _make_sync_event(
                     SyncEntityType.UserV1,
                     sync_user.model_dump(mode="json"),
-                    current_user.updated_at,
                     current_user.id,
                 )
                 logger.debug("Streamed user", extra={"user_id": owner_id})
@@ -1068,10 +1141,8 @@ async def generate_sync_stream(
                 },
             )
 
-        # Stream completion event (no entity_id for marker events)
-        yield _make_sync_event(
-            SyncEntityType.SyncCompleteV1, {}, datetime.now(timezone.utc), ""
-        )
+        # Stream completion event
+        yield _make_sync_event(SyncEntityType.SyncCompleteV1, {}, "")
         logger.info("Sync stream completed", extra={"user_id": owner_id})
 
     except Exception as e:
