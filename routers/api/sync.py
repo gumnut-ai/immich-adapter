@@ -13,7 +13,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, List, cast
+from typing import Any, AsyncGenerator, List, TypeAlias, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -757,30 +757,57 @@ _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
 # Page size for events API pagination
 EVENTS_PAGE_SIZE = 500
 
-# Event types that represent deletions
+# Batch size for entity fetch API calls (conservative to avoid upstream limits)
+FETCH_BATCH_SIZE = 100
+
+# Delete event types that are converted to Immich delete sync models
 _DELETE_EVENT_TYPES = frozenset(
     {
         "asset_deleted",
         "album_deleted",
         "person_deleted",
         "face_deleted",
-        "exif_deleted",
-        "album_asset_removed",
     }
 )
+
+# Event types that are intentionally skipped (not converted to sync events)
+_SKIPPED_EVENT_TYPES = frozenset(
+    {
+        "exif_deleted",  # Immich handles via asset deletion
+        "album_asset_removed",  # No bulk fetch endpoint yet (GUM-254)
+    }
+)
+
+# Expected entity_type for each delete event_type
+_DELETE_EVENT_ENTITY_TYPES: dict[str, str] = {
+    "asset_deleted": "asset",
+    "album_deleted": "album",
+    "person_deleted": "person",
+    "face_deleted": "face",
+}
+
+
+_EntityType: TypeAlias = (
+    AssetResponse | AlbumResponse | PersonResponse | FaceResponse | ExifResponse
+)
+
+
+def _batched(items: list[str], size: int) -> list[list[str]]:
+    """Split a list into chunks of the given size."""
+    return [items[i : i + size] for i in range(0, len(items), size)]
 
 
 def _fetch_entities_map(
     gumnut_client: Gumnut,
     gumnut_entity_type: str,
     entity_ids: list[str],
-) -> dict[
-    str, AssetResponse | AlbumResponse | PersonResponse | FaceResponse | ExifResponse
-]:
+) -> dict[str, _EntityType]:
     """
     Batch-fetch entities by ID and return a dict keyed by entity ID.
 
-    Missing entities (deleted between event and fetch) result in fewer entries.
+    IDs are chunked into batches of FETCH_BATCH_SIZE to avoid exceeding
+    upstream API limits. Missing entities (deleted between event and fetch)
+    result in fewer entries.
 
     Args:
         gumnut_client: The Gumnut API client
@@ -794,44 +821,40 @@ def _fetch_entities_map(
         return {}
 
     unique_ids = list(dict.fromkeys(entity_ids))  # Deduplicate, preserve order
+    result: dict[str, _EntityType] = {}
 
-    if gumnut_entity_type == "asset":
-        page = gumnut_client.assets.list(ids=unique_ids, limit=len(unique_ids))
-        return {entity.id: entity for entity in page}
+    for chunk in _batched(unique_ids, FETCH_BATCH_SIZE):
+        if gumnut_entity_type == "asset":
+            page = gumnut_client.assets.list(ids=chunk, limit=len(chunk))
+            result.update({entity.id: entity for entity in page})
 
-    elif gumnut_entity_type == "album":
-        page = gumnut_client.albums.list(ids=unique_ids, limit=len(unique_ids))
-        return {entity.id: entity for entity in page}
+        elif gumnut_entity_type == "album":
+            page = gumnut_client.albums.list(ids=chunk, limit=len(chunk))
+            result.update({entity.id: entity for entity in page})
 
-    elif gumnut_entity_type == "person":
-        page = gumnut_client.people.list(ids=unique_ids, limit=len(unique_ids))
-        return {entity.id: entity for entity in page}
+        elif gumnut_entity_type == "person":
+            page = gumnut_client.people.list(ids=chunk, limit=len(chunk))
+            result.update({entity.id: entity for entity in page})
 
-    elif gumnut_entity_type == "face":
-        page = gumnut_client.faces.list(ids=unique_ids, limit=len(unique_ids))
-        return {entity.id: entity for entity in page}
+        elif gumnut_entity_type == "face":
+            page = gumnut_client.faces.list(ids=chunk, limit=len(chunk))
+            result.update({entity.id: entity for entity in page})
 
-    elif gumnut_entity_type == "exif":
-        # Exif is 1:1 with asset; v2 exif events use entity_id = asset_id
-        page = gumnut_client.assets.list(ids=unique_ids, limit=len(unique_ids))
-        exif_result: dict[
-            str,
-            AssetResponse
-            | AlbumResponse
-            | PersonResponse
-            | FaceResponse
-            | ExifResponse,
-        ] = {}
-        for asset in page:
-            if asset.exif:
-                exif_result[asset.exif.asset_id] = asset.exif
-        return exif_result
+        elif gumnut_entity_type == "exif":
+            # Exif is 1:1 with asset; v2 exif events use entity_id = asset_id
+            page = gumnut_client.assets.list(ids=chunk, limit=len(chunk))
+            for asset in page:
+                if asset.exif:
+                    result[asset.exif.asset_id] = asset.exif
 
-    logger.warning(
-        "Unknown entity type in _fetch_entities_map",
-        extra={"gumnut_entity_type": gumnut_entity_type},
-    )
-    return {}
+        else:
+            logger.warning(
+                "Unknown entity type in _fetch_entities_map",
+                extra={"gumnut_entity_type": gumnut_entity_type},
+            )
+            return {}
+
+    return result
 
 
 def _make_delete_sync_event(
@@ -840,12 +863,29 @@ def _make_delete_sync_event(
     """
     Convert a v2 delete event to an Immich delete sync event JSON line.
 
+    Validates that event.entity_type matches expectations for the delete
+    event_type. Logs a warning and skips if there's a mismatch.
+
     Args:
         event: The v2 event with a delete event_type
 
     Returns:
         Tuple of (json_line, sync_entity_type) or None if event should be skipped
     """
+    # Validate entity_type matches the delete event_type
+    expected_entity_type = _DELETE_EVENT_ENTITY_TYPES.get(event.event_type)
+    if expected_entity_type and event.entity_type != expected_entity_type:
+        logger.warning(
+            "Delete event entity_type mismatch, skipping",
+            extra={
+                "event_type": event.event_type,
+                "entity_type": event.entity_type,
+                "expected_entity_type": expected_entity_type,
+                "entity_id": event.entity_id,
+            },
+        )
+        return None
+
     if event.event_type == "asset_deleted":
         data = SyncAssetDeleteV1(assetId=str(safe_uuid_from_asset_id(event.entity_id)))
         return (
@@ -894,8 +934,13 @@ def _make_delete_sync_event(
             SyncEntityType.AssetFaceDeleteV1,
         )
 
-    # exif_deleted: Immich handles via asset deletion, skip
-    # album_asset_removed: No bulk fetch endpoint yet (GUM-254), skip
+    logger.warning(
+        "Unhandled delete event type in _make_delete_sync_event",
+        extra={
+            "event_type": event.event_type,
+            "entity_id": event.entity_id,
+        },
+    )
     return None
 
 
@@ -994,11 +1039,12 @@ async def _stream_entity_type(
         if not events:
             break
 
-        # Collect entity IDs from upsert events (non-delete)
+        # Collect entity IDs from upsert events (non-delete, non-skipped)
         upsert_ids = [
             event.entity_id
             for event in events
             if event.event_type not in _DELETE_EVENT_TYPES
+            and event.event_type not in _SKIPPED_EVENT_TYPES
         ]
 
         # Batch-fetch entities for upserts
@@ -1008,6 +1054,18 @@ async def _stream_entity_type(
 
         # Process events in order
         for event in events:
+            if event.event_type in _SKIPPED_EVENT_TYPES:
+                # Intentionally skipped event type — advance cursor only
+                logger.debug(
+                    "Skipping unsupported event type",
+                    extra={
+                        "event_type": event.event_type,
+                        "entity_id": event.entity_id,
+                        "entity_type": event.entity_type,
+                    },
+                )
+                continue
+
             if event.event_type in _DELETE_EVENT_TYPES:
                 # Delete event — convert directly
                 result = _make_delete_sync_event(event)

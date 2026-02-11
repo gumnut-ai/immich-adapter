@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, Mock, call
 from uuid import UUID
 
@@ -933,13 +934,13 @@ class TestStreamEntityTypePagination:
                 )
             )
 
-        # Create matching entity page for first page
-        first_page_assets = []
+        # Create matching asset data for first page, keyed by ID
+        first_page_assets_by_id: dict[str, Mock] = {}
         for i in range(EVENTS_PAGE_SIZE):
             asset_uuid = UUID(f"00000000-0000-0000-0000-{i:012d}")
             asset_data = create_mock_asset_data(updated_at)
             asset_data.id = uuid_to_gumnut_asset_id(asset_uuid)
-            first_page_assets.append(asset_data)
+            first_page_assets_by_id[asset_data.id] = asset_data
 
         # Create second page with 1 event
         second_asset_uuid = UUID("00000000-0000-0000-0000-000000000500")
@@ -961,10 +962,21 @@ class TestStreamEntityTypePagination:
         second_response = create_mock_v2_events_response([second_page_event])
 
         mock_client.events_v2.get.side_effect = [first_response, second_response]
-        mock_client.assets.list.side_effect = [
-            create_mock_entity_page(first_page_assets),
-            create_mock_entity_page([second_asset_data]),
-        ]
+
+        # Mock assets.list to return entities matching the requested IDs.
+        # With FETCH_BATCH_SIZE chunking, assets.list is called multiple times
+        # per event page.
+        all_assets_by_id = {
+            **first_page_assets_by_id,
+            second_asset_id: second_asset_data,
+        }
+
+        def mock_assets_list(**kwargs: Any) -> Mock:
+            ids = kwargs.get("ids", [])
+            matching = [all_assets_by_id[id_] for id_ in ids if id_ in all_assets_by_id]
+            return create_mock_entity_page(matching)
+
+        mock_client.assets.list.side_effect = mock_assets_list
 
         results = []
         async for item in _stream_entity_type(
@@ -1002,7 +1014,7 @@ class TestStreamEntityTypePagination:
 
         # Create exactly EVENTS_PAGE_SIZE events but has_more=False
         page_events = []
-        page_assets = []
+        assets_by_id: dict[str, Mock] = {}
         for i in range(EVENTS_PAGE_SIZE):
             asset_uuid = UUID(f"00000000-0000-0000-0000-{i:012d}")
             asset_id = uuid_to_gumnut_asset_id(asset_uuid)
@@ -1017,13 +1029,20 @@ class TestStreamEntityTypePagination:
             )
             asset_data = create_mock_asset_data(updated_at)
             asset_data.id = asset_id
-            page_assets.append(asset_data)
+            assets_by_id[asset_id] = asset_data
 
         # has_more=False — should not make a second call
         mock_client.events_v2.get.return_value = create_mock_v2_events_response(
             page_events, has_more=False
         )
-        mock_client.assets.list.return_value = create_mock_entity_page(page_assets)
+
+        # Mock assets.list to return entities matching the requested IDs
+        def mock_assets_list(**kwargs: Any) -> Mock:
+            ids = kwargs.get("ids", [])
+            matching = [assets_by_id[id_] for id_ in ids if id_ in assets_by_id]
+            return create_mock_entity_page(matching)
+
+        mock_client.assets.list.side_effect = mock_assets_list
 
         results = []
         async for item in _stream_entity_type(
