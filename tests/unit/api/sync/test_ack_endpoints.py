@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from routers.api.sync import delete_sync_ack, get_sync_ack, send_sync_ack
+from routers.api.sync.routes import delete_sync_ack, get_sync_ack, send_sync_ack
 from routers.immich_models import SyncAckDeleteDto, SyncAckSetDto, SyncEntityType
 from services.checkpoint_store import Checkpoint, CheckpointStore
 from services.session_store import SessionStore

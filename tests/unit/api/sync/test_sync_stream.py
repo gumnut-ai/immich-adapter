@@ -8,12 +8,12 @@ from uuid import UUID
 
 import pytest
 
-from routers.api.sync import (
+from routers.api.sync.routes import get_sync_stream
+from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
     _generate_reset_stream,
     _stream_entity_type,
     generate_sync_stream,
-    get_sync_stream,
 )
 from routers.immich_models import SyncEntityType, SyncRequestType, SyncStreamDto
 from services.checkpoint_store import Checkpoint, CheckpointStore
