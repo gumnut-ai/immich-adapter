@@ -162,10 +162,11 @@ async def get_sync_ack(
             type=checkpoint.entity_type,
             ack=_to_ack_string(
                 checkpoint.entity_type,
-                checkpoint.cursor or "",
+                checkpoint.cursor,
             ),
         )
         for checkpoint in checkpoints
+        if checkpoint.cursor
     ]
 
     logger.info(

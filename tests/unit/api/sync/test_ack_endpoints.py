@@ -42,8 +42,8 @@ class TestGetSyncAck:
         mock_checkpoint_store.get_all.assert_called_once_with(TEST_SESSION_UUID)
 
     @pytest.mark.anyio
-    async def test_returns_checkpoints_without_cursor(self):
-        """Checkpoints without cursor return empty string in ack."""
+    async def test_filters_checkpoints_without_cursor(self):
+        """Checkpoints without cursor are excluded from response."""
         mock_request = Mock()
         mock_request.state.session_token = str(TEST_SESSION_UUID)
 
@@ -61,9 +61,7 @@ class TestGetSyncAck:
             checkpoint_store=mock_checkpoint_store,
         )
 
-        assert len(result) == 1
-        # Ack format with empty cursor: "SyncEntityType||"
-        assert result[0].ack == "AssetV1||"
+        assert len(result) == 0
 
     @pytest.mark.anyio
     async def test_returns_empty_list_when_no_checkpoints(self):
