@@ -786,7 +786,7 @@ class TestGetSyncStreamEndpoint:
         assert len(events) == 1
         assert events[0]["type"] == "SyncResetV1"
         assert events[0]["data"] == {}
-        assert events[0]["ack"] == "SyncResetV1|reset"
+        assert events[0]["ack"] == "SyncResetV1|reset|"
 
         mock_checkpoint_store.get_all.assert_not_called()
         mock_checkpoint_store.delete_all.assert_not_called()
@@ -868,7 +868,7 @@ class TestGenerateResetStream:
         assert len(events) == 1
         assert events[0]["type"] == "SyncResetV1"
         assert events[0]["data"] == {}
-        assert events[0]["ack"] == "SyncResetV1|reset"
+        assert events[0]["ack"] == "SyncResetV1|reset|"
 
 
 class TestStreamEntityTypePagination:

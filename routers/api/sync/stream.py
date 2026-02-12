@@ -584,7 +584,7 @@ async def _generate_reset_stream() -> AsyncGenerator[str, None]:
             {
                 "type": SyncEntityType.SyncResetV1.value,
                 "data": {},
-                "ack": "SyncResetV1|reset",
+                "ack": _to_ack_string(SyncEntityType.SyncResetV1, "reset"),
             }
         )
         + "\n"
