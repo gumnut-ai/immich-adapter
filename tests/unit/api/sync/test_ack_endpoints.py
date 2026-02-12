@@ -119,8 +119,8 @@ class TestSendSyncAck:
         )
 
     @pytest.mark.anyio
-    async def test_stores_checkpoint_with_empty_cursor(self):
-        """Acks without cursor store empty string."""
+    async def test_skips_ack_with_empty_cursor(self):
+        """Acks with empty cursor are skipped (not stored)."""
         mock_request = Mock()
         mock_request.state.session_token = str(TEST_SESSION_UUID)
 
@@ -137,11 +137,8 @@ class TestSendSyncAck:
             session_store=mock_session_store,
         )
 
-        call_args = mock_checkpoint_store.set_many.call_args
-        checkpoints = call_args[0][1]
-        assert len(checkpoints) == 1
-        # Empty cursor should be stored as empty string
-        assert checkpoints[0] == (SyncEntityType.AssetV1, "")
+        # Empty cursor ack is skipped, so set_many should not be called
+        mock_checkpoint_store.set_many.assert_not_called()
 
     @pytest.mark.anyio
     async def test_handles_sync_reset_ack(self):

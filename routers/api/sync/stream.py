@@ -484,30 +484,36 @@ async def generate_sync_stream(
             },
         )
 
-        # Stream auth user if requested (not from events API)
+        # User/auth-user entities don't go through v2 events.
+        # Use updated_at as the cursor for delta semantics: re-stream
+        # when the user record has changed since the last ack.
+        user_cursor = (
+            current_user.updated_at.isoformat()
+            if current_user.updated_at
+            else current_user.id
+        )
+
+        # Stream auth user if requested
         if SyncRequestType.AuthUsersV1 in requested_types:
-            # Check checkpoint — only stream if no checkpoint exists
-            # (user entities don't go through v2 events, always stream on full sync)
             checkpoint = checkpoint_map.get(SyncEntityType.AuthUserV1)
-            if checkpoint is None:
+            if checkpoint is None or checkpoint.cursor != user_cursor:
                 sync_auth_user = gumnut_user_to_sync_auth_user_v1(current_user)
                 yield _make_sync_event(
                     SyncEntityType.AuthUserV1,
                     sync_auth_user.model_dump(mode="json"),
-                    current_user.id,
+                    user_cursor,
                 )
                 logger.debug("Streamed auth user", extra={"user_id": owner_id})
 
-        # Stream user if requested (not from events API)
+        # Stream user if requested
         if SyncRequestType.UsersV1 in requested_types:
-            # Check checkpoint — only stream if no checkpoint exists
             checkpoint = checkpoint_map.get(SyncEntityType.UserV1)
-            if checkpoint is None:
+            if checkpoint is None or checkpoint.cursor != user_cursor:
                 sync_user = gumnut_user_to_sync_user_v1(current_user)
                 yield _make_sync_event(
                     SyncEntityType.UserV1,
                     sync_user.model_dump(mode="json"),
-                    current_user.id,
+                    user_cursor,
                 )
                 logger.debug("Streamed user", extra={"user_id": owner_id})
 

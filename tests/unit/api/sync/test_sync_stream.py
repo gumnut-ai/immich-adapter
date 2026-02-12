@@ -92,7 +92,9 @@ class TestGenerateSyncStream:
             f"Expected 3 parts in ack, got {len(ack_parts)}: {auth_event['ack']}"
         )
         assert ack_parts[0] == "AuthUserV1"
-        assert ack_parts[1] == mock_user.id  # cursor is the user ID for user entities
+        assert (
+            ack_parts[1] == user_updated_at.isoformat()
+        )  # cursor is updated_at for user entities
         assert ack_parts[2] == ""  # trailing empty string from trailing pipe
 
     @pytest.mark.anyio
@@ -203,8 +205,8 @@ class TestGenerateSyncStream:
     # -------------------------------------------------------------------------
 
     @pytest.mark.anyio
-    async def test_skips_entity_when_checkpoint_exists(self):
-        """User entity is skipped when a checkpoint already exists."""
+    async def test_skips_entity_when_checkpoint_matches(self):
+        """User entity is skipped when checkpoint cursor matches updated_at."""
         user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         checkpoint_time = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(user_updated_at)
@@ -214,7 +216,7 @@ class TestGenerateSyncStream:
         checkpoint = Checkpoint(
             entity_type=SyncEntityType.AuthUserV1,
             updated_at=checkpoint_time,
-            cursor=mock_user.id,
+            cursor=user_updated_at.isoformat(),
         )
         checkpoint_map = {SyncEntityType.AuthUserV1: checkpoint}
 
@@ -224,6 +226,31 @@ class TestGenerateSyncStream:
 
         assert len(events) == 1
         assert events[0]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_streams_entity_when_user_updated_since_checkpoint(self):
+        """User entity is re-streamed when updated_at differs from checkpoint cursor."""
+        user_updated_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+        old_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        checkpoint_time = datetime(2025, 1, 16, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(user_updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1])
+        checkpoint = Checkpoint(
+            entity_type=SyncEntityType.AuthUserV1,
+            updated_at=checkpoint_time,
+            cursor=old_updated_at.isoformat(),
+        )
+        checkpoint_map = {SyncEntityType.AuthUserV1: checkpoint}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        assert len(events) == 2
+        assert events[0]["type"] == "AuthUserV1"
+        assert events[1]["type"] == "SyncCompleteV1"
 
     @pytest.mark.anyio
     async def test_streams_entity_when_no_checkpoint(self):
@@ -691,11 +718,11 @@ class TestGetSyncStreamEndpoint:
         mock_request = Mock()
         mock_request.state.session_token = str(TEST_SESSION_UUID)
 
-        # Create checkpoint that will cause auth user to be skipped
+        # Create checkpoint with matching updated_at cursor to cause auth user to be skipped
         checkpoint = Checkpoint(
             entity_type=SyncEntityType.AuthUserV1,
             updated_at=datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc),
-            cursor=mock_user.id,
+            cursor=updated_at.isoformat(),
         )
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_checkpoint_store.get_all.return_value = [checkpoint]

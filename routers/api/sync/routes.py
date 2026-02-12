@@ -129,6 +129,13 @@ def _parse_ack(ack: str) -> tuple[SyncEntityType, str] | None:
 
     cursor = parts[1] if parts[1] else ""
 
+    if not cursor:
+        logger.warning(
+            "Skipping ack with empty cursor",
+            extra={"ack": ack, "entity_type": entity_type_str},
+        )
+        return None
+
     return entity_type, cursor
 
 

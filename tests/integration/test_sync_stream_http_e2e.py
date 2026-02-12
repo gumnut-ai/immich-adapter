@@ -34,6 +34,7 @@ TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 TEST_USER_UUID = UUID("660e8400-e29b-41d4-a716-446655440001")
 # Generated via: uuid_to_gumnut_user_id(TEST_USER_UUID)
 TEST_GUMNUT_USER_ID = "intuser_LB2VTcVgieV6LNawiPgXG5"
+TEST_USER_UPDATED_AT = datetime(2025, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
 
 # Test album data
 TEST_ALBUMS_DATA = [
@@ -327,8 +328,8 @@ def mock_gumnut_user():
         is_superuser=False,
         is_active=True,
         is_verified=True,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=TEST_USER_UPDATED_AT,
+        updated_at=TEST_USER_UPDATED_AT,
     )
 
 
@@ -790,7 +791,7 @@ class TestSyncStreamHTTPE2E:
         )
 
         # Build expected cursors from test data
-        # AuthUserV1 uses user ID as cursor (not from v2 events)
+        # AuthUserV1 uses updated_at as cursor (not from v2 events)
         # Entity types use cursor_<type>_<index> format from mock v2 events
         face_cursors: set[str] = set()
         for i, asset in enumerate(TEST_ASSETS_DATA):
@@ -798,7 +799,7 @@ class TestSyncStreamHTTPE2E:
                 face_cursors.add(f"cursor_face_{i}_{j}")
 
         expected_cursors: dict[str, set[str]] = {
-            "AuthUserV1": {TEST_GUMNUT_USER_ID},
+            "AuthUserV1": {TEST_USER_UPDATED_AT.isoformat()},
             "AssetV1": {f"cursor_asset_{i}" for i in range(len(TEST_ASSETS_DATA))},
             "AssetExifV1": {f"cursor_exif_{i}" for i in range(len(TEST_ASSETS_DATA))},
             "AlbumV1": {f"cursor_album_{i}" for i in range(len(TEST_ALBUMS_DATA))},

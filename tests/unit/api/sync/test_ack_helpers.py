@@ -25,14 +25,10 @@ class TestParseAck:
         assert cursor == "event_cursor_abc123"
 
     def test_parse_ack_with_empty_cursor(self):
-        """Parse ack with empty cursor returns empty string."""
+        """Parse ack with empty cursor returns None (malformed)."""
         ack = "AssetV1||"
         result = _parse_ack(ack)
-        assert result is not None
-        entity_type, cursor = result
-
-        assert entity_type == SyncEntityType.AssetV1
-        assert cursor == ""
+        assert result is None
 
     def test_parse_ack_minimal_format(self):
         """Parse ack with just entity type and cursor (no trailing pipe)."""
@@ -107,14 +103,10 @@ class TestToAckString:
         assert parsed_type == original_type
         assert parsed_cursor == original_cursor
 
-    def test_roundtrip_with_empty_cursor(self):
-        """Verify roundtrip with empty cursor."""
+    def test_roundtrip_with_empty_cursor_rejected(self):
+        """Verify roundtrip with empty cursor is rejected by parser."""
         original_type = SyncEntityType.AlbumV1
 
         ack_string = _to_ack_string(original_type, "")
         result = _parse_ack(ack_string)
-        assert result is not None
-        parsed_type, parsed_cursor = result
-
-        assert parsed_type == original_type
-        assert parsed_cursor == ""
+        assert result is None
