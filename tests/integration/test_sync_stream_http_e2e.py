@@ -11,23 +11,17 @@ Test data is derived from real Proxyman captures.
 
 import json
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 
-from gumnut.types.album_asset_event_payload import AlbumAssetEventPayload
-from gumnut.types.album_asset_response import AlbumAssetResponse
-from gumnut.types.album_event_payload import AlbumEventPayload
 from gumnut.types.album_response import AlbumResponse
-from gumnut.types.asset_event_payload import AssetEventPayload
 from gumnut.types.asset_response import AssetResponse
-from gumnut.types.exif_event_payload import ExifEventPayload
 from gumnut.types.exif_response import ExifResponse
-from gumnut.types.face_event_payload import FaceEventPayload
 from gumnut.types.face_response import FaceResponse
-from gumnut.types.person_event_payload import PersonEventPayload
 from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
 from main import app
@@ -40,6 +34,7 @@ TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 TEST_USER_UUID = UUID("660e8400-e29b-41d4-a716-446655440001")
 # Generated via: uuid_to_gumnut_user_id(TEST_USER_UUID)
 TEST_GUMNUT_USER_ID = "intuser_LB2VTcVgieV6LNawiPgXG5"
+TEST_USER_UPDATED_AT = datetime(2025, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
 
 # Test album data
 TEST_ALBUMS_DATA = [
@@ -177,7 +172,9 @@ def parse_datetime(dt_str: str) -> datetime:
     return datetime.fromisoformat(dt_str)
 
 
-def create_asset_response(asset_data: dict) -> AssetResponse:
+def create_asset_response(
+    asset_data: dict, exif: ExifResponse | None = None
+) -> AssetResponse:
     """Create an AssetResponse from test data."""
     return AssetResponse(
         id=asset_data["id"],
@@ -192,6 +189,7 @@ def create_asset_response(asset_data: dict) -> AssetResponse:
         updated_at=datetime.now(timezone.utc),
         checksum=asset_data["checksum"],
         checksum_sha1=asset_data.get("checksum_sha1"),
+        exif=exif,
     )
 
 
@@ -238,20 +236,6 @@ def create_album_response(album_data: dict) -> AlbumResponse:
     )
 
 
-def create_album_asset_response(
-    album_id: str,
-    asset_id: str,
-) -> AlbumAssetResponse:
-    """Create an AlbumAssetResponse from test data."""
-    return AlbumAssetResponse(
-        id=f"album_asset_{album_id}_{asset_id}",
-        album_id=album_id,
-        asset_id=asset_id,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
-    )
-
-
 def create_person_response(
     person_id: str,
     name: str,
@@ -267,6 +251,29 @@ def create_person_response(
         updated_at=datetime.now(timezone.utc),
         thumbnail_face_id=thumbnail_face_id,
     )
+
+
+def create_v2_event(
+    entity_type: str,
+    entity_id: str,
+    event_type: str,
+    cursor: str,
+) -> Mock:
+    """Create a mock v2 event record."""
+    event = Mock()
+    event.entity_type = entity_type
+    event.entity_id = entity_id
+    event.event_type = event_type
+    event.created_at = datetime.now(timezone.utc)
+    event.cursor = cursor
+    return event
+
+
+def create_mock_entity_page(entities: list) -> Mock:
+    """Create a mock paginated entity response that is iterable."""
+    page = Mock()
+    page.__iter__ = Mock(return_value=iter(entities))
+    return page
 
 
 @pytest.fixture
@@ -321,8 +328,8 @@ def mock_gumnut_user():
         is_superuser=False,
         is_active=True,
         is_verified=True,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=TEST_USER_UPDATED_AT,
+        updated_at=TEST_USER_UPDATED_AT,
     )
 
 
@@ -331,84 +338,136 @@ def mock_gumnut_client(mock_gumnut_user):
     """
     Create mock Gumnut client with comprehensive test data.
 
-    Includes: assets, exif, faces, albums, album_assets, persons
+    Uses v2 events API (lightweight events) with separate entity batch fetching.
+    Includes: assets, exif, faces, albums, persons
     """
     client = Mock()
     client.users.me.return_value = mock_gumnut_user
 
-    # Build event data from test assets
-    asset_events = []
-    exif_events = []
-    face_events = []
+    # Build entity responses and v2 events from test data
+    asset_responses: dict[str, AssetResponse] = {}
+    face_responses: dict[str, FaceResponse] = {}
+    album_responses: dict[str, AlbumResponse] = {}
+    person_responses: dict[str, PersonResponse] = {}
 
-    for asset_data in TEST_ASSETS_DATA:
-        # Asset event
-        asset_response = create_asset_response(asset_data)
-        asset_events.append(AssetEventPayload(data=asset_response, entity_type="asset"))
+    v2_events: dict[str, list[Mock]] = {
+        "asset": [],
+        "exif": [],
+        "face": [],
+        "album": [],
+        "person": [],
+    }
 
-        # Exif event
+    for i, asset_data in enumerate(TEST_ASSETS_DATA):
+        # Create exif response (needed for both asset and exif entity fetching)
+        exif_resp = None
         if asset_data.get("exif"):
-            exif_response = create_exif_response(asset_data["id"], asset_data["exif"])
-            exif_events.append(ExifEventPayload(data=exif_response, entity_type="exif"))
+            exif_resp = create_exif_response(asset_data["id"], asset_data["exif"])
 
-        # Face events
-        for face_data in asset_data.get("faces", []):
-            face_response = create_face_response(asset_data["id"], face_data)
-            face_events.append(FaceEventPayload(data=face_response, entity_type="face"))
+        # Create asset response with exif attached (for exif entity fetching)
+        asset_resp = create_asset_response(asset_data, exif=exif_resp)
+        asset_responses[asset_data["id"]] = asset_resp
 
-    # Album events (from Gumnut API)
-    album_events = []
-    for album_data in TEST_ALBUMS_DATA:
-        album_response = create_album_response(album_data)
-        album_events.append(AlbumEventPayload(data=album_response, entity_type="album"))
-
-    # Album asset events (link assets to album)
-    # Note: Using first album for test data since we only have one album
-    album_asset_events = []
-    for album_data in TEST_ALBUMS_DATA:
-        for asset_data in TEST_ASSETS_DATA:
-            album_asset_response = create_album_asset_response(
-                album_id=album_data["id"],
-                asset_id=asset_data["id"],
+        # Asset v2 event
+        v2_events["asset"].append(
+            create_v2_event(
+                entity_type="asset",
+                entity_id=asset_data["id"],
+                event_type="asset_updated",
+                cursor=f"cursor_asset_{i}",
             )
-            album_asset_events.append(
-                AlbumAssetEventPayload(
-                    data=album_asset_response, entity_type="album_asset"
+        )
+
+        # Exif v2 event (entity_id = asset_id since exif is 1:1 with asset)
+        if asset_data.get("exif"):
+            v2_events["exif"].append(
+                create_v2_event(
+                    entity_type="exif",
+                    entity_id=asset_data["id"],
+                    event_type="exif_updated",
+                    cursor=f"cursor_exif_{i}",
                 )
             )
 
-    # Person events (create a test person with valid shortuuid-encoded ID)
+        # Face v2 events
+        for j, face_data in enumerate(asset_data.get("faces", [])):
+            face_resp = create_face_response(asset_data["id"], face_data)
+            face_responses[face_data["id"]] = face_resp
+            v2_events["face"].append(
+                create_v2_event(
+                    entity_type="face",
+                    entity_id=face_data["id"],
+                    event_type="face_updated",
+                    cursor=f"cursor_face_{i}_{j}",
+                )
+            )
+
+    # Album v2 events
+    for i, album_data in enumerate(TEST_ALBUMS_DATA):
+        album_resp = create_album_response(album_data)
+        album_responses[album_data["id"]] = album_resp
+        v2_events["album"].append(
+            create_v2_event(
+                entity_type="album",
+                entity_id=album_data["id"],
+                event_type="album_updated",
+                cursor=f"cursor_album_{i}",
+            )
+        )
+
+    # Person v2 event
     # Generated via: uuid_to_gumnut_person_id(UUID('770e8400-e29b-41d4-a716-446655440002'))
-    person_response = create_person_response(
+    person_resp = create_person_response(
         person_id="person_PCRc9xU4DgqoA8btzKftNh",
         name="Test Person",
         thumbnail_face_id="face_nxS3BTriNXmqzFFW8ADKzf",
     )
-    person_events = [PersonEventPayload(data=person_response, entity_type="person")]
+    person_responses["person_PCRc9xU4DgqoA8btzKftNh"] = person_resp
+    v2_events["person"].append(
+        create_v2_event(
+            entity_type="person",
+            entity_id="person_PCRc9xU4DgqoA8btzKftNh",
+            event_type="person_updated",
+            cursor="cursor_person_0",
+        )
+    )
 
-    def mock_events_get(**kwargs):
-        """Return appropriate events based on entity_types parameter."""
+    # Mock events_v2.get — returns lightweight v2 events
+    def mock_events_v2_get(**kwargs: Any) -> Mock:
         entity_types = kwargs.get("entity_types", "")
         response = Mock()
-
-        if entity_types == "asset":
-            response.data = asset_events
-        elif entity_types == "exif":
-            response.data = exif_events
-        elif entity_types == "face":
-            response.data = face_events
-        elif entity_types == "album":
-            response.data = album_events
-        elif entity_types == "album_asset":
-            response.data = album_asset_events
-        elif entity_types == "person":
-            response.data = person_events
-        else:
-            response.data = []
-
+        response.data = v2_events.get(entity_types, [])
+        response.has_more = False
         return response
 
-    client.events.get.side_effect = mock_events_get
+    client.events_v2.get.side_effect = mock_events_v2_get
+
+    # Mock entity list endpoints for batch fetching
+    def mock_assets_list(**kwargs: Any) -> Mock:
+        ids = kwargs.get("ids", [])
+        matching = [asset_responses[id_] for id_ in ids if id_ in asset_responses]
+        return create_mock_entity_page(matching)
+
+    def mock_albums_list(**kwargs: Any) -> Mock:
+        ids = kwargs.get("ids", [])
+        matching = [album_responses[id_] for id_ in ids if id_ in album_responses]
+        return create_mock_entity_page(matching)
+
+    def mock_people_list(**kwargs: Any) -> Mock:
+        ids = kwargs.get("ids", [])
+        matching = [person_responses[id_] for id_ in ids if id_ in person_responses]
+        return create_mock_entity_page(matching)
+
+    def mock_faces_list(**kwargs: Any) -> Mock:
+        ids = kwargs.get("ids", [])
+        matching = [face_responses[id_] for id_ in ids if id_ in face_responses]
+        return create_mock_entity_page(matching)
+
+    client.assets.list.side_effect = mock_assets_list
+    client.albums.list.side_effect = mock_albums_list
+    client.people.list.side_effect = mock_people_list
+    client.faces.list.side_effect = mock_faces_list
+
     return client
 
 
@@ -667,7 +726,6 @@ class TestSyncStreamHTTPE2E:
                 "AssetExifsV1",
                 "AssetFacesV1",
                 "AlbumsV1",
-                "AlbumToAssetsV1",
                 "PeopleV1",
             ],
         )
@@ -683,16 +741,11 @@ class TestSyncStreamHTTPE2E:
             len(asset.get("faces", [])) for asset in TEST_ASSETS_DATA
         )
 
-        # Verify counts match expected values
-        # Compute expected album-to-asset count (albums × assets)
-        expected_album_asset_count = len(TEST_ALBUMS_DATA) * len(TEST_ASSETS_DATA)
-
         assert event_counts.get("AuthUserV1") == 1
         assert event_counts.get("AssetV1") == len(TEST_ASSETS_DATA)
         assert event_counts.get("AssetExifV1") == len(TEST_ASSETS_DATA)
         assert event_counts.get("AssetFaceV1") == expected_face_count
         assert event_counts.get("AlbumV1") == len(TEST_ALBUMS_DATA)
-        assert event_counts.get("AlbumToAssetV1") == expected_album_asset_count
         assert event_counts.get("PersonV1") == 1
         assert event_counts.get("SyncCompleteV1") == 1
 
@@ -708,27 +761,22 @@ class TestSyncStreamHTTPE2E:
         # Data should be empty
         assert complete_event["data"] == {}
 
-        # Ack format: SyncCompleteV1|{timestamp}||
+        # Ack format: SyncCompleteV1||
         ack = complete_event["ack"]
         ack_parts = ack.split("|")
         assert ack_parts[0] == "SyncCompleteV1", (
             f"Ack should start with SyncCompleteV1: {ack}"
         )
-        assert len(ack_parts) >= 3, f"Ack should have at least 3 parts: {ack}"
-        # Verify timestamp is valid ISO format
-        datetime.fromisoformat(ack_parts[1])
-        # Entity ID should be empty for SyncCompleteV1
-        assert ack_parts[2] == "", (
-            f"Entity ID should be empty for SyncCompleteV1: {ack}"
-        )
+        assert len(ack_parts) == 3, f"Ack should have exactly 3 parts: {ack}"
+        # Cursor should be empty for SyncCompleteV1
+        assert ack_parts[1] == "", f"Cursor should be empty for SyncCompleteV1: {ack}"
 
     def test_sync_stream_ack_format(self, client):
-        """Test that each entity has correct ack format with actual entity IDs.
+        """Test that each entity has correct ack format with cursors.
 
-        Ack format: {entity_type}|{timestamp}|{gumnut_entity_id}|
+        Ack format: {entity_type}|{cursor}|
         - entity_type: matches the event type
-        - timestamp: ISO 8601 format
-        - gumnut_entity_id: the actual Gumnut ID from test data
+        - cursor: opaque v2 events cursor (user ID for auth events, empty for complete)
         """
         events = post_sync_stream(
             client,
@@ -737,64 +785,58 @@ class TestSyncStreamHTTPE2E:
                 "AssetsV1",
                 "AssetExifsV1",
                 "AlbumsV1",
-                "AlbumToAssetsV1",
                 "PeopleV1",
                 "AssetFacesV1",
             ],
         )
 
-        # Build expected entity IDs from test data
-        expected_entity_ids = {
-            "AuthUserV1": {TEST_GUMNUT_USER_ID},
-            "AssetV1": {a["id"] for a in TEST_ASSETS_DATA},
-            "AssetExifV1": {a["id"] for a in TEST_ASSETS_DATA},  # Uses asset_id
-            "AlbumV1": {album["id"] for album in TEST_ALBUMS_DATA},
-            "AlbumToAssetV1": {
-                f"album_asset_{album['id']}_{asset['id']}"
-                for album in TEST_ALBUMS_DATA
-                for asset in TEST_ASSETS_DATA
-            },
-            "PersonV1": {"person_PCRc9xU4DgqoA8btzKftNh"},
-            "AssetFaceV1": {
-                face["id"] for a in TEST_ASSETS_DATA for face in a.get("faces", [])
-            },
-            "SyncCompleteV1": {""},  # Empty entity_id
+        # Build expected cursors from test data
+        # AuthUserV1 uses updated_at as cursor (not from v2 events)
+        # Entity types use cursor_<type>_<index> format from mock v2 events
+        face_cursors: set[str] = set()
+        for i, asset in enumerate(TEST_ASSETS_DATA):
+            for j in range(len(asset.get("faces", []))):
+                face_cursors.add(f"cursor_face_{i}_{j}")
+
+        expected_cursors: dict[str, set[str]] = {
+            "AuthUserV1": {TEST_USER_UPDATED_AT.isoformat()},
+            "AssetV1": {f"cursor_asset_{i}" for i in range(len(TEST_ASSETS_DATA))},
+            "AssetExifV1": {f"cursor_exif_{i}" for i in range(len(TEST_ASSETS_DATA))},
+            "AlbumV1": {f"cursor_album_{i}" for i in range(len(TEST_ALBUMS_DATA))},
+            "PersonV1": {"cursor_person_0"},
+            "AssetFaceV1": face_cursors,
+            "SyncCompleteV1": {""},
         }
 
-        # Collect actual entity IDs from acks by event type
-        actual_entity_ids: dict[str, set[str]] = {}
+        # Collect actual cursors from acks by event type
+        actual_cursors: dict[str, set[str]] = {}
         for event in events:
             event_type = event["type"]
             ack = event["ack"]
             ack_parts = ack.split("|")
 
-            # All acks should have at least 3 parts: type|timestamp|entity_id|
-            assert len(ack_parts) >= 3, f"Ack should have at least 3 parts: {ack}"
+            # All acks should have exactly 3 parts: type|cursor|
+            assert len(ack_parts) == 3, f"Ack should have exactly 3 parts: {ack}"
 
             # First part should match event type
             assert ack_parts[0] == event_type, (
                 f"Ack type mismatch: expected {event_type}, got {ack_parts[0]}"
             )
 
-            # Second part should be valid ISO timestamp
-            try:
-                datetime.fromisoformat(ack_parts[1])
-            except ValueError:
-                pytest.fail(
-                    f"Invalid timestamp in ack for {event_type}: {ack_parts[1]}"
-                )
+            # Trailing part should be empty (from trailing |)
+            assert ack_parts[2] == "", f"Ack should end with trailing |: {ack}"
 
-            # Collect entity_id
-            entity_id = ack_parts[2]
-            if event_type not in actual_entity_ids:
-                actual_entity_ids[event_type] = set()
-            actual_entity_ids[event_type].add(entity_id)
+            # Collect cursor
+            cursor = ack_parts[1]
+            if event_type not in actual_cursors:
+                actual_cursors[event_type] = set()
+            actual_cursors[event_type].add(cursor)
 
-        # Verify entity IDs match expected values for each type
-        for event_type, expected_ids in expected_entity_ids.items():
-            actual_ids = actual_entity_ids.get(event_type, set())
-            assert actual_ids == expected_ids, (
-                f"{event_type} entity IDs mismatch:\n"
-                f"  expected: {expected_ids}\n"
-                f"  actual: {actual_ids}"
+        # Verify cursors match expected values for each type
+        for event_type, expected in expected_cursors.items():
+            actual = actual_cursors.get(event_type, set())
+            assert actual == expected, (
+                f"{event_type} cursor mismatch:\n"
+                f"  expected: {expected}\n"
+                f"  actual: {actual}"
             )

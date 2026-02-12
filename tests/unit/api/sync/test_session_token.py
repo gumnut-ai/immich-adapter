@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 from fastapi import HTTPException
 
-from routers.api.sync import _get_session_token
+from routers.api.sync.routes import _get_session_token
 from tests.unit.api.sync.conftest import TEST_SESSION_UUID
 
 

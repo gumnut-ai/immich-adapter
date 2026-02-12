@@ -1,5 +1,6 @@
 """Checkpoint storage service for sync progress tracking."""
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -8,6 +9,8 @@ from uuid import UUID
 from routers.immich_models import SyncEntityType
 from utils.redis_client import get_redis_client
 from utils.redis_protocols import AsyncRedisClient
+
+logger = logging.getLogger(__name__)
 
 
 class CheckpointDataError(Exception):
@@ -26,22 +29,20 @@ class Checkpoint:
     """
 
     entity_type: SyncEntityType
-    last_synced_at: datetime  # Timestamp from client ack (for query filtering)
     updated_at: datetime  # When checkpoint was stored (for activity tracking)
-    last_entity_id: str | None = None  # Entity ID for keyset pagination
+    cursor: str | None = None  # Opaque v2 events cursor
 
     def to_redis_value(self) -> str:
         """
         Convert to Redis storage format.
 
         Returns:
-            Pipe-delimited string: "{last_synced_at}|{updated_at}|{last_entity_id}"
-            - last_synced_at: Timestamp from client ack (used for query filtering)
+            Pipe-delimited string: "{updated_at}|{cursor}"
             - updated_at: When this checkpoint was stored (used for activity tracking)
-            - last_entity_id: Entity ID for keyset pagination (empty string if None)
+            - cursor: Opaque v2 events cursor (empty string if None)
         """
-        entity_id = self.last_entity_id or ""
-        return f"{self.last_synced_at.isoformat()}|{self.updated_at.isoformat()}|{entity_id}"
+        cursor = self.cursor or ""
+        return f"{self.updated_at.isoformat()}|{cursor}"
 
     @classmethod
     def from_redis_value(cls, entity_type: SyncEntityType, value: str) -> "Checkpoint":
@@ -57,34 +58,27 @@ class Checkpoint:
 
         Raises:
             CheckpointDataError: If value is malformed
-
-        Note:
-            Backward compatible with old 2-field format (without entity_id).
         """
         parts = value.split("|")
-        if len(parts) < 2 or len(parts) > 3:
+        if len(parts) != 2:
             raise CheckpointDataError(
-                f"Checkpoint for {entity_type.value} with value {value} has invalid format: expected 2-3 parts, got {len(parts)}"
+                f"Checkpoint for {entity_type.value} with value {value} has invalid format: expected 2 parts, got {len(parts)}"
             )
 
         try:
-            last_synced_at = datetime.fromisoformat(parts[0])
-            updated_at = datetime.fromisoformat(parts[1])
+            updated_at = datetime.fromisoformat(parts[0])
         except ValueError as e:
             raise CheckpointDataError(
                 f"Checkpoint for {entity_type.value} has invalid timestamp: {e}"
             ) from e
 
-        # Parse entity_id (3rd field) if present, treat empty string as None
-        last_entity_id = None
-        if len(parts) == 3 and parts[2]:
-            last_entity_id = parts[2]
+        # Parse cursor (2nd field), treat empty string as None
+        cursor = parts[1] if parts[1] else None
 
         return cls(
             entity_type=entity_type,
-            last_synced_at=last_synced_at,
             updated_at=updated_at,
-            last_entity_id=last_entity_id,
+            cursor=cursor,
         )
 
 
@@ -94,7 +88,7 @@ def _checkpoint_key(session_token: UUID) -> str:
 
     Schema: session:{uuid}:checkpoints (Hash)
         Each field is an entity type (e.g., AssetV1, AlbumV1)
-        Each value is pipe-delimited: {last_synced_at}|{updated_at}|{last_entity_id}
+        Each value is pipe-delimited: {updated_at}|{cursor}
     """
     return f"session:{session_token}:checkpoints"
 
@@ -136,7 +130,18 @@ class CheckpointStore:
         checkpoints = []
         for entity_type_str, value in data.items():
             entity_type = SyncEntityType(entity_type_str)
-            checkpoint = Checkpoint.from_redis_value(entity_type, value)
+            try:
+                checkpoint = Checkpoint.from_redis_value(entity_type, value)
+            except CheckpointDataError:
+                logger.warning(
+                    "Skipping corrupt checkpoint (old format?), will re-sync",
+                    extra={
+                        "session_token": str(session_token),
+                        "entity_type": entity_type_str,
+                        "value": value,
+                    },
+                )
+                continue
             checkpoints.append(checkpoint)
 
         return checkpoints
@@ -160,14 +165,24 @@ class CheckpointStore:
         if not value:
             return None
 
-        return Checkpoint.from_redis_value(entity_type, value)
+        try:
+            return Checkpoint.from_redis_value(entity_type, value)
+        except CheckpointDataError:
+            logger.warning(
+                "Skipping corrupt checkpoint (old format?), will re-sync",
+                extra={
+                    "session_token": str(session_token),
+                    "entity_type": entity_type.value,
+                    "value": value,
+                },
+            )
+            return None
 
     async def set(
         self,
         session_token: UUID,
         entity_type: SyncEntityType,
-        last_synced_at: datetime,
-        last_entity_id: str,
+        cursor: str,
     ) -> bool:
         """
         Set a checkpoint for a session.
@@ -175,8 +190,7 @@ class CheckpointStore:
         Args:
             session_token: The session token (UUID)
             entity_type: The entity type
-            last_synced_at: The sync timestamp from client ack
-            last_entity_id: The entity ID for keyset pagination
+            cursor: The opaque v2 events cursor
 
         Returns:
             True if checkpoint was set successfully
@@ -184,9 +198,8 @@ class CheckpointStore:
         now = datetime.now(timezone.utc)
         checkpoint = Checkpoint(
             entity_type=entity_type,
-            last_synced_at=last_synced_at,
             updated_at=now,
-            last_entity_id=last_entity_id,
+            cursor=cursor,
         )
 
         await self._redis.hset(
@@ -199,14 +212,14 @@ class CheckpointStore:
     async def set_many(
         self,
         session_token: UUID,
-        checkpoints: list[tuple[SyncEntityType, datetime, str]],
+        checkpoints: list[tuple[SyncEntityType, str]],
     ) -> bool:
         """
         Set multiple checkpoints for a session atomically.
 
         Args:
             session_token: The session token (UUID)
-            checkpoints: List of (entity_type, last_synced_at, last_entity_id) tuples).
+            checkpoints: List of (entity_type, cursor) tuples.
 
         Returns:
             True if checkpoints were set successfully
@@ -217,12 +230,11 @@ class CheckpointStore:
         now = datetime.now(timezone.utc)
         mapping: dict[str, str] = {}
 
-        for entity_type, last_synced_at, last_entity_id in checkpoints:
+        for entity_type, cursor in checkpoints:
             checkpoint = Checkpoint(
                 entity_type=entity_type,
-                last_synced_at=last_synced_at,
                 updated_at=now,
-                last_entity_id=last_entity_id,
+                cursor=cursor,
             )
             mapping[entity_type.value] = checkpoint.to_redis_value()
 

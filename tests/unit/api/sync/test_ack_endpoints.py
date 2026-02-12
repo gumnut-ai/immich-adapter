@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from routers.api.sync import delete_sync_ack, get_sync_ack, send_sync_ack
+from routers.api.sync.routes import delete_sync_ack, get_sync_ack, send_sync_ack
 from routers.immich_models import SyncAckDeleteDto, SyncAckSetDto, SyncEntityType
 from services.checkpoint_store import Checkpoint, CheckpointStore
 from services.session_store import SessionStore
@@ -24,9 +24,8 @@ class TestGetSyncAck:
         checkpoint_time = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         checkpoint = Checkpoint(
             entity_type=SyncEntityType.AssetV1,
-            last_synced_at=checkpoint_time,
             updated_at=checkpoint_time,
-            last_entity_id="asset-123",
+            cursor="event_cursor_abc",
         )
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_checkpoint_store.get_all.return_value = [checkpoint]
@@ -38,22 +37,21 @@ class TestGetSyncAck:
 
         assert len(result) == 1
         assert result[0].type == SyncEntityType.AssetV1
-        # Ack format: "SyncEntityType|timestamp|entity_id|"
-        assert result[0].ack == f"AssetV1|{checkpoint_time.isoformat()}|asset-123|"
+        # Ack format: "SyncEntityType|cursor|"
+        assert result[0].ack == "AssetV1|event_cursor_abc|"
         mock_checkpoint_store.get_all.assert_called_once_with(TEST_SESSION_UUID)
 
     @pytest.mark.anyio
-    async def test_returns_checkpoints_without_entity_id(self):
-        """Checkpoints without entity_id return empty string in ack."""
+    async def test_filters_checkpoints_without_cursor(self):
+        """Checkpoints without cursor are excluded from response."""
         mock_request = Mock()
         mock_request.state.session_token = str(TEST_SESSION_UUID)
 
         checkpoint_time = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         checkpoint = Checkpoint(
             entity_type=SyncEntityType.AssetV1,
-            last_synced_at=checkpoint_time,
             updated_at=checkpoint_time,
-            last_entity_id=None,
+            cursor=None,
         )
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_checkpoint_store.get_all.return_value = [checkpoint]
@@ -63,9 +61,7 @@ class TestGetSyncAck:
             checkpoint_store=mock_checkpoint_store,
         )
 
-        assert len(result) == 1
-        # Ack format with empty entity_id: "SyncEntityType|timestamp||"
-        assert result[0].ack == f"AssetV1|{checkpoint_time.isoformat()}||"
+        assert len(result) == 0
 
     @pytest.mark.anyio
     async def test_returns_empty_list_when_no_checkpoints(self):
@@ -96,11 +92,8 @@ class TestSendSyncAck:
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_session_store = AsyncMock(spec=SessionStore)
 
-        checkpoint_time = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        # New ack format with entity_id
-        request = SyncAckSetDto(
-            acks=[f"AssetV1|{checkpoint_time.isoformat()}|asset-123|"]
-        )
+        # v2 ack format: "SyncEntityType|cursor|"
+        request = SyncAckSetDto(acks=["AssetV1|event_cursor_abc|"])
 
         await send_sync_ack(
             request=request,
@@ -115,8 +108,8 @@ class TestSendSyncAck:
         assert call_args[0][0] == TEST_SESSION_UUID
         checkpoints = call_args[0][1]
         assert len(checkpoints) == 1
-        # Now expecting 3-tuple: (entity_type, timestamp, entity_id)
-        assert checkpoints[0] == (SyncEntityType.AssetV1, checkpoint_time, "asset-123")
+        # Expecting 2-tuple: (entity_type, cursor)
+        assert checkpoints[0] == (SyncEntityType.AssetV1, "event_cursor_abc")
 
         # Verify session activity was updated
         mock_session_store.update_activity.assert_called_once_with(
@@ -124,17 +117,16 @@ class TestSendSyncAck:
         )
 
     @pytest.mark.anyio
-    async def test_stores_checkpoint_with_empty_entity_id(self):
-        """Acks without entity_id store empty string."""
+    async def test_skips_ack_with_empty_cursor(self):
+        """Acks with empty cursor are skipped (not stored)."""
         mock_request = Mock()
         mock_request.state.session_token = str(TEST_SESSION_UUID)
 
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_session_store = AsyncMock(spec=SessionStore)
 
-        checkpoint_time = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        # Old format or empty entity_id
-        request = SyncAckSetDto(acks=[f"AssetV1|{checkpoint_time.isoformat()}|"])
+        # Empty cursor
+        request = SyncAckSetDto(acks=["AssetV1||"])
 
         await send_sync_ack(
             request=request,
@@ -143,11 +135,8 @@ class TestSendSyncAck:
             session_store=mock_session_store,
         )
 
-        call_args = mock_checkpoint_store.set_many.call_args
-        checkpoints = call_args[0][1]
-        assert len(checkpoints) == 1
-        # Empty entity_id should be stored as empty string
-        assert checkpoints[0] == (SyncEntityType.AssetV1, checkpoint_time, "")
+        # Empty cursor ack is skipped, so set_many should not be called
+        mock_checkpoint_store.set_many.assert_not_called()
 
     @pytest.mark.anyio
     async def test_handles_sync_reset_ack(self):
@@ -158,8 +147,8 @@ class TestSendSyncAck:
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_session_store = AsyncMock(spec=SessionStore)
 
-        # SyncResetV1 has timestamp "reset" - still needs valid timestamp
-        request = SyncAckSetDto(acks=["SyncResetV1|2025-01-15T10:00:00+00:00|reset|"])
+        # SyncResetV1 ack with cursor
+        request = SyncAckSetDto(acks=["SyncResetV1|reset|"])
 
         await send_sync_ack(
             request=request,
@@ -189,11 +178,10 @@ class TestSendSyncAck:
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_session_store = AsyncMock(spec=SessionStore)
 
-        checkpoint_time = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         request = SyncAckSetDto(
             acks=[
                 "malformed",  # Too few parts - skipped
-                f"AssetV1|{checkpoint_time.isoformat()}|asset-123|",  # Valid
+                "AssetV1|event_cursor_abc|",  # Valid
             ]
         )
 
@@ -208,7 +196,7 @@ class TestSendSyncAck:
         call_args = mock_checkpoint_store.set_many.call_args
         checkpoints = call_args[0][1]
         assert len(checkpoints) == 1
-        assert checkpoints[0] == (SyncEntityType.AssetV1, checkpoint_time, "asset-123")
+        assert checkpoints[0] == (SyncEntityType.AssetV1, "event_cursor_abc")
 
     @pytest.mark.anyio
     async def test_does_not_store_when_all_acks_malformed(self):
@@ -219,10 +207,7 @@ class TestSendSyncAck:
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_session_store = AsyncMock(spec=SessionStore)
 
-        # Use valid entity types but invalid timestamps (malformed acks that get skipped)
-        request = SyncAckSetDto(
-            acks=["malformed", "AssetV1|not-a-valid-timestamp|entity-123|"]
-        )
+        request = SyncAckSetDto(acks=["malformed"])
 
         await send_sync_ack(
             request=request,

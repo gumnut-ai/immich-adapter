@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
-from routers.api.sync import gumnut_asset_to_sync_asset_v1
+from routers.api.sync.converters import gumnut_asset_to_sync_asset_v1
 from routers.utils.datetime_utils import (
     format_timezone_immich,
     to_actual_utc,
