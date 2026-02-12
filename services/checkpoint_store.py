@@ -1,5 +1,6 @@
 """Checkpoint storage service for sync progress tracking."""
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -8,6 +9,8 @@ from uuid import UUID
 from routers.immich_models import SyncEntityType
 from utils.redis_client import get_redis_client
 from utils.redis_protocols import AsyncRedisClient
+
+logger = logging.getLogger(__name__)
 
 
 class CheckpointDataError(Exception):
@@ -127,7 +130,18 @@ class CheckpointStore:
         checkpoints = []
         for entity_type_str, value in data.items():
             entity_type = SyncEntityType(entity_type_str)
-            checkpoint = Checkpoint.from_redis_value(entity_type, value)
+            try:
+                checkpoint = Checkpoint.from_redis_value(entity_type, value)
+            except CheckpointDataError:
+                logger.warning(
+                    "Skipping corrupt checkpoint (old format?), will re-sync",
+                    extra={
+                        "session_token": str(session_token),
+                        "entity_type": entity_type_str,
+                        "value": value,
+                    },
+                )
+                continue
             checkpoints.append(checkpoint)
 
         return checkpoints
@@ -151,7 +165,18 @@ class CheckpointStore:
         if not value:
             return None
 
-        return Checkpoint.from_redis_value(entity_type, value)
+        try:
+            return Checkpoint.from_redis_value(entity_type, value)
+        except CheckpointDataError:
+            logger.warning(
+                "Skipping corrupt checkpoint (old format?), will re-sync",
+                extra={
+                    "session_token": str(session_token),
+                    "entity_type": entity_type.value,
+                    "value": value,
+                },
+            )
+            return None
 
     async def set(
         self,

@@ -151,17 +151,18 @@ class TestCheckpointStoreGetAll:
         assert checkpoints == []
 
     @pytest.mark.anyio
-    async def test_get_all_raises_on_malformed_checkpoints(
+    async def test_get_all_skips_malformed_checkpoints(
         self, checkpoint_store, mock_redis
     ):
-        """Test get_all raises CheckpointDataError for malformed checkpoint values."""
+        """Test get_all skips malformed checkpoints and returns valid ones."""
         mock_redis.hgetall.return_value = {
             "AssetV1": "2025-01-20T10:30:45+00:00|event_asset123",
-            "AlbumV1": "malformed-data",  # Invalid format
+            "AlbumV1": "malformed-data",  # Invalid format — skipped
         }
 
-        with pytest.raises(CheckpointDataError):
-            await checkpoint_store.get_all(TEST_SESSION_TOKEN)
+        result = await checkpoint_store.get_all(TEST_SESSION_TOKEN)
+        assert len(result) == 1
+        assert result[0].entity_type == SyncEntityType.AssetV1
 
     @pytest.mark.anyio
     async def test_get_all_raises_on_unknown_entity_types(
