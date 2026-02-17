@@ -56,7 +56,7 @@ async def get_time_buckets(
         # Call assets.list() with optional albumId parameter
         if albumId:
             gumnut_album_id = uuid_to_gumnut_album_id(albumId)
-            gumnut_assets_response = client.albums.assets.list(gumnut_album_id)
+            gumnut_assets_response = client.albums.assets_associations.list(gumnut_album_id)
             gumnut_assets = list(gumnut_assets_response)
         elif personId:
             gumnut_assets_response = client.assets.list(
@@ -152,7 +152,7 @@ async def get_time_bucket(
         # Call assets.list() with optional albumId parameter
         if albumId:
             gumnut_album_id = uuid_to_gumnut_album_id(albumId)
-            gumnut_assets_response = client.albums.assets.list(gumnut_album_id)
+            gumnut_assets_response = client.albums.assets_associations.list(gumnut_album_id)
             gumnut_assets = list(gumnut_assets_response)
         elif personId:
             gumnut_assets_response = client.assets.list(

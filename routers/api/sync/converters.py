@@ -6,6 +6,7 @@ Pure functions with no internal dependencies.
 
 import logging
 
+from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.exif_response import ExifResponse
@@ -16,6 +17,7 @@ from gumnut.types.user_response import UserResponse
 from routers.immich_models import (
     AssetOrder,
     AssetVisibility,
+    SyncAlbumToAssetV1,
     SyncAlbumV1,
     SyncAssetExifV1,
     SyncAssetFaceV1,
@@ -273,4 +275,14 @@ def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
         imageWidth=0,
         sourceType="machine-learning",
         personId=person_id,
+    )
+
+
+def gumnut_album_asset_to_sync_album_to_asset_v1(
+    album_asset: AlbumAssetResponse,
+) -> SyncAlbumToAssetV1:
+    """Convert Gumnut AlbumAssetResponse to Immich SyncAlbumToAssetV1 format."""
+    return SyncAlbumToAssetV1(
+        albumId=str(safe_uuid_from_album_id(album_asset.album_id)),
+        assetId=str(safe_uuid_from_asset_id(album_asset.asset_id)),
     )

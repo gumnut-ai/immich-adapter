@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, TypeAlias, cast
 
 from gumnut import Gumnut
+from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.events_v2_response import Data as EventV2Data
@@ -37,6 +38,7 @@ from routers.utils.gumnut_id_conversion import (
 from services.checkpoint_store import Checkpoint
 
 from routers.api.sync.converters import (
+    gumnut_album_asset_to_sync_album_to_asset_v1,
     gumnut_album_to_sync_album_v1,
     gumnut_asset_to_sync_asset_v1,
     gumnut_exif_to_sync_exif_v1,
@@ -68,7 +70,7 @@ _DELETE_EVENT_TYPES = frozenset(
 _SKIPPED_EVENT_TYPES = frozenset(
     {
         "exif_deleted",  # Immich handles via asset deletion
-        "album_asset_removed",  # No bulk fetch endpoint yet (GUM-254)
+        "album_asset_removed",  # Record is gone by deletion time; can't resolve albumId+assetId
     }
 )
 
@@ -85,14 +87,19 @@ _DELETE_EVENT_ENTITY_TYPES: dict[str, str] = {
 _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.AssetsV1, "asset", SyncEntityType.AssetV1),
     (SyncRequestType.AlbumsV1, "album", SyncEntityType.AlbumV1),
-    # album_asset skipped — no bulk fetch endpoint yet (GUM-254)
+    (SyncRequestType.AlbumToAssetsV1, "album_asset", SyncEntityType.AlbumToAssetV1),
     (SyncRequestType.AssetExifsV1, "exif", SyncEntityType.AssetExifV1),
     (SyncRequestType.PeopleV1, "person", SyncEntityType.PersonV1),
     (SyncRequestType.AssetFacesV1, "face", SyncEntityType.AssetFaceV1),
 ]
 
 _EntityType: TypeAlias = (
-    AssetResponse | AlbumResponse | PersonResponse | FaceResponse | ExifResponse
+    AssetResponse
+    | AlbumResponse
+    | AlbumAssetResponse
+    | PersonResponse
+    | FaceResponse
+    | ExifResponse
 )
 
 
@@ -234,11 +241,7 @@ def _make_delete_sync_event(
 
 def _convert_entity_to_sync_event(
     gumnut_entity_type: str,
-    entity: AssetResponse
-    | AlbumResponse
-    | PersonResponse
-    | FaceResponse
-    | ExifResponse,
+    entity: _EntityType,
     owner_id: str,
     cursor: str,
     sync_entity_type: SyncEntityType,
@@ -267,6 +270,10 @@ def _convert_entity_to_sync_event(
     elif gumnut_entity_type == "person":
         sync_model = gumnut_person_to_sync_person_v1(
             cast(PersonResponse, entity), owner_id
+        )
+    elif gumnut_entity_type == "album_asset":
+        sync_model = gumnut_album_asset_to_sync_album_to_asset_v1(
+            cast(AlbumAssetResponse, entity)
         )
     elif gumnut_entity_type == "face":
         sync_model = gumnut_face_to_sync_face_v1(cast(FaceResponse, entity))
@@ -328,6 +335,10 @@ def _fetch_entities_map(
 
         elif gumnut_entity_type == "face":
             page = gumnut_client.faces.list(ids=chunk, limit=len(chunk))
+            result.update({entity.id: entity for entity in page})
+
+        elif gumnut_entity_type == "album_asset":
+            page = gumnut_client.album_assets.list(ids=chunk, limit=len(chunk))
             result.update({entity.id: entity for entity in page})
 
         elif gumnut_entity_type == "exif":

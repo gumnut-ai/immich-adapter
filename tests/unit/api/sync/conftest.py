@@ -61,6 +61,7 @@ def create_mock_gumnut_client(user: Mock) -> Mock:
     empty_page.__iter__ = Mock(return_value=iter([]))
     client.assets.list.return_value = empty_page
     client.albums.list.return_value = empty_page
+    client.album_assets.list.return_value = empty_page
     client.people.list.return_value = empty_page
     client.faces.list.return_value = empty_page
     return client
@@ -213,6 +214,17 @@ def create_mock_face_data(updated_at: datetime) -> Mock:
     return face
 
 
+def create_mock_album_asset_data(updated_at: datetime) -> Mock:
+    """Create mock album_asset data for entity fetch."""
+    album_asset = Mock()
+    album_asset.id = "album_asset_test_id"
+    album_asset.album_id = uuid_to_gumnut_album_id(TEST_UUID)
+    album_asset.asset_id = uuid_to_gumnut_asset_id(TEST_UUID)
+    album_asset.created_at = updated_at
+    album_asset.updated_at = updated_at
+    return album_asset
+
+
 def create_mock_entity_page(entities: list) -> Mock:
     """Create a mock paginated entity response that is iterable."""
     page = Mock()
@@ -233,6 +245,7 @@ __all__ = [
     "create_mock_v2_events_response",
     "create_mock_asset_data",
     "create_mock_album_data",
+    "create_mock_album_asset_data",
     "create_mock_exif_data",
     "create_mock_person_data",
     "create_mock_face_data",

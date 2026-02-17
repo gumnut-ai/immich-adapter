@@ -28,6 +28,7 @@ from tests.unit.api.sync.conftest import (
     TEST_SESSION_UUID,
     TEST_UUID,
     collect_stream,
+    create_mock_album_asset_data,
     create_mock_album_data,
     create_mock_asset_data,
     create_mock_entity_page,
@@ -440,6 +441,75 @@ class TestGenerateSyncStream:
         assert events[0]["type"] == "AssetFaceV1"
         assert "boundingBoxX1" in events[0]["data"]
         assert events[1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_streams_album_assets_when_requested(self):
+        """Album-to-asset links are streamed when AlbumToAssetsV1 is requested."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        album_asset_data = create_mock_album_asset_data(updated_at)
+        v2_event = create_mock_v2_event(
+            entity_type="album_asset",
+            entity_id=album_asset_data.id,
+            event_type="album_asset_added",
+            created_at=updated_at,
+            cursor="cursor_album_asset_1",
+        )
+        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
+            [v2_event]
+        )
+        mock_client.album_assets.list.return_value = create_mock_entity_page(
+            [album_asset_data]
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.AlbumToAssetsV1])
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        assert len(events) == 2
+        assert events[0]["type"] == "AlbumToAssetV1"
+        assert "albumId" in events[0]["data"]
+        assert "assetId" in events[0]["data"]
+        assert events[1]["type"] == "SyncCompleteV1"
+
+        # Verify album_assets.list was called with correct IDs
+        mock_client.album_assets.list.assert_called_once_with(
+            ids=[album_asset_data.id], limit=1
+        )
+
+    @pytest.mark.anyio
+    async def test_skips_album_asset_removed_event(self):
+        """album_asset_removed events are silently skipped."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        v2_event = create_mock_v2_event(
+            entity_type="album_asset",
+            entity_id="some-album-asset-id",
+            event_type="album_asset_removed",
+            created_at=updated_at,
+            cursor="cursor_del_aa",
+        )
+        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
+            [v2_event]
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.AlbumToAssetsV1])
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        # Only SyncCompleteV1 — album_asset_removed was skipped
+        assert len(events) == 1
+        assert events[0]["type"] == "SyncCompleteV1"
 
     # -------------------------------------------------------------------------
     # Delete event tests
