@@ -9,11 +9,12 @@
    - Code style and conventions
    - Testing requirements
 
-2. **Before committing code changes**:
+2. **Before committing code changes**, run the same checks CI runs:
 
-   - Run the formatting command specified in the project's README
-   - Run linting and type checking as documented
-   - Ensure all tests pass
+   - `uv run ruff format` (auto-fix formatting)
+   - `uv run ruff check` (linting)
+   - `uv run pyright` (type checking)
+   - `uv run pytest` (tests)
 
 ## AI-Specific Behavior
 
