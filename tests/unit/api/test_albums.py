@@ -281,8 +281,8 @@ class TestGetAlbumInfo:
         # Setup - create mock client
         mock_client = Mock()
         mock_client.albums.retrieve.return_value = sample_gumnut_album
-        mock_client.albums.assets_associations.list.return_value = mock_sync_cursor_page(
-            multiple_gumnut_assets
+        mock_client.albums.assets_associations.list.return_value = (
+            mock_sync_cursor_page(multiple_gumnut_assets)
         )
 
         # Execute

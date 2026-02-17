@@ -106,7 +106,9 @@ class TestGetTimeBuckets:
         assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         assets[0].created_at = assets[0].local_datetime
 
-        mock_client.albums.assets_associations.list.return_value = mock_sync_cursor_page([assets[0]])
+        mock_client.albums.assets_associations.list.return_value = (
+            mock_sync_cursor_page([assets[0]])
+        )
 
         # Execute
         result = await call_get_time_buckets(albumId=sample_uuid, client=mock_client)
@@ -340,7 +342,9 @@ class TestGetTimeBucket:
         assets[0].width = 1920
         assets[0].height = 1080
 
-        mock_client.albums.assets_associations.list.return_value = mock_sync_cursor_page([assets[0]])
+        mock_client.albums.assets_associations.list.return_value = (
+            mock_sync_cursor_page([assets[0]])
+        )
 
         # Mock get_current_user_id
         with patch("routers.api.timeline.get_current_user_id") as mock_user_id:

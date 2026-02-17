@@ -226,7 +226,9 @@ async def add_assets_to_album(
                 gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
                 # Add asset to album using Gumnut SDK
-                client.albums.assets_associations.add(gumnut_album_id, asset_ids=[gumnut_asset_id])
+                client.albums.assets_associations.add(
+                    gumnut_album_id, asset_ids=[gumnut_asset_id]
+                )
 
                 # Success response
                 response.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
@@ -460,7 +462,9 @@ async def add_assets_to_albums(
                     raise  # Re-raise other exceptions
 
                 # Add assets to album using Gumnut SDK
-                client.albums.assets_associations.add(gumnut_album_id, asset_ids=gumnut_asset_ids)
+                client.albums.assets_associations.add(
+                    gumnut_album_id, asset_ids=gumnut_asset_ids
+                )
                 successful_operations += 1
 
             except Exception as album_error:
