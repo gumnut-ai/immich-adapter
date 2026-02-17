@@ -761,15 +761,16 @@ class TestSyncStreamHTTPE2E:
         # Data should be empty
         assert complete_event["data"] == {}
 
-        # Ack format: SyncCompleteV1||
+        # Ack format: SyncCompleteV1|complete|
         ack = complete_event["ack"]
         ack_parts = ack.split("|")
         assert ack_parts[0] == "SyncCompleteV1", (
             f"Ack should start with SyncCompleteV1: {ack}"
         )
         assert len(ack_parts) == 3, f"Ack should have exactly 3 parts: {ack}"
-        # Cursor should be empty for SyncCompleteV1
-        assert ack_parts[1] == "", f"Cursor should be empty for SyncCompleteV1: {ack}"
+        assert ack_parts[1] == "complete", (
+            f"Cursor should be 'complete' for SyncCompleteV1: {ack}"
+        )
 
     def test_sync_stream_ack_format(self, client):
         """Test that each entity has correct ack format with cursors.
@@ -805,7 +806,7 @@ class TestSyncStreamHTTPE2E:
             "AlbumV1": {f"cursor_album_{i}" for i in range(len(TEST_ALBUMS_DATA))},
             "PersonV1": {"cursor_person_0"},
             "AssetFaceV1": face_cursors,
-            "SyncCompleteV1": {""},
+            "SyncCompleteV1": {"complete"},
         }
 
         # Collect actual cursors from acks by event type

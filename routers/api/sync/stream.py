@@ -112,13 +112,23 @@ def _to_ack_string(
 
     Ack format for immich-adapter: "SyncEntityType|cursor|"
 
+    The cursor MUST NOT contain pipe characters — ``_parse_ack()`` splits on
+    ``|`` and would silently truncate the cursor, corrupting the checkpoint.
+    Upstream v2 cursors are opaque strings controlled by photos-api; if they
+    ever include pipes this assertion will surface the issue immediately.
+
     Args:
         entity_type: The sync entity type
-        cursor: The opaque v2 events cursor
+        cursor: The opaque v2 events cursor (must not contain '|')
 
     Returns:
         Formatted ack string
     """
+    if "|" in cursor:
+        logger.error(
+            "Cursor contains pipe character, ack format will be corrupted",
+            extra={"entity_type": entity_type.value, "cursor": cursor},
+        )
     return f"{entity_type.value}|{cursor}|"
 
 
@@ -347,6 +357,11 @@ def _fetch_entities_map(
             for asset in page:
                 if asset.exif:
                     result[asset.exif.asset_id] = asset.exif
+                else:
+                    logger.warning(
+                        "Missing exif on fetched asset while processing exif events",
+                        extra={"asset_id": asset.id},
+                    )
 
         else:
             logger.warning(
@@ -388,7 +403,11 @@ async def _stream_entity_type(
     count = 0
 
     while True:
-        # Build params for v2 events API
+        # Build params for v2 events API.
+        # created_at_lt bounds the query to a point-in-time snapshot so events
+        # created during streaming are deferred to the next sync cycle.  This
+        # is required because cursor ordering alone doesn't prevent tailing new
+        # events indefinitely — the time bound guarantees the stream terminates.
         params: dict[str, Any] = {
             "created_at_lt": sync_started_at,
             "entity_types": gumnut_entity_type,
@@ -570,7 +589,7 @@ async def generate_sync_stream(
             )
 
         # Stream completion event
-        yield _make_sync_event(SyncEntityType.SyncCompleteV1, {}, "")
+        yield _make_sync_event(SyncEntityType.SyncCompleteV1, {}, "complete")
         logger.info("Sync stream completed", extra={"user_id": owner_id})
 
     except Exception as e:
