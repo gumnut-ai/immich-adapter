@@ -242,19 +242,22 @@ def _make_delete_sync_event(
         )
 
     elif event.event_type == "album_asset_removed":
-        payload = getattr(event, "payload", None)
-        if not payload or "album_id" not in payload or "asset_id" not in payload:
+        if (
+            not event.payload
+            or "album_id" not in event.payload
+            or "asset_id" not in event.payload
+        ):
             logger.warning(
                 "album_asset_removed event missing payload, skipping",
                 extra={
                     "entity_id": event.entity_id,
-                    "payload": payload,
+                    "payload": event.payload,
                 },
             )
             return None
         data = SyncAlbumToAssetDeleteV1(
-            albumId=str(safe_uuid_from_album_id(payload["album_id"])),
-            assetId=str(safe_uuid_from_asset_id(payload["asset_id"])),
+            albumId=str(safe_uuid_from_album_id(str(event.payload["album_id"]))),
+            assetId=str(safe_uuid_from_asset_id(str(event.payload["asset_id"]))),
         )
         return (
             _make_sync_event(
