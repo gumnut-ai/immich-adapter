@@ -51,6 +51,7 @@
 - Always use structured logging with key/value metadata in the `extra` dict
 - Include relevant identifiers for traceability: `user_id`, `session_token`, `sid`, `asset_id`, etc.
 - Example: `logger.info("WebSocket connected", extra={"sid": sid, "user_id": user_id, "device_type": session.device_type})`
+- **Do not assert on logging in tests.** Logging is non-functional behavior — tests should assert on observable outputs (return values, side effects, emitted events), not on whether a particular log message was emitted
 
 ### HTTP Response Status Codes
 
