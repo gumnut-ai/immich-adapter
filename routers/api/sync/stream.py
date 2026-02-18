@@ -242,22 +242,37 @@ def _make_delete_sync_event(
         )
 
     elif event.event_type == "album_asset_removed":
-        if (
-            not event.payload
-            or "album_id" not in event.payload
-            or "asset_id" not in event.payload
-        ):
+        if not isinstance(event.payload, dict):
             logger.warning(
-                "album_asset_removed event missing payload, skipping",
+                "album_asset_removed event payload missing or invalid, skipping",
                 extra={
+                    "event_type": event.event_type,
+                    "cursor": event.cursor,
+                    "created_at": event.created_at,
                     "entity_id": event.entity_id,
                     "payload": event.payload,
                 },
             )
             return None
+
+        album_id = event.payload.get("album_id")
+        asset_id = event.payload.get("asset_id")
+        if not album_id or not asset_id:
+            logger.warning(
+                "album_asset_removed event missing album_id/asset_id, skipping",
+                extra={
+                    "event_type": event.event_type,
+                    "cursor": event.cursor,
+                    "created_at": event.created_at,
+                    "entity_id": event.entity_id,
+                    "payload": event.payload,
+                },
+            )
+            return None
+
         data = SyncAlbumToAssetDeleteV1(
-            albumId=str(safe_uuid_from_album_id(str(event.payload["album_id"]))),
-            assetId=str(safe_uuid_from_asset_id(str(event.payload["asset_id"]))),
+            albumId=str(safe_uuid_from_album_id(str(album_id))),
+            assetId=str(safe_uuid_from_asset_id(str(asset_id))),
         )
         return (
             _make_sync_event(

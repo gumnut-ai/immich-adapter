@@ -86,9 +86,9 @@ All HTTP errors must use Immich's expected format:
 
 The sync stream (`routers/api/sync/stream.py`) consumes v2 events from photos-api and converts them to Immich sync format. Key concepts:
 
-- **Event types** are classified into `_UPSERT_EVENT_TYPES` (fetch full entity from photos-api), `_DELETE_EVENT_TYPES` (construct delete sync event from event data), and `_SKIPPED_EVENT_TYPES` (ignored)
+- **Event types** are classified into `_DELETE_EVENT_TYPES` (construct delete sync event from event data), `_SKIPPED_EVENT_TYPES` (ignored), and everything else is treated as an upsert (fetch full entity from photos-api)
 - **Deletion events** use `_make_delete_sync_event()` which maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted
-- **Contract with photos-api**: The adapter depends on the v2 events API response shape (`EventV2Response`). When photos-api adds new fields (like `payload`), the Python SDK's `extra="allow"` on BaseModel makes them accessible before SDK regeneration, but the adapter should access them via `getattr()` for backward compatibility with old events
+- **Contract with photos-api**: The adapter depends on the v2 events API response shape (`EventV2Response`). Fields like `payload` are typed in the SDK (v0.49.0+) and accessed directly. For backward compatibility with old events that predate a field, check for `None` before use
 
 ### Pull Requests
 
