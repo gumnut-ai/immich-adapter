@@ -3,7 +3,7 @@
 import json
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import AsyncMock, Mock, call
+from unittest.mock import AsyncMock, Mock, call, patch
 from uuid import UUID
 
 import pytest
@@ -516,11 +516,15 @@ class TestGenerateSyncStream:
         assert events[0]["data"]["assetId"] == str(
             UUID("00000000-0000-0000-0000-000000000099")
         )
+        # Verify cursor is propagated in the ack string
+        ack_parts = events[0]["ack"].split("|")
+        assert ack_parts[0] == "AlbumToAssetDeleteV1"
+        assert ack_parts[1] == "cursor_del_aa"
         assert events[1]["type"] == "SyncCompleteV1"
 
     @pytest.mark.anyio
     async def test_skips_album_asset_removed_without_payload(self):
-        """album_asset_removed events without payload are gracefully skipped."""
+        """album_asset_removed events without payload are gracefully skipped with warning."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -540,13 +544,26 @@ class TestGenerateSyncStream:
         request = SyncStreamDto(types=[SyncRequestType.AlbumToAssetsV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
-        events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
-        )
+        with patch("routers.api.sync.stream.logger") as mock_logger:
+            events = await collect_stream(
+                generate_sync_stream(mock_client, request, checkpoint_map)
+            )
 
         # Only SyncCompleteV1 — album_asset_removed without payload was skipped
         assert len(events) == 1
         assert events[0]["type"] == "SyncCompleteV1"
+
+        # Verify warning was emitted with diagnostic context
+        mock_logger.warning.assert_any_call(
+            "album_asset_removed event payload missing or invalid, skipping",
+            extra={
+                "event_type": "album_asset_removed",
+                "cursor": "cursor_del_aa",
+                "created_at": updated_at,
+                "entity_id": "album_asset_some_id",
+                "payload": None,
+            },
+        )
 
     # -------------------------------------------------------------------------
     # Delete event tests
