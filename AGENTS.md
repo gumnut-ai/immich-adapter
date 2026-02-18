@@ -82,6 +82,14 @@ All HTTP errors must use Immich's expected format:
 - In route handlers: Raise `HTTPException(status_code=..., detail="...")` - the global handler formats it
 - In middleware: Return `JSONResponse` directly with the above format (HTTPException doesn't work in BaseHTTPMiddleware)
 
+## Sync Stream Architecture
+
+The sync stream (`routers/api/sync/stream.py`) consumes v2 events from photos-api and converts them to Immich sync format. Key concepts:
+
+- **Event types** are classified into `_UPSERT_EVENT_TYPES` (fetch full entity from photos-api), `_DELETE_EVENT_TYPES` (construct delete sync event from event data), and `_SKIPPED_EVENT_TYPES` (ignored)
+- **Deletion events** use `_make_delete_sync_event()` which maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted
+- **Contract with photos-api**: The adapter depends on the v2 events API response shape (`EventV2Response`). When photos-api adds new fields (like `payload`), the Python SDK's `extra="allow"` on BaseModel makes them accessible before SDK regeneration, but the adapter should access them via `getattr()` for backward compatibility with old events
+
 ### Pull Requests
 
 - When updating pull requests with additional commits, update the PR description to include the latest changes
