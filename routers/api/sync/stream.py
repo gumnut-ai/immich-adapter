@@ -21,6 +21,7 @@ from gumnut.types.person_response import PersonResponse
 
 from routers.immich_models import (
     SyncAlbumDeleteV1,
+    SyncAlbumToAssetDeleteV1,
     SyncAssetDeleteV1,
     SyncAssetFaceDeleteV1,
     SyncEntityType,
@@ -63,6 +64,7 @@ _DELETE_EVENT_TYPES = frozenset(
         "album_deleted",
         "person_deleted",
         "face_deleted",
+        "album_asset_removed",
     }
 )
 
@@ -70,7 +72,6 @@ _DELETE_EVENT_TYPES = frozenset(
 _SKIPPED_EVENT_TYPES = frozenset(
     {
         "exif_deleted",  # Immich handles via asset deletion
-        "album_asset_removed",  # Record is gone by deletion time; can't resolve albumId+assetId
     }
 )
 
@@ -80,6 +81,7 @@ _DELETE_EVENT_ENTITY_TYPES: dict[str, str] = {
     "album_deleted": "album",
     "person_deleted": "person",
     "face_deleted": "face",
+    "album_asset_removed": "album_asset",
 }
 
 # Mapping from SyncRequestType to (gumnut_entity_type, SyncEntityType)
@@ -237,6 +239,30 @@ def _make_delete_sync_event(
                 event.cursor,
             ),
             SyncEntityType.AssetFaceDeleteV1,
+        )
+
+    elif event.event_type == "album_asset_removed":
+        payload = getattr(event, "payload", None)
+        if not payload or "album_id" not in payload or "asset_id" not in payload:
+            logger.warning(
+                "album_asset_removed event missing payload, skipping",
+                extra={
+                    "entity_id": event.entity_id,
+                    "payload": payload,
+                },
+            )
+            return None
+        data = SyncAlbumToAssetDeleteV1(
+            albumId=str(safe_uuid_from_album_id(payload["album_id"])),
+            assetId=str(safe_uuid_from_asset_id(payload["asset_id"])),
+        )
+        return (
+            _make_sync_event(
+                SyncEntityType.AlbumToAssetDeleteV1,
+                data.model_dump(mode="json"),
+                event.cursor,
+            ),
+            SyncEntityType.AlbumToAssetDeleteV1,
         )
 
     logger.warning(
