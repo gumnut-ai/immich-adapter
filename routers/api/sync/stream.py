@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, TypeAlias, cast
 
 from gumnut import Gumnut
+from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.events_v2_response import Data as EventV2Data
@@ -37,6 +38,7 @@ from routers.utils.gumnut_id_conversion import (
 from services.checkpoint_store import Checkpoint
 
 from routers.api.sync.converters import (
+    gumnut_album_asset_to_sync_album_to_asset_v1,
     gumnut_album_to_sync_album_v1,
     gumnut_asset_to_sync_asset_v1,
     gumnut_exif_to_sync_exif_v1,
@@ -68,7 +70,7 @@ _DELETE_EVENT_TYPES = frozenset(
 _SKIPPED_EVENT_TYPES = frozenset(
     {
         "exif_deleted",  # Immich handles via asset deletion
-        "album_asset_removed",  # No bulk fetch endpoint yet (GUM-254)
+        "album_asset_removed",  # Record is gone by deletion time; can't resolve albumId+assetId
     }
 )
 
@@ -85,14 +87,19 @@ _DELETE_EVENT_ENTITY_TYPES: dict[str, str] = {
 _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.AssetsV1, "asset", SyncEntityType.AssetV1),
     (SyncRequestType.AlbumsV1, "album", SyncEntityType.AlbumV1),
-    # album_asset skipped — no bulk fetch endpoint yet (GUM-254)
+    (SyncRequestType.AlbumToAssetsV1, "album_asset", SyncEntityType.AlbumToAssetV1),
     (SyncRequestType.AssetExifsV1, "exif", SyncEntityType.AssetExifV1),
     (SyncRequestType.PeopleV1, "person", SyncEntityType.PersonV1),
     (SyncRequestType.AssetFacesV1, "face", SyncEntityType.AssetFaceV1),
 ]
 
 _EntityType: TypeAlias = (
-    AssetResponse | AlbumResponse | PersonResponse | FaceResponse | ExifResponse
+    AssetResponse
+    | AlbumResponse
+    | AlbumAssetResponse
+    | PersonResponse
+    | FaceResponse
+    | ExifResponse
 )
 
 
@@ -105,13 +112,23 @@ def _to_ack_string(
 
     Ack format for immich-adapter: "SyncEntityType|cursor|"
 
+    The cursor MUST NOT contain pipe characters — ``_parse_ack()`` splits on
+    ``|`` and would silently truncate the cursor, corrupting the checkpoint.
+    Upstream v2 cursors are opaque strings controlled by photos-api; if they
+    ever include pipes this assertion will surface the issue immediately.
+
     Args:
         entity_type: The sync entity type
-        cursor: The opaque v2 events cursor
+        cursor: The opaque v2 events cursor (must not contain '|')
 
     Returns:
         Formatted ack string
     """
+    if "|" in cursor:
+        logger.error(
+            "Cursor contains pipe character, ack format will be corrupted",
+            extra={"entity_type": entity_type.value, "cursor": cursor},
+        )
     return f"{entity_type.value}|{cursor}|"
 
 
@@ -234,11 +251,7 @@ def _make_delete_sync_event(
 
 def _convert_entity_to_sync_event(
     gumnut_entity_type: str,
-    entity: AssetResponse
-    | AlbumResponse
-    | PersonResponse
-    | FaceResponse
-    | ExifResponse,
+    entity: _EntityType,
     owner_id: str,
     cursor: str,
     sync_entity_type: SyncEntityType,
@@ -267,6 +280,10 @@ def _convert_entity_to_sync_event(
     elif gumnut_entity_type == "person":
         sync_model = gumnut_person_to_sync_person_v1(
             cast(PersonResponse, entity), owner_id
+        )
+    elif gumnut_entity_type == "album_asset":
+        sync_model = gumnut_album_asset_to_sync_album_to_asset_v1(
+            cast(AlbumAssetResponse, entity)
         )
     elif gumnut_entity_type == "face":
         sync_model = gumnut_face_to_sync_face_v1(cast(FaceResponse, entity))
@@ -330,12 +347,21 @@ def _fetch_entities_map(
             page = gumnut_client.faces.list(ids=chunk, limit=len(chunk))
             result.update({entity.id: entity for entity in page})
 
+        elif gumnut_entity_type == "album_asset":
+            page = gumnut_client.album_assets.list(ids=chunk, limit=len(chunk))
+            result.update({entity.id: entity for entity in page})
+
         elif gumnut_entity_type == "exif":
             # Exif is 1:1 with asset; v2 exif events use entity_id = asset_id
             page = gumnut_client.assets.list(ids=chunk, limit=len(chunk))
             for asset in page:
                 if asset.exif:
                     result[asset.exif.asset_id] = asset.exif
+                else:
+                    logger.warning(
+                        "Missing exif on fetched asset while processing exif events",
+                        extra={"asset_id": asset.id},
+                    )
 
         else:
             logger.warning(
@@ -377,7 +403,11 @@ async def _stream_entity_type(
     count = 0
 
     while True:
-        # Build params for v2 events API
+        # Build params for v2 events API.
+        # created_at_lt bounds the query to a point-in-time snapshot so events
+        # created during streaming are deferred to the next sync cycle.  This
+        # is required because cursor ordering alone doesn't prevent tailing new
+        # events indefinitely — the time bound guarantees the stream terminates.
         params: dict[str, Any] = {
             "created_at_lt": sync_started_at,
             "entity_types": gumnut_entity_type,
@@ -559,7 +589,7 @@ async def generate_sync_stream(
             )
 
         # Stream completion event
-        yield _make_sync_event(SyncEntityType.SyncCompleteV1, {}, "")
+        yield _make_sync_event(SyncEntityType.SyncCompleteV1, {}, "complete")
         logger.info("Sync stream completed", extra={"user_id": owner_id})
 
     except Exception as e:

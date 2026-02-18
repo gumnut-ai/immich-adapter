@@ -281,8 +281,8 @@ class TestGetAlbumInfo:
         # Setup - create mock client
         mock_client = Mock()
         mock_client.albums.retrieve.return_value = sample_gumnut_album
-        mock_client.albums.assets.list.return_value = mock_sync_cursor_page(
-            multiple_gumnut_assets
+        mock_client.albums.assets_associations.list.return_value = (
+            mock_sync_cursor_page(multiple_gumnut_assets)
         )
 
         # Execute
@@ -296,7 +296,7 @@ class TestGetAlbumInfo:
         assert hasattr(result, "albumName")
         assert result.albumName == "Test Album"  # From sample_gumnut_album.name
         mock_client.albums.retrieve.assert_called_once()
-        mock_client.albums.assets.list.assert_called_once()
+        mock_client.albums.assets_associations.list.assert_called_once()
 
     @pytest.mark.anyio
     async def test_get_album_info_uses_gumnut_asset_count(
@@ -312,7 +312,7 @@ class TestGetAlbumInfo:
         mock_client = Mock()
         mock_client.albums.retrieve.return_value = sample_gumnut_album
         # Return empty assets list
-        mock_client.albums.assets.list.return_value = []
+        mock_client.albums.assets_associations.list.return_value = []
 
         # Execute
         result = await get_album_info(
@@ -333,7 +333,7 @@ class TestGetAlbumInfo:
 
         mock_client = Mock()
         mock_client.albums.retrieve.return_value = sample_gumnut_album
-        mock_client.albums.assets.list.return_value = []
+        mock_client.albums.assets_associations.list.return_value = []
 
         # Execute
         result = await get_album_info(
@@ -353,7 +353,7 @@ class TestGetAlbumInfo:
         mock_client = Mock()
         mock_client.albums.retrieve.return_value = sample_gumnut_album
         # Mock assets list to return an empty iterable to avoid the "Mock object is not iterable" error
-        mock_client.albums.assets.list.return_value = []
+        mock_client.albums.assets_associations.list.return_value = []
 
         # Execute
         result = await get_album_info(
@@ -369,7 +369,7 @@ class TestGetAlbumInfo:
         assert result.albumName == "Test Album"  # From sample_gumnut_album.name
         mock_client.albums.retrieve.assert_called_once()
         # Note: The current implementation always fetches assets but only processes them when withoutAssets is falsy
-        mock_client.albums.assets.list.assert_called_once()
+        mock_client.albums.assets_associations.list.assert_called_once()
 
     @pytest.mark.anyio
     async def test_get_album_info_not_found(self, sample_uuid, mock_current_user):
@@ -442,7 +442,7 @@ class TestAddAssetsToAlbum:
         # Setup - create mock client
         mock_client = Mock()
         mock_client.albums.retrieve.return_value = sample_gumnut_album
-        mock_client.albums.assets.add.return_value = None
+        mock_client.albums.assets_associations.add.return_value = None
 
         asset_id1 = uuid4()
         asset_id2 = uuid4()
@@ -459,7 +459,7 @@ class TestAddAssetsToAlbum:
         assert result[0].id == str(asset_id1)
         assert result[1].id == str(asset_id2)
         mock_client.albums.retrieve.assert_called_once()
-        assert mock_client.albums.assets.add.call_count == 2
+        assert mock_client.albums.assets_associations.add.call_count == 2
 
     @pytest.mark.anyio
     async def test_add_assets_album_not_found(self, mock_gumnut_client, sample_uuid):
@@ -482,7 +482,7 @@ class TestAddAssetsToAlbum:
         mock_client.albums.retrieve.return_value = sample_gumnut_album
 
         # First call succeeds, second fails
-        mock_client.albums.assets.add.side_effect = [
+        mock_client.albums.assets_associations.add.side_effect = [
             None,  # Success
             Exception("Asset not found"),  # Failure
         ]
@@ -596,7 +596,7 @@ class TestRemoveAssetFromAlbum:
         # Setup - create mock client
         mock_client = Mock()
         mock_client.albums.retrieve.return_value = sample_gumnut_album
-        mock_client.albums.assets.remove.return_value = None
+        mock_client.albums.assets_associations.remove.return_value = None
 
         asset_id1 = uuid4()
         asset_id2 = uuid4()
@@ -613,7 +613,7 @@ class TestRemoveAssetFromAlbum:
         assert result[0].id == str(asset_id1)
         assert result[1].id == str(asset_id2)
         mock_client.albums.retrieve.assert_called_once()
-        assert mock_client.albums.assets.remove.call_count == 2
+        assert mock_client.albums.assets_associations.remove.call_count == 2
 
 
 class TestDeleteAlbum:
@@ -657,7 +657,7 @@ class TestAddAssetsToAlbums:
         """Test successful addition of assets to multiple albums."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.assets.add.return_value = None
+        mock_client.albums.assets_associations.add.return_value = None
 
         album_ids = [uuid4(), uuid4()]
         asset_ids = [uuid4()]
@@ -669,4 +669,4 @@ class TestAddAssetsToAlbums:
         # Assert
         # AlbumsAddAssetsResponseDto has success and error attributes, not a results list
         assert result.success is True
-        assert mock_client.albums.assets.add.call_count == 2
+        assert mock_client.albums.assets_associations.add.call_count == 2

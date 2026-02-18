@@ -128,16 +128,7 @@ async def get_album_info(
         gumnut_album = client.albums.retrieve(gumnut_album_id)
 
         # Also retrieve the assets for this album
-        try:
-            gumnut_assets_response = client.albums.assets.list(gumnut_album_id)
-            # The response should be iterable (like a list)
-            gumnut_assets = list(gumnut_assets_response)
-        except Exception as assets_error:
-            # If assets retrieval fails, continue with empty assets list
-            logger.warning(
-                f"Warning: Could not retrieve assets for album {gumnut_album_id}: {assets_error}"
-            )
-            gumnut_assets = []
+        gumnut_assets = client.albums.assets_associations.list(gumnut_album_id)
 
         # Convert assets to AssetResponseDto format
         immich_assets = []
@@ -235,7 +226,9 @@ async def add_assets_to_album(
                 gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
                 # Add asset to album using Gumnut SDK
-                client.albums.assets.add(gumnut_album_id, asset_ids=[gumnut_asset_id])
+                client.albums.assets_associations.add(
+                    gumnut_album_id, asset_ids=[gumnut_asset_id]
+                )
 
                 # Success response
                 response.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
@@ -359,7 +352,7 @@ async def remove_asset_from_album(
                 gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
                 # Remove asset from album using Gumnut SDK
-                client.albums.assets.remove(
+                client.albums.assets_associations.remove(
                     gumnut_album_id, asset_ids=[gumnut_asset_id]
                 )
 
@@ -469,7 +462,9 @@ async def add_assets_to_albums(
                     raise  # Re-raise other exceptions
 
                 # Add assets to album using Gumnut SDK
-                client.albums.assets.add(gumnut_album_id, asset_ids=gumnut_asset_ids)
+                client.albums.assets_associations.add(
+                    gumnut_album_id, asset_ids=gumnut_asset_ids
+                )
                 successful_operations += 1
 
             except Exception as album_error:

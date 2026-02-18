@@ -9,11 +9,12 @@
    - Code style and conventions
    - Testing requirements
 
-2. **Before committing code changes**:
+2. **Before committing code changes**, run the same checks CI runs:
 
-   - Run the formatting command specified in the project's README
-   - Run linting and type checking as documented
-   - Ensure all tests pass
+   - `uv run ruff format` (auto-fix formatting)
+   - `uv run ruff check` (linting)
+   - `uv run pyright` (type checking)
+   - `uv run pytest` (tests)
 
 ## AI-Specific Behavior
 
@@ -22,6 +23,7 @@
 - Only use emojis if the user explicitly requests it
 - Never proactively create documentation files (\*.md) unless explicitly requested
 - Always prefer editing existing files over creating new ones
+- Always use `uv run` to execute Python commands (e.g., `uv run pytest`, `uv run python`). Never use bare `python` or `pip` — pyenv versions may not match `.python-version`
 
 ### Working with Files
 
