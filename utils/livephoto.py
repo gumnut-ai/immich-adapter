@@ -64,25 +64,10 @@ def is_live_photo_video(data: bytes) -> bool:
         # The 'meta' atom may or may not have a 4-byte version/flags prefix.
         # ISOBMFF (MP4) treats 'meta' as a full box with version/flags,
         # but QuickTime .MOV files use a plain container (no version/flags).
-        # Detect which format by checking if the first 4 bytes after the header
-        # are all zero (version=0, flags=0 → full box) or form a valid child
-        # atom size (plain container). We check by looking at bytes 4-8: if they
-        # are a known atom type like 'hdlr', it's a plain container.
-        if meta_start + 8 <= meta_end:
-            child_size, child_type = struct.unpack(
-                ">I4s", data[meta_start : meta_start + 8]
-            )
-            if child_type == b"hdlr" and 8 <= child_size <= (meta_end - meta_start):
-                # Plain QuickTime container — no version/flags to skip
-                pass
-            else:
-                # ISOBMFF full box — skip 4-byte version/flags
-                meta_start += 4
-        if meta_start >= meta_end:
-            return False
-
-        # Step 3: Find the 'keys' atom inside 'meta'
+        # Try both interpretations instead of guessing the format.
         keys = _find_atom(data, b"keys", meta_start, meta_end)
+        if keys is None and meta_start + 4 < meta_end:
+            keys = _find_atom(data, b"keys", meta_start + 4, meta_end)
         if keys is None:
             return False
         keys_start, keys_end = keys
