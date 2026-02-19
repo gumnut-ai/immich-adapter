@@ -1,5 +1,5 @@
 """
-V2 events processing, entity fetching, and sync stream generation.
+Events processing, entity fetching, and sync stream generation.
 
 Imports converter functions from converters module.
 """
@@ -14,7 +14,7 @@ from gumnut import Gumnut
 from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
-from gumnut.types.events_v2_response import Data as EventV2Data
+from gumnut.types.events_response import Data as EventData
 from gumnut.types.exif_response import ExifResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.person_response import PersonResponse
@@ -116,12 +116,12 @@ def _to_ack_string(
 
     The cursor MUST NOT contain pipe characters — ``_parse_ack()`` splits on
     ``|`` and would silently truncate the cursor, corrupting the checkpoint.
-    Upstream v2 cursors are opaque strings controlled by photos-api; if they
+    Upstream cursors are opaque strings controlled by photos-api; if they
     ever include pipes this assertion will surface the issue immediately.
 
     Args:
         entity_type: The sync entity type
-        cursor: The opaque v2 events cursor (must not contain '|')
+        cursor: The opaque events cursor (must not contain '|')
 
     Returns:
         Formatted ack string
@@ -145,7 +145,7 @@ def _make_sync_event(
     Args:
         entity_type: The Immich sync entity type
         data: The entity data dict
-        cursor: The opaque v2 events cursor for checkpointing
+        cursor: The opaque events cursor for checkpointing
 
     Returns:
         JSON line string with newline
@@ -165,16 +165,16 @@ def _make_sync_event(
 
 
 def _make_delete_sync_event(
-    event: EventV2Data,
+    event: EventData,
 ) -> tuple[str, SyncEntityType] | None:
     """
-    Convert a v2 delete event to an Immich delete sync event JSON line.
+    Convert a delete event to an Immich delete sync event JSON line.
 
     Validates that event.entity_type matches expectations for the delete
     event_type. Logs a warning and skips if there's a mismatch.
 
     Args:
-        event: The v2 event with a delete event_type
+        event: The event with a delete event_type
 
     Returns:
         Tuple of (json_line, sync_entity_type) or None if event should be skipped
@@ -322,7 +322,7 @@ def _convert_entity_to_sync_event(
         gumnut_entity_type: The entity type string (e.g., "asset", "album")
         entity: The fetched entity object
         owner_id: UUID of the owner
-        cursor: The v2 event cursor for the ack string
+        cursor: The event cursor for the ack string
         sync_entity_type: The Immich sync entity type
 
     Returns:
@@ -411,7 +411,7 @@ def _fetch_entities_map(
             result.update({entity.id: entity for entity in page})
 
         elif gumnut_entity_type == "exif":
-            # Exif is 1:1 with asset; v2 exif events use entity_id = asset_id
+            # Exif is 1:1 with asset; exif events use entity_id = asset_id
             page = gumnut_client.assets.list(ids=chunk, limit=len(chunk))
             for asset in page:
                 if asset.exif:
@@ -441,9 +441,9 @@ async def _stream_entity_type(
     sync_started_at: datetime,
 ) -> AsyncGenerator[tuple[str, int], None]:
     """
-    Stream events for a single entity type using the v2 events API.
+    Stream events for a single entity type using the events API.
 
-    Fetches lightweight v2 events, then batch-fetches full entities for
+    Fetches lightweight events, then batch-fetches full entities for
     upsert events. Delete events are converted directly to Immich delete
     sync events.
 
@@ -462,7 +462,7 @@ async def _stream_entity_type(
     count = 0
 
     while True:
-        # Build params for v2 events API.
+        # Build params for events API.
         # created_at_lt bounds the query to a point-in-time snapshot so events
         # created during streaming are deferred to the next sync cycle.  This
         # is required because cursor ordering alone doesn't prevent tailing new
@@ -475,7 +475,7 @@ async def _stream_entity_type(
         if last_cursor is not None:
             params["after_cursor"] = last_cursor
 
-        events_response = gumnut_client.events_v2.get(**params)
+        events_response = gumnut_client.events.get(**params)
 
         events = events_response.data
         if not events:
@@ -548,7 +548,7 @@ async def generate_sync_stream(
     """
     Generate sync stream as JSON Lines (newline-delimited JSON).
 
-    Uses the photos-api v2 events endpoint to fetch lightweight event records
+    Uses the photos-api events endpoint to fetch lightweight event records
     in priority order, then batch-fetches full entities for upsert events.
 
     Each entity type uses its own checkpoint with an opaque cursor for
@@ -573,7 +573,7 @@ async def generate_sync_stream(
             },
         )
 
-        # User/auth-user entities don't go through v2 events.
+        # User/auth-user entities don't go through events API.
         # Use updated_at as the cursor for delta semantics: re-stream
         # when the user record has changed since the last ack.
         user_cursor = (

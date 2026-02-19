@@ -38,8 +38,8 @@ from tests.unit.api.sync.conftest import (
     create_mock_person_data,
     create_mock_session,
     create_mock_user,
-    create_mock_v2_event,
-    create_mock_v2_events_response,
+    create_mock_event,
+    create_mock_events_response,
 )
 
 
@@ -100,7 +100,7 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_asset_event_ack_includes_cursor(self):
-        """Asset events from v2 events API include cursor in ack.
+        """Asset events from events API include cursor in ack.
 
         Ack format: "SyncEntityType|cursor|"
         """
@@ -108,18 +108,16 @@ class TestGenerateSyncStream:
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        # Set up v2 event
+        # Set up event
         asset_data = create_mock_asset_data(updated_at)
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="asset",
             entity_id=asset_data.id,
             event_type="asset_created",
             created_at=updated_at,
             cursor="event_abc123",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
         # Set up entity fetch
         mock_client.assets.list.return_value = create_mock_entity_page([asset_data])
 
@@ -139,7 +137,7 @@ class TestGenerateSyncStream:
             f"Expected 3 parts in ack, got {len(ack_parts)}: {asset_event_output['ack']}"
         )
         assert ack_parts[0] == "AssetV1"
-        assert ack_parts[1] == "event_abc123"  # cursor from v2 event
+        assert ack_parts[1] == "event_abc123"  # cursor from event
         assert ack_parts[2] == ""  # trailing empty string from trailing pipe
 
     @pytest.mark.anyio
@@ -271,7 +269,7 @@ class TestGenerateSyncStream:
         assert events[0]["type"] == "AuthUserV1"
 
     # -------------------------------------------------------------------------
-    # Events API entity tests (v2 events + entity fetch)
+    # Events API entity tests (events + entity fetch)
     # -------------------------------------------------------------------------
 
     @pytest.mark.anyio
@@ -281,18 +279,16 @@ class TestGenerateSyncStream:
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        # Set up v2 event
+        # Set up event
         asset_data = create_mock_asset_data(updated_at)
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="asset",
             entity_id=asset_data.id,
             event_type="asset_created",
             created_at=updated_at,
             cursor="cursor_asset_1",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
         mock_client.assets.list.return_value = create_mock_entity_page([asset_data])
 
         request = SyncStreamDto(types=[SyncRequestType.AssetsV1])
@@ -315,16 +311,14 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         album_data = create_mock_album_data(updated_at)
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="album",
             entity_id=album_data.id,
             event_type="album_created",
             created_at=updated_at,
             cursor="cursor_album_1",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
         mock_client.albums.list.return_value = create_mock_entity_page([album_data])
 
         request = SyncStreamDto(types=[SyncRequestType.AlbumsV1])
@@ -352,16 +346,14 @@ class TestGenerateSyncStream:
         asset_with_exif.id = exif_data.asset_id
         asset_with_exif.exif = exif_data
 
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="exif",
             entity_id=exif_data.asset_id,
             event_type="exif_created",
             created_at=updated_at,
             cursor="cursor_exif_1",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
         mock_client.assets.list.return_value = create_mock_entity_page(
             [asset_with_exif]
         )
@@ -386,16 +378,14 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         person_data = create_mock_person_data(updated_at)
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="person",
             entity_id=person_data.id,
             event_type="person_created",
             created_at=updated_at,
             cursor="cursor_person_1",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
         mock_client.people.list.return_value = create_mock_entity_page([person_data])
 
         request = SyncStreamDto(types=[SyncRequestType.PeopleV1])
@@ -418,16 +408,14 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         face_data = create_mock_face_data(updated_at)
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="face",
             entity_id=face_data.id,
             event_type="face_created",
             created_at=updated_at,
             cursor="cursor_face_1",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
 
         request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
@@ -450,16 +438,14 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         album_asset_data = create_mock_album_asset_data(updated_at)
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="album_asset",
             entity_id=album_asset_data.id,
             event_type="album_asset_added",
             created_at=updated_at,
             cursor="cursor_album_asset_1",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
         mock_client.album_assets.list.return_value = create_mock_entity_page(
             [album_asset_data]
         )
@@ -491,17 +477,15 @@ class TestGenerateSyncStream:
 
         album_id = uuid_to_gumnut_album_id(TEST_UUID)
         asset_id = uuid_to_gumnut_asset_id(UUID("00000000-0000-0000-0000-000000000099"))
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="album_asset",
             entity_id="album_asset_some_id",
             event_type="album_asset_removed",
             created_at=updated_at,
             cursor="cursor_del_aa",
         )
-        v2_event.payload = {"album_id": album_id, "asset_id": asset_id}
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_event.payload = {"album_id": album_id, "asset_id": asset_id}
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
 
         request = SyncStreamDto(types=[SyncRequestType.AlbumToAssetsV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
@@ -529,17 +513,15 @@ class TestGenerateSyncStream:
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="album_asset",
             entity_id="album_asset_some_id",
             event_type="album_asset_removed",
             created_at=updated_at,
             cursor="cursor_del_aa",
         )
-        v2_event.payload = None  # Old event before migration
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_event.payload = None  # Old event before migration
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
 
         request = SyncStreamDto(types=[SyncRequestType.AlbumToAssetsV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
@@ -564,16 +546,14 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         asset_id = uuid_to_gumnut_asset_id(TEST_UUID)
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="asset",
             entity_id=asset_id,
             event_type="asset_deleted",
             created_at=updated_at,
             cursor="cursor_del_1",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
 
         request = SyncStreamDto(types=[SyncRequestType.AssetsV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
@@ -595,16 +575,14 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         album_id = uuid_to_gumnut_album_id(TEST_UUID)
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="album",
             entity_id=album_id,
             event_type="album_deleted",
             created_at=updated_at,
             cursor="cursor_del_2",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
 
         request = SyncStreamDto(types=[SyncRequestType.AlbumsV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
@@ -625,16 +603,14 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         person_id = uuid_to_gumnut_person_id(TEST_UUID)
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="person",
             entity_id=person_id,
             event_type="person_deleted",
             created_at=updated_at,
             cursor="cursor_del_3",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
 
         request = SyncStreamDto(types=[SyncRequestType.PeopleV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
@@ -655,16 +631,14 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         face_id = uuid_to_gumnut_face_id(TEST_UUID)
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="face",
             entity_id=face_id,
             event_type="face_deleted",
             created_at=updated_at,
             cursor="cursor_del_4",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
 
         request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
@@ -684,16 +658,14 @@ class TestGenerateSyncStream:
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="exif",
             entity_id="some-asset-id",
             event_type="exif_deleted",
             created_at=updated_at,
             cursor="cursor_del_5",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
 
         request = SyncStreamDto(types=[SyncRequestType.AssetExifsV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
@@ -713,16 +685,14 @@ class TestGenerateSyncStream:
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        v2_event = create_mock_v2_event(
+        mock_event = create_mock_event(
             entity_type="asset",
             entity_id="nonexistent-asset-id",
             event_type="asset_created",
             created_at=updated_at,
             cursor="cursor_missing_1",
         )
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            [v2_event]
-        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
         # Entity not in fetch results — empty page
         mock_client.assets.list.return_value = create_mock_entity_page([])
 
@@ -750,15 +720,15 @@ class TestGenerateSyncStream:
         )
 
         # First event: upsert, second event: delete
-        v2_events = [
-            create_mock_v2_event(
+        mock_events = [
+            create_mock_event(
                 entity_type="asset",
                 entity_id=asset_data.id,
                 event_type="asset_created",
                 created_at=updated_at,
                 cursor="cursor_1",
             ),
-            create_mock_v2_event(
+            create_mock_event(
                 entity_type="asset",
                 entity_id=deleted_asset_id,
                 event_type="asset_deleted",
@@ -766,9 +736,7 @@ class TestGenerateSyncStream:
                 cursor="cursor_2",
             ),
         ]
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
-            v2_events
-        )
+        mock_client.events.get.return_value = create_mock_events_response(mock_events)
         mock_client.assets.list.return_value = create_mock_entity_page([asset_data])
 
         request = SyncStreamDto(types=[SyncRequestType.AssetsV1])
@@ -995,7 +963,7 @@ class TestStreamEntityTypePagination:
         mock_client = create_mock_gumnut_client(mock_user)
 
         # Return empty response so we don't loop
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response([])
+        mock_client.events.get.return_value = create_mock_events_response([])
 
         checkpoint = Checkpoint(
             entity_type=SyncEntityType.AssetV1,
@@ -1014,7 +982,7 @@ class TestStreamEntityTypePagination:
         ):
             results.append(item)
 
-        mock_client.events_v2.get.assert_called_once_with(
+        mock_client.events.get.assert_called_once_with(
             created_at_lt=sync_started_at,
             entity_types="asset",
             limit=EVENTS_PAGE_SIZE,
@@ -1029,7 +997,7 @@ class TestStreamEntityTypePagination:
         mock_user = create_mock_user(sync_started_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response([])
+        mock_client.events.get.return_value = create_mock_events_response([])
 
         results = []
         async for item in _stream_entity_type(
@@ -1042,7 +1010,7 @@ class TestStreamEntityTypePagination:
         ):
             results.append(item)
 
-        mock_client.events_v2.get.assert_called_once_with(
+        mock_client.events.get.assert_called_once_with(
             created_at_lt=sync_started_at,
             entity_types="asset",
             limit=EVENTS_PAGE_SIZE,
@@ -1063,7 +1031,7 @@ class TestStreamEntityTypePagination:
             asset_uuid = UUID(f"00000000-0000-0000-0000-{i:012d}")
             asset_id = uuid_to_gumnut_asset_id(asset_uuid)
             first_page_events.append(
-                create_mock_v2_event(
+                create_mock_event(
                     entity_type="asset",
                     entity_id=asset_id,
                     event_type="asset_created",
@@ -1083,7 +1051,7 @@ class TestStreamEntityTypePagination:
         # Create second page with 1 event
         second_asset_uuid = UUID("00000000-0000-0000-0000-000000000500")
         second_asset_id = uuid_to_gumnut_asset_id(second_asset_uuid)
-        second_page_event = create_mock_v2_event(
+        second_page_event = create_mock_event(
             entity_type="asset",
             entity_id=second_asset_id,
             event_type="asset_created",
@@ -1094,12 +1062,10 @@ class TestStreamEntityTypePagination:
         second_asset_data.id = second_asset_id
 
         # Set up mock responses
-        first_response = create_mock_v2_events_response(
-            first_page_events, has_more=True
-        )
-        second_response = create_mock_v2_events_response([second_page_event])
+        first_response = create_mock_events_response(first_page_events, has_more=True)
+        second_response = create_mock_events_response([second_page_event])
 
-        mock_client.events_v2.get.side_effect = [first_response, second_response]
+        mock_client.events.get.side_effect = [first_response, second_response]
 
         # Mock assets.list to return entities matching the requested IDs.
         # With FETCH_BATCH_SIZE chunking, assets.list is called multiple times
@@ -1130,7 +1096,7 @@ class TestStreamEntityTypePagination:
         assert len(results) == EVENTS_PAGE_SIZE + 1
 
         # Verify second call used cursor from last event of first page
-        calls = mock_client.events_v2.get.call_args_list
+        calls = mock_client.events.get.call_args_list
         assert len(calls) == 2
 
         second_call = calls[1]
@@ -1157,7 +1123,7 @@ class TestStreamEntityTypePagination:
             asset_uuid = UUID(f"00000000-0000-0000-0000-{i:012d}")
             asset_id = uuid_to_gumnut_asset_id(asset_uuid)
             page_events.append(
-                create_mock_v2_event(
+                create_mock_event(
                     entity_type="asset",
                     entity_id=asset_id,
                     event_type="asset_created",
@@ -1170,7 +1136,7 @@ class TestStreamEntityTypePagination:
             assets_by_id[asset_id] = asset_data
 
         # has_more=False — should not make a second call
-        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
+        mock_client.events.get.return_value = create_mock_events_response(
             page_events, has_more=False
         )
 
@@ -1195,4 +1161,4 @@ class TestStreamEntityTypePagination:
 
         assert len(results) == EVENTS_PAGE_SIZE
         # Only one API call — no second page fetch
-        mock_client.events_v2.get.assert_called_once()
+        mock_client.events.get.assert_called_once()

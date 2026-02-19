@@ -92,7 +92,7 @@ class TestSendSyncAck:
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_session_store = AsyncMock(spec=SessionStore)
 
-        # v2 ack format: "SyncEntityType|cursor|"
+        # ack format: "SyncEntityType|cursor|"
         request = SyncAckSetDto(acks=["AssetV1|event_cursor_abc|"])
 
         await send_sync_ack(

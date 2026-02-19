@@ -253,13 +253,13 @@ def create_person_response(
     )
 
 
-def create_v2_event(
+def create_event(
     entity_type: str,
     entity_id: str,
     event_type: str,
     cursor: str,
 ) -> Mock:
-    """Create a mock v2 event record."""
+    """Create a mock event record."""
     event = Mock()
     event.entity_type = entity_type
     event.entity_id = entity_id
@@ -338,19 +338,19 @@ def mock_gumnut_client(mock_gumnut_user):
     """
     Create mock Gumnut client with comprehensive test data.
 
-    Uses v2 events API (lightweight events) with separate entity batch fetching.
+    Uses events API (lightweight events) with separate entity batch fetching.
     Includes: assets, exif, faces, albums, persons
     """
     client = Mock()
     client.users.me.return_value = mock_gumnut_user
 
-    # Build entity responses and v2 events from test data
+    # Build entity responses and events from test data
     asset_responses: dict[str, AssetResponse] = {}
     face_responses: dict[str, FaceResponse] = {}
     album_responses: dict[str, AlbumResponse] = {}
     person_responses: dict[str, PersonResponse] = {}
 
-    v2_events: dict[str, list[Mock]] = {
+    mock_events: dict[str, list[Mock]] = {
         "asset": [],
         "exif": [],
         "face": [],
@@ -368,9 +368,9 @@ def mock_gumnut_client(mock_gumnut_user):
         asset_resp = create_asset_response(asset_data, exif=exif_resp)
         asset_responses[asset_data["id"]] = asset_resp
 
-        # Asset v2 event
-        v2_events["asset"].append(
-            create_v2_event(
+        # Asset event
+        mock_events["asset"].append(
+            create_event(
                 entity_type="asset",
                 entity_id=asset_data["id"],
                 event_type="asset_updated",
@@ -378,10 +378,10 @@ def mock_gumnut_client(mock_gumnut_user):
             )
         )
 
-        # Exif v2 event (entity_id = asset_id since exif is 1:1 with asset)
+        # Exif event (entity_id = asset_id since exif is 1:1 with asset)
         if asset_data.get("exif"):
-            v2_events["exif"].append(
-                create_v2_event(
+            mock_events["exif"].append(
+                create_event(
                     entity_type="exif",
                     entity_id=asset_data["id"],
                     event_type="exif_updated",
@@ -389,12 +389,12 @@ def mock_gumnut_client(mock_gumnut_user):
                 )
             )
 
-        # Face v2 events
+        # Face events
         for j, face_data in enumerate(asset_data.get("faces", [])):
             face_resp = create_face_response(asset_data["id"], face_data)
             face_responses[face_data["id"]] = face_resp
-            v2_events["face"].append(
-                create_v2_event(
+            mock_events["face"].append(
+                create_event(
                     entity_type="face",
                     entity_id=face_data["id"],
                     event_type="face_updated",
@@ -402,12 +402,12 @@ def mock_gumnut_client(mock_gumnut_user):
                 )
             )
 
-    # Album v2 events
+    # Album events
     for i, album_data in enumerate(TEST_ALBUMS_DATA):
         album_resp = create_album_response(album_data)
         album_responses[album_data["id"]] = album_resp
-        v2_events["album"].append(
-            create_v2_event(
+        mock_events["album"].append(
+            create_event(
                 entity_type="album",
                 entity_id=album_data["id"],
                 event_type="album_updated",
@@ -415,7 +415,7 @@ def mock_gumnut_client(mock_gumnut_user):
             )
         )
 
-    # Person v2 event
+    # Person event
     # Generated via: uuid_to_gumnut_person_id(UUID('770e8400-e29b-41d4-a716-446655440002'))
     person_resp = create_person_response(
         person_id="person_PCRc9xU4DgqoA8btzKftNh",
@@ -423,8 +423,8 @@ def mock_gumnut_client(mock_gumnut_user):
         thumbnail_face_id="face_nxS3BTriNXmqzFFW8ADKzf",
     )
     person_responses["person_PCRc9xU4DgqoA8btzKftNh"] = person_resp
-    v2_events["person"].append(
-        create_v2_event(
+    mock_events["person"].append(
+        create_event(
             entity_type="person",
             entity_id="person_PCRc9xU4DgqoA8btzKftNh",
             event_type="person_updated",
@@ -432,15 +432,15 @@ def mock_gumnut_client(mock_gumnut_user):
         )
     )
 
-    # Mock events_v2.get — returns lightweight v2 events
-    def mock_events_v2_get(**kwargs: Any) -> Mock:
+    # Mock events.get — returns lightweight events
+    def mock_events_get(**kwargs: Any) -> Mock:
         entity_types = kwargs.get("entity_types", "")
         response = Mock()
-        response.data = v2_events.get(entity_types, [])
+        response.data = mock_events.get(entity_types, [])
         response.has_more = False
         return response
 
-    client.events_v2.get.side_effect = mock_events_v2_get
+    client.events.get.side_effect = mock_events_get
 
     # Mock entity list endpoints for batch fetching
     def mock_assets_list(**kwargs: Any) -> Mock:
@@ -777,7 +777,7 @@ class TestSyncStreamHTTPE2E:
 
         Ack format: {entity_type}|{cursor}|
         - entity_type: matches the event type
-        - cursor: opaque v2 events cursor (user ID for auth events, empty for complete)
+        - cursor: opaque events cursor (user ID for auth events, empty for complete)
         """
         events = post_sync_stream(
             client,
@@ -792,8 +792,8 @@ class TestSyncStreamHTTPE2E:
         )
 
         # Build expected cursors from test data
-        # AuthUserV1 uses updated_at as cursor (not from v2 events)
-        # Entity types use cursor_<type>_<index> format from mock v2 events
+        # AuthUserV1 uses updated_at as cursor (not from events API)
+        # Entity types use cursor_<type>_<index> format from mock events
         face_cursors: set[str] = set()
         for i, asset in enumerate(TEST_ASSETS_DATA):
             for j in range(len(asset.get("faces", []))):
