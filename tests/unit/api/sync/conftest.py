@@ -58,7 +58,7 @@ def create_mock_gumnut_client(user: Mock) -> Mock:
     client.events.get.return_value = events_response
     # Default: empty entity list responses for batch fetching
     empty_page = Mock()
-    empty_page.__iter__ = Mock(return_value=iter([]))
+    empty_page.data = []
     client.assets.list.return_value = empty_page
     client.albums.list.return_value = empty_page
     client.album_assets.list.return_value = empty_page
@@ -227,9 +227,9 @@ def create_mock_album_asset_data(updated_at: datetime) -> Mock:
 
 
 def create_mock_entity_page(entities: list) -> Mock:
-    """Create a mock paginated entity response that is iterable."""
+    """Create a mock paginated entity response."""
     page = Mock()
-    page.__iter__ = Mock(return_value=iter(entities))
+    page.data = entities
     return page
 
 
