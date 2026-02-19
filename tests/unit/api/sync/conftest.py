@@ -51,11 +51,11 @@ def create_mock_gumnut_client(user: Mock) -> Mock:
     """Create a mock Gumnut client with the given user."""
     client = Mock()
     client.users.me.return_value = user
-    # Default: no v2 events
+    # Default: no events
     events_response = Mock()
     events_response.data = []
     events_response.has_more = False
-    client.events_v2.get.return_value = events_response
+    client.events.get.return_value = events_response
     # Default: empty entity list responses for batch fetching
     empty_page = Mock()
     empty_page.__iter__ = Mock(return_value=iter([]))
@@ -108,14 +108,14 @@ async def collect_stream(stream: AsyncGenerator[str, None]) -> list[dict]:
     return events
 
 
-def create_mock_v2_event(
+def create_mock_event(
     entity_type: str,
     entity_id: str,
     event_type: str,
     created_at: datetime,
     cursor: str = "cursor_1",
 ) -> Mock:
-    """Create a mock v2 event."""
+    """Create a mock event."""
     event = Mock()
     event.entity_type = entity_type
     event.entity_id = entity_id
@@ -126,8 +126,8 @@ def create_mock_v2_event(
     return event
 
 
-def create_mock_v2_events_response(events: list, has_more: bool = False) -> Mock:
-    """Create a mock v2 events response."""
+def create_mock_events_response(events: list, has_more: bool = False) -> Mock:
+    """Create a mock events response."""
     resp = Mock()
     resp.data = events
     resp.has_more = has_more
@@ -242,8 +242,8 @@ __all__ = [
     "create_mock_checkpoint_store",
     "create_mock_session_store",
     "collect_stream",
-    "create_mock_v2_event",
-    "create_mock_v2_events_response",
+    "create_mock_event",
+    "create_mock_events_response",
     "create_mock_asset_data",
     "create_mock_album_data",
     "create_mock_album_asset_data",
