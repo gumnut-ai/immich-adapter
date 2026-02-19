@@ -57,3 +57,13 @@ class TestIsLivePhotoVideo:
         meta = _atom(b"meta", b"\x00\x00\x00\x00" + keys)
         data = _atom(b"moov", meta)
         assert is_live_photo_video(data) is True
+
+    def test_null_terminated_key_detected(self):
+        """Key string with trailing null bytes is still matched."""
+        key = b"com.apple.quicktime.content.identifier\x00"
+        key_entry = struct.pack(">I", 8 + len(key)) + b"mdta" + key
+        keys_body = struct.pack(">II", 0, 1) + key_entry
+        keys = _atom(b"keys", keys_body)
+        meta = _atom(b"meta", keys)
+        data = _atom(b"moov", meta)
+        assert is_live_photo_video(data) is True

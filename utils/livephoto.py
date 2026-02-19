@@ -91,7 +91,7 @@ def is_live_photo_video(data: bytes) -> bool:
             key_data_end = pos + key_size
             if key_data_end > keys_end:
                 return False
-            key_string = data[pos + 8 : key_data_end]
+            key_string = data[pos + 8 : key_data_end].rstrip(b"\x00")
             if key_string == LIVE_PHOTO_KEY:
                 return True
             pos = key_data_end
