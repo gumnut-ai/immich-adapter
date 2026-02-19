@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime, timezone
 from unittest.mock import Mock, AsyncMock, patch
 from fastapi import HTTPException
-from uuid import uuid4
+from uuid import UUID, uuid4
 import base64
 
 from gumnut import GumnutError
@@ -503,7 +503,7 @@ class TestUploadAsset:
                 current_user=mock_current_user,
             )
 
-        assert result.id == "00000000-0000-0000-0000-000000000000"
+        assert UUID(result.id)  # valid UUID
         assert result.status == AssetMediaStatus.created
         mock_client.assets.create.assert_not_called()
 
@@ -529,7 +529,7 @@ class TestUploadAsset:
                 current_user=mock_current_user,
             )
 
-        assert result.id == "00000000-0000-0000-0000-000000000000"
+        assert UUID(result.id)  # valid UUID
         assert result.status == AssetMediaStatus.created
         mock_client.assets.create.assert_not_called()
 

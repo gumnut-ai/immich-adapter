@@ -1,5 +1,5 @@
 from typing import List
-from uuid import UUID
+from uuid import UUID, uuid4
 import base64
 import logging
 from datetime import datetime
@@ -355,8 +355,11 @@ async def upload_asset(
                     "content_type": assetData.content_type,
                 },
             )
+            # Unique ID for the dropped asset. Currently unused by the Immich
+            # mobile client, but included for future safety so responses
+            # don't collide.
             return AssetMediaResponseDto(
-                id="00000000-0000-0000-0000-000000000000",
+                id=str(uuid4()),
                 status=AssetMediaStatus.created,
             )
 
