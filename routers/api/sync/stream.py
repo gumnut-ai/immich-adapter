@@ -392,28 +392,28 @@ def _fetch_entities_map(
     for chunk in _batched(unique_ids, FETCH_BATCH_SIZE):
         if gumnut_entity_type == "asset":
             page = gumnut_client.assets.list(ids=chunk, limit=len(chunk))
-            result.update({entity.id: entity for entity in page})
+            result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "album":
             page = gumnut_client.albums.list(ids=chunk, limit=len(chunk))
-            result.update({entity.id: entity for entity in page})
+            result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "person":
             page = gumnut_client.people.list(ids=chunk, limit=len(chunk))
-            result.update({entity.id: entity for entity in page})
+            result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "face":
             page = gumnut_client.faces.list(ids=chunk, limit=len(chunk))
-            result.update({entity.id: entity for entity in page})
+            result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "album_asset":
             page = gumnut_client.album_assets.list(ids=chunk, limit=len(chunk))
-            result.update({entity.id: entity for entity in page})
+            result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "exif":
             # Exif is 1:1 with asset; exif events use entity_id = asset_id
             page = gumnut_client.assets.list(ids=chunk, limit=len(chunk))
-            for asset in page:
+            for asset in page.data:
                 if asset.exif:
                     result[asset.exif.asset_id] = asset.exif
                 else:

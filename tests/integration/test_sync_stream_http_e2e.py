@@ -270,9 +270,9 @@ def create_event(
 
 
 def create_mock_entity_page(entities: list) -> Mock:
-    """Create a mock paginated entity response that is iterable."""
+    """Create a mock paginated entity response."""
     page = Mock()
-    page.__iter__ = Mock(return_value=iter(entities))
+    page.data = entities
     return page
 
 
