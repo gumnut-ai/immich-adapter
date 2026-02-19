@@ -20,11 +20,10 @@ def _find_atom(
     while pos + 8 <= end:
         size, atom_type = struct.unpack(">I4s", data[pos : pos + 8])
         if size < 8:
-            # Invalid atom size
-            return None
+            break
         atom_end = pos + size
         if atom_end > end:
-            return None
+            break
         if atom_type == target:
             return (pos + 8, atom_end)
         pos = atom_end
