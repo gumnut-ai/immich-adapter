@@ -3,11 +3,21 @@
 import struct
 from pathlib import Path
 
+import pytest
+
 from utils.livephoto import is_live_photo_video
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent / "fixtures" / "livephoto"
-SAMPLE_MOV = (FIXTURES_DIR / "IMG_1309.MOV").read_bytes()
-SAMPLE_HEIC = (FIXTURES_DIR / "IMG_1309.HEIC").read_bytes()
+
+
+@pytest.fixture
+def sample_mov() -> bytes:
+    return (FIXTURES_DIR / "IMG_1309.MOV").read_bytes()
+
+
+@pytest.fixture
+def sample_heic() -> bytes:
+    return (FIXTURES_DIR / "IMG_1309.HEIC").read_bytes()
 
 
 def _atom(atom_type: bytes, body: bytes) -> bytes:
@@ -18,13 +28,13 @@ def _atom(atom_type: bytes, body: bytes) -> bytes:
 class TestIsLivePhotoVideo:
     """Tests for is_live_photo_video function."""
 
-    def test_real_live_photo_mov_detected(self):
+    def test_real_live_photo_mov_detected(self, sample_mov: bytes):
         """Real iOS live photo .MOV is correctly identified."""
-        assert is_live_photo_video(SAMPLE_MOV) is True
+        assert is_live_photo_video(sample_mov) is True
 
-    def test_real_heic_not_detected(self):
+    def test_real_heic_not_detected(self, sample_heic: bytes):
         """Real iOS .HEIC still image is not identified as live photo video."""
-        assert is_live_photo_video(SAMPLE_HEIC) is False
+        assert is_live_photo_video(sample_heic) is False
 
     def test_empty_data_returns_false(self):
         assert is_live_photo_video(b"") is False
