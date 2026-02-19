@@ -55,6 +55,7 @@ from routers.utils.asset_conversion import (
     convert_gumnut_asset_to_immich,
     mime_type_to_asset_type,
 )
+from utils.livephoto import is_live_photo_video
 from routers.immich_models import AssetTypeEnum
 
 logger = logging.getLogger(__name__)
@@ -334,6 +335,30 @@ async def upload_asset(
 
         # Read the binary data from the uploaded file
         asset_data = await assetData.read()
+
+        # Drop iOS live photo .MOV files — they upload as separate video files
+        # that would become orphan assets since Gumnut doesn't support live photos.
+        # The Immich mobile client sends .MOV files with content_type
+        # "application/octet-stream", so we check both the content type and the
+        # file extension to determine if this might be a video.
+        filename_lower = (assetData.filename or "").lower()
+        may_be_video = (
+            assetData.content_type and assetData.content_type.startswith("video/")
+        ) or filename_lower.endswith((".mov", ".mp4", ".m4v"))
+        if may_be_video and is_live_photo_video(asset_data):
+            logger.info(
+                "Dropping iOS live photo video",
+                extra={
+                    "device_asset_id": deviceAssetId,
+                    "device_id": deviceId,
+                    "upload_filename": assetData.filename,
+                    "content_type": assetData.content_type,
+                },
+            )
+            return AssetMediaResponseDto(
+                id="00000000-0000-0000-0000-000000000000",
+                status=AssetMediaStatus.created,
+            )
 
         # Create asset using Gumnut SDK
         gumnut_asset = client.assets.create(

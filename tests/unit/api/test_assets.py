@@ -480,6 +480,101 @@ class TestUploadAsset:
             assert second_call[0][1] == mock_current_user.id
 
     @pytest.mark.anyio
+    async def test_upload_live_photo_mov_is_dropped(self, mock_current_user):
+        """Test that iOS live photo .MOV files are silently dropped.
+
+        The Immich mobile client sends .MOV files with content_type
+        "application/octet-stream", so detection relies on filename extension.
+        """
+        mock_client = Mock()
+
+        mock_file = Mock()
+        mock_file.filename = "IMG_1234.MOV"
+        mock_file.content_type = "application/octet-stream"
+        mock_file.read = AsyncMock(return_value=b"fake live photo data")
+
+        with patch("routers.api.assets.is_live_photo_video", return_value=True):
+            result = await upload_asset(
+                assetData=mock_file,
+                deviceAssetId="device-123",
+                deviceId="device-456",
+                fileCreatedAt="2023-01-01T12:00:00Z",
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        assert result.id == "00000000-0000-0000-0000-000000000000"
+        assert result.status == AssetMediaStatus.created
+        mock_client.assets.create.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_upload_live_photo_mov_with_video_content_type_is_dropped(
+        self, mock_current_user
+    ):
+        """Test that live photo .MOV with video/* content type is also dropped."""
+        mock_client = Mock()
+
+        mock_file = Mock()
+        mock_file.filename = "IMG_1234.MOV"
+        mock_file.content_type = "video/quicktime"
+        mock_file.read = AsyncMock(return_value=b"fake live photo data")
+
+        with patch("routers.api.assets.is_live_photo_video", return_value=True):
+            result = await upload_asset(
+                assetData=mock_file,
+                deviceAssetId="device-123",
+                deviceId="device-456",
+                fileCreatedAt="2023-01-01T12:00:00Z",
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        assert result.id == "00000000-0000-0000-0000-000000000000"
+        assert result.status == AssetMediaStatus.created
+        mock_client.assets.create.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_upload_regular_video_proceeds(self, sample_uuid, mock_current_user):
+        """Test that regular video uploads are not dropped."""
+        mock_client = Mock()
+
+        mock_gumnut_asset = Mock()
+        mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.original_file_name = "video.mp4"
+        mock_gumnut_asset.created_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.mime_type = "video/mp4"
+        mock_gumnut_asset.width = 1920
+        mock_gumnut_asset.height = 1080
+        mock_gumnut_asset.file_size_bytes = 10240
+        mock_gumnut_asset.exif = None
+        mock_gumnut_asset.people = []
+        mock_client.assets.create.return_value = mock_gumnut_asset
+
+        mock_file = Mock()
+        mock_file.filename = "video.mp4"
+        mock_file.content_type = "video/mp4"
+        mock_file.read = AsyncMock(return_value=b"fake video data")
+
+        with (
+            patch("routers.api.assets.is_live_photo_video", return_value=False),
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+        ):
+            result = await upload_asset(
+                assetData=mock_file,
+                deviceAssetId="device-123",
+                deviceId="device-456",
+                fileCreatedAt="2023-01-01T12:00:00Z",
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        assert result.id == str(sample_uuid)
+        assert result.status == AssetMediaStatus.created
+        mock_client.assets.create.assert_called_once()
+
+    @pytest.mark.anyio
     async def test_upload_asset_websocket_error_does_not_fail_upload(
         self, sample_uuid, mock_current_user
     ):
