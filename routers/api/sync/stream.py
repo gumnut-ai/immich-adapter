@@ -21,6 +21,7 @@ from gumnut.types.person_response import PersonResponse
 
 from routers.immich_models import (
     SyncAlbumDeleteV1,
+    SyncAlbumToAssetDeleteV1,
     SyncAssetDeleteV1,
     SyncAssetFaceDeleteV1,
     SyncEntityType,
@@ -63,6 +64,7 @@ _DELETE_EVENT_TYPES = frozenset(
         "album_deleted",
         "person_deleted",
         "face_deleted",
+        "album_asset_removed",
     }
 )
 
@@ -70,7 +72,6 @@ _DELETE_EVENT_TYPES = frozenset(
 _SKIPPED_EVENT_TYPES = frozenset(
     {
         "exif_deleted",  # Immich handles via asset deletion
-        "album_asset_removed",  # Record is gone by deletion time; can't resolve albumId+assetId
     }
 )
 
@@ -80,6 +81,7 @@ _DELETE_EVENT_ENTITY_TYPES: dict[str, str] = {
     "album_deleted": "album",
     "person_deleted": "person",
     "face_deleted": "face",
+    "album_asset_removed": "album_asset",
 }
 
 # Mapping from SyncRequestType to (gumnut_entity_type, SyncEntityType)
@@ -237,6 +239,63 @@ def _make_delete_sync_event(
                 event.cursor,
             ),
             SyncEntityType.AssetFaceDeleteV1,
+        )
+
+    elif event.event_type == "album_asset_removed":
+        if not isinstance(event.payload, dict):
+            logger.warning(
+                "album_asset_removed event payload missing or invalid, skipping",
+                extra={
+                    "event_type": event.event_type,
+                    "cursor": event.cursor,
+                    "created_at": event.created_at,
+                    "entity_id": event.entity_id,
+                    "payload": event.payload,
+                },
+            )
+            return None
+
+        album_id = event.payload.get("album_id")
+        asset_id = event.payload.get("asset_id")
+        if not isinstance(album_id, (str, int)) or not isinstance(asset_id, (str, int)):
+            logger.warning(
+                "album_asset_removed event album_id/asset_id missing or invalid type, skipping",
+                extra={
+                    "event_type": event.event_type,
+                    "cursor": event.cursor,
+                    "created_at": event.created_at,
+                    "entity_id": event.entity_id,
+                    "payload": event.payload,
+                },
+            )
+            return None
+
+        album_id_str = str(album_id).strip()
+        asset_id_str = str(asset_id).strip()
+        if not album_id_str or not asset_id_str:
+            logger.warning(
+                "album_asset_removed event album_id/asset_id empty after conversion, skipping",
+                extra={
+                    "event_type": event.event_type,
+                    "cursor": event.cursor,
+                    "created_at": event.created_at,
+                    "entity_id": event.entity_id,
+                    "payload": event.payload,
+                },
+            )
+            return None
+
+        data = SyncAlbumToAssetDeleteV1(
+            albumId=str(safe_uuid_from_album_id(album_id_str)),
+            assetId=str(safe_uuid_from_asset_id(asset_id_str)),
+        )
+        return (
+            _make_sync_event(
+                SyncEntityType.AlbumToAssetDeleteV1,
+                data.model_dump(mode="json"),
+                event.cursor,
+            ),
+            SyncEntityType.AlbumToAssetDeleteV1,
         )
 
     logger.warning(

@@ -122,6 +122,7 @@ def create_mock_v2_event(
     event.event_type = event_type
     event.created_at = created_at
     event.cursor = cursor
+    event.payload = None
     return event
 
 

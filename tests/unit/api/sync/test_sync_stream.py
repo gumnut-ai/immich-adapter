@@ -483,19 +483,22 @@ class TestGenerateSyncStream:
         )
 
     @pytest.mark.anyio
-    async def test_skips_album_asset_removed_event(self):
-        """album_asset_removed events are silently skipped."""
+    async def test_streams_album_asset_removed_event(self):
+        """album_asset_removed events with payload produce AlbumToAssetDeleteV1."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
+        album_id = uuid_to_gumnut_album_id(TEST_UUID)
+        asset_id = uuid_to_gumnut_asset_id(UUID("00000000-0000-0000-0000-000000000099"))
         v2_event = create_mock_v2_event(
             entity_type="album_asset",
-            entity_id="some-album-asset-id",
+            entity_id="album_asset_some_id",
             event_type="album_asset_removed",
             created_at=updated_at,
             cursor="cursor_del_aa",
         )
+        v2_event.payload = {"album_id": album_id, "asset_id": asset_id}
         mock_client.events_v2.get.return_value = create_mock_v2_events_response(
             [v2_event]
         )
@@ -507,7 +510,45 @@ class TestGenerateSyncStream:
             generate_sync_stream(mock_client, request, checkpoint_map)
         )
 
-        # Only SyncCompleteV1 — album_asset_removed was skipped
+        assert len(events) == 2
+        assert events[0]["type"] == "AlbumToAssetDeleteV1"
+        assert events[0]["data"]["albumId"] == str(TEST_UUID)
+        assert events[0]["data"]["assetId"] == str(
+            UUID("00000000-0000-0000-0000-000000000099")
+        )
+        # Verify cursor is propagated in the ack string
+        ack_parts = events[0]["ack"].split("|")
+        assert ack_parts[0] == "AlbumToAssetDeleteV1"
+        assert ack_parts[1] == "cursor_del_aa"
+        assert events[1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_skips_album_asset_removed_without_payload(self):
+        """album_asset_removed events without payload are gracefully skipped."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        v2_event = create_mock_v2_event(
+            entity_type="album_asset",
+            entity_id="album_asset_some_id",
+            event_type="album_asset_removed",
+            created_at=updated_at,
+            cursor="cursor_del_aa",
+        )
+        v2_event.payload = None  # Old event before migration
+        mock_client.events_v2.get.return_value = create_mock_v2_events_response(
+            [v2_event]
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.AlbumToAssetsV1])
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        # Only SyncCompleteV1 — album_asset_removed without payload was skipped
         assert len(events) == 1
         assert events[0]["type"] == "SyncCompleteV1"
 
