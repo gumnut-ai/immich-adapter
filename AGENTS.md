@@ -96,3 +96,34 @@ The sync stream (`routers/api/sync/stream.py`) consumes events from photos-api a
 
 - When updating pull requests with additional commits, update the PR description to include the latest changes
 - Always run tests and formatting before creating a PR
+
+## Documentation Map
+
+Detailed docs are in the `docs/` directory. Consult these when working in the relevant areas:
+
+### Architecture
+
+| Topic | Document | Consult when... |
+|-------|----------|-----------------|
+| Adapter architecture | `docs/architecture/adapter-architecture.md` | Understanding overall adapter design, request flow, middleware |
+| WebSocket implementation | `docs/architecture/websocket-implementation.md` | WebSocket connections, real-time sync, event handling |
+| Session & checkpoint implementation | `docs/architecture/session-checkpoint-implementation.md` | Session management, checkpoint tracking, sync state |
+
+### Design Docs
+
+| Topic | Document | Consult when... |
+|-------|----------|-----------------|
+| Immich auth architecture | `docs/design-docs/immich-auth-architecture.md` | Legacy auth design (deprecated, see auth-design.md) |
+| Authentication design | `docs/design-docs/auth-design.md` | Current auth architecture, OAuth, token handling |
+| Static file sharing | `docs/design-docs/static-file-sharing.md` | File sharing proposals, static asset serving |
+| Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Docker deployment, Render configuration |
+| Checksum support | `docs/design-docs/checksum-support.md` | File integrity, checksum validation, deduplication |
+
+### References
+
+| Topic | Document | Consult when... |
+|-------|----------|-----------------|
+| WebSocket events reference | `docs/references/websocket-events-reference.md` | WebSocket event types, payload formats |
+| Session & checkpoint reference | `docs/references/session-checkpoint-reference.md` | Session/checkpoint object shapes, field definitions |
+| Immich sync communication | `docs/references/immich-sync-communication.md` | Immich client-server sync protocol, message formats |
+| Uvicorn settings | `docs/references/uvicorn-settings.md` | Server configuration, worker settings, timeouts |
