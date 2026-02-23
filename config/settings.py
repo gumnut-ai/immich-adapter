@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # Redis connection pool settings
     # Cap the pool so we fail fast when all connections are in use, instead of
     # silently creating thousands of connections. Default is 2**31 (effectively unlimited).
-    redis_max_connections: int = 20
+    redis_max_connections: int = 50
     # Bound the TCP handshake so a DNS or network issue surfaces quickly rather
     # than blocking indefinitely. Default is None (no timeout).
     redis_socket_connect_timeout: int = 5
