@@ -30,9 +30,17 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/1"
 
     # Redis connection pool settings
+    # Cap the pool so we fail fast when all connections are in use, instead of
+    # silently creating thousands of connections. Default is 2**31 (effectively unlimited).
     redis_max_connections: int = 20
+    # Bound the TCP handshake so a DNS or network issue surfaces quickly rather
+    # than blocking indefinitely. Default is None (no timeout).
     redis_socket_connect_timeout: int = 5
+    # Bound individual read/write operations so a stalled Redis command doesn't
+    # pin a connection forever. Default is None (no timeout).
     redis_socket_timeout: int = 5
+    # Proactively verify idle connections before reuse, avoiding errors from
+    # connections silently closed by the server or a proxy. Default is 0 (disabled).
     redis_health_check_interval: int = 30
 
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
