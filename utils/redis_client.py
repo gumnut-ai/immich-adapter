@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import redis.asyncio as redis
 
@@ -25,7 +26,12 @@ async def get_redis_client() -> redis.Redis:
             if _redis_client is None:
                 settings = get_settings()
                 _redis_client = redis.from_url(
-                    settings.redis_url, decode_responses=True
+                    settings.redis_url,
+                    decode_responses=True,
+                    max_connections=settings.redis_max_connections,
+                    socket_connect_timeout=settings.redis_socket_connect_timeout,
+                    socket_timeout=settings.redis_socket_timeout,
+                    health_check_interval=settings.redis_health_check_interval,
                 )
     return _redis_client
 
@@ -51,3 +57,11 @@ async def close_redis_client() -> None:
             pass
         finally:
             _redis_client = None
+
+
+def _reset_for_testing() -> None:
+    """Reset module state. Only for use in tests."""
+    if os.getenv("PYTEST_CURRENT_TEST") is None:
+        raise RuntimeError("_reset_for_testing is for tests only")
+    global _redis_client
+    _redis_client = None

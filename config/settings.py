@@ -29,6 +29,20 @@ class Settings(BaseSettings):
     # Redis settings (uses db 1 for isolation from photos-api which uses db 0)
     redis_url: str = "redis://localhost:6379/1"
 
+    # Redis connection pool settings
+    # Cap the pool so we fail fast when all connections are in use, instead of
+    # silently creating thousands of connections. redis-py default is 2**31 (effectively unlimited).
+    redis_max_connections: int = 50
+    # Seconds. Bound the TCP handshake so a DNS or network issue surfaces quickly
+    # rather than blocking indefinitely. None disables (redis-py default).
+    redis_socket_connect_timeout: float | None = 5.0
+    # Seconds. Bound individual read/write operations so a stalled Redis command
+    # doesn't pin a connection forever. None disables (redis-py default).
+    redis_socket_timeout: float | None = 5.0
+    # Seconds. Proactively verify idle connections before reuse, avoiding errors
+    # from connections silently closed by the server or a proxy. 0 disables (redis-py default).
+    redis_health_check_interval: int = 30
+
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
     oauth_mobile_redirect_uri: str = "app.immich:///oauth-callback"
 
