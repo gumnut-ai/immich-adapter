@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # Redis settings (uses db 1 for isolation from photos-api which uses db 0)
     redis_url: str = "redis://localhost:6379/1"
 
+    # Redis connection pool settings
+    redis_max_connections: int = 20
+    redis_socket_connect_timeout: int = 5
+    redis_socket_timeout: int = 5
+    redis_health_check_interval: int = 30
+
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
     oauth_mobile_redirect_uri: str = "app.immich:///oauth-callback"
 

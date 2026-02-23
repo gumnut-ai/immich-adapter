@@ -30,19 +30,19 @@ async def get_redis_client() -> redis.Redis:
                     # Cap the pool so we fail fast when all connections are
                     # in use, instead of silently creating thousands of
                     # connections. Default is 2**31 (effectively unlimited).
-                    max_connections=20,
+                    max_connections=settings.redis_max_connections,
                     # Bound the TCP handshake so a DNS or network issue
                     # surfaces quickly rather than blocking indefinitely.
                     # Default is None (no timeout).
-                    socket_connect_timeout=5,
+                    socket_connect_timeout=settings.redis_socket_connect_timeout,
                     # Bound individual read/write operations so a stalled
                     # Redis command doesn't pin a connection forever.
                     # Default is None (no timeout).
-                    socket_timeout=5,
+                    socket_timeout=settings.redis_socket_timeout,
                     # Proactively verify idle connections before reuse,
                     # avoiding errors from connections silently closed by
                     # the server or a proxy. Default is 0 (disabled).
-                    health_check_interval=30,
+                    health_check_interval=settings.redis_health_check_interval,
                 )
     return _redis_client
 
@@ -68,3 +68,10 @@ async def close_redis_client() -> None:
             pass
         finally:
             _redis_client = None
+
+
+def _reset_for_testing() -> None:
+    """Reset module state. Only for use in tests."""
+    global _redis_client, _redis_lock
+    _redis_client = None
+    _redis_lock = asyncio.Lock()
