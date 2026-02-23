@@ -5,7 +5,39 @@ from unittest.mock import AsyncMock, patch
 
 import redis.exceptions
 
-from utils.redis_client import check_redis_connection
+from utils.redis_client import check_redis_connection, get_redis_client
+
+
+class TestGetRedisClient:
+    """Tests for get_redis_client()."""
+
+    @pytest.fixture(autouse=True)
+    def reset_redis_client(self):
+        """Reset the module-level singleton before each test."""
+        import utils.redis_client as mod
+
+        mod._redis_client = None
+        yield
+        mod._redis_client = None
+
+    @pytest.mark.anyio
+    async def test_get_redis_client_pool_configuration(self):
+        """Test that Redis client is created with connection pool parameters."""
+        mock_client = AsyncMock()
+
+        with patch(
+            "utils.redis_client.redis.from_url", return_value=mock_client
+        ) as mock_from_url:
+            client = await get_redis_client()
+
+            mock_from_url.assert_called_once()
+            call_kwargs = mock_from_url.call_args.kwargs
+            assert call_kwargs["decode_responses"] is True
+            assert call_kwargs["max_connections"] == 20
+            assert call_kwargs["socket_connect_timeout"] == 5
+            assert call_kwargs["socket_timeout"] == 5
+            assert call_kwargs["health_check_interval"] == 30
+            assert client is mock_client
 
 
 class TestCheckRedisConnection:
