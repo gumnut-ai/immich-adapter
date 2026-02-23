@@ -30,8 +30,8 @@ class TestGetRedisClient:
         mock_settings = AsyncMock()
         mock_settings.redis_url = "redis://localhost:6379/1"
         mock_settings.redis_max_connections = 20
-        mock_settings.redis_socket_connect_timeout = 5
-        mock_settings.redis_socket_timeout = 5
+        mock_settings.redis_socket_connect_timeout = 5.0
+        mock_settings.redis_socket_timeout = 5.0
         mock_settings.redis_health_check_interval = 30
 
         with (
@@ -40,9 +40,13 @@ class TestGetRedisClient:
             ) as mock_from_url,
             patch("utils.redis_client.get_settings", return_value=mock_settings),
         ):
-            client = await get_redis_client()
+            client1 = await get_redis_client()
+            client2 = await get_redis_client()
 
+            # Singleton: same instance returned, from_url called only once
+            assert client1 is client2
             mock_from_url.assert_called_once()
+
             call_kwargs = mock_from_url.call_args.kwargs
             assert call_kwargs["decode_responses"] is True
             assert call_kwargs["max_connections"] == mock_settings.redis_max_connections
@@ -55,7 +59,7 @@ class TestGetRedisClient:
                 call_kwargs["health_check_interval"]
                 == mock_settings.redis_health_check_interval
             )
-            assert client is mock_client
+            assert client1 is mock_client
 
 
 class TestCheckRedisConnection:

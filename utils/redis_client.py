@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import redis.asyncio as redis
 
@@ -60,6 +61,7 @@ async def close_redis_client() -> None:
 
 def _reset_for_testing() -> None:
     """Reset module state. Only for use in tests."""
-    global _redis_client, _redis_lock
+    if os.getenv("PYTEST_CURRENT_TEST") is None:
+        raise RuntimeError("_reset_for_testing is for tests only")
+    global _redis_client
     _redis_client = None
-    _redis_lock = asyncio.Lock()
