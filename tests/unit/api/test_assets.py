@@ -326,7 +326,7 @@ class TestUploadAsset:
     @pytest.mark.anyio
     async def test_upload_asset_success(self, sample_uuid, mock_current_user):
         """Test successful asset upload."""
-        # Setup - create mock client
+        # Setup - create mock client (AsyncMock for assets.create since it's awaited)
         mock_client = Mock()
 
         # Mock the gumnut asset response with proper Gumnut ID format
@@ -342,7 +342,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create.return_value = mock_gumnut_asset
+        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
 
         # Mock the file data
         mock_file = Mock()
@@ -372,9 +372,11 @@ class TestUploadAsset:
     @pytest.mark.anyio
     async def test_upload_asset_duplicate(self, sample_uuid, mock_current_user):
         """Test upload asset with duplicate error."""
-        # Setup - create mock client
+        # Setup - create mock client (AsyncMock for assets.create since it's awaited)
         mock_client = Mock()
-        mock_client.assets.create.side_effect = Exception("Asset already exists")
+        mock_client.assets.create = AsyncMock(
+            side_effect=Exception("Asset already exists")
+        )
 
         # Mock the file data
         mock_file = Mock()
@@ -400,9 +402,11 @@ class TestUploadAsset:
     @pytest.mark.anyio
     async def test_upload_asset_api_error(self, mock_current_user):
         """Test upload asset with API error."""
-        # Setup - create mock client
+        # Setup - create mock client (AsyncMock for assets.create since it's awaited)
         mock_client = Mock()
-        mock_client.assets.create.side_effect = Exception("401 Invalid API key")
+        mock_client.assets.create = AsyncMock(
+            side_effect=Exception("401 Invalid API key")
+        )
 
         # Mock the file data
         mock_file = Mock()
@@ -429,7 +433,7 @@ class TestUploadAsset:
         self, sample_uuid, mock_current_user
     ):
         """Test that upload_asset emits on_upload_success and AssetUploadReadyV1 events."""
-        # Setup - create mock client
+        # Setup - create mock client (AsyncMock for assets.create since it's awaited)
         mock_client = Mock()
 
         # Mock the gumnut asset response
@@ -445,7 +449,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create.return_value = mock_gumnut_asset
+        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
 
         # Mock the file data
         mock_file = Mock()
@@ -550,7 +554,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 10240
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create.return_value = mock_gumnut_asset
+        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
 
         mock_file = Mock()
         mock_file.filename = "video.mp4"
@@ -579,7 +583,7 @@ class TestUploadAsset:
         self, sample_uuid, mock_current_user
     ):
         """Test that WebSocket emission errors don't fail the upload."""
-        # Setup - create mock client
+        # Setup - create mock client (AsyncMock for assets.create since it's awaited)
         mock_client = Mock()
 
         # Mock the gumnut asset response
@@ -595,7 +599,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create.return_value = mock_gumnut_asset
+        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
 
         # Mock the file data
         mock_file = Mock()

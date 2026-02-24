@@ -40,7 +40,10 @@ from routers.api import (
     view,
 )
 from services import websockets
-from routers.utils.gumnut_client import close_shared_http_client
+from routers.utils.gumnut_client import (
+    close_shared_async_http_client,
+    close_shared_http_client,
+)
 from utils.redis_client import check_redis_connection, close_redis_client
 
 init_logging()
@@ -57,8 +60,9 @@ async def lifespan(app: FastAPI):
     await check_redis_connection()
 
     yield
-    # Ensure the singleton HTTP client for Gumnut is closed on shutdown
+    # Ensure the singleton HTTP clients for Gumnut are closed on shutdown
     await close_shared_http_client()
+    await close_shared_async_http_client()
     # Close Redis client
     await close_redis_client()
 

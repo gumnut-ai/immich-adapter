@@ -16,9 +16,12 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from gumnut import Gumnut, GumnutError
+from gumnut import AsyncGumnut, Gumnut, GumnutError
 
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_async_gumnut_client,
+    get_authenticated_gumnut_client,
+)
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
@@ -307,12 +310,15 @@ async def upload_asset(
     duration: str = Form(None),
     key: str = Query(default=None),
     slug: str = Query(default=None),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_async_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetMediaResponseDto:
     """
     Upload an asset using the Gumnut SDK.
     Creates a new asset in Gumnut from the provided asset data.
+
+    Uses AsyncGumnut so the SDK call yields the event loop instead of blocking
+    it for the full photos-api round-trip (~1.7s locally, ~5s production).
     """
 
     try:
@@ -363,8 +369,8 @@ async def upload_asset(
                 status=AssetMediaStatus.created,
             )
 
-        # Create asset using Gumnut SDK
-        gumnut_asset = client.assets.create(
+        # Create asset using async Gumnut SDK (yields event loop during HTTP call)
+        gumnut_asset = await client.assets.create(
             asset_data=(assetData.filename, asset_data, assetData.content_type),
             device_asset_id=deviceAssetId,
             device_id=deviceId,
@@ -409,8 +415,6 @@ async def upload_asset(
         # Handle specific upload error cases first
         error_msg = str(e).lower()
         if "duplicate" in error_msg or "already exists" in error_msg:
-            # If it's a duplicate, we still need an asset ID
-            # This is a simplified approach - in a real implementation you'd extract the existing asset ID
             return AssetMediaResponseDto(
                 id="00000000-0000-0000-0000-000000000000",  # Placeholder
                 status=AssetMediaStatus.duplicate,
@@ -420,7 +424,6 @@ async def upload_asset(
         elif check_for_error_by_code(e, 415) or "unsupported" in error_msg:
             raise HTTPException(status_code=415, detail="Unsupported media type")
         else:
-            # Use the general error mapper for other cases
             raise map_gumnut_error(e, "Failed to upload asset")
 
 

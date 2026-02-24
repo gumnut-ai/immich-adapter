@@ -2,7 +2,7 @@ import httpx
 import threading
 from contextvars import ContextVar
 from fastapi import HTTPException, Request, status
-from gumnut import Gumnut
+from gumnut import AsyncGumnut, Gumnut
 
 from config.settings import get_settings
 
@@ -36,6 +36,7 @@ _refreshed_token_var: ContextVar[str | None] = ContextVar(
 _thread_local = threading.local()
 
 _shared_http_client: httpx.Client | None = None
+_shared_async_http_client: httpx.AsyncClient | None = None
 
 
 def get_refreshed_token() -> str | None:
@@ -90,8 +91,22 @@ def _response_hook(response: httpx.Response) -> None:
     'x-new-access-token' header. This hook captures that token and stores it
     in both ContextVar and thread-local storage for later retrieval by middleware.
 
+    Used by the sync httpx.Client. For httpx.AsyncClient, use _async_response_hook.
+
     Args:
         response: The httpx Response object from the Gumnut API
+    """
+    token = response.headers.get("x-new-access-token")
+    if token:
+        set_refreshed_token(token)
+
+
+async def _async_response_hook(response: httpx.Response) -> None:
+    """
+    Async HTTP response hook for httpx.AsyncClient.
+
+    httpx.AsyncClient awaits response event hooks, so this must be an async function.
+    Same logic as _response_hook.
     """
     token = response.headers.get("x-new-access-token")
     if token:
@@ -137,6 +152,68 @@ async def close_shared_http_client() -> None:
     if _shared_http_client is not None:
         _shared_http_client.close()
         _shared_http_client = None
+
+
+def get_shared_async_http_client() -> httpx.AsyncClient:
+    """
+    Get or create the shared async HTTP client for Gumnut connections.
+
+    Used by AsyncGumnut for non-blocking SDK calls (e.g., asset uploads).
+    Same pooling config and response hook as the sync client.
+    """
+    global _shared_async_http_client
+    if _shared_async_http_client is None:
+        _shared_async_http_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+            event_hooks={"response": [_async_response_hook]},
+        )
+    return _shared_async_http_client
+
+
+async def close_shared_async_http_client() -> None:
+    """
+    Close and clean up the shared async HTTP client.
+    Should be called on application shutdown to release resources.
+    """
+    global _shared_async_http_client
+    if _shared_async_http_client is not None:
+        await _shared_async_http_client.aclose()
+        _shared_async_http_client = None
+
+
+def get_async_gumnut_client(jwt_token: str) -> AsyncGumnut:
+    """
+    Create and return an async Gumnut client instance with the given JWT.
+
+    Uses a shared async HTTP client for connection pooling.
+    Used for endpoints that need non-blocking SDK calls (e.g., asset uploads).
+    """
+    settings = get_settings()
+
+    return AsyncGumnut(
+        api_key=jwt_token,
+        base_url=settings.gumnut_api_base_url,
+        http_client=get_shared_async_http_client(),
+    )
+
+
+async def get_authenticated_async_gumnut_client(request: Request) -> AsyncGumnut:
+    """
+    Dependency that provides an authenticated async Gumnut client.
+
+    Same auth check as get_authenticated_gumnut_client, but returns an
+    AsyncGumnut backed by httpx.AsyncClient for non-blocking SDK calls.
+    """
+    jwt_token = getattr(request.state, "jwt_token", None)
+
+    if not jwt_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+
+    return get_async_gumnut_client(jwt_token)
 
 
 def get_gumnut_client(jwt_token: str) -> Gumnut:
