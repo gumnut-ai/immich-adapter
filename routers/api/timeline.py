@@ -1,3 +1,4 @@
+from calendar import monthrange
 from collections import defaultdict
 from datetime import datetime
 from uuid import UUID
@@ -151,33 +152,42 @@ async def get_time_bucket(
     """
 
     try:
-        # Call assets.list() with optional albumId parameter
+        # Compute month boundaries from timeBucket for date-range filtering
+        bucket_date = datetime.fromisoformat(timeBucket)
+        month_start = bucket_date.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        _, last_day = monthrange(month_start.year, month_start.month)
+        month_end = month_start.replace(
+            day=last_day, hour=23, minute=59, second=59, microsecond=999999
+        )
+        date_range_query = {
+            "local_datetime_after": month_start.isoformat(),
+            "local_datetime_before": month_end.isoformat(),
+        }
+
         if albumId:
+            # Albums endpoint doesn't support date-range filtering,
+            # so we fetch all and filter in-memory
             gumnut_album_id = uuid_to_gumnut_album_id(albumId)
             gumnut_assets_response = client.albums.assets_associations.list(
                 gumnut_album_id
             )
-            gumnut_assets = list(gumnut_assets_response)
+            filtered_assets: List[AssetResponse] = [
+                asset
+                for asset in gumnut_assets_response
+                if asset.local_datetime.year == month_start.year
+                and asset.local_datetime.month == month_start.month
+            ]
         elif personId:
-            gumnut_assets_response = client.assets.list(
-                person_id=uuid_to_gumnut_person_id(personId)
+            filtered_assets = list(
+                client.assets.list(
+                    person_id=uuid_to_gumnut_person_id(personId),
+                    extra_query=date_range_query,
+                )
             )
-            gumnut_assets = list(gumnut_assets_response)
         else:
-            # Get all assets
-            gumnut_assets_response = client.assets.list()
-            gumnut_assets = list(gumnut_assets_response)
-
-        # Filter assets by year and month matching timeBucket
-        bucketDate = datetime.fromisoformat(timeBucket)
-        target_year = bucketDate.year
-        target_month = bucketDate.month
-        filtered_assets: List[AssetResponse] = [
-            asset
-            for asset in gumnut_assets
-            if asset.local_datetime.year == target_year
-            and asset.local_datetime.month == target_month
-        ]
+            filtered_assets = list(client.assets.list(extra_query=date_range_query))
 
         # Build the response arrays based on filtered assets
         asset_count = len(filtered_assets)
