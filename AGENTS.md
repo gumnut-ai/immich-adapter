@@ -37,6 +37,11 @@
 - When working with datetimes as strings, ensure the proper format is used, as Immich has different formats for different use cases
 - If you cannot determine the proper format to use, ask for clarification
 
+### Async Patterns
+
+- For singleton initialization locks in async code, use `threading.Lock()` (not `asyncio.Lock()`) when the critical section contains no awaits. `asyncio.Lock()` is event-loop-bound and breaks in multi-loop scenarios; `threading.Lock()` is safe for guarding pure object construction
+- When manually managing `__aenter__`/`__aexit__` on streaming context managers (e.g., for `StreamingResponse`), wrap the entry and any work before the iterator is consumed in `try/except` to guarantee `__aexit__()` runs on failure. Otherwise, exceptions between `__aenter__()` and iterator consumption leak the upstream connection
+
 ### Exception Handling
 
 - Don't expose implementation details in exceptions thrown to consumers
