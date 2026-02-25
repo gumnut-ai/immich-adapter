@@ -16,9 +16,12 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from gumnut import Gumnut, GumnutError
+from gumnut import AsyncGumnut, Gumnut, GumnutError
 
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_async_gumnut_client,
+    get_authenticated_gumnut_client,
+)
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
@@ -69,16 +72,20 @@ router = APIRouter(
 
 async def _download_asset_content(
     asset_uuid: UUID,
-    client: Gumnut,
+    client: AsyncGumnut,
     size: AssetMediaSize = AssetMediaSize.fullsize,
     force_original: bool = False,
 ) -> Response:
     """
     Shared helper function to download asset content from Gumnut.
 
+    Uses the async Gumnut client with async streaming to avoid blocking the
+    event loop during downloads. This is critical for health check responsiveness
+    under load — see GUM-289.
+
     Args:
         asset_uuid: The asset UUID to download
-        client: Authenticated Gumnut client
+        client: Authenticated async Gumnut client
         size: The size variant to download (fullsize, preview, thumbnail)
         force_original: If True, always download the original file via download().
                        If False, use download_thumbnail() for all sizes.
@@ -98,10 +105,10 @@ async def _download_asset_content(
     try:
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
-        # Helper function to create streaming generator
-        def create_streaming_generator(streaming_response_context):
-            with streaming_response_context as gumnut_response:
-                for chunk in gumnut_response.iter_bytes(chunk_size=8192):
+        # Async streaming generator that yields chunks without blocking the event loop
+        async def create_async_streaming_generator(streaming_response_context):
+            async with streaming_response_context as gumnut_response:
+                async for chunk in gumnut_response.aiter_bytes(chunk_size=8192):
                     yield chunk
 
         def extract_headers_and_filename(gumnut_response):
@@ -125,17 +132,17 @@ async def _download_asset_content(
 
             return content_type, response_headers
 
-        def create_streaming_response(streaming_context_factory):
+        async def create_async_streaming_response(streaming_context_factory):
             """Create a StreamingResponse with proper header extraction."""
             # Get headers first
-            with streaming_context_factory() as gumnut_response:
+            async with streaming_context_factory() as gumnut_response:
                 content_type, response_headers = extract_headers_and_filename(
                     gumnut_response
                 )
 
             # Create new streaming context for actual streaming
             return StreamingResponse(
-                create_streaming_generator(streaming_context_factory()),
+                create_async_streaming_generator(streaming_context_factory()),
                 media_type=content_type,
                 headers=response_headers,
             )
@@ -147,7 +154,7 @@ async def _download_asset_content(
             def streaming_factory():
                 return client.assets.with_streaming_response.download(gumnut_asset_id)
 
-            return create_streaming_response(streaming_factory)
+            return await create_async_streaming_response(streaming_factory)
 
         # For /thumbnail endpoint: use download_thumbnail for ALL sizes
         # This ensures browser-compatible formats are served for non-web-native
@@ -164,7 +171,7 @@ async def _download_asset_content(
                 gumnut_asset_id, size=gumnut_size
             )
 
-        return create_streaming_response(streaming_factory)
+        return await create_async_streaming_response(streaming_factory)
 
     except Exception as e:
         raise map_gumnut_error(e, "Failed to fetch asset")
@@ -647,7 +654,7 @@ async def view_asset(
     size: AssetMediaSize = Query(default=None, alias="size"),
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_async_gumnut_client),
 ) -> Response:
     """
     Get a thumbnail for an asset.
@@ -675,7 +682,7 @@ async def download_asset(
     id: UUID,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_async_gumnut_client),
 ) -> Response:
     """
     Download the original asset file.
