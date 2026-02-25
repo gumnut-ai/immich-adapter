@@ -14,7 +14,17 @@ from routers.immich_models import (
     AssetOrder,
     AssetVisibility,
 )
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
+from routers.utils.gumnut_id_conversion import (
+    uuid_to_gumnut_asset_id,
+    uuid_to_gumnut_person_id,
+)
+
+# Expected date range query for January 2024 — the most common test timeBucket.
+# Half-open interval: [month_start, next_month_start)
+JANUARY_2024_DATE_RANGE = {
+    "local_datetime_after": "2024-01-01T00:00:00",
+    "local_datetime_before": "2024-02-01T00:00:00",
+}
 
 
 def call_get_time_buckets(**kwargs):
@@ -319,10 +329,7 @@ class TestGetTimeBucket:
 
             # Verify server-side date filtering was requested
             mock_client.assets.list.assert_called_once_with(
-                extra_query={
-                    "local_datetime_after": "2024-01-01T00:00:00",
-                    "local_datetime_before": "2024-01-31T23:59:59.999999",
-                }
+                extra_query=JANUARY_2024_DATE_RANGE
             )
 
     @pytest.mark.anyio
@@ -394,14 +401,9 @@ class TestGetTimeBucket:
             # Assert
             assert len(result["id"]) == 1
             # Should be called with person_id and date range extra_query
-            from routers.utils.gumnut_id_conversion import uuid_to_gumnut_person_id
-
             mock_client.assets.list.assert_called_once_with(
                 person_id=uuid_to_gumnut_person_id(sample_uuid),
-                extra_query={
-                    "local_datetime_after": "2024-01-01T00:00:00",
-                    "local_datetime_before": "2024-01-31T23:59:59.999999",
-                },
+                extra_query=JANUARY_2024_DATE_RANGE,
             )
 
     @pytest.mark.anyio
@@ -429,10 +431,7 @@ class TestGetTimeBucket:
 
             # Verify date range was passed to server
             mock_client.assets.list.assert_called_once_with(
-                extra_query={
-                    "local_datetime_after": "2024-01-01T00:00:00",
-                    "local_datetime_before": "2024-01-31T23:59:59.999999",
-                }
+                extra_query=JANUARY_2024_DATE_RANGE
             )
 
     @pytest.mark.anyio
@@ -470,10 +469,7 @@ class TestGetTimeBucket:
             assert result["localOffsetHours"][0] == 10  # UTC+10
             assert result["isImage"][0] is True
             mock_client.assets.list.assert_called_once_with(
-                extra_query={
-                    "local_datetime_after": "2024-01-01T00:00:00",
-                    "local_datetime_before": "2024-01-31T23:59:59.999999",
-                }
+                extra_query=JANUARY_2024_DATE_RANGE
             )
 
     @pytest.mark.anyio
@@ -770,7 +766,7 @@ class TestDateRangeFiltering:
 
     @pytest.mark.anyio
     async def test_february_leap_year(self, mock_sync_cursor_page):
-        """Test date boundaries for February in a leap year (2024)."""
+        """Test exclusive end boundary for February in a leap year (2024)."""
         mock_client = Mock()
         mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
@@ -783,13 +779,13 @@ class TestDateRangeFiltering:
             mock_client.assets.list.assert_called_once_with(
                 extra_query={
                     "local_datetime_after": "2024-02-01T00:00:00",
-                    "local_datetime_before": "2024-02-29T23:59:59.999999",
+                    "local_datetime_before": "2024-03-01T00:00:00",
                 }
             )
 
     @pytest.mark.anyio
     async def test_february_non_leap_year(self, mock_sync_cursor_page):
-        """Test date boundaries for February in a non-leap year (2023)."""
+        """Test exclusive end boundary for February in a non-leap year (2023)."""
         mock_client = Mock()
         mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
@@ -802,13 +798,13 @@ class TestDateRangeFiltering:
             mock_client.assets.list.assert_called_once_with(
                 extra_query={
                     "local_datetime_after": "2023-02-01T00:00:00",
-                    "local_datetime_before": "2023-02-28T23:59:59.999999",
+                    "local_datetime_before": "2023-03-01T00:00:00",
                 }
             )
 
     @pytest.mark.anyio
     async def test_thirty_day_month(self, mock_sync_cursor_page):
-        """Test date boundaries for a 30-day month (April)."""
+        """Test exclusive end boundary for a 30-day month (April)."""
         mock_client = Mock()
         mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
@@ -821,13 +817,13 @@ class TestDateRangeFiltering:
             mock_client.assets.list.assert_called_once_with(
                 extra_query={
                     "local_datetime_after": "2024-04-01T00:00:00",
-                    "local_datetime_before": "2024-04-30T23:59:59.999999",
+                    "local_datetime_before": "2024-05-01T00:00:00",
                 }
             )
 
     @pytest.mark.anyio
     async def test_december(self, mock_sync_cursor_page):
-        """Test date boundaries for December (year boundary)."""
+        """Test exclusive end boundary for December (year boundary)."""
         mock_client = Mock()
         mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
@@ -840,7 +836,7 @@ class TestDateRangeFiltering:
             mock_client.assets.list.assert_called_once_with(
                 extra_query={
                     "local_datetime_after": "2024-12-01T00:00:00",
-                    "local_datetime_before": "2024-12-31T23:59:59.999999",
+                    "local_datetime_before": "2025-01-01T00:00:00",
                 }
             )
 

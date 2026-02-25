@@ -1,4 +1,3 @@
-from calendar import monthrange
 from collections import defaultdict
 from datetime import datetime
 from uuid import UUID
@@ -152,18 +151,21 @@ async def get_time_bucket(
     """
 
     try:
-        # Compute month boundaries from timeBucket for date-range filtering
+        # Compute month boundaries from timeBucket for server-side date filtering.
+        # timeBucket is a naive local datetime from the Immich client (e.g. "2024-01-01T00:00:00").
+        # We pass naive timestamps to match the photos-api local_datetime column, which is also naive.
+        # Uses a half-open interval [month_start, next_month_start) for clean boundaries.
         bucket_date = datetime.fromisoformat(timeBucket)
         month_start = bucket_date.replace(
             day=1, hour=0, minute=0, second=0, microsecond=0
         )
-        _, last_day = monthrange(month_start.year, month_start.month)
-        month_end = month_start.replace(
-            day=last_day, hour=23, minute=59, second=59, microsecond=999999
-        )
+        if month_start.month == 12:
+            next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+        else:
+            next_month_start = month_start.replace(month=month_start.month + 1)
         date_range_query = {
             "local_datetime_after": month_start.isoformat(),
-            "local_datetime_before": month_end.isoformat(),
+            "local_datetime_before": next_month_start.isoformat(),
         }
 
         if albumId:
