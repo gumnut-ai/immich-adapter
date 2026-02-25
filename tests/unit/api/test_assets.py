@@ -4,6 +4,7 @@ import pytest
 from datetime import datetime, timezone
 from unittest.mock import Mock, AsyncMock, patch
 from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
 from uuid import UUID, uuid4
 import base64
 
@@ -915,19 +916,27 @@ def _make_async_streaming_context(headers, chunks):
 
     Creates a mock that supports `async with context as response` where the
     response has async iteration via `aiter_bytes()`.
+
+    The returned context records `chunk_size` arguments passed to `aiter_bytes()`
+    on `mock_context.chunk_sizes` so tests can assert the expected value.
     """
     mock_response = Mock()
     mock_response.headers = headers
 
-    async def aiter_bytes(chunk_size=None):
+    # Track chunk_size arguments for assertion
+    chunk_sizes: list[int | None] = []
+
+    async def iter_bytes(chunk_size=None):
+        chunk_sizes.append(chunk_size)
         for chunk in chunks:
             yield chunk
 
-    mock_response.aiter_bytes = aiter_bytes
+    mock_response.iter_bytes = iter_bytes
 
     mock_context = AsyncMock()
     mock_context.__aenter__ = AsyncMock(return_value=mock_response)
     mock_context.__aexit__ = AsyncMock(return_value=None)
+    mock_context.chunk_sizes = chunk_sizes
     return mock_context
 
 
@@ -940,10 +949,11 @@ class TestViewAsset:
         # Setup - create mock async client
         mock_client = Mock()
 
+        streaming_ctx = _make_async_streaming_context(
+            {"content-type": "image/jpeg"}, [b"fake image data"]
+        )
         mock_client.assets.with_streaming_response.download_thumbnail.return_value = (
-            _make_async_streaming_context(
-                {"content-type": "image/jpeg"}, [b"fake image data"]
-            )
+            streaming_ctx
         )
 
         # Execute
@@ -952,13 +962,17 @@ class TestViewAsset:
         )
 
         # Assert
+        assert isinstance(result, StreamingResponse)
         assert result.media_type == "image/jpeg"
-        assert hasattr(result, "body_iterator")  # StreamingResponse has body_iterator
-        # Called twice: once for headers, once for streaming
+        # Single upstream request — headers and body from the same response
         assert (
             mock_client.assets.with_streaming_response.download_thumbnail.call_count
-            == 2
+            == 1
         )
+        # Drain the streaming response to trigger iter_bytes
+        async for _ in result.body_iterator:
+            pass
+        assert streaming_ctx.chunk_sizes == [8192]
 
     @pytest.mark.anyio
     async def test_view_asset_fullsize_uses_thumbnail_api(self, sample_uuid):
@@ -971,10 +985,11 @@ class TestViewAsset:
         # Setup - create mock async client
         mock_client = Mock()
 
+        streaming_ctx = _make_async_streaming_context(
+            {"content-type": "image/webp"}, [b"fake image data"]
+        )
         mock_client.assets.with_streaming_response.download_thumbnail.return_value = (
-            _make_async_streaming_context(
-                {"content-type": "image/webp"}, [b"fake image data"]
-            )
+            streaming_ctx
         )
 
         # Execute
@@ -983,15 +998,18 @@ class TestViewAsset:
         )
 
         # Assert
+        assert isinstance(result, StreamingResponse)
         assert result.media_type == "image/webp"
-        assert hasattr(result, "body_iterator")  # StreamingResponse has body_iterator
-        # Verify download_thumbnail was called with size="fullsize", NOT download()
-        # Called twice: once for headers, once for streaming
+        # Verify download_thumbnail was called once (single request), NOT download()
         assert (
             mock_client.assets.with_streaming_response.download_thumbnail.call_count
-            == 2
+            == 1
         )
         mock_client.assets.with_streaming_response.download.assert_not_called()
+        # Drain the streaming response to trigger iter_bytes
+        async for _ in result.body_iterator:
+            pass
+        assert streaming_ctx.chunk_sizes == [8192]
 
     @pytest.mark.anyio
     async def test_view_asset_not_found(self, sample_uuid):
@@ -1018,25 +1036,28 @@ class TestDownloadAsset:
         # Setup - create mock async client
         mock_client = Mock()
 
-        mock_client.assets.with_streaming_response.download.return_value = (
-            _make_async_streaming_context(
-                {
-                    "content-type": "image/jpeg",
-                    "content-disposition": 'attachment; filename="test.jpg"',
-                },
-                [b"fake image data"],
-            )
+        streaming_ctx = _make_async_streaming_context(
+            {
+                "content-type": "image/jpeg",
+                "content-disposition": 'attachment; filename="test.jpg"',
+            },
+            [b"fake image data"],
         )
+        mock_client.assets.with_streaming_response.download.return_value = streaming_ctx
 
         # Execute
         result = await download_asset(sample_uuid, client=mock_client)
 
         # Assert
+        assert isinstance(result, StreamingResponse)
         assert result.media_type == "image/jpeg"
-        assert hasattr(result, "body_iterator")  # StreamingResponse has body_iterator
         assert "Content-Disposition" in result.headers
-        # Called twice: once for headers, once for streaming
-        assert mock_client.assets.with_streaming_response.download.call_count == 2
+        # Single upstream request — headers and body from the same response
+        assert mock_client.assets.with_streaming_response.download.call_count == 1
+        # Drain the streaming response to trigger iter_bytes
+        async for _ in result.body_iterator:
+            pass
+        assert streaming_ctx.chunk_sizes == [8192]
 
     @pytest.mark.anyio
     async def test_download_asset_uses_download_not_thumbnail(self, sample_uuid):
@@ -1050,24 +1071,27 @@ class TestDownloadAsset:
         # Setup - create mock async client
         mock_client = Mock()
 
-        mock_client.assets.with_streaming_response.download.return_value = (
-            _make_async_streaming_context(
-                {
-                    "content-type": "image/heic",
-                    "content-disposition": 'attachment; filename="IMG_1234.heic"',
-                },
-                [b"fake heic data"],
-            )
+        streaming_ctx = _make_async_streaming_context(
+            {
+                "content-type": "image/heic",
+                "content-disposition": 'attachment; filename="IMG_1234.heic"',
+            },
+            [b"fake heic data"],
         )
+        mock_client.assets.with_streaming_response.download.return_value = streaming_ctx
 
         # Execute
         result = await download_asset(sample_uuid, client=mock_client)
 
-        # Assert - download() was called, NOT download_thumbnail()
+        # Assert - download() was called once (single request), NOT download_thumbnail()
+        assert isinstance(result, StreamingResponse)
         assert result.media_type == "image/heic"
-        # Called twice: once for headers, once for streaming
-        assert mock_client.assets.with_streaming_response.download.call_count == 2
+        assert mock_client.assets.with_streaming_response.download.call_count == 1
         mock_client.assets.with_streaming_response.download_thumbnail.assert_not_called()
+        # Drain the streaming response to trigger iter_bytes
+        async for _ in result.body_iterator:
+            pass
+        assert streaming_ctx.chunk_sizes == [8192]
 
 
 class TestReplaceAsset:

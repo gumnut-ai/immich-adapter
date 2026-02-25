@@ -60,10 +60,12 @@ async def lifespan(app: FastAPI):
     await check_redis_connection()
 
     yield
-    # Ensure the singleton HTTP clients for Gumnut are closed on shutdown
-    await close_shared_http_client()
+    # Shutdown: close clients in reverse dependency order.
+    # Close async client first — it may have long-running streaming responses
+    # in flight (thumbnail/original downloads). The sync client and Redis are
+    # independent and can be closed after.
     await close_shared_async_http_client()
-    # Close Redis client
+    await close_shared_http_client()
     await close_redis_client()
 
 

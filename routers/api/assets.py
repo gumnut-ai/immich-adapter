@@ -105,12 +105,6 @@ async def _download_asset_content(
     try:
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
-        # Async streaming generator that yields chunks without blocking the event loop
-        async def create_async_streaming_generator(streaming_response_context):
-            async with streaming_response_context as gumnut_response:
-                async for chunk in gumnut_response.aiter_bytes(chunk_size=8192):
-                    yield chunk
-
         def extract_headers_and_filename(gumnut_response):
             """Extract content type, filename, and build response headers."""
             content_type = gumnut_response.headers.get(
@@ -132,46 +126,45 @@ async def _download_asset_content(
 
             return content_type, response_headers
 
-        async def create_async_streaming_response(streaming_context_factory):
-            """Create a StreamingResponse with proper header extraction."""
-            # Get headers first
-            async with streaming_context_factory() as gumnut_response:
-                content_type, response_headers = extract_headers_and_filename(
-                    gumnut_response
-                )
-
-            # Create new streaming context for actual streaming
-            return StreamingResponse(
-                create_async_streaming_generator(streaming_context_factory()),
-                media_type=content_type,
-                headers=response_headers,
-            )
-
         # For /original endpoint: always return the actual original file
         # This preserves the original format (JPEG, HEIC, etc.) for download
         if force_original:
-
-            def streaming_factory():
-                return client.assets.with_streaming_response.download(gumnut_asset_id)
-
-            return await create_async_streaming_response(streaming_factory)
-
-        # For /thumbnail endpoint: use download_thumbnail for ALL sizes
-        # This ensures browser-compatible formats are served for non-web-native
-        # formats like HEIC (photos-api converts HEIC to WEBP for fullsize thumbnails)
-        size_map = {
-            AssetMediaSize.fullsize: "fullsize",
-            AssetMediaSize.preview: "preview",
-            AssetMediaSize.thumbnail: "thumbnail",
-        }
-        gumnut_size = size_map.get(size, "thumbnail")
-
-        def streaming_factory():
-            return client.assets.with_streaming_response.download_thumbnail(
-                gumnut_asset_id, size=gumnut_size
+            streaming_context = client.assets.with_streaming_response.download(
+                gumnut_asset_id
+            )
+        else:
+            # For /thumbnail endpoint: use download_thumbnail for ALL sizes
+            # This ensures browser-compatible formats are served for non-web-native
+            # formats like HEIC (photos-api converts HEIC to WEBP for fullsize thumbnails)
+            size_map = {
+                AssetMediaSize.fullsize: "fullsize",
+                AssetMediaSize.preview: "preview",
+                AssetMediaSize.thumbnail: "thumbnail",
+            }
+            gumnut_size = size_map.get(size, "thumbnail")
+            streaming_context = (
+                client.assets.with_streaming_response.download_thumbnail(
+                    gumnut_asset_id, size=gumnut_size
+                )
             )
 
-        return await create_async_streaming_response(streaming_factory)
+        # Open the streaming context once and use the same response for both
+        # header extraction and body streaming (avoids a second upstream request)
+        gumnut_response = await streaming_context.__aenter__()
+        content_type, response_headers = extract_headers_and_filename(gumnut_response)
+
+        async def stream_and_cleanup():
+            try:
+                async for chunk in gumnut_response.iter_bytes(chunk_size=8192):
+                    yield chunk
+            finally:
+                await streaming_context.__aexit__(None, None, None)
+
+        return StreamingResponse(
+            stream_and_cleanup(),
+            media_type=content_type,
+            headers=response_headers,
+        )
 
     except Exception as e:
         raise map_gumnut_error(e, "Failed to fetch asset")
