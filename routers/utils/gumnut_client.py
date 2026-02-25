@@ -141,13 +141,16 @@ async def close_shared_http_client() -> None:
         _shared_http_client = None
 
 
-async def get_shared_async_http_client() -> httpx.AsyncClient:
+def get_shared_async_http_client() -> httpx.AsyncClient:
     """
     Get or create the shared async HTTP client for Gumnut download connections.
 
     Used exclusively for asset downloads (thumbnails, originals) to enable
     async streaming that doesn't block the event loop. All other SDK operations
     continue to use the sync client.
+
+    Not async because httpx.AsyncClient construction is synchronous and the
+    lock is a threading.Lock (no awaits needed).
 
     Returns:
         httpx.AsyncClient: Shared async HTTP client with response hook
@@ -177,7 +180,7 @@ async def close_shared_async_http_client() -> None:
         _shared_async_http_client = None
 
 
-async def get_async_gumnut_client(jwt_token: str) -> AsyncGumnut:
+def get_async_gumnut_client(jwt_token: str) -> AsyncGumnut:
     """
     Create and return a configured async Gumnut client for asset downloads.
 
@@ -196,7 +199,7 @@ async def get_async_gumnut_client(jwt_token: str) -> AsyncGumnut:
     return AsyncGumnut(
         api_key=jwt_token,
         base_url=settings.gumnut_api_base_url,
-        http_client=await get_shared_async_http_client(),
+        http_client=get_shared_async_http_client(),
     )
 
 
@@ -246,7 +249,7 @@ async def get_authenticated_async_gumnut_client(request: Request) -> AsyncGumnut
             detail="Authentication required",
         )
 
-    return await get_async_gumnut_client(jwt_token)
+    return get_async_gumnut_client(jwt_token)
 
 
 async def get_authenticated_gumnut_client(request: Request) -> Gumnut:

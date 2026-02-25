@@ -915,10 +915,11 @@ def _make_async_streaming_context(headers, chunks):
     """Helper to create a mock async streaming response context manager.
 
     Creates a mock that supports `async with context as response` where the
-    response has async iteration via `aiter_bytes()`.
+    response has async iteration via `iter_bytes()` (the SDK method name;
+    httpx's underlying `aiter_bytes()` is wrapped by the SDK).
 
-    The returned context records `chunk_size` arguments passed to `aiter_bytes()`
-    on `mock_context.chunk_sizes` so tests can assert the expected value.
+    The returned context records `chunk_size` arguments passed to `iter_bytes()`
+    on `mock_context.chunk_sizes` so tests can assert the expected value (e.g., 8192).
     """
     mock_response = Mock()
     mock_response.headers = headers
