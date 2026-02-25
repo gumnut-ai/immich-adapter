@@ -149,9 +149,17 @@ async def _download_asset_content(
             )
 
         # Open the streaming context once and use the same response for both
-        # header extraction and body streaming (avoids a second upstream request)
-        gumnut_response = await streaming_context.__aenter__()
-        content_type, response_headers = extract_headers_and_filename(gumnut_response)
+        # header extraction and body streaming (avoids a second upstream request).
+        # Wrap in try/except to guarantee cleanup if header extraction fails
+        # before the streaming iterator is consumed.
+        try:
+            gumnut_response = await streaming_context.__aenter__()
+            content_type, response_headers = extract_headers_and_filename(
+                gumnut_response
+            )
+        except Exception:
+            await streaming_context.__aexit__(None, None, None)
+            raise
 
         async def stream_and_cleanup():
             try:

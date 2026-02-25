@@ -1,4 +1,3 @@
-import asyncio
 import httpx
 import threading
 from contextvars import ContextVar
@@ -38,7 +37,7 @@ _thread_local = threading.local()
 
 _shared_http_client: httpx.Client | None = None
 _shared_async_http_client: httpx.AsyncClient | None = None
-_async_client_lock = asyncio.Lock()
+_async_client_lock = threading.Lock()
 
 
 def get_refreshed_token() -> str | None:
@@ -155,7 +154,7 @@ async def get_shared_async_http_client() -> httpx.AsyncClient:
     """
     global _shared_async_http_client
     if _shared_async_http_client is None:
-        async with _async_client_lock:
+        with _async_client_lock:
             if _shared_async_http_client is None:
                 _shared_async_http_client = httpx.AsyncClient(
                     timeout=30.0,
