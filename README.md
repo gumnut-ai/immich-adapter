@@ -100,6 +100,64 @@ Mobile clients (especially iOS/Flutter) often make rapid successive requests and
 - **API Docs**: http://localhost:3001/docs and http://localhost:3001/redoc
 - **OpenAPI Spec**: http://localhost:3001/openapi.json
 
+## Running with Immich Web
+
+To test the adapter end-to-end with the Immich web UI, you need three services running locally:
+
+```
+Browser (localhost:3000)
+  → Vite dev server proxy (/api/*)
+    → immich-adapter (localhost:3001)
+      → photos-api (localhost:8000)
+        → Clerk (OAuth provider)
+```
+
+### Prerequisites
+
+1. **photos-api** running on `localhost:8000` — see the [photos-api README](../photos/photos-api/README.md) for setup
+2. **Clerk OAuth configured** in photos-api — see the "Configure Clerk OAuth" section in the photos-api README
+3. **immich-adapter** running on `localhost:3001` (see [Running the Application](#running-the-application) above)
+4. The [Immich repository](https://github.com/immich-app/immich) cloned as a sibling directory (`../immich/`)
+
+### Build and run Immich web
+
+1. **Build the Immich TypeScript SDK** (shared types used by the web app):
+
+```bash
+cd ../immich/open-api/typescript-sdk
+pnpm install
+pnpm run build
+```
+
+2. **Install web dependencies**:
+
+```bash
+cd ../immich/web
+pnpm install
+```
+
+3. **Start the Immich web dev server**, pointing it at the immich-adapter:
+
+```bash
+cd ../immich/web
+IMMICH_SERVER_URL=http://localhost:3001/ pnpm run dev
+```
+
+The web app will be available at http://localhost:3000. The Vite dev server proxies all `/api` requests to the immich-adapter via the `IMMICH_SERVER_URL` environment variable.
+
+### Verify the setup
+
+1. Open http://localhost:3000 in your browser
+2. The app should redirect to Clerk for OAuth authentication
+3. After signing in, you should be redirected back to the Immich web UI
+
+### Troubleshooting
+
+- **404 errors from the proxy**: Ensure the immich-adapter is actually running on port 3001 and no other service is using that port
+- **OAuth `invalid_client` error**: Check that `CLERK_OAUTH_CLIENT_ID` in photos-api `.env` is set to a real value (not the placeholder)
+- **OAuth `redirect_uri` mismatch**: Add `http://localhost:3000/auth/login` as an allowed redirect URI in the Clerk OAuth application settings
+- **OAuth `invalid_scope` error**: Enable the `openid`, `email`, and `profile` scopes on the Clerk OAuth application
+
 ## Development Commands
 
 ### Core Commands
