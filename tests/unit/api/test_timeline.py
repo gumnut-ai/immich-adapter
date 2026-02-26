@@ -14,7 +14,17 @@ from routers.immich_models import (
     AssetOrder,
     AssetVisibility,
 )
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
+from routers.utils.gumnut_id_conversion import (
+    uuid_to_gumnut_asset_id,
+    uuid_to_gumnut_person_id,
+)
+
+# Expected date range query for January 2024 — the most common test timeBucket.
+# Half-open interval: [month_start, next_month_start)
+JANUARY_2024_DATE_RANGE = {
+    "local_datetime_after": "2024-01-01T00:00:00",
+    "local_datetime_before": "2024-02-01T00:00:00",
+}
 
 
 def call_get_time_buckets(**kwargs):
@@ -254,13 +264,13 @@ class TestGetTimeBucket:
     async def test_get_time_bucket_success(
         self, multiple_gumnut_assets, mock_sync_cursor_page
     ):
-        """Test successful retrieval of time bucket assets."""
+        """Test successful retrieval of time bucket assets with server-side date filtering."""
         # Setup
         mock_client = Mock()
 
-        # Setup test assets - some in January 2024, some in February
+        # Setup test assets - server returns only January 2024 assets (pre-filtered)
         assets = multiple_gumnut_assets
-        # Asset 0: January 2024 (should be included)
+        # Asset 0: January 2024
         assets[0].id = uuid_to_gumnut_asset_id(uuid4())
         assets[0].local_datetime = datetime(
             2024, 1, 15, 10, 0, 0, tzinfo=timezone(timedelta(hours=-5))
@@ -270,25 +280,17 @@ class TestGetTimeBucket:
         assets[0].width = 1920
         assets[0].height = 1280
 
-        # Asset 1: February 2024 (should NOT be included)
+        # Asset 1: January 2024
         assets[1].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[1].local_datetime = datetime(2024, 2, 20, 14, 0, 0, tzinfo=timezone.utc)
-        assets[1].created_at = assets[1].local_datetime
-        assets[1].mime_type = "video/mp4"
-        assets[1].width = 1920
-        assets[1].height = 1080
-
-        # Asset 2: January 2024 (should be included)
-        assets[2].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[2].local_datetime = datetime(
+        assets[1].local_datetime = datetime(
             2024, 1, 25, 16, 0, 0, tzinfo=timezone(timedelta(hours=2))
         )
-        assets[2].created_at = assets[2].local_datetime
-        assets[2].mime_type = "image/png"
-        assets[2].width = 1080
-        assets[2].height = 1080
+        assets[1].created_at = assets[1].local_datetime
+        assets[1].mime_type = "image/png"
+        assets[1].width = 1080
+        assets[1].height = 1080
 
-        mock_client.assets.list.return_value = mock_sync_cursor_page(assets)
+        mock_client.assets.list.return_value = mock_sync_cursor_page(assets[:2])
 
         # Mock get_current_user_id
         with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
@@ -302,7 +304,7 @@ class TestGetTimeBucket:
             # Assert
             assert isinstance(result, dict)
 
-            # Should have 2 assets (asset-jan-1 and asset-jan-2)
+            # Should have 2 assets returned by server
             assert len(result["id"]) == 2
             assert len(result["fileCreatedAt"]) == 2
             assert len(result["isImage"]) == 2
@@ -324,6 +326,11 @@ class TestGetTimeBucket:
             assert all(fav is False for fav in result["isFavorite"])
             assert all(trash is False for trash in result["isTrashed"])
             assert all(vis == AssetVisibility.timeline for vis in result["visibility"])
+
+            # Verify server-side date filtering was requested
+            mock_client.assets.list.assert_called_once_with(
+                extra_query=JANUARY_2024_DATE_RANGE
+            )
 
     @pytest.mark.anyio
     async def test_get_time_bucket_with_album_id(
@@ -365,7 +372,7 @@ class TestGetTimeBucket:
     async def test_get_time_bucket_with_person_id(
         self, multiple_gumnut_assets, mock_sync_cursor_page, sample_uuid
     ):
-        """Test time bucket with person filter."""
+        """Test time bucket with person filter uses server-side date filtering."""
         # Setup
         mock_client = Mock()
 
@@ -393,29 +400,26 @@ class TestGetTimeBucket:
 
             # Assert
             assert len(result["id"]) == 1
-            # Should be called with person_id parameter
-            mock_client.assets.list.assert_called_once()
+            # Should be called with person_id and date range extra_query
+            mock_client.assets.list.assert_called_once_with(
+                person_id=uuid_to_gumnut_person_id(sample_uuid),
+                extra_query=JANUARY_2024_DATE_RANGE,
+            )
 
     @pytest.mark.anyio
-    async def test_get_time_bucket_no_matching_assets(
-        self, multiple_gumnut_assets, mock_sync_cursor_page
-    ):
-        """Test time bucket with no assets matching the time."""
+    async def test_get_time_bucket_no_matching_assets(self, mock_sync_cursor_page):
+        """Test time bucket when server returns no assets for the date range."""
         # Setup
         mock_client = Mock()
 
-        # Setup test assets from February 2024
-        assets = multiple_gumnut_assets
-        assets[0].local_datetime = datetime(2024, 2, 15, 10, 0, 0, tzinfo=timezone.utc)
-        assets[0].created_at = assets[0].local_datetime
-
-        mock_client.assets.list.return_value = mock_sync_cursor_page(assets[:1])
+        # Server returns empty results for this date range
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
         # Mock get_current_user_id
         with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
             mock_user_id.return_value = uuid4()
 
-            # Execute - request January 2024 bucket (no matching assets)
+            # Execute - request January 2024 bucket (server returns nothing)
             result = await call_get_time_bucket(
                 timeBucket="2024-01-01T00:00:00", client=mock_client
             )
@@ -425,13 +429,18 @@ class TestGetTimeBucket:
             assert len(result["fileCreatedAt"]) == 0
             assert len(result["isImage"]) == 0
 
+            # Verify date range was passed to server
+            mock_client.assets.list.assert_called_once_with(
+                extra_query=JANUARY_2024_DATE_RANGE
+            )
+
     @pytest.mark.anyio
     async def test_get_time_bucket_with_non_utc_timezone(self, mock_sync_cursor_page):
         """Test handling of assets with non-UTC timezone offsets."""
         # Setup
         mock_client = Mock()
 
-        # Create mock asset with timezone offset
+        # Create mock asset with timezone offset (server returns pre-filtered)
         mock_asset = Mock()
         mock_asset.id = uuid_to_gumnut_asset_id(uuid4())
         # UTC+10 (Australian Eastern Standard Time)
@@ -459,6 +468,9 @@ class TestGetTimeBucket:
             assert result["ratio"][0] == 1920 / 1280  # 1.5
             assert result["localOffsetHours"][0] == 10  # UTC+10
             assert result["isImage"][0] is True
+            mock_client.assets.list.assert_called_once_with(
+                extra_query=JANUARY_2024_DATE_RANGE
+            )
 
     @pytest.mark.anyio
     async def test_get_time_bucket_missing_attributes(self, mock_sync_cursor_page):
@@ -747,3 +759,121 @@ class TestGetTimeBucket:
 
             # Asset 4: Naive (no tzinfo) -> 0
             assert result["localOffsetHours"][3] == 0
+
+
+class TestDateRangeFiltering:
+    """Test that date-range query parameters are computed correctly."""
+
+    @pytest.mark.anyio
+    async def test_february_leap_year(self, mock_sync_cursor_page):
+        """Test exclusive end boundary for February in a leap year (2024)."""
+        mock_client = Mock()
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            await call_get_time_bucket(
+                timeBucket="2024-02-01T00:00:00", client=mock_client
+            )
+
+            mock_client.assets.list.assert_called_once_with(
+                extra_query={
+                    "local_datetime_after": "2024-02-01T00:00:00",
+                    "local_datetime_before": "2024-03-01T00:00:00",
+                }
+            )
+
+    @pytest.mark.anyio
+    async def test_february_non_leap_year(self, mock_sync_cursor_page):
+        """Test exclusive end boundary for February in a non-leap year (2023)."""
+        mock_client = Mock()
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            await call_get_time_bucket(
+                timeBucket="2023-02-01T00:00:00", client=mock_client
+            )
+
+            mock_client.assets.list.assert_called_once_with(
+                extra_query={
+                    "local_datetime_after": "2023-02-01T00:00:00",
+                    "local_datetime_before": "2023-03-01T00:00:00",
+                }
+            )
+
+    @pytest.mark.anyio
+    async def test_thirty_day_month(self, mock_sync_cursor_page):
+        """Test exclusive end boundary for a 30-day month (April)."""
+        mock_client = Mock()
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            await call_get_time_bucket(
+                timeBucket="2024-04-01T00:00:00", client=mock_client
+            )
+
+            mock_client.assets.list.assert_called_once_with(
+                extra_query={
+                    "local_datetime_after": "2024-04-01T00:00:00",
+                    "local_datetime_before": "2024-05-01T00:00:00",
+                }
+            )
+
+    @pytest.mark.anyio
+    async def test_december(self, mock_sync_cursor_page):
+        """Test exclusive end boundary for December (year boundary)."""
+        mock_client = Mock()
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            await call_get_time_bucket(
+                timeBucket="2024-12-01T00:00:00", client=mock_client
+            )
+
+            mock_client.assets.list.assert_called_once_with(
+                extra_query={
+                    "local_datetime_after": "2024-12-01T00:00:00",
+                    "local_datetime_before": "2025-01-01T00:00:00",
+                }
+            )
+
+    @pytest.mark.anyio
+    async def test_album_id_uses_in_memory_filtering(
+        self, multiple_gumnut_assets, mock_sync_cursor_page, sample_uuid
+    ):
+        """Test that albumId branch still uses in-memory filtering (no extra_query)."""
+        mock_client = Mock()
+
+        # Setup: 2 assets, one in Jan 2024, one in Feb 2024
+        assets = multiple_gumnut_assets
+        assets[0].id = uuid_to_gumnut_asset_id(uuid4())
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].mime_type = "image/jpeg"
+        assets[0].width = 1920
+        assets[0].height = 1080
+
+        assets[1].id = uuid_to_gumnut_asset_id(uuid4())
+        assets[1].local_datetime = datetime(2024, 2, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[1].mime_type = "image/jpeg"
+        assets[1].width = 1920
+        assets[1].height = 1080
+
+        # Album endpoint returns both assets (no server-side date filtering)
+        mock_client.albums.assets_associations.list.return_value = assets[:2]
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = sample_uuid
+
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00",
+                albumId=sample_uuid,
+                client=mock_client,
+            )
+
+            # Only January asset should be returned (in-memory filtering)
+            assert len(result["id"]) == 1
+            # assets.list should NOT have been called (album branch uses different API)
+            mock_client.assets.list.assert_not_called()
