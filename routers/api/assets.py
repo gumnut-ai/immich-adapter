@@ -16,6 +16,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 from gumnut import AsyncGumnut, Gumnut, GumnutError
 
 from routers.utils.gumnut_client import (
@@ -161,17 +162,31 @@ async def _download_asset_content(
             await streaming_context.__aexit__(None, None, None)
             raise
 
-        async def stream_and_cleanup():
+        # Track whether cleanup has run so __aexit__ is called exactly once.
+        cleanup_done = False
+
+        async def cleanup_streaming_context():
+            nonlocal cleanup_done
+            if not cleanup_done:
+                cleanup_done = True
+                await streaming_context.__aexit__(None, None, None)
+
+        async def stream_body():
             try:
                 async for chunk in gumnut_response.iter_bytes(chunk_size=8192):
                     yield chunk
             finally:
-                await streaming_context.__aexit__(None, None, None)
+                # Prompt cleanup on normal completion or generator close.
+                await cleanup_streaming_context()
 
+        # BackgroundTask is the safety net: if the client disconnects and
+        # Starlette cancels the generator before finally runs, the background
+        # task still executes after response finalization.
         return StreamingResponse(
-            stream_and_cleanup(),
+            stream_body(),
             media_type=content_type,
             headers=response_headers,
+            background=BackgroundTask(cleanup_streaming_context),
         )
 
     except Exception as e:
