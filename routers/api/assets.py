@@ -16,9 +16,13 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from gumnut import Gumnut, GumnutError
+from starlette.background import BackgroundTask
+from gumnut import AsyncGumnut, Gumnut, GumnutError
 
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_async_gumnut_client,
+    get_authenticated_gumnut_client,
+)
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
@@ -69,16 +73,20 @@ router = APIRouter(
 
 async def _download_asset_content(
     asset_uuid: UUID,
-    client: Gumnut,
+    client: AsyncGumnut,
     size: AssetMediaSize = AssetMediaSize.fullsize,
     force_original: bool = False,
 ) -> Response:
     """
     Shared helper function to download asset content from Gumnut.
 
+    Uses the async Gumnut client with async streaming to avoid blocking the
+    event loop during downloads. This is critical for health check responsiveness
+    under load — see GUM-289.
+
     Args:
         asset_uuid: The asset UUID to download
-        client: Authenticated Gumnut client
+        client: Authenticated async Gumnut client
         size: The size variant to download (fullsize, preview, thumbnail)
         force_original: If True, always download the original file via download().
                        If False, use download_thumbnail() for all sizes.
@@ -97,12 +105,6 @@ async def _download_asset_content(
 
     try:
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
-
-        # Helper function to create streaming generator
-        def create_streaming_generator(streaming_response_context):
-            with streaming_response_context as gumnut_response:
-                for chunk in gumnut_response.iter_bytes(chunk_size=8192):
-                    yield chunk
 
         def extract_headers_and_filename(gumnut_response):
             """Extract content type, filename, and build response headers."""
@@ -125,46 +127,67 @@ async def _download_asset_content(
 
             return content_type, response_headers
 
-        def create_streaming_response(streaming_context_factory):
-            """Create a StreamingResponse with proper header extraction."""
-            # Get headers first
-            with streaming_context_factory() as gumnut_response:
-                content_type, response_headers = extract_headers_and_filename(
-                    gumnut_response
-                )
-
-            # Create new streaming context for actual streaming
-            return StreamingResponse(
-                create_streaming_generator(streaming_context_factory()),
-                media_type=content_type,
-                headers=response_headers,
-            )
-
         # For /original endpoint: always return the actual original file
         # This preserves the original format (JPEG, HEIC, etc.) for download
         if force_original:
-
-            def streaming_factory():
-                return client.assets.with_streaming_response.download(gumnut_asset_id)
-
-            return create_streaming_response(streaming_factory)
-
-        # For /thumbnail endpoint: use download_thumbnail for ALL sizes
-        # This ensures browser-compatible formats are served for non-web-native
-        # formats like HEIC (photos-api converts HEIC to WEBP for fullsize thumbnails)
-        size_map = {
-            AssetMediaSize.fullsize: "fullsize",
-            AssetMediaSize.preview: "preview",
-            AssetMediaSize.thumbnail: "thumbnail",
-        }
-        gumnut_size = size_map.get(size, "thumbnail")
-
-        def streaming_factory():
-            return client.assets.with_streaming_response.download_thumbnail(
-                gumnut_asset_id, size=gumnut_size
+            streaming_context = client.assets.with_streaming_response.download(
+                gumnut_asset_id
+            )
+        else:
+            # For /thumbnail endpoint: use download_thumbnail for ALL sizes
+            # This ensures browser-compatible formats are served for non-web-native
+            # formats like HEIC (photos-api converts HEIC to WEBP for fullsize thumbnails)
+            size_map = {
+                AssetMediaSize.fullsize: "fullsize",
+                AssetMediaSize.preview: "preview",
+                AssetMediaSize.thumbnail: "thumbnail",
+            }
+            gumnut_size = size_map.get(size, "thumbnail")
+            streaming_context = (
+                client.assets.with_streaming_response.download_thumbnail(
+                    gumnut_asset_id, size=gumnut_size
+                )
             )
 
-        return create_streaming_response(streaming_factory)
+        # Open the streaming context once and use the same response for both
+        # header extraction and body streaming (avoids a second upstream request).
+        # Wrap in try/except to guarantee cleanup if header extraction fails
+        # before the streaming iterator is consumed.
+        try:
+            gumnut_response = await streaming_context.__aenter__()
+            content_type, response_headers = extract_headers_and_filename(
+                gumnut_response
+            )
+        except Exception:
+            await streaming_context.__aexit__(None, None, None)
+            raise
+
+        # Track whether cleanup has run so __aexit__ is called exactly once.
+        cleanup_done = False
+
+        async def cleanup_streaming_context():
+            nonlocal cleanup_done
+            if not cleanup_done:
+                cleanup_done = True
+                await streaming_context.__aexit__(None, None, None)
+
+        async def stream_body():
+            try:
+                async for chunk in gumnut_response.iter_bytes(chunk_size=8192):
+                    yield chunk
+            finally:
+                # Prompt cleanup on normal completion or generator close.
+                await cleanup_streaming_context()
+
+        # BackgroundTask is the safety net: if the client disconnects and
+        # Starlette cancels the generator before finally runs, the background
+        # task still executes after response finalization.
+        return StreamingResponse(
+            stream_body(),
+            media_type=content_type,
+            headers=response_headers,
+            background=BackgroundTask(cleanup_streaming_context),
+        )
 
     except Exception as e:
         raise map_gumnut_error(e, "Failed to fetch asset")
@@ -647,7 +670,7 @@ async def view_asset(
     size: AssetMediaSize = Query(default=None, alias="size"),
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_async_gumnut_client),
 ) -> Response:
     """
     Get a thumbnail for an asset.
@@ -675,7 +698,7 @@ async def download_asset(
     id: UUID,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_async_gumnut_client),
 ) -> Response:
     """
     Download the original asset file.
