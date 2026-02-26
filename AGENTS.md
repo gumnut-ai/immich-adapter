@@ -119,6 +119,12 @@ Detailed docs are in the `docs/` directory. Consult these when working in the re
 | Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Docker deployment, Render configuration |
 | Checksum support | `docs/design-docs/checksum-support.md` | File integrity, checksum validation, deduplication |
 
+### Getting Started
+
+| Topic | Document | Consult when... |
+|-------|----------|-----------------|
+| Running with Immich Web | `README.md` § "Running with Immich Web" | Setting up the full local stack (Immich web + adapter + photos-api + Clerk OAuth) |
+
 ### References
 
 | Topic | Document | Consult when... |
