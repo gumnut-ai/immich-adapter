@@ -40,7 +40,9 @@
 ### Async Patterns
 
 - For singleton initialization locks in async code, use `threading.Lock()` (not `asyncio.Lock()`) when the critical section contains no awaits. `asyncio.Lock()` is event-loop-bound and breaks in multi-loop scenarios; `threading.Lock()` is safe for guarding pure object construction
-- When manually managing `__aenter__`/`__aexit__` on streaming context managers (e.g., for `StreamingResponse`), wrap the entry and any work before the iterator is consumed in `try/except` to guarantee `__aexit__()` runs on failure. Otherwise, exceptions between `__aenter__()` and iterator consumption leak the upstream connection
+- When manually managing `__aenter__`/`__aexit__` on streaming context managers (e.g., for `StreamingResponse`), two cleanup failure modes must be covered:
+  1. **Setup failure**: Wrap `__aenter__()` and any work before the iterator is consumed in `try/except` to call `__aexit__()` on failure. Otherwise, exceptions between `__aenter__()` and iterator consumption leak the upstream connection.
+  2. **Teardown failure**: Add a Starlette `BackgroundTask` to the `StreamingResponse` as a safety net for `__aexit__()`. Generator finalization via `try/finally` is unreliable — Starlette may cancel the body iterator on client disconnect without running `finally`. The `BackgroundTask` runs after response finalization regardless. Use a flag (e.g., `cleanup_done`) to ensure exactly-once semantics when both the generator's `finally` and the `BackgroundTask` might call cleanup.
 
 ### Exception Handling
 
