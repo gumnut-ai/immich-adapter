@@ -201,12 +201,12 @@ This creates `key.pem` and `cert.pem` in the current directory.
 
 ```bash
 uv run uvicorn main:app --reload --port 3001 \
-  --host 0.0.0.0 \
+  --host 192.168.1.100 \
   --ssl-keyfile=key.pem \
   --ssl-certfile=cert.pem
 ```
 
-This uses `uvicorn` directly because the `fastapi` CLI doesn't expose SSL options. `--host 0.0.0.0` is required because the default (`127.0.0.1`) only accepts connections from the local machine — binding to `0.0.0.0` listens on all network interfaces so your mobile device can reach the server.
+This uses `uvicorn` directly because the `fastapi` CLI doesn't expose SSL options. `--host` is set to your machine's IP (the same one from step 2) because the default (`127.0.0.1`) only accepts connections from the local machine. Using the specific IP rather than `0.0.0.0` limits access to your LAN interface instead of exposing the server on all network interfaces.
 
 The server will now be available at `https://192.168.1.100:3001`.
 
