@@ -521,6 +521,21 @@ async def _stream_entity_type(
                 if entity is None:
                     # Entity was deleted between event and fetch — skip
                     continue
+
+                # GUM-292: face_created events should not carry person_id.
+                # Face detection always creates faces without a person.
+                # The current entity state may include a person_id assigned
+                # later by clustering, but the corresponding person_created
+                # event may not be in this sync cycle. Null it out — the
+                # face_updated event from clustering will deliver the correct
+                # person_id in the same or a future sync cycle.
+                if (
+                    event.event_type == "face_created"
+                    and isinstance(entity, FaceResponse)
+                    and entity.person_id is not None
+                ):
+                    entity = entity.model_copy(update={"person_id": None})
+
                 json_line = _convert_entity_to_sync_event(
                     gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type
                 )

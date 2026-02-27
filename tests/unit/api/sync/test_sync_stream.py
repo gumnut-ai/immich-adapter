@@ -934,6 +934,226 @@ class TestGetSyncStreamEndpoint:
         mock_checkpoint_store.get_all.assert_not_called()
 
 
+class TestGUM292FacePersonOrdering:
+    """GUM-292: Face sync events can reference people not in the sync stream.
+
+    The sync stream fetches the CURRENT state of entities, not their state at
+    event time. When a face_created event is processed, the adapter fetches
+    the face's current state from the API. If face clustering has since assigned
+    the face to a person, the current state includes person_id — but the
+    person_created event may not be in this sync cycle.
+
+    The Immich mobile client enforces FK constraints in its local SQLite DB,
+    so receiving a face with a personId for a person that was never delivered
+    causes: SqliteException(787) FOREIGN KEY constraint failed in
+    updateAssetFacesV1.
+    """
+
+    @pytest.mark.anyio
+    async def test_face_created_nulls_person_id_from_current_state(self):
+        """face_created events null out person_id even if current state has one.
+
+        Scenario:
+        1. Face detection ran → face_created event (face had person_id=NULL)
+        2. Face clustering ran → assigned face to person P1 (face now has person_id=P1)
+        3. Sync starts — the face_created event is within the window
+        4. Adapter fetches face's CURRENT state → gets person_id=P1
+        5. Adapter nulls person_id because face_created always means no person
+
+        The face_updated event from clustering will deliver the correct
+        person_id in the same or a future sync cycle.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        # Face entity's CURRENT state has person_id set
+        # (clustering assigned it after detection)
+        face_data = create_mock_face_data(updated_at)
+        assert face_data.person_id is not None, "Test setup: face should have person_id"
+
+        # But the EVENT is face_created (from when the face had no person)
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_created",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        assert event_data["type"] == "AssetFaceV1"
+        assert event_data["data"]["personId"] is None, (
+            "face_created event should null out person_id to avoid referencing "
+            "a person that may not be in this sync cycle"
+        )
+
+        # Verify the original entity wasn't mutated (model_copy creates a new instance)
+        assert face_data.person_id is not None, (
+            "Original face entity should not be mutated by stream processing"
+        )
+
+    @pytest.mark.anyio
+    async def test_face_created_does_not_reference_undelivered_person(self):
+        """face_created events don't reference people outside the sync window.
+
+        Scenario:
+        1. Face detection created face F1 (person_id=NULL) → face_created event
+        2. Face clustering created person P1, assigned F1 → person_created event
+           + face_updated event, but BOTH happened after sync_started_at
+        3. Sync starts with created_at_lt = sync_started_at
+        4. People stream: person_created event is AFTER sync_started_at → not returned
+        5. Face stream: face_created event is BEFORE sync_started_at → returned
+        6. Adapter fetches F1 current state → person_id=P1
+        7. Adapter nulls person_id on face_created → no FK violation
+
+        The face_updated event from clustering will deliver person_id=P1
+        in the same or a future sync cycle.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        # Face's CURRENT state has person_id (assigned by clustering after detection)
+        face_data = create_mock_face_data(updated_at)
+
+        # face_created event exists (from face detection, before sync window boundary)
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_created",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        # No person events in this sync window — the person was created after
+        # sync_started_at, so its event is excluded by the created_at_lt filter
+        def mock_events_get(**kwargs: Any) -> Any:
+            entity_types = kwargs.get("entity_types", "")
+            if entity_types == "person":
+                return create_mock_events_response([])
+            elif entity_types == "face":
+                return create_mock_events_response([face_event])
+            return create_mock_events_response([])
+
+        mock_client.events.get.side_effect = mock_events_get
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        # Collect what was streamed
+        face_person_refs = set()
+
+        for event in events:
+            if event["type"] == "AssetFaceV1":
+                pid = event["data"].get("personId")
+                if pid:
+                    face_person_refs.add(pid)
+
+        # After fix: face_created events have person_id nulled out, so no
+        # orphaned references to undelivered people.
+        assert not face_person_refs, (
+            "face_created events should not reference any person, but found "
+            f"person references: {face_person_refs}"
+        )
+
+    @pytest.mark.anyio
+    async def test_face_references_person_in_sync_stream_when_both_present(self):
+        """When both person and face events are in the sync window, no orphan.
+
+        This is the happy path: face clustering events (person_created +
+        face_updated) are both within the sync window, so the person is
+        delivered before the face.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        # Person and face data
+        person_data = create_mock_person_data(updated_at)
+        face_data = create_mock_face_data(updated_at)
+        # face_data.person_id already points to person with TEST_UUID
+
+        person_event = create_mock_event(
+            entity_type="person",
+            entity_id=person_data.id,
+            event_type="person_created",
+            created_at=updated_at,
+            cursor="cursor_person_1",
+        )
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        def mock_events_get(**kwargs):
+            entity_types = kwargs.get("entity_types", "")
+            if entity_types == "person":
+                return create_mock_events_response([person_event])
+            elif entity_types == "face":
+                return create_mock_events_response([face_event])
+            return create_mock_events_response([])
+
+        mock_client.events.get.side_effect = mock_events_get
+        mock_client.people.list.return_value = create_mock_entity_page([person_data])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        streamed_person_ids = set()
+        face_person_refs = set()
+
+        for event in events:
+            if event["type"] == "PersonV1":
+                streamed_person_ids.add(event["data"]["id"])
+            elif event["type"] == "AssetFaceV1":
+                pid = event["data"].get("personId")
+                if pid:
+                    face_person_refs.add(pid)
+
+        # Happy path: all face person references are satisfied
+        orphaned_refs = face_person_refs - streamed_person_ids
+        assert not orphaned_refs, (
+            f"Face references unsatisfied person IDs: {orphaned_refs}"
+        )
+
+
 class TestGenerateResetStream:
     """Tests for _generate_reset_stream helper function."""
 
