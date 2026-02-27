@@ -124,6 +124,7 @@ Detailed docs are in the `docs/` directory. Consult these when working in the re
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
 | Running with Immich Web | `README.md` § "Running with Immich Web" | Setting up the full local stack (Immich web + adapter + photos-api + Clerk OAuth) |
+| Running with Immich Mobile | `README.md` § "Running with Immich Mobile" | Self-signed certs, HTTPS setup, connecting the Immich mobile app |
 
 ### References
 
