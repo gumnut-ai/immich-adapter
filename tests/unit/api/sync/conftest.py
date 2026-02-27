@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
 import pytest
+from gumnut.types.face_response import FaceResponse
 
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
@@ -206,7 +207,7 @@ def create_mock_person_data(updated_at: datetime) -> Mock:
 
 def create_mock_face_data(updated_at: datetime) -> Mock:
     """Create mock face data for entity fetch."""
-    face = Mock()
+    face = Mock(spec=FaceResponse)
     face.id = uuid_to_gumnut_face_id(TEST_UUID)
     face.asset_id = uuid_to_gumnut_asset_id(TEST_UUID)
     face.person_id = uuid_to_gumnut_person_id(TEST_UUID)
