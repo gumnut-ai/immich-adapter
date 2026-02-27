@@ -205,15 +205,16 @@ def create_mock_person_data(updated_at: datetime) -> Mock:
     return person
 
 
-def create_mock_face_data(updated_at: datetime) -> Mock:
-    """Create mock face data for entity fetch."""
-    face = Mock(spec=FaceResponse)
-    face.id = uuid_to_gumnut_face_id(TEST_UUID)
-    face.asset_id = uuid_to_gumnut_asset_id(TEST_UUID)
-    face.person_id = uuid_to_gumnut_person_id(TEST_UUID)
-    face.bounding_box = {"x": 100, "y": 100, "w": 50, "h": 50}
-    face.updated_at = updated_at
-    return face
+def create_mock_face_data(updated_at: datetime) -> FaceResponse:
+    """Create face data for entity fetch using a real FaceResponse instance."""
+    return FaceResponse(
+        id=uuid_to_gumnut_face_id(TEST_UUID),
+        asset_id=uuid_to_gumnut_asset_id(TEST_UUID),
+        person_id=uuid_to_gumnut_person_id(TEST_UUID),
+        bounding_box={"x": 100, "y": 100, "w": 50, "h": 50},
+        created_at=updated_at,
+        updated_at=updated_at,
+    )
 
 
 def create_mock_album_asset_data(updated_at: datetime) -> Mock:

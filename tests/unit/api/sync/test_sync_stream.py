@@ -1007,6 +1007,11 @@ class TestGUM292FacePersonOrdering:
             "a person that may not be in this sync cycle"
         )
 
+        # Verify the original entity wasn't mutated (model_copy creates a new instance)
+        assert face_data.person_id is not None, (
+            "Original face entity should not be mutated by stream processing"
+        )
+
     @pytest.mark.anyio
     async def test_face_created_does_not_reference_undelivered_person(self):
         """face_created events don't reference people outside the sync window.

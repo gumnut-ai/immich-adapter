@@ -7,7 +7,6 @@ Imports converter functions from converters module.
 import json
 import logging
 import uuid
-from copy import copy
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, TypeAlias, cast
 
@@ -535,8 +534,7 @@ async def _stream_entity_type(
                     and isinstance(entity, FaceResponse)
                     and entity.person_id is not None
                 ):
-                    entity = copy(entity)
-                    entity.person_id = None
+                    entity = entity.model_copy(update={"person_id": None})
 
                 json_line = _convert_entity_to_sync_event(
                     gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type
