@@ -47,6 +47,7 @@ async def get_all_jobs_status() -> QueuesResponseLegacyDto:
         backgroundTask=fake_status,
         backupDatabase=fake_status,
         duplicateDetection=fake_status,
+        editor=fake_status,
         faceDetection=fake_status,
         facialRecognition=fake_status,
         library=fake_status,

@@ -35,7 +35,6 @@ from routers.immich_models import (
     AssetMediaSize,
     AssetMediaResponseDto,
     AssetMediaStatus,
-    AssetMetadataKey,
     AssetMetadataResponseDto,
     AssetMetadataUpsertDto,
     AssetResponseDto,
@@ -749,7 +748,7 @@ async def update_asset_metadata(
 @router.delete("/{id}/metadata/{key}", status_code=204)
 async def delete_asset_metadata(
     id: UUID,
-    key: AssetMetadataKey,
+    key: str,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
 ):
     """
@@ -763,7 +762,7 @@ async def delete_asset_metadata(
 @router.get("/{id}/metadata/{key}", response_model=AssetMetadataResponseDto)
 async def get_asset_metadata_by_key(
     id: UUID,
-    key: AssetMetadataKey,
+    key: str,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
 ):
     """

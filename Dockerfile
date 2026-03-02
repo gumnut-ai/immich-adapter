@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
 
 # Build arguments for versioning and metadata
-# Override with: docker build --build-arg IMMICH_VERSION=v2.2.3 .
+# Override with: docker build --build-arg IMMICH_VERSION=v2.5.6 .
 # Pinned to specific version for reproducible builds
-# Last updated: 2025-11-11 (Immich v2.2.3)
-ARG IMMICH_VERSION=v2.2.3
+# Last updated: 2026-02-27 (Immich v2.5.6)
+ARG IMMICH_VERSION=v2.5.6
 ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
 

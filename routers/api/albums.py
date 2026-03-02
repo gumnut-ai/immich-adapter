@@ -20,7 +20,7 @@ from routers.immich_models import (
     UpdateAlbumDto,
     UpdateAlbumUserDto,
     AddUsersDto,
-    Error2,
+    Error1,
     UserResponseDto,
 )
 from routers.utils.gumnut_id_conversion import (
@@ -239,7 +239,7 @@ async def add_assets_to_album(
                 if "duplicate" in error_msg or "already exists" in error_msg:
                     response.append(
                         BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error2.duplicate
+                            id=asset_uuid_str, success=False, error=Error1.duplicate
                         )
                     )
                 elif (
@@ -248,13 +248,13 @@ async def add_assets_to_album(
                 ):
                     response.append(
                         BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error2.not_found
+                            id=asset_uuid_str, success=False, error=Error1.not_found
                         )
                     )
                 else:
                     response.append(
                         BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error2.unknown
+                            id=asset_uuid_str, success=False, error=Error1.unknown
                         )
                     )
 
@@ -368,19 +368,19 @@ async def remove_asset_from_album(
                 ):
                     response.append(
                         BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error2.not_found
+                            id=asset_uuid_str, success=False, error=Error1.not_found
                         )
                     )
                 elif "not in album" in error_msg or "not member" in error_msg:
                     response.append(
                         BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error2.not_found
+                            id=asset_uuid_str, success=False, error=Error1.not_found
                         )
                     )
                 else:
                     response.append(
                         BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error2.unknown
+                            id=asset_uuid_str, success=False, error=Error1.unknown
                         )
                     )
 

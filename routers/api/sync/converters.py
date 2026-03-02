@@ -150,6 +150,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         id=str(safe_uuid_from_asset_id(asset.id)),
         checksum=asset.checksum_sha1 or asset.checksum,
         isFavorite=False,  # Gumnut doesn't track favorites
+        isEdited=False,
         originalFileName=asset.original_file_name,
         ownerId=owner_id,
         type=asset_type,
@@ -160,10 +161,12 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         # Optional fields - use None when not available
         deletedAt=None,
         duration=None,
+        height=None,
         libraryId=None,
         livePhotoVideoId=None,
         stackId=None,
         thumbhash=None,
+        width=None,
     )
 
 

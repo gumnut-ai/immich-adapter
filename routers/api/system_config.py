@@ -195,6 +195,7 @@ async def get_config() -> SystemConfigDto:
 
     job_config = SystemConfigJobDto(
         backgroundTask=job_settings_bg,
+        editor=job_settings_bg,
         faceDetection=job_settings_face,
         library=job_settings_lib,
         metadataExtraction=job_settings_meta,
