@@ -1153,6 +1153,335 @@ class TestGUM292FacePersonOrdering:
             f"Face references unsatisfied person IDs: {orphaned_refs}"
         )
 
+    # -------------------------------------------------------------------------
+    # face_updated person_id validation tests (GUM-292 extension)
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.anyio
+    async def test_face_updated_nulls_person_id_when_person_not_in_sync_window(self):
+        """face_updated nulls person_id when person was created after sync_started_at.
+
+        Scenario:
+        1. Clustering pass 1: assigns face F1 to person P1 → face_updated at T1
+        2. Clustering pass 2: reassigns F1 to P2 → face_updated at T2
+        3. sync_started_at falls between T1 and T2
+        4. face_updated(T1) is in window, but entity fetch returns person_id=P2
+        5. P2 was created after sync_started_at → not delivered → null person_id
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        # Person P2 was created AFTER sync_started_at
+        person_p2_id = uuid_to_gumnut_person_id(
+            UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        )
+
+        # Face entity's current state references P2
+        face_data = create_mock_face_data(updated_at)
+        face_data = face_data.model_copy(update={"person_id": person_p2_id})
+
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        # P2 was created after sync_started_at → _get_verified_person_ids returns empty
+        person_p2 = create_mock_person_data(updated_at)
+        person_p2.id = person_p2_id
+        person_p2.created_at = datetime(2025, 1, 21, 10, 0, 0, tzinfo=timezone.utc)
+        mock_client.people.list.return_value = create_mock_entity_page([person_p2])
+
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+            delivered_person_ids=set(),
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        assert event_data["type"] == "AssetFaceV1"
+        assert event_data["data"]["personId"] is None, (
+            "face_updated should null person_id when person was created after sync_started_at"
+        )
+
+    @pytest.mark.anyio
+    async def test_face_updated_keeps_person_id_when_person_delivered_this_cycle(self):
+        """face_updated keeps person_id when person was delivered in this sync cycle.
+
+        Happy path: person P1 was streamed earlier in this cycle, so
+        face_updated referencing P1 should keep the person_id.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        person_data = create_mock_person_data(updated_at)
+        face_data = create_mock_face_data(updated_at)
+        # face_data.person_id already references the TEST_UUID person
+
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        # Person was delivered earlier in this cycle
+        delivered_person_ids = {person_data.id}
+
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+            delivered_person_ids=delivered_person_ids,
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        assert event_data["type"] == "AssetFaceV1"
+        assert event_data["data"]["personId"] is not None, (
+            "face_updated should keep person_id when person was delivered this cycle"
+        )
+
+    @pytest.mark.anyio
+    async def test_face_updated_keeps_person_id_when_person_previously_synced(self):
+        """face_updated keeps person_id when person was created before sync window.
+
+        Delta sync scenario: person P1 was created before sync_started_at,
+        so it was eligible for delivery in a prior cycle. The client should
+        already have it.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        person_id = uuid_to_gumnut_person_id(
+            UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+        )
+
+        face_data = create_mock_face_data(updated_at)
+        face_data = face_data.model_copy(update={"person_id": person_id})
+
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        # Person was created before sync_started_at → verification succeeds
+        person = create_mock_person_data(updated_at)
+        person.id = person_id
+        person.created_at = datetime(2025, 1, 10, 10, 0, 0, tzinfo=timezone.utc)
+        mock_client.people.list.return_value = create_mock_entity_page([person])
+
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+            delivered_person_ids=set(),
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        assert event_data["data"]["personId"] is not None, (
+            "face_updated should keep person_id when person was created before sync window"
+        )
+
+    @pytest.mark.anyio
+    async def test_face_updated_nulls_person_id_when_person_not_found(self):
+        """face_updated nulls person_id when person has been deleted.
+
+        If the person was deleted between event time and fetch, the
+        verification lookup returns empty, so person_id should be nulled.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        deleted_person_id = uuid_to_gumnut_person_id(
+            UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+        )
+
+        face_data = create_mock_face_data(updated_at)
+        face_data = face_data.model_copy(update={"person_id": deleted_person_id})
+
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        # Person not found (deleted) → people.list returns empty
+        mock_client.people.list.return_value = create_mock_entity_page([])
+
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+            delivered_person_ids=set(),
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        assert event_data["data"]["personId"] is None, (
+            "face_updated should null person_id when person has been deleted"
+        )
+
+    @pytest.mark.anyio
+    async def test_face_person_validation_skipped_when_people_not_requested(self):
+        """No person_id validation when PeopleV1 is not in requested types.
+
+        When the client doesn't request PeopleV1, we can't reason about
+        its person DB state, so person_id should pass through unchanged.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+        assert face_data.person_id is not None, "Test setup: face should have person_id"
+
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        def mock_events_get(**kwargs: Any) -> Any:
+            entity_types = kwargs.get("entity_types", "")
+            if entity_types == "face":
+                return create_mock_events_response([face_event])
+            return create_mock_events_response([])
+
+        mock_client.events.get.side_effect = mock_events_get
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        # Only request faces, NOT people
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        face_events = [e for e in events if e["type"] == "AssetFaceV1"]
+        assert len(face_events) == 1
+        assert face_events[0]["data"]["personId"] is not None, (
+            "person_id should pass through when PeopleV1 is not requested"
+        )
+
+    @pytest.mark.anyio
+    async def test_face_created_still_nulls_with_delivered_set(self):
+        """face_created always nulls person_id even when delivered_person_ids is provided.
+
+        The face_created null logic is unconditional (face detection always
+        creates faces without a person). This should not change when the
+        delivered_person_ids tracking is active.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        person_data = create_mock_person_data(updated_at)
+        face_data = create_mock_face_data(updated_at)
+        # face_data.person_id already references the TEST_UUID person
+
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_created",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        # Even though the person IS in delivered set, face_created still nulls
+        delivered_person_ids = {person_data.id}
+
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+            delivered_person_ids=delivered_person_ids,
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        assert event_data["data"]["personId"] is None, (
+            "face_created should always null person_id regardless of delivered set"
+        )
+
 
 class TestGenerateResetStream:
     """Tests for _generate_reset_stream helper function."""

@@ -432,6 +432,42 @@ def _fetch_entities_map(
     return result
 
 
+def _get_verified_person_ids(
+    gumnut_client: Gumnut,
+    person_ids: list[str],
+    sync_started_at: datetime,
+) -> set[str]:
+    """
+    Batch-fetch persons by ID and return those created before sync_started_at.
+
+    Persons created before the sync window started were eligible for delivery
+    in a prior sync cycle, so the client should already have them. Persons
+    created after sync_started_at could not have been delivered and may cause
+    FK violations if referenced by face events.
+
+    Args:
+        gumnut_client: The Gumnut API client
+        person_ids: List of person IDs to verify
+        sync_started_at: Upper bound of the current sync window
+
+    Returns:
+        Set of person IDs that were created before sync_started_at
+    """
+    if not person_ids:
+        return set()
+
+    verified: set[str] = set()
+    unique_ids = list(dict.fromkeys(person_ids))
+
+    for chunk in _batched(unique_ids, FETCH_BATCH_SIZE):
+        page = gumnut_client.people.list(ids=chunk, limit=len(chunk))
+        for person in page.data:
+            if person.created_at is not None and person.created_at < sync_started_at:
+                verified.add(person.id)
+
+    return verified
+
+
 async def _stream_entity_type(
     gumnut_client: Gumnut,
     gumnut_entity_type: str,
@@ -439,6 +475,8 @@ async def _stream_entity_type(
     owner_id: str,
     checkpoint: Checkpoint | None,
     sync_started_at: datetime,
+    delivered_entity_ids: set[str] | None = None,
+    delivered_person_ids: set[str] | None = None,
 ) -> AsyncGenerator[tuple[str, int], None]:
     """
     Stream events for a single entity type using the events API.
@@ -454,6 +492,10 @@ async def _stream_entity_type(
         owner_id: The owner UUID string
         checkpoint: The checkpoint with cursor (None for full sync)
         sync_started_at: Upper bound for the query window
+        delivered_entity_ids: If provided, populated with entity IDs of upserted
+            entities during streaming (used for person tracking)
+        delivered_person_ids: If provided, used during face streaming to validate
+            person_id references against known-safe person IDs
 
     Yields:
         Tuples of (json_line, count) for each event
@@ -493,6 +535,27 @@ async def _stream_entity_type(
         entities_map = _fetch_entities_map(
             gumnut_client, gumnut_entity_type, upsert_ids
         )
+
+        # GUM-292: For face entities, compute safe person_ids for this page.
+        # A person_id is safe if it was delivered in this sync cycle or was
+        # created before sync_started_at (eligible from a prior cycle).
+        safe_person_ids: set[str] | None = None
+        if gumnut_entity_type == "face" and delivered_person_ids is not None:
+            # Collect person_ids from fetched faces not already known safe
+            unverified_person_ids = [
+                entity.person_id
+                for entity in entities_map.values()
+                if isinstance(entity, FaceResponse)
+                and entity.person_id is not None
+                and entity.person_id not in delivered_person_ids
+            ]
+            if unverified_person_ids:
+                verified = _get_verified_person_ids(
+                    gumnut_client, unverified_person_ids, sync_started_at
+                )
+                safe_person_ids = delivered_person_ids | verified
+            else:
+                safe_person_ids = delivered_person_ids
 
         # Process events in order
         for event in events:
@@ -536,11 +599,28 @@ async def _stream_entity_type(
                 ):
                     entity = entity.model_copy(update={"person_id": None})
 
+                # GUM-292: For non-creation face events (e.g. face_updated),
+                # validate that person_id references a person the client has.
+                # The entity fetch returns CURRENT state which may reference a
+                # person assigned in a later clustering pass whose
+                # person_created event is outside this sync window.
+                elif (
+                    safe_person_ids is not None
+                    and isinstance(entity, FaceResponse)
+                    and entity.person_id is not None
+                    and entity.person_id not in safe_person_ids
+                ):
+                    entity = entity.model_copy(update={"person_id": None})
+
                 json_line = _convert_entity_to_sync_event(
                     gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type
                 )
                 yield json_line, 1
                 count += 1
+
+                # Track delivered entity IDs (used for person tracking)
+                if delivered_entity_ids is not None:
+                    delivered_entity_ids.add(event.entity_id)
 
         # Update cursor from last event
         last_cursor = events[-1].cursor
@@ -628,6 +708,13 @@ async def generate_sync_stream(
         event_counts: dict[str, int] = {}
         total_events = 0
 
+        # GUM-292: Track delivered person IDs so face streaming can validate
+        # person_id references. Only relevant when PeopleV1 is requested —
+        # if the client didn't ask for people, we can't reason about its
+        # person DB state.
+        people_requested = SyncRequestType.PeopleV1 in requested_types
+        delivered_person_ids: set[str] = set()
+
         # Process each entity type in order, using its own checkpoint
         for request_type, gumnut_entity_type, sync_entity_type in _SYNC_TYPE_ORDER:
             if request_type not in requested_types:
@@ -635,6 +722,13 @@ async def generate_sync_stream(
 
             # Get checkpoint for this entity type
             checkpoint = checkpoint_map.get(sync_entity_type)
+
+            # Build optional tracking params
+            extra_kwargs: dict[str, set[str]] = {}
+            if gumnut_entity_type == "person" and people_requested:
+                extra_kwargs["delivered_entity_ids"] = delivered_person_ids
+            elif gumnut_entity_type == "face" and people_requested:
+                extra_kwargs["delivered_person_ids"] = delivered_person_ids
 
             # Stream events for this entity type
             async for event_line, count in _stream_entity_type(
@@ -644,6 +738,7 @@ async def generate_sync_stream(
                 owner_id,
                 checkpoint,
                 sync_started_at,
+                **extra_kwargs,
             ):
                 yield event_line
                 event_counts[sync_entity_type.value] = (
