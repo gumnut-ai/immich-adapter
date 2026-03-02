@@ -256,13 +256,20 @@ def build_asset_upload_ready_payload(
         thumbhash=None,
         checksum=gumnut_asset.checksum or "",
         deletedAt=None,
+        duration=None,
         fileCreatedAt=file_created_at,
         fileModifiedAt=file_modified_at,
+        height=None,
+        isEdited=False,
         isFavorite=False,
+        libraryId=None,
+        livePhotoVideoId=None,
         localDateTime=local_date_time,
         originalFileName=gumnut_asset.original_file_name or "",
+        stackId=None,
         type=mime_type_to_asset_type(gumnut_asset.mime_type),
         visibility=AssetVisibility.timeline,
+        width=None,
     )
 
     sync_exif = extract_sync_exif(gumnut_asset, asset_uuid)
@@ -334,7 +341,9 @@ def convert_gumnut_asset_to_immich(
         createdAt=created_at_fallback,
         duration="00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else "",
         hasMetadata=True,
+        height=None,
         isArchived=False,
+        isEdited=False,
         isFavorite=False,
         isOffline=False,
         isTrashed=False,
@@ -343,5 +352,6 @@ def convert_gumnut_asset_to_immich(
         owner=current_user,
         thumbhash="",
         visibility=AssetVisibility.timeline,
+        width=None,
         people=people,
     )

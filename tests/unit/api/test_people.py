@@ -22,7 +22,7 @@ from routers.api.people import (
 from routers.immich_models import (
     AssetFaceUpdateDto,
     BulkIdsDto,
-    Error2,
+    Error1,
     MergePersonDto,
     PeopleUpdateDto,
     PeopleUpdateItem,
@@ -168,7 +168,7 @@ class TestUpdatePeople:
         assert result[0].error is None
         assert result[0].id == person_id1
         assert result[1].success is False
-        assert result[1].error == Error2.not_found
+        assert result[1].error == Error1.not_found
         assert result[1].id == person_id2
 
     @pytest.mark.anyio

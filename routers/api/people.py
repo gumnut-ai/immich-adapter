@@ -11,7 +11,7 @@ from routers.immich_models import (
     AssetFaceUpdateDto,
     BulkIdResponseDto,
     BulkIdsDto,
-    Error2,
+    Error1,
     MergePersonDto,
     PeopleResponseDto,
     PeopleUpdateDto,
@@ -93,19 +93,19 @@ async def update_people(
             if check_for_error_by_code(e, 404) or "not found" in error_msg:
                 results.append(
                     BulkIdResponseDto(
-                        id=person_item.id, success=False, error=Error2.not_found
+                        id=person_item.id, success=False, error=Error1.not_found
                     )
                 )
             elif check_for_error_by_code(e, 401) or "invalid api key" in error_msg:
                 results.append(
                     BulkIdResponseDto(
-                        id=person_item.id, success=False, error=Error2.no_permission
+                        id=person_item.id, success=False, error=Error1.no_permission
                     )
                 )
             else:
                 results.append(
                     BulkIdResponseDto(
-                        id=person_item.id, success=False, error=Error2.unknown
+                        id=person_item.id, success=False, error=Error1.unknown
                     )
                 )
 

@@ -47,7 +47,6 @@ from routers.immich_models import (
     UpdateAssetDto,
     AssetMetadataUpsertDto,
     AssetMetadataUpsertItemDto,
-    AssetMetadataKey,
     AssetMediaSize,
     AssetMediaStatus,
 )
@@ -1110,9 +1109,7 @@ class TestUpdateAssetMetadata:
         # Setup
         request = AssetMetadataUpsertDto(
             items=[
-                AssetMetadataUpsertItemDto(
-                    key=AssetMetadataKey.mobile_app, value={"test": "value"}
-                )
+                AssetMetadataUpsertItemDto(key="mobile_app", value={"test": "value"})
             ]
         )
 
@@ -1130,7 +1127,7 @@ class TestDeleteAssetMetadata:
     async def test_delete_asset_metadata_returns_none(self, sample_uuid):
         """Test delete asset metadata (stub implementation)."""
         # Execute
-        result = await delete_asset_metadata(sample_uuid, AssetMetadataKey.mobile_app)
+        result = await delete_asset_metadata(sample_uuid, "mobile_app")
 
         # Assert
         assert result is None
@@ -1143,9 +1140,7 @@ class TestGetAssetMetadataByKey:
     async def test_get_asset_metadata_by_key_returns_none(self, sample_uuid):
         """Test that get_asset_metadata_by_key returns None."""
         # Execute
-        result = await get_asset_metadata_by_key(
-            sample_uuid, AssetMetadataKey.mobile_app
-        )
+        result = await get_asset_metadata_by_key(sample_uuid, "mobile_app")
 
         # Assert
         assert result is None

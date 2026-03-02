@@ -100,9 +100,57 @@ Mobile clients (especially iOS/Flutter) often make rapid successive requests and
 - **API Docs**: http://localhost:3001/docs and http://localhost:3001/redoc
 - **OpenAPI Spec**: http://localhost:3001/openapi.json
 
-## Running with Immich Web
+## Running with Immich Web (Static Files)
 
-To test the adapter end-to-end with the Immich web UI, you need three services running locally:
+The simplest way to run the Immich web UI locally is to extract the pre-built static files from the Immich Docker image. The adapter serves them directly on port 3001 — no separate web server needed.
+
+```
+Browser (localhost:3001)
+  → immich-adapter (serves static files + API)
+    → photos-api (localhost:8000)
+      → Clerk (OAuth provider)
+```
+
+### Prerequisites
+
+1. **Docker** running locally
+2. **photos-api** running on `localhost:8000` — see the [photos-api README](../photos/photos-api/README.md) for setup
+3. **Clerk OAuth configured** in photos-api — see the "Configure Clerk OAuth" section in the photos-api README
+4. **immich-adapter** running on `localhost:3001` (see [Running the Application](#running-the-application) above)
+
+### Extract Immich web files
+
+Run the extraction script to pull the web files from the Immich Docker image into `static/`:
+
+```bash
+./scripts/extract-immich-web.py -f ./static
+```
+
+The script reads the Immich version from `.immich-container-tag`, pulls `ghcr.io/immich-app/immich-server:<tag>`, and copies the pre-built web files into `static/`. The `-f` flag overwrites any existing files.
+
+Other useful options:
+
+```bash
+./scripts/extract-immich-web.py -f -s ./static   # Skip pull if image already exists locally
+./scripts/extract-immich-web.py -t v2.5.6 ./static  # Use a specific tag instead of .immich-container-tag
+```
+
+### Verify the setup
+
+1. Open http://localhost:3001 in your browser
+2. The app should redirect to Clerk for OAuth authentication
+3. After signing in, you should be redirected back to the Immich web UI
+
+### Troubleshooting
+
+- **"Failed to pull image"**: Ensure Docker is running
+- **OAuth `invalid_client` error**: Check that `CLERK_OAUTH_CLIENT_ID` in photos-api `.env` is set to a real value (not the placeholder)
+- **OAuth `redirect_uri` mismatch**: Add `http://localhost:3001/auth/login` as an allowed redirect URI in the Clerk OAuth application settings
+- **OAuth `invalid_scope` error**: Enable the `openid`, `email`, and `profile` scopes on the Clerk OAuth application
+
+## Running with Immich Web (Dev Server)
+
+If you need to modify the Immich web UI or debug frontend behavior, you can run the Immich web dev server from source instead. This uses Vite's hot-reload on port 3000 and proxies API requests to the adapter.
 
 ```
 Browser (localhost:3000)

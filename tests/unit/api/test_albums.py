@@ -21,7 +21,7 @@ from routers.immich_models import (
     UpdateAlbumDto,
     BulkIdsDto,
     AlbumsAddAssetsDto,
-    Error2,
+    Error1,
 )
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
@@ -502,8 +502,8 @@ class TestAddAssetsToAlbum:
         assert result[0].id == str(asset_id1)
         assert result[1].success is False
         assert result[1].id == str(asset_id2)
-        # Now error is an Error2 enum, check for the not_found value
-        assert result[1].error == Error2.not_found
+        # Now error is an Error1 enum, check for the not_found value
+        assert result[1].error == Error1.not_found
 
 
 class TestUpdateAlbum:
