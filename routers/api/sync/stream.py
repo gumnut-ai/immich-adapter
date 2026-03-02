@@ -461,6 +461,17 @@ def _get_verified_person_ids(
 
     for chunk in _batched(unique_ids, FETCH_BATCH_SIZE):
         page = gumnut_client.people.list(ids=chunk, limit=len(chunk))
+        returned_ids = {person.id for person in page.data}
+        missing = set(chunk) - returned_ids
+        if missing:
+            logger.warning(
+                "people.list returned partial results during person_id verification",
+                extra={
+                    "requested_count": len(chunk),
+                    "returned_count": len(returned_ids),
+                    "missing_count": len(missing),
+                },
+            )
         for person in page.data:
             if person.created_at is not None and person.created_at < sync_started_at:
                 verified.add(person.id)
@@ -724,7 +735,7 @@ async def generate_sync_stream(
             checkpoint = checkpoint_map.get(sync_entity_type)
 
             # Build optional tracking params
-            extra_kwargs: dict[str, set[str]] = {}
+            extra_kwargs: dict[str, Any] = {}
             if gumnut_entity_type == "person" and people_requested:
                 extra_kwargs["delivered_entity_ids"] = delivered_person_ids
             elif gumnut_entity_type == "face" and people_requested:

@@ -1221,6 +1221,9 @@ class TestGUM292FacePersonOrdering:
             "face_updated should null person_id when person was created after sync_started_at"
         )
 
+        # Verification API call should have been made for the unknown person_id
+        mock_client.people.list.assert_called_once()
+
     @pytest.mark.anyio
     async def test_face_updated_keeps_person_id_when_person_delivered_this_cycle(self):
         """face_updated keeps person_id when person was delivered in this sync cycle.
@@ -1272,6 +1275,9 @@ class TestGUM292FacePersonOrdering:
         assert event_data["data"]["personId"] is not None, (
             "face_updated should keep person_id when person was delivered this cycle"
         )
+
+        # No verification API call needed — person already in delivered set
+        mock_client.people.list.assert_not_called()
 
     @pytest.mark.anyio
     async def test_face_updated_keeps_person_id_when_person_previously_synced(self):
