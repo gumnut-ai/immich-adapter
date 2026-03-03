@@ -530,7 +530,8 @@ async def _stream_entity_type(
                 # face_updated event from clustering will deliver the correct
                 # person_id in the same or a future sync cycle.
                 if (
-                    event.event_type == "face_created"
+                    sync_entity_type == SyncEntityType.AssetFaceV1
+                    and event.event_type == "face_created"
                     and isinstance(entity, FaceResponse)
                     and entity.person_id is not None
                 ):
@@ -541,16 +542,20 @@ async def _stream_entity_type(
                 # entity's current state, which may reference a person
                 # assigned by a later clustering run.
                 elif (
-                    event.event_type == "face_updated"
+                    sync_entity_type == SyncEntityType.AssetFaceV1
+                    and event.event_type == "face_updated"
                     and isinstance(entity, FaceResponse)
                     and isinstance(event.payload, dict)
                     and "person_id" in event.payload
                 ):
-                    payload_person_id = event.payload.get("person_id")
-                    if entity.person_id != payload_person_id:
-                        entity = entity.model_copy(
-                            update={"person_id": payload_person_id}
-                        )
+                    payload_person_id = event.payload["person_id"]
+                    if payload_person_id is None or (
+                        isinstance(payload_person_id, str) and payload_person_id.strip()
+                    ):
+                        if entity.person_id != payload_person_id:
+                            entity = entity.model_copy(
+                                update={"person_id": payload_person_id}
+                            )
 
                 json_line = _convert_entity_to_sync_event(
                     gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type

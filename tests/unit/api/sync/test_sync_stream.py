@@ -19,6 +19,7 @@ from routers.immich_models import SyncEntityType, SyncRequestType, SyncStreamDto
 from services.checkpoint_store import Checkpoint, CheckpointStore
 from services.session_store import SessionStore
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_person_id,
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_face_id,
@@ -1260,8 +1261,6 @@ class TestGUM292FacePersonOrdering:
         event_data = json.loads(json_line.strip())
 
         # Legacy event: should use entity's current person_id
-        from routers.utils.gumnut_id_conversion import safe_uuid_from_person_id
-
         assert face_data.person_id is not None
         expected_uuid = str(safe_uuid_from_person_id(face_data.person_id))
         assert event_data["data"]["personId"] == expected_uuid, (
@@ -1311,6 +1310,56 @@ class TestGUM292FacePersonOrdering:
 
         assert event_data["data"]["personId"] is None, (
             "face_updated with payload person_id=None should null out personId"
+        )
+
+    @pytest.mark.anyio
+    async def test_face_updated_with_empty_payload_dict_uses_current_state(self):
+        """face_updated with empty payload {} (no person_id key) uses current state.
+
+        A producer bug might send an empty payload dict. Since person_id
+        is not present in the payload, the handler should not trigger and
+        the entity's current person_id should pass through unchanged.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+            payload={},
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        # Empty payload: should use entity's current person_id
+        assert face_data.person_id is not None
+        expected_uuid = str(safe_uuid_from_person_id(face_data.person_id))
+        assert event_data["data"]["personId"] == expected_uuid, (
+            "face_updated with empty payload {} should use entity's current person_id"
         )
 
 
