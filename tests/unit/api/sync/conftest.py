@@ -3,6 +3,7 @@
 import json
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
@@ -115,6 +116,7 @@ def create_mock_event(
     event_type: str,
     created_at: datetime,
     cursor: str = "cursor_1",
+    payload: Any = None,
 ) -> Mock:
     """Create a mock event."""
     event = Mock()
@@ -123,7 +125,7 @@ def create_mock_event(
     event.event_type = event_type
     event.created_at = created_at
     event.cursor = cursor
-    event.payload = None
+    event.payload = payload
     return event
 
 
