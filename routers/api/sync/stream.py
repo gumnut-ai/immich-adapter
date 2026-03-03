@@ -536,6 +536,22 @@ async def _stream_entity_type(
                 ):
                     entity = entity.model_copy(update={"person_id": None})
 
+                # GUM-292: face_updated events carry the causally-consistent
+                # person_id in the event payload. Use it instead of the
+                # entity's current state, which may reference a person
+                # assigned by a later clustering run.
+                elif (
+                    event.event_type == "face_updated"
+                    and isinstance(entity, FaceResponse)
+                    and isinstance(event.payload, dict)
+                    and "person_id" in event.payload
+                ):
+                    payload_person_id = event.payload.get("person_id")
+                    if entity.person_id != payload_person_id:
+                        entity = entity.model_copy(
+                            update={"person_id": payload_person_id}
+                        )
+
                 json_line = _convert_entity_to_sync_event(
                     gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type
                 )
