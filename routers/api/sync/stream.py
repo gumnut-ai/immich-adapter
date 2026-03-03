@@ -522,7 +522,7 @@ async def _stream_entity_type(
                     # Entity was deleted between event and fetch — skip
                     continue
 
-                # GUM-292: face_created events should not carry person_id.
+                # face_created events should not carry person_id.
                 # Face detection always creates faces without a person.
                 # The current entity state may include a person_id assigned
                 # later by clustering, but the corresponding person_created
@@ -537,7 +537,7 @@ async def _stream_entity_type(
                 ):
                     entity = entity.model_copy(update={"person_id": None})
 
-                # GUM-292: face_updated events carry the causally-consistent
+                # face_updated events carry the causally-consistent
                 # person_id in the event payload. Use it instead of the
                 # entity's current state, which may reference a person
                 # assigned by a later clustering run.

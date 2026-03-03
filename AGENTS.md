@@ -18,6 +18,11 @@
 
 ## AI-Specific Behavior
 
+### Comments
+
+- Never reference internal issue tracker IDs (e.g., `GUM-123`) in code comments. This is a public repository and not everyone has access to our bug tracker
+- Comments on fixes should include all relevant context inline so that the reasoning is self-contained
+
 ### Code Writing
 
 - Only use emojis if the user explicitly requests it
