@@ -1217,6 +1217,62 @@ class TestGUM292FacePersonOrdering:
         )
 
     @pytest.mark.anyio
+    async def test_face_updated_payload_assigns_person_id_when_entity_has_none(self):
+        """face_updated with payload person_id assigns even when entity has None.
+
+        When the fetched entity has person_id=None (e.g. face detection just
+        created it, or the entity state lags behind the event), the payload
+        person_id must still be applied. The guard must not skip payload
+        processing based on the entity's current person_id.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        # Entity currently has person_id=None
+        face_data = create_mock_face_data(updated_at)
+        face_data = face_data.model_copy(update={"person_id": None})
+        assert face_data.person_id is None
+
+        # But the event payload carries a valid person_id
+        payload_uuid = UUID("00000000-0000-0000-0000-000000000003")
+        payload_person_id = uuid_to_gumnut_person_id(payload_uuid)
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+            payload={"person_id": payload_person_id},
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        expected_uuid = str(payload_uuid)
+        assert event_data["data"]["personId"] == expected_uuid, (
+            f"face_updated payload should assign person_id even when entity has None, "
+            f"expected {expected_uuid} but got {event_data['data']['personId']}"
+        )
+
+    @pytest.mark.anyio
     async def test_face_updated_without_payload_nulls_person_id(self):
         """Legacy face_updated events (no payload) null out person_id.
 

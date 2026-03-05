@@ -535,13 +535,12 @@ async def _stream_entity_type(
                 # - face_updated WITHOUT payload (legacy): null out —
                 #   a newer face_updated event with payload will deliver
                 #   the correct person_id if one exists
-                if (
-                    sync_entity_type == SyncEntityType.AssetFaceV1
-                    and isinstance(entity, FaceResponse)
-                    and entity.person_id is not None
+                if sync_entity_type == SyncEntityType.AssetFaceV1 and isinstance(
+                    entity, FaceResponse
                 ):
                     if event.event_type == "face_created":
-                        entity = entity.model_copy(update={"person_id": None})
+                        if entity.person_id is not None:
+                            entity = entity.model_copy(update={"person_id": None})
                     elif event.event_type == "face_updated":
                         if (
                             isinstance(event.payload, dict)
@@ -562,7 +561,8 @@ async def _stream_entity_type(
                             # Legacy face_updated without payload — null
                             # out person_id since the entity's current
                             # state is not causally consistent
-                            entity = entity.model_copy(update={"person_id": None})
+                            if entity.person_id is not None:
+                                entity = entity.model_copy(update={"person_id": None})
 
                 json_line = _convert_entity_to_sync_event(
                     gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type
