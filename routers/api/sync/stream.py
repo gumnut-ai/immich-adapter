@@ -522,40 +522,47 @@ async def _stream_entity_type(
                     # Entity was deleted between event and fetch — skip
                     continue
 
-                # face_created events should not carry person_id.
-                # Face detection always creates faces without a person.
-                # The current entity state may include a person_id assigned
-                # later by clustering, but the corresponding person_created
-                # event may not be in this sync cycle. Null it out — the
-                # face_updated event from clustering will deliver the correct
-                # person_id in the same or a future sync cycle.
+                # Face person_id handling: only trust the event payload,
+                # never the entity's current state. The current state may
+                # reference a person that has no events (e.g. created by
+                # an older clustering run that didn't emit events), which
+                # would cause an FK constraint failure on the client.
+                #
+                # - face_created: always null (face detection creates
+                #   faces without a person)
+                # - face_updated WITH payload: use payload person_id
+                #   (causally consistent)
+                # - face_updated WITHOUT payload (legacy): null out —
+                #   a newer face_updated event with payload will deliver
+                #   the correct person_id if one exists
                 if (
                     sync_entity_type == SyncEntityType.AssetFaceV1
-                    and event.event_type == "face_created"
                     and isinstance(entity, FaceResponse)
                     and entity.person_id is not None
                 ):
-                    entity = entity.model_copy(update={"person_id": None})
-
-                # face_updated events carry the causally-consistent
-                # person_id in the event payload. Use it instead of the
-                # entity's current state, which may reference a person
-                # assigned by a later clustering run.
-                elif (
-                    sync_entity_type == SyncEntityType.AssetFaceV1
-                    and event.event_type == "face_updated"
-                    and isinstance(entity, FaceResponse)
-                    and isinstance(event.payload, dict)
-                    and "person_id" in event.payload
-                ):
-                    payload_person_id = event.payload["person_id"]
-                    if payload_person_id is None or (
-                        isinstance(payload_person_id, str) and payload_person_id.strip()
-                    ):
-                        if entity.person_id != payload_person_id:
-                            entity = entity.model_copy(
-                                update={"person_id": payload_person_id}
-                            )
+                    if event.event_type == "face_created":
+                        entity = entity.model_copy(update={"person_id": None})
+                    elif event.event_type == "face_updated":
+                        if (
+                            isinstance(event.payload, dict)
+                            and "person_id" in event.payload
+                        ):
+                            # Use the causally-consistent person_id from
+                            # the event payload
+                            payload_person_id = event.payload["person_id"]
+                            if payload_person_id is None or (
+                                isinstance(payload_person_id, str)
+                                and payload_person_id.strip()
+                            ):
+                                if entity.person_id != payload_person_id:
+                                    entity = entity.model_copy(
+                                        update={"person_id": payload_person_id}
+                                    )
+                        else:
+                            # Legacy face_updated without payload — null
+                            # out person_id since the entity's current
+                            # state is not causally consistent
+                            entity = entity.model_copy(update={"person_id": None})
 
                 json_line = _convert_entity_to_sync_event(
                     gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type
