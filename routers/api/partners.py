@@ -51,8 +51,8 @@ async def create_partners(
     return fake_partner
 
 
-@router.post("/{id}", status_code=201)
-async def create_partner_eprecated(id: UUID) -> PartnerResponseDto:
+@router.post("/{id}", status_code=201, deprecated=True)
+async def create_partner_deprecated(id: UUID) -> PartnerResponseDto:
     """
     Delete a partner.
     This is a stub implementation that returns a dummy partner.

@@ -507,7 +507,7 @@ async def delete_assets(
         raise map_gumnut_error(e, "Failed to delete assets")
 
 
-@router.get("/device/{deviceId}")
+@router.get("/device/{deviceId}", deprecated=True)
 async def get_all_user_assets_by_device_id(
     deviceId: str,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
@@ -562,7 +562,7 @@ async def get_asset_statistics(
         raise map_gumnut_error(e, "Failed to fetch asset statistics")
 
 
-@router.get("/random")
+@router.get("/random", deprecated=True)
 async def get_random(
     count: int = Query(default=None, ge=1, type="number"),
     client: Gumnut = Depends(get_authenticated_gumnut_client),
@@ -693,6 +693,7 @@ async def download_asset(
 
 @router.put(
     "/{id}/original",
+    deprecated=True,
     response_model=AssetMediaResponseDto,
     openapi_extra={
         "requestBody": {
