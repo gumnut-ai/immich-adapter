@@ -35,7 +35,7 @@ def create_fake_job_status() -> QueueResponseLegacyDto:
     )
 
 
-@router.get("")
+@router.get("", deprecated=True)
 async def get_all_jobs_status() -> QueuesResponseLegacyDto:
     """
     Get all jobs status.
@@ -74,7 +74,7 @@ async def create_job(request: JobCreateDto):
     return
 
 
-@router.put("/{id}")
+@router.put("/{id}", deprecated=True)
 async def send_job_command(
     id: JobName, request: QueueCommandDto
 ) -> QueueResponseLegacyDto:

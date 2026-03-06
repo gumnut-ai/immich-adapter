@@ -305,7 +305,7 @@ async def delete_sync_ack(
     return
 
 
-@router.post("/delta-sync")
+@router.post("/delta-sync", deprecated=True)
 async def get_delta_sync(
     request: AssetDeltaSyncDto,
     gumnut_client: Gumnut = Depends(get_authenticated_gumnut_client),
@@ -373,7 +373,7 @@ async def get_delta_sync(
         )
 
 
-@router.post("/full-sync")
+@router.post("/full-sync", deprecated=True)
 async def get_full_sync_for_user(
     request: AssetFullSyncDto,
     gumnut_client: Gumnut = Depends(get_authenticated_gumnut_client),
