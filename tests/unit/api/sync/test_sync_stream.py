@@ -11,6 +11,7 @@ import pytest
 from routers.api.sync.routes import get_sync_stream
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
+    SyncStreamStats,
     _generate_reset_stream,
     _stream_entity_type,
     generate_sync_stream,
@@ -142,8 +143,8 @@ class TestGenerateSyncStream:
         assert ack_parts[2] == ""  # trailing empty string from trailing pipe
 
     @pytest.mark.anyio
-    async def test_streams_error_on_exception(self):
-        """Error event is streamed when an exception occurs."""
+    async def test_closes_stream_on_exception(self):
+        """Stream closes without yielding an error event when an exception occurs."""
         mock_client = Mock()
         mock_client.users.me.side_effect = Exception("API error")
 
@@ -154,9 +155,7 @@ class TestGenerateSyncStream:
             generate_sync_stream(mock_client, request, checkpoint_map)
         )
 
-        assert len(events) == 1
-        assert events[0]["type"] == "Error"
-        assert "message" in events[0]["data"]
+        assert len(events) == 0
 
     # -------------------------------------------------------------------------
     # User entity tests (special cases - not from events API)
@@ -995,6 +994,8 @@ class TestGUM292FacePersonOrdering:
             owner_id=str(TEST_UUID),
             checkpoint=None,
             sync_started_at=sync_started_at,
+            stats=SyncStreamStats(),
+            checkpoint_map={},
         ):
             results.append(item)
 
@@ -1196,6 +1197,8 @@ class TestGUM292FacePersonOrdering:
             owner_id=str(TEST_UUID),
             checkpoint=None,
             sync_started_at=sync_started_at,
+            stats=SyncStreamStats(),
+            checkpoint_map={},
         ):
             results.append(item)
 
@@ -1253,6 +1256,8 @@ class TestGUM292FacePersonOrdering:
             owner_id=str(TEST_UUID),
             checkpoint=None,
             sync_started_at=sync_started_at,
+            stats=SyncStreamStats(),
+            checkpoint_map={},
         ):
             results.append(item)
 
@@ -1301,6 +1306,8 @@ class TestGUM292FacePersonOrdering:
             owner_id=str(TEST_UUID),
             checkpoint=None,
             sync_started_at=sync_started_at,
+            stats=SyncStreamStats(),
+            checkpoint_map={},
         ):
             results.append(item)
 
@@ -1348,6 +1355,8 @@ class TestGUM292FacePersonOrdering:
             owner_id=str(TEST_UUID),
             checkpoint=None,
             sync_started_at=sync_started_at,
+            stats=SyncStreamStats(),
+            checkpoint_map={},
         ):
             results.append(item)
 
@@ -1408,6 +1417,8 @@ class TestStreamEntityTypePagination:
             owner_id=str(TEST_UUID),
             checkpoint=checkpoint,
             sync_started_at=sync_started_at,
+            stats=SyncStreamStats(),
+            checkpoint_map={},
         ):
             results.append(item)
 
@@ -1436,6 +1447,8 @@ class TestStreamEntityTypePagination:
             owner_id=str(TEST_UUID),
             checkpoint=None,
             sync_started_at=sync_started_at,
+            stats=SyncStreamStats(),
+            checkpoint_map={},
         ):
             results.append(item)
 
@@ -1519,6 +1532,8 @@ class TestStreamEntityTypePagination:
             owner_id=str(TEST_UUID),
             checkpoint=None,
             sync_started_at=sync_started_at,
+            stats=SyncStreamStats(),
+            checkpoint_map={},
         ):
             results.append(item)
 
@@ -1585,6 +1600,8 @@ class TestStreamEntityTypePagination:
             owner_id=str(TEST_UUID),
             checkpoint=None,
             sync_started_at=sync_started_at,
+            stats=SyncStreamStats(),
+            checkpoint_map={},
         ):
             results.append(item)
 

@@ -6,7 +6,8 @@ Imports converter functions from converters module.
 
 import json
 import logging
-import uuid
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, TypeAlias, cast
 
@@ -104,6 +105,79 @@ _EntityType: TypeAlias = (
     | ExifResponse
 )
 
+# Map gumnut entity type -> SyncEntityType (derived from _SYNC_TYPE_ORDER at module load)
+_GUMNUT_TYPE_TO_SYNC_TYPE: dict[str, SyncEntityType] = {
+    gumnut_type: sync_type for _, gumnut_type, sync_type in _SYNC_TYPE_ORDER
+}
+
+# Supported SyncRequestTypes (used to detect unsupported types requested by client)
+_SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
+    {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
+    | {SyncRequestType.AuthUsersV1, SyncRequestType.UsersV1}
+)
+
+# FK references: gumnut_entity_type -> [(attribute_name, referenced_gumnut_entity_type)]
+_FK_REFERENCES: dict[str, list[tuple[str, str]]] = {
+    "face": [("person_id", "person"), ("asset_id", "asset")],
+    "album_asset": [("album_id", "album"), ("asset_id", "asset")],
+    "album": [("album_cover_asset_id", "asset")],
+}
+
+
+@dataclass
+class SyncStreamStats:
+    """Tracks streamed entity IDs and skip counts during sync stream generation."""
+
+    streamed_ids: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
+    entity_not_found_skips: dict[str, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+    delete_event_skips: int = 0
+    fk_warnings: int = 0
+
+
+def _check_fk_references(
+    gumnut_entity_type: str,
+    entity: _EntityType,
+    stats: SyncStreamStats,
+    checkpoint_map: dict[SyncEntityType, Checkpoint],
+    cursor: str,
+) -> None:
+    """Warn if entity references IDs not seen in this sync for fully-synced entity types.
+
+    Only warns when the referenced entity type has no checkpoint (i.e., it was
+    fully synced in this cycle), since a prior checkpoint means the referenced
+    entity may have been synced in an earlier cycle.
+    """
+    refs = _FK_REFERENCES.get(gumnut_entity_type)
+    if not refs:
+        return
+
+    for attr_name, ref_type in refs:
+        ref_id = getattr(entity, attr_name, None)
+        if ref_id is None:
+            continue
+
+        # If the referenced entity type has a checkpoint, skip the check —
+        # the referenced entity may have been synced in a prior cycle
+        ref_sync_type = _GUMNUT_TYPE_TO_SYNC_TYPE.get(ref_type)
+        if ref_sync_type and ref_sync_type in checkpoint_map:
+            continue
+
+        if ref_id not in stats.streamed_ids.get(ref_type, set()):
+            logger.warning(
+                "Entity references ID not seen in this sync",
+                extra={
+                    "entity_type": gumnut_entity_type,
+                    "entity_id": getattr(entity, "id", None),
+                    "reference_field": attr_name,
+                    "referenced_type": ref_type,
+                    "referenced_id": ref_id,
+                    "cursor": cursor,
+                },
+            )
+            stats.fk_warnings += 1
+
 
 def _to_ack_string(
     entity_type: SyncEntityType,
@@ -189,6 +263,7 @@ def _make_delete_sync_event(
                 "entity_type": event.entity_type,
                 "expected_entity_type": expected_entity_type,
                 "entity_id": event.entity_id,
+                "cursor": event.cursor,
             },
         )
         return None
@@ -303,6 +378,7 @@ def _make_delete_sync_event(
         extra={
             "event_type": event.event_type,
             "entity_id": event.entity_id,
+            "cursor": event.cursor,
         },
     )
     return None
@@ -367,7 +443,7 @@ def _fetch_entities_map(
     gumnut_client: Gumnut,
     gumnut_entity_type: str,
     entity_ids: list[str],
-) -> dict[str, _EntityType]:
+) -> tuple[dict[str, _EntityType], set[str]]:
     """
     Batch-fetch entities by ID and return a dict keyed by entity ID.
 
@@ -381,13 +457,15 @@ def _fetch_entities_map(
         entity_ids: List of entity IDs to fetch
 
     Returns:
-        Dict mapping entity_id -> entity object
+        Tuple of (entity_id -> entity object mapping, set of IDs that were
+        explicitly missing — e.g., assets fetched but lacking exif data)
     """
     if not entity_ids:
-        return {}
+        return {}, set()
 
     unique_ids = list(dict.fromkeys(entity_ids))  # Deduplicate, preserve order
     result: dict[str, _EntityType] = {}
+    missing_ids: set[str] = set()
 
     for chunk in _batched(unique_ids, FETCH_BATCH_SIZE):
         if gumnut_entity_type == "asset":
@@ -421,15 +499,16 @@ def _fetch_entities_map(
                         "Missing exif on fetched asset while processing exif events",
                         extra={"asset_id": asset.id},
                     )
+                    missing_ids.add(asset.id)
 
         else:
             logger.warning(
                 "Unknown entity type in _fetch_entities_map",
                 extra={"gumnut_entity_type": gumnut_entity_type},
             )
-            return {}
+            return {}, set()
 
-    return result
+    return result, missing_ids
 
 
 async def _stream_entity_type(
@@ -439,6 +518,8 @@ async def _stream_entity_type(
     owner_id: str,
     checkpoint: Checkpoint | None,
     sync_started_at: datetime,
+    stats: SyncStreamStats,
+    checkpoint_map: dict[SyncEntityType, Checkpoint],
 ) -> AsyncGenerator[tuple[str, int], None]:
     """
     Stream events for a single entity type using the events API.
@@ -454,6 +535,8 @@ async def _stream_entity_type(
         owner_id: The owner UUID string
         checkpoint: The checkpoint with cursor (None for full sync)
         sync_started_at: Upper bound for the query window
+        stats: Mutable stats tracker for streamed IDs, skip counts, and FK warnings
+        checkpoint_map: All checkpoints for this sync (used for FK reference checks)
 
     Yields:
         Tuples of (json_line, count) for each event
@@ -490,7 +573,7 @@ async def _stream_entity_type(
         ]
 
         # Batch-fetch entities for upserts
-        entities_map = _fetch_entities_map(
+        entities_map, missing_ids = _fetch_entities_map(
             gumnut_client, gumnut_entity_type, upsert_ids
         )
 
@@ -515,11 +598,39 @@ async def _stream_entity_type(
                     json_line, _ = result
                     yield json_line, 1
                     count += 1
+                else:
+                    stats.delete_event_skips += 1
             else:
                 # Upsert event — look up fetched entity
                 entity = entities_map.get(event.entity_id)
                 if entity is None:
-                    # Entity was deleted between event and fetch — skip
+                    # Entity was deleted between event and fetch, or
+                    # explicitly missing (e.g., asset fetched but no exif).
+                    # For exif events, event.entity_id == asset_id, which
+                    # matches the asset.id stored in missing_ids by
+                    # _fetch_entities_map when an asset lacks exif data.
+                    if event.entity_id in missing_ids:
+                        logger.warning(
+                            "Entity explicitly missing from fetch result",
+                            extra={
+                                "entity_type": gumnut_entity_type,
+                                "entity_id": event.entity_id,
+                                "event_type": event.event_type,
+                                "cursor": event.cursor,
+                            },
+                        )
+                    else:
+                        logger.warning(
+                            "Entity not found during sync, likely deleted between "
+                            "event fetch and entity fetch",
+                            extra={
+                                "entity_type": gumnut_entity_type,
+                                "entity_id": event.entity_id,
+                                "event_type": event.event_type,
+                                "cursor": event.cursor,
+                            },
+                        )
+                    stats.entity_not_found_skips[gumnut_entity_type] += 1
                     continue
 
                 # face_created events should not carry person_id.
@@ -556,6 +667,17 @@ async def _stream_entity_type(
                             entity = entity.model_copy(
                                 update={"person_id": payload_person_id}
                             )
+
+                # Track streamed entity ID before FK check so the current
+                # entity is visible to its own reference validation
+                entity_id = getattr(entity, "id", None)
+                if entity_id is not None:
+                    stats.streamed_ids[gumnut_entity_type].add(entity_id)
+
+                # Check FK references before yielding
+                _check_fk_references(
+                    gumnut_entity_type, entity, stats, checkpoint_map, event.cursor
+                )
 
                 json_line = _convert_entity_to_sync_event(
                     gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type
@@ -599,6 +721,17 @@ async def generate_sync_stream(
 
         requested_types = set(request.types)
 
+        # Log unsupported sync types requested by the client
+        unsupported_types = requested_types - _SUPPORTED_REQUEST_TYPES
+        if unsupported_types:
+            logger.info(
+                "Client requested unsupported sync types",
+                extra={
+                    "user_id": owner_id,
+                    "unsupported_types": sorted(t.value for t in unsupported_types),
+                },
+            )
+
         logger.info(
             f"Starting sync stream with {len(requested_types)} entity types",
             extra={
@@ -608,6 +741,8 @@ async def generate_sync_stream(
                 "checkpoints": len(checkpoint_map),
             },
         )
+
+        stats = SyncStreamStats()
 
         # User/auth-user entities don't go through events API.
         # Use updated_at as the cursor for delta semantics: re-stream
@@ -665,6 +800,8 @@ async def generate_sync_stream(
                 owner_id,
                 checkpoint,
                 sync_started_at,
+                stats,
+                checkpoint_map,
             ):
                 yield event_line
                 event_counts[sync_entity_type.value] = (
@@ -672,29 +809,27 @@ async def generate_sync_stream(
                 )
                 total_events += count
 
-        # Log summary
-        if total_events > 0:
-            logger.info(
-                "Streamed events from photos-api",
-                extra={
-                    "user_id": owner_id,
-                    "total_events": total_events,
-                    "event_counts": event_counts,
-                },
-            )
+        # Log summary with skip counts
+        summary_extra: dict[str, Any] = {
+            "user_id": owner_id,
+            "total_events": total_events,
+            "event_counts": event_counts,
+        }
+        if stats.entity_not_found_skips:
+            summary_extra["entity_not_found_skips"] = dict(stats.entity_not_found_skips)
+        if stats.delete_event_skips > 0:
+            summary_extra["delete_event_skips"] = stats.delete_event_skips
+        if stats.fk_warnings > 0:
+            summary_extra["fk_reference_warnings"] = stats.fk_warnings
+
+        logger.info("Sync stream summary", extra=summary_extra)
 
         # Stream completion event
         yield _make_sync_event(SyncEntityType.SyncCompleteV1, {}, "complete")
         logger.info("Sync stream completed", extra={"user_id": owner_id})
 
-    except Exception as e:
-        logger.error(f"Error generating sync stream: {str(e)}", exc_info=True)
-        error_event = {
-            "type": "Error",
-            "data": {"message": "Internal sync error occurred"},
-            "ack": str(uuid.uuid4()),
-        }
-        yield json.dumps(error_event) + "\n"
+    except Exception:
+        logger.error("Error generating sync stream", exc_info=True)
 
 
 async def _generate_reset_stream() -> AsyncGenerator[str, None]:
