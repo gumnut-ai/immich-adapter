@@ -605,7 +605,10 @@ async def _stream_entity_type(
                 entity = entities_map.get(event.entity_id)
                 if entity is None:
                     # Entity was deleted between event and fetch, or
-                    # explicitly missing (e.g., asset fetched but no exif)
+                    # explicitly missing (e.g., asset fetched but no exif).
+                    # For exif events, event.entity_id == asset_id, which
+                    # matches the asset.id stored in missing_ids by
+                    # _fetch_entities_map when an asset lacks exif data.
                     if event.entity_id in missing_ids:
                         logger.warning(
                             "Entity explicitly missing from fetch result",
@@ -665,6 +668,12 @@ async def _stream_entity_type(
                                 update={"person_id": payload_person_id}
                             )
 
+                # Track streamed entity ID before FK check so the current
+                # entity is visible to its own reference validation
+                entity_id = getattr(entity, "id", None)
+                if entity_id is not None:
+                    stats.streamed_ids[gumnut_entity_type].add(entity_id)
+
                 # Check FK references before yielding
                 _check_fk_references(
                     gumnut_entity_type, entity, stats, checkpoint_map, event.cursor
@@ -675,11 +684,6 @@ async def _stream_entity_type(
                 )
                 yield json_line, 1
                 count += 1
-
-                # Track streamed entity ID for FK reference checks
-                entity_id = getattr(entity, "id", None)
-                if entity_id is not None:
-                    stats.streamed_ids[gumnut_entity_type].add(entity_id)
 
         # Update cursor from last event
         last_cursor = events[-1].cursor
@@ -759,7 +763,6 @@ async def generate_sync_stream(
                     sync_auth_user.model_dump(mode="json"),
                     user_cursor,
                 )
-                stats.streamed_ids["user"].add(current_user.id)
                 logger.debug("Streamed auth user", extra={"user_id": owner_id})
 
         # Stream user if requested
@@ -772,7 +775,6 @@ async def generate_sync_stream(
                     sync_user.model_dump(mode="json"),
                     user_cursor,
                 )
-                stats.streamed_ids["user"].add(current_user.id)
                 logger.debug("Streamed user", extra={"user_id": owner_id})
 
         # Capture sync start time to bound the query window
