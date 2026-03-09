@@ -98,7 +98,7 @@ class TestFetchAssetCounts:
         assert result[1]["count"] == 10
         mock_client.get.assert_called_once_with(
             "/api/assets/counts",
-            cast_to=dict,
+            cast_to=object,
             options={"params": {"group_by": "month", "limit": 1000}},
         )
 

@@ -46,9 +46,12 @@ def _fetch_asset_counts(
 
     all_buckets: list[dict[str, Any]] = []
     while True:
-        response = client.get(
+        # Use cast_to=object to get the raw parsed JSON dict. Bare `dict`
+        # (without type args) triggers a Stainless SDK bug in construct_type
+        # that tries to unpack get_args(dict) which is empty.
+        response: dict[str, Any] = client.get(  # type: ignore[assignment]
             "/api/assets/counts",
-            cast_to=dict,
+            cast_to=object,
             options={"params": params},
         )
         page_data: list[dict[str, Any]] = response["data"]
