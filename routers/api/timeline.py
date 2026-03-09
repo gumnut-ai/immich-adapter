@@ -96,14 +96,20 @@ async def get_time_buckets(
             client, album_id=album_id, person_id=person_id
         )
 
-        # Map to Immich format: truncate time_bucket datetime to date string
-        buckets = [
-            TimeBucketsResponseDto(
-                timeBucket=bucket["time_bucket"][:10],
-                count=bucket["count"],
+        # Map to Immich format: normalize time_bucket to month start (YYYY-MM-01)
+        buckets = []
+        for bucket in raw_buckets:
+            tb = bucket.get("time_bucket")
+            if not isinstance(tb, str) or len(tb) < 7:
+                continue
+            # Parse year-month and normalize to first of month
+            time_bucket = tb[:7] + "-01"
+            buckets.append(
+                TimeBucketsResponseDto(
+                    timeBucket=time_bucket,
+                    count=bucket.get("count", 0),
+                )
             )
-            for bucket in raw_buckets
-        ]
 
         # The counts endpoint returns results in descending order by default.
         # Reverse only if ascending order is requested.

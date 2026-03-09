@@ -274,8 +274,8 @@ class TestGetTimeBuckets:
         assert exc_info.value.status_code == 401
 
     @pytest.mark.anyio
-    async def test_get_time_buckets_truncates_datetime_to_date(self):
-        """Test that time_bucket datetimes are truncated to date strings."""
+    async def test_get_time_buckets_normalizes_to_month_start(self):
+        """Test that time_bucket values are normalized to YYYY-MM-01."""
         mock_client = Mock()
         mock_client.get.return_value = _counts_response(
             [{"time_bucket": "2024-03-15T12:30:45.123456", "count": 3}]
@@ -284,7 +284,28 @@ class TestGetTimeBuckets:
         result = await call_get_time_buckets(client=mock_client)
 
         assert len(result) == 1
-        assert result[0].timeBucket == "2024-03-15"
+        assert result[0].timeBucket == "2024-03-01"
+
+    @pytest.mark.anyio
+    async def test_get_time_buckets_skips_malformed_time_bucket(self):
+        """Test that malformed time_bucket values are skipped gracefully."""
+        mock_client = Mock()
+        mock_client.get.return_value = _counts_response(
+            [
+                {"time_bucket": "2024-01-01T00:00:00", "count": 5},
+                {"time_bucket": None, "count": 2},
+                {"time_bucket": "short", "count": 1},
+                {"time_bucket": "2024-02-01T00:00:00", "count": 3},
+            ]
+        )
+
+        result = await call_get_time_buckets(client=mock_client)
+
+        assert len(result) == 2
+        assert result[0].timeBucket == "2024-01-01"
+        assert result[0].count == 5
+        assert result[1].timeBucket == "2024-02-01"
+        assert result[1].count == 3
 
 
 class TestGetTimeBucket:
