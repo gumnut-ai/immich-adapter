@@ -1,31 +1,60 @@
-from collections import defaultdict
 from datetime import datetime
+from typing import Any, List
 from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query
 from gumnut import Gumnut
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.error_mapping import map_gumnut_error
-from routers.utils.current_user import get_current_user_id
+from gumnut.types.asset_count_response import AssetCountResponse, Data
+
 from routers.immich_models import (
     AssetOrder,
     AssetTypeEnum,
-    TimeBucketsResponseDto,
     AssetVisibility,
+    TimeBucketsResponseDto,
 )
-from typing import Any, List
+from routers.utils.asset_conversion import mime_type_to_asset_type
+from routers.utils.current_user import get_current_user_id
+from routers.utils.error_mapping import map_gumnut_error
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_person_id,
 )
-from routers.utils.asset_conversion import mime_type_to_asset_type
-from gumnut.types.asset_response import AssetResponse
 
 router = APIRouter(
     prefix="/api/timeline",
     tags=["timeline"],
     responses={404: {"description": "Not found"}},
 )
+
+
+def _fetch_asset_counts(
+    client: Gumnut,
+    *,
+    album_id: str | None = None,
+    person_id: str | None = None,
+) -> list[Data]:
+    """Fetch all monthly asset counts from photos-api, paginating if needed."""
+    kwargs: dict[str, Any] = {"group_by": "month", "limit": 1000}
+    if album_id is not None:
+        kwargs["album_id"] = album_id
+    if person_id is not None:
+        kwargs["person_id"] = person_id
+
+    all_buckets: list[Data] = []
+    while True:
+        response: AssetCountResponse = client.assets.counts(**kwargs)
+        all_buckets.extend(response.data)
+
+        if not response.has_more or not response.data:
+            break
+
+        # Cursor forward: results are ordered by time_bucket descending,
+        # so use the last time_bucket as the upper bound for the next page.
+        kwargs["local_datetime_before"] = response.data[-1].time_bucket
+
+    return all_buckets
 
 
 @router.get("/buckets")
@@ -53,62 +82,26 @@ async def get_time_buckets(
         return []  # Gumnut does not support favorites, trashed, hidden, archived or locked assets, so return empty list
 
     try:
-        # Call assets.list() with optional albumId parameter
-        if albumId:
-            gumnut_album_id = uuid_to_gumnut_album_id(albumId)
-            gumnut_assets_response = client.albums.assets_associations.list(
-                gumnut_album_id
-            )
-            gumnut_assets = list(gumnut_assets_response)
-        elif personId:
-            gumnut_assets_response = client.assets.list(
-                person_id=uuid_to_gumnut_person_id(personId)
-            )
-            gumnut_assets = list(gumnut_assets_response)
-        else:
-            # Get all assets
-            gumnut_assets_response = client.assets.list()
-            gumnut_assets = list(gumnut_assets_response)
+        album_id = uuid_to_gumnut_album_id(albumId) if albumId else None
+        person_id = uuid_to_gumnut_person_id(personId) if personId else None
 
-        # Process and group assets by month
-        date_counts = defaultdict(int)
-
-        for asset in gumnut_assets:
-            # Extract local_datetime or created_at for month grouping
-            if isinstance(asset, dict):
-                local_datetime = asset.get("local_datetime") or asset.get("created_at")
-            else:
-                local_datetime = getattr(asset, "local_datetime", None) or getattr(
-                    asset, "created_at", None
-                )
-
-            if local_datetime:
-                # Parse the datetime if it's a string
-                if isinstance(local_datetime, str):
-                    try:
-                        dt = datetime.fromisoformat(
-                            local_datetime.replace("Z", "+00:00")
-                        )
-                    except (ValueError, AttributeError):
-                        dt = datetime.now()
-                else:
-                    dt = local_datetime
-
-                # Group by month only (ignore day and time)
-                # Format as YYYY-MM-01 to group by month
-                month_key = dt.strftime("%Y-%m-01")
-                date_counts[month_key] += 1
-
-        # Sort by month (descending by default)
-        sorted_dates = sorted(
-            date_counts.items(), key=lambda x: x[0], reverse=(order != AssetOrder.asc)
+        raw_buckets = _fetch_asset_counts(
+            client, album_id=album_id, person_id=person_id
         )
 
-        # Convert to TimeBucketsResponseDto format
+        # Map to Immich format: normalize time_bucket to month start (YYYY-MM-01)
         buckets = [
-            TimeBucketsResponseDto(timeBucket=date, count=count)
-            for date, count in sorted_dates
+            TimeBucketsResponseDto(
+                timeBucket=bucket.time_bucket.strftime("%Y-%m-01"),
+                count=bucket.count,
+            )
+            for bucket in raw_buckets
         ]
+
+        # The counts endpoint returns results in descending order by default.
+        # Reverse only if ascending order is requested.
+        if order == AssetOrder.asc:
+            buckets.reverse()
 
         return buckets
 
@@ -169,18 +162,13 @@ async def get_time_bucket(
         }
 
         if albumId:
-            # Albums endpoint doesn't support date-range filtering,
-            # so we fetch all and filter in-memory
             gumnut_album_id = uuid_to_gumnut_album_id(albumId)
-            gumnut_assets_response = client.albums.assets_associations.list(
-                gumnut_album_id
+            filtered_assets = list(
+                client.assets.list(
+                    album_id=gumnut_album_id,
+                    extra_query=date_range_query,
+                )
             )
-            filtered_assets: List[AssetResponse] = [
-                asset
-                for asset in gumnut_assets_response
-                if asset.local_datetime.year == month_start.year
-                and asset.local_datetime.month == month_start.month
-            ]
         elif personId:
             filtered_assets = list(
                 client.assets.list(
