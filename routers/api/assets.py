@@ -15,7 +15,7 @@ from fastapi import (
     Response,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from gumnut import Gumnut, GumnutError
 
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
@@ -30,12 +30,14 @@ from routers.immich_models import (
     AssetBulkUpdateDto,
     AssetBulkUploadCheckDto,
     AssetBulkUploadCheckResponseDto,
+    AssetCopyDto,
     AssetJobsDto,
     AssetMediaReplaceDto,
     AssetMediaSize,
     AssetMediaResponseDto,
     AssetMediaStatus,
     AssetMetadataResponseDto,
+    AssetOcrResponseDto,
     AssetMetadataUpsertDto,
     AssetResponseDto,
     AssetStatsResponseDto,
@@ -286,6 +288,7 @@ async def check_existing_assets(
 @router.post(
     "",
     status_code=201,
+    response_model=AssetMediaResponseDto,
     openapi_extra={
         "requestBody": {
             "content": {
@@ -293,6 +296,12 @@ async def check_existing_assets(
                     "schema": {"$ref": "#/components/schemas/AssetMediaCreateDto"}
                 }
             }
+        }
+    },
+    responses={
+        200: {
+            "model": AssetMediaResponseDto,
+            "description": "Duplicate asset detected",
         }
     },
 )
@@ -308,10 +317,11 @@ async def upload_asset(
     slug: str = Query(default=None),
     client: Gumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
-) -> AssetMediaResponseDto:
+) -> AssetMediaResponseDto | JSONResponse:
     """
     Upload an asset using the Gumnut SDK.
     Creates a new asset in Gumnut from the provided asset data.
+    Returns 201 on success, 200 if the asset is a duplicate.
     """
 
     try:
@@ -410,9 +420,13 @@ async def upload_asset(
         if "duplicate" in error_msg or "already exists" in error_msg:
             # If it's a duplicate, we still need an asset ID
             # This is a simplified approach - in a real implementation you'd extract the existing asset ID
-            return AssetMediaResponseDto(
-                id="00000000-0000-0000-0000-000000000000",  # Placeholder
-                status=AssetMediaStatus.duplicate,
+            # Return 200 (not 201) for duplicates, matching Immich server behavior
+            return JSONResponse(
+                content={
+                    "id": "00000000-0000-0000-0000-000000000000",
+                    "status": AssetMediaStatus.duplicate.value,
+                },
+                status_code=status.HTTP_200_OK,
             )
         elif check_for_error_by_code(e, 413) or "too large" in error_msg:
             raise HTTPException(status_code=413, detail="Asset file too large")
@@ -588,6 +602,19 @@ async def run_asset_jobs(
     """
     # Stub implementation: asset jobs are not supported in Gumnut
     return Response(status_code=204)
+
+
+@router.put("/copy", status_code=204)
+async def copy_asset(
+    request: AssetCopyDto,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> Response:
+    """
+    Copy asset metadata between assets.
+    This is a stub implementation as Gumnut does not support copying asset metadata.
+    Returns HTTP 204 (No Content) as specified by the Immich API.
+    """
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put("/{id}")
@@ -787,3 +814,16 @@ async def play_asset_video(
     Returns HTTP 200 (OK) as specified by the Immich API.
     """
     return Response(status_code=status.HTTP_200_OK)
+
+
+@router.get("/{id}/ocr")
+async def get_asset_ocr(
+    id: UUID,
+    client: Gumnut = Depends(get_authenticated_gumnut_client),
+) -> list[AssetOcrResponseDto]:
+    """
+    Retrieve OCR data for an asset.
+    This is a stub implementation as Gumnut does not support OCR.
+    Returns an empty list.
+    """
+    return []

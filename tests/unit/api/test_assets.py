@@ -4,6 +4,7 @@ import pytest
 from datetime import datetime, timezone
 from unittest.mock import Mock, AsyncMock, patch
 from fastapi import HTTPException
+from fastapi.responses import JSONResponse
 from uuid import UUID, uuid4
 import base64
 
@@ -16,6 +17,7 @@ from routers.api.assets import (
     _immich_checksum_to_base64,
     bulk_upload_check,
     check_existing_assets,
+    copy_asset,
     upload_asset,
     update_assets,
     delete_assets,
@@ -25,6 +27,7 @@ from routers.api.assets import (
     run_asset_jobs,
     update_asset,
     get_asset_info,
+    get_asset_ocr,
     view_asset,
     download_asset,
     replace_asset,
@@ -39,6 +42,8 @@ from routers.immich_models import (
     Action,
     AssetBulkUploadCheckDto,
     AssetBulkUploadCheckItem,
+    AssetCopyDto,
+    AssetMediaResponseDto,
     CheckExistingAssetsDto,
     AssetBulkUpdateDto,
     AssetBulkDeleteDto,
@@ -364,13 +369,14 @@ class TestUploadAsset:
             )
 
         # Assert
+        assert isinstance(result, AssetMediaResponseDto)
         assert result.id == str(sample_uuid)
         assert result.status == AssetMediaStatus.created
         mock_client.assets.create.assert_called_once()
 
     @pytest.mark.anyio
     async def test_upload_asset_duplicate(self, sample_uuid, mock_current_user):
-        """Test upload asset with duplicate error."""
+        """Test upload asset with duplicate error returns 200 with duplicate status."""
         # Setup - create mock client
         mock_client = Mock()
         mock_client.assets.create.side_effect = Exception("Asset already exists")
@@ -392,9 +398,13 @@ class TestUploadAsset:
                 current_user=mock_current_user,
             )
 
-        # Assert
-        assert result.status == AssetMediaStatus.duplicate
-        assert result.id == "00000000-0000-0000-0000-000000000000"
+        # Assert - returns JSONResponse with 200 status for duplicates
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        assert (
+            result.body
+            == b'{"id":"00000000-0000-0000-0000-000000000000","status":"duplicate"}'
+        )
 
     @pytest.mark.anyio
     async def test_upload_asset_api_error(self, mock_current_user):
@@ -502,6 +512,7 @@ class TestUploadAsset:
                 current_user=mock_current_user,
             )
 
+        assert isinstance(result, AssetMediaResponseDto)
         assert UUID(result.id)  # valid UUID
         assert result.status == AssetMediaStatus.created
         mock_client.assets.create.assert_not_called()
@@ -528,6 +539,7 @@ class TestUploadAsset:
                 current_user=mock_current_user,
             )
 
+        assert isinstance(result, AssetMediaResponseDto)
         assert UUID(result.id)  # valid UUID
         assert result.status == AssetMediaStatus.created
         mock_client.assets.create.assert_not_called()
@@ -569,6 +581,7 @@ class TestUploadAsset:
                 current_user=mock_current_user,
             )
 
+        assert isinstance(result, AssetMediaResponseDto)
         assert result.id == str(sample_uuid)
         assert result.status == AssetMediaStatus.created
         mock_client.assets.create.assert_called_once()
@@ -618,6 +631,7 @@ class TestUploadAsset:
             )
 
             # Upload should still succeed despite WebSocket error
+            assert isinstance(result, AssetMediaResponseDto)
             assert result.id == str(sample_uuid)
             assert result.status == AssetMediaStatus.created
 
@@ -1144,6 +1158,30 @@ class TestGetAssetMetadataByKey:
 
         # Assert
         assert result is None
+
+
+class TestCopyAsset:
+    """Test the copy_asset endpoint."""
+
+    @pytest.mark.anyio
+    async def test_copy_asset_returns_204(self, sample_uuid):
+        """Test that copy_asset returns 204 No Content."""
+        request = AssetCopyDto(sourceId=sample_uuid, targetId=uuid4())
+
+        result = await copy_asset(request)
+
+        assert result.status_code == 204
+
+
+class TestGetAssetOcr:
+    """Test the get_asset_ocr endpoint."""
+
+    @pytest.mark.anyio
+    async def test_get_asset_ocr_returns_empty_list(self, sample_uuid):
+        """Test that get_asset_ocr returns an empty list."""
+        result = await get_asset_ocr(sample_uuid)
+
+        assert result == []
 
 
 class TestPlayAssetVideo:
