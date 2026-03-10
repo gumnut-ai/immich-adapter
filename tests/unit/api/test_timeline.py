@@ -29,6 +29,22 @@ JANUARY_2024_DATE_RANGE = {
 }
 
 
+def _make_data(time_bucket: datetime, count: int) -> Mock:
+    """Build a mock Data object matching gumnut.types.asset_count_response.Data."""
+    d = Mock()
+    d.time_bucket = time_bucket
+    d.count = count
+    return d
+
+
+def _make_counts_response(data: list[Mock], has_more: bool = False) -> Mock:
+    """Build a mock AssetCountResponse."""
+    resp = Mock()
+    resp.data = data
+    resp.has_more = has_more
+    return resp
+
+
 def call_get_time_buckets(**kwargs):
     """Helper function to call get_time_buckets with proper None defaults for Query parameters."""
     defaults = {
@@ -73,81 +89,69 @@ def call_get_time_bucket(timeBucket, **kwargs):
     return get_time_bucket(timeBucket, **defaults)  # type: ignore
 
 
-def _counts_response(buckets: list[dict], has_more: bool = False) -> dict:
-    """Build a mock /api/assets/counts response."""
-    return {"data": buckets, "has_more": has_more}
-
-
 class TestFetchAssetCounts:
     """Test the _fetch_asset_counts helper."""
 
     def test_single_page(self):
         """Single page of results (has_more=False)."""
         mock_client = Mock()
-        mock_client.get.return_value = _counts_response(
+        mock_client.assets.counts.return_value = _make_counts_response(
             [
-                {"time_bucket": "2024-02-01T00:00:00", "count": 5},
-                {"time_bucket": "2024-01-01T00:00:00", "count": 10},
+                _make_data(datetime(2024, 2, 1), 5),
+                _make_data(datetime(2024, 1, 1), 10),
             ]
         )
 
         result = _fetch_asset_counts(mock_client)
 
         assert len(result) == 2
-        assert result[0]["count"] == 5
-        assert result[1]["count"] == 10
-        mock_client.get.assert_called_once_with(
-            "/api/assets/counts",
-            cast_to=object,
-            options={"params": {"group_by": "month", "limit": 1000}},
-        )
+        assert result[0].count == 5
+        assert result[1].count == 10
+        mock_client.assets.counts.assert_called_once_with(group_by="month", limit=1000)
 
     def test_pagination(self):
         """Multiple pages with has_more cursor pagination."""
         mock_client = Mock()
-        mock_client.get.side_effect = [
-            _counts_response(
-                [{"time_bucket": "2024-02-01T00:00:00", "count": 5}],
-                has_more=True,
-            ),
-            _counts_response(
-                [{"time_bucket": "2024-01-01T00:00:00", "count": 10}],
-                has_more=False,
-            ),
+        feb_bucket = _make_data(datetime(2024, 2, 1), 5)
+        jan_bucket = _make_data(datetime(2024, 1, 1), 10)
+
+        mock_client.assets.counts.side_effect = [
+            _make_counts_response([feb_bucket], has_more=True),
+            _make_counts_response([jan_bucket], has_more=False),
         ]
 
         result = _fetch_asset_counts(mock_client)
 
         assert len(result) == 2
-        assert mock_client.get.call_count == 2
+        assert mock_client.assets.counts.call_count == 2
         # Second call should include local_datetime_before cursor
-        second_call_params = mock_client.get.call_args_list[1][1]["options"]["params"]
-        assert second_call_params["local_datetime_before"] == "2024-02-01T00:00:00"
+        second_call_kwargs = mock_client.assets.counts.call_args_list[1][1]
+        assert second_call_kwargs["local_datetime_before"] == feb_bucket.time_bucket
 
     def test_with_album_id(self):
-        """album_id is passed through as a query param."""
+        """album_id is passed through as a kwarg."""
         mock_client = Mock()
-        mock_client.get.return_value = _counts_response([])
+        mock_client.assets.counts.return_value = _make_counts_response([])
 
         _fetch_asset_counts(mock_client, album_id="album-123")
 
-        params = mock_client.get.call_args[1]["options"]["params"]
-        assert params["album_id"] == "album-123"
+        kwargs = mock_client.assets.counts.call_args[1]
+        assert kwargs["album_id"] == "album-123"
 
     def test_with_person_id(self):
-        """person_id is passed through as a query param."""
+        """person_id is passed through as a kwarg."""
         mock_client = Mock()
-        mock_client.get.return_value = _counts_response([])
+        mock_client.assets.counts.return_value = _make_counts_response([])
 
         _fetch_asset_counts(mock_client, person_id="person-456")
 
-        params = mock_client.get.call_args[1]["options"]["params"]
-        assert params["person_id"] == "person-456"
+        kwargs = mock_client.assets.counts.call_args[1]
+        assert kwargs["person_id"] == "person-456"
 
     def test_empty_response(self):
         """Empty data returns empty list."""
         mock_client = Mock()
-        mock_client.get.return_value = _counts_response([])
+        mock_client.assets.counts.return_value = _make_counts_response([])
 
         result = _fetch_asset_counts(mock_client)
 
@@ -161,10 +165,10 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_success(self):
         """Test successful retrieval of time buckets."""
         mock_client = Mock()
-        mock_client.get.return_value = _counts_response(
+        mock_client.assets.counts.return_value = _make_counts_response(
             [
-                {"time_bucket": "2024-02-01T00:00:00", "count": 1},
-                {"time_bucket": "2024-01-01T00:00:00", "count": 2},
+                _make_data(datetime(2024, 2, 1), 1),
+                _make_data(datetime(2024, 1, 1), 2),
             ]
         )
 
@@ -181,8 +185,8 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_with_album_id(self, sample_uuid):
         """Test time buckets with album filter."""
         mock_client = Mock()
-        mock_client.get.return_value = _counts_response(
-            [{"time_bucket": "2024-01-01T00:00:00", "count": 1}]
+        mock_client.assets.counts.return_value = _make_counts_response(
+            [_make_data(datetime(2024, 1, 1), 1)]
         )
 
         result = await call_get_time_buckets(albumId=sample_uuid, client=mock_client)
@@ -190,15 +194,15 @@ class TestGetTimeBuckets:
         assert len(result) == 1
         assert result[0].timeBucket == "2024-01-01"
         assert result[0].count == 1
-        params = mock_client.get.call_args[1]["options"]["params"]
-        assert params["album_id"] == uuid_to_gumnut_album_id(sample_uuid)
+        kwargs = mock_client.assets.counts.call_args[1]
+        assert kwargs["album_id"] == uuid_to_gumnut_album_id(sample_uuid)
 
     @pytest.mark.anyio
     async def test_get_time_buckets_with_person_id(self, sample_uuid):
         """Test time buckets with person filter."""
         mock_client = Mock()
-        mock_client.get.return_value = _counts_response(
-            [{"time_bucket": "2024-01-01T00:00:00", "count": 1}]
+        mock_client.assets.counts.return_value = _make_counts_response(
+            [_make_data(datetime(2024, 1, 1), 1)]
         )
 
         result = await call_get_time_buckets(personId=sample_uuid, client=mock_client)
@@ -206,18 +210,17 @@ class TestGetTimeBuckets:
         assert len(result) == 1
         assert result[0].timeBucket == "2024-01-01"
         assert result[0].count == 1
-        params = mock_client.get.call_args[1]["options"]["params"]
-        assert params["person_id"] == uuid_to_gumnut_person_id(sample_uuid)
+        kwargs = mock_client.assets.counts.call_args[1]
+        assert kwargs["person_id"] == uuid_to_gumnut_person_id(sample_uuid)
 
     @pytest.mark.anyio
     async def test_get_time_buckets_ascending_order(self):
         """Test time buckets with ascending order."""
         mock_client = Mock()
-        # API returns descending
-        mock_client.get.return_value = _counts_response(
+        mock_client.assets.counts.return_value = _make_counts_response(
             [
-                {"time_bucket": "2024-02-01T00:00:00", "count": 1},
-                {"time_bucket": "2024-01-01T00:00:00", "count": 2},
+                _make_data(datetime(2024, 2, 1), 1),
+                _make_data(datetime(2024, 1, 1), 2),
             ]
         )
 
@@ -244,7 +247,7 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_empty_assets(self):
         """Test time buckets with no assets."""
         mock_client = Mock()
-        mock_client.get.return_value = _counts_response([])
+        mock_client.assets.counts.return_value = _make_counts_response([])
 
         result = await call_get_time_buckets(client=mock_client)
 
@@ -254,7 +257,7 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_gumnut_error(self):
         """Test handling of Gumnut API errors."""
         mock_client = Mock()
-        mock_client.get.side_effect = Exception("API Error")
+        mock_client.assets.counts.side_effect = Exception("API Error")
 
         with pytest.raises(HTTPException) as exc_info:
             await call_get_time_buckets(client=mock_client)
@@ -266,7 +269,7 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_auth_error(self):
         """Test handling of authentication errors."""
         mock_client = Mock()
-        mock_client.get.side_effect = Exception("401 Invalid API key")
+        mock_client.assets.counts.side_effect = Exception("401 Invalid API key")
 
         with pytest.raises(HTTPException) as exc_info:
             await call_get_time_buckets(client=mock_client)
@@ -277,35 +280,15 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_normalizes_to_month_start(self):
         """Test that time_bucket values are normalized to YYYY-MM-01."""
         mock_client = Mock()
-        mock_client.get.return_value = _counts_response(
-            [{"time_bucket": "2024-03-15T12:30:45.123456", "count": 3}]
+        # Even if the API returns a mid-month datetime, we normalize to the 1st
+        mock_client.assets.counts.return_value = _make_counts_response(
+            [_make_data(datetime(2024, 3, 15, 12, 30, 45), 3)]
         )
 
         result = await call_get_time_buckets(client=mock_client)
 
         assert len(result) == 1
         assert result[0].timeBucket == "2024-03-01"
-
-    @pytest.mark.anyio
-    async def test_get_time_buckets_skips_malformed_time_bucket(self):
-        """Test that malformed time_bucket values are skipped gracefully."""
-        mock_client = Mock()
-        mock_client.get.return_value = _counts_response(
-            [
-                {"time_bucket": "2024-01-01T00:00:00", "count": 5},
-                {"time_bucket": None, "count": 2},
-                {"time_bucket": "short", "count": 1},
-                {"time_bucket": "2024-02-01T00:00:00", "count": 3},
-            ]
-        )
-
-        result = await call_get_time_buckets(client=mock_client)
-
-        assert len(result) == 2
-        assert result[0].timeBucket == "2024-01-01"
-        assert result[0].count == 5
-        assert result[1].timeBucket == "2024-02-01"
-        assert result[1].count == 3
 
 
 class TestGetTimeBucket:

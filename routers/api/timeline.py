@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from gumnut import Gumnut
+from gumnut.types.asset_count_response import AssetCountResponse, Data
 
 from routers.immich_models import (
     AssetOrder,
@@ -33,36 +34,25 @@ def _fetch_asset_counts(
     *,
     album_id: str | None = None,
     person_id: str | None = None,
-) -> list[dict[str, Any]]:
-    """Fetch all monthly asset counts from photos-api, paginating if needed.
-
-    Returns a list of dicts with ``time_bucket`` (ISO datetime str) and ``count`` (int).
-    """
-    params: dict[str, Any] = {"group_by": "month", "limit": 1000}
+) -> list[Data]:
+    """Fetch all monthly asset counts from photos-api, paginating if needed."""
+    kwargs: dict[str, Any] = {"group_by": "month", "limit": 1000}
     if album_id is not None:
-        params["album_id"] = album_id
+        kwargs["album_id"] = album_id
     if person_id is not None:
-        params["person_id"] = person_id
+        kwargs["person_id"] = person_id
 
-    all_buckets: list[dict[str, Any]] = []
+    all_buckets: list[Data] = []
     while True:
-        # Use cast_to=object to get the raw parsed JSON dict. Bare `dict`
-        # (without type args) triggers a Stainless SDK bug in construct_type
-        # that tries to unpack get_args(dict) which is empty.
-        response: dict[str, Any] = client.get(  # type: ignore[assignment]
-            "/api/assets/counts",
-            cast_to=object,
-            options={"params": params},
-        )
-        page_data: list[dict[str, Any]] = response["data"]
-        all_buckets.extend(page_data)
+        response: AssetCountResponse = client.assets.counts(**kwargs)
+        all_buckets.extend(response.data)
 
-        if not response.get("has_more", False) or not page_data:
+        if not response.has_more or not response.data:
             break
 
         # Cursor forward: results are ordered by time_bucket descending,
         # so use the last time_bucket as the upper bound for the next page.
-        params["local_datetime_before"] = page_data[-1]["time_bucket"]
+        kwargs["local_datetime_before"] = response.data[-1].time_bucket
 
     return all_buckets
 
@@ -100,19 +90,13 @@ async def get_time_buckets(
         )
 
         # Map to Immich format: normalize time_bucket to month start (YYYY-MM-01)
-        buckets = []
-        for bucket in raw_buckets:
-            tb = bucket.get("time_bucket")
-            if not isinstance(tb, str) or len(tb) < 7:
-                continue
-            # Parse year-month and normalize to first of month
-            time_bucket = tb[:7] + "-01"
-            buckets.append(
-                TimeBucketsResponseDto(
-                    timeBucket=time_bucket,
-                    count=bucket.get("count", 0),
-                )
+        buckets = [
+            TimeBucketsResponseDto(
+                timeBucket=bucket.time_bucket.strftime("%Y-%m-01"),
+                count=bucket.count,
             )
+            for bucket in raw_buckets
+        ]
 
         # The counts endpoint returns results in descending order by default.
         # Reverse only if ascending order is requested.
