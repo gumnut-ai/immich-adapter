@@ -37,6 +37,7 @@ from routers.immich_models import (
     AssetMediaResponseDto,
     AssetMediaStatus,
     AssetMetadataResponseDto,
+    AssetOcrResponseDto,
     AssetMetadataUpsertDto,
     AssetResponseDto,
     AssetStatsResponseDto,
@@ -819,7 +820,7 @@ async def play_asset_video(
 async def get_asset_ocr(
     id: UUID,
     client: Gumnut = Depends(get_authenticated_gumnut_client),
-) -> list:
+) -> list[AssetOcrResponseDto]:
     """
     Retrieve OCR data for an asset.
     This is a stub implementation as Gumnut does not support OCR.
