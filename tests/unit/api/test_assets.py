@@ -506,6 +506,7 @@ class TestUploadAsset:
         mock_file.filename = "IMG_1234.MOV"
         mock_file.content_type = "application/octet-stream"
         mock_file.file = BytesIO(b"fake live photo data")
+        mock_file.seek = AsyncMock()
 
         with patch("routers.api.assets.is_live_photo_video", return_value=True):
             result = await upload_asset(
@@ -533,6 +534,7 @@ class TestUploadAsset:
         mock_file.filename = "IMG_1234.MOV"
         mock_file.content_type = "video/quicktime"
         mock_file.file = BytesIO(b"fake live photo data")
+        mock_file.seek = AsyncMock()
 
         with patch("routers.api.assets.is_live_photo_video", return_value=True):
             result = await upload_asset(

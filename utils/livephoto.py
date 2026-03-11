@@ -118,3 +118,6 @@ def is_live_photo_video(f: BinaryIO) -> bool:
     except Exception:
         # Any parse error means this isn't a valid live photo .MOV
         return False
+
+    finally:
+        f.seek(0)
