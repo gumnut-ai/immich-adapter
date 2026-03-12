@@ -2,6 +2,7 @@
 
 import pytest
 from datetime import datetime, timezone
+from io import BytesIO
 from unittest.mock import Mock, AsyncMock, patch
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -352,7 +353,8 @@ class TestUploadAsset:
         mock_file = Mock()
         mock_file.filename = "test.jpg"
         mock_file.content_type = "image/jpeg"
-        mock_file.read = AsyncMock(return_value=b"fake image data")
+        mock_file.file = BytesIO(b"fake image data")
+        mock_file.seek = AsyncMock()
 
         # Execute
         with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
@@ -373,6 +375,9 @@ class TestUploadAsset:
         assert result.id == str(sample_uuid)
         assert result.status == AssetMediaStatus.created
         mock_client.assets.create.assert_called_once()
+        # Verify file object is streamed directly, not buffered as bytes
+        call_kwargs = mock_client.assets.create.call_args
+        assert call_kwargs.kwargs["asset_data"][1] is mock_file.file
 
     @pytest.mark.anyio
     async def test_upload_asset_duplicate(self, sample_uuid, mock_current_user):
@@ -385,7 +390,8 @@ class TestUploadAsset:
         mock_file = Mock()
         mock_file.filename = "test.jpg"
         mock_file.content_type = "image/jpeg"
-        mock_file.read = AsyncMock(return_value=b"fake image data")
+        mock_file.file = BytesIO(b"fake image data")
+        mock_file.seek = AsyncMock()
 
         # Execute
         with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
@@ -417,7 +423,8 @@ class TestUploadAsset:
         mock_file = Mock()
         mock_file.filename = "test.jpg"
         mock_file.content_type = "image/jpeg"
-        mock_file.read = AsyncMock(return_value=b"fake image data")
+        mock_file.file = BytesIO(b"fake image data")
+        mock_file.seek = AsyncMock()
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -460,7 +467,8 @@ class TestUploadAsset:
         mock_file = Mock()
         mock_file.filename = "test.jpg"
         mock_file.content_type = "image/jpeg"
-        mock_file.read = AsyncMock(return_value=b"fake image data")
+        mock_file.file = BytesIO(b"fake image data")
+        mock_file.seek = AsyncMock()
 
         # Execute with mocked emit_event
         with patch(
@@ -500,7 +508,8 @@ class TestUploadAsset:
         mock_file = Mock()
         mock_file.filename = "IMG_1234.MOV"
         mock_file.content_type = "application/octet-stream"
-        mock_file.read = AsyncMock(return_value=b"fake live photo data")
+        mock_file.file = BytesIO(b"fake live photo data")
+        mock_file.seek = AsyncMock()
 
         with patch("routers.api.assets.is_live_photo_video", return_value=True):
             result = await upload_asset(
@@ -527,7 +536,8 @@ class TestUploadAsset:
         mock_file = Mock()
         mock_file.filename = "IMG_1234.MOV"
         mock_file.content_type = "video/quicktime"
-        mock_file.read = AsyncMock(return_value=b"fake live photo data")
+        mock_file.file = BytesIO(b"fake live photo data")
+        mock_file.seek = AsyncMock()
 
         with patch("routers.api.assets.is_live_photo_video", return_value=True):
             result = await upload_asset(
@@ -566,7 +576,8 @@ class TestUploadAsset:
         mock_file = Mock()
         mock_file.filename = "video.mp4"
         mock_file.content_type = "video/mp4"
-        mock_file.read = AsyncMock(return_value=b"fake video data")
+        mock_file.file = BytesIO(b"fake video data")
+        mock_file.seek = AsyncMock()
 
         with (
             patch("routers.api.assets.is_live_photo_video", return_value=False),
@@ -613,7 +624,8 @@ class TestUploadAsset:
         mock_file = Mock()
         mock_file.filename = "test.jpg"
         mock_file.content_type = "image/jpeg"
-        mock_file.read = AsyncMock(return_value=b"fake image data")
+        mock_file.file = BytesIO(b"fake image data")
+        mock_file.seek = AsyncMock()
 
         # Execute with emit_event that raises a SocketIOError
         with patch(

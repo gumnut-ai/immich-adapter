@@ -342,9 +342,6 @@ async def upload_asset(
             except (ValueError, AttributeError):
                 file_modified_at = file_created_at
 
-        # Read the binary data from the uploaded file
-        asset_data = await assetData.read()
-
         # Drop iOS live photo .MOV files — they upload as separate video files
         # that would become orphan assets since Gumnut doesn't support live photos.
         # The Immich mobile client sends .MOV files with content_type
@@ -354,7 +351,7 @@ async def upload_asset(
         may_be_video = (
             assetData.content_type and assetData.content_type.startswith("video/")
         ) or filename_lower.endswith((".mov", ".mp4", ".m4v"))
-        if may_be_video and is_live_photo_video(asset_data):
+        if may_be_video and is_live_photo_video(assetData.file):
             logger.info(
                 "Dropping iOS live photo video",
                 extra={
@@ -372,9 +369,10 @@ async def upload_asset(
                 status=AssetMediaStatus.created,
             )
 
-        # Create asset using Gumnut SDK
+        # Stream the file to Gumnut SDK without loading into memory.
+        await assetData.seek(0)
         gumnut_asset = client.assets.create(
-            asset_data=(assetData.filename, asset_data, assetData.content_type),
+            asset_data=(assetData.filename, assetData.file, assetData.content_type),
             device_asset_id=deviceAssetId,
             device_id=deviceId,
             file_created_at=file_created_at,

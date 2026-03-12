@@ -2,6 +2,7 @@
 
 import logging
 import struct
+from typing import BinaryIO
 
 logger = logging.getLogger(__name__)
 
@@ -9,16 +10,20 @@ LIVE_PHOTO_KEY = b"com.apple.quicktime.content.identifier"
 
 
 def _find_atom(
-    data: bytes, target: bytes, offset: int, end: int
+    f: BinaryIO, target: bytes, offset: int, end: int
 ) -> tuple[int, int] | None:
     """
-    Find a QuickTime atom by type within data[offset:end].
+    Find a QuickTime atom by type within the file region [offset, end).
 
     Returns (body_offset, body_end) of the atom's body, or None if not found.
     """
     pos = offset
     while pos + 8 <= end:
-        size, atom_type = struct.unpack(">I4s", data[pos : pos + 8])
+        f.seek(pos)
+        header = f.read(8)
+        if len(header) < 8:
+            break
+        size, atom_type = struct.unpack(">I4s", header)
         if size < 8:
             break
         atom_end = pos + size
@@ -30,10 +35,13 @@ def _find_atom(
     return None
 
 
-def is_live_photo_video(data: bytes) -> bool:
+def is_live_photo_video(f: BinaryIO) -> bool:
     """
     Detect iOS live photo .MOV files by checking for
     com.apple.quicktime.content.identifier in QuickTime mdta/keys metadata.
+
+    Reads only the metadata atoms from the file — does not load the entire
+    file into memory, making this safe for multi-GB video files.
 
     iOS live photos upload as two separate files: a .MOV (2-3 second video)
     and a .HEIC (still image). The .MOV contains a ContentIdentifier in its
@@ -41,21 +49,25 @@ def is_live_photo_video(data: bytes) -> bool:
     videos do not have this field.
 
     Args:
-        data: Raw bytes of the uploaded file.
+        f: A seekable binary file object (position is reset internally).
 
     Returns:
         True if the file is an iOS live photo video, False otherwise
         (including on any parse error).
     """
     try:
+        # Determine file size by seeking to end
+        f.seek(0, 2)
+        file_size = f.tell()
+
         # Step 1: Find the 'moov' atom at the top level
-        moov = _find_atom(data, b"moov", 0, len(data))
+        moov = _find_atom(f, b"moov", 0, file_size)
         if moov is None:
             return False
         moov_start, moov_end = moov
 
         # Step 2: Find the 'meta' atom inside 'moov'
-        meta = _find_atom(data, b"meta", moov_start, moov_end)
+        meta = _find_atom(f, b"meta", moov_start, moov_end)
         if meta is None:
             return False
         meta_start, meta_end = meta
@@ -64,9 +76,9 @@ def is_live_photo_video(data: bytes) -> bool:
         # ISOBMFF (MP4) treats 'meta' as a full box with version/flags,
         # but QuickTime .MOV files use a plain container (no version/flags).
         # Try both interpretations instead of guessing the format.
-        keys = _find_atom(data, b"keys", meta_start, meta_end)
+        keys = _find_atom(f, b"keys", meta_start, meta_end)
         if keys is None and meta_start + 4 < meta_end:
-            keys = _find_atom(data, b"keys", meta_start + 4, meta_end)
+            keys = _find_atom(f, b"keys", meta_start + 4, meta_end)
         if keys is None:
             return False
         keys_start, keys_end = keys
@@ -76,21 +88,27 @@ def is_live_photo_video(data: bytes) -> bool:
         # then entries of: 4 bytes size, 4 bytes namespace, (size-8) bytes key string
         if keys_start + 8 > keys_end:
             return False
-        _version_flags, entry_count = struct.unpack(
-            ">II", data[keys_start : keys_start + 8]
-        )
+        f.seek(keys_start)
+        keys_header = f.read(8)
+        if len(keys_header) < 8:
+            return False
+        _version_flags, entry_count = struct.unpack(">II", keys_header)
         pos = keys_start + 8
 
         for _ in range(entry_count):
             if pos + 8 > keys_end:
                 return False
-            key_size, _namespace = struct.unpack(">I4s", data[pos : pos + 8])
+            f.seek(pos)
+            entry_header = f.read(8)
+            if len(entry_header) < 8:
+                return False
+            key_size, _namespace = struct.unpack(">I4s", entry_header)
             if key_size < 8:
                 return False
             key_data_end = pos + key_size
             if key_data_end > keys_end:
                 return False
-            key_string = data[pos + 8 : key_data_end].rstrip(b"\x00")
+            key_string = f.read(key_size - 8).rstrip(b"\x00")
             if key_string == LIVE_PHOTO_KEY:
                 return True
             pos = key_data_end
@@ -100,3 +118,6 @@ def is_live_photo_video(data: bytes) -> bool:
     except Exception:
         # Any parse error means this isn't a valid live photo .MOV
         return False
+
+    finally:
+        f.seek(0)
