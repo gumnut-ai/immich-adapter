@@ -375,6 +375,9 @@ class TestUploadAsset:
         assert result.id == str(sample_uuid)
         assert result.status == AssetMediaStatus.created
         mock_client.assets.create.assert_called_once()
+        # Verify file object is streamed directly, not buffered as bytes
+        call_kwargs = mock_client.assets.create.call_args
+        assert call_kwargs.kwargs["asset_data"][1] is mock_file.file
 
     @pytest.mark.anyio
     async def test_upload_asset_duplicate(self, sample_uuid, mock_current_user):

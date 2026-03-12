@@ -377,7 +377,6 @@ async def upload_asset(
             device_id=deviceId,
             file_created_at=file_created_at,
             file_modified_at=file_modified_at,
-            timeout=600.0,  # 10 minutes for large video uploads
         )
 
         # Get the asset ID from the AssetResponse
