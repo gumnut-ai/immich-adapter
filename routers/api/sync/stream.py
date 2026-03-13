@@ -119,9 +119,10 @@ _KNOWN_DELETE_TYPES = {
     SyncEntityType.AlbumToAssetDeleteV1,
 }
 _missing_delete_types = _KNOWN_DELETE_TYPES - set(_DELETE_TYPE_ORDER)
-assert not _missing_delete_types, (
-    f"Missing delete types in _DELETE_TYPE_ORDER: {_missing_delete_types}"
-)
+if _missing_delete_types:
+    raise ValueError(
+        f"Missing delete types in _DELETE_TYPE_ORDER: {_missing_delete_types}"
+    )
 
 _EntityType: TypeAlias = (
     AssetResponse
