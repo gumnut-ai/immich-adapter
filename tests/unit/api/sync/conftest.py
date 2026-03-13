@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
 import pytest
+from gumnut.types.album_response import AlbumResponse
 from gumnut.types.face_response import FaceResponse
 
 from routers.utils.gumnut_id_conversion import (
@@ -155,16 +156,21 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     return asset
 
 
-def create_mock_album_data(updated_at: datetime) -> Mock:
-    """Create mock album data for entity fetch."""
-    album = Mock()
-    album.id = uuid_to_gumnut_album_id(TEST_UUID)
-    album.name = "Test Album"
-    album.description = "Test Description"
-    album.created_at = updated_at
-    album.updated_at = updated_at
-    album.album_cover_asset_id = None
-    return album
+def create_mock_album_data(
+    updated_at: datetime,
+    album_cover_asset_id: str | None = None,
+    asset_count: int = 1,
+) -> AlbumResponse:
+    """Create album data for entity fetch using a real AlbumResponse instance."""
+    return AlbumResponse(
+        id=uuid_to_gumnut_album_id(TEST_UUID),
+        name="Test Album",
+        description="Test Description",
+        asset_count=asset_count,
+        created_at=updated_at,
+        updated_at=updated_at,
+        album_cover_asset_id=album_cover_asset_id,
+    )
 
 
 def create_mock_exif_data(updated_at: datetime) -> Mock:

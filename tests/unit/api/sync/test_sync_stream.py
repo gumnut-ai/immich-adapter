@@ -21,6 +21,7 @@ from routers.immich_models import SyncEntityType, SyncRequestType, SyncStreamDto
 from services.checkpoint_store import Checkpoint, CheckpointStore
 from services.session_store import SessionStore
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
     safe_uuid_from_person_id,
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
@@ -2033,4 +2034,136 @@ class TestDeleteTypeOrderCompleteness:
         assert not missing, (
             f"Delete types handled by _make_delete_sync_event but missing "
             f"from _DELETE_TYPE_ORDER: {missing}"
+        )
+
+
+class TestAlbumCoverPayloadOverride:
+    """Tests for album_updated event payload override of album_cover_asset_id.
+
+    Same pattern as face_updated/person_id: the event payload carries the
+    causally-consistent album_cover_asset_id from event time. The adapter
+    should prefer this over the entity's current state, which is computed
+    at fetch time and may reference an asset outside the sync window.
+    """
+
+    async def _stream_album_event(
+        self,
+        album_data: Any,
+        album_event: Any,
+    ) -> dict[str, Any]:
+        """Stream a single album event and return the parsed sync event data."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+        mock_client.events.get.return_value = create_mock_events_response([album_event])
+        mock_client.albums.list.return_value = create_mock_entity_page([album_data])
+
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="album",
+            sync_entity_type=SyncEntityType.AlbumV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc),
+            stats=SyncStreamStats(),
+            checkpoint_map={},
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, _count = results[0]
+        return json.loads(json_line.strip())
+
+    @pytest.mark.anyio
+    async def test_album_updated_uses_cover_from_payload(self):
+        """album_updated events use album_cover_asset_id from event payload, not current state."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+
+        # Album entity's CURRENT state has cover = asset_A (from a later asset addition)
+        current_cover_id = uuid_to_gumnut_asset_id(
+            UUID("00000000-0000-0000-0000-000000000001")
+        )
+        album_data = create_mock_album_data(
+            updated_at, album_cover_asset_id=current_cover_id
+        )
+
+        # But the event payload carries cover = asset_B (from when the event was recorded)
+        payload_cover_id = uuid_to_gumnut_asset_id(
+            UUID("00000000-0000-0000-0000-000000000002")
+        )
+        album_event = create_mock_event(
+            entity_type="album",
+            entity_id=album_data.id,
+            event_type="album_updated",
+            created_at=updated_at,
+            cursor="cursor_album_1",
+            payload={"album_cover_asset_id": payload_cover_id},
+        )
+
+        event_data = await self._stream_album_event(album_data, album_event)
+
+        expected_uuid = str(safe_uuid_from_asset_id(payload_cover_id))
+        actual_cover = event_data["data"]["thumbnailAssetId"]
+        assert actual_cover == expected_uuid, (
+            f"album_updated should use album_cover_asset_id from payload ({expected_uuid}), "
+            f"not current entity state, but got {actual_cover}"
+        )
+
+        # Verify the original entity wasn't mutated
+        assert album_data.album_cover_asset_id == current_cover_id, (
+            "Original album entity should not be mutated by stream processing"
+        )
+
+    @pytest.mark.anyio
+    async def test_album_updated_without_payload_uses_current_state(self):
+        """Legacy album_updated events (no payload) fall through with current state."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+
+        current_cover_id = uuid_to_gumnut_asset_id(TEST_UUID)
+        album_data = create_mock_album_data(
+            updated_at, album_cover_asset_id=current_cover_id
+        )
+
+        # Legacy event — no payload
+        album_event = create_mock_event(
+            entity_type="album",
+            entity_id=album_data.id,
+            event_type="album_updated",
+            created_at=updated_at,
+            cursor="cursor_album_1",
+        )
+
+        event_data = await self._stream_album_event(album_data, album_event)
+
+        expected_uuid = str(safe_uuid_from_asset_id(current_cover_id))
+        assert event_data["data"]["thumbnailAssetId"] == expected_uuid, (
+            "Legacy album_updated (no payload) should use entity's current album_cover_asset_id"
+        )
+
+    @pytest.mark.anyio
+    async def test_album_updated_payload_with_null_cover(self):
+        """album_updated with payload album_cover_asset_id=null sets cover to null."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+
+        # Album entity's CURRENT state has a cover (asset was added after event)
+        current_cover_id = uuid_to_gumnut_asset_id(TEST_UUID)
+        album_data = create_mock_album_data(
+            updated_at, album_cover_asset_id=current_cover_id, asset_count=0
+        )
+
+        # Event payload says cover was null at event time (album was empty then)
+        album_event = create_mock_event(
+            entity_type="album",
+            entity_id=album_data.id,
+            event_type="album_updated",
+            created_at=updated_at,
+            cursor="cursor_album_1",
+            payload={"album_cover_asset_id": None},
+        )
+
+        event_data = await self._stream_album_event(album_data, album_event)
+
+        assert event_data["data"]["thumbnailAssetId"] is None, (
+            "album_updated with payload album_cover_asset_id=None should null out thumbnailAssetId"
         )

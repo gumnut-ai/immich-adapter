@@ -139,6 +139,31 @@ _FK_REFERENCES: dict[str, list[tuple[str, str]]] = {
 }
 
 
+def _payload_override(payload: dict[str, Any], key: str) -> tuple[bool, str | None]:
+    """Check an event payload for a causally-consistent FK override.
+
+    Returns (should_apply, value) where should_apply is True if the payload
+    contains a valid override value (None or non-empty string) for the given key.
+    Logs a warning for unexpected types so bad payloads are visible, not silently
+    ignored.
+    """
+    if key not in payload:
+        return False, None
+    value = payload[key]
+    if value is None:
+        return True, None
+    if isinstance(value, str):
+        value = value.strip()
+        return (True, value) if value else (False, None)
+    logger.warning(
+        "Unexpected payload type for %s: %r (type=%s), skipping override",
+        key,
+        value,
+        type(value).__name__,
+    )
+    return False, None
+
+
 @dataclass
 class SyncStreamStats:
     """Tracks streamed entity IDs and skip counts during sync stream generation."""
@@ -684,16 +709,32 @@ async def _stream_entity_type(
                     and event.event_type == "face_updated"
                     and isinstance(entity, FaceResponse)
                     and isinstance(event.payload, dict)
-                    and "person_id" in event.payload
                 ):
-                    payload_person_id = event.payload["person_id"]
-                    if payload_person_id is None or (
-                        isinstance(payload_person_id, str) and payload_person_id.strip()
-                    ):
-                        if entity.person_id != payload_person_id:
-                            entity = entity.model_copy(
-                                update={"person_id": payload_person_id}
-                            )
+                    should_apply, person_id = _payload_override(
+                        event.payload, "person_id"
+                    )
+                    if should_apply and entity.person_id != person_id:
+                        entity = entity.model_copy(update={"person_id": person_id})
+
+                # album_updated events carry the causally-consistent
+                # album_cover_asset_id in the event payload. Use it
+                # instead of the entity's current state, which is
+                # computed at fetch time (oldest asset in album) and may
+                # reference an asset added after the event was recorded
+                # — potentially outside the client's sync window.
+                if (
+                    sync_entity_type == SyncEntityType.AlbumV1
+                    and event.event_type == "album_updated"
+                    and isinstance(entity, AlbumResponse)
+                    and isinstance(event.payload, dict)
+                ):
+                    should_apply, cover_id = _payload_override(
+                        event.payload, "album_cover_asset_id"
+                    )
+                    if should_apply and entity.album_cover_asset_id != cover_id:
+                        entity = entity.model_copy(
+                            update={"album_cover_asset_id": cover_id}
+                        )
 
                 # Track streamed entity ID before FK check so the current
                 # entity is visible to its own reference validation
