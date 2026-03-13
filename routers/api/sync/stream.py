@@ -110,19 +110,6 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
     SyncEntityType.AssetDeleteV1,
 ]
 
-# Sanity check: all delete SyncEntityTypes must appear in _DELETE_TYPE_ORDER
-_KNOWN_DELETE_TYPES = {
-    SyncEntityType.AssetDeleteV1,
-    SyncEntityType.AlbumDeleteV1,
-    SyncEntityType.PersonDeleteV1,
-    SyncEntityType.AssetFaceDeleteV1,
-    SyncEntityType.AlbumToAssetDeleteV1,
-}
-_missing_delete_types = _KNOWN_DELETE_TYPES - set(_DELETE_TYPE_ORDER)
-if _missing_delete_types:
-    raise ValueError(
-        f"Missing delete types in _DELETE_TYPE_ORDER: {_missing_delete_types}"
-    )
 
 _EntityType: TypeAlias = (
     AssetResponse

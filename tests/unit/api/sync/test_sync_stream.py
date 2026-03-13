@@ -12,6 +12,7 @@ from routers.api.sync.routes import get_sync_stream
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
     SyncStreamStats,
+    _DELETE_TYPE_ORDER,
     _generate_reset_stream,
     _stream_entity_type,
     generate_sync_stream,
@@ -2012,3 +2013,24 @@ class TestUpsertsBeforeDeletes:
             "PersonDeleteV1|cursor_2|",
             "PersonDeleteV1|cursor_3|",
         ]
+
+
+class TestDeleteTypeOrderCompleteness:
+    """Ensure _DELETE_TYPE_ORDER covers all delete SyncEntityTypes the adapter handles."""
+
+    def test_all_handled_delete_types_in_delete_type_order(self):
+        """Every delete SyncEntityType produced by _make_delete_sync_event must
+        appear in _DELETE_TYPE_ORDER so buffered deletes are emitted in a
+        deterministic, FK-safe order."""
+        handled_delete_types = {
+            SyncEntityType.AssetDeleteV1,
+            SyncEntityType.AlbumDeleteV1,
+            SyncEntityType.PersonDeleteV1,
+            SyncEntityType.AssetFaceDeleteV1,
+            SyncEntityType.AlbumToAssetDeleteV1,
+        }
+        missing = handled_delete_types - set(_DELETE_TYPE_ORDER)
+        assert not missing, (
+            f"Delete types handled by _make_delete_sync_event but missing "
+            f"from _DELETE_TYPE_ORDER: {missing}"
+        )
