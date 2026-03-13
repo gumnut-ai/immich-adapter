@@ -157,14 +157,16 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
 
 
 def create_mock_album_data(
-    updated_at: datetime, album_cover_asset_id: str | None = None
+    updated_at: datetime,
+    album_cover_asset_id: str | None = None,
+    asset_count: int = 1,
 ) -> AlbumResponse:
     """Create album data for entity fetch using a real AlbumResponse instance."""
     return AlbumResponse(
         id=uuid_to_gumnut_album_id(TEST_UUID),
         name="Test Album",
         description="Test Description",
-        asset_count=1,
+        asset_count=asset_count,
         created_at=updated_at,
         updated_at=updated_at,
         album_cover_asset_id=album_cover_asset_id,
