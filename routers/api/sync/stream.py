@@ -695,6 +695,28 @@ async def _stream_entity_type(
                                 update={"person_id": payload_person_id}
                             )
 
+                # album_updated events carry the causally-consistent
+                # album_cover_asset_id in the event payload. Use it
+                # instead of the entity's current state, which is
+                # computed at fetch time (oldest asset in album) and may
+                # reference an asset added after the event was recorded
+                # — potentially outside the client's sync window.
+                if (
+                    sync_entity_type == SyncEntityType.AlbumV1
+                    and event.event_type == "album_updated"
+                    and isinstance(entity, AlbumResponse)
+                    and isinstance(event.payload, dict)
+                    and "album_cover_asset_id" in event.payload
+                ):
+                    payload_cover_id = event.payload["album_cover_asset_id"]
+                    if payload_cover_id is None or (
+                        isinstance(payload_cover_id, str) and payload_cover_id.strip()
+                    ):
+                        if entity.album_cover_asset_id != payload_cover_id:
+                            entity = entity.model_copy(
+                                update={"album_cover_asset_id": payload_cover_id}
+                            )
+
                 # Track streamed entity ID before FK check so the current
                 # entity is visible to its own reference validation
                 entity_id = getattr(entity, "id", None)
