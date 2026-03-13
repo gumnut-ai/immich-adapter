@@ -899,7 +899,7 @@ async def generate_sync_stream(
         # before the referenced parent entity is removed.
         if delete_buffer:
             logger.info(
-                "Emitting buffered deletes (phase 2) — cursors may be lower than "
+                "Emitting buffered deletes — cursors may be lower than "
                 "last upsert cursor; deletes could be lost if client resumes from "
                 "the upsert checkpoint",
                 extra={
