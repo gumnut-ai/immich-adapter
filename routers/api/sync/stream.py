@@ -9,6 +9,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from collections.abc import Iterator
 from typing import Any, AsyncGenerator, TypeAlias, cast
 
 from gumnut import Gumnut
@@ -108,6 +109,19 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
     SyncEntityType.AlbumDeleteV1,
     SyncEntityType.AssetDeleteV1,
 ]
+
+# Sanity check: all delete SyncEntityTypes must appear in _DELETE_TYPE_ORDER
+_KNOWN_DELETE_TYPES = {
+    SyncEntityType.AssetDeleteV1,
+    SyncEntityType.AlbumDeleteV1,
+    SyncEntityType.PersonDeleteV1,
+    SyncEntityType.AssetFaceDeleteV1,
+    SyncEntityType.AlbumToAssetDeleteV1,
+}
+_missing_delete_types = _KNOWN_DELETE_TYPES - set(_DELETE_TYPE_ORDER)
+assert not _missing_delete_types, (
+    f"Missing delete types in _DELETE_TYPE_ORDER: {_missing_delete_types}"
+)
 
 _EntityType: TypeAlias = (
     AssetResponse
@@ -725,40 +739,37 @@ async def _stream_entity_type(
 
 def _yield_buffered_deletes(
     delete_buffer: list[tuple[str, SyncEntityType]],
-) -> list[tuple[str, SyncEntityType]]:
+) -> Iterator[tuple[str, SyncEntityType]]:
     """
-    Sort buffered delete events in reverse FK dependency order.
+    Yield buffered delete events in reverse FK dependency order.
 
-    Groups deletes by SyncEntityType and returns them in ``_DELETE_TYPE_ORDER``
+    Groups deletes by SyncEntityType and yields them in ``_DELETE_TYPE_ORDER``
     (children before parents), preserving chronological order within each type.
-    Any delete types not in ``_DELETE_TYPE_ORDER`` are appended at the end.
+    Any delete types not in ``_DELETE_TYPE_ORDER`` are yielded at the end.
 
     Args:
         delete_buffer: List of (json_line, SyncEntityType) tuples
 
-    Returns:
-        Sorted list of (json_line, SyncEntityType) tuples
+    Yields:
+        (json_line, SyncEntityType) tuples in reverse FK dependency order
     """
     if not delete_buffer:
-        return []
+        return
 
     # Group by SyncEntityType, preserving insertion (chronological) order
-    groups: dict[SyncEntityType, list[tuple[str, SyncEntityType]]] = defaultdict(list)
-    for item in delete_buffer:
-        groups[item[1]].append(item)
-
-    result: list[tuple[str, SyncEntityType]] = []
+    groups: dict[SyncEntityType, list[str]] = defaultdict(list)
+    for json_line, delete_type in delete_buffer:
+        groups[delete_type].append(json_line)
 
     # Yield in _DELETE_TYPE_ORDER (reverse FK dependency)
     for delete_type in _DELETE_TYPE_ORDER:
-        if delete_type in groups:
-            result.extend(groups.pop(delete_type))
+        for json_line in groups.pop(delete_type, []):
+            yield json_line, delete_type
 
     # Defensive: yield any remaining types not in _DELETE_TYPE_ORDER
-    for remaining in groups.values():
-        result.extend(remaining)
-
-    return result
+    for delete_type, lines in groups.items():
+        for json_line in lines:
+            yield json_line, delete_type
 
 
 async def generate_sync_stream(
@@ -886,6 +897,16 @@ async def generate_sync_stream(
         # Phase 2: Yield buffered deletes in reverse FK dependency order
         # (children before parents) so the client can clean up FK references
         # before the referenced parent entity is removed.
+        if delete_buffer:
+            logger.info(
+                "Emitting buffered deletes (phase 2) — cursors may be lower than "
+                "last upsert cursor; deletes could be lost if client resumes from "
+                "the upsert checkpoint",
+                extra={
+                    "user_id": owner_id,
+                    "buffered_deletes": len(delete_buffer),
+                },
+            )
         for json_line, delete_entity_type in _yield_buffered_deletes(delete_buffer):
             yield json_line
             event_counts[delete_entity_type.value] = (
