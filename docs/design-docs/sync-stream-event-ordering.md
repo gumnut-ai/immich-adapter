@@ -1,5 +1,7 @@
 ---
 title: "Sync Stream Event Ordering"
+status: active
+created: 2026-03-13
 last-updated: 2026-03-13
 ---
 
