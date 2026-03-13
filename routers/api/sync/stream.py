@@ -9,6 +9,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from collections.abc import Iterator
 from typing import Any, AsyncGenerator, TypeAlias, cast
 
 from gumnut import Gumnut
@@ -87,6 +88,7 @@ _DELETE_EVENT_ENTITY_TYPES: dict[str, str] = {
 
 # Mapping from SyncRequestType to (gumnut_entity_type, SyncEntityType)
 # Order matters - assets before exif, albums before album_assets, etc.
+# This ordering ensures FK parents are streamed before children during upserts.
 _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.AssetsV1, "asset", SyncEntityType.AssetV1),
     (SyncRequestType.AlbumsV1, "album", SyncEntityType.AlbumV1),
@@ -95,6 +97,19 @@ _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.PeopleV1, "person", SyncEntityType.PersonV1),
     (SyncRequestType.AssetFacesV1, "face", SyncEntityType.AssetFaceV1),
 ]
+
+# Order for streaming delete events — reverse of FK dependency order.
+# Children are deleted before parents so the client can clean up FK references
+# before the referenced entity is removed. This is the inverse of
+# _SYNC_TYPE_ORDER's upsert ordering.
+_DELETE_TYPE_ORDER: list[SyncEntityType] = [
+    SyncEntityType.AssetFaceDeleteV1,
+    SyncEntityType.AlbumToAssetDeleteV1,
+    SyncEntityType.PersonDeleteV1,
+    SyncEntityType.AlbumDeleteV1,
+    SyncEntityType.AssetDeleteV1,
+]
+
 
 _EntityType: TypeAlias = (
     AssetResponse
@@ -133,6 +148,7 @@ class SyncStreamStats:
         default_factory=lambda: defaultdict(int)
     )
     delete_event_skips: int = 0
+    buffered_deletes: int = 0
     fk_warnings: int = 0
 
 
@@ -520,13 +536,19 @@ async def _stream_entity_type(
     sync_started_at: datetime,
     stats: SyncStreamStats,
     checkpoint_map: dict[SyncEntityType, Checkpoint],
+    delete_buffer: list[tuple[str, SyncEntityType]] | None = None,
 ) -> AsyncGenerator[tuple[str, int], None]:
     """
     Stream events for a single entity type using the events API.
 
     Fetches lightweight events, then batch-fetches full entities for
-    upsert events. Delete events are converted directly to Immich delete
-    sync events.
+    upsert events. Delete events are either yielded directly or buffered
+    for later delivery depending on the ``delete_buffer`` parameter.
+
+    When ``delete_buffer`` is provided, delete events are appended to it
+    instead of being yielded. This supports the two-phase streaming
+    strategy where all upserts are streamed first (preserving FK parent
+    ordering) and deletes are streamed afterward in reverse FK order.
 
     Args:
         gumnut_client: The Gumnut API client
@@ -537,9 +559,10 @@ async def _stream_entity_type(
         sync_started_at: Upper bound for the query window
         stats: Mutable stats tracker for streamed IDs, skip counts, and FK warnings
         checkpoint_map: All checkpoints for this sync (used for FK reference checks)
+        delete_buffer: If provided, delete events are appended here instead of yielded
 
     Yields:
-        Tuples of (json_line, count) for each event
+        Tuples of (json_line, count) for each upsert event (deletes buffered when delete_buffer is set)
     """
     last_cursor = checkpoint.cursor if checkpoint else None
     count = 0
@@ -592,12 +615,16 @@ async def _stream_entity_type(
                 continue
 
             if event.event_type in _DELETE_EVENT_TYPES:
-                # Delete event — convert directly
+                # Delete event — convert and either buffer or yield
                 result = _make_delete_sync_event(event)
                 if result:
-                    json_line, _ = result
-                    yield json_line, 1
-                    count += 1
+                    json_line, delete_sync_type = result
+                    if delete_buffer is not None:
+                        delete_buffer.append((json_line, delete_sync_type))
+                        stats.buffered_deletes += 1
+                    else:
+                        yield json_line, 1
+                        count += 1
                 else:
                     stats.delete_event_skips += 1
             else:
@@ -698,6 +725,41 @@ async def _stream_entity_type(
         )
 
 
+def _yield_buffered_deletes(
+    delete_buffer: list[tuple[str, SyncEntityType]],
+) -> Iterator[tuple[str, SyncEntityType]]:
+    """
+    Yield buffered delete events in reverse FK dependency order.
+
+    Groups deletes by SyncEntityType and yields them in ``_DELETE_TYPE_ORDER``
+    (children before parents), preserving chronological order within each type.
+    Any delete types not in ``_DELETE_TYPE_ORDER`` are yielded at the end.
+
+    Args:
+        delete_buffer: List of (json_line, SyncEntityType) tuples
+
+    Yields:
+        (json_line, SyncEntityType) tuples in reverse FK dependency order
+    """
+    if not delete_buffer:
+        return
+
+    # Group by SyncEntityType, preserving insertion (chronological) order
+    groups: dict[SyncEntityType, list[str]] = defaultdict(list)
+    for json_line, delete_type in delete_buffer:
+        groups[delete_type].append(json_line)
+
+    # Yield in _DELETE_TYPE_ORDER (reverse FK dependency)
+    for delete_type in _DELETE_TYPE_ORDER:
+        for json_line in groups.pop(delete_type, []):
+            yield json_line, delete_type
+
+    # Defensive: yield any remaining types not in _DELETE_TYPE_ORDER
+    for delete_type, lines in groups.items():
+        for json_line in lines:
+            yield json_line, delete_type
+
+
 async def generate_sync_stream(
     gumnut_client: Gumnut,
     request: SyncStreamDto,
@@ -708,6 +770,13 @@ async def generate_sync_stream(
 
     Uses the photos-api events endpoint to fetch lightweight event records
     in priority order, then batch-fetches full entities for upsert events.
+
+    The stream is split into two phases to maintain FK integrity:
+    - Phase 1: All upserts in FK dependency order (parents before children)
+    - Phase 2: All deletes in reverse FK order (children before parents)
+
+    This prevents FK constraint violations in the mobile client, which
+    batches events by type and enforces FK constraints at insert time.
 
     Each entity type uses its own checkpoint with an opaque cursor for
     cursor-based pagination.
@@ -784,7 +853,10 @@ async def generate_sync_stream(
         event_counts: dict[str, int] = {}
         total_events = 0
 
-        # Process each entity type in order, using its own checkpoint
+        # Phase 1: Stream upserts for all entity types in FK dependency order,
+        # buffering delete events for phase 2.
+        delete_buffer: list[tuple[str, SyncEntityType]] = []
+
         for request_type, gumnut_entity_type, sync_entity_type in _SYNC_TYPE_ORDER:
             if request_type not in requested_types:
                 continue
@@ -792,7 +864,7 @@ async def generate_sync_stream(
             # Get checkpoint for this entity type
             checkpoint = checkpoint_map.get(sync_entity_type)
 
-            # Stream events for this entity type
+            # Stream upsert events, buffer deletes
             async for event_line, count in _stream_entity_type(
                 gumnut_client,
                 gumnut_entity_type,
@@ -802,12 +874,33 @@ async def generate_sync_stream(
                 sync_started_at,
                 stats,
                 checkpoint_map,
+                delete_buffer=delete_buffer,
             ):
                 yield event_line
                 event_counts[sync_entity_type.value] = (
                     event_counts.get(sync_entity_type.value, 0) + count
                 )
                 total_events += count
+
+        # Phase 2: Yield buffered deletes in reverse FK dependency order
+        # (children before parents) so the client can clean up FK references
+        # before the referenced parent entity is removed.
+        if delete_buffer:
+            logger.info(
+                "Emitting buffered deletes — cursors may be lower than "
+                "last upsert cursor; deletes could be lost if client resumes from "
+                "the upsert checkpoint",
+                extra={
+                    "user_id": owner_id,
+                    "buffered_deletes": len(delete_buffer),
+                },
+            )
+        for json_line, delete_entity_type in _yield_buffered_deletes(delete_buffer):
+            yield json_line
+            event_counts[delete_entity_type.value] = (
+                event_counts.get(delete_entity_type.value, 0) + 1
+            )
+            total_events += 1
 
         # Log summary with skip counts
         summary_extra: dict[str, Any] = {
@@ -819,6 +912,8 @@ async def generate_sync_stream(
             summary_extra["entity_not_found_skips"] = dict(stats.entity_not_found_skips)
         if stats.delete_event_skips > 0:
             summary_extra["delete_event_skips"] = stats.delete_event_skips
+        if stats.buffered_deletes > 0:
+            summary_extra["buffered_deletes"] = stats.buffered_deletes
         if stats.fk_warnings > 0:
             summary_extra["fk_reference_warnings"] = stats.fk_warnings
 
