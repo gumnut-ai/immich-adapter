@@ -756,6 +756,10 @@ def _yield_buffered_deletes(
 
     # Defensive: yield any remaining types not in _DELETE_TYPE_ORDER
     for delete_type, lines in groups.items():
+        logger.warning(
+            "Delete type not in _DELETE_TYPE_ORDER, emitting in arbitrary order",
+            extra={"delete_type": delete_type.value, "count": len(lines)},
+        )
         for json_line in lines:
             yield json_line, delete_type
 
