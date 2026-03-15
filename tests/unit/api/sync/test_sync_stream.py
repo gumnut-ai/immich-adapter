@@ -9,11 +9,11 @@ from uuid import UUID
 import pytest
 
 from routers.api.sync.routes import get_sync_stream
+from routers.api.sync.fk_integrity import SyncStreamStats
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
-    SyncStreamStats,
-    generate_reset_stream,
     _stream_entity_type,
+    generate_reset_stream,
     generate_sync_stream,
 )
 from routers.immich_models import SyncEntityType, SyncRequestType, SyncStreamDto

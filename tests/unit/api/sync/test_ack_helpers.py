@@ -4,7 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from routers.api.sync.routes import _parse_ack
-from routers.api.sync.stream import to_ack_string
+from routers.api.sync.events import to_ack_string
 from routers.immich_models import SyncEntityType
 
 

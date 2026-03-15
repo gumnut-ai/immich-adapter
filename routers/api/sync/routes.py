@@ -40,11 +40,8 @@ from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 
-from routers.api.sync.stream import (
-    generate_reset_stream,
-    generate_sync_stream,
-    to_ack_string,
-)
+from routers.api.sync.events import to_ack_string
+from routers.api.sync.stream import generate_reset_stream, generate_sync_stream
 
 logger = logging.getLogger(__name__)
 
