@@ -169,6 +169,7 @@ class SyncStreamStats:
     """Tracks streamed entity IDs and skip counts during sync stream generation."""
 
     streamed_ids: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
+    not_found_ids: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     entity_not_found_skips: dict[str, int] = field(
         default_factory=lambda: defaultdict(int)
     )
@@ -625,6 +626,11 @@ async def _stream_entity_type(
             gumnut_client, gumnut_entity_type, upsert_ids
         )
 
+        # Track entity IDs that were requested but not returned (deleted/404)
+        for uid in dict.fromkeys(upsert_ids):
+            if uid not in entities_map:
+                stats.not_found_ids[gumnut_entity_type].add(uid)
+
         # Process events in order
         for event in events:
             if event.event_type in _SKIPPED_EVENT_TYPES:
@@ -716,6 +722,30 @@ async def _stream_entity_type(
                     if should_apply and entity.person_id != person_id:
                         entity = entity.model_copy(update={"person_id": person_id})
 
+                # Guard: if the payload override set a person_id that
+                # references a deleted person (returned 404 during fetch),
+                # null it out. The client will get the correct person from
+                # a later face_updated event in this or a future sync cycle.
+                # Skip this guard if the person type has a checkpoint — the
+                # person may exist on the client from a prior sync cycle.
+                if (
+                    sync_entity_type == SyncEntityType.AssetFaceV1
+                    and isinstance(entity, FaceResponse)
+                    and entity.person_id is not None
+                    and SyncEntityType.PersonV1 not in checkpoint_map
+                    and entity.person_id in stats.not_found_ids.get("person", set())
+                ):
+                    logger.info(
+                        "Nulling face person_id referencing deleted person",
+                        extra={
+                            "face_id": entity.id,
+                            "deleted_person_id": entity.person_id,
+                            "event_type": event.event_type,
+                            "cursor": event.cursor,
+                        },
+                    )
+                    entity = entity.model_copy(update={"person_id": None})
+
                 # album_updated events carry the causally-consistent
                 # album_cover_asset_id in the event payload. Use it
                 # instead of the entity's current state, which is
@@ -735,6 +765,28 @@ async def _stream_entity_type(
                         entity = entity.model_copy(
                             update={"album_cover_asset_id": cover_id}
                         )
+
+                # Guard: if the payload override set an album_cover_asset_id
+                # that references a deleted asset (returned 404 during fetch),
+                # null it out. Same pattern as face/person above.
+                if (
+                    sync_entity_type == SyncEntityType.AlbumV1
+                    and isinstance(entity, AlbumResponse)
+                    and entity.album_cover_asset_id is not None
+                    and SyncEntityType.AssetV1 not in checkpoint_map
+                    and entity.album_cover_asset_id
+                    in stats.not_found_ids.get("asset", set())
+                ):
+                    logger.info(
+                        "Nulling album cover referencing deleted asset",
+                        extra={
+                            "album_id": entity.id,
+                            "deleted_asset_id": entity.album_cover_asset_id,
+                            "event_type": event.event_type,
+                            "cursor": event.cursor,
+                        },
+                    )
+                    entity = entity.model_copy(update={"album_cover_asset_id": None})
 
                 # Track streamed entity ID before FK check so the current
                 # entity is visible to its own reference validation

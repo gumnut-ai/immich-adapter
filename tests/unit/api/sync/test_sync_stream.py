@@ -8,6 +8,8 @@ from uuid import UUID
 
 import pytest
 
+from gumnut.types.face_response import FaceResponse
+
 from routers.api.sync.routes import get_sync_stream
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
@@ -2166,4 +2168,499 @@ class TestAlbumCoverPayloadOverride:
 
         assert event_data["data"]["thumbnailAssetId"] is None, (
             "album_updated with payload album_cover_asset_id=None should null out thumbnailAssetId"
+        )
+
+
+class TestPayloadOverrideDeletedEntity:
+    """Tests for payload override when the referenced entity has been deleted.
+
+    When a face_updated event's payload carries a person_id for a person that
+    was deleted after the event was recorded, the adapter should null out the
+    person_id rather than streaming a reference to a non-existent entity. The
+    same applies to album_updated events with album_cover_asset_id referencing
+    a deleted asset.
+
+    Without this fix, the Immich mobile client gets a permanent FK constraint
+    violation (SqliteException 787) in updateAssetFacesV1 because it tries to
+    insert a face referencing a person that was never delivered.
+    """
+
+    @pytest.mark.anyio
+    async def test_face_updated_nulls_person_id_when_person_deleted(self):
+        """face_updated payload person_id is nulled when the person returns 404.
+
+        Scenario (fresh sync, no checkpoints):
+        1. face_updated event recorded with person_id=P1 in payload
+        2. Person P1 is deleted after the event was recorded
+        3. Sync starts — adapter fetches person P1 → 404 (not in fetch results)
+        4. face_updated event's payload overrides person_id to P1
+        5. P1 was never streamed → must null out person_id to avoid FK violation
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        # The deleted person's ID — will return 404 (not in people.list results)
+        deleted_person_uuid = UUID("00000000-0000-0000-0000-000000000099")
+        deleted_person_id = uuid_to_gumnut_person_id(deleted_person_uuid)
+
+        # Face entity's CURRENT state has a different person_id (reassigned)
+        face_data = create_mock_face_data(updated_at)
+        current_person_id = face_data.person_id
+        assert current_person_id != deleted_person_id
+
+        # The face_updated event payload references the deleted person
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+            payload={"person_id": deleted_person_id},
+        )
+
+        # Person events: person_created then person_deleted for the same person
+        person_events = [
+            create_mock_event(
+                entity_type="person",
+                entity_id=deleted_person_id,
+                event_type="person_created",
+                created_at=updated_at,
+                cursor="cursor_p1",
+            ),
+            create_mock_event(
+                entity_type="person",
+                entity_id=deleted_person_id,
+                event_type="person_deleted",
+                created_at=updated_at,
+                cursor="cursor_p2",
+            ),
+        ]
+
+        def mock_events_get(**kwargs: Any) -> Any:
+            entity_types = kwargs.get("entity_types", "")
+            if entity_types == "person":
+                return create_mock_events_response(person_events)
+            elif entity_types == "face":
+                return create_mock_events_response([face_event])
+            return create_mock_events_response([])
+
+        mock_client.events.get.side_effect = mock_events_get
+        # Person fetch returns empty — person was deleted
+        mock_client.people.list.return_value = create_mock_entity_page([])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        face_events = [e for e in events if e["type"] == "AssetFaceV1"]
+        assert len(face_events) == 1
+
+        assert face_events[0]["data"]["personId"] is None, (
+            "face_updated should null person_id when the referenced person "
+            "was deleted (404 on fetch) to avoid FK constraint violation"
+        )
+
+    @pytest.mark.anyio
+    async def test_face_updated_keeps_person_id_when_person_synced_prior_cycle(self):
+        """face_updated payload person_id is kept when person was synced in a prior cycle.
+
+        Scenario (incremental sync, person checkpoint exists):
+        1. Person P1 was synced in a prior cycle (client has it locally)
+        2. face_updated event recorded with person_id=P1 in payload
+        3. Person P1 is NOT modified in this sync window (no person events)
+        4. The adapter should keep person_id=P1 — the client already has it
+
+        This ensures the fix for deleted persons doesn't break incremental syncs
+        where the person exists but simply wasn't modified in this window.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        # Person P1 — exists, was synced before, not modified in this window
+        person_uuid = UUID("00000000-0000-0000-0000-000000000002")
+        payload_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        # Face entity's CURRENT state has a different person_id
+        face_data = create_mock_face_data(updated_at)
+
+        # face_updated event with payload person_id = P1
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+            payload={"person_id": payload_person_id},
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        # Incremental sync: person checkpoint exists (person type was synced before)
+        checkpoint_map = {
+            SyncEntityType.PersonV1: Checkpoint(
+                entity_type=SyncEntityType.PersonV1,
+                cursor="prior_cursor",
+                updated_at=updated_at,
+            ),
+        }
+
+        stats = SyncStreamStats()
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+            stats=stats,
+            checkpoint_map=checkpoint_map,
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        # Person was synced in a prior cycle — person_id should be preserved
+        expected_uuid = str(person_uuid)
+        assert event_data["data"]["personId"] == expected_uuid, (
+            "face_updated should keep payload person_id when the person was "
+            "synced in a prior cycle (checkpoint exists for PersonV1)"
+        )
+
+    @pytest.mark.anyio
+    async def test_face_reassignment_sequence_after_person_deletion(self):
+        """Full reassignment sequence: person deleted, face unassigned, face gets new person.
+
+        Reproduces the exact production timeline:
+        1. face_updated with payload person_id=P1 (clustering assigned P1)
+        2. person_deleted for P1
+        3. face_updated with payload=null (unassignment from deleted P1)
+        4. face_updated with payload person_id=P2 (reassigned to new person)
+
+        The face's current state has person_id=P2. After sync:
+        - Event 1 should have person_id nulled (P1 is deleted/404)
+        - Event 3 should use current state (P2) since payload is null
+        - Event 4 should have person_id=P2 from payload
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        # Person P1 (deleted) and Person P2 (alive)
+        p1_uuid = UUID("00000000-0000-0000-0000-000000000001")
+        p2_uuid = UUID("00000000-0000-0000-0000-000000000002")
+        p1_id = uuid_to_gumnut_person_id(p1_uuid)
+        p2_id = uuid_to_gumnut_person_id(p2_uuid)
+
+        # Face's current state has person_id = P2 (reassigned)
+        face_data = FaceResponse(
+            id=uuid_to_gumnut_face_id(TEST_UUID),
+            asset_id=uuid_to_gumnut_asset_id(TEST_UUID),
+            person_id=p2_id,
+            bounding_box={"x": 100, "y": 100, "w": 50, "h": 50},
+            created_at=updated_at,
+            updated_at=updated_at,
+        )
+
+        # Person P2 exists
+        p2_data = Mock()
+        p2_data.id = p2_id
+        p2_data.name = "Person Two"
+        p2_data.is_favorite = False
+        p2_data.is_hidden = False
+        p2_data.created_at = updated_at
+        p2_data.updated_at = updated_at
+
+        # Events in chronological order
+        person_events = [
+            create_mock_event(
+                entity_type="person",
+                entity_id=p1_id,
+                event_type="person_created",
+                created_at=updated_at,
+                cursor="cursor_p1",
+            ),
+            create_mock_event(
+                entity_type="person",
+                entity_id=p2_id,
+                event_type="person_created",
+                created_at=updated_at,
+                cursor="cursor_p2",
+            ),
+            create_mock_event(
+                entity_type="person",
+                entity_id=p1_id,
+                event_type="person_deleted",
+                created_at=updated_at,
+                cursor="cursor_p3",
+            ),
+        ]
+
+        face_events = [
+            # Event 1: clustering assigned face to P1
+            create_mock_event(
+                entity_type="face",
+                entity_id=face_data.id,
+                event_type="face_updated",
+                created_at=updated_at,
+                cursor="cursor_f1",
+                payload={"person_id": p1_id},
+            ),
+            # Event 2: face unassigned from deleted P1 (null payload)
+            create_mock_event(
+                entity_type="face",
+                entity_id=face_data.id,
+                event_type="face_updated",
+                created_at=updated_at,
+                cursor="cursor_f2",
+                payload=None,
+            ),
+            # Event 3: face reassigned to P2
+            create_mock_event(
+                entity_type="face",
+                entity_id=face_data.id,
+                event_type="face_updated",
+                created_at=updated_at,
+                cursor="cursor_f3",
+                payload={"person_id": p2_id},
+            ),
+        ]
+
+        def mock_events_get(**kwargs: Any) -> Any:
+            entity_types = kwargs.get("entity_types", "")
+            if entity_types == "person":
+                return create_mock_events_response(person_events)
+            elif entity_types == "face":
+                return create_mock_events_response(face_events)
+            return create_mock_events_response([])
+
+        mock_client.events.get.side_effect = mock_events_get
+        # Person P1 is deleted (404), P2 exists
+        mock_client.people.list.return_value = create_mock_entity_page([p2_data])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        face_events_out = [e for e in events if e["type"] == "AssetFaceV1"]
+        assert len(face_events_out) == 3, (
+            f"Expected 3 face events, got {len(face_events_out)}"
+        )
+
+        # Event 1: payload person_id=P1, but P1 is deleted → should be nulled
+        assert face_events_out[0]["data"]["personId"] is None, (
+            "First face_updated (payload person_id=P1) should null person_id "
+            "because P1 was deleted (404 on fetch)"
+        )
+
+        # Event 2: null payload → uses current state (P2)
+        assert face_events_out[1]["data"]["personId"] == str(p2_uuid), (
+            "Second face_updated (null payload) should use current state person_id (P2)"
+        )
+
+        # Event 3: payload person_id=P2, P2 exists → should keep P2
+        assert face_events_out[2]["data"]["personId"] == str(p2_uuid), (
+            "Third face_updated (payload person_id=P2) should keep P2 "
+            "because P2 was streamed in this cycle"
+        )
+
+    @pytest.mark.anyio
+    async def test_multiple_faces_referencing_same_deleted_person(self):
+        """Multiple faces with payload person_id referencing the same deleted person.
+
+        All faces should have their person_id nulled, not just the first one.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        deleted_person_uuid = UUID("00000000-0000-0000-0000-000000000099")
+        deleted_person_id = uuid_to_gumnut_person_id(deleted_person_uuid)
+
+        # Two different faces, both referencing the deleted person in payload
+        face1_uuid = UUID("00000000-0000-0000-0000-000000000011")
+        face2_uuid = UUID("00000000-0000-0000-0000-000000000022")
+
+        face1_data = FaceResponse(
+            id=uuid_to_gumnut_face_id(face1_uuid),
+            asset_id=uuid_to_gumnut_asset_id(TEST_UUID),
+            person_id=None,  # current state: unassigned
+            bounding_box={"x": 10, "y": 10, "w": 50, "h": 50},
+            created_at=updated_at,
+            updated_at=updated_at,
+        )
+        face2_data = FaceResponse(
+            id=uuid_to_gumnut_face_id(face2_uuid),
+            asset_id=uuid_to_gumnut_asset_id(TEST_UUID),
+            person_id=None,  # current state: unassigned
+            bounding_box={"x": 100, "y": 100, "w": 50, "h": 50},
+            created_at=updated_at,
+            updated_at=updated_at,
+        )
+
+        face_events = [
+            create_mock_event(
+                entity_type="face",
+                entity_id=face1_data.id,
+                event_type="face_updated",
+                created_at=updated_at,
+                cursor="cursor_f1",
+                payload={"person_id": deleted_person_id},
+            ),
+            create_mock_event(
+                entity_type="face",
+                entity_id=face2_data.id,
+                event_type="face_updated",
+                created_at=updated_at,
+                cursor="cursor_f2",
+                payload={"person_id": deleted_person_id},
+            ),
+        ]
+
+        person_events = [
+            create_mock_event(
+                entity_type="person",
+                entity_id=deleted_person_id,
+                event_type="person_created",
+                created_at=updated_at,
+                cursor="cursor_p1",
+            ),
+            create_mock_event(
+                entity_type="person",
+                entity_id=deleted_person_id,
+                event_type="person_deleted",
+                created_at=updated_at,
+                cursor="cursor_p2",
+            ),
+        ]
+
+        def mock_events_get(**kwargs: Any) -> Any:
+            entity_types = kwargs.get("entity_types", "")
+            if entity_types == "person":
+                return create_mock_events_response(person_events)
+            elif entity_types == "face":
+                return create_mock_events_response(face_events)
+            return create_mock_events_response([])
+
+        mock_client.events.get.side_effect = mock_events_get
+        mock_client.people.list.return_value = create_mock_entity_page([])
+        mock_client.faces.list.return_value = create_mock_entity_page(
+            [face1_data, face2_data]
+        )
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        face_events_out = [e for e in events if e["type"] == "AssetFaceV1"]
+        assert len(face_events_out) == 2
+
+        for i, face_event in enumerate(face_events_out):
+            assert face_event["data"]["personId"] is None, (
+                f"Face {i + 1} should have person_id nulled when the referenced "
+                f"person was deleted (404)"
+            )
+
+    @pytest.mark.anyio
+    async def test_album_updated_nulls_cover_when_asset_deleted(self):
+        """album_updated payload album_cover_asset_id is nulled when asset returns 404.
+
+        Same pattern as face/person: the payload references an asset that was
+        deleted after the event was recorded. The adapter should null the
+        cover to avoid FK violations.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        # The deleted asset's ID — will return 404
+        deleted_asset_uuid = UUID("00000000-0000-0000-0000-000000000088")
+        deleted_asset_id = uuid_to_gumnut_asset_id(deleted_asset_uuid)
+
+        # Album's current state has no cover (asset was deleted)
+        album_data = create_mock_album_data(
+            updated_at, album_cover_asset_id=None, asset_count=0
+        )
+
+        # But the event payload references the deleted asset as the cover
+        album_event = create_mock_event(
+            entity_type="album",
+            entity_id=album_data.id,
+            event_type="album_updated",
+            created_at=updated_at,
+            cursor="cursor_a1",
+            payload={"album_cover_asset_id": deleted_asset_id},
+        )
+
+        asset_events = [
+            create_mock_event(
+                entity_type="asset",
+                entity_id=deleted_asset_id,
+                event_type="asset_created",
+                created_at=updated_at,
+                cursor="cursor_asset1",
+            ),
+            create_mock_event(
+                entity_type="asset",
+                entity_id=deleted_asset_id,
+                event_type="asset_deleted",
+                created_at=updated_at,
+                cursor="cursor_asset2",
+            ),
+        ]
+
+        album_events = [album_event]
+
+        def mock_events_get(**kwargs: Any) -> Any:
+            entity_types = kwargs.get("entity_types", "")
+            if entity_types == "asset":
+                return create_mock_events_response(asset_events)
+            elif entity_types == "album":
+                return create_mock_events_response(album_events)
+            return create_mock_events_response([])
+
+        mock_client.events.get.side_effect = mock_events_get
+        # Asset was deleted — returns empty from fetch
+        mock_client.assets.list.return_value = create_mock_entity_page([])
+        mock_client.albums.list.return_value = create_mock_entity_page([album_data])
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.AssetsV1, SyncRequestType.AlbumsV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map)
+        )
+
+        album_events_out = [e for e in events if e["type"] == "AlbumV1"]
+        assert len(album_events_out) == 1
+
+        assert album_events_out[0]["data"]["thumbnailAssetId"] is None, (
+            "album_updated should null album_cover_asset_id when the referenced "
+            "asset was deleted (404 on fetch)"
         )
