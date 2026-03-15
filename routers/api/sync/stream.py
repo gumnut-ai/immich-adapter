@@ -1,63 +1,51 @@
-"""
-Events processing, entity fetching, and sync stream generation.
+"""Sync stream generation — two-phase event streaming with FK integrity.
 
-Imports converter functions from converters module.
+Orchestrates event fetching, entity hydration, and stream generation.
+Delegates to submodules for event construction (events), entity fetching
+(entity_fetch), and FK validation (fk_integrity).
 """
 
 import json
 import logging
 from collections import defaultdict
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from collections.abc import Iterator
-from typing import Any, AsyncGenerator, TypeAlias, cast
+from typing import Any, AsyncGenerator
 
 from gumnut import Gumnut
-from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
-from gumnut.types.asset_response import AssetResponse
-from gumnut.types.events_response import Data as EventData
-from gumnut.types.exif_response import ExifResponse
 from gumnut.types.face_response import FaceResponse
-from gumnut.types.person_response import PersonResponse
 
 from routers.immich_models import (
-    SyncAlbumDeleteV1,
-    SyncAlbumToAssetDeleteV1,
-    SyncAssetDeleteV1,
-    SyncAssetFaceDeleteV1,
     SyncEntityType,
-    SyncPersonDeleteV1,
     SyncRequestType,
     SyncStreamDto,
 )
-from routers.utils.gumnut_id_conversion import (
-    safe_uuid_from_album_id,
-    safe_uuid_from_asset_id,
-    safe_uuid_from_face_id,
-    safe_uuid_from_person_id,
-    safe_uuid_from_user_id,
-)
+from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
 from services.checkpoint_store import Checkpoint
 
 from routers.api.sync.converters import (
-    gumnut_album_asset_to_sync_album_to_asset_v1,
-    gumnut_album_to_sync_album_v1,
-    gumnut_asset_to_sync_asset_v1,
-    gumnut_exif_to_sync_exif_v1,
-    gumnut_face_to_sync_face_v1,
-    gumnut_person_to_sync_person_v1,
     gumnut_user_to_sync_auth_user_v1,
     gumnut_user_to_sync_user_v1,
+)
+from routers.api.sync.entity_fetch import fetch_entities_map
+from routers.api.sync.events import (
+    convert_entity_to_sync_event,
+    make_delete_sync_event,
+    make_sync_event,
+    to_ack_string,
+)
+from routers.api.sync.fk_integrity import (
+    SyncStreamStats,
+    check_fk_references,
+    null_deleted_fk_references,
+    payload_override,
 )
 
 logger = logging.getLogger(__name__)
 
 # Page size for events API pagination
 EVENTS_PAGE_SIZE = 500
-
-# Batch size for entity fetch API calls (conservative to avoid upstream limits)
-FETCH_BATCH_SIZE = 100
 
 # Delete event types that are converted to Immich delete sync models
 _DELETE_EVENT_TYPES = frozenset(
@@ -76,15 +64,6 @@ _SKIPPED_EVENT_TYPES = frozenset(
         "exif_deleted",  # Immich handles via asset deletion
     }
 )
-
-# Expected entity_type for each delete event_type
-_DELETE_EVENT_ENTITY_TYPES: dict[str, str] = {
-    "asset_deleted": "asset",
-    "album_deleted": "album",
-    "person_deleted": "person",
-    "face_deleted": "face",
-    "album_asset_removed": "album_asset",
-}
 
 # Mapping from SyncRequestType to (gumnut_entity_type, SyncEntityType)
 # Order matters - assets before exif, albums before album_assets, etc.
@@ -110,494 +89,11 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
     SyncEntityType.AssetDeleteV1,
 ]
 
-
-_EntityType: TypeAlias = (
-    AssetResponse
-    | AlbumResponse
-    | AlbumAssetResponse
-    | PersonResponse
-    | FaceResponse
-    | ExifResponse
-)
-
-# Map gumnut entity type -> SyncEntityType (derived from _SYNC_TYPE_ORDER at module load)
-_GUMNUT_TYPE_TO_SYNC_TYPE: dict[str, SyncEntityType] = {
-    gumnut_type: sync_type for _, gumnut_type, sync_type in _SYNC_TYPE_ORDER
-}
-
 # Supported SyncRequestTypes (used to detect unsupported types requested by client)
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
     | {SyncRequestType.AuthUsersV1, SyncRequestType.UsersV1}
 )
-
-# FK references: gumnut_entity_type -> [(attribute_name, referenced_gumnut_entity_type)]
-_FK_REFERENCES: dict[str, list[tuple[str, str]]] = {
-    "face": [("person_id", "person"), ("asset_id", "asset")],
-    "album_asset": [("album_id", "album"), ("asset_id", "asset")],
-    "album": [("album_cover_asset_id", "asset")],
-}
-
-
-def _payload_override(payload: dict[str, Any], key: str) -> tuple[bool, str | None]:
-    """Check an event payload for a causally-consistent FK override.
-
-    Returns (should_apply, value) where should_apply is True if the payload
-    contains a valid override value (None or non-empty string) for the given key.
-    Logs a warning for unexpected types so bad payloads are visible, not silently
-    ignored.
-    """
-    if key not in payload:
-        return False, None
-    value = payload[key]
-    if value is None:
-        return True, None
-    if isinstance(value, str):
-        value = value.strip()
-        return (True, value) if value else (False, None)
-    logger.warning(
-        "Unexpected payload type for %s: %r (type=%s), skipping override",
-        key,
-        value,
-        type(value).__name__,
-    )
-    return False, None
-
-
-@dataclass
-class SyncStreamStats:
-    """Tracks streamed entity IDs and skip counts during sync stream generation."""
-
-    streamed_ids: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
-    not_found_ids: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
-    entity_not_found_skips: dict[str, int] = field(
-        default_factory=lambda: defaultdict(int)
-    )
-    delete_event_skips: int = 0
-    buffered_deletes: int = 0
-    fk_warnings: int = 0
-
-
-def _check_fk_references(
-    gumnut_entity_type: str,
-    entity: _EntityType,
-    stats: SyncStreamStats,
-    checkpoint_map: dict[SyncEntityType, Checkpoint],
-    cursor: str,
-) -> None:
-    """Warn if entity references IDs not seen in this sync for fully-synced entity types.
-
-    Only warns when the referenced entity type has no checkpoint (i.e., it was
-    fully synced in this cycle), since a prior checkpoint means the referenced
-    entity may have been synced in an earlier cycle.
-    """
-    refs = _FK_REFERENCES.get(gumnut_entity_type)
-    if not refs:
-        return
-
-    for attr_name, ref_type in refs:
-        ref_id = getattr(entity, attr_name, None)
-        if ref_id is None:
-            continue
-
-        # If the referenced entity type has a checkpoint, skip the check —
-        # the referenced entity may have been synced in a prior cycle
-        ref_sync_type = _GUMNUT_TYPE_TO_SYNC_TYPE.get(ref_type)
-        if ref_sync_type and ref_sync_type in checkpoint_map:
-            continue
-
-        if ref_id not in stats.streamed_ids.get(ref_type, set()):
-            logger.warning(
-                "Entity references ID not seen in this sync",
-                extra={
-                    "entity_type": gumnut_entity_type,
-                    "entity_id": getattr(entity, "id", None),
-                    "reference_field": attr_name,
-                    "referenced_type": ref_type,
-                    "referenced_id": ref_id,
-                    "cursor": cursor,
-                },
-            )
-            stats.fk_warnings += 1
-
-
-def _null_deleted_fk_references(
-    gumnut_entity_type: str,
-    entity: _EntityType,
-    stats: SyncStreamStats,
-    checkpoint_map: dict[SyncEntityType, Checkpoint],
-    event_type: str,
-    cursor: str,
-) -> _EntityType:
-    """Null FK fields that reference entities confirmed deleted (404 during fetch).
-
-    Uses _FK_REFERENCES to discover which fields to check. Skips fields whose
-    referenced entity type has a checkpoint — the entity may exist on the
-    client from a prior sync cycle.
-
-    Returns the (possibly updated) entity.
-    """
-    refs = _FK_REFERENCES.get(gumnut_entity_type)
-    if not refs:
-        return entity
-
-    for attr_name, ref_type in refs:
-        ref_id = getattr(entity, attr_name, None)
-        if ref_id is None:
-            continue
-
-        ref_sync_type = _GUMNUT_TYPE_TO_SYNC_TYPE.get(ref_type)
-        if ref_sync_type and ref_sync_type in checkpoint_map:
-            continue
-
-        if ref_id in stats.not_found_ids.get(ref_type, set()):
-            logger.info(
-                "Nulling FK reference to deleted entity",
-                extra={
-                    "entity_type": gumnut_entity_type,
-                    "entity_id": getattr(entity, "id", None),
-                    "reference_field": attr_name,
-                    "referenced_type": ref_type,
-                    "deleted_ref_id": ref_id,
-                    "event_type": event_type,
-                    "cursor": cursor,
-                },
-            )
-            entity = entity.model_copy(update={attr_name: None})
-
-    return entity
-
-
-def _to_ack_string(
-    entity_type: SyncEntityType,
-    cursor: str,
-) -> str:
-    """
-    Convert entity type and cursor to ack string.
-
-    Ack format for immich-adapter: "SyncEntityType|cursor|"
-
-    The cursor MUST NOT contain pipe characters — ``_parse_ack()`` splits on
-    ``|`` and would silently truncate the cursor, corrupting the checkpoint.
-    Upstream cursors are opaque strings controlled by photos-api; if they
-    ever include pipes this assertion will surface the issue immediately.
-
-    Args:
-        entity_type: The sync entity type
-        cursor: The opaque events cursor (must not contain '|')
-
-    Returns:
-        Formatted ack string
-    """
-    if "|" in cursor:
-        logger.error(
-            "Cursor contains pipe character, ack format will be corrupted",
-            extra={"entity_type": entity_type.value, "cursor": cursor},
-        )
-    return f"{entity_type.value}|{cursor}|"
-
-
-def _make_sync_event(
-    entity_type: SyncEntityType,
-    data: dict,
-    cursor: str,
-) -> str:
-    """
-    Create a sync event JSON line.
-
-    Args:
-        entity_type: The Immich sync entity type
-        data: The entity data dict
-        cursor: The opaque events cursor for checkpointing
-
-    Returns:
-        JSON line string with newline
-    """
-    ack = _to_ack_string(entity_type, cursor)
-
-    return (
-        json.dumps(
-            {
-                "type": entity_type.value,
-                "data": data,
-                "ack": ack,
-            }
-        )
-        + "\n"
-    )
-
-
-def _make_delete_sync_event(
-    event: EventData,
-) -> tuple[str, SyncEntityType] | None:
-    """
-    Convert a delete event to an Immich delete sync event JSON line.
-
-    Validates that event.entity_type matches expectations for the delete
-    event_type. Logs a warning and skips if there's a mismatch.
-
-    Args:
-        event: The event with a delete event_type
-
-    Returns:
-        Tuple of (json_line, sync_entity_type) or None if event should be skipped
-    """
-    # Validate entity_type matches the delete event_type
-    expected_entity_type = _DELETE_EVENT_ENTITY_TYPES.get(event.event_type)
-    if expected_entity_type and event.entity_type != expected_entity_type:
-        logger.warning(
-            "Delete event entity_type mismatch, skipping",
-            extra={
-                "event_type": event.event_type,
-                "entity_type": event.entity_type,
-                "expected_entity_type": expected_entity_type,
-                "entity_id": event.entity_id,
-                "cursor": event.cursor,
-            },
-        )
-        return None
-
-    if event.event_type == "asset_deleted":
-        data = SyncAssetDeleteV1(assetId=str(safe_uuid_from_asset_id(event.entity_id)))
-        return (
-            _make_sync_event(
-                SyncEntityType.AssetDeleteV1,
-                data.model_dump(mode="json"),
-                event.cursor,
-            ),
-            SyncEntityType.AssetDeleteV1,
-        )
-
-    elif event.event_type == "album_deleted":
-        data = SyncAlbumDeleteV1(albumId=str(safe_uuid_from_album_id(event.entity_id)))
-        return (
-            _make_sync_event(
-                SyncEntityType.AlbumDeleteV1,
-                data.model_dump(mode="json"),
-                event.cursor,
-            ),
-            SyncEntityType.AlbumDeleteV1,
-        )
-
-    elif event.event_type == "person_deleted":
-        data = SyncPersonDeleteV1(
-            personId=str(safe_uuid_from_person_id(event.entity_id))
-        )
-        return (
-            _make_sync_event(
-                SyncEntityType.PersonDeleteV1,
-                data.model_dump(mode="json"),
-                event.cursor,
-            ),
-            SyncEntityType.PersonDeleteV1,
-        )
-
-    elif event.event_type == "face_deleted":
-        data = SyncAssetFaceDeleteV1(
-            assetFaceId=str(safe_uuid_from_face_id(event.entity_id))
-        )
-        return (
-            _make_sync_event(
-                SyncEntityType.AssetFaceDeleteV1,
-                data.model_dump(mode="json"),
-                event.cursor,
-            ),
-            SyncEntityType.AssetFaceDeleteV1,
-        )
-
-    elif event.event_type == "album_asset_removed":
-        if not isinstance(event.payload, dict):
-            logger.warning(
-                "album_asset_removed event payload missing or invalid, skipping",
-                extra={
-                    "event_type": event.event_type,
-                    "cursor": event.cursor,
-                    "created_at": event.created_at,
-                    "entity_id": event.entity_id,
-                    "payload": event.payload,
-                },
-            )
-            return None
-
-        album_id = event.payload.get("album_id")
-        asset_id = event.payload.get("asset_id")
-        if not isinstance(album_id, (str, int)) or not isinstance(asset_id, (str, int)):
-            logger.warning(
-                "album_asset_removed event album_id/asset_id missing or invalid type, skipping",
-                extra={
-                    "event_type": event.event_type,
-                    "cursor": event.cursor,
-                    "created_at": event.created_at,
-                    "entity_id": event.entity_id,
-                    "payload": event.payload,
-                },
-            )
-            return None
-
-        album_id_str = str(album_id).strip()
-        asset_id_str = str(asset_id).strip()
-        if not album_id_str or not asset_id_str:
-            logger.warning(
-                "album_asset_removed event album_id/asset_id empty after conversion, skipping",
-                extra={
-                    "event_type": event.event_type,
-                    "cursor": event.cursor,
-                    "created_at": event.created_at,
-                    "entity_id": event.entity_id,
-                    "payload": event.payload,
-                },
-            )
-            return None
-
-        data = SyncAlbumToAssetDeleteV1(
-            albumId=str(safe_uuid_from_album_id(album_id_str)),
-            assetId=str(safe_uuid_from_asset_id(asset_id_str)),
-        )
-        return (
-            _make_sync_event(
-                SyncEntityType.AlbumToAssetDeleteV1,
-                data.model_dump(mode="json"),
-                event.cursor,
-            ),
-            SyncEntityType.AlbumToAssetDeleteV1,
-        )
-
-    logger.warning(
-        "Unhandled delete event type in _make_delete_sync_event",
-        extra={
-            "event_type": event.event_type,
-            "entity_id": event.entity_id,
-            "cursor": event.cursor,
-        },
-    )
-    return None
-
-
-def _convert_entity_to_sync_event(
-    gumnut_entity_type: str,
-    entity: _EntityType,
-    owner_id: str,
-    cursor: str,
-    sync_entity_type: SyncEntityType,
-) -> str:
-    """
-    Convert a fetched entity to an Immich sync event JSON line.
-
-    Args:
-        gumnut_entity_type: The entity type string (e.g., "asset", "album")
-        entity: The fetched entity object
-        owner_id: UUID of the owner
-        cursor: The event cursor for the ack string
-        sync_entity_type: The Immich sync entity type
-
-    Returns:
-        JSON line string with newline
-    """
-    if gumnut_entity_type == "asset":
-        sync_model = gumnut_asset_to_sync_asset_v1(
-            cast(AssetResponse, entity), owner_id
-        )
-    elif gumnut_entity_type == "album":
-        sync_model = gumnut_album_to_sync_album_v1(
-            cast(AlbumResponse, entity), owner_id
-        )
-    elif gumnut_entity_type == "person":
-        sync_model = gumnut_person_to_sync_person_v1(
-            cast(PersonResponse, entity), owner_id
-        )
-    elif gumnut_entity_type == "album_asset":
-        sync_model = gumnut_album_asset_to_sync_album_to_asset_v1(
-            cast(AlbumAssetResponse, entity)
-        )
-    elif gumnut_entity_type == "face":
-        sync_model = gumnut_face_to_sync_face_v1(cast(FaceResponse, entity))
-    elif gumnut_entity_type == "exif":
-        sync_model = gumnut_exif_to_sync_exif_v1(cast(ExifResponse, entity))
-    else:
-        raise ValueError(f"Unsupported entity type: {gumnut_entity_type}")
-
-    return _make_sync_event(
-        sync_entity_type,
-        sync_model.model_dump(mode="json"),
-        cursor,
-    )
-
-
-def _batched(items: list[str], size: int) -> list[list[str]]:
-    """Split a list into chunks of the given size."""
-    return [items[i : i + size] for i in range(0, len(items), size)]
-
-
-def _fetch_entities_map(
-    gumnut_client: Gumnut,
-    gumnut_entity_type: str,
-    entity_ids: list[str],
-) -> tuple[dict[str, _EntityType], set[str]]:
-    """
-    Batch-fetch entities by ID and return a dict keyed by entity ID.
-
-    IDs are chunked into batches of FETCH_BATCH_SIZE to avoid exceeding
-    upstream API limits. Missing entities (deleted between event and fetch)
-    result in fewer entries.
-
-    Args:
-        gumnut_client: The Gumnut API client
-        gumnut_entity_type: The entity type string (e.g., "asset", "album")
-        entity_ids: List of entity IDs to fetch
-
-    Returns:
-        Tuple of (entity_id -> entity object mapping, set of IDs that were
-        explicitly missing — e.g., assets fetched but lacking exif data)
-    """
-    if not entity_ids:
-        return {}, set()
-
-    unique_ids = list(dict.fromkeys(entity_ids))  # Deduplicate, preserve order
-    result: dict[str, _EntityType] = {}
-    missing_ids: set[str] = set()
-
-    for chunk in _batched(unique_ids, FETCH_BATCH_SIZE):
-        if gumnut_entity_type == "asset":
-            page = gumnut_client.assets.list(ids=chunk, limit=len(chunk))
-            result.update({entity.id: entity for entity in page.data})
-
-        elif gumnut_entity_type == "album":
-            page = gumnut_client.albums.list(ids=chunk, limit=len(chunk))
-            result.update({entity.id: entity for entity in page.data})
-
-        elif gumnut_entity_type == "person":
-            page = gumnut_client.people.list(ids=chunk, limit=len(chunk))
-            result.update({entity.id: entity for entity in page.data})
-
-        elif gumnut_entity_type == "face":
-            page = gumnut_client.faces.list(ids=chunk, limit=len(chunk))
-            result.update({entity.id: entity for entity in page.data})
-
-        elif gumnut_entity_type == "album_asset":
-            page = gumnut_client.album_assets.list(ids=chunk, limit=len(chunk))
-            result.update({entity.id: entity for entity in page.data})
-
-        elif gumnut_entity_type == "exif":
-            # Exif is 1:1 with asset; exif events use entity_id = asset_id
-            page = gumnut_client.assets.list(ids=chunk, limit=len(chunk))
-            for asset in page.data:
-                if asset.exif:
-                    result[asset.exif.asset_id] = asset.exif
-                else:
-                    logger.warning(
-                        "Missing exif on fetched asset while processing exif events",
-                        extra={"asset_id": asset.id},
-                    )
-                    missing_ids.add(asset.id)
-
-        else:
-            logger.warning(
-                "Unknown entity type in _fetch_entities_map",
-                extra={"gumnut_entity_type": gumnut_entity_type},
-            )
-            return {}, set()
-
-    return result, missing_ids
 
 
 async def _stream_entity_type(
@@ -669,7 +165,7 @@ async def _stream_entity_type(
         ]
 
         # Batch-fetch entities for upserts
-        entities_map, missing_ids = _fetch_entities_map(
+        entities_map, missing_ids = fetch_entities_map(
             gumnut_client, gumnut_entity_type, upsert_ids
         )
 
@@ -694,7 +190,7 @@ async def _stream_entity_type(
 
             if event.event_type in _DELETE_EVENT_TYPES:
                 # Delete event — convert and either buffer or yield
-                result = _make_delete_sync_event(event)
+                result = make_delete_sync_event(event)
                 if result:
                     json_line, delete_sync_type = result
                     if delete_buffer is not None:
@@ -713,7 +209,7 @@ async def _stream_entity_type(
                     # explicitly missing (e.g., asset fetched but no exif).
                     # For exif events, event.entity_id == asset_id, which
                     # matches the asset.id stored in missing_ids by
-                    # _fetch_entities_map when an asset lacks exif data.
+                    # fetch_entities_map when an asset lacks exif data.
                     if event.entity_id in missing_ids:
                         logger.warning(
                             "Entity explicitly missing from fetch result",
@@ -763,7 +259,7 @@ async def _stream_entity_type(
                     and isinstance(entity, FaceResponse)
                     and isinstance(event.payload, dict)
                 ):
-                    should_apply, person_id = _payload_override(
+                    should_apply, person_id = payload_override(
                         event.payload, "person_id"
                     )
                     if should_apply and entity.person_id != person_id:
@@ -781,7 +277,7 @@ async def _stream_entity_type(
                     and isinstance(entity, AlbumResponse)
                     and isinstance(event.payload, dict)
                 ):
-                    should_apply, cover_id = _payload_override(
+                    should_apply, cover_id = payload_override(
                         event.payload, "album_cover_asset_id"
                     )
                     if should_apply and entity.album_cover_asset_id != cover_id:
@@ -790,10 +286,10 @@ async def _stream_entity_type(
                         )
 
                 # Null FK fields that reference entities confirmed deleted
-                # (returned 404 during fetch). Uses _FK_REFERENCES to
+                # (returned 404 during fetch). Uses FK_REFERENCES to
                 # discover which fields to check. Skipped when the
                 # referenced entity type has a checkpoint.
-                entity = _null_deleted_fk_references(
+                entity = null_deleted_fk_references(
                     gumnut_entity_type,
                     entity,
                     stats,
@@ -809,11 +305,15 @@ async def _stream_entity_type(
                     stats.streamed_ids[gumnut_entity_type].add(entity_id)
 
                 # Check FK references before yielding
-                _check_fk_references(
-                    gumnut_entity_type, entity, stats, checkpoint_map, event.cursor
+                check_fk_references(
+                    gumnut_entity_type,
+                    entity,
+                    stats,
+                    checkpoint_map,
+                    event.cursor,
                 )
 
-                json_line = _convert_entity_to_sync_event(
+                json_line = convert_entity_to_sync_event(
                     gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type
                 )
                 yield json_line, 1
@@ -938,7 +438,7 @@ async def generate_sync_stream(
             checkpoint = checkpoint_map.get(SyncEntityType.AuthUserV1)
             if checkpoint is None or checkpoint.cursor != user_cursor:
                 sync_auth_user = gumnut_user_to_sync_auth_user_v1(current_user)
-                yield _make_sync_event(
+                yield make_sync_event(
                     SyncEntityType.AuthUserV1,
                     sync_auth_user.model_dump(mode="json"),
                     user_cursor,
@@ -950,7 +450,7 @@ async def generate_sync_stream(
             checkpoint = checkpoint_map.get(SyncEntityType.UserV1)
             if checkpoint is None or checkpoint.cursor != user_cursor:
                 sync_user = gumnut_user_to_sync_user_v1(current_user)
-                yield _make_sync_event(
+                yield make_sync_event(
                     SyncEntityType.UserV1,
                     sync_user.model_dump(mode="json"),
                     user_cursor,
@@ -1031,14 +531,14 @@ async def generate_sync_stream(
         logger.info("Sync stream summary", extra=summary_extra)
 
         # Stream completion event
-        yield _make_sync_event(SyncEntityType.SyncCompleteV1, {}, "complete")
+        yield make_sync_event(SyncEntityType.SyncCompleteV1, {}, "complete")
         logger.info("Sync stream completed", extra={"user_id": owner_id})
 
     except Exception:
         logger.error("Error generating sync stream", exc_info=True)
 
 
-async def _generate_reset_stream() -> AsyncGenerator[str, None]:
+async def generate_reset_stream() -> AsyncGenerator[str, None]:
     """
     Generate a sync stream containing only SyncResetV1.
 
@@ -1050,7 +550,7 @@ async def _generate_reset_stream() -> AsyncGenerator[str, None]:
             {
                 "type": SyncEntityType.SyncResetV1.value,
                 "data": {},
-                "ack": _to_ack_string(SyncEntityType.SyncResetV1, "reset"),
+                "ack": to_ack_string(SyncEntityType.SyncResetV1, "reset"),
             }
         )
         + "\n"

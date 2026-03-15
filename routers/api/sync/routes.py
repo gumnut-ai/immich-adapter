@@ -40,11 +40,8 @@ from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 
-from routers.api.sync.stream import (
-    _generate_reset_stream,
-    _to_ack_string,
-    generate_sync_stream,
-)
+from routers.api.sync.events import to_ack_string
+from routers.api.sync.stream import generate_reset_stream, generate_sync_stream
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +157,7 @@ async def get_sync_ack(
     ack_dtos = [
         SyncAckDto(
             type=checkpoint.entity_type,
-            ack=_to_ack_string(
+            ack=to_ack_string(
                 checkpoint.entity_type,
                 checkpoint.cursor,
             ),
@@ -474,7 +471,7 @@ async def get_sync_stream(
                 extra={"session_id": session_token},
             )
             return StreamingResponse(
-                _generate_reset_stream(),
+                generate_reset_stream(),
                 media_type="application/jsonlines+json",
             )
 
