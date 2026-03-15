@@ -938,8 +938,8 @@ class TestGetSyncStreamEndpoint:
         mock_checkpoint_store.get_all.assert_not_called()
 
 
-class TestGUM292FacePersonOrdering:
-    """GUM-292: Face sync events can reference people not in the sync stream.
+class TestFacePersonIdOverride:
+    """Face events should use causally-consistent person_id, not current state.
 
     The sync stream fetches the CURRENT state of entities, not their state at
     event time. When a face_created event is processed, the adapter fetches
@@ -2171,14 +2171,12 @@ class TestAlbumCoverPayloadOverride:
         )
 
 
-class TestPayloadOverrideDeletedEntity:
-    """Tests for payload override when the referenced entity has been deleted.
+class TestFacePayloadOverrideDeletedPerson:
+    """Tests for face_updated payload override when the referenced person is deleted.
 
     When a face_updated event's payload carries a person_id for a person that
     was deleted after the event was recorded, the adapter should null out the
-    person_id rather than streaming a reference to a non-existent entity. The
-    same applies to album_updated events with album_cover_asset_id referencing
-    a deleted asset.
+    person_id rather than streaming a reference to a non-existent entity.
 
     Without this fix, the Immich mobile client gets a permanent FK constraint
     violation (SqliteException 787) in updateAssetFacesV1 because it tries to
@@ -2585,14 +2583,18 @@ class TestPayloadOverrideDeletedEntity:
                 f"person was deleted (404)"
             )
 
+
+class TestAlbumPayloadOverrideDeletedAsset:
+    """Tests for album_updated payload override when the referenced asset is deleted.
+
+    Same pattern as face/person: when an album_updated event's payload carries
+    an album_cover_asset_id for an asset that was deleted after the event was
+    recorded, the adapter should null out the cover to avoid FK violations.
+    """
+
     @pytest.mark.anyio
     async def test_album_updated_nulls_cover_when_asset_deleted(self):
-        """album_updated payload album_cover_asset_id is nulled when asset returns 404.
-
-        Same pattern as face/person: the payload references an asset that was
-        deleted after the event was recorded. The adapter should null the
-        cover to avoid FK violations.
-        """
+        """album_updated payload album_cover_asset_id is nulled when asset returns 404."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)

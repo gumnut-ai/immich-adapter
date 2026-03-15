@@ -722,12 +722,13 @@ async def _stream_entity_type(
                     if should_apply and entity.person_id != person_id:
                         entity = entity.model_copy(update={"person_id": person_id})
 
-                # Guard: if the payload override set a person_id that
-                # references a deleted person (returned 404 during fetch),
-                # null it out. The client will get the correct person from
-                # a later face_updated event in this or a future sync cycle.
-                # Skip this guard if the person type has a checkpoint — the
-                # person may exist on the client from a prior sync cycle.
+                # Guard: if the entity's person_id references a deleted
+                # person (returned 404 during fetch), null it out. This
+                # catches both payload-overridden and current-state values.
+                # The client will get the correct person from a later
+                # face_updated event in this or a future sync cycle.
+                # Skip if the person type has a checkpoint — the person
+                # may exist on the client from a prior sync cycle.
                 if (
                     sync_entity_type == SyncEntityType.AssetFaceV1
                     and isinstance(entity, FaceResponse)
@@ -766,9 +767,9 @@ async def _stream_entity_type(
                             update={"album_cover_asset_id": cover_id}
                         )
 
-                # Guard: if the payload override set an album_cover_asset_id
-                # that references a deleted asset (returned 404 during fetch),
-                # null it out. Same pattern as face/person above.
+                # Guard: if the entity's album_cover_asset_id references a
+                # deleted asset (returned 404 during fetch), null it out.
+                # Same pattern as face/person above.
                 if (
                     sync_entity_type == SyncEntityType.AlbumV1
                     and isinstance(entity, AlbumResponse)
