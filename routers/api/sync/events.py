@@ -80,7 +80,7 @@ def to_ack_string(
 
 def make_sync_event(
     entity_type: SyncEntityType,
-    data: dict,
+    data: dict[str, Any],
     cursor: str,
 ) -> str:
     """

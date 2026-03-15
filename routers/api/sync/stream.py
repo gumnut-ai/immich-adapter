@@ -89,11 +89,6 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
     SyncEntityType.AssetDeleteV1,
 ]
 
-# Map gumnut entity type -> SyncEntityType (derived from _SYNC_TYPE_ORDER at module load)
-_GUMNUT_TYPE_TO_SYNC_TYPE: dict[str, SyncEntityType] = {
-    gumnut_type: sync_type for _, gumnut_type, sync_type in _SYNC_TYPE_ORDER
-}
-
 # Supported SyncRequestTypes (used to detect unsupported types requested by client)
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
@@ -299,7 +294,6 @@ async def _stream_entity_type(
                     entity,
                     stats,
                     checkpoint_map,
-                    _GUMNUT_TYPE_TO_SYNC_TYPE,
                     event.event_type,
                     event.cursor,
                 )
@@ -316,7 +310,6 @@ async def _stream_entity_type(
                     entity,
                     stats,
                     checkpoint_map,
-                    _GUMNUT_TYPE_TO_SYNC_TYPE,
                     event.cursor,
                 )
 

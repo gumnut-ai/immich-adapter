@@ -18,6 +18,18 @@ FK_REFERENCES: dict[str, list[tuple[str, str]]] = {
     "album": [("album_cover_asset_id", "asset")],
 }
 
+# Map gumnut entity type -> SyncEntityType for FK checkpoint lookups.
+# Derived from the canonical type order in stream.py; duplicated here to
+# avoid a circular import (fk_integrity is imported by stream).
+_GUMNUT_TYPE_TO_SYNC_TYPE: dict[str, SyncEntityType] = {
+    "asset": SyncEntityType.AssetV1,
+    "album": SyncEntityType.AlbumV1,
+    "album_asset": SyncEntityType.AlbumToAssetV1,
+    "exif": SyncEntityType.AssetExifV1,
+    "person": SyncEntityType.PersonV1,
+    "face": SyncEntityType.AssetFaceV1,
+}
+
 
 def payload_override(payload: dict[str, Any], key: str) -> tuple[bool, str | None]:
     """Check an event payload for a causally-consistent FK override.
@@ -63,7 +75,6 @@ def check_fk_references(
     entity: EntityType,
     stats: SyncStreamStats,
     checkpoint_map: dict[SyncEntityType, Checkpoint],
-    gumnut_type_to_sync_type: dict[str, SyncEntityType],
     cursor: str,
 ) -> None:
     """Warn if entity references IDs not seen in this sync for fully-synced entity types.
@@ -83,7 +94,7 @@ def check_fk_references(
 
         # If the referenced entity type has a checkpoint, skip the check —
         # the referenced entity may have been synced in a prior cycle
-        ref_sync_type = gumnut_type_to_sync_type.get(ref_type)
+        ref_sync_type = _GUMNUT_TYPE_TO_SYNC_TYPE.get(ref_type)
         if ref_sync_type and ref_sync_type in checkpoint_map:
             continue
 
@@ -107,7 +118,6 @@ def null_deleted_fk_references(
     entity: EntityType,
     stats: SyncStreamStats,
     checkpoint_map: dict[SyncEntityType, Checkpoint],
-    gumnut_type_to_sync_type: dict[str, SyncEntityType],
     event_type: str,
     cursor: str,
 ) -> EntityType:
@@ -123,12 +133,13 @@ def null_deleted_fk_references(
     if not refs:
         return entity
 
+    updates: dict[str, None] = {}
     for attr_name, ref_type in refs:
         ref_id = getattr(entity, attr_name, None)
         if ref_id is None:
             continue
 
-        ref_sync_type = gumnut_type_to_sync_type.get(ref_type)
+        ref_sync_type = _GUMNUT_TYPE_TO_SYNC_TYPE.get(ref_type)
         if ref_sync_type and ref_sync_type in checkpoint_map:
             continue
 
@@ -145,6 +156,9 @@ def null_deleted_fk_references(
                     "cursor": cursor,
                 },
             )
-            entity = entity.model_copy(update={attr_name: None})
+            updates[attr_name] = None
+
+    if updates:
+        entity = entity.model_copy(update=updates)
 
     return entity

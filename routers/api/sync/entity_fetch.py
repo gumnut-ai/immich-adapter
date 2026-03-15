@@ -38,6 +38,12 @@ def fetch_entities_map(
         Tuple of (entity_id -> entity object mapping, set of IDs that were
         explicitly missing — e.g., assets fetched but lacking exif data)
     """
+    _SUPPORTED_TYPES = {"asset", "album", "person", "face", "album_asset", "exif"}
+    if gumnut_entity_type not in _SUPPORTED_TYPES:
+        raise ValueError(
+            f"Unsupported entity type in fetch_entities_map: {gumnut_entity_type}"
+        )
+
     if not entity_ids:
         return {}, set()
 
@@ -78,12 +84,5 @@ def fetch_entities_map(
                         extra={"asset_id": asset.id},
                     )
                     missing_ids.add(asset.id)
-
-        else:
-            logger.warning(
-                "Unknown entity type in fetch_entities_map",
-                extra={"gumnut_entity_type": gumnut_entity_type},
-            )
-            return {}, set()
 
     return result, missing_ids
