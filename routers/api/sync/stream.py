@@ -268,7 +268,7 @@ def _null_deleted_fk_references(
     return entity
 
 
-def _to_ack_string(
+def to_ack_string(
     entity_type: SyncEntityType,
     cursor: str,
 ) -> str:
@@ -313,7 +313,7 @@ def _make_sync_event(
     Returns:
         JSON line string with newline
     """
-    ack = _to_ack_string(entity_type, cursor)
+    ack = to_ack_string(entity_type, cursor)
 
     return (
         json.dumps(
@@ -1038,7 +1038,7 @@ async def generate_sync_stream(
         logger.error("Error generating sync stream", exc_info=True)
 
 
-async def _generate_reset_stream() -> AsyncGenerator[str, None]:
+async def generate_reset_stream() -> AsyncGenerator[str, None]:
     """
     Generate a sync stream containing only SyncResetV1.
 
@@ -1050,7 +1050,7 @@ async def _generate_reset_stream() -> AsyncGenerator[str, None]:
             {
                 "type": SyncEntityType.SyncResetV1.value,
                 "data": {},
-                "ack": _to_ack_string(SyncEntityType.SyncResetV1, "reset"),
+                "ack": to_ack_string(SyncEntityType.SyncResetV1, "reset"),
             }
         )
         + "\n"

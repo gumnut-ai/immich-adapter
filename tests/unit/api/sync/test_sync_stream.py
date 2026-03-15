@@ -12,7 +12,7 @@ from routers.api.sync.routes import get_sync_stream
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
     SyncStreamStats,
-    _generate_reset_stream,
+    generate_reset_stream,
     _stream_entity_type,
     generate_sync_stream,
 )
@@ -934,13 +934,13 @@ class TestGetSyncStreamEndpoint:
 
 
 class TestGenerateResetStream:
-    """Tests for _generate_reset_stream helper function."""
+    """Tests for generate_reset_stream helper function."""
 
     @pytest.mark.anyio
     async def test_generates_single_reset_event(self):
         """Reset stream contains only SyncResetV1 with correct format."""
         events = []
-        async for line in _generate_reset_stream():
+        async for line in generate_reset_stream():
             events.append(json.loads(line.strip()))
 
         assert len(events) == 1

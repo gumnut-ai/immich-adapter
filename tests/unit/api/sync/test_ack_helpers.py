@@ -4,7 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from routers.api.sync.routes import _parse_ack
-from routers.api.sync.stream import _to_ack_string
+from routers.api.sync.stream import to_ack_string
 from routers.immich_models import SyncEntityType
 
 
@@ -67,14 +67,14 @@ class TestParseAck:
 
 
 class TestToAckString:
-    """Tests for _to_ack_string helper function.
+    """Tests for to_ack_string helper function.
 
     Generates ack strings in format: "SyncEntityType|cursor|"
     """
 
     def test_ack_string_format_is_pipe_delimited(self):
         """Verify ack string uses pipe delimiters."""
-        result = _to_ack_string(SyncEntityType.AssetV1, "event_cursor_abc")
+        result = to_ack_string(SyncEntityType.AssetV1, "event_cursor_abc")
 
         parts = result.split("|")
         assert len(parts) == 3  # Type, cursor, trailing empty
@@ -84,7 +84,7 @@ class TestToAckString:
 
     def test_ack_string_with_empty_cursor(self):
         """Verify ack string with empty cursor."""
-        result = _to_ack_string(SyncEntityType.AssetV1, "")
+        result = to_ack_string(SyncEntityType.AssetV1, "")
 
         parts = result.split("|")
         assert len(parts) == 3
@@ -95,7 +95,7 @@ class TestToAckString:
         original_type = SyncEntityType.AssetExifV1
         original_cursor = "event_cursor_exif789"
 
-        ack_string = _to_ack_string(original_type, original_cursor)
+        ack_string = to_ack_string(original_type, original_cursor)
         result = _parse_ack(ack_string)
         assert result is not None
         parsed_type, parsed_cursor = result
@@ -107,6 +107,6 @@ class TestToAckString:
         """Verify roundtrip with empty cursor is rejected by parser."""
         original_type = SyncEntityType.AlbumV1
 
-        ack_string = _to_ack_string(original_type, "")
+        ack_string = to_ack_string(original_type, "")
         result = _parse_ack(ack_string)
         assert result is None
