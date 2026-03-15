@@ -2,7 +2,7 @@
 title: "Sync Stream Event Ordering"
 status: active
 created: 2026-03-13
-last-updated: 2026-03-13
+last-updated: 2026-03-15
 ---
 
 # Sync Stream Event Ordering
@@ -50,9 +50,15 @@ Face detection creates faces without a person. Clustering assigns a person later
 
 For `face_updated` events, use the `person_id` from the event payload instead of the entity's current state. The payload records the causally-consistent person_id at event time, avoiding references to persons assigned by later clustering runs that fall outside the sync window.
 
-### Fix 3: Upserts before deletes (this change)
+### Fix 3: Upserts before deletes (PR #85)
 
 The payload fix solved the time-window problem but introduced a deletion-ordering problem. The payload's person_id was valid at event time, but the person may have been deleted by the time the mobile app processes the face event. Fix: buffer delete events and yield them after all upserts.
+
+### Fix 4: Null payload references to deleted entities (PR #88)
+
+The two-phase fix handles ordering within a sync cycle, but the payload override can still reference an entity that was deleted after the event was recorded. On a fresh sync (no prior data), the deleted entity returns 404 during fetch and is never streamed. The face/album arrives with a reference to a non-existent entity, causing an FK violation.
+
+Fix: after applying a payload override, check if the referenced entity ID is in the set of IDs that returned 404 during fetch (`stats.not_found_ids`). If so, null it out. The guard is skipped when the referenced entity type has a checkpoint, since the entity may exist on the client from a prior sync cycle. Applies to both `face_updated` (person_id) and `album_updated` (album_cover_asset_id).
 
 ## How the Real Immich Server Avoids This
 

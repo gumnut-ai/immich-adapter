@@ -169,6 +169,7 @@ class SyncStreamStats:
     """Tracks streamed entity IDs and skip counts during sync stream generation."""
 
     streamed_ids: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
+    not_found_ids: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     entity_not_found_skips: dict[str, int] = field(
         default_factory=lambda: defaultdict(int)
     )
@@ -218,6 +219,53 @@ def _check_fk_references(
                 },
             )
             stats.fk_warnings += 1
+
+
+def _null_deleted_fk_references(
+    gumnut_entity_type: str,
+    entity: _EntityType,
+    stats: SyncStreamStats,
+    checkpoint_map: dict[SyncEntityType, Checkpoint],
+    event_type: str,
+    cursor: str,
+) -> _EntityType:
+    """Null FK fields that reference entities confirmed deleted (404 during fetch).
+
+    Uses _FK_REFERENCES to discover which fields to check. Skips fields whose
+    referenced entity type has a checkpoint — the entity may exist on the
+    client from a prior sync cycle.
+
+    Returns the (possibly updated) entity.
+    """
+    refs = _FK_REFERENCES.get(gumnut_entity_type)
+    if not refs:
+        return entity
+
+    for attr_name, ref_type in refs:
+        ref_id = getattr(entity, attr_name, None)
+        if ref_id is None:
+            continue
+
+        ref_sync_type = _GUMNUT_TYPE_TO_SYNC_TYPE.get(ref_type)
+        if ref_sync_type and ref_sync_type in checkpoint_map:
+            continue
+
+        if ref_id in stats.not_found_ids.get(ref_type, set()):
+            logger.info(
+                "Nulling FK reference to deleted entity",
+                extra={
+                    "entity_type": gumnut_entity_type,
+                    "entity_id": getattr(entity, "id", None),
+                    "reference_field": attr_name,
+                    "referenced_type": ref_type,
+                    "deleted_ref_id": ref_id,
+                    "event_type": event_type,
+                    "cursor": cursor,
+                },
+            )
+            entity = entity.model_copy(update={attr_name: None})
+
+    return entity
 
 
 def _to_ack_string(
@@ -625,6 +673,11 @@ async def _stream_entity_type(
             gumnut_client, gumnut_entity_type, upsert_ids
         )
 
+        # Track entity IDs that were requested but not returned (deleted/404)
+        not_returned = set(upsert_ids) - entities_map.keys()
+        if not_returned:
+            stats.not_found_ids[gumnut_entity_type].update(not_returned)
+
         # Process events in order
         for event in events:
             if event.event_type in _SKIPPED_EVENT_TYPES:
@@ -735,6 +788,19 @@ async def _stream_entity_type(
                         entity = entity.model_copy(
                             update={"album_cover_asset_id": cover_id}
                         )
+
+                # Null FK fields that reference entities confirmed deleted
+                # (returned 404 during fetch). Uses _FK_REFERENCES to
+                # discover which fields to check. Skipped when the
+                # referenced entity type has a checkpoint.
+                entity = _null_deleted_fk_references(
+                    gumnut_entity_type,
+                    entity,
+                    stats,
+                    checkpoint_map,
+                    event.event_type,
+                    event.cursor,
+                )
 
                 # Track streamed entity ID before FK check so the current
                 # entity is visible to its own reference validation
