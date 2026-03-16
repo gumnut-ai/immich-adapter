@@ -1,4 +1,5 @@
 import logging
+import os
 
 import sentry_sdk
 
@@ -13,6 +14,7 @@ def init_sentry():
     if sentry_dsn:
         sentry_sdk.init(
             dsn=sentry_dsn,
+            release=os.environ.get("RENDER_GIT_COMMIT"),
             _experiments={
                 "enable_logs": True,
             },
