@@ -10,11 +10,8 @@ import pytest
 
 from gumnut.types.face_response import FaceResponse
 
-from routers.api.sync.stream import (
-    SyncStreamStats,
-    _stream_entity_type,
-    generate_sync_stream,
-)
+from routers.api.sync.fk_integrity import SyncStreamStats
+from routers.api.sync.stream import _stream_entity_type, generate_sync_stream
 from routers.immich_models import SyncEntityType, SyncRequestType, SyncStreamDto
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
