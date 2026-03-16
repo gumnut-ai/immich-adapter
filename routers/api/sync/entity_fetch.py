@@ -2,7 +2,7 @@
 
 import logging
 
-from gumnut import Gumnut
+from gumnut import AsyncGumnut
 
 from routers.api.sync.types import EntityType
 
@@ -17,8 +17,8 @@ def _batched(items: list[str], size: int) -> list[list[str]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
-def fetch_entities_map(
-    gumnut_client: Gumnut,
+async def fetch_entities_map(
+    gumnut_client: AsyncGumnut,
     gumnut_entity_type: str,
     entity_ids: list[str],
 ) -> tuple[dict[str, EntityType], set[str]]:
@@ -30,7 +30,7 @@ def fetch_entities_map(
     result in fewer entries.
 
     Args:
-        gumnut_client: The Gumnut API client
+        gumnut_client: The async Gumnut API client
         gumnut_entity_type: The entity type string (e.g., "asset", "album")
         entity_ids: List of entity IDs to fetch
 
@@ -53,28 +53,28 @@ def fetch_entities_map(
 
     for chunk in _batched(unique_ids, FETCH_BATCH_SIZE):
         if gumnut_entity_type == "asset":
-            page = gumnut_client.assets.list(ids=chunk, limit=len(chunk))
+            page = await gumnut_client.assets.list(ids=chunk, limit=len(chunk))
             result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "album":
-            page = gumnut_client.albums.list(ids=chunk, limit=len(chunk))
+            page = await gumnut_client.albums.list(ids=chunk, limit=len(chunk))
             result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "person":
-            page = gumnut_client.people.list(ids=chunk, limit=len(chunk))
+            page = await gumnut_client.people.list(ids=chunk, limit=len(chunk))
             result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "face":
-            page = gumnut_client.faces.list(ids=chunk, limit=len(chunk))
+            page = await gumnut_client.faces.list(ids=chunk, limit=len(chunk))
             result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "album_asset":
-            page = gumnut_client.album_assets.list(ids=chunk, limit=len(chunk))
+            page = await gumnut_client.album_assets.list(ids=chunk, limit=len(chunk))
             result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "exif":
             # Exif is 1:1 with asset; exif events use entity_id = asset_id
-            page = gumnut_client.assets.list(ids=chunk, limit=len(chunk))
+            page = await gumnut_client.assets.list(ids=chunk, limit=len(chunk))
             for asset in page.data:
                 if asset.exif:
                     result[asset.exif.asset_id] = asset.exif

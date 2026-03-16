@@ -1,7 +1,7 @@
 """Tests for timeline.py endpoints."""
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 from uuid import uuid4
 from datetime import datetime, timezone, timedelta
@@ -92,35 +92,41 @@ def call_get_time_bucket(timeBucket, **kwargs):
 class TestFetchAssetCounts:
     """Test the _fetch_asset_counts helper."""
 
-    def test_single_page(self):
+    @pytest.mark.anyio
+    async def test_single_page(self):
         """Single page of results (has_more=False)."""
         mock_client = Mock()
-        mock_client.assets.counts.return_value = _make_counts_response(
-            [
-                _make_data(datetime(2024, 2, 1), 5),
-                _make_data(datetime(2024, 1, 1), 10),
-            ]
+        mock_client.assets.counts = AsyncMock(
+            return_value=_make_counts_response(
+                [
+                    _make_data(datetime(2024, 2, 1), 5),
+                    _make_data(datetime(2024, 1, 1), 10),
+                ]
+            )
         )
 
-        result = _fetch_asset_counts(mock_client)
+        result = await _fetch_asset_counts(mock_client)
 
         assert len(result) == 2
         assert result[0].count == 5
         assert result[1].count == 10
         mock_client.assets.counts.assert_called_once_with(group_by="month", limit=1000)
 
-    def test_pagination(self):
+    @pytest.mark.anyio
+    async def test_pagination(self):
         """Multiple pages with has_more cursor pagination."""
         mock_client = Mock()
         feb_bucket = _make_data(datetime(2024, 2, 1), 5)
         jan_bucket = _make_data(datetime(2024, 1, 1), 10)
 
-        mock_client.assets.counts.side_effect = [
-            _make_counts_response([feb_bucket], has_more=True),
-            _make_counts_response([jan_bucket], has_more=False),
-        ]
+        mock_client.assets.counts = AsyncMock(
+            side_effect=[
+                _make_counts_response([feb_bucket], has_more=True),
+                _make_counts_response([jan_bucket], has_more=False),
+            ]
+        )
 
-        result = _fetch_asset_counts(mock_client)
+        result = await _fetch_asset_counts(mock_client)
 
         assert len(result) == 2
         assert mock_client.assets.counts.call_count == 2
@@ -128,32 +134,35 @@ class TestFetchAssetCounts:
         second_call_kwargs = mock_client.assets.counts.call_args_list[1][1]
         assert second_call_kwargs["local_datetime_before"] == feb_bucket.time_bucket
 
-    def test_with_album_id(self):
+    @pytest.mark.anyio
+    async def test_with_album_id(self):
         """album_id is passed through as a kwarg."""
         mock_client = Mock()
-        mock_client.assets.counts.return_value = _make_counts_response([])
+        mock_client.assets.counts = AsyncMock(return_value=_make_counts_response([]))
 
-        _fetch_asset_counts(mock_client, album_id="album-123")
+        await _fetch_asset_counts(mock_client, album_id="album-123")
 
         kwargs = mock_client.assets.counts.call_args[1]
         assert kwargs["album_id"] == "album-123"
 
-    def test_with_person_id(self):
+    @pytest.mark.anyio
+    async def test_with_person_id(self):
         """person_id is passed through as a kwarg."""
         mock_client = Mock()
-        mock_client.assets.counts.return_value = _make_counts_response([])
+        mock_client.assets.counts = AsyncMock(return_value=_make_counts_response([]))
 
-        _fetch_asset_counts(mock_client, person_id="person-456")
+        await _fetch_asset_counts(mock_client, person_id="person-456")
 
         kwargs = mock_client.assets.counts.call_args[1]
         assert kwargs["person_id"] == "person-456"
 
-    def test_empty_response(self):
+    @pytest.mark.anyio
+    async def test_empty_response(self):
         """Empty data returns empty list."""
         mock_client = Mock()
-        mock_client.assets.counts.return_value = _make_counts_response([])
+        mock_client.assets.counts = AsyncMock(return_value=_make_counts_response([]))
 
-        result = _fetch_asset_counts(mock_client)
+        result = await _fetch_asset_counts(mock_client)
 
         assert result == []
 
@@ -165,11 +174,13 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_success(self):
         """Test successful retrieval of time buckets."""
         mock_client = Mock()
-        mock_client.assets.counts.return_value = _make_counts_response(
-            [
-                _make_data(datetime(2024, 2, 1), 1),
-                _make_data(datetime(2024, 1, 1), 2),
-            ]
+        mock_client.assets.counts = AsyncMock(
+            return_value=_make_counts_response(
+                [
+                    _make_data(datetime(2024, 2, 1), 1),
+                    _make_data(datetime(2024, 1, 1), 2),
+                ]
+            )
         )
 
         result = await call_get_time_buckets(client=mock_client)
@@ -185,8 +196,8 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_with_album_id(self, sample_uuid):
         """Test time buckets with album filter."""
         mock_client = Mock()
-        mock_client.assets.counts.return_value = _make_counts_response(
-            [_make_data(datetime(2024, 1, 1), 1)]
+        mock_client.assets.counts = AsyncMock(
+            return_value=_make_counts_response([_make_data(datetime(2024, 1, 1), 1)])
         )
 
         result = await call_get_time_buckets(albumId=sample_uuid, client=mock_client)
@@ -201,8 +212,8 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_with_person_id(self, sample_uuid):
         """Test time buckets with person filter."""
         mock_client = Mock()
-        mock_client.assets.counts.return_value = _make_counts_response(
-            [_make_data(datetime(2024, 1, 1), 1)]
+        mock_client.assets.counts = AsyncMock(
+            return_value=_make_counts_response([_make_data(datetime(2024, 1, 1), 1)])
         )
 
         result = await call_get_time_buckets(personId=sample_uuid, client=mock_client)
@@ -217,11 +228,13 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_ascending_order(self):
         """Test time buckets with ascending order."""
         mock_client = Mock()
-        mock_client.assets.counts.return_value = _make_counts_response(
-            [
-                _make_data(datetime(2024, 2, 1), 1),
-                _make_data(datetime(2024, 1, 1), 2),
-            ]
+        mock_client.assets.counts = AsyncMock(
+            return_value=_make_counts_response(
+                [
+                    _make_data(datetime(2024, 2, 1), 1),
+                    _make_data(datetime(2024, 1, 1), 2),
+                ]
+            )
         )
 
         result = await call_get_time_buckets(order=AssetOrder.asc, client=mock_client)
@@ -247,7 +260,7 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_empty_assets(self):
         """Test time buckets with no assets."""
         mock_client = Mock()
-        mock_client.assets.counts.return_value = _make_counts_response([])
+        mock_client.assets.counts = AsyncMock(return_value=_make_counts_response([]))
 
         result = await call_get_time_buckets(client=mock_client)
 
@@ -257,7 +270,7 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_gumnut_error(self):
         """Test handling of Gumnut API errors."""
         mock_client = Mock()
-        mock_client.assets.counts.side_effect = Exception("API Error")
+        mock_client.assets.counts = AsyncMock(side_effect=Exception("API Error"))
 
         with pytest.raises(HTTPException) as exc_info:
             await call_get_time_buckets(client=mock_client)
@@ -269,7 +282,9 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_auth_error(self):
         """Test handling of authentication errors."""
         mock_client = Mock()
-        mock_client.assets.counts.side_effect = Exception("401 Invalid API key")
+        mock_client.assets.counts = AsyncMock(
+            side_effect=Exception("401 Invalid API key")
+        )
 
         with pytest.raises(HTTPException) as exc_info:
             await call_get_time_buckets(client=mock_client)
@@ -281,8 +296,10 @@ class TestGetTimeBuckets:
         """Test that time_bucket values are normalized to YYYY-MM-01."""
         mock_client = Mock()
         # Even if the API returns a mid-month datetime, we normalize to the 1st
-        mock_client.assets.counts.return_value = _make_counts_response(
-            [_make_data(datetime(2024, 3, 15, 12, 30, 45), 3)]
+        mock_client.assets.counts = AsyncMock(
+            return_value=_make_counts_response(
+                [_make_data(datetime(2024, 3, 15, 12, 30, 45), 3)]
+            )
         )
 
         result = await call_get_time_buckets(client=mock_client)

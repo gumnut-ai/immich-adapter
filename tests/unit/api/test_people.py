@@ -1,7 +1,7 @@
 """Tests for people.py endpoints."""
 
 import pytest
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from fastapi import HTTPException
 from uuid import uuid4
 from datetime import datetime
@@ -52,7 +52,7 @@ class TestCreatePerson:
         """Test successful person creation."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.create.return_value = sample_gumnut_person
+        mock_client.people.create = AsyncMock(return_value=sample_gumnut_person)
 
         request = PersonCreateDto(
             name="John Doe",
@@ -81,7 +81,9 @@ class TestCreatePerson:
         """Test person creation with API error."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.create.side_effect = Exception("401 Invalid API key")
+        mock_client.people.create = AsyncMock(
+            side_effect=Exception("401 Invalid API key")
+        )
 
         request = PersonCreateDto(name="John Doe")
 
@@ -96,7 +98,7 @@ class TestCreatePerson:
         """Test person creation with general error."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.create.side_effect = Exception("Unknown error")
+        mock_client.people.create = AsyncMock(side_effect=Exception("Unknown error"))
 
         request = PersonCreateDto(name="John Doe")
 
@@ -116,7 +118,7 @@ class TestUpdatePeople:
         """Test successful bulk people update."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.update.return_value = None
+        mock_client.people.update = AsyncMock(return_value=None)
 
         person_id1 = str(uuid4())
         person_id2 = str(uuid4())
@@ -145,10 +147,12 @@ class TestUpdatePeople:
         mock_client = Mock()
 
         # First update succeeds, second fails
-        mock_client.people.update.side_effect = [
-            None,  # Success
-            Exception("404 Person not found"),  # Failure
-        ]
+        mock_client.people.update = AsyncMock(
+            side_effect=[
+                None,  # Success
+                Exception("404 Person not found"),  # Failure
+            ]
+        )
 
         person_id1 = str(uuid4())
         person_id2 = str(uuid4())
@@ -176,7 +180,7 @@ class TestUpdatePeople:
         """Test bulk people update with partial data."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.update.return_value = None
+        mock_client.people.update = AsyncMock(return_value=None)
 
         person_id1 = str(uuid4())
         person_id2 = str(uuid4())
@@ -210,7 +214,7 @@ class TestUpdatePerson:
         mock_client = Mock()
         # Update the sample to have the updated name
         sample_gumnut_person.name = "Updated Name"
-        mock_client.people.update.return_value = sample_gumnut_person
+        mock_client.people.update = AsyncMock(return_value=sample_gumnut_person)
 
         request = PersonUpdateDto(name="Updated Name", isFavorite=True)
 
@@ -229,7 +233,9 @@ class TestUpdatePerson:
         """Test updating non-existent person."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.update.side_effect = Exception("404 Person not found")
+        mock_client.people.update = AsyncMock(
+            side_effect=Exception("404 Person not found")
+        )
 
         request = PersonUpdateDto(name="Updated Name")
 
@@ -346,7 +352,7 @@ class TestDeletePeople:
         """Test successful bulk people deletion."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.delete.return_value = None
+        mock_client.people.delete = AsyncMock(return_value=None)
 
         person_ids = [uuid4(), uuid4()]
         request = BulkIdsDto(ids=person_ids)
@@ -363,7 +369,9 @@ class TestDeletePeople:
         """Test deletion with person not found."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.delete.side_effect = Exception("404 Person not found")
+        mock_client.people.delete = AsyncMock(
+            side_effect=Exception("404 Person not found")
+        )
 
         person_ids = [uuid4()]
         request = BulkIdsDto(ids=person_ids)
@@ -379,7 +387,9 @@ class TestDeletePeople:
         """Test deletion with API error."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.delete.side_effect = Exception("401 Invalid API key")
+        mock_client.people.delete = AsyncMock(
+            side_effect=Exception("401 Invalid API key")
+        )
 
         person_ids = [uuid4()]
         request = BulkIdsDto(ids=person_ids)
@@ -402,13 +412,13 @@ class TestGetThumbnail:
 
         # Setup person with thumbnail
         sample_gumnut_person.thumbnail_face_id = "face-123"
-        mock_client.people.retrieve.return_value = sample_gumnut_person
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
 
         # Mock the thumbnail download response
         mock_response = Mock()
-        mock_response.read.return_value = b"fake image data"
+        mock_response.read = AsyncMock(return_value=b"fake image data")
         mock_response.headers = {"content-type": "image/jpeg"}
-        mock_client.faces.download_thumbnail.return_value = mock_response
+        mock_client.faces.download_thumbnail = AsyncMock(return_value=mock_response)
 
         # Execute
         result = await get_thumbnail(sample_uuid, client=mock_client)
@@ -427,7 +437,7 @@ class TestGetThumbnail:
 
         # Setup person without thumbnail
         sample_gumnut_person.thumbnail_face_id = None
-        mock_client.people.retrieve.return_value = sample_gumnut_person
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -441,7 +451,9 @@ class TestGetThumbnail:
         """Test thumbnail retrieval when person doesn't exist."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.retrieve.side_effect = Exception("404 Person not found")
+        mock_client.people.retrieve = AsyncMock(
+            side_effect=Exception("404 Person not found")
+        )
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -458,7 +470,7 @@ class TestGetPerson:
         """Test successful person retrieval."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.retrieve.return_value = sample_gumnut_person
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
 
         # Execute
         result = await get_person(sample_uuid, client=mock_client)
@@ -475,7 +487,9 @@ class TestGetPerson:
         """Test person retrieval when person doesn't exist."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.retrieve.side_effect = Exception("404 Person not found")
+        mock_client.people.retrieve = AsyncMock(
+            side_effect=Exception("404 Person not found")
+        )
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -488,7 +502,9 @@ class TestGetPerson:
         """Test person retrieval with API error."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.retrieve.side_effect = Exception("401 Invalid API key")
+        mock_client.people.retrieve = AsyncMock(
+            side_effect=Exception("401 Invalid API key")
+        )
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -570,7 +586,7 @@ class TestDeletePerson:
         """Test successful person deletion."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.delete.return_value = None
+        mock_client.people.delete = AsyncMock(return_value=None)
 
         # Execute
         result = await delete_person(sample_uuid, client=mock_client)
@@ -584,7 +600,9 @@ class TestDeletePerson:
         """Test deletion of non-existent person."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.delete.side_effect = Exception("404 Person not found")
+        mock_client.people.delete = AsyncMock(
+            side_effect=Exception("404 Person not found")
+        )
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -597,7 +615,9 @@ class TestDeletePerson:
         """Test deletion with API error."""
         # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.people.delete.side_effect = Exception("401 Invalid API key")
+        mock_client.people.delete = AsyncMock(
+            side_effect=Exception("401 Invalid API key")
+        )
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:

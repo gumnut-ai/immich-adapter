@@ -1,8 +1,10 @@
+import asyncio
+
 import httpx
 import threading
 from contextvars import ContextVar
 from fastapi import HTTPException, Request, status
-from gumnut import Gumnut
+from gumnut import AsyncGumnut
 
 from config.settings import get_settings
 
@@ -35,7 +37,7 @@ _refreshed_token_var: ContextVar[str | None] = ContextVar(
 # Thread-local token storage (fallback for TestClient)
 _thread_local = threading.local()
 
-_shared_http_client: httpx.Client | None = None
+_shared_http_client: httpx.AsyncClient | None = None
 
 
 def get_refreshed_token() -> str | None:
@@ -82,7 +84,7 @@ def clear_refreshed_token() -> None:
     _thread_local.refreshed_token = None
 
 
-def _response_hook(response: httpx.Response) -> None:
+async def _response_hook(response: httpx.Response) -> None:
     """
     HTTP response hook that captures refreshed tokens from Gumnut API responses.
 
@@ -98,12 +100,12 @@ def _response_hook(response: httpx.Response) -> None:
         set_refreshed_token(token)
 
 
-_client_lock = threading.Lock()
+_client_lock = asyncio.Lock()
 
 
-def get_shared_http_client() -> httpx.Client:
+async def get_shared_http_client() -> httpx.AsyncClient:
     """
-    Get or create the shared HTTP client for Gumnut connections.
+    Get or create the shared async HTTP client for Gumnut connections.
 
     This client is shared across all requests for connection pooling.
     Each Gumnut instance has its own JWT but shares the connection pool.
@@ -112,13 +114,13 @@ def get_shared_http_client() -> httpx.Client:
     from the Gumnut API.
 
     Returns:
-        httpx.Client: Shared HTTP client for connection pooling with response hook
+        httpx.AsyncClient: Shared HTTP client for connection pooling with response hook
     """
     global _shared_http_client
     if _shared_http_client is None:
-        with _client_lock:
+        async with _client_lock:
             if _shared_http_client is None:
-                _shared_http_client = httpx.Client(
+                _shared_http_client = httpx.AsyncClient(
                     timeout=30.0,
                     limits=httpx.Limits(
                         max_connections=100, max_keepalive_connections=20
@@ -135,44 +137,46 @@ async def close_shared_http_client() -> None:
     """
     global _shared_http_client
     if _shared_http_client is not None:
-        _shared_http_client.close()
+        await _shared_http_client.aclose()
         _shared_http_client = None
 
 
-def get_gumnut_client(jwt_token: str) -> Gumnut:
+async def get_gumnut_client(jwt_token: str) -> AsyncGumnut:
     """
-    Create and return a configured Gumnut client instance with the given JWT.
+    Create and return a configured AsyncGumnut client instance with the given JWT.
 
     Uses a shared HTTP client for connection pooling (stateless).
     Each client instance has its own JWT but shares the connection pool.
+    Configures max_retries=3 for SDK-level retry of 429s and transient errors.
 
     Args:
         jwt_token: JWT token for authenticated requests
 
     Returns:
-        Gumnut: Configured Gumnut client instance with user's JWT
+        AsyncGumnut: Configured async Gumnut client instance with user's JWT
     """
     settings = get_settings()
 
-    return Gumnut(
+    return AsyncGumnut(
         api_key=jwt_token,
         base_url=settings.gumnut_api_base_url,
-        http_client=get_shared_http_client(),
+        max_retries=3,
+        http_client=await get_shared_http_client(),
     )
 
 
-async def get_authenticated_gumnut_client(request: Request) -> Gumnut:
+async def get_authenticated_gumnut_client(request: Request) -> AsyncGumnut:
     """
-    Dependency that provides an authenticated Gumnut client for the current request.
+    Dependency that provides an authenticated AsyncGumnut client for the current request.
 
     Extracts the JWT from request.state (set by auth middleware) and creates
-    a Gumnut client instance with that JWT.
+    an AsyncGumnut client instance with that JWT.
 
     Args:
         request: FastAPI request object containing state set by middleware
 
     Returns:
-        Gumnut: Authenticated Gumnut client instance for the current user
+        AsyncGumnut: Authenticated async Gumnut client instance for the current user
 
     Raises:
         HTTPException: 401 if no JWT is present in request state
@@ -185,12 +189,14 @@ async def get_authenticated_gumnut_client(request: Request) -> Gumnut:
             detail="Authentication required",
         )
 
-    return get_gumnut_client(jwt_token)
+    return await get_gumnut_client(jwt_token)
 
 
-async def get_authenticated_gumnut_client_optional(request: Request) -> Gumnut | None:
+async def get_authenticated_gumnut_client_optional(
+    request: Request,
+) -> AsyncGumnut | None:
     """
-    Dependency that provides an authenticated Gumnut client for the current request
+    Dependency that provides an authenticated AsyncGumnut client for the current request
     if a JWT is present. Otherwise, returns None without raising an exception.
 
     Used during logout to prevent errors when no JWT is present.
@@ -199,33 +205,31 @@ async def get_authenticated_gumnut_client_optional(request: Request) -> Gumnut |
         request: FastAPI request object containing state set by middleware
 
     Returns:
-        Gumnut: Authenticated Gumnut client instance for the current user
-
-    Raises:
-        HTTPException: 401 if no JWT is present in request state
+        AsyncGumnut | None: Authenticated async Gumnut client, or None if no JWT
     """
     jwt_token = getattr(request.state, "jwt_token", None)
 
     if jwt_token:
-        return get_gumnut_client(jwt_token)
+        return await get_gumnut_client(jwt_token)
 
     return None
 
 
-async def get_unauthenticated_gumnut_client() -> Gumnut:
+async def get_unauthenticated_gumnut_client() -> AsyncGumnut:
     """
-    Dependency that provides an unauthenticated Gumnut client for OAuth operations.
+    Dependency that provides an unauthenticated AsyncGumnut client for OAuth operations.
 
     This is used for OAuth endpoints that don't require authentication (like
     starting OAuth flow or handling callbacks) but still need to communicate
     with the Gumnut backend.
 
     Returns:
-        Gumnut: Unauthenticated Gumnut client instance
+        AsyncGumnut: Unauthenticated async Gumnut client instance
     """
     settings = get_settings()
 
-    return Gumnut(
+    return AsyncGumnut(
         base_url=settings.gumnut_api_base_url,
-        http_client=get_shared_http_client(),
+        max_retries=3,
+        http_client=await get_shared_http_client(),
     )

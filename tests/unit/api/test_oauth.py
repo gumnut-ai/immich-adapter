@@ -186,7 +186,7 @@ class TestFinishOAuth:
         mock_exchange_result.access_token = "test-jwt-token"
         mock_exchange_result.user = mock_user
 
-        mock_gumnut_client.oauth.exchange.return_value = mock_exchange_result
+        mock_gumnut_client.oauth.exchange = AsyncMock(return_value=mock_exchange_result)
         # Use realistic Chrome on Mac UA string
         mock_request.headers = {
             "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -242,7 +242,7 @@ class TestFinishOAuth:
         mock_exchange_result.access_token = "test-jwt-token"
         mock_exchange_result.user = mock_user
 
-        mock_gumnut_client.oauth.exchange.return_value = mock_exchange_result
+        mock_gumnut_client.oauth.exchange = AsyncMock(return_value=mock_exchange_result)
         mock_request.headers = {
             "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }

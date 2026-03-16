@@ -16,7 +16,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
-from gumnut import Gumnut, GumnutError
+from gumnut import AsyncGumnut, GumnutError
 
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
@@ -70,7 +70,7 @@ router = APIRouter(
 
 async def _download_asset_content(
     asset_uuid: UUID,
-    client: Gumnut,
+    client: AsyncGumnut,
     size: AssetMediaSize = AssetMediaSize.fullsize,
     force_original: bool = False,
 ) -> Response:
@@ -99,12 +99,6 @@ async def _download_asset_content(
     try:
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
-        # Helper function to create streaming generator
-        def create_streaming_generator(streaming_response_context):
-            with streaming_response_context as gumnut_response:
-                for chunk in gumnut_response.iter_bytes(chunk_size=8192):
-                    yield chunk
-
         def extract_headers_and_filename(gumnut_response):
             """Extract content type, filename, and build response headers."""
             content_type = gumnut_response.headers.get(
@@ -126,46 +120,40 @@ async def _download_asset_content(
 
             return content_type, response_headers
 
-        def create_streaming_response(streaming_context_factory):
-            """Create a StreamingResponse with proper header extraction."""
-            # Get headers first
-            with streaming_context_factory() as gumnut_response:
-                content_type, response_headers = extract_headers_and_filename(
-                    gumnut_response
-                )
-
-            # Create new streaming context for actual streaming
-            return StreamingResponse(
-                create_streaming_generator(streaming_context_factory()),
-                media_type=content_type,
-                headers=response_headers,
-            )
-
-        # For /original endpoint: always return the actual original file
-        # This preserves the original format (JPEG, HEIC, etc.) for download
-        if force_original:
-
-            def streaming_factory():
-                return client.assets.with_streaming_response.download(gumnut_asset_id)
-
-            return create_streaming_response(streaming_factory)
-
-        # For /thumbnail endpoint: use download_thumbnail for ALL sizes
-        # This ensures browser-compatible formats are served for non-web-native
-        # formats like HEIC (photos-api converts HEIC to WEBP for fullsize thumbnails)
+        # Select the appropriate streaming endpoint
         size_map = {
             AssetMediaSize.fullsize: "fullsize",
             AssetMediaSize.preview: "preview",
             AssetMediaSize.thumbnail: "thumbnail",
         }
-        gumnut_size = size_map.get(size, "thumbnail")
 
-        def streaming_factory():
-            return client.assets.with_streaming_response.download_thumbnail(
+        if force_original:
+            streaming_ctx = client.assets.with_streaming_response.download(
+                gumnut_asset_id
+            )
+        else:
+            gumnut_size = size_map.get(size, "thumbnail")
+            streaming_ctx = client.assets.with_streaming_response.download_thumbnail(
                 gumnut_asset_id, size=gumnut_size
             )
 
-        return create_streaming_response(streaming_factory)
+        # Enter the async context manager manually so it stays open during streaming.
+        # The context must remain alive while StreamingResponse consumes the generator.
+        gumnut_response = await streaming_ctx.__aenter__()
+        content_type, response_headers = extract_headers_and_filename(gumnut_response)
+
+        async def stream_and_close():
+            try:
+                async for chunk in gumnut_response.iter_bytes(chunk_size=8192):
+                    yield chunk
+            finally:
+                await streaming_ctx.__aexit__(None, None, None)
+
+        return StreamingResponse(
+            stream_and_close(),
+            media_type=content_type,
+            headers=response_headers,
+        )
 
     except Exception as e:
         raise map_gumnut_error(e, "Failed to fetch asset")
@@ -207,7 +195,7 @@ def _immich_checksum_to_base64(checksum: str) -> str:
 @router.post("/bulk-upload-check")
 async def bulk_upload_check(
     request: AssetBulkUploadCheckDto,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> AssetBulkUploadCheckResponseDto:
     """
     Check which assets from a bulk upload already exist in Gumnut.
@@ -222,7 +210,7 @@ async def bulk_upload_check(
             for asset in request.assets
         }
 
-        existing_assets_response = client.assets.check_existence(
+        existing_assets_response = await client.assets.check_existence(
             checksum_sha1s=list(checksum_to_b64.values())
         )
         existing_assets = existing_assets_response.assets
@@ -266,13 +254,13 @@ async def bulk_upload_check(
 @router.post("/exist")
 async def check_existing_assets(
     request: CheckExistingAssetsDto,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> CheckExistingAssetsResponseDto:
     """
     Check if multiple assets exist on the server and return all existing.
     """
     try:
-        existing_assets_response = client.assets.check_existence(
+        existing_assets_response = await client.assets.check_existence(
             device_id=request.deviceId, device_asset_ids=request.deviceAssetIds
         )
         existing_ids = [
@@ -315,7 +303,7 @@ async def upload_asset(
     duration: str = Form(None),
     key: str = Query(default=None),
     slug: str = Query(default=None),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetMediaResponseDto | JSONResponse:
     """
@@ -371,7 +359,7 @@ async def upload_asset(
 
         # Stream the file to Gumnut SDK without loading into memory.
         await assetData.seek(0)
-        gumnut_asset = client.assets.create(
+        gumnut_asset = await client.assets.create(
             asset_data=(assetData.filename, assetData.file, assetData.content_type),
             device_asset_id=deviceAssetId,
             device_id=deviceId,
@@ -438,7 +426,7 @@ async def upload_asset(
 @router.put("", status_code=204)
 async def update_assets(
     request: AssetBulkUpdateDto,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ):
     """
     Update asset metadata.
@@ -451,7 +439,7 @@ async def update_assets(
 @router.delete("", status_code=204)
 async def delete_assets(
     request: AssetBulkDeleteDto,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user_id: UUID = Depends(get_current_user_id),
 ) -> Response:
     """
@@ -465,7 +453,7 @@ async def delete_assets(
             try:
                 gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
-                client.assets.delete(gumnut_asset_id)
+                await client.assets.delete(gumnut_asset_id)
 
                 # Emit WebSocket event for real-time timeline sync
                 try:
@@ -522,7 +510,7 @@ async def delete_assets(
 @router.get("/device/{deviceId}", deprecated=True)
 async def get_all_user_assets_by_device_id(
     deviceId: str,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[str]:
     """
     Retrieve assets by device ID.
@@ -537,7 +525,7 @@ async def get_asset_statistics(
     isFavorite: bool = Query(default=None, alias="isFavorite"),
     isTrashed: bool = Query(default=None, alias="isTrashed"),
     visibility: AssetVisibility = Query(default=None, alias="visibility"),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> AssetStatsResponseDto:
     """
     Get asset statistics from Gumnut.
@@ -553,7 +541,7 @@ async def get_asset_statistics(
         image_count = 0
         video_count = 0
 
-        for asset in gumnut_assets:
+        async for asset in gumnut_assets:
             total_assets += 1
 
             # Check mime_type to determine if it's an image or video
@@ -577,7 +565,7 @@ async def get_asset_statistics(
 @router.get("/random", deprecated=True)
 async def get_random(
     count: int = Query(default=None, ge=1, type="number"),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[AssetResponseDto]:
     """
     Get random assets.
@@ -591,7 +579,7 @@ async def get_random(
 @router.post("/jobs", status_code=204)
 async def run_asset_jobs(
     request: AssetJobsDto,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> Response:
     """
     Run asset jobs.
@@ -605,7 +593,7 @@ async def run_asset_jobs(
 @router.put("/copy", status_code=204)
 async def copy_asset(
     request: AssetCopyDto,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> Response:
     """
     Copy asset metadata between assets.
@@ -619,7 +607,7 @@ async def copy_asset(
 async def update_asset(
     id: UUID,
     request: UpdateAssetDto,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetResponseDto:
     """
@@ -635,14 +623,14 @@ async def get_asset_info(
     id: UUID,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetResponseDto:
     try:
         gumnut_asset_id = uuid_to_gumnut_asset_id(id)
 
         # Retrieve the specific asset from Gumnut
-        gumnut_asset = client.assets.retrieve(gumnut_asset_id)
+        gumnut_asset = await client.assets.retrieve(gumnut_asset_id)
 
         # Convert Gumnut asset to AssetResponseDto format
         immich_asset = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
@@ -671,7 +659,7 @@ async def view_asset(
     size: AssetMediaSize = Query(default=None, alias="size"),
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> Response:
     """
     Get a thumbnail for an asset.
@@ -699,7 +687,7 @@ async def download_asset(
     id: UUID,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> Response:
     """
     Download the original asset file.
@@ -735,7 +723,7 @@ async def replace_asset(
     request: AssetMediaReplaceDto,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ):
     """
     Replace the asset with new file, without changing its id.
@@ -747,7 +735,7 @@ async def replace_asset(
 @router.get("/{id}/metadata")
 async def get_asset_metadata(
     id: UUID,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[AssetMetadataResponseDto]:
     """
     Retrieve metadata for a specific asset.
@@ -761,7 +749,7 @@ async def get_asset_metadata(
 async def update_asset_metadata(
     id: UUID,
     request: AssetMetadataUpsertDto,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[AssetMetadataResponseDto]:
     """
     Update metadata for a specific asset.
@@ -775,7 +763,7 @@ async def update_asset_metadata(
 async def delete_asset_metadata(
     id: UUID,
     key: str,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ):
     """
     Delete a specific metadata key for an asset.
@@ -789,7 +777,7 @@ async def delete_asset_metadata(
 async def get_asset_metadata_by_key(
     id: UUID,
     key: str,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ):
     """
     Retrieve a specific metadata key for an asset.
@@ -804,7 +792,7 @@ async def play_asset_video(
     id: UUID,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ):
     """
     Play the video for a specific asset.
@@ -817,7 +805,7 @@ async def play_asset_video(
 @router.get("/{id}/ocr")
 async def get_asset_ocr(
     id: UUID,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> list[AssetOcrResponseDto]:
     """
     Retrieve OCR data for an asset.

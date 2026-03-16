@@ -69,7 +69,7 @@ class TestStartOAuthIntegration:
         # Setup mock response
         mock_auth_url_result = Mock()
         mock_auth_url_result.url = "https://oauth.provider.com/authorize?client_id=test&state=xyz123&redirect_uri=http://localhost:3000/auth/callback"
-        mock_gumnut_client.oauth.auth_url.return_value = mock_auth_url_result
+        mock_gumnut_client.oauth.auth_url = AsyncMock(return_value=mock_auth_url_result)
 
         # Execute - POST to the actual endpoint
         response = client.post("/api/oauth/authorize", json=oauth_config)
@@ -97,7 +97,7 @@ class TestStartOAuthIntegration:
         # Setup mock response
         mock_auth_url_result = Mock()
         mock_auth_url_result.url = "https://oauth.provider.com/authorize?client_id=test&state=xyz123&code_challenge=test_challenge_string"
-        mock_gumnut_client.oauth.auth_url.return_value = mock_auth_url_result
+        mock_gumnut_client.oauth.auth_url = AsyncMock(return_value=mock_auth_url_result)
 
         # Execute
         response = client.post("/api/oauth/authorize", json=oauth_config)
@@ -118,8 +118,8 @@ class TestStartOAuthIntegration:
         oauth_config = {"redirectUri": "http://localhost:3000/auth/callback"}
 
         # Setup mock to raise an error
-        mock_gumnut_client.oauth.auth_url.side_effect = Exception(
-            "Backend connection failed"
+        mock_gumnut_client.oauth.auth_url = AsyncMock(
+            side_effect=Exception("Backend connection failed")
         )
 
         # Execute & Assert
@@ -149,7 +149,7 @@ class TestFinishOAuthIntegration:
         mock_exchange_result.user.email = "test@example.com"
         mock_exchange_result.user.first_name = "Test"
         mock_exchange_result.user.last_name = "User"
-        mock_gumnut_client.oauth.exchange.return_value = mock_exchange_result
+        mock_gumnut_client.oauth.exchange = AsyncMock(return_value=mock_exchange_result)
 
         # Execute
         response = client.post("/api/oauth/callback", json=oauth_callback)
@@ -205,7 +205,7 @@ class TestFinishOAuthIntegration:
         mock_exchange_result.user.email = "test@example.com"
         mock_exchange_result.user.first_name = "Test"
         mock_exchange_result.user.last_name = "User"
-        mock_gumnut_client.oauth.exchange.return_value = mock_exchange_result
+        mock_gumnut_client.oauth.exchange = AsyncMock(return_value=mock_exchange_result)
 
         # Execute
         response = client.post("/api/oauth/callback", json=oauth_callback)
@@ -231,8 +231,8 @@ class TestFinishOAuthIntegration:
         }
 
         # Setup mock to raise an error
-        mock_gumnut_client.oauth.exchange.side_effect = Exception(
-            "OAuth error: {access_denied}"
+        mock_gumnut_client.oauth.exchange = AsyncMock(
+            side_effect=Exception("OAuth error: {access_denied}")
         )
 
         # Execute
@@ -275,8 +275,8 @@ class TestFinishOAuthIntegration:
         }
 
         # Setup mock to raise an error
-        mock_gumnut_client.oauth.exchange.side_effect = Exception(
-            "Backend connection failed"
+        mock_gumnut_client.oauth.exchange = AsyncMock(
+            side_effect=Exception("Backend connection failed")
         )
 
         # Execute & Assert
@@ -304,7 +304,7 @@ class TestFinishOAuthIntegration:
         mock_exchange_result.user.email = "test@example.com"
         mock_exchange_result.user.first_name = "Test"
         mock_exchange_result.user.last_name = "User"
-        mock_gumnut_client.oauth.exchange.return_value = mock_exchange_result
+        mock_gumnut_client.oauth.exchange = AsyncMock(return_value=mock_exchange_result)
 
         # Execute
         response = client.post("/api/oauth/callback", json=oauth_callback)

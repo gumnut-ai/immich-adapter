@@ -258,7 +258,7 @@ class TestTokenRefresh:
                 headers={"x-new-access-token": "new-jwt-token-123"},
                 json={"status": "ok"},
             )
-            _response_hook(mock_response)
+            await _response_hook(mock_response)
 
             return {"status": "ok"}
 
