@@ -6,8 +6,10 @@ from uuid import UUID
 
 import pytest
 
+from routers.api.sync.fk_integrity import _GUMNUT_TYPE_TO_SYNC_TYPE
 from routers.api.sync.stream import (
     _DELETE_TYPE_ORDER,
+    _SYNC_TYPE_ORDER,
     generate_sync_stream,
 )
 from routers.immich_models import SyncEntityType, SyncRequestType, SyncStreamDto
@@ -432,6 +434,24 @@ class TestUpsertsBeforeDeletes:
             "PersonDeleteV1|cursor_2|",
             "PersonDeleteV1|cursor_3|",
         ]
+
+
+class TestGumnutTypeToSyncTypeConsistency:
+    """Ensure _GUMNUT_TYPE_TO_SYNC_TYPE in fk_integrity stays aligned with _SYNC_TYPE_ORDER in stream."""
+
+    def test_fk_integrity_map_matches_stream_order(self):
+        """The duplicated _GUMNUT_TYPE_TO_SYNC_TYPE must match the canonical
+        _SYNC_TYPE_ORDER so FK checkpoint lookups stay correct."""
+        expected = {
+            gumnut_type: sync_type
+            for _, gumnut_type, sync_type in _SYNC_TYPE_ORDER
+        }
+        assert _GUMNUT_TYPE_TO_SYNC_TYPE == expected, (
+            f"_GUMNUT_TYPE_TO_SYNC_TYPE in fk_integrity.py has diverged from "
+            f"_SYNC_TYPE_ORDER in stream.py.\n"
+            f"  Expected: {expected}\n"
+            f"  Actual:   {dict(_GUMNUT_TYPE_TO_SYNC_TYPE)}"
+        )
 
 
 class TestDeleteTypeOrderCompleteness:
