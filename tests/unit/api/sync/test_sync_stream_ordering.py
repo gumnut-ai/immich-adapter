@@ -443,8 +443,7 @@ class TestGumnutTypeToSyncTypeConsistency:
         """The duplicated _GUMNUT_TYPE_TO_SYNC_TYPE must match the canonical
         _SYNC_TYPE_ORDER so FK checkpoint lookups stay correct."""
         expected = {
-            gumnut_type: sync_type
-            for _, gumnut_type, sync_type in _SYNC_TYPE_ORDER
+            gumnut_type: sync_type for _, gumnut_type, sync_type in _SYNC_TYPE_ORDER
         }
         assert _GUMNUT_TYPE_TO_SYNC_TYPE == expected, (
             f"_GUMNUT_TYPE_TO_SYNC_TYPE in fk_integrity.py has diverged from "
