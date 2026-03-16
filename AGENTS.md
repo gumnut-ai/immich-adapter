@@ -91,7 +91,12 @@ All HTTP errors must use Immich's expected format:
 
 ### Immich Client Error Handling
 
-Immich mobile and web clients have **no HTTP 429 (rate limit) handling**. A 429 response causes sync failures, broken thumbnails, and upload errors with no automatic recovery. immich-adapter must never forward 429 responses from photos-api to Immich clients -- catch and retry internally instead. See `gumnut-dev-setup/docs/design-docs/request-overload-protection.md` for the full design.
+- **Observed behavior:** Immich mobile and web clients have no HTTP 429 (rate limit) handling. A 429 causes sync failures, broken thumbnails, and upload errors with no automatic recovery.
+- **Adapter contract:**
+  - Never forward 429 responses from photos-api to Immich clients.
+  - When photos-api returns 429, retry internally respecting the `Retry-After` header with a capped retry budget.
+  - If retries are exhausted, let the error propagate as a non-429 Immich-formatted error.
+- **Reference:** `docs/design-docs/request-overload-protection.md` in the `gumnut-dev-setup` repo.
 
 ## Sync Stream Architecture
 
