@@ -89,6 +89,10 @@ All HTTP errors must use Immich's expected format:
 - In route handlers: Raise `HTTPException(status_code=..., detail="...")` - the global handler formats it
 - In middleware: Return `JSONResponse` directly with the above format (HTTPException doesn't work in BaseHTTPMiddleware)
 
+### Immich Client Error Handling
+
+Immich mobile and web clients have **no HTTP 429 (rate limit) handling**. A 429 response causes sync failures, broken thumbnails, and upload errors with no automatic recovery. immich-adapter must never forward 429 responses from photos-api to Immich clients -- catch and retry internally instead. See `gumnut-dev-setup/docs/design-docs/request-overload-protection.md` for the full design.
+
 ## Sync Stream Architecture
 
 The sync stream (`routers/api/sync/stream.py`) consumes events from photos-api and converts them to Immich sync format. Key concepts:
