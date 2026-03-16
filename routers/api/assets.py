@@ -140,7 +140,13 @@ async def _download_asset_content(
         # Enter the async context manager manually so it stays open during streaming.
         # The context must remain alive while StreamingResponse consumes the generator.
         gumnut_response = await streaming_ctx.__aenter__()
-        content_type, response_headers = extract_headers_and_filename(gumnut_response)
+        try:
+            content_type, response_headers = extract_headers_and_filename(
+                gumnut_response
+            )
+        except Exception:
+            await streaming_ctx.__aexit__(None, None, None)
+            raise
 
         async def stream_and_close():
             try:
