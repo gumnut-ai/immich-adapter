@@ -94,8 +94,8 @@ All HTTP errors must use Immich's expected format:
 - **Observed behavior:** Immich mobile and web clients have no HTTP 429 (rate limit) handling. A 429 causes sync failures, broken thumbnails, and upload errors with no automatic recovery.
 - **Adapter contract:**
   - Never forward 429 responses from photos-api to Immich clients.
-  - When photos-api returns 429, retry internally respecting the `Retry-After` header with a capped retry budget.
-  - If retries are exhausted, let the error propagate as a non-429 Immich-formatted error.
+  - The Gumnut SDK (Stainless-generated) has built-in retry for 429, 5xx, and connection errors with exponential backoff, ±25% jitter, and `Retry-After` header support (see [SDK retry docs](https://www.stainless.com/docs/sdks/configure/client/#retries)). Configure `max_retries` on the client — **do not add a custom retry wrapper** on top, as it will stack with SDK retry and cause retry amplification.
+  - `map_gumnut_error` must catch `RateLimitError` explicitly and return 502 (not 429) to Immich clients. The default error mapping would pass through the 429 status code.
 - **Reference:** `docs/design-docs/request-overload-protection.md` in the `gumnut-dev-setup` repo.
 
 ## Sync Stream Architecture
