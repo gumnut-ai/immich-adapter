@@ -127,16 +127,37 @@ def multiple_gumnut_assets():
 
 
 class MockSyncCursorPage:
-    """Mock for Gumnut SyncCursorPage response."""
+    """Mock for Gumnut SyncCursorPage / AsyncPaginator response.
+
+    Supports both sync and async iteration patterns:
+    - ``for item in page`` (sync iteration, used in tests)
+    - ``async for item in page`` (async iteration, used by AsyncGumnut list calls)
+    - ``page = await paginator`` (returns self with .data, used by entity_fetch)
+    """
 
     def __init__(self, items: List[Any]):
         self.items = items
+        self.data = items
+        self.has_more = False
 
     def __iter__(self):
         return iter(self.items)
 
     def __len__(self):
         return len(self.items)
+
+    async def _async_iter(self):
+        for item in self.items:
+            yield item
+
+    def __aiter__(self):
+        return self._async_iter()
+
+    def __await__(self):
+        return self._await_impl().__await__()
+
+    async def _await_impl(self):
+        return self
 
 
 @pytest.fixture

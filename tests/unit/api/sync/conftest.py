@@ -51,17 +51,20 @@ def create_mock_user(updated_at: datetime) -> Mock:
 
 
 def create_mock_gumnut_client(user: Mock) -> Mock:
-    """Create a mock Gumnut client with the given user."""
+    """Create a mock AsyncGumnut client with the given user."""
     client = Mock()
-    client.users.me.return_value = user
+    client.users.me = AsyncMock(return_value=user)
     # Default: no events
     events_response = Mock()
     events_response.data = []
     events_response.has_more = False
-    client.events.get.return_value = events_response
-    # Default: empty entity list responses for batch fetching
-    empty_page = Mock()
-    empty_page.data = []
+    client.events.get = AsyncMock(return_value=events_response)
+    # Default: empty entity list responses for batch fetching.
+    # list() is NOT a coroutine — it returns an AsyncPaginator synchronously.
+    # The MockSyncCursorPage supports __await__ for the `await paginator` pattern.
+    from tests.conftest import MockSyncCursorPage
+
+    empty_page = MockSyncCursorPage([])
     client.assets.list.return_value = empty_page
     client.albums.list.return_value = empty_page
     client.album_assets.list.return_value = empty_page
@@ -236,11 +239,11 @@ def create_mock_album_asset_data(updated_at: datetime) -> Mock:
     return album_asset
 
 
-def create_mock_entity_page(entities: list) -> Mock:
-    """Create a mock paginated entity response."""
-    page = Mock()
-    page.data = entities
-    return page
+def create_mock_entity_page(entities: list):
+    """Create a mock paginated entity response that supports await."""
+    from tests.conftest import MockSyncCursorPage
+
+    return MockSyncCursorPage(entities)
 
 
 __all__ = [

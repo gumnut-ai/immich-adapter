@@ -269,11 +269,11 @@ def create_event(
     return event
 
 
-def create_mock_entity_page(entities: list) -> Mock:
-    """Create a mock paginated entity response."""
-    page = Mock()
-    page.data = entities
-    return page
+def create_mock_entity_page(entities: list):
+    """Create a mock paginated entity response that supports await."""
+    from tests.conftest import MockSyncCursorPage
+
+    return MockSyncCursorPage(entities)
 
 
 @pytest.fixture
@@ -342,7 +342,7 @@ def mock_gumnut_client(mock_gumnut_user):
     Includes: assets, exif, faces, albums, persons
     """
     client = Mock()
-    client.users.me.return_value = mock_gumnut_user
+    client.users.me = AsyncMock(return_value=mock_gumnut_user)
 
     # Build entity responses and events from test data
     asset_responses: dict[str, AssetResponse] = {}
@@ -440,25 +440,25 @@ def mock_gumnut_client(mock_gumnut_user):
         response.has_more = False
         return response
 
-    client.events.get.side_effect = mock_events_get
+    client.events.get = AsyncMock(side_effect=mock_events_get)
 
     # Mock entity list endpoints for batch fetching
-    def mock_assets_list(**kwargs: Any) -> Mock:
+    def mock_assets_list(**kwargs: Any) -> Any:
         ids = kwargs.get("ids", [])
         matching = [asset_responses[id_] for id_ in ids if id_ in asset_responses]
         return create_mock_entity_page(matching)
 
-    def mock_albums_list(**kwargs: Any) -> Mock:
+    def mock_albums_list(**kwargs: Any) -> Any:
         ids = kwargs.get("ids", [])
         matching = [album_responses[id_] for id_ in ids if id_ in album_responses]
         return create_mock_entity_page(matching)
 
-    def mock_people_list(**kwargs: Any) -> Mock:
+    def mock_people_list(**kwargs: Any) -> Any:
         ids = kwargs.get("ids", [])
         matching = [person_responses[id_] for id_ in ids if id_ in person_responses]
         return create_mock_entity_page(matching)
 
-    def mock_faces_list(**kwargs: Any) -> Mock:
+    def mock_faces_list(**kwargs: Any) -> Any:
         ids = kwargs.get("ids", [])
         matching = [face_responses[id_] for id_ in ids if id_ in face_responses]
         return create_mock_entity_page(matching)

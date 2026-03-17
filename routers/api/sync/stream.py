@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from collections.abc import Iterator
 from typing import Any, AsyncGenerator
 
-from gumnut import Gumnut
+from gumnut import AsyncGumnut
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.face_response import FaceResponse
 
@@ -97,7 +97,7 @@ _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
 
 
 async def _stream_entity_type(
-    gumnut_client: Gumnut,
+    gumnut_client: AsyncGumnut,
     gumnut_entity_type: str,
     sync_entity_type: SyncEntityType,
     owner_id: str,
@@ -150,7 +150,7 @@ async def _stream_entity_type(
         if last_cursor is not None:
             params["after_cursor"] = last_cursor
 
-        events_response = gumnut_client.events.get(**params)
+        events_response = await gumnut_client.events.get(**params)
 
         events = events_response.data
         if not events:
@@ -165,7 +165,7 @@ async def _stream_entity_type(
         ]
 
         # Batch-fetch entities for upserts
-        entities_map, missing_ids = fetch_entities_map(
+        entities_map, missing_ids = await fetch_entities_map(
             gumnut_client, gumnut_entity_type, upsert_ids
         )
 
@@ -372,7 +372,7 @@ def _yield_buffered_deletes(
 
 
 async def generate_sync_stream(
-    gumnut_client: Gumnut,
+    gumnut_client: AsyncGumnut,
     request: SyncStreamDto,
     checkpoint_map: dict[SyncEntityType, Checkpoint],
 ) -> AsyncGenerator[str, None]:
@@ -396,7 +396,7 @@ async def generate_sync_stream(
     """
     try:
         # Get current user for owner_id
-        current_user = gumnut_client.users.me()
+        current_user = await gumnut_client.users.me()
         owner_id = str(safe_uuid_from_user_id(current_user.id))
 
         requested_types = set(request.types)

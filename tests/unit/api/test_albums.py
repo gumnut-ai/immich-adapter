@@ -1,7 +1,7 @@
 """Tests for albums.py endpoints."""
 
 import pytest
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from fastapi import HTTPException
 from uuid import uuid4
 
@@ -280,9 +280,9 @@ class TestGetAlbumInfo:
         """Test successful retrieval of album info."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.retrieve.return_value = sample_gumnut_album
-        mock_client.albums.assets_associations.list.return_value = (
-            mock_sync_cursor_page(multiple_gumnut_assets)
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.assets_associations.list = AsyncMock(
+            return_value=mock_sync_cursor_page(multiple_gumnut_assets)
         )
 
         # Execute
@@ -310,9 +310,9 @@ class TestGetAlbumInfo:
         sample_gumnut_album.asset_count = 42  # Set specific count
 
         mock_client = Mock()
-        mock_client.albums.retrieve.return_value = sample_gumnut_album
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
         # Return empty assets list
-        mock_client.albums.assets_associations.list.return_value = []
+        mock_client.albums.assets_associations.list = AsyncMock(return_value=[])
 
         # Execute
         result = await get_album_info(
@@ -332,8 +332,8 @@ class TestGetAlbumInfo:
         sample_gumnut_album.album_cover_asset_id = cover_asset_id
 
         mock_client = Mock()
-        mock_client.albums.retrieve.return_value = sample_gumnut_album
-        mock_client.albums.assets_associations.list.return_value = []
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.assets_associations.list = AsyncMock(return_value=[])
 
         # Execute
         result = await get_album_info(
@@ -351,9 +351,9 @@ class TestGetAlbumInfo:
         """Test retrieval of album info without assets."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.retrieve.return_value = sample_gumnut_album
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
         # Mock assets list to return an empty iterable to avoid the "Mock object is not iterable" error
-        mock_client.albums.assets_associations.list.return_value = []
+        mock_client.albums.assets_associations.list = AsyncMock(return_value=[])
 
         # Execute
         result = await get_album_info(
@@ -376,7 +376,7 @@ class TestGetAlbumInfo:
         """Test handling of album not found."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.retrieve.side_effect = Exception("404 Not found")
+        mock_client.albums.retrieve = AsyncMock(side_effect=Exception("404 Not found"))
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -398,7 +398,7 @@ class TestCreateAlbum:
         # Update the sample to have the name we want to test
         sample_gumnut_album.name = "New Album"
         sample_gumnut_album.description = "New Description"
-        mock_client.albums.create.return_value = sample_gumnut_album
+        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
 
         request = CreateAlbumDto(albumName="New Album", description="New Description")
 
@@ -420,7 +420,7 @@ class TestCreateAlbum:
         """Test handling of Gumnut API errors during creation."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.create.side_effect = Exception("API Error")
+        mock_client.albums.create = AsyncMock(side_effect=Exception("API Error"))
 
         request = CreateAlbumDto(albumName="Test Album")
 
@@ -441,8 +441,8 @@ class TestAddAssetsToAlbum:
         """Test successful addition of assets to album."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.retrieve.return_value = sample_gumnut_album
-        mock_client.albums.assets_associations.add.return_value = None
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.assets_associations.add = AsyncMock(return_value=None)
 
         asset_id1 = uuid4()
         asset_id2 = uuid4()
@@ -466,7 +466,9 @@ class TestAddAssetsToAlbum:
         """Test adding assets to non-existent album."""
         # Setup
         request = BulkIdsDto(ids=[uuid4()])
-        mock_gumnut_client.albums.retrieve.side_effect = Exception("404 Not found")
+        mock_gumnut_client.albums.retrieve = AsyncMock(
+            side_effect=Exception("404 Not found")
+        )
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -479,13 +481,15 @@ class TestAddAssetsToAlbum:
         """Test adding assets with some failures."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.retrieve.return_value = sample_gumnut_album
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
 
         # First call succeeds, second fails
-        mock_client.albums.assets_associations.add.side_effect = [
-            None,  # Success
-            Exception("Asset not found"),  # Failure
-        ]
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                None,  # Success
+                Exception("Asset not found"),  # Failure
+            ]
+        )
 
         asset_id1 = uuid4()
         asset_id2 = uuid4()
@@ -516,11 +520,11 @@ class TestUpdateAlbum:
         """Test successful album update."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.retrieve.return_value = sample_gumnut_album
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
         # Update the sample to have the name we want to test
         sample_gumnut_album.name = "Updated Album"
         sample_gumnut_album.description = "Updated Description"
-        mock_client.albums.update.return_value = sample_gumnut_album
+        mock_client.albums.update = AsyncMock(return_value=sample_gumnut_album)
 
         request = UpdateAlbumDto(
             albumName="Updated Album", description="Updated Description"
@@ -548,10 +552,10 @@ class TestUpdateAlbum:
         sample_gumnut_album.album_cover_asset_id = cover_asset_id
 
         mock_client = Mock()
-        mock_client.albums.retrieve.return_value = sample_gumnut_album
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
         sample_gumnut_album.name = "Updated Album"
         sample_gumnut_album.description = "Updated Description"
-        mock_client.albums.update.return_value = sample_gumnut_album
+        mock_client.albums.update = AsyncMock(return_value=sample_gumnut_album)
 
         request = UpdateAlbumDto(
             albumName="Updated Album", description="Updated Description"
@@ -573,7 +577,9 @@ class TestUpdateAlbum:
         """Test updating non-existent album."""
         # Setup
         request = UpdateAlbumDto(albumName="Updated Album")
-        mock_gumnut_client.albums.retrieve.side_effect = Exception("404 Not found")
+        mock_gumnut_client.albums.retrieve = AsyncMock(
+            side_effect=Exception("404 Not found")
+        )
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -595,8 +601,8 @@ class TestRemoveAssetFromAlbum:
         """Test successful removal of assets from album."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.retrieve.return_value = sample_gumnut_album
-        mock_client.albums.assets_associations.remove.return_value = None
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.assets_associations.remove = AsyncMock(return_value=None)
 
         asset_id1 = uuid4()
         asset_id2 = uuid4()
@@ -625,8 +631,8 @@ class TestDeleteAlbum:
     ):
         """Test successful album deletion."""
         # Setup
-        mock_gumnut_client.albums.retrieve.return_value = sample_gumnut_album
-        mock_gumnut_client.albums.delete.return_value = None
+        mock_gumnut_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_gumnut_client.albums.delete = AsyncMock(return_value=None)
 
         # Execute
         result = await delete_album(sample_uuid, client=mock_gumnut_client)
@@ -640,7 +646,9 @@ class TestDeleteAlbum:
     async def test_delete_album_not_found(self, mock_gumnut_client, sample_uuid):
         """Test deleting non-existent album."""
         # Setup
-        mock_gumnut_client.albums.retrieve.side_effect = Exception("404 Not found")
+        mock_gumnut_client.albums.retrieve = AsyncMock(
+            side_effect=Exception("404 Not found")
+        )
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -657,7 +665,8 @@ class TestAddAssetsToAlbums:
         """Test successful addition of assets to multiple albums."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.assets_associations.add.return_value = None
+        mock_client.albums.retrieve = AsyncMock(return_value=Mock())
+        mock_client.albums.assets_associations.add = AsyncMock(return_value=None)
 
         album_ids = [uuid4(), uuid4()]
         asset_ids = [uuid4()]

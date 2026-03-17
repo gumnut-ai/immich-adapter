@@ -15,7 +15,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from gumnut import Gumnut
+from gumnut import AsyncGumnut
 
 from services.checkpoint_store import (
     Checkpoint,
@@ -305,7 +305,7 @@ async def delete_sync_ack(
 @router.post("/delta-sync", deprecated=True)
 async def get_delta_sync(
     request: AssetDeltaSyncDto,
-    gumnut_client: Gumnut = Depends(get_authenticated_gumnut_client),
+    gumnut_client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetDeltaSyncResponseDto:
     """
@@ -324,13 +324,12 @@ async def get_delta_sync(
         # Paginate through all assets using cursor-based pagination
         while True:
             # Fetch a page of assets
-            assets_page = gumnut_client.assets.list(
+            assets_page = await gumnut_client.assets.list(
                 limit=page_size,
                 starting_after_id=starting_after_id,
             )
 
-            # Convert to list to process the page
-            page_assets = list(assets_page)
+            page_assets = assets_page.data
             if not page_assets:
                 break
 
@@ -373,7 +372,7 @@ async def get_delta_sync(
 @router.post("/full-sync", deprecated=True)
 async def get_full_sync_for_user(
     request: AssetFullSyncDto,
-    gumnut_client: Gumnut = Depends(get_authenticated_gumnut_client),
+    gumnut_client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> List[AssetResponseDto]:
     """
@@ -395,7 +394,7 @@ async def get_full_sync_for_user(
         assets = []
         skip_until_cursor = request.lastId is not None
 
-        for asset in gumnut_client.assets.list():
+        async for asset in gumnut_client.assets.list():
             # Skip until we find the cursor asset
             if skip_until_cursor:
                 if asset.id == request.lastId:
@@ -434,7 +433,7 @@ async def get_full_sync_for_user(
 async def get_sync_stream(
     request: SyncStreamDto,
     http_request: Request,
-    gumnut_client: Gumnut = Depends(get_authenticated_gumnut_client),
+    gumnut_client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     checkpoint_store: CheckpointStore = Depends(get_checkpoint_store),
     session_store: SessionStore = Depends(get_session_store),
 ):

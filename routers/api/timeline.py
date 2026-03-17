@@ -3,7 +3,7 @@ from typing import Any, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from gumnut import Gumnut
+from gumnut import AsyncGumnut
 from gumnut.types.asset_count_response import AssetCountResponse, Data
 
 from routers.immich_models import (
@@ -29,8 +29,8 @@ router = APIRouter(
 )
 
 
-def _fetch_asset_counts(
-    client: Gumnut,
+async def _fetch_asset_counts(
+    client: AsyncGumnut,
     *,
     album_id: str | None = None,
     person_id: str | None = None,
@@ -44,7 +44,7 @@ def _fetch_asset_counts(
 
     all_buckets: list[Data] = []
     while True:
-        response: AssetCountResponse = client.assets.counts(**kwargs)
+        response: AssetCountResponse = await client.assets.counts(**kwargs)
         all_buckets.extend(response.data)
 
         if not response.has_more or not response.data:
@@ -72,7 +72,7 @@ async def get_time_buckets(
     withCoordinates: bool = Query(default=None),
     withPartners: bool = Query(default=None),
     withStacked: bool = Query(default=None),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[TimeBucketsResponseDto]:
     if (
         isFavorite
@@ -85,7 +85,7 @@ async def get_time_buckets(
         album_id = uuid_to_gumnut_album_id(albumId) if albumId else None
         person_id = uuid_to_gumnut_person_id(personId) if personId else None
 
-        raw_buckets = _fetch_asset_counts(
+        raw_buckets = await _fetch_asset_counts(
             client, album_id=album_id, person_id=person_id
         )
 
@@ -125,7 +125,7 @@ async def get_time_bucket(
     withCoordinates: bool = Query(default=None),
     withPartners: bool = Query(default=None),
     withStacked: bool = Query(default=None),
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user_id: UUID = Depends(get_current_user_id),
 ) -> Any:  # Should be TimeBucketAssetResponseDto, but using Any to bypass Pydantic validation. See comment below.
     """
@@ -163,21 +163,25 @@ async def get_time_bucket(
 
         if albumId:
             gumnut_album_id = uuid_to_gumnut_album_id(albumId)
-            filtered_assets = list(
-                client.assets.list(
+            filtered_assets = [
+                a
+                async for a in client.assets.list(
                     album_id=gumnut_album_id,
                     extra_query=date_range_query,
                 )
-            )
+            ]
         elif personId:
-            filtered_assets = list(
-                client.assets.list(
+            filtered_assets = [
+                a
+                async for a in client.assets.list(
                     person_id=uuid_to_gumnut_person_id(personId),
                     extra_query=date_range_query,
                 )
-            )
+            ]
         else:
-            filtered_assets = list(client.assets.list(extra_query=date_range_query))
+            filtered_assets = [
+                a async for a in client.assets.list(extra_query=date_range_query)
+            ]
 
         # Build the response arrays based on filtered assets
         asset_count = len(filtered_assets)

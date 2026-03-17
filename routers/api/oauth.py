@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from gumnut import Gumnut, omit
+from gumnut import AsyncGumnut, omit
 
 from routers.immich_models import (
     LoginResponseDto,
@@ -80,7 +80,7 @@ def rewrite_redirect_uri(uri: str, request: Request) -> str:
 async def start_oauth(
     oauth_config: OAuthConfigDto,
     request: Request,
-    client: Gumnut = Depends(get_unauthenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_unauthenticated_gumnut_client),
 ) -> OAuthAuthorizeResponseDto:
     """
     Start OAuth authentication process.
@@ -100,7 +100,7 @@ async def start_oauth(
     """
     try:
         redirectUri = rewrite_redirect_uri(oauth_config.redirectUri, request)
-        result = client.oauth.auth_url(
+        result = await client.oauth.auth_url(
             redirect_uri=redirectUri,
             code_challenge=oauth_config.codeChallenge,
             code_challenge_method="S256" if oauth_config.codeChallenge else None,
@@ -126,7 +126,7 @@ async def finish_oauth(
     oauth_callback: OAuthCallbackDto,
     request: Request,
     response: Response,
-    client: Gumnut = Depends(get_unauthenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_unauthenticated_gumnut_client),
     session_store: SessionStore = Depends(get_session_store),
 ) -> LoginResponseDto:
     """
@@ -170,7 +170,7 @@ async def finish_oauth(
         )
 
         # Exchange authorization code for JWT
-        result = client.oauth.exchange(
+        result = await client.oauth.exchange(
             code=parsed["code"],
             state=parsed["state"],
             error=parsed["error"],

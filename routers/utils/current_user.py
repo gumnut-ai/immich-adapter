@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 import logging
 
 from fastapi import Depends, Request
-from gumnut import Gumnut
+from gumnut import AsyncGumnut
 
 from routers.immich_models import (
     UserAdminResponseDto,
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 async def get_current_user_admin(
     request: Request,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> UserAdminResponseDto:
     """
     Get the current user as UserAdminResponseDto.
@@ -45,7 +45,7 @@ async def get_current_user_admin(
 
     # Fetch from Gumnut backend
     try:
-        user = client.users.me()
+        user = await client.users.me()
     except Exception as e:
         logger.error(f"Failed to fetch user from Gumnut: {e}")
         raise map_gumnut_error(e, "Failed to fetch user details")

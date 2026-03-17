@@ -22,7 +22,8 @@ TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 class TestRefreshTokenHook:
     """Test the response hook that captures refresh tokens."""
 
-    def test_capture_refresh_token_hook_with_header(self):
+    @pytest.mark.anyio
+    async def test_capture_refresh_token_hook_with_header(self):
         """Test that the hook captures x-new-access-token header."""
         # Setup
         mock_response = Mock()
@@ -32,12 +33,13 @@ class TestRefreshTokenHook:
         clear_refreshed_token()
 
         # Execute
-        _response_hook(mock_response)
+        await _response_hook(mock_response)
 
         # Assert
         assert get_refreshed_token() == "new-token-123"
 
-    def test_capture_refresh_token_hook_without_header(self):
+    @pytest.mark.anyio
+    async def test_capture_refresh_token_hook_without_header(self):
         """Test that the hook does nothing when header is absent."""
         # Setup
         mock_response = Mock()
@@ -48,17 +50,18 @@ class TestRefreshTokenHook:
         assert get_refreshed_token() is None
 
         # Execute
-        _response_hook(mock_response)
+        await _response_hook(mock_response)
 
         # Assert - should still be None
         assert get_refreshed_token() is None
 
-    def test_clear_refreshed_token(self):
+    @pytest.mark.anyio
+    async def test_clear_refreshed_token(self):
         """Test that clear_refreshed_token works correctly."""
         # Setup - set a token
         mock_response = Mock()
         mock_response.headers = {"x-new-access-token": "token-to-clear"}
-        _response_hook(mock_response)
+        await _response_hook(mock_response)
         assert get_refreshed_token() == "token-to-clear"
 
         # Execute
@@ -119,7 +122,7 @@ class TestTokenRefreshIntegration:
                 headers={"x-new-access-token": "refreshed-jwt-456"},
                 json={"albums": []},
             )
-            _response_hook(mock_response)
+            await _response_hook(mock_response)
 
             return {"albums": []}
 
@@ -220,7 +223,8 @@ class TestTokenRefreshIntegration:
 class TestTokenRefreshWithMockedGumnut:
     """Test token refresh with mocked Gumnut SDK responses."""
 
-    def test_gumnut_response_with_refresh_header(self):
+    @pytest.mark.anyio
+    async def test_gumnut_response_with_refresh_header(self):
         """Test that httpx response hook captures refresh header from Gumnut."""
         # Clear any previous token
         clear_refreshed_token()
@@ -233,18 +237,19 @@ class TestTokenRefreshWithMockedGumnut:
         )
 
         # Get the httpx client (which has our hook registered)
-        client = get_shared_http_client()
+        client = await get_shared_http_client()
 
-        # Simulate the hook being called (as httpx would do)
+        # Simulate the hook being called (as httpx would do with async hooks)
         for hook in client.event_hooks["response"]:
-            hook(mock_response)
+            await hook(mock_response)
 
         # Assert that the token was captured
         assert get_refreshed_token() == "backend-refreshed-token"
 
-    def test_multiple_requests_dont_interfere(self):
+    @pytest.mark.anyio
+    async def test_multiple_requests_dont_interfere(self):
         """Test that clearing tokens between requests prevents interference."""
-        client = get_shared_http_client()
+        client = await get_shared_http_client()
 
         # First request with refresh
         clear_refreshed_token()
@@ -254,7 +259,7 @@ class TestTokenRefreshWithMockedGumnut:
             json={},
         )
         for hook in client.event_hooks["response"]:
-            hook(response1)
+            await hook(response1)
         assert get_refreshed_token() == "token-1"
 
         # Second request without refresh (after clearing)
@@ -265,7 +270,7 @@ class TestTokenRefreshWithMockedGumnut:
             json={},
         )
         for hook in client.event_hooks["response"]:
-            hook(response2)
+            await hook(response2)
         assert get_refreshed_token() is None
 
         # Third request with different refresh token
@@ -276,5 +281,5 @@ class TestTokenRefreshWithMockedGumnut:
             json={},
         )
         for hook in client.event_hooks["response"]:
-            hook(response3)
+            await hook(response3)
         assert get_refreshed_token() == "token-3"

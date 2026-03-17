@@ -145,7 +145,7 @@ class TestGenerateSyncStream:
     async def test_closes_stream_on_exception(self):
         """Stream closes without yielding an error event when an exception occurs."""
         mock_client = Mock()
-        mock_client.users.me.side_effect = Exception("API error")
+        mock_client.users.me = AsyncMock(side_effect=Exception("API error"))
 
         request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
@@ -1078,7 +1078,7 @@ class TestStreamEntityTypePagination:
             second_asset_id: second_asset_data,
         }
 
-        def mock_assets_list(**kwargs: Any) -> Mock:
+        def mock_assets_list(**kwargs: Any) -> Any:
             ids = kwargs.get("ids", [])
             matching = [all_assets_by_id[id_] for id_ in ids if id_ in all_assets_by_id]
             return create_mock_entity_page(matching)
@@ -1146,7 +1146,7 @@ class TestStreamEntityTypePagination:
         )
 
         # Mock assets.list to return entities matching the requested IDs
-        def mock_assets_list(**kwargs: Any) -> Mock:
+        def mock_assets_list(**kwargs: Any) -> Any:
             ids = kwargs.get("ids", [])
             matching = [assets_by_id[id_] for id_ in ids if id_ in assets_by_id]
             return create_mock_entity_page(matching)

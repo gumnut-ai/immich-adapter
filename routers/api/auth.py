@@ -2,7 +2,7 @@ from uuid import UUID
 import logging
 
 from fastapi import APIRouter, Depends, Request, Response
-from gumnut import Gumnut, GumnutError
+from gumnut import AsyncGumnut, GumnutError
 
 from routers.immich_models import (
     AuthStatusResponseDto,
@@ -93,7 +93,7 @@ async def post_login(
 async def post_logout(
     request: Request,
     response: Response,
-    client: Gumnut | None = Depends(get_authenticated_gumnut_client_optional),
+    client: AsyncGumnut | None = Depends(get_authenticated_gumnut_client_optional),
     session_store: SessionStore = Depends(get_session_store),
 ) -> LogoutResponseDto:
     auth_type = request.cookies.get(ImmichCookie.AUTH_TYPE.value)
@@ -133,7 +133,7 @@ async def post_logout(
     redirect_uri = "/auth/login?autoLaunch=0"
     if auth_type == AuthType.OAUTH.value and client is not None:
         try:
-            logout_response = client.oauth.logout_endpoint()
+            logout_response = await client.oauth.logout_endpoint()
             redirect_uri = logout_response.logout_endpoint
         except GumnutError:
             logger.warning(

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Response
-from gumnut import Gumnut
+from gumnut import AsyncGumnut
 from uuid import UUID, uuid4
 from typing import List
 import logging
@@ -74,14 +74,14 @@ async def get_my_user(
 @router.put("/me")
 async def update_my_user(
     request: UserUpdateMeDto,
-    client: Gumnut = Depends(get_authenticated_gumnut_client),
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> UserAdminResponseDto:
     """
     Update current user details.
     This is a stub implementation that returns current user data.
     """
     # Re-fetch current user to ensure we have latest data
-    user = client.users.me()
+    user = await client.users.me()
     first_name = user.first_name or ""
     last_name = user.last_name or ""
     full_name = f"{first_name} {last_name}".strip() or "User"

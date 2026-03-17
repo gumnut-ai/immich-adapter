@@ -3,7 +3,8 @@ Error mapping utilities for handling Gumnut SDK exceptions.
 """
 
 import logging
-from fastapi import HTTPException
+from fastapi import HTTPException, status
+from gumnut import RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,19 @@ def map_gumnut_error(e: Exception, context: str) -> HTTPException:
     Returns:
         HTTPException with appropriate status code and detail message
     """
+    # Rate limit errors from photos-api must never reach Immich clients,
+    # which have no 429 handling and would break (sync failures, broken
+    # thumbnails). Map to 502 so the client sees an upstream error instead.
+    if isinstance(e, RateLimitError):
+        logger.error(
+            "SDK retries exhausted for rate-limited request",
+            extra={"context": context, "status_code": 429},
+        )
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"{context}: Upstream temporarily unavailable",
+        )
+
     msg = str(e)
 
     # Log the original error for debugging

@@ -31,7 +31,7 @@ class TestOAuthCookieSecurity:
         mock_exchange_result.user.email = "test@example.com"
         mock_exchange_result.user.first_name = "Test"
         mock_exchange_result.user.last_name = "User"
-        mock_gumnut_client.oauth.exchange.return_value = mock_exchange_result
+        mock_gumnut_client.oauth.exchange = AsyncMock(return_value=mock_exchange_result)
 
         # Mock the SessionStore
         mock_session_store = AsyncMock(spec=SessionStore)

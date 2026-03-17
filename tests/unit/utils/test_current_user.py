@@ -2,7 +2,7 @@
 
 import pytest
 import shortuuid
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 
@@ -42,7 +42,7 @@ class TestGetCurrentUserAdmin:
         mock_user.is_active = True
         mock_user.created_at = datetime.now(timezone.utc)
         mock_user.updated_at = datetime.now(timezone.utc)
-        mock_client.users.me.return_value = mock_user
+        mock_client.users.me = AsyncMock(return_value=mock_user)
 
         # Execute
         result = await get_current_user_admin(mock_request, mock_client)
@@ -74,7 +74,7 @@ class TestGetCurrentUserAdmin:
         mock_user.is_active = True
         mock_user.created_at = datetime.now(timezone.utc)
         mock_user.updated_at = datetime.now(timezone.utc)
-        mock_client.users.me.return_value = mock_user
+        mock_client.users.me = AsyncMock(return_value=mock_user)
 
         # Execute - first call
         result1 = await get_current_user_admin(mock_request, mock_client)
@@ -107,7 +107,7 @@ class TestGetCurrentUserAdmin:
         mock_user.is_active = True
         mock_user.created_at = datetime.now(timezone.utc)
         mock_user.updated_at = datetime.now(timezone.utc)
-        mock_client.users.me.return_value = mock_user
+        mock_client.users.me = AsyncMock(return_value=mock_user)
 
         # Execute
         result = await get_current_user_admin(mock_request, mock_client)
@@ -132,7 +132,7 @@ class TestGetCurrentUserAdmin:
         mock_user.is_active = False
         mock_user.created_at = datetime.now(timezone.utc)
         mock_user.updated_at = datetime.now(timezone.utc)
-        mock_client.users.me.return_value = mock_user
+        mock_client.users.me = AsyncMock(return_value=mock_user)
 
         # Execute
         result = await get_current_user_admin(mock_request, mock_client)

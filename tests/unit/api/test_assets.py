@@ -79,7 +79,7 @@ class TestBulkUploadCheck:
         mock_client = Mock()
         mock_response = Mock()
         mock_response.assets = []
-        mock_client.assets.check_existence.return_value = mock_response
+        mock_client.assets.check_existence = AsyncMock(return_value=mock_response)
 
         # Execute
         result = await bulk_upload_check(request, client=mock_client)
@@ -116,7 +116,7 @@ class TestBulkUploadCheck:
 
         mock_response = Mock()
         mock_response.assets = [mock_existing_asset]
-        mock_client.assets.check_existence.return_value = mock_response
+        mock_client.assets.check_existence = AsyncMock(return_value=mock_response)
 
         # Execute
         result = await bulk_upload_check(request, client=mock_client)
@@ -155,7 +155,7 @@ class TestBulkUploadCheck:
 
         mock_response = Mock()
         mock_response.assets = [mock_existing_asset]
-        mock_client.assets.check_existence.return_value = mock_response
+        mock_client.assets.check_existence = AsyncMock(return_value=mock_response)
 
         # Execute
         result = await bulk_upload_check(request, client=mock_client)
@@ -194,7 +194,7 @@ class TestBulkUploadCheck:
         mock_client = Mock()
         mock_response = Mock()
         mock_response.assets = []
-        mock_client.assets.check_existence.return_value = mock_response
+        mock_client.assets.check_existence = AsyncMock(return_value=mock_response)
 
         # Execute - should NOT raise an exception
         result = await bulk_upload_check(request, client=mock_client)
@@ -285,7 +285,7 @@ class TestCheckExistingAssets:
         mock_client = Mock()
         mock_response = Mock()
         mock_response.assets = []
-        mock_client.assets.check_existence.return_value = mock_response
+        mock_client.assets.check_existence = AsyncMock(return_value=mock_response)
 
         # Execute
         result = await check_existing_assets(request, client=mock_client)
@@ -314,7 +314,7 @@ class TestCheckExistingAssets:
 
         mock_response = Mock()
         mock_response.assets = [mock_asset1, mock_asset2]
-        mock_client.assets.check_existence.return_value = mock_response
+        mock_client.assets.check_existence = AsyncMock(return_value=mock_response)
 
         # Execute
         result = await check_existing_assets(request, client=mock_client)
@@ -347,7 +347,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create.return_value = mock_gumnut_asset
+        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
 
         # Mock the file data
         mock_file = Mock()
@@ -384,7 +384,9 @@ class TestUploadAsset:
         """Test upload asset with duplicate error returns 200 with duplicate status."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.assets.create.side_effect = Exception("Asset already exists")
+        mock_client.assets.create = AsyncMock(
+            side_effect=Exception("Asset already exists")
+        )
 
         # Mock the file data
         mock_file = Mock()
@@ -417,7 +419,9 @@ class TestUploadAsset:
         """Test upload asset with API error."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.assets.create.side_effect = Exception("401 Invalid API key")
+        mock_client.assets.create = AsyncMock(
+            side_effect=Exception("401 Invalid API key")
+        )
 
         # Mock the file data
         mock_file = Mock()
@@ -461,7 +465,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create.return_value = mock_gumnut_asset
+        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
 
         # Mock the file data
         mock_file = Mock()
@@ -571,7 +575,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 10240
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create.return_value = mock_gumnut_asset
+        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
 
         mock_file = Mock()
         mock_file.filename = "video.mp4"
@@ -618,7 +622,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create.return_value = mock_gumnut_asset
+        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
 
         # Mock the file data
         mock_file = Mock()
@@ -674,7 +678,7 @@ class TestDeleteAssets:
         """Test successful assets deletion."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.assets.delete.return_value = None
+        mock_client.assets.delete = AsyncMock(return_value=None)
 
         asset_ids = [uuid4(), uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
@@ -697,10 +701,12 @@ class TestDeleteAssets:
         mock_client = Mock()
 
         # First delete succeeds, second fails with 404
-        mock_client.assets.delete.side_effect = [
-            None,  # Success
-            GumnutError("404 Not found"),  # Failure
-        ]
+        mock_client.assets.delete = AsyncMock(
+            side_effect=[
+                None,  # Success
+                GumnutError("404 Not found"),  # Failure
+            ]
+        )
 
         asset_ids = [uuid4(), uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
@@ -721,7 +727,7 @@ class TestDeleteAssets:
         """Test that delete_assets emits on_asset_delete for each deleted asset."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.assets.delete.return_value = None
+        mock_client.assets.delete = AsyncMock(return_value=None)
 
         asset_ids = [uuid4(), uuid4(), uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
@@ -749,7 +755,7 @@ class TestDeleteAssets:
         """Test that WebSocket emission errors don't fail the deletion."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.assets.delete.return_value = None
+        mock_client.assets.delete = AsyncMock(return_value=None)
 
         asset_ids = [uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
@@ -880,7 +886,7 @@ class TestUpdateAsset:
         """Test successful asset update (calls get_asset_info)."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.assets.retrieve.return_value = sample_gumnut_asset
+        mock_client.assets.retrieve = AsyncMock(return_value=sample_gumnut_asset)
 
         request = UpdateAssetDto(isFavorite=True)
 
@@ -906,7 +912,7 @@ class TestGetAssetInfo:
         """Test successful retrieval of asset info."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.assets.retrieve.return_value = sample_gumnut_asset
+        mock_client.assets.retrieve = AsyncMock(return_value=sample_gumnut_asset)
 
         # Execute
         result = await get_asset_info(
@@ -924,7 +930,7 @@ class TestGetAssetInfo:
         """Test handling of asset not found."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_client.assets.retrieve.side_effect = Exception("404 Not found")
+        mock_client.assets.retrieve = AsyncMock(side_effect=Exception("404 Not found"))
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -947,11 +953,15 @@ class TestViewAsset:
         # Mock the streaming response context manager
         mock_response = Mock()
         mock_response.headers = {"content-type": "image/jpeg"}
-        mock_response.iter_bytes.return_value = iter([b"fake image data"])
+
+        async def _iter_bytes(chunk_size=None):
+            yield b"fake image data"
+
+        mock_response.iter_bytes = _iter_bytes
 
         mock_context = Mock()
-        mock_context.__enter__ = Mock(return_value=mock_response)
-        mock_context.__exit__ = Mock(return_value=None)
+        mock_context.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_context.__aexit__ = AsyncMock(return_value=None)
 
         mock_client.assets.with_streaming_response.download_thumbnail.return_value = (
             mock_context
@@ -965,11 +975,7 @@ class TestViewAsset:
         # Assert
         assert result.media_type == "image/jpeg"
         assert hasattr(result, "body_iterator")  # StreamingResponse has body_iterator
-        # Called twice: once for headers, once for streaming
-        assert (
-            mock_client.assets.with_streaming_response.download_thumbnail.call_count
-            == 2
-        )
+        mock_client.assets.with_streaming_response.download_thumbnail.assert_called_once()
 
     @pytest.mark.anyio
     async def test_view_asset_fullsize_uses_thumbnail_api(self, sample_uuid):
@@ -985,11 +991,15 @@ class TestViewAsset:
         # Mock the streaming response context manager
         mock_response = Mock()
         mock_response.headers = {"content-type": "image/webp"}
-        mock_response.iter_bytes.return_value = iter([b"fake image data"])
+
+        async def _iter_bytes(chunk_size=None):
+            yield b"fake image data"
+
+        mock_response.iter_bytes = _iter_bytes
 
         mock_context = Mock()
-        mock_context.__enter__ = Mock(return_value=mock_response)
-        mock_context.__exit__ = Mock(return_value=None)
+        mock_context.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_context.__aexit__ = AsyncMock(return_value=None)
 
         # Mock download_thumbnail, NOT download
         mock_client.assets.with_streaming_response.download_thumbnail.return_value = (
@@ -1005,11 +1015,7 @@ class TestViewAsset:
         assert result.media_type == "image/webp"
         assert hasattr(result, "body_iterator")  # StreamingResponse has body_iterator
         # Verify download_thumbnail was called with size="fullsize", NOT download()
-        # Called twice: once for headers, once for streaming
-        assert (
-            mock_client.assets.with_streaming_response.download_thumbnail.call_count
-            == 2
-        )
+        mock_client.assets.with_streaming_response.download_thumbnail.assert_called_once()
         mock_client.assets.with_streaming_response.download.assert_not_called()
 
     @pytest.mark.anyio
@@ -1043,11 +1049,15 @@ class TestDownloadAsset:
             "content-type": "image/jpeg",
             "content-disposition": 'attachment; filename="test.jpg"',
         }
-        mock_response.iter_bytes.return_value = iter([b"fake image data"])
+
+        async def _iter_bytes(chunk_size=None):
+            yield b"fake image data"
+
+        mock_response.iter_bytes = _iter_bytes
 
         mock_context = Mock()
-        mock_context.__enter__ = Mock(return_value=mock_response)
-        mock_context.__exit__ = Mock(return_value=None)
+        mock_context.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_context.__aexit__ = AsyncMock(return_value=None)
 
         mock_client.assets.with_streaming_response.download.return_value = mock_context
 
@@ -1058,8 +1068,7 @@ class TestDownloadAsset:
         assert result.media_type == "image/jpeg"
         assert hasattr(result, "body_iterator")  # StreamingResponse has body_iterator
         assert "Content-Disposition" in result.headers
-        # Called twice: once for headers, once for streaming
-        assert mock_client.assets.with_streaming_response.download.call_count == 2
+        mock_client.assets.with_streaming_response.download.assert_called_once()
 
     @pytest.mark.anyio
     async def test_download_asset_uses_download_not_thumbnail(self, sample_uuid):
@@ -1079,11 +1088,15 @@ class TestDownloadAsset:
             "content-type": "image/heic",
             "content-disposition": 'attachment; filename="IMG_1234.heic"',
         }
-        mock_response.iter_bytes.return_value = iter([b"fake heic data"])
+
+        async def _aiter_bytes(chunk_size=None):
+            yield b"fake heic data"
+
+        mock_response.aiter_bytes = _aiter_bytes
 
         mock_context = Mock()
-        mock_context.__enter__ = Mock(return_value=mock_response)
-        mock_context.__exit__ = Mock(return_value=None)
+        mock_context.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_context.__aexit__ = AsyncMock(return_value=None)
 
         mock_client.assets.with_streaming_response.download.return_value = mock_context
 
@@ -1092,8 +1105,7 @@ class TestDownloadAsset:
 
         # Assert - download() was called, NOT download_thumbnail()
         assert result.media_type == "image/heic"
-        # Called twice: once for headers, once for streaming
-        assert mock_client.assets.with_streaming_response.download.call_count == 2
+        mock_client.assets.with_streaming_response.download.assert_called_once()
         mock_client.assets.with_streaming_response.download_thumbnail.assert_not_called()
 
 
