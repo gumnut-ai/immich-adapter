@@ -85,7 +85,7 @@ uv run fastapi run --port 3001 \
 **Configuration Explanation:**
 
 - `--timeout-keep-alive 75`: Sets keep-alive timeout to 75 seconds (iOS-friendly, matches typical mobile client expectations)
-- `--limit-concurrency 200`: Limits concurrent connections to provide backpressure before resource exhaustion (returns 503 with Retry-After when hit)
+- `--limit-concurrency 200`: Limits concurrent connections to provide backpressure before resource exhaustion
 - `--backlog 2048`: Sets the socket backlog queue size for pending connections (helps with bursts of rapid requests)
 
 **Why these settings matter for mobile clients:**
