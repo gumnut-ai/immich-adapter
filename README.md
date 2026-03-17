@@ -78,14 +78,14 @@ For production deployments or when testing with mobile clients (iOS/Android), us
 ```bash
 uv run fastapi run --port 3001 \
   --timeout-keep-alive 75 \
-  --limit-concurrency 1000 \
+  --limit-concurrency 200 \
   --backlog 2048
 ```
 
 **Configuration Explanation:**
 
 - `--timeout-keep-alive 75`: Sets keep-alive timeout to 75 seconds (iOS-friendly, matches typical mobile client expectations)
-- `--limit-concurrency 1000`: Limits concurrent connections to prevent resource exhaustion
+- `--limit-concurrency 200`: Limits concurrent connections to provide backpressure before resource exhaustion
 - `--backlog 2048`: Sets the socket backlog queue size for pending connections (helps with bursts of rapid requests)
 
 **Why these settings matter for mobile clients:**

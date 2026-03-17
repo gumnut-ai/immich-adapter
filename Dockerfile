@@ -106,5 +106,5 @@ ENV LOG_LEVEL=info
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level ${LOG_LEVEL} \
   --timeout-graceful-shutdown 60 \
   --timeout-keep-alive ${TIMEOUT_KEEP_ALIVE:-75} \
-  --limit-concurrency ${LIMIT_CONCURRENCY:-1000} \
+  --limit-concurrency ${LIMIT_CONCURRENCY:-200} \
   --backlog ${BACKLOG:-2048}"]
