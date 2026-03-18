@@ -48,7 +48,7 @@ async def get_current_user_admin(
         user = await client.users.me()
     except Exception as e:
         logger.error(f"Failed to fetch user from Gumnut: {e}")
-        raise map_gumnut_error(e, "Failed to fetch user details")
+        raise map_gumnut_error(e, "Failed to fetch user details") from e
 
     # Map Gumnut UserResponse to Immich UserAdminResponseDto
     # Combine first_name and last_name into Immich's single "name" field

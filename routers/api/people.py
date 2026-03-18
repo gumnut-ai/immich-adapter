@@ -51,7 +51,7 @@ async def create_person(
         return convert_gumnut_person_to_immich(gumnut_person)
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to create person")
+        raise map_gumnut_error(e, "Failed to create person") from e
 
 
 @router.put("")
@@ -140,7 +140,7 @@ async def update_person(
         return convert_gumnut_person_to_immich(gumnut_person)
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to update person")
+        raise map_gumnut_error(e, "Failed to update person") from e
 
 
 @router.get("")
@@ -188,7 +188,7 @@ async def get_all_people(
         )
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch people")
+        raise map_gumnut_error(e, "Failed to fetch people") from e
 
 
 @router.delete("", status_code=204)
@@ -206,7 +206,7 @@ async def delete_people(
         return Response(status_code=204)
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to delete people")
+        raise map_gumnut_error(e, "Failed to delete people") from e
 
 
 @router.get(
@@ -271,7 +271,7 @@ async def get_thumbnail(
     except Exception as e:
         # log the error
         logger.warning(f"Error fetching thumbnail for person {id}: {e}")
-        raise map_gumnut_error(e, "Failed to fetch asset")
+        raise map_gumnut_error(e, "Failed to fetch asset") from e
 
 
 @router.get("/{id}")
@@ -294,7 +294,7 @@ async def get_person(
         # Re-raise HTTP exceptions (like 404 for person not found)
         raise
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch person")
+        raise map_gumnut_error(e, "Failed to fetch person") from e
 
 
 @router.get("/{id}/statistics")
@@ -316,7 +316,7 @@ async def get_person_statistics(
             )
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch person")
+        raise map_gumnut_error(e, "Failed to fetch person") from e
 
 
 @router.delete("/{id}", status_code=204)
@@ -333,7 +333,7 @@ async def delete_person(
         return Response(status_code=204)
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to delete people")
+        raise map_gumnut_error(e, "Failed to delete people") from e
 
 
 @router.post("/{id}/merge")

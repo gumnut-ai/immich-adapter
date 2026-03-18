@@ -74,7 +74,7 @@ async def get_all_albums(
         return immich_albums
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch albums")
+        raise map_gumnut_error(e, "Failed to fetch albums") from e
 
 
 @router.get("/statistics")
@@ -104,7 +104,7 @@ async def get_album_statistics(
         )
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch album statistics")
+        raise map_gumnut_error(e, "Failed to fetch album statistics") from e
 
 
 @router.get("/{id}")
@@ -155,7 +155,7 @@ async def get_album_info(
         return immich_album
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch album")
+        raise map_gumnut_error(e, "Failed to fetch album") from e
 
 
 @router.post("", status_code=201)
@@ -187,7 +187,7 @@ async def create_album(
         return immich_album
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to create album")
+        raise map_gumnut_error(e, "Failed to create album") from e
 
 
 @router.put("/{id}/assets")
@@ -264,7 +264,7 @@ async def add_assets_to_album(
         # Re-raise HTTP exceptions (like 404 for album not found)
         raise
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to update album assets")
+        raise map_gumnut_error(e, "Failed to update album assets") from e
 
 
 @router.patch("/{id}")
@@ -315,7 +315,7 @@ async def update_album(
         # Re-raise HTTP exceptions (like 404 for album not found)
         raise
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to update album")
+        raise map_gumnut_error(e, "Failed to update album") from e
 
 
 @router.delete("/{id}/assets")
@@ -390,7 +390,7 @@ async def remove_asset_from_album(
         # Re-raise HTTP exceptions (like 404 for album not found)
         raise
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to remove album assets")
+        raise map_gumnut_error(e, "Failed to remove album assets") from e
 
 
 @router.delete("/{id}", status_code=204)
@@ -423,7 +423,7 @@ async def delete_album(
         # Re-raise HTTP exceptions (like 404 for album not found)
         raise
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to delete album")
+        raise map_gumnut_error(e, "Failed to delete album") from e
 
 
 @router.put("/assets")
@@ -490,7 +490,7 @@ async def add_assets_to_albums(
             )
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to add assets to albums")
+        raise map_gumnut_error(e, "Failed to add assets to albums") from e
 
 
 @router.delete("/{id}/user/{userId}", status_code=204)

@@ -162,7 +162,7 @@ async def _download_asset_content(
         )
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch asset")
+        raise map_gumnut_error(e, "Failed to fetch asset") from e
 
 
 def _immich_checksum_to_base64(checksum: str) -> str:
@@ -254,7 +254,7 @@ async def bulk_upload_check(
         return AssetBulkUploadCheckResponseDto(results=results)
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to check bulk upload assets")
+        raise map_gumnut_error(e, "Failed to check bulk upload assets") from e
 
 
 @router.post("/exist")
@@ -274,7 +274,7 @@ async def check_existing_assets(
             for asset in existing_assets_response.assets
         ]
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to check existing assets")
+        raise map_gumnut_error(e, "Failed to check existing assets") from e
 
     return CheckExistingAssetsResponseDto(existingIds=existing_ids)
 
@@ -426,7 +426,7 @@ async def upload_asset(
             raise HTTPException(status_code=415, detail="Unsupported media type")
         else:
             # Use the general error mapper for other cases
-            raise map_gumnut_error(e, "Failed to upload asset")
+            raise map_gumnut_error(e, "Failed to upload asset") from e
 
 
 @router.put("", status_code=204)
@@ -510,7 +510,7 @@ async def delete_assets(
         return Response(status_code=204)
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to delete assets")
+        raise map_gumnut_error(e, "Failed to delete assets") from e
 
 
 @router.get("/device/{deviceId}", deprecated=True)
@@ -565,7 +565,7 @@ async def get_asset_statistics(
         )
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch asset statistics")
+        raise map_gumnut_error(e, "Failed to fetch asset statistics") from e
 
 
 @router.get("/random", deprecated=True)
@@ -644,7 +644,7 @@ async def get_asset_info(
         return immich_asset
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch asset")
+        raise map_gumnut_error(e, "Failed to fetch asset") from e
 
 
 @router.get(
