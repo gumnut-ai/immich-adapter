@@ -271,7 +271,7 @@ async def get_thumbnail(
     except Exception as e:
         # log the error
         logger.warning(f"Error fetching thumbnail for person {id}: {e}")
-        raise map_gumnut_error(e, "Failed to fetch asset") from e
+        raise map_gumnut_error(e, "Failed to fetch person thumbnail") from e
 
 
 @router.get("/{id}")
@@ -316,7 +316,7 @@ async def get_person_statistics(
             )
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch person") from e
+        raise map_gumnut_error(e, "Failed to fetch person statistics") from e
 
 
 @router.delete("/{id}", status_code=204)
@@ -333,7 +333,7 @@ async def delete_person(
         return Response(status_code=204)
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to delete people") from e
+        raise map_gumnut_error(e, "Failed to delete person") from e
 
 
 @router.post("/{id}/merge")
