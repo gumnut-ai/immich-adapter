@@ -130,7 +130,7 @@ def make_mock_streaming_context(
     headers: dict[str, str],
     chunks: tuple[bytes, ...] = (b"fake image data",),
     *,
-    method: str = "iter_bytes",
+    method: str,
 ) -> Mock:
     """Create a mock streaming response context manager.
 

@@ -950,7 +950,9 @@ class TestViewAsset:
         """Test successful asset thumbnail view."""
         # Setup - create mock client
         mock_client = Mock()
-        mock_context = make_mock_streaming_context({"content-type": "image/jpeg"})
+        mock_context = make_mock_streaming_context(
+            {"content-type": "image/jpeg"}, method="iter_bytes"
+        )
         mock_client.assets.with_streaming_response.download_thumbnail.return_value = (
             mock_context
         )
@@ -975,7 +977,9 @@ class TestViewAsset:
         """
         # Setup - create mock client
         mock_client = Mock()
-        mock_context = make_mock_streaming_context({"content-type": "image/webp"})
+        mock_context = make_mock_streaming_context(
+            {"content-type": "image/webp"}, method="iter_bytes"
+        )
         # Mock download_thumbnail, NOT download
         mock_client.assets.with_streaming_response.download_thumbnail.return_value = (
             mock_context
@@ -1022,7 +1026,8 @@ class TestDownloadAsset:
             {
                 "content-type": "image/jpeg",
                 "content-disposition": 'attachment; filename="test.jpg"',
-            }
+            },
+            method="iter_bytes",
         )
         mock_client.assets.with_streaming_response.download.return_value = mock_context
 
