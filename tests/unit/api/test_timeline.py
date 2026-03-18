@@ -110,7 +110,7 @@ class TestFetchAssetCounts:
         assert len(result) == 2
         assert result[0].count == 5
         assert result[1].count == 10
-        mock_client.assets.counts.assert_called_once_with(group_by="month", limit=1000)
+        mock_client.assets.counts.assert_called_once_with(group_by="month", limit=200)
 
     @pytest.mark.anyio
     async def test_pagination(self):

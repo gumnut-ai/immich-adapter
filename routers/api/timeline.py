@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from gumnut import AsyncGumnut
 from gumnut.types.asset_count_response import AssetCountResponse, Data
 
+from routers.api.constants import PHOTOS_API_MAX_PAGE_SIZE
 from routers.immich_models import (
     AssetOrder,
     AssetTypeEnum,
@@ -36,7 +37,7 @@ async def _fetch_asset_counts(
     person_id: str | None = None,
 ) -> list[Data]:
     """Fetch all monthly asset counts from photos-api, paginating if needed."""
-    kwargs: dict[str, Any] = {"group_by": "month", "limit": 1000}
+    kwargs: dict[str, Any] = {"group_by": "month", "limit": PHOTOS_API_MAX_PAGE_SIZE}
     if album_id is not None:
         kwargs["album_id"] = album_id
     if person_id is not None:
