@@ -127,22 +127,25 @@ def multiple_gumnut_assets():
 
 
 def make_mock_streaming_context(
-    headers: dict[str, str], chunks: tuple[bytes, ...] = (b"fake image data",)
+    headers: dict[str, str],
+    chunks: tuple[bytes, ...] = (b"fake image data",),
+    *,
+    method: str = "iter_bytes",
 ) -> Mock:
     """Create a mock streaming response context manager.
 
-    Returns a mock context manager that yields chunks when iterated via
-    ``iter_bytes`` or ``aiter_bytes``.
+    Returns a mock context manager whose response exposes only the specified
+    iterator method (``iter_bytes`` or ``aiter_bytes``), so tests fail loudly
+    if the code under test calls the wrong one.
     """
     mock_response = Mock()
     mock_response.headers = headers
 
-    async def _iter_bytes(chunk_size=None):
+    async def _iter(chunk_size: int | None = None):
         for chunk in chunks:
             yield chunk
 
-    mock_response.iter_bytes = _iter_bytes
-    mock_response.aiter_bytes = _iter_bytes
+    setattr(mock_response, method, _iter)
 
     mock_context = Mock()
     mock_context.__aenter__ = AsyncMock(return_value=mock_response)

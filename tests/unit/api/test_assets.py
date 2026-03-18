@@ -1052,6 +1052,7 @@ class TestDownloadAsset:
                 "content-disposition": 'attachment; filename="IMG_1234.heic"',
             },
             chunks=(b"fake heic data",),
+            method="aiter_bytes",
         )
         mock_client.assets.with_streaming_response.download.return_value = mock_context
 
