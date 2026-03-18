@@ -45,7 +45,7 @@ from routers.api.sync.fk_integrity import (
 logger = logging.getLogger(__name__)
 
 # Page size for events API pagination
-EVENTS_PAGE_SIZE = 500
+EVENTS_PAGE_SIZE = 200
 
 # Delete event types that are converted to Immich delete sync models
 _DELETE_EVENT_TYPES = frozenset(

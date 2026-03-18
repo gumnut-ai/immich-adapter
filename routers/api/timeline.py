@@ -36,7 +36,7 @@ async def _fetch_asset_counts(
     person_id: str | None = None,
 ) -> list[Data]:
     """Fetch all monthly asset counts from photos-api, paginating if needed."""
-    kwargs: dict[str, Any] = {"group_by": "month", "limit": 1000}
+    kwargs: dict[str, Any] = {"group_by": "month", "limit": 200}
     if album_id is not None:
         kwargs["album_id"] = album_id
     if person_id is not None:
