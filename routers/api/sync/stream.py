@@ -15,6 +15,7 @@ from typing import Any, AsyncGenerator
 from gumnut import AsyncGumnut
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.face_response import FaceResponse
+from gumnut.types.user_response import UserResponse
 
 from routers.immich_models import (
     SyncEntityType,
@@ -376,6 +377,7 @@ async def generate_sync_stream(
     gumnut_client: AsyncGumnut,
     request: SyncStreamDto,
     checkpoint_map: dict[SyncEntityType, Checkpoint],
+    current_user: UserResponse,
 ) -> AsyncGenerator[str, None]:
     """
     Generate sync stream as JSON Lines (newline-delimited JSON).
@@ -394,10 +396,16 @@ async def generate_sync_stream(
     cursor-based pagination.
 
     Each line is a JSON object with: type, data, and ack (checkpoint cursor).
+
+    Args:
+        gumnut_client: Authenticated Gumnut API client for entity fetching.
+        request: The sync stream request with entity types and reset flag.
+        checkpoint_map: Existing checkpoints keyed by entity type.
+        current_user: Pre-fetched current user (resolved in route handler
+            before streaming begins, so auth errors return proper HTTP 401
+            instead of being silently swallowed inside the generator).
     """
     try:
-        # Get current user for owner_id
-        current_user = await gumnut_client.users.me()
         owner_id = str(safe_uuid_from_user_id(current_user.id))
 
         requested_types = set(request.types)

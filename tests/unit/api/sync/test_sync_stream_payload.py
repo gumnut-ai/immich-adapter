@@ -167,7 +167,7 @@ class TestFacePersonIdOverride:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         # Collect what was streamed
@@ -236,7 +236,7 @@ class TestFacePersonIdOverride:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         streamed_person_ids = set()
@@ -688,7 +688,7 @@ class TestFacePayloadOverrideDeletedPerson:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         face_events = [e for e in events if e["type"] == "AssetFaceV1"]
@@ -890,7 +890,7 @@ class TestFacePayloadOverrideDeletedPerson:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         face_events_out = [e for e in events if e["type"] == "AssetFaceV1"]
@@ -1005,7 +1005,7 @@ class TestFacePayloadOverrideDeletedPerson:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         face_events_out = [e for e in events if e["type"] == "AssetFaceV1"]
@@ -1090,7 +1090,7 @@ class TestAlbumPayloadOverrideDeletedAsset:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         album_events_out = [e for e in events if e["type"] == "AlbumV1"]

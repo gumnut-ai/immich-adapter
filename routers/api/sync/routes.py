@@ -38,6 +38,7 @@ from routers.immich_models import (
 )
 from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
 from routers.utils.current_user import get_current_user
+from routers.utils.error_mapping import map_gumnut_error
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 
 from routers.api.sync.events import to_ack_string
@@ -496,7 +497,16 @@ async def get_sync_stream(
             },
         )
 
+    # Fetch current user before starting the stream. This ensures auth
+    # errors (e.g. expired JWT) return a proper HTTP 401 instead of being
+    # silently swallowed inside the streaming generator after the 200
+    # status has already been committed.
+    try:
+        current_user = await gumnut_client.users.me()
+    except Exception as e:
+        raise map_gumnut_error(e, "Failed to authenticate for sync stream") from e
+
     return StreamingResponse(
-        generate_sync_stream(gumnut_client, request, checkpoint_map),
+        generate_sync_stream(gumnut_client, request, checkpoint_map, current_user),
         media_type="application/jsonlines+json",
     )
