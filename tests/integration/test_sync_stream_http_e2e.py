@@ -841,3 +841,55 @@ class TestSyncStreamHTTPE2E:
                 f"  expected: {expected}\n"
                 f"  actual: {actual}"
             )
+
+
+class TestSyncStreamAuthErrors:
+    """Tests for authentication error handling in the sync stream endpoint."""
+
+    def test_expired_jwt_returns_401(self, mock_checkpoint_store, mock_session_store):
+        """Expired JWT returns HTTP 401 instead of an empty 200 stream.
+
+        Previously, the users.me() call happened inside the streaming
+        generator after the 200 status was committed, so auth errors were
+        silently swallowed. Now the call happens in the route handler
+        before streaming begins.
+        """
+        import httpx
+        from gumnut import AuthenticationError
+
+        # Create a client whose users.me() raises AuthenticationError
+        expired_client = Mock()
+        req = httpx.Request("GET", "http://test/api/users/me")
+        resp = httpx.Response(401, json={"detail": "JWT has expired"}, request=req)
+        expired_client.users.me = AsyncMock(
+            side_effect=AuthenticationError(
+                "Error code: 401",
+                response=resp,
+                body={"detail": "JWT has expired"},
+            )
+        )
+
+        app.dependency_overrides[get_authenticated_gumnut_client] = (
+            lambda: expired_client
+        )
+        app.dependency_overrides[get_checkpoint_store] = lambda: mock_checkpoint_store
+        app.dependency_overrides[get_session_store] = lambda: mock_session_store
+
+        try:
+            with patch(
+                "routers.middleware.auth_middleware.get_session_store",
+                return_value=mock_session_store,
+            ):
+                with TestClient(app, base_url="https://testserver") as client:
+                    response = client.post(
+                        "/api/sync/stream",
+                        json={"types": ["AuthUsersV1"]},
+                        headers={"Authorization": f"Bearer {TEST_SESSION_UUID}"},
+                    )
+
+            assert response.status_code == 401
+            body = response.json()
+            assert body["statusCode"] == 401
+            assert "JWT has expired" in body["message"]
+        finally:
+            app.dependency_overrides.clear()

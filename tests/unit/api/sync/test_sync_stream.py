@@ -61,7 +61,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 1
@@ -82,7 +82,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         auth_event = events[0]
@@ -126,7 +126,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         asset_event_output = events[0]
@@ -144,14 +144,18 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_closes_stream_on_exception(self):
         """Stream closes without yielding an error event when an exception occurs."""
-        mock_client = Mock()
-        mock_client.users.me = AsyncMock(side_effect=Exception("API error"))
+        mock_user = create_mock_user(datetime.now(timezone.utc))
+        mock_client = create_mock_gumnut_client(mock_user)
+        # Simulate an error during event fetching inside the generator
+        mock_client.events.get = AsyncMock(side_effect=Exception("API error"))
 
-        request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1])
+        request = SyncStreamDto(
+            types=[SyncRequestType.AssetsV1],
+        )
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 0
@@ -171,7 +175,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -190,7 +194,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -219,7 +223,7 @@ class TestGenerateSyncStream:
         checkpoint_map = {SyncEntityType.AuthUserV1: checkpoint}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 1
@@ -243,7 +247,7 @@ class TestGenerateSyncStream:
         checkpoint_map = {SyncEntityType.AuthUserV1: checkpoint}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -261,7 +265,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -294,7 +298,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -324,7 +328,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -361,7 +365,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -391,7 +395,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -421,7 +425,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -453,7 +457,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -490,7 +494,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -526,7 +530,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         # Only SyncCompleteV1 — album_asset_removed without payload was skipped
@@ -558,7 +562,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -587,7 +591,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -615,7 +619,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -643,7 +647,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         assert len(events) == 2
@@ -670,7 +674,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         # Only SyncCompleteV1 — exif_deleted was skipped
@@ -699,7 +703,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         # Only SyncCompleteV1 — missing entity was skipped
@@ -742,7 +746,7 @@ class TestGenerateSyncStream:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         # AssetV1 (upsert) + AssetDeleteV1 (delete) + SyncCompleteV1

@@ -109,7 +109,7 @@ class TestUpsertsBeforeDeletes:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         event_types = [e["type"] for e in events]
@@ -192,7 +192,7 @@ class TestUpsertsBeforeDeletes:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         event_types = [e["type"] for e in events if e["type"] != "SyncCompleteV1"]
@@ -287,7 +287,7 @@ class TestUpsertsBeforeDeletes:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         delete_types = [
@@ -330,7 +330,7 @@ class TestUpsertsBeforeDeletes:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         event_types = [e["type"] for e in events]
@@ -363,7 +363,7 @@ class TestUpsertsBeforeDeletes:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         event_types = [e["type"] for e in events]
@@ -422,7 +422,7 @@ class TestUpsertsBeforeDeletes:
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map)
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
         )
 
         delete_events = [e for e in events if e["type"] == "PersonDeleteV1"]
