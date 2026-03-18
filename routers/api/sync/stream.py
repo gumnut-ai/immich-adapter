@@ -24,6 +24,7 @@ from routers.immich_models import (
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
 from services.checkpoint_store import Checkpoint
 
+from routers.api.constants import PHOTOS_API_MAX_PAGE_SIZE
 from routers.api.sync.converters import (
     gumnut_user_to_sync_auth_user_v1,
     gumnut_user_to_sync_user_v1,
@@ -45,7 +46,7 @@ from routers.api.sync.fk_integrity import (
 logger = logging.getLogger(__name__)
 
 # Page size for events API pagination
-EVENTS_PAGE_SIZE = 200
+EVENTS_PAGE_SIZE = PHOTOS_API_MAX_PAGE_SIZE
 
 # Delete event types that are converted to Immich delete sync models
 _DELETE_EVENT_TYPES = frozenset(
