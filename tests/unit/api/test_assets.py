@@ -38,6 +38,7 @@ from routers.api.assets import (
     get_asset_metadata_by_key,
     play_asset_video,
 )
+from tests.conftest import make_mock_streaming_context
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 from routers.immich_models import (
     Action,
@@ -949,20 +950,9 @@ class TestViewAsset:
         """Test successful asset thumbnail view."""
         # Setup - create mock client
         mock_client = Mock()
-
-        # Mock the streaming response context manager
-        mock_response = Mock()
-        mock_response.headers = {"content-type": "image/jpeg"}
-
-        async def _iter_bytes(chunk_size=None):
-            yield b"fake image data"
-
-        mock_response.iter_bytes = _iter_bytes
-
-        mock_context = Mock()
-        mock_context.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_context.__aexit__ = AsyncMock(return_value=None)
-
+        mock_context = make_mock_streaming_context(
+            {"content-type": "image/jpeg"}, method="iter_bytes"
+        )
         mock_client.assets.with_streaming_response.download_thumbnail.return_value = (
             mock_context
         )
@@ -987,20 +977,9 @@ class TestViewAsset:
         """
         # Setup - create mock client
         mock_client = Mock()
-
-        # Mock the streaming response context manager
-        mock_response = Mock()
-        mock_response.headers = {"content-type": "image/webp"}
-
-        async def _iter_bytes(chunk_size=None):
-            yield b"fake image data"
-
-        mock_response.iter_bytes = _iter_bytes
-
-        mock_context = Mock()
-        mock_context.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_context.__aexit__ = AsyncMock(return_value=None)
-
+        mock_context = make_mock_streaming_context(
+            {"content-type": "image/webp"}, method="iter_bytes"
+        )
         # Mock download_thumbnail, NOT download
         mock_client.assets.with_streaming_response.download_thumbnail.return_value = (
             mock_context
@@ -1043,22 +1022,13 @@ class TestDownloadAsset:
         # Setup - create mock client
         mock_client = Mock()
 
-        # Mock the streaming response context manager
-        mock_response = Mock()
-        mock_response.headers = {
-            "content-type": "image/jpeg",
-            "content-disposition": 'attachment; filename="test.jpg"',
-        }
-
-        async def _iter_bytes(chunk_size=None):
-            yield b"fake image data"
-
-        mock_response.iter_bytes = _iter_bytes
-
-        mock_context = Mock()
-        mock_context.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_context.__aexit__ = AsyncMock(return_value=None)
-
+        mock_context = make_mock_streaming_context(
+            {
+                "content-type": "image/jpeg",
+                "content-disposition": 'attachment; filename="test.jpg"',
+            },
+            method="iter_bytes",
+        )
         mock_client.assets.with_streaming_response.download.return_value = mock_context
 
         # Execute
@@ -1081,23 +1051,14 @@ class TestDownloadAsset:
         """
         # Setup - create mock client
         mock_client = Mock()
-
-        # Mock the streaming response context manager
-        mock_response = Mock()
-        mock_response.headers = {
-            "content-type": "image/heic",
-            "content-disposition": 'attachment; filename="IMG_1234.heic"',
-        }
-
-        async def _aiter_bytes(chunk_size=None):
-            yield b"fake heic data"
-
-        mock_response.aiter_bytes = _aiter_bytes
-
-        mock_context = Mock()
-        mock_context.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_context.__aexit__ = AsyncMock(return_value=None)
-
+        mock_context = make_mock_streaming_context(
+            {
+                "content-type": "image/heic",
+                "content-disposition": 'attachment; filename="IMG_1234.heic"',
+            },
+            chunks=(b"fake heic data",),
+            method="aiter_bytes",
+        )
         mock_client.assets.with_streaming_response.download.return_value = mock_context
 
         # Execute

@@ -8,7 +8,7 @@ import os
 os.environ["TESTING"] = "1"
 
 import pytest
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import List, Any
@@ -124,6 +124,33 @@ def multiple_gumnut_assets():
         asset.checksum = f"checksum-{i}"
         assets.append(asset)
     return assets
+
+
+def make_mock_streaming_context(
+    headers: dict[str, str],
+    chunks: tuple[bytes, ...] = (b"fake image data",),
+    *,
+    method: str,
+) -> Mock:
+    """Create a mock streaming response context manager.
+
+    Returns a mock context manager whose response exposes only the specified
+    iterator method (``iter_bytes`` or ``aiter_bytes``), so tests fail loudly
+    if the code under test calls the wrong one.
+    """
+    mock_response = Mock()
+    mock_response.headers = headers
+
+    async def _iter(chunk_size: int | None = None):
+        for chunk in chunks:
+            yield chunk
+
+    setattr(mock_response, method, _iter)
+
+    mock_context = Mock()
+    mock_context.__aenter__ = AsyncMock(return_value=mock_response)
+    mock_context.__aexit__ = AsyncMock(return_value=None)
+    return mock_context
 
 
 class MockSyncCursorPage:
