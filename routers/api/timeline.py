@@ -107,7 +107,7 @@ async def get_time_buckets(
         return buckets
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch timeline buckets")
+        raise map_gumnut_error(e, "Failed to fetch timeline buckets") from e
 
 
 @router.get("/bucket")
@@ -259,4 +259,4 @@ async def get_time_bucket(
         }
 
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch timeline bucket")
+        raise map_gumnut_error(e, "Failed to fetch timeline bucket") from e
