@@ -504,7 +504,7 @@ async def get_sync_stream(
     try:
         current_user = await gumnut_client.users.me()
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to authenticate for sync stream")
+        raise map_gumnut_error(e, "Failed to authenticate for sync stream") from e
 
     return StreamingResponse(
         generate_sync_stream(gumnut_client, request, checkpoint_map, current_user),
