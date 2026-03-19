@@ -44,14 +44,15 @@ def _immich_people_sort_key(person: PersonResponse) -> tuple:
     5. Name alphabetically (nulls last)
     6. Creation date ascending (oldest first, as tiebreaker)
     """
-    has_no_name = not person.name or person.name.strip() == ""
-    asset_count = person.asset_count if person.asset_count is not None else 0
+    normalized_name = (person.name or "").strip()
+    has_no_name = normalized_name == ""
+    asset_count = person.asset_count or 0
     return (
         person.is_hidden,  # False < True → visible first
         not person.is_favorite,  # True first → negate so favorites sort first
         has_no_name,  # False < True → named people first
         -asset_count,  # Negate for descending order
-        (has_no_name, (person.name or "").lower()),  # Alphabetical, nulls last
+        normalized_name.casefold(),  # Alphabetical (unnamed all sort as "")
         person.created_at,  # Ascending (oldest first)
     )
 

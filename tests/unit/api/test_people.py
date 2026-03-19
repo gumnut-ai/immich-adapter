@@ -19,7 +19,10 @@ from routers.api.people import (
     merge_person,
     reassign_faces,
 )
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_person_id
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_person_id,
+    uuid_to_gumnut_person_id,
+)
 from routers.immich_models import (
     AssetFaceUpdateDto,
     BulkIdsDto,
@@ -461,9 +464,11 @@ class TestGetAllPeopleSorting:
 
         result = await call_get_all_people(client=mock_client)
 
-        # Older should come first
-        assert result.people[0].updatedAt == older.updated_at
-        assert result.people[1].updatedAt == newer.updated_at
+        # Older should come first — identify by person ID
+        older_id = str(safe_uuid_from_person_id(older.id))
+        newer_id = str(safe_uuid_from_person_id(newer.id))
+        assert result.people[0].id == older_id
+        assert result.people[1].id == newer_id
 
     @pytest.mark.anyio
     async def test_full_immich_ordering(self, mock_sync_cursor_page):
