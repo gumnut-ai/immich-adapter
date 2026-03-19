@@ -108,5 +108,4 @@ See [docs/references/uvicorn-settings.md](docs/references/uvicorn-settings.md) f
 - [Architecture](docs/architecture/adapter-architecture.md) — how the adapter works: auth, data translation, pagination, sync, error handling
 - [Code Practices](docs/references/code-practices.md) — Python style, endpoint patterns, testing, logging
 - [Development Tools](docs/references/development-tools.md) — model generator, API compatibility, OpenAPI spec
-- [Immich Monitoring](docs/references/immich-monitoring.md) — inspecting mobile/web traffic
 - See [docs/](docs/) for design docs and more

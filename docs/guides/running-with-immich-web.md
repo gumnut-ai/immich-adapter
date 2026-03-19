@@ -116,3 +116,7 @@ The web app will be available at http://localhost:3000. The Vite dev server prox
 - **OAuth `invalid_client` error**: Check that `CLERK_OAUTH_CLIENT_ID` in photos-api `.env` is set to a real value (not the placeholder)
 - **OAuth `redirect_uri` mismatch**: Add `http://localhost:3000/auth/login` as an allowed redirect URI in the Clerk OAuth application settings
 - **OAuth `invalid_scope` error**: Enable the `openid`, `email`, and `profile` scopes on the Clerk OAuth application
+
+## Monitoring Traffic
+
+Use the developer tools in your web browser to inspect API requests and responses between the Immich web client and the adapter.

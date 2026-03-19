@@ -108,4 +108,3 @@ Detailed docs are in the `docs/` directory. Consult these when working in the re
 | Uvicorn settings | `docs/references/uvicorn-settings.md` | Server configuration, worker settings, timeouts |
 | Code practices | `docs/references/code-practices.md` | Python style, endpoint patterns, testing, logging |
 | Development tools | `docs/references/development-tools.md` | Model generation, API compatibility, OpenAPI spec |
-| Immich monitoring | `docs/references/immich-monitoring.md` | Reverse proxy, mobile traffic inspection |

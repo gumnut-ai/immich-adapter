@@ -93,3 +93,28 @@ The file you need is `rootCA.pem` in that directory.
 - **"Hostname mismatch"**: The IP in the server URL must match the SAN in the certificate. Regenerate the cert if your IP has changed
 - **OAuth callback fails**: Ensure `OAUTH_MOBILE_REDIRECT_URI` is set correctly in your `.env` (default: `app.immich:///oauth-callback`)
 - **Can't reach server**: Ensure your mobile device and dev machine are on the same network, and that no firewall is blocking port 3001
+
+## Monitoring Traffic
+
+To inspect traffic from the Immich mobile client, you need a reverse proxy between the mobile client and the server. Immich uses the Flutter framework, which bypasses system proxy settings — a standard forward proxy won't see the traffic.
+
+Set up a reverse proxy so the mobile client connects to your dev machine (which logs the traffic), and the proxy forwards requests to the actual server.
+
+### Generic Reverse Proxy Setup
+
+* Choose local listen endpoint: `http://<dev-machine-ip>:<port>`
+* Configure upstream: `https://<real-immich-host>:<port>`
+* Set Immich mobile "Server Endpoint URL" to the local listen endpoint
+* Ensure device can reach dev machine IP (same Wi-Fi/VPN)
+* _TLS note:_ if intercepting HTTPS, you may need to trust a local CA on the device and set "Allow self-signed SSL certificates" in the Advanced section of the mobile client Settings; if not intercepting, use simple pass-through/forwarding mode
+
+### Proxyman Setup
+
+* Select "Reverse Proxy..." from the "Tools Menu"
+* Check "Enable Reverse Proxy Tool" if not already checked
+* Click "+" in the lower left to create a new reverse proxy
+* Specify a name for the proxy, the local port, the remote host or IP address, and the remote port
+* If you are using OAuth with the Immich mobile client, you will need to run immich-adapter with a SSL certificate, and you will need to check "Force Using SSL when connecting to Remote Port"
+* Click "Add" to create and start the reverse proxy
+
+With Proxyman, if you are using OAuth, you will not specify https for the protocol of the immich-adapter server as the SSL connection is handled by Proxyman.
