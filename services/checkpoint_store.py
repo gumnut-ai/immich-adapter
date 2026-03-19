@@ -186,7 +186,7 @@ class CheckpointStore:
         with sentry_sdk.start_span(op="cache.get", name="checkpoint") as span:
             value = await self._redis.hget(key, entity_type.value)
             span.set_data("cache.key", [key])
-            span.set_data("cache.hit", value is not None and value != "")
+            span.set_data("cache.hit", value is not None)
             self._set_network_data(span)
             if value:
                 span.set_data("cache.item_size", len(value))
