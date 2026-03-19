@@ -2,10 +2,13 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 import redis.exceptions
+import sentry_sdk
 
+from config.settings import get_settings
 from utils.jwt_encryption import decrypt_jwt, encrypt_jwt
 from utils.redis_client import get_redis_client
 from utils.redis_protocols import AsyncRedisClient
@@ -125,6 +128,12 @@ class Session:
         return decrypt_jwt(self.stored_jwt)
 
 
+def _parse_redis_peer() -> tuple[str, int]:
+    """Parse Redis host and port from settings for Sentry cache span attributes."""
+    parsed = urlparse(get_settings().redis_url)
+    return parsed.hostname or "localhost", parsed.port or 6379
+
+
 class SessionStore:
     """
     Abstraction layer for session storage.
@@ -141,6 +150,12 @@ class SessionStore:
             redis_client: An async Redis client (redis.asyncio.Redis)
         """
         self._redis: AsyncRedisClient = redis_client
+        self._redis_host, self._redis_port = _parse_redis_peer()
+
+    def _set_network_data(self, span: Any) -> None:
+        """Set network peer attributes on a cache span."""
+        span.set_data("network.peer.address", self._redis_host)
+        span.set_data("network.peer.port", self._redis_port)
 
     async def create(
         self,
@@ -200,22 +215,29 @@ class SessionStore:
         )
 
         session_key = str(session_id)
-        pipe = self._redis.pipeline()
-        pipe.hset(f"session:{session_key}", mapping=session.to_dict())
-        pipe.sadd(f"user:{user_id}:sessions", session_key)
-        pipe.zadd("sessions:by_updated_at", {session_key: now.timestamp()})
+        session_data = session.to_dict()
+        cache_key = f"session:{session_key}"
 
-        if expires_at is not None:
-            ttl_seconds = int((expires_at - now).total_seconds())
-            if ttl_seconds <= 0:
-                # Should have been caught by the earlier `expires_at <= now` check,
-                # but guard against rounding issues.
-                ttl_seconds = 1
-            pipe.expire(f"session:{session_key}", ttl_seconds)
-            # Set same TTL on checkpoint key so it expires with the session
-            pipe.expire(f"session:{session_key}:checkpoints", ttl_seconds)
+        with sentry_sdk.start_span(op="cache.put", name="session") as span:
+            pipe = self._redis.pipeline()
+            pipe.hset(cache_key, mapping=session_data)
+            pipe.sadd(f"user:{user_id}:sessions", session_key)
+            pipe.zadd("sessions:by_updated_at", {session_key: now.timestamp()})
 
-        await pipe.execute()
+            if expires_at is not None:
+                ttl_seconds = int((expires_at - now).total_seconds())
+                if ttl_seconds <= 0:
+                    # Should have been caught by the earlier `expires_at <= now` check,
+                    # but guard against rounding issues.
+                    ttl_seconds = 1
+                pipe.expire(cache_key, ttl_seconds)
+                # Set same TTL on checkpoint key so it expires with the session
+                pipe.expire(f"session:{session_key}:checkpoints", ttl_seconds)
+
+            await pipe.execute()
+            span.set_data("cache.key", [cache_key])
+            span.set_data("cache.item_size", sum(len(v) for v in session_data.values()))
+            self._set_network_data(span)
         return session
 
     async def get_by_id(self, session_token: str) -> Session | None:
@@ -237,8 +259,15 @@ class SessionStore:
         except ValueError:
             return None
 
+        cache_key = f"session:{session_token}"
         try:
-            data = await self._redis.hgetall(f"session:{session_token}")
+            with sentry_sdk.start_span(op="cache.get", name="session") as span:
+                data = await self._redis.hgetall(cache_key)
+                span.set_data("cache.key", [cache_key])
+                span.set_data("cache.hit", bool(data))
+                self._set_network_data(span)
+                if data:
+                    span.set_data("cache.item_size", sum(len(v) for v in data.values()))
         except redis.exceptions.RedisError as e:
             raise SessionStoreError(f"Failed to retrieve session: {e}") from e
 

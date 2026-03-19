@@ -4,8 +4,12 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
+import sentry_sdk
+
+from config.settings import get_settings
 from routers.immich_models import SyncEntityType
 from utils.redis_client import get_redis_client
 from utils.redis_protocols import AsyncRedisClient
@@ -93,6 +97,12 @@ def _checkpoint_key(session_token: UUID) -> str:
     return f"session:{session_token}:checkpoints"
 
 
+def _parse_redis_peer() -> tuple[str, int]:
+    """Parse Redis host and port from settings for Sentry cache span attributes."""
+    parsed = urlparse(get_settings().redis_url)
+    return parsed.hostname or "localhost", parsed.port or 6379
+
+
 class CheckpointStore:
     """
     Abstraction layer for checkpoint storage.
@@ -112,6 +122,12 @@ class CheckpointStore:
             redis_client: An async Redis client (redis.asyncio.Redis)
         """
         self._redis: AsyncRedisClient = redis_client
+        self._redis_host, self._redis_port = _parse_redis_peer()
+
+    def _set_network_data(self, span: Any) -> None:
+        """Set network peer attributes on a cache span."""
+        span.set_data("network.peer.address", self._redis_host)
+        span.set_data("network.peer.port", self._redis_port)
 
     async def get_all(self, session_token: UUID) -> list[Checkpoint]:
         """
@@ -123,7 +139,14 @@ class CheckpointStore:
         Returns:
             List of Checkpoint objects, empty if none exist
         """
-        data = await self._redis.hgetall(_checkpoint_key(session_token))
+        key = _checkpoint_key(session_token)
+        with sentry_sdk.start_span(op="cache.get", name="checkpoint") as span:
+            data = await self._redis.hgetall(key)
+            span.set_data("cache.key", [key])
+            span.set_data("cache.hit", bool(data))
+            self._set_network_data(span)
+            if data:
+                span.set_data("cache.item_size", sum(len(v) for v in data.values()))
         if not data:
             return []
 
@@ -159,9 +182,14 @@ class CheckpointStore:
         Returns:
             Checkpoint if found, None otherwise
         """
-        value = await self._redis.hget(
-            _checkpoint_key(session_token), entity_type.value
-        )
+        key = _checkpoint_key(session_token)
+        with sentry_sdk.start_span(op="cache.get", name="checkpoint") as span:
+            value = await self._redis.hget(key, entity_type.value)
+            span.set_data("cache.key", [key])
+            span.set_data("cache.hit", value is not None and value != "")
+            self._set_network_data(span)
+            if value:
+                span.set_data("cache.item_size", len(value))
         if not value:
             return None
 
@@ -202,11 +230,13 @@ class CheckpointStore:
             cursor=cursor,
         )
 
-        await self._redis.hset(
-            _checkpoint_key(session_token),
-            entity_type.value,
-            checkpoint.to_redis_value(),
-        )
+        key = _checkpoint_key(session_token)
+        value = checkpoint.to_redis_value()
+        with sentry_sdk.start_span(op="cache.put", name="checkpoint") as span:
+            await self._redis.hset(key, entity_type.value, value)
+            span.set_data("cache.key", [key])
+            span.set_data("cache.item_size", len(value))
+            self._set_network_data(span)
         return True
 
     async def set_many(
@@ -238,7 +268,12 @@ class CheckpointStore:
             )
             mapping[entity_type.value] = checkpoint.to_redis_value()
 
-        await self._redis.hset(_checkpoint_key(session_token), mapping=mapping)
+        key = _checkpoint_key(session_token)
+        with sentry_sdk.start_span(op="cache.put", name="checkpoint") as span:
+            await self._redis.hset(key, mapping=mapping)
+            span.set_data("cache.key", [key])
+            span.set_data("cache.item_size", sum(len(v) for v in mapping.values()))
+            self._set_network_data(span)
         return True
 
     async def delete(
