@@ -215,3 +215,16 @@ class TestEnrichHttpSpans:
         result = _enrich_http_spans(event, {})
         assert _span_data(result, 0)["server.address"] == "localhost"
         assert "server.port" not in _span_data(result, 0)
+
+    def test_non_string_description_does_not_raise(self):
+        event = {
+            "spans": [
+                {
+                    "op": "http.client",
+                    "description": 123,
+                    "data": {},
+                }
+            ]
+        }
+        result = _enrich_http_spans(event, {})
+        assert "server.address" not in _span_data(result, 0)

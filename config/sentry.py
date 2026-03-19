@@ -32,7 +32,10 @@ def _enrich_http_spans(event, _hint):
 
         url = data.get("url")
         if not isinstance(url, str) or not url:
-            parts = (span.get("description") or "").split(" ", 1)
+            description = span.get("description")
+            if not isinstance(description, str):
+                continue
+            parts = description.split(" ", 1)
             if len(parts) < 2:
                 continue
             url = parts[1]
