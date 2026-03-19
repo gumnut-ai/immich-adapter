@@ -50,10 +50,15 @@ The adapter uses a **session token architecture** that decouples client authenti
 
 ### Login flow
 
-1. Client initiates OAuth login → adapter redirects to Photos API OAuth endpoint
-2. Photos API handles Clerk OAuth, issues a JWT
-3. Adapter generates a UUID session token, encrypts the JWT, stores it in Redis
-4. Client receives the session token (via cookie for web, Authorization header for mobile)
+Both web and mobile clients authenticate via OAuth (Immich's `/api/auth/login` email/password endpoint exists as a stub but is not functional). The flow:
+
+1. Client calls `POST /api/oauth/authorize` → adapter forwards to Photos API → returns Clerk OAuth URL
+2. Client opens the OAuth URL in a browser → user authenticates with Clerk
+3. Clerk redirects back to the adapter's `POST /api/oauth/callback` with an authorization code
+4. Adapter exchanges the code with Photos API for a JWT, generates a UUID session token, encrypts the JWT, stores it in Redis
+5. Client receives the session token (via `immich_access_token` cookie for web, `accessToken` in JSON body for mobile)
+
+For mobile, OAuth providers that don't support custom URL schemes (e.g., `app.immich:///`) are handled via `GET /api/oauth/mobile-redirect`, which receives the OAuth response at an HTTPS URL and redirects to the mobile app's custom scheme.
 
 ### Request flow
 
@@ -68,12 +73,19 @@ The adapter uses a **session token architecture** that decouples client authenti
 
 ```
 session:{uuid}             → Hash { user_id, device_type, device_os, app_version, ... }
-session:{uuid}:checkpoints → Hash { "AssetV1": "timestamp|...", "AlbumV1": "timestamp|...", ... }
+session:{uuid}:checkpoints → Hash { "asset_v1": "opaque_cursor|", "album_v1": "opaque_cursor|", ... }
 user:{user_id}:sessions    → Set { session_uuid_1, session_uuid_2, ... }
 sessions:by_updated_at     → Sorted Set { session_uuid: timestamp, ... }
 ```
 
 Session storage is ~3KB per device, enabling horizontal scaling of the adapter.
+
+### Session lifecycle
+
+- **TTL**: Session Redis keys are set to expire based on the underlying JWT's expiry time. When a JWT is refreshed, the TTL is updated. Sessions with no expiry persist until stale cleanup (90+ days inactive).
+- **Cookie flags**: `HttpOnly`, `Secure` (protocol-aware — disabled for local HTTP dev), `SameSite=lax`
+- **Logout**: Deletes the Redis session key, clears cookies, emits `on_session_delete` WebSocket event to notify connected clients
+- **JWT refresh failure**: If the backend cannot refresh an expired JWT, the next request using that session returns 401. The client must re-authenticate via OAuth.
 
 **Related docs:**
 - `docs/design-docs/auth-design.md` — Full auth architecture and OAuth flow design
@@ -137,19 +149,24 @@ Used when Immich clients expect offset-based pagination or need the full result 
 
 ### Pattern 2: Server-side cursor pagination
 
-Used when the adapter can leverage Photos API's cursor-based pagination internally, even though the external interface may differ.
+Used when the adapter can leverage Photos API's cursor-based pagination internally, even though the external interface may differ. The Photos API has two cursor mechanisms depending on the endpoint:
+
+- **Entity list endpoints** (assets, people, albums): `limit` + `starting_after_id` (cursor is an entity ID)
+- **Events endpoint**: `limit` + `after_cursor` (cursor is an opaque position token)
+
+Both support optional time-bound filters (e.g., `local_datetime_before`, `created_at_lt`) that constrain the result set but are not themselves cursors.
 
 **How it works:**
-1. Call Photos API with cursor parameters (`after_cursor`, `limit`, `created_at_lt`)
+1. Call Photos API with a `limit` and cursor parameter
 2. Check `response.has_more` for next page
-3. Advance cursor for subsequent pages
+3. Advance the cursor (last entity ID or returned cursor token) for subsequent pages
 
 **Endpoints using this pattern:**
 
-| Endpoint | SDK call | Cursor mechanism |
+| Endpoint | SDK call | Cursor + filters |
 |----------|----------|-----------------|
-| `GET /api/timeline/buckets` | `client.assets.counts(group_by="month")` | `local_datetime_before` as cursor, paginate until `has_more=false` |
-| Sync stream (internal) | `client.events.get(...)` | `after_cursor` + `created_at_lt` time bound |
+| `GET /api/timeline/buckets` | `client.assets.counts(group_by="month")` | `starting_after_id` cursor, `local_datetime_before` filter, paginate until `has_more=false` |
+| Sync stream (internal) | `client.events.get(...)` | `after_cursor` opaque cursor, `created_at_lt` time bound |
 
 Note: Even with cursor pagination, the timeline buckets endpoint still loads all pages before returning to the client, since Immich expects the complete bucket list.
 
@@ -223,13 +240,14 @@ The sync stream (`/api/sync/stream`) yields events in two phases to prevent FK c
 
 ### Checkpoint system
 
-Each session maintains per-entity-type checkpoints in Redis, tracking the `updated_at` timestamp of the last synced entity. On the next sync:
+Each session maintains per-entity-type checkpoints in Redis, stored as opaque cursor strings from the Photos API events endpoint. The ack string format is `"{entity_type}|{cursor}|"` (e.g., `"asset_v1|eyJ0eXAi...|"`). On the next sync:
 
 1. Adapter captures `snapshot_time = NOW()` as a consistent upper bound
-2. For each entity type, queries Photos API for entities where `checkpoint_time < updated_at < snapshot_time`
-3. Streams entities to the client with ack strings
-4. Client sends `POST /sync/ack` incrementally during the stream (not at the end), enabling crash recovery
-5. Adapter updates the checkpoint in Redis
+2. For each entity type, queries Photos API events with `after_cursor` (from the last checkpoint) and `created_at_lt` (the snapshot time)
+3. Photos API handles ordering and tie-breaking — entities with the same timestamp are ordered by cursor position
+4. Streams entities to the client with ack strings
+5. Client sends `POST /sync/ack` incrementally during the stream (not at the end), enabling crash recovery — if the client crashes mid-sync, it resumes from the last acknowledged cursor
+6. Adapter updates the checkpoint cursor in Redis
 
 **Related docs:**
 - `docs/architecture/session-checkpoint-implementation.md` — Checkpoint storage and coordination details
@@ -277,8 +295,9 @@ Route handlers raise `HTTPException(status_code=..., detail="...")` and a global
 Immich clients have no HTTP 429 handling — a rate limit response causes sync failures, broken thumbnails, and upload errors with no automatic recovery. The adapter protects against this:
 
 1. The Gumnut SDK (Stainless-generated) has built-in retry with exponential backoff and jitter for 429/5xx responses
-2. `map_gumnut_error` catches `RateLimitError` and returns **502 Bad Gateway** (not 429) to Immich clients
-3. Custom retry wrappers must not be added on top of SDK retry (causes retry amplification)
+2. If SDK retries are exhausted, `map_gumnut_error` catches `RateLimitError` and returns **502 Bad Gateway** (not 429) to Immich clients. 502 is semantically correct — the adapter is a gateway and the upstream is unavailable. 503 would imply the adapter itself is overloaded, which isn't the case.
+3. Immich clients display a generic error on 5xx and do not automatically retry — there is no risk of tight retry loops from the client side
+4. Custom retry wrappers must not be added on top of SDK retry (causes retry amplification)
 
 ### Per-item error handling
 
