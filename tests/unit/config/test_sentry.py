@@ -174,3 +174,44 @@ class TestEnrichHttpSpans:
         event: dict[str, Any] = {"spans": None}
         result = _enrich_http_spans(event, {})
         assert result["spans"] is None
+
+    def test_ignores_non_dict_span_element(self):
+        event: dict[str, Any] = {
+            "spans": [
+                None,
+                {
+                    "op": "http.client",
+                    "description": "GET https://api.example.com/v1",
+                    "data": {},
+                },
+            ]
+        }
+        result = _enrich_http_spans(event, {})
+        assert _span_data(result, 1)["server.address"] == "api.example.com"
+
+    def test_ignores_non_string_url(self):
+        event = {
+            "spans": [
+                {
+                    "op": "http.client",
+                    "description": "GET https://api.example.com/v1",
+                    "data": {"url": {"not": "a string"}},
+                }
+            ]
+        }
+        result = _enrich_http_spans(event, {})
+        assert _span_data(result, 0)["server.address"] == "api.example.com"
+
+    def test_malformed_port_does_not_raise(self):
+        event = {
+            "spans": [
+                {
+                    "op": "http.client",
+                    "description": "GET http://localhost:badport/foo",
+                    "data": {},
+                }
+            ]
+        }
+        result = _enrich_http_spans(event, {})
+        assert _span_data(result, 0)["server.address"] == "localhost"
+        assert "server.port" not in _span_data(result, 0)

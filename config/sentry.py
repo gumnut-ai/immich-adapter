@@ -20,6 +20,8 @@ def _enrich_http_spans(event, _hint):
     entire transaction event.
     """
     for span in event.get("spans") or []:
+        if not isinstance(span, dict):
+            continue
         if span.get("op") != "http.client":
             continue
         data = span.get("data")
@@ -29,7 +31,7 @@ def _enrich_http_spans(event, _hint):
             continue
 
         url = data.get("url")
-        if not url:
+        if not isinstance(url, str) or not url:
             parts = (span.get("description") or "").split(" ", 1)
             if len(parts) < 2:
                 continue
