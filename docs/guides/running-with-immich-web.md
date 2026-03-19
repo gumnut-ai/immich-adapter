@@ -25,7 +25,7 @@ For details on how the adapter handles requests in this setup, see the [adapter 
 ### Prerequisites
 
 1. **Docker** running locally
-2. **photos-api** running on `localhost:8000` — see the [photos-api README](../../../photos/photos-api/README.md) for setup
+2. **photos-api** running on `localhost:8000` — see the photos-api README for setup
 3. **Clerk OAuth configured** in photos-api — see the "Configure Clerk OAuth" section in the photos-api README
 4. **immich-adapter** running on `localhost:3001`
 
@@ -73,7 +73,7 @@ Browser (localhost:3000)
 
 ### Prerequisites
 
-1. **photos-api** running on `localhost:8000` — see the [photos-api README](../../../photos/photos-api/README.md) for setup
+1. **photos-api** running on `localhost:8000` — see the photos-api README for setup
 2. **Clerk OAuth configured** in photos-api — see the "Configure Clerk OAuth" section in the photos-api README
 3. **immich-adapter** running on `localhost:3001`
 4. The [Immich repository](https://github.com/immich-app/immich) cloned as a sibling directory (`../immich/`)
