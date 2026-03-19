@@ -1,5 +1,6 @@
 import asyncio
 import os
+from urllib.parse import urlparse
 
 import redis.asyncio as redis
 
@@ -57,6 +58,12 @@ async def close_redis_client() -> None:
             pass
         finally:
             _redis_client = None
+
+
+def parse_redis_peer() -> tuple[str, int]:
+    """Parse Redis host and port from settings for Sentry cache span attributes."""
+    parsed = urlparse(get_settings().redis_url)
+    return parsed.hostname or "localhost", parsed.port or 6379
 
 
 def _reset_for_testing() -> None:
