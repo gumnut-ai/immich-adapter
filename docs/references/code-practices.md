@@ -83,6 +83,7 @@ asset_id: Annotated[UUID | SkipJsonSchema[None], Query(alias="assetId")] = None,
 - All tests should be async and use `@pytest.mark.anyio` decorator
 - Run tests from the project directory, not repository root
 - Use model factories for test data creation
+- Do not assert on logging in tests — logging is non-functional behavior. Tests should assert on observable outputs (return values, side effects, emitted events), not on whether a particular log message was emitted.
 
 ## Logging
 

@@ -40,10 +40,6 @@
 - When working with datetimes as strings, ensure the proper format is used, as Immich has different formats for different use cases
 - If you cannot determine the proper format to use, ask for clarification
 
-### Logging
-
-- **Do not assert on logging in tests.** Logging is non-functional behavior — tests should assert on observable outputs (return values, side effects, emitted events), not on whether a particular log message was emitted
-
 For code style, endpoint patterns, error response format, testing, and logging conventions, see `docs/references/code-practices.md`.
 
 ### Immich Client Error Handling
