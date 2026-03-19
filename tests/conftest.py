@@ -208,6 +208,7 @@ def sample_gumnut_person():
     person.is_hidden = False
     person.thumbnail_face_id = "face-456"
     person.thumbnail_face_url = "https://example.com/thumbnail.jpg"
+    person.asset_count = 5
     person.created_at = datetime.now(timezone.utc)
     person.updated_at = datetime.now(timezone.utc)
     return person
@@ -226,6 +227,7 @@ def multiple_gumnut_people():
         person.is_hidden = False  # Default to not hidden
         person.thumbnail_face_id = f"face-{i}"
         person.thumbnail_face_url = f"https://example.com/thumbnail-{i}.jpg"
+        person.asset_count = (i + 1) * 5
         person.created_at = datetime.now(timezone.utc)
         person.updated_at = datetime.now(timezone.utc)
         people.append(person)

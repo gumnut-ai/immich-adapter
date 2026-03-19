@@ -4,6 +4,7 @@ from uuid import UUID
 import logging
 
 from gumnut import AsyncGumnut
+from gumnut.types import PersonResponse
 
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
@@ -30,6 +31,29 @@ router = APIRouter(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _immich_people_sort_key(person: PersonResponse) -> tuple:
+    """Sort key matching Immich's default people ordering.
+
+    Immich orders people by:
+    1. Hidden status (visible first)
+    2. Favorite status (favorites first)
+    3. Named people first (non-empty name before empty/null)
+    4. Asset count descending (most photos first)
+    5. Name alphabetically (nulls last)
+    6. Creation date ascending (oldest first, as tiebreaker)
+    """
+    has_no_name = not person.name or person.name.strip() == ""
+    asset_count = person.asset_count if person.asset_count is not None else 0
+    return (
+        person.is_hidden,  # False < True → visible first
+        not person.is_favorite,  # True first → negate so favorites sort first
+        has_no_name,  # False < True → named people first
+        -asset_count,  # Negate for descending order
+        (has_no_name, (person.name or "").lower()),  # Alphabetical, nulls last
+        person.created_at,  # Ascending (oldest first)
+    )
 
 
 @router.post("", status_code=201)
@@ -158,27 +182,27 @@ async def get_all_people(
     try:
         # Get all people from Gumnut
         gumnut_people = client.people.list()
+        all_people = [p async for p in gumnut_people]
 
-        # Convert to list if it's a paginated response
-        people_list = [p async for p in gumnut_people]
+        # Count hidden before filtering so the response includes the total
+        hidden_count = sum(1 for p in all_people if p.is_hidden)
 
-        # Since Gumnut doesn't support the same filtering/pagination as Immich,
-        # we'll implement basic logic here
-        total_count = len(people_list)
-        hidden_count = 0
-
-        # Apply pagination if specified
-        if page is not None and size is not None:
-            start_index = (page - 1) * size
-            end_index = start_index + size
-            people_list = people_list[start_index:end_index]
-            has_next_page = end_index < total_count
-
+        # Filter hidden people first (before sorting and pagination)
         if withHidden is False:
-            people_list = [p for p in people_list if not p.is_hidden]
-            hidden_count = total_count - len(people_list)
-            total_count = len(people_list)
-        converted_people = [convert_gumnut_person_to_immich(p) for p in people_list]
+            all_people = [p for p in all_people if not p.is_hidden]
+
+        # Sort to match Immich's expected ordering
+        all_people.sort(key=_immich_people_sort_key)
+
+        total_count = len(all_people)
+
+        # Apply pagination after filtering and sorting
+        start_index = (page - 1) * size
+        end_index = start_index + size
+        page_people = all_people[start_index:end_index]
+        has_next_page = end_index < total_count
+
+        converted_people = [convert_gumnut_person_to_immich(p) for p in page_people]
 
         return PeopleResponseDto(
             people=converted_people,
