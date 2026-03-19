@@ -54,6 +54,7 @@ def _immich_people_sort_key(person: PersonResponse) -> tuple:
         -asset_count,  # Negate for descending order
         normalized_name.casefold(),  # Alphabetical (unnamed all sort as "")
         person.created_at,  # Ascending (oldest first)
+        person.id,  # Deterministic tiebreaker for stable pagination
     )
 
 
