@@ -2,15 +2,13 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 import redis.exceptions
 import sentry_sdk
 
-from config.settings import get_settings
 from utils.jwt_encryption import decrypt_jwt, encrypt_jwt
-from utils.redis_client import get_redis_client
+from utils.redis_client import get_redis_client, parse_redis_peer
 from utils.redis_protocols import AsyncRedisClient
 
 
@@ -128,12 +126,6 @@ class Session:
         return decrypt_jwt(self.stored_jwt)
 
 
-def _parse_redis_peer() -> tuple[str, int]:
-    """Parse Redis host and port from settings for Sentry cache span attributes."""
-    parsed = urlparse(get_settings().redis_url)
-    return parsed.hostname or "localhost", parsed.port or 6379
-
-
 class SessionStore:
     """
     Abstraction layer for session storage.
@@ -150,7 +142,7 @@ class SessionStore:
             redis_client: An async Redis client (redis.asyncio.Redis)
         """
         self._redis: AsyncRedisClient = redis_client
-        self._redis_host, self._redis_port = _parse_redis_peer()
+        self._redis_host, self._redis_port = parse_redis_peer()
 
     def _set_network_data(self, span: Any) -> None:
         """Set network peer attributes on a cache span."""
