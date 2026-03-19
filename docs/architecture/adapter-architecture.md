@@ -85,13 +85,15 @@ Session storage is ~3KB per device, enabling horizontal scaling of the adapter.
 
 Gumnut uses prefixed short UUIDs (e.g., `asset_BM3nUmJ6fkBqBADyz5FEiu`), while Immich uses standard UUIDs. The `routers/utils/gumnut_id_conversion.py` module handles bidirectional conversion using the `shortuuid` library.
 
-| Entity | Gumnut prefix | Example Gumnut ID | Immich format |
-|--------|---------------|-------------------|---------------|
-| Asset | `asset_` | `asset_BM3nUmJ6fkBqBADyz5FEiu` | `550e8400-e29b-41d4-a716-446655440000` |
-| Album | `album_` | `album_K7xFp2mNqRsTvWyZ3aB4cD` | UUID |
-| Person | `person_` | `person_J5wEn1lMpQrStUxY2zA3bC` | UUID |
-| Face | `face_` | `face_H4vDm0kLoOnRtTwX1yA2bB` | UUID |
-| User | `intuser_` | `intuser_G3uCl9jKnNmQsSvW0xZ1aA` | UUID |
+| Entity | Gumnut prefix | Example |
+|--------|---------------|---------|
+| Asset | `asset_` | `asset_BM3nUmJ6fkBqBADyz5FEiu` |
+| Album | `album_` | `album_K7xFp2mNqRsTvWyZ3aB4cD` |
+| Person | `person_` | `person_J5wEn1lMpQrStUxY2zA3bC` |
+| Face | `face_` | `face_H4vDm0kLoOnRtTwX1yA2bB` |
+| User | `intuser_` | `intuser_G3uCl9jKnNmQsSvW0xZ1aA` |
+
+All Gumnut IDs are encoded using the `shortuuid` library and are deterministically convertible to/from standard UUIDs (e.g., `asset_BM3nUmJ6fkBqBADyz5FEiu` ↔ `550e8400-e29b-41d4-a716-446655440000`). Immich clients always see standard UUIDs.
 
 ### Model mapping
 
