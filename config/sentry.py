@@ -15,22 +15,39 @@ def _enrich_http_spans(event, _hint):
     The sentry-sdk httpx integration (as of v2.48.0) does not set
     server.address on http.client spans. Without this attribute, spans
     are invisible on the Sentry Requests dashboard.
+
+    This hook must be strictly non-throwing — any exception drops the
+    entire transaction event.
     """
-    for span in event.get("spans", []):
+    for span in event.get("spans") or []:
         if span.get("op") != "http.client":
             continue
-        data = span.get("data", {})
+        data = span.get("data")
+        if not isinstance(data, dict):
+            data = {}
         if "server.address" in data:
             continue
-        description = span.get("description", "")
-        parts = description.split(" ", 1)
-        if len(parts) != 2:
+
+        url = data.get("url")
+        if not url:
+            parts = (span.get("description") or "").split(" ", 1)
+            if len(parts) < 2:
+                continue
+            url = parts[1]
+
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
             continue
-        parsed = urlparse(parts[1])
-        if parsed.hostname:
-            span.setdefault("data", {})["server.address"] = parsed.hostname
-            if parsed.port:
-                span["data"]["server.port"] = parsed.port
+        if not parsed.hostname:
+            continue
+
+        data["server.address"] = parsed.hostname
+        try:
+            if parsed.port is not None:
+                data["server.port"] = parsed.port
+        except ValueError:
+            pass
+        span["data"] = data
     return event
 
 

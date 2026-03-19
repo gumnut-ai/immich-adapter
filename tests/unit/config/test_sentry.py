@@ -130,3 +130,47 @@ class TestEnrichHttpSpans:
         assert _span_data(result, 0)["server.address"] == "a.example.com"
         assert "server.address" not in _span_data(result, 1)
         assert _span_data(result, 2)["server.address"] == "b.example.com"
+
+    def test_handles_data_none(self):
+        event = {
+            "spans": [
+                {
+                    "op": "http.client",
+                    "description": "GET https://api.example.com/v1/users",
+                    "data": None,
+                }
+            ]
+        }
+        result = _enrich_http_spans(event, {})
+        assert _span_data(result, 0)["server.address"] == "api.example.com"
+
+    def test_prefers_data_url_over_description(self):
+        event = {
+            "spans": [
+                {
+                    "op": "http.client",
+                    "description": "GET https://description.example.com/foo",
+                    "data": {"url": "https://data.example.com/bar"},
+                }
+            ]
+        }
+        result = _enrich_http_spans(event, {})
+        assert _span_data(result, 0)["server.address"] == "data.example.com"
+
+    def test_skips_non_http_scheme(self):
+        event = {
+            "spans": [
+                {
+                    "op": "http.client",
+                    "description": "CONNECT ftp://files.example.com/data",
+                    "data": {},
+                }
+            ]
+        }
+        result = _enrich_http_spans(event, {})
+        assert "server.address" not in _span_data(result, 0)
+
+    def test_handles_spans_none(self):
+        event: dict[str, Any] = {"spans": None}
+        result = _enrich_http_spans(event, {})
+        assert result["spans"] is None
