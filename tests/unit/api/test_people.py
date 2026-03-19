@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, Mock
 from fastapi import HTTPException
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from routers.api.people import (
     create_person,
@@ -18,6 +18,10 @@ from routers.api.people import (
     delete_person,
     merge_person,
     reassign_faces,
+)
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_person_id,
+    uuid_to_gumnut_person_id,
 )
 from routers.immich_models import (
     AssetFaceUpdateDto,
@@ -342,6 +346,212 @@ class TestGetAllPeople:
 
         assert exc_info.value.status_code == 500
         assert "Failed to fetch people" in str(exc_info.value.detail)
+
+
+def _make_person(
+    *,
+    name: str | None = None,
+    is_hidden: bool = False,
+    is_favorite: bool = False,
+    asset_count: int | None = 0,
+    created_at: datetime | None = None,
+) -> Mock:
+    """Helper to create a mock Gumnut person with controlled fields for sort tests."""
+    person = Mock()
+    person.id = uuid_to_gumnut_person_id(uuid4())
+    person.name = name
+    person.birth_date = None
+    person.is_hidden = is_hidden
+    person.is_favorite = is_favorite
+    person.thumbnail_face_id = None
+    person.thumbnail_face_url = None
+    person.asset_count = asset_count
+    person.created_at = created_at or datetime.now(timezone.utc)
+    person.updated_at = datetime.now(timezone.utc)
+    return person
+
+
+class TestGetAllPeopleSorting:
+    """Test that get_all_people sorts in Immich's expected order."""
+
+    @pytest.mark.anyio
+    async def test_visible_people_before_hidden(self, mock_sync_cursor_page):
+        """Hidden people should sort after visible ones."""
+        hidden = _make_person(name="Alice", is_hidden=True, asset_count=100)
+        visible = _make_person(name="Bob", is_hidden=False, asset_count=1)
+
+        mock_client = Mock()
+        mock_client.people.list.return_value = mock_sync_cursor_page([hidden, visible])
+
+        result = await call_get_all_people(withHidden=True, client=mock_client)
+
+        assert result.people[0].name == "Bob"
+        assert result.people[1].name == "Alice"
+
+    @pytest.mark.anyio
+    async def test_favorites_before_non_favorites(self, mock_sync_cursor_page):
+        """Favorites should sort before non-favorites."""
+        non_fav = _make_person(name="Alice", is_favorite=False, asset_count=100)
+        fav = _make_person(name="Bob", is_favorite=True, asset_count=1)
+
+        mock_client = Mock()
+        mock_client.people.list.return_value = mock_sync_cursor_page([non_fav, fav])
+
+        result = await call_get_all_people(client=mock_client)
+
+        assert result.people[0].name == "Bob"
+        assert result.people[1].name == "Alice"
+
+    @pytest.mark.anyio
+    async def test_named_before_unnamed(self, mock_sync_cursor_page):
+        """Named people should sort before unnamed ones."""
+        unnamed = _make_person(name=None, asset_count=100)
+        empty_name = _make_person(name="", asset_count=50)
+        named = _make_person(name="Alice", asset_count=1)
+
+        mock_client = Mock()
+        mock_client.people.list.return_value = mock_sync_cursor_page(
+            [unnamed, empty_name, named]
+        )
+
+        result = await call_get_all_people(client=mock_client)
+
+        assert result.people[0].name == "Alice"
+
+    @pytest.mark.anyio
+    async def test_higher_asset_count_first(self, mock_sync_cursor_page):
+        """People with more assets should sort first within the same tier."""
+        few = _make_person(name="Alice", asset_count=5)
+        many = _make_person(name="Bob", asset_count=50)
+
+        mock_client = Mock()
+        mock_client.people.list.return_value = mock_sync_cursor_page([few, many])
+
+        result = await call_get_all_people(client=mock_client)
+
+        assert result.people[0].name == "Bob"
+        assert result.people[1].name == "Alice"
+
+    @pytest.mark.anyio
+    async def test_alphabetical_by_name(self, mock_sync_cursor_page):
+        """People with the same asset count should sort alphabetically."""
+        charlie = _make_person(name="Charlie", asset_count=10)
+        alice = _make_person(name="Alice", asset_count=10)
+        bob = _make_person(name="Bob", asset_count=10)
+
+        mock_client = Mock()
+        mock_client.people.list.return_value = mock_sync_cursor_page(
+            [charlie, alice, bob]
+        )
+
+        result = await call_get_all_people(client=mock_client)
+
+        assert [p.name for p in result.people] == ["Alice", "Bob", "Charlie"]
+
+    @pytest.mark.anyio
+    async def test_created_at_tiebreaker(self, mock_sync_cursor_page):
+        """When all other fields match, older people should sort first."""
+        now = datetime.now(timezone.utc)
+
+        # Same name and asset count — created_at is the tiebreaker
+        newer = _make_person(name="Alice", asset_count=10, created_at=now)
+        older = _make_person(
+            name="Alice", asset_count=10, created_at=now - timedelta(days=1)
+        )
+
+        mock_client = Mock()
+        mock_client.people.list.return_value = mock_sync_cursor_page([newer, older])
+
+        result = await call_get_all_people(client=mock_client)
+
+        # Older should come first — identify by person ID
+        older_id = str(safe_uuid_from_person_id(older.id))
+        newer_id = str(safe_uuid_from_person_id(newer.id))
+        assert result.people[0].id == older_id
+        assert result.people[1].id == newer_id
+
+    @pytest.mark.anyio
+    async def test_full_immich_ordering(self, mock_sync_cursor_page):
+        """Test the complete Immich sort order with mixed attributes."""
+        # Expected final order (top to bottom):
+        # 1. Visible favorite with name and high asset count
+        # 2. Visible favorite with name and low asset count
+        # 3. Visible non-favorite with name (alphabetically: Alice before Bob)
+        # 4. Visible non-favorite unnamed
+        # 5. Hidden person
+        visible_fav_many = _make_person(name="Zara", is_favorite=True, asset_count=50)
+        visible_fav_few = _make_person(name="Yuki", is_favorite=True, asset_count=5)
+        visible_alice = _make_person(name="Alice", asset_count=10)
+        visible_bob = _make_person(name="Bob", asset_count=10)
+        visible_unnamed = _make_person(name=None, asset_count=100)
+        hidden_person = _make_person(name="Hidden", is_hidden=True, asset_count=200)
+
+        # Shuffle input order
+        shuffled = [
+            visible_unnamed,
+            hidden_person,
+            visible_bob,
+            visible_fav_few,
+            visible_alice,
+            visible_fav_many,
+        ]
+
+        mock_client = Mock()
+        mock_client.people.list.return_value = mock_sync_cursor_page(shuffled)
+
+        result = await call_get_all_people(withHidden=True, client=mock_client)
+
+        names = [p.name for p in result.people]
+        assert names == [
+            "Zara",  # visible, favorite, most assets
+            "Yuki",  # visible, favorite, fewer assets
+            "Alice",  # visible, non-fav, named, 10 assets, alphabetical
+            "Bob",  # visible, non-fav, named, 10 assets, alphabetical
+            # unnamed person (name is None → converted to "Unknown Person")
+            "Unknown Person",
+            "Hidden",  # hidden person always last
+        ]
+
+    @pytest.mark.anyio
+    async def test_hidden_filter_before_pagination(self, mock_sync_cursor_page):
+        """Filtering hidden people should happen before pagination slicing."""
+        # Create 4 people: 2 hidden, 2 visible
+        people = [
+            _make_person(name="Visible 1", is_hidden=False, asset_count=20),
+            _make_person(name="Hidden 1", is_hidden=True, asset_count=15),
+            _make_person(name="Visible 2", is_hidden=False, asset_count=10),
+            _make_person(name="Hidden 2", is_hidden=True, asset_count=5),
+        ]
+
+        mock_client = Mock()
+        mock_client.people.list.return_value = mock_sync_cursor_page(people)
+
+        # Request page 1, size 2 with hidden filtered out
+        result = await call_get_all_people(
+            page=1, size=2, withHidden=False, client=mock_client
+        )
+
+        # Should get both visible people (only 2 exist after filtering)
+        assert len(result.people) == 2
+        assert result.total == 2
+        assert result.hidden == 2
+        assert result.hasNextPage is False
+
+    @pytest.mark.anyio
+    async def test_none_asset_count_treated_as_zero(self, mock_sync_cursor_page):
+        """People with None asset_count should sort as if they have 0."""
+        with_count = _make_person(name="Alice", asset_count=5)
+        no_count = _make_person(name="Bob", asset_count=None)
+
+        mock_client = Mock()
+        mock_client.people.list.return_value = mock_sync_cursor_page(
+            [no_count, with_count]
+        )
+
+        result = await call_get_all_people(client=mock_client)
+
+        assert result.people[0].name == "Alice"
+        assert result.people[1].name == "Bob"
 
 
 class TestDeletePeople:
