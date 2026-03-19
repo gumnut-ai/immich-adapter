@@ -2,12 +2,10 @@
 
 ## Important Rules
 
-1. **Always read README.md files** in each project directory to understand:
+1. **Always read project documentation** before starting work:
 
-   - How to set up and run the project
-   - Available commands and scripts
-   - Code style and conventions
-   - Testing requirements
+   - `README.md` — how to set up, run, and develop the project
+   - `docs/references/code-practices.md` — code style, endpoint patterns, testing, logging conventions
 
 2. **Before committing code changes**, run the same checks CI runs:
 
@@ -42,52 +40,7 @@
 - When working with datetimes as strings, ensure the proper format is used, as Immich has different formats for different use cases
 - If you cannot determine the proper format to use, ask for clarification
 
-### Exception Handling
-
-- Don't expose implementation details in exceptions thrown to consumers
-- Wrap low-level exceptions (e.g., Redis, HTTP client errors) in domain-specific exceptions
-- Example: `SessionStore` catches `redis.exceptions.RedisError` and raises `SessionStoreError`
-
-### Type Annotations
-
-- Add type annotations to all function parameters and return types
-
-### Logging
-
-- Always use structured logging with key/value metadata in the `extra` dict
-- Include relevant identifiers for traceability: `user_id`, `session_token`, `sid`, `asset_id`, etc.
-- Example: `logger.info("WebSocket connected", extra={"sid": sid, "user_id": user_id, "device_type": session.device_type})`
-- **Do not assert on logging in tests.** Logging is non-functional behavior — tests should assert on observable outputs (return values, side effects, emitted events), not on whether a particular log message was emitted
-
-### HTTP Response Status Codes
-
-- Always use `fastapi.status` constants for `statusCode` - never use just the numeric value
-
-```python
-# In route handlers:
-raise HTTPException(
-   status_code=status.HTTP_401_UNAUTHORIZED,
-   detail="Human-readable error description"
-)
-
-# Resulting JSON response:
-# {"message": "...", "statusCode": 401, "error": "Unauthorized"}
-```
-
-### Error Responses
-
-All HTTP errors must use Immich's expected format:
-
-```json
-{
-  "message": "Human-readable error description",
-  "statusCode": 401,
-  "error": "Unauthorized"
-}
-```
-
-- In route handlers: Raise `HTTPException(status_code=..., detail="...")` - the global handler formats it
-- In middleware: Return `JSONResponse` directly with the above format (HTTPException doesn't work in BaseHTTPMiddleware)
+For code style, endpoint patterns, error response format, testing, and logging conventions, see `docs/references/code-practices.md`.
 
 ### Immich Client Error Handling
 
@@ -123,7 +76,7 @@ Detailed docs are in the `docs/` directory. Consult these when working in the re
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Adapter architecture | `docs/architecture/adapter-architecture.md` | Understanding overall adapter design, request flow, middleware |
+| Adapter architecture | `docs/architecture/adapter-architecture.md` | Overall adapter design, auth, data translation, pagination, sync protocol, error handling, endpoint status |
 | WebSocket implementation | `docs/architecture/websocket-implementation.md` | WebSocket connections, real-time sync, event handling |
 | Session & checkpoint implementation | `docs/architecture/session-checkpoint-implementation.md` | Session management, checkpoint tracking, sync state |
 
@@ -138,12 +91,12 @@ Detailed docs are in the `docs/` directory. Consult these when working in the re
 | Checksum support | `docs/design-docs/checksum-support.md` | File integrity, checksum validation, deduplication |
 | Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Sync FK integrity, event ordering, face/person deletion issues |
 
-### Getting Started
+### Guides
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Running with Immich Web | `README.md` § "Running with Immich Web" | Setting up the full local stack (Immich web + adapter + photos-api + Clerk OAuth) |
-| Running with Immich Mobile | `README.md` § "Running with Immich Mobile" | Self-signed certs, HTTPS setup, connecting the Immich mobile app |
+| Running with Immich Web | `docs/guides/running-with-immich-web.md` | Setting up the full local stack (Immich web + adapter + photos-api + Clerk OAuth) |
+| Running with Immich Mobile | `docs/guides/running-with-immich-mobile.md` | Self-signed certs, HTTPS setup, connecting the Immich mobile app |
 
 ### References
 
@@ -153,3 +106,5 @@ Detailed docs are in the `docs/` directory. Consult these when working in the re
 | Session & checkpoint reference | `docs/references/session-checkpoint-reference.md` | Session/checkpoint object shapes, field definitions |
 | Immich sync communication | `docs/references/immich-sync-communication.md` | Immich client-server sync protocol, message formats |
 | Uvicorn settings | `docs/references/uvicorn-settings.md` | Server configuration, worker settings, timeouts |
+| Code practices | `docs/references/code-practices.md` | Python style, endpoint patterns, testing, logging |
+| Development tools | `docs/references/development-tools.md` | Model generation, API compatibility, OpenAPI spec |
