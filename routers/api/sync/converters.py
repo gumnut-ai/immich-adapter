@@ -183,7 +183,10 @@ def gumnut_exif_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         SyncAssetExifV1 for sync stream
     """
     exif = asset.exif
-    assert exif is not None, f"Asset {asset.id} passed to exif converter with no exif"
+    # Callers only pass assets that have exif, so this is always non-None
+    # at runtime. The check satisfies the type checker.
+    if exif is None:
+        raise ValueError(f"Asset {asset.id} passed to exif converter with no exif")
 
     # Convert EXIF datetimes to actual UTC for Immich compatibility
     original_datetime = to_actual_utc(exif.original_datetime)
