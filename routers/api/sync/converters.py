@@ -9,7 +9,6 @@ import logging
 from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
-from gumnut.types.exif_response import ExifResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
@@ -161,25 +160,31 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         # Optional fields - use None when not available
         deletedAt=None,
         duration=None,
-        height=None,
+        height=asset.height,
         libraryId=None,
         livePhotoVideoId=None,
         stackId=None,
         thumbhash=None,
-        width=None,
+        width=asset.width,
     )
 
 
-def gumnut_exif_to_sync_exif_v1(exif: ExifResponse) -> SyncAssetExifV1:
+def gumnut_exif_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
     """
-    Convert Gumnut ExifResponse to Immich SyncAssetExifV1 format.
+    Convert Gumnut AssetResponse (with EXIF) to Immich SyncAssetExifV1 format.
+
+    Accepts the full AssetResponse because exif image dimensions and file size
+    live on the asset, not on the nested ExifResponse.
 
     Args:
-        exif: Gumnut EXIF data
+        asset: Gumnut asset data (must have non-None exif)
 
     Returns:
         SyncAssetExifV1 for sync stream
     """
+    exif = asset.exif
+    assert exif is not None, f"Asset {asset.id} passed to exif converter with no exif"
+
     # Convert EXIF datetimes to actual UTC for Immich compatibility
     original_datetime = to_actual_utc(exif.original_datetime)
     modified_datetime = to_actual_utc(exif.modified_datetime)
@@ -189,12 +194,12 @@ def gumnut_exif_to_sync_exif_v1(exif: ExifResponse) -> SyncAssetExifV1:
         city=exif.city,
         country=exif.country,
         dateTimeOriginal=original_datetime,
-        description=exif.description,
-        exifImageHeight=None,  # Not available in ExifResponse
-        exifImageWidth=None,  # Not available in ExifResponse
+        description=exif.description or "",
+        exifImageHeight=asset.height,
+        exifImageWidth=asset.width,
         exposureTime=_format_exposure_time(exif.exposure_time),
         fNumber=exif.f_number,
-        fileSizeInByte=None,  # Not available in ExifResponse
+        fileSizeInByte=asset.file_size_bytes,
         focalLength=exif.focal_length,
         fps=exif.fps,
         iso=exif.iso,

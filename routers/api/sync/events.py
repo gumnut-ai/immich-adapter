@@ -8,7 +8,6 @@ from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.events_response import Data as EventData
-from gumnut.types.exif_response import ExifResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.person_response import PersonResponse
 
@@ -294,7 +293,7 @@ def convert_entity_to_sync_event(
     elif gumnut_entity_type == "face":
         sync_model = gumnut_face_to_sync_face_v1(cast(FaceResponse, entity))
     elif gumnut_entity_type == "exif":
-        sync_model = gumnut_exif_to_sync_exif_v1(cast(ExifResponse, entity))
+        sync_model = gumnut_exif_to_sync_exif_v1(cast(AssetResponse, entity))
     else:
         raise ValueError(f"Unsupported entity type: {gumnut_entity_type}")
 
