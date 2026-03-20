@@ -73,11 +73,13 @@ async def fetch_entities_map(
             result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "exif":
-            # Exif is 1:1 with asset; exif events use entity_id = asset_id
+            # Exif is 1:1 with asset; exif events use entity_id = asset_id.
+            # Store the full AssetResponse (not just asset.exif) because the
+            # exif converter needs asset-level fields (width, height, file_size_bytes).
             page = await gumnut_client.assets.list(ids=chunk, limit=len(chunk))
             for asset in page.data:
                 if asset.exif:
-                    result[asset.exif.asset_id] = asset.exif
+                    result[asset.id] = asset
                 else:
                     logger.warning(
                         "Missing exif on fetched asset while processing exif events",

@@ -371,6 +371,10 @@ class TestGenerateSyncStream:
         assert len(events) == 2
         assert events[0]["type"] == "AssetExifV1"
         assert events[0]["data"]["city"] == "San Francisco"
+        assert events[0]["data"]["exifImageWidth"] == 1920
+        assert events[0]["data"]["exifImageHeight"] == 1080
+        assert events[0]["data"]["fileSizeInByte"] == 1059218
+        assert events[0]["data"]["description"] == ""
         assert events[1]["type"] == "SyncCompleteV1"
 
     @pytest.mark.anyio

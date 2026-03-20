@@ -155,6 +155,7 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     asset.checksum_sha1 = "sha1checksum"
     asset.width = 1920
     asset.height = 1080
+    asset.file_size_bytes = 1059218
     asset.exif = None
     return asset
 
