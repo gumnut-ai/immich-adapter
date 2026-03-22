@@ -39,8 +39,10 @@ fake_features = {
     "search": True,
     "trash": True,
     "oauth": True,
+    # Auto-redirect to OAuth provider on login page instead of showing login form
     "oauthAutoLaunch": True,
-    "passwordLogin": True,
+    # Hide the password login form — OAuth is the only login method
+    "passwordLogin": False,
     "configFile": False,
     "email": False,
     "ocr": False,
@@ -50,7 +52,8 @@ fake_config = {
     "loginPageMessage": "",
     "trashDays": 30,
     "userDeleteDelay": 7,
-    "oauthButtonText": "Login with OAuth",
+    # Shown as the OAuth button label if the login form is visible (e.g., ?autoLaunch=0)
+    "oauthButtonText": "Sign in with Gumnut",
     "isInitialized": True,
     "isOnboarded": True,
     "externalDomain": "",

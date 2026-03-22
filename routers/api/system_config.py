@@ -263,14 +263,17 @@ async def get_config() -> SystemConfigDto:
 
     notifications_config = SystemConfigNotificationsDto(smtp=smtp_config)
 
+    # OAuth is the default (and only) login method. autoLaunch causes the Immich
+    # web client to redirect to the OAuth provider automatically. enabled=True
+    # ensures the system config is consistent with the /server/features response.
     oauth_config = SystemConfigOAuthDto(
         autoLaunch=True,
         autoRegister=True,
-        buttonText="Login with OAuth",
+        buttonText="Sign in with Gumnut",
         clientId="",
         clientSecret="",
         defaultStorageQuota=0,
-        enabled=False,
+        enabled=True,
         issuerUrl="",
         mobileOverrideEnabled=False,
         mobileRedirectUri=AnyUrl("https://example.com/oauth/redirect"),
@@ -284,7 +287,8 @@ async def get_config() -> SystemConfigDto:
         tokenEndpointAuthMethod=OAuthTokenEndpointAuthMethod.client_secret_post,
     )
 
-    password_login = SystemConfigPasswordLoginDto(enabled=True)
+    # Password login disabled — all authentication goes through OAuth
+    password_login = SystemConfigPasswordLoginDto(enabled=False)
 
     reverse_geocoding = SystemConfigReverseGeocodingDto(enabled=True)
 
