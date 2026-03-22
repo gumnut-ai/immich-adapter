@@ -7,7 +7,6 @@ from routers.immich_models import (
     AuthStatusResponseDto,
     ChangePasswordDto,
     LoginCredentialDto,
-    LoginResponseDto,
     LogoutResponseDto,
     PinCodeChangeDto,
     PinCodeResetDto,
@@ -53,10 +52,8 @@ async def change_password(request: ChangePasswordDto):
     return
 
 
-@router.post("/login", status_code=201)
-async def post_login(
-    body: LoginCredentialDto, request: Request, response: Response
-) -> LoginResponseDto:
+@router.post("/login", status_code=403)
+async def post_login(body: LoginCredentialDto, request: Request, response: Response):
     # Password login is disabled — all authentication goes through OAuth.
     # The Immich web/mobile clients won't normally reach this endpoint because
     # passwordLogin=false in /server/features hides the login form, but we
