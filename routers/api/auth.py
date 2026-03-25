@@ -1,14 +1,12 @@
-from uuid import UUID
 import logging
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from gumnut import AsyncGumnut, GumnutError
 
 from routers.immich_models import (
     AuthStatusResponseDto,
     ChangePasswordDto,
     LoginCredentialDto,
-    LoginResponseDto,
     LogoutResponseDto,
     PinCodeChangeDto,
     PinCodeResetDto,
@@ -18,7 +16,7 @@ from routers.immich_models import (
     UserAdminResponseDto,
     ValidateAccessTokenResponseDto,
 )
-from routers.utils.cookies import AuthType, ImmichCookie, set_auth_cookies
+from routers.utils.cookies import AuthType, ImmichCookie
 from routers.utils.gumnut_client import (
     get_authenticated_gumnut_client_optional,
 )
@@ -34,18 +32,6 @@ router = APIRouter(
     tags=["auth"],
     responses={404: {"description": "Not found"}},
 )
-
-
-fake_auth_login = {
-    "accessToken": "y3NP8DRmNE1K2DCNsVZKPepmqIWXQyoghTGS9aDjBM",
-    "userId": UUID("d6773835-4b91-4c7d-8667-26bd5daa1a45"),
-    "userEmail": "ted@immich.test",
-    "name": "Ted Mao",
-    "isAdmin": True,
-    "isOnboarded": True,
-    "profileImagePath": "",
-    "shouldChangePassword": False,
-}
 
 
 @router.post("/admin-sign-up", status_code=201, response_model=UserAdminResponseDto)
@@ -66,26 +52,15 @@ async def change_password(request: ChangePasswordDto):
     return
 
 
-@router.post("/login", status_code=201)
-async def post_login(
-    body: LoginCredentialDto, request: Request, response: Response
-) -> LoginResponseDto:
-    set_auth_cookies(
-        response,
-        fake_auth_login["accessToken"],
-        AuthType.PASSWORD,
-        request.url.scheme == "https",
-    )
-
-    return LoginResponseDto(
-        accessToken=fake_auth_login["accessToken"],
-        isAdmin=fake_auth_login["isAdmin"],
-        isOnboarded=fake_auth_login["isOnboarded"],
-        name=fake_auth_login["name"],
-        profileImagePath=fake_auth_login["profileImagePath"],
-        shouldChangePassword=fake_auth_login["shouldChangePassword"],
-        userEmail=body.email or fake_auth_login["userEmail"],
-        userId=str(fake_auth_login["userId"]),
+@router.post("/login", status_code=403)
+async def post_login(body: LoginCredentialDto, request: Request, response: Response):
+    # Password login is disabled — all authentication goes through OAuth.
+    # The Immich web/mobile clients won't normally reach this endpoint because
+    # passwordLogin=false in /server/features hides the login form, but we
+    # reject explicitly in case the endpoint is called directly.
+    raise HTTPException(
+        status_code=403,
+        detail="Password login is disabled. Please use OAuth to sign in.",
     )
 
 
