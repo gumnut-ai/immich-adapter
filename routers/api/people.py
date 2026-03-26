@@ -146,10 +146,21 @@ async def update_people(
                 BulkIdResponseDto(id=person_item.id, success=True, error=None)
             )
 
-        except HTTPException:
-            # Re-raise HTTP exceptions (e.g., 400 from _resolve_thumbnail_face_id)
-            # so the caller gets the precise status code and detail message.
-            raise
+        except HTTPException as he:
+            # Map adapter-raised HTTPExceptions to per-item failures so the
+            # bulk endpoint never aborts mid-batch (Immich clients expect a
+            # complete results list).
+            results.append(
+                BulkIdResponseDto(
+                    id=person_item.id, success=False, error=Error1.unknown
+                )
+            )
+            logger.warning(
+                "HTTPException in bulk person update for %s: %s %s",
+                person_item.id,
+                he.status_code,
+                he.detail,
+            )
         except Exception as e:
             error_msg = str(e).lower()
             if check_for_error_by_code(e, 404) or "not found" in error_msg:

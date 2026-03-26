@@ -347,11 +347,11 @@ class TestUpdatePeopleFeatureFace:
             people=[PeopleUpdateItem(id=str(person_uuid), featureFaceAssetId=uuid4())]
         )
 
-        with pytest.raises(HTTPException) as exc_info:
-            await update_people(request, client=mock_client)
+        result = await update_people(request, client=mock_client)
 
-        assert exc_info.value.status_code == 400
-        assert "No face found" in str(exc_info.value.detail)
+        assert len(result) == 1
+        assert result[0].success is False
+        assert result[0].error == Error1.unknown
 
 
 class TestGetAllPeople:
