@@ -146,6 +146,10 @@ async def update_people(
                 BulkIdResponseDto(id=person_item.id, success=True, error=None)
             )
 
+        except HTTPException:
+            # Re-raise HTTP exceptions (e.g., 400 from _resolve_thumbnail_face_id)
+            # so the caller gets the precise status code and detail message.
+            raise
         except Exception as e:
             error_msg = str(e).lower()
             if check_for_error_by_code(e, 404) or "not found" in error_msg:
@@ -202,6 +206,8 @@ async def update_person(
 
         return convert_gumnut_person_to_immich(gumnut_person)
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise map_gumnut_error(e, "Failed to update person") from e
 
