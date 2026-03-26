@@ -338,17 +338,27 @@ class TestUpdatePeopleFeatureFace:
     async def test_update_people_feature_face_no_face_found(self):
         """Test bulk update with featureFaceAssetId when no face exists on the asset."""
         mock_client = Mock()
+        mock_client.people.update = AsyncMock(return_value=None)
         mock_faces_page = Mock()
         mock_faces_page.data = []
         mock_client.faces.list = AsyncMock(return_value=mock_faces_page)
 
         person_uuid = uuid4()
+        asset_uuid = uuid4()
         request = PeopleUpdateDto(
-            people=[PeopleUpdateItem(id=str(person_uuid), featureFaceAssetId=uuid4())]
+            people=[
+                PeopleUpdateItem(id=str(person_uuid), featureFaceAssetId=asset_uuid)
+            ]
         )
 
         result = await update_people(request, client=mock_client)
 
+        mock_client.faces.list.assert_called_once_with(
+            person_id=uuid_to_gumnut_person_id(person_uuid),
+            asset_id=uuid_to_gumnut_asset_id(asset_uuid),
+            limit=1,
+        )
+        mock_client.people.update.assert_not_called()
         assert len(result) == 1
         assert result[0].success is False
         assert result[0].error == Error1.unknown

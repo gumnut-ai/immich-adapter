@@ -150,10 +150,14 @@ async def update_people(
             # Map adapter-raised HTTPExceptions to per-item failures so the
             # bulk endpoint never aborts mid-batch (Immich clients expect a
             # complete results list).
+            if he.status_code == 404:
+                error = Error1.not_found
+            elif he.status_code in (401, 403):
+                error = Error1.no_permission
+            else:
+                error = Error1.unknown
             results.append(
-                BulkIdResponseDto(
-                    id=person_item.id, success=False, error=Error1.unknown
-                )
+                BulkIdResponseDto(id=person_item.id, success=False, error=error)
             )
             logger.warning(
                 "HTTPException in bulk person update for %s: %s %s",
