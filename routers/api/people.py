@@ -21,7 +21,10 @@ from routers.immich_models import (
     PersonStatisticsResponseDto,
     PersonUpdateDto,
 )
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_person_id
+from routers.utils.gumnut_id_conversion import (
+    uuid_to_gumnut_asset_id,
+    uuid_to_gumnut_person_id,
+)
 from routers.utils.person_conversion import convert_gumnut_person_to_immich
 
 router = APIRouter(
@@ -31,6 +34,30 @@ router = APIRouter(
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _resolve_thumbnail_face_id(
+    client: AsyncGumnut,
+    gumnut_person_id: str,
+    feature_face_asset_id: UUID,
+) -> str:
+    """Resolve an Immich featureFaceAssetId to a Gumnut thumbnail_face_id.
+
+    Immich identifies feature faces by asset ID, while Gumnut uses face IDs.
+    This finds the face belonging to the given person on the given asset.
+    """
+    gumnut_asset_id = uuid_to_gumnut_asset_id(feature_face_asset_id)
+    faces_page = await client.faces.list(
+        person_id=gumnut_person_id,
+        asset_id=gumnut_asset_id,
+        limit=1,
+    )
+    if not faces_page.data:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No face found for this person on asset {feature_face_asset_id}",
+        )
+    return faces_page.data[0].id
 
 
 def _immich_people_sort_key(person: PersonResponse) -> tuple:
@@ -94,6 +121,9 @@ async def update_people(
         try:
             # Update the person using Gumnut SDK - only pass parameters that are not None
             update_kwargs = {}
+            gumnut_person_id = uuid_to_gumnut_person_id(
+                UUID(person_item.id)
+            )  # immich openapi specs switch between str and UUID for people id
             if person_item.name is not None:
                 update_kwargs["name"] = person_item.name
             if person_item.birthDate is not None:
@@ -102,11 +132,13 @@ async def update_people(
                 update_kwargs["is_favorite"] = person_item.isFavorite
             if person_item.isHidden is not None:
                 update_kwargs["is_hidden"] = person_item.isHidden
+            if person_item.featureFaceAssetId is not None:
+                update_kwargs["thumbnail_face_id"] = await _resolve_thumbnail_face_id(
+                    client, gumnut_person_id, person_item.featureFaceAssetId
+                )
 
             await client.people.update(
-                person_id=uuid_to_gumnut_person_id(
-                    UUID(person_item.id)
-                ),  # immich openapi specs switch between str and UUID for people id
+                person_id=gumnut_person_id,
                 **update_kwargs,
             )
 
@@ -150,6 +182,7 @@ async def update_person(
     try:
         # Update the person using Gumnut SDK - only pass parameters that are not None
         update_kwargs = {}
+        gumnut_person_id = uuid_to_gumnut_person_id(id)
         if person_data.name is not None:
             update_kwargs["name"] = person_data.name
         if person_data.birthDate is not None:
@@ -158,9 +191,13 @@ async def update_person(
             update_kwargs["is_favorite"] = person_data.isFavorite
         if person_data.isHidden is not None:
             update_kwargs["is_hidden"] = person_data.isHidden
+        if person_data.featureFaceAssetId is not None:
+            update_kwargs["thumbnail_face_id"] = await _resolve_thumbnail_face_id(
+                client, gumnut_person_id, person_data.featureFaceAssetId
+            )
 
         gumnut_person = await client.people.update(
-            person_id=uuid_to_gumnut_person_id(id), **update_kwargs
+            person_id=gumnut_person_id, **update_kwargs
         )
 
         return convert_gumnut_person_to_immich(gumnut_person)

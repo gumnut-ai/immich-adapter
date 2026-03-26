@@ -21,6 +21,7 @@ from routers.api.people import (
 )
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_person_id,
+    uuid_to_gumnut_asset_id,
     uuid_to_gumnut_person_id,
 )
 from routers.immich_models import (
@@ -248,6 +249,85 @@ class TestUpdatePerson:
             await update_person(sample_uuid, request, client=mock_client)
 
         assert exc_info.value.status_code == 404  # Now properly mapped as 404
+
+    @pytest.mark.anyio
+    async def test_update_person_with_feature_face_asset_id(
+        self, sample_gumnut_person, sample_uuid
+    ):
+        """Test updating a person's feature face via featureFaceAssetId."""
+        mock_client = Mock()
+        sample_gumnut_person.name = "Test Person"
+        mock_client.people.update = AsyncMock(return_value=sample_gumnut_person)
+
+        asset_uuid = uuid4()
+        mock_face = Mock()
+        mock_face.id = "face_abc123"
+        mock_faces_page = Mock()
+        mock_faces_page.data = [mock_face]
+        mock_client.faces.list = AsyncMock(return_value=mock_faces_page)
+
+        request = PersonUpdateDto(featureFaceAssetId=asset_uuid)
+
+        result = await update_person(sample_uuid, request, client=mock_client)
+
+        assert result.name == "Test Person"
+        mock_client.faces.list.assert_called_once_with(
+            person_id=uuid_to_gumnut_person_id(sample_uuid),
+            asset_id=uuid_to_gumnut_asset_id(asset_uuid),
+            limit=1,
+        )
+        mock_client.people.update.assert_called_once_with(
+            person_id=uuid_to_gumnut_person_id(sample_uuid),
+            thumbnail_face_id="face_abc123",
+        )
+
+    @pytest.mark.anyio
+    async def test_update_person_feature_face_no_face_found(self, sample_uuid):
+        """Test updating feature face when no face exists on the asset."""
+        mock_client = Mock()
+        mock_faces_page = Mock()
+        mock_faces_page.data = []
+        mock_client.faces.list = AsyncMock(return_value=mock_faces_page)
+
+        request = PersonUpdateDto(featureFaceAssetId=uuid4())
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_person(sample_uuid, request, client=mock_client)
+
+        assert exc_info.value.status_code == 400
+        assert "No face found" in str(exc_info.value.detail)
+
+
+class TestUpdatePeopleFeatureFace:
+    """Test featureFaceAssetId handling in bulk update."""
+
+    @pytest.mark.anyio
+    async def test_update_people_with_feature_face_asset_id(self):
+        """Test bulk update with featureFaceAssetId."""
+        mock_client = Mock()
+        mock_client.people.update = AsyncMock(return_value=None)
+
+        person_uuid = uuid4()
+        asset_uuid = uuid4()
+        mock_face = Mock()
+        mock_face.id = "face_xyz789"
+        mock_faces_page = Mock()
+        mock_faces_page.data = [mock_face]
+        mock_client.faces.list = AsyncMock(return_value=mock_faces_page)
+
+        person_updates = [
+            PeopleUpdateItem(id=str(person_uuid), featureFaceAssetId=asset_uuid),
+        ]
+        request = PeopleUpdateDto(people=person_updates)
+
+        result = await update_people(request, client=mock_client)
+
+        assert len(result) == 1
+        assert result[0].success is True
+        mock_client.people.update.assert_called_once_with(
+            person_id=uuid_to_gumnut_person_id(person_uuid),
+            thumbnail_face_id="face_xyz789",
+        )
 
 
 class TestGetAllPeople:
