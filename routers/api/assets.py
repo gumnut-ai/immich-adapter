@@ -8,6 +8,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Request,
     UploadFile,
     File,
     Form,
@@ -18,6 +19,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 from gumnut import AsyncGumnut, GumnutError
 
+from routers.utils.cdn_client import stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.utils.current_user import get_current_user, get_current_user_id
@@ -68,99 +70,49 @@ router = APIRouter(
 )
 
 
-async def _download_asset_content(
+_IMMICH_SIZE_TO_VARIANT: dict[AssetMediaSize, str] = {
+    AssetMediaSize.fullsize: "fullsize",
+    AssetMediaSize.preview: "preview",
+    AssetMediaSize.thumbnail: "thumbnail",
+}
+
+
+async def _retrieve_and_stream_variant(
     asset_uuid: UUID,
     client: AsyncGumnut,
-    size: AssetMediaSize = AssetMediaSize.fullsize,
-    force_original: bool = False,
-) -> Response:
-    """
-    Shared helper function to download asset content from Gumnut.
+    variant: str,
+    range_header: str | None = None,
+) -> StreamingResponse:
+    """Retrieve asset metadata and stream the requested variant from CDN.
 
     Args:
-        asset_uuid: The asset UUID to download
-        client: Authenticated Gumnut client
-        size: The size variant to download (fullsize, preview, thumbnail)
-        force_original: If True, always download the original file via download().
-                       If False, use download_thumbnail() for all sizes.
+        asset_uuid: Immich-format asset UUID.
+        client: Authenticated Gumnut client.
+        variant: asset_urls key (thumbnail, preview, fullsize, original).
+        range_header: Optional Range header for video seeking.
 
     Returns:
-        FastAPI Response with the asset content
-
-    Note on HEIC handling:
-        The /thumbnail endpoint should always use download_thumbnail(), even for
-        fullsize requests. This returns browser-compatible formats (WEBP) for
-        non-web-native formats like HEIC. See GUM-223 for details.
-
-        The /original endpoint should always use download() to return the actual
-        original file regardless of format.
+        StreamingResponse streaming CDN bytes to the Immich client.
     """
-
     try:
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
-        def extract_headers_and_filename(gumnut_response):
-            """Extract content type, filename, and build response headers."""
-            content_type = gumnut_response.headers.get(
-                "content-type", "application/octet-stream"
+        asset = await client.assets.retrieve(gumnut_asset_id)
+
+        if not asset.asset_urls or variant not in asset.asset_urls:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Asset variant '{variant}' not available",
             )
 
-            # Extract filename from content-disposition header if available
-            content_disposition = gumnut_response.headers.get("content-disposition", "")
-            filename = None
-            if 'filename="' in content_disposition:
-                filename = content_disposition.split('filename="')[1].split('"')[0]
+        variant_info = asset.asset_urls[variant]
+        cdn_url = variant_info.url
+        mimetype = variant_info.mimetype
 
-            # Build response headers
-            response_headers = {"Content-Type": content_type}
-            if filename:
-                response_headers["Content-Disposition"] = (
-                    f'inline; filename="{filename}"'
-                )
+        return await stream_from_cdn(cdn_url, mimetype, range_header=range_header)
 
-            return content_type, response_headers
-
-        # Select the appropriate streaming endpoint
-        size_map = {
-            AssetMediaSize.fullsize: "fullsize",
-            AssetMediaSize.preview: "preview",
-            AssetMediaSize.thumbnail: "thumbnail",
-        }
-
-        if force_original:
-            streaming_ctx = client.assets.with_streaming_response.download(
-                gumnut_asset_id
-            )
-        else:
-            gumnut_size = size_map.get(size, "thumbnail")
-            streaming_ctx = client.assets.with_streaming_response.download_thumbnail(
-                gumnut_asset_id, size=gumnut_size
-            )
-
-        # Enter the async context manager manually so it stays open during streaming.
-        # The context must remain alive while StreamingResponse consumes the generator.
-        gumnut_response = await streaming_ctx.__aenter__()
-        try:
-            content_type, response_headers = extract_headers_and_filename(
-                gumnut_response
-            )
-        except Exception:
-            await streaming_ctx.__aexit__(None, None, None)
-            raise
-
-        async def stream_and_close():
-            try:
-                async for chunk in gumnut_response.iter_bytes(chunk_size=8192):
-                    yield chunk
-            finally:
-                await streaming_ctx.__aexit__(None, None, None)
-
-        return StreamingResponse(
-            stream_and_close(),
-            media_type=content_type,
-            headers=response_headers,
-        )
-
+    except HTTPException:
+        raise
     except Exception as e:
         raise map_gumnut_error(e, "Failed to fetch asset") from e
 
@@ -666,14 +618,14 @@ async def view_asset(
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> Response:
+) -> StreamingResponse:
     """
     Get a thumbnail for an asset.
-    Uses the shared download logic with size defaulting to thumbnail if not specified.
+    Retrieves asset metadata and streams the requested variant from CDN.
     """
-    # Determine the size, defaulting to thumbnail if not specified
     preferred_size = size if size is not None else AssetMediaSize.thumbnail
-    return await _download_asset_content(id, client, preferred_size)
+    variant = _IMMICH_SIZE_TO_VARIANT.get(preferred_size, "thumbnail")
+    return await _retrieve_and_stream_variant(id, client, variant)
 
 
 @router.get(
@@ -694,20 +646,14 @@ async def download_asset(
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> Response:
+) -> StreamingResponse:
     """
     Download the original asset file.
 
-    Always downloads the original file using download(), preserving the original
-    format (JPEG, HEIC, RAW, etc.) for actual downloads.
-
-    Note: force_original=True ensures we call download() instead of download_thumbnail().
-    This is important for preserving the original format when users explicitly
-    request the original file (e.g., for editing or archival purposes).
+    Fetches the original variant from CDN, preserving the original format
+    (JPEG, HEIC, RAW, etc.) for actual downloads.
     """
-    return await _download_asset_content(
-        id, client, AssetMediaSize.fullsize, force_original=True
-    )
+    return await _retrieve_and_stream_variant(id, client, "original")
 
 
 @router.put(
@@ -796,16 +742,20 @@ async def get_asset_metadata_by_key(
 @router.get("/{id}/video/playback")
 async def play_asset_video(
     id: UUID,
+    request: Request,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-):
+) -> StreamingResponse:
     """
     Play the video for a specific asset.
-    This is a stub implementation as Gumnut does not support video playback.
-    Returns HTTP 200 (OK) as specified by the Immich API.
+
+    Streams the original video from CDN. Forwards Range headers for seeking.
     """
-    return Response(status_code=status.HTTP_200_OK)
+    range_header = request.headers.get("range")
+    return await _retrieve_and_stream_variant(
+        id, client, "original", range_header=range_header
+    )
 
 
 @router.get("/{id}/ocr")

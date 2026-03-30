@@ -38,7 +38,6 @@ from routers.api.assets import (
     get_asset_metadata_by_key,
     play_asset_video,
 )
-from tests.conftest import make_mock_streaming_context
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 from routers.immich_models import (
     Action,
@@ -942,73 +941,109 @@ class TestGetAssetInfo:
         assert exc_info.value.status_code == 404
 
 
+def _make_mock_asset_with_urls(variant_map: dict[str, dict[str, str]]):
+    """Create a mock asset with asset_urls (Mock objects with .url/.mimetype attrs)."""
+    asset = Mock()
+    mock_urls = {}
+    for key, val in variant_map.items():
+        variant = Mock()
+        variant.url = val["url"]
+        variant.mimetype = val["mimetype"]
+        mock_urls[key] = variant
+    asset.asset_urls = mock_urls
+    return asset
+
+
 class TestViewAsset:
     """Test the view_asset endpoint."""
 
     @pytest.mark.anyio
     async def test_view_asset_success(self, sample_uuid):
-        """Test successful asset thumbnail view."""
-        # Setup - create mock client
+        """Test successful asset thumbnail view via CDN."""
         mock_client = Mock()
-        mock_context = make_mock_streaming_context(
-            {"content-type": "image/jpeg"}, method="iter_bytes"
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "thumbnail": {
+                        "url": "https://cdn.example.com/thumb.webp",
+                        "mimetype": "image/webp",
+                    }
+                }
+            )
         )
-        mock_client.assets.with_streaming_response.download_thumbnail.return_value = (
-            mock_context
-        )
+        mock_streaming_response = Mock()
 
-        # Execute
-        result = await view_asset(
-            sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
-        )
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = mock_streaming_response
+            result = await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
 
-        # Assert
-        assert result.media_type == "image/jpeg"
-        assert hasattr(result, "body_iterator")  # StreamingResponse has body_iterator
-        mock_client.assets.with_streaming_response.download_thumbnail.assert_called_once()
+        assert result is mock_streaming_response
+        mock_client.assets.retrieve.assert_called_once()
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/thumb.webp", "image/webp", range_header=None
+        )
 
     @pytest.mark.anyio
-    async def test_view_asset_fullsize_uses_thumbnail_api(self, sample_uuid):
-        """Test that /thumbnail?size=fullsize uses download_thumbnail, not download.
-
-        This is critical for HEIC support: Immich requests fullsize thumbnails
-        expecting browser-compatible formats (WEBP), not the original HEIC.
-        See GUM-223 for details.
-        """
-        # Setup - create mock client
+    async def test_view_asset_fullsize_maps_to_fullsize_variant(self, sample_uuid):
+        """Test that ?size=fullsize maps to the 'fullsize' asset_urls variant."""
         mock_client = Mock()
-        mock_context = make_mock_streaming_context(
-            {"content-type": "image/webp"}, method="iter_bytes"
-        )
-        # Mock download_thumbnail, NOT download
-        mock_client.assets.with_streaming_response.download_thumbnail.return_value = (
-            mock_context
-        )
-
-        # Execute
-        result = await view_asset(
-            sample_uuid, size=AssetMediaSize.fullsize, client=mock_client
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "fullsize": {
+                        "url": "https://cdn.example.com/full.webp",
+                        "mimetype": "image/webp",
+                    }
+                }
+            )
         )
 
-        # Assert
-        assert result.media_type == "image/webp"
-        assert hasattr(result, "body_iterator")  # StreamingResponse has body_iterator
-        # Verify download_thumbnail was called with size="fullsize", NOT download()
-        mock_client.assets.with_streaming_response.download_thumbnail.assert_called_once()
-        mock_client.assets.with_streaming_response.download.assert_not_called()
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.fullsize, client=mock_client
+            )
+
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/full.webp", "image/webp", range_header=None
+        )
 
     @pytest.mark.anyio
     async def test_view_asset_not_found(self, sample_uuid):
         """Test handling of asset not found during view."""
-        # Setup - create mock client
         mock_client = Mock()
-        mock_client.assets.with_streaming_response.download_thumbnail.side_effect = (
-            Exception("404 Not found")
-        )
+        mock_client.assets.retrieve = AsyncMock(side_effect=Exception("404 Not found"))
 
-        # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
             await view_asset(sample_uuid, client=mock_client)
+
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_view_asset_missing_variant(self, sample_uuid):
+        """Test 404 when requested variant is not in asset_urls."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "original": {
+                        "url": "https://cdn.example.com/orig.jpg",
+                        "mimetype": "image/jpeg",
+                    }
+                }
+            )
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
 
         assert exc_info.value.status_code == 404
 
@@ -1018,56 +1053,56 @@ class TestDownloadAsset:
 
     @pytest.mark.anyio
     async def test_download_asset_success(self, sample_uuid):
-        """Test successful asset download."""
-        # Setup - create mock client
+        """Test successful asset download via CDN original variant."""
         mock_client = Mock()
-
-        mock_context = make_mock_streaming_context(
-            {
-                "content-type": "image/jpeg",
-                "content-disposition": 'attachment; filename="test.jpg"',
-            },
-            method="iter_bytes",
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "original": {
+                        "url": "https://cdn.example.com/original.jpg",
+                        "mimetype": "image/jpeg",
+                    }
+                }
+            )
         )
-        mock_client.assets.with_streaming_response.download.return_value = mock_context
+        mock_streaming_response = Mock()
 
-        # Execute
-        result = await download_asset(sample_uuid, client=mock_client)
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = mock_streaming_response
+            result = await download_asset(sample_uuid, client=mock_client)
 
-        # Assert
-        assert result.media_type == "image/jpeg"
-        assert hasattr(result, "body_iterator")  # StreamingResponse has body_iterator
-        assert "Content-Disposition" in result.headers
-        mock_client.assets.with_streaming_response.download.assert_called_once()
+        assert result is mock_streaming_response
+        mock_client.assets.retrieve.assert_called_once()
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/original.jpg", "image/jpeg", range_header=None
+        )
 
     @pytest.mark.anyio
-    async def test_download_asset_uses_download_not_thumbnail(self, sample_uuid):
-        """Test that /original endpoint uses download(), not download_thumbnail().
-
-        The /original endpoint should always return the actual original file
-        (JPEG, HEIC, RAW, etc.), not a converted thumbnail. This preserves the
-        original format for downloads.
-        See GUM-223 for details on the distinction from /thumbnail endpoint.
-        """
-        # Setup - create mock client
+    async def test_download_asset_heic_original(self, sample_uuid):
+        """Test that /original returns HEIC format (not converted)."""
         mock_client = Mock()
-        mock_context = make_mock_streaming_context(
-            {
-                "content-type": "image/heic",
-                "content-disposition": 'attachment; filename="IMG_1234.heic"',
-            },
-            chunks=(b"fake heic data",),
-            method="aiter_bytes",
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "original": {
+                        "url": "https://cdn.example.com/IMG_1234.heic",
+                        "mimetype": "image/heic",
+                    }
+                }
+            )
         )
-        mock_client.assets.with_streaming_response.download.return_value = mock_context
 
-        # Execute
-        result = await download_asset(sample_uuid, client=mock_client)
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await download_asset(sample_uuid, client=mock_client)
 
-        # Assert - download() was called, NOT download_thumbnail()
-        assert result.media_type == "image/heic"
-        mock_client.assets.with_streaming_response.download.assert_called_once()
-        mock_client.assets.with_streaming_response.download_thumbnail.assert_not_called()
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/IMG_1234.heic", "image/heic", range_header=None
+        )
 
 
 class TestReplaceAsset:
@@ -1174,9 +1209,77 @@ class TestPlayAssetVideo:
 
     @pytest.mark.anyio
     async def test_play_asset_video_success(self, sample_uuid):
-        """Test video playback (stub implementation)."""
-        # Execute
-        result = await play_asset_video(sample_uuid)
+        """Test video playback streams original variant from CDN."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "original": {
+                        "url": "https://cdn.example.com/video.mp4",
+                        "mimetype": "video/mp4",
+                    }
+                }
+            )
+        )
+        mock_streaming_response = Mock()
+        mock_request = Mock()
+        mock_request.headers = {}
 
-        # Assert
-        assert result.status_code == 200
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = mock_streaming_response
+            result = await play_asset_video(
+                sample_uuid, request=mock_request, client=mock_client
+            )
+
+        assert result is mock_streaming_response
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/video.mp4", "video/mp4", range_header=None
+        )
+
+    @pytest.mark.anyio
+    async def test_play_asset_video_with_range_header(self, sample_uuid):
+        """Test video playback forwards Range header for seeking."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "original": {
+                        "url": "https://cdn.example.com/video.mp4",
+                        "mimetype": "video/mp4",
+                    }
+                }
+            )
+        )
+        mock_request = Mock()
+        mock_request.headers = {"range": "bytes=1000-2000"}
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await play_asset_video(
+                sample_uuid, request=mock_request, client=mock_client
+            )
+
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/video.mp4",
+            "video/mp4",
+            range_header="bytes=1000-2000",
+        )
+
+    @pytest.mark.anyio
+    async def test_play_asset_video_not_found(self, sample_uuid):
+        """Test video playback when asset not found."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(side_effect=Exception("404 Not found"))
+        mock_request = Mock()
+        mock_request.headers = {}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await play_asset_video(
+                sample_uuid, request=mock_request, client=mock_client
+            )
+
+        assert exc_info.value.status_code == 404

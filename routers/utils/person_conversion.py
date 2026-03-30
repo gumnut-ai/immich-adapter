@@ -32,7 +32,9 @@ def _extract_person_fields(
     is_favorite = gumnut_person.is_favorite
     is_hidden = gumnut_person.is_hidden
     updated_at = gumnut_person.updated_at
-    thumbnail_path = gumnut_person.thumbnail_face_url or ""
+    thumbnail_path = ""
+    if gumnut_person.asset_urls and "thumbnail" in gumnut_person.asset_urls:
+        thumbnail_path = gumnut_person.asset_urls["thumbnail"].url
 
     # Ensure updated_at is a datetime object
     if updated_at is None:
