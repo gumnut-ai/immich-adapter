@@ -4,6 +4,8 @@ import base64
 import logging
 from datetime import datetime
 
+import sentry_sdk
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -365,13 +367,25 @@ async def upload_asset(
 
         # Stream the file to Gumnut SDK without loading into memory.
         await assetData.seek(0)
-        gumnut_asset = await client.assets.create(
-            asset_data=(assetData.filename, assetData.file, assetData.content_type),
-            device_asset_id=deviceAssetId,
-            device_id=deviceId,
-            file_created_at=file_created_at,
-            file_modified_at=file_modified_at,
-        )
+        with sentry_sdk.start_span(
+            op="http.client", name="gumnut.assets.create"
+        ) as span:
+            span.set_data("upload.filename", assetData.filename)
+            span.set_data("upload.content_type", assetData.content_type)
+            span.set_data("upload.device_asset_id", deviceAssetId)
+            span.set_data("upload.device_id", deviceId)
+            gumnut_asset = await client.assets.create(
+                asset_data=(
+                    assetData.filename,
+                    assetData.file,
+                    assetData.content_type,
+                ),
+                device_asset_id=deviceAssetId,
+                device_id=deviceId,
+                file_created_at=file_created_at,
+                file_modified_at=file_modified_at,
+            )
+            span.set_data("upload.gumnut_asset_id", gumnut_asset.id)
 
         # Get the asset ID from the AssetResponse
         asset_id = gumnut_asset.id
@@ -407,6 +421,17 @@ async def upload_asset(
         )
 
     except Exception as e:
+        logger.warning(
+            "Upload failed",
+            extra={
+                "file_name": assetData.filename,
+                "content_type": assetData.content_type,
+                "device_asset_id": deviceAssetId,
+                "device_id": deviceId,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         # Handle specific upload error cases first
         error_msg = str(e).lower()
         if "duplicate" in error_msg or "already exists" in error_msg:
