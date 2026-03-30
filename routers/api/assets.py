@@ -422,9 +422,9 @@ async def upload_asset(
 
     except Exception as e:
         logger.warning(
-            f"Upload failed for {assetData.filename}",
+            "Upload failed",
             extra={
-                "upload_filename": assetData.filename,
+                "file_name": assetData.filename,
                 "content_type": assetData.content_type,
                 "device_asset_id": deviceAssetId,
                 "device_id": deviceId,
