@@ -20,7 +20,7 @@ FROM ghcr.io/immich-app/immich-server:${IMMICH_VERSION} AS immich-source
 # ============================================================================
 # Stage 2: Build the immich-adapter application
 # ============================================================================
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 # Copy uv from official image - pinned to specific version for reproducibility
 # Version 0.9.8 released 2025-11-07
@@ -40,7 +40,7 @@ RUN uv sync --frozen --no-dev
 # ============================================================================
 # Stage 3: Runtime image (final, smallest image)
 # ============================================================================
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Propagate build args for labels
 ARG GIT_COMMIT
