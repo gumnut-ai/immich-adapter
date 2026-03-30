@@ -21,7 +21,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 from gumnut import AsyncGumnut, GumnutError
 
-from routers.utils.cdn_client import stream_from_cdn
+from routers.utils.cdn_client import _DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.utils.current_user import get_current_user, get_current_user_id
@@ -84,6 +84,7 @@ async def _retrieve_and_stream_variant(
     client: AsyncGumnut,
     variant: str,
     range_header: str | None = None,
+    forwarded_headers: tuple[str, ...] = _DEFAULT_FORWARDED_HEADERS,
 ) -> StreamingResponse:
     """Retrieve asset metadata and stream the requested variant from CDN.
 
@@ -92,6 +93,7 @@ async def _retrieve_and_stream_variant(
         client: Authenticated Gumnut client.
         variant: asset_urls key (thumbnail, preview, fullsize, original).
         range_header: Optional Range header for video seeking.
+        forwarded_headers: Upstream headers to forward from CDN response.
 
     Returns:
         StreamingResponse streaming CDN bytes to the Immich client.
@@ -111,7 +113,12 @@ async def _retrieve_and_stream_variant(
         cdn_url = variant_info.url
         mimetype = variant_info.mimetype
 
-        return await stream_from_cdn(cdn_url, mimetype, range_header=range_header)
+        return await stream_from_cdn(
+            cdn_url,
+            mimetype,
+            range_header=range_header,
+            forwarded_headers=forwarded_headers,
+        )
 
     except HTTPException:
         raise
@@ -678,7 +685,12 @@ async def download_asset(
     Fetches the original variant from CDN, preserving the original format
     (JPEG, HEIC, RAW, etc.) for actual downloads.
     """
-    return await _retrieve_and_stream_variant(id, client, "original")
+    return await _retrieve_and_stream_variant(
+        id,
+        client,
+        "original",
+        forwarded_headers=_DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
+    )
 
 
 @router.put(

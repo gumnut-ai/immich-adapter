@@ -146,8 +146,8 @@ class TestStreamFromCdn:
         cdn_response.aclose.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_forwards_upstream_headers(self, mock_cdn_response):
-        """Test that Content-Length, caching, and Content-Disposition headers are forwarded."""
+    async def test_forwards_default_headers(self, mock_cdn_response):
+        """Test that default headers (Content-Length, caching) are forwarded but not Content-Disposition."""
         cdn_response = mock_cdn_response(
             200,
             headers={
@@ -172,12 +172,40 @@ class TestStreamFromCdn:
             )
 
         assert result.headers["Content-Length"] == "12345"
-        assert (
-            result.headers["Content-Disposition"] == 'attachment; filename="photo.jpg"'
-        )
         assert result.headers["etag"] == '"abc123"'
         assert result.headers["Last-Modified"] == "Mon, 30 Mar 2026 00:00:00 GMT"
         assert result.headers["Cache-Control"] == "public, max-age=31536000"
+        assert "Content-Disposition" not in result.headers
+
+    @pytest.mark.anyio
+    async def test_forwards_content_disposition_when_requested(self, mock_cdn_response):
+        """Test that Content-Disposition is forwarded when explicitly included."""
+        from routers.utils.cdn_client import _DEFAULT_FORWARDED_HEADERS
+
+        cdn_response = mock_cdn_response(
+            200,
+            headers={
+                "content-disposition": 'attachment; filename="photo.jpg"',
+            },
+        )
+        mock_client = AsyncMock()
+        mock_client.build_request.return_value = Mock()
+        mock_client.send = AsyncMock(return_value=cdn_response)
+
+        with patch(
+            "routers.utils.cdn_client.get_cdn_http_client",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            result = await stream_from_cdn(
+                "https://cdn.example.com/photo.jpg",
+                "image/jpeg",
+                forwarded_headers=_DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
+            )
+
+        assert (
+            result.headers["Content-Disposition"] == 'attachment; filename="photo.jpg"'
+        )
 
     @pytest.mark.anyio
     async def test_cdn_502_maps_to_502(self, mock_cdn_response):

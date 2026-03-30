@@ -984,7 +984,15 @@ class TestViewAsset:
         assert result is mock_streaming_response
         mock_client.assets.retrieve.assert_called_once()
         mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/thumb.webp", "image/webp", range_header=None
+            "https://cdn.example.com/thumb.webp",
+            "image/webp",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
         )
 
     @pytest.mark.anyio
@@ -1011,7 +1019,15 @@ class TestViewAsset:
             )
 
         mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/full.webp", "image/webp", range_header=None
+            "https://cdn.example.com/full.webp",
+            "image/webp",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
         )
 
     @pytest.mark.anyio
@@ -1076,7 +1092,16 @@ class TestDownloadAsset:
         assert result is mock_streaming_response
         mock_client.assets.retrieve.assert_called_once()
         mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/original.jpg", "image/jpeg", range_header=None
+            "https://cdn.example.com/original.jpg",
+            "image/jpeg",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+                "content-disposition",
+            ),
         )
 
     @pytest.mark.anyio
@@ -1101,7 +1126,16 @@ class TestDownloadAsset:
             await download_asset(sample_uuid, client=mock_client)
 
         mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/IMG_1234.heic", "image/heic", range_header=None
+            "https://cdn.example.com/IMG_1234.heic",
+            "image/heic",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+                "content-disposition",
+            ),
         )
 
 
@@ -1235,7 +1269,15 @@ class TestPlayAssetVideo:
 
         assert result is mock_streaming_response
         mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/video.mp4", "video/mp4", range_header=None
+            "https://cdn.example.com/video.mp4",
+            "video/mp4",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
         )
 
     @pytest.mark.anyio
@@ -1267,6 +1309,12 @@ class TestPlayAssetVideo:
             "https://cdn.example.com/video.mp4",
             "video/mp4",
             range_header="bytes=1000-2000",
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
         )
 
     @pytest.mark.anyio
