@@ -28,10 +28,13 @@ async def get_cdn_http_client() -> httpx.AsyncClient:
         async with _cdn_client_lock:
             if _cdn_http_client is None:
                 _cdn_http_client = httpx.AsyncClient(
-                    timeout=30.0,
+                    timeout=httpx.Timeout(
+                        connect=10.0, read=None, write=30.0, pool=30.0
+                    ),
                     limits=httpx.Limits(
                         max_connections=100, max_keepalive_connections=20
                     ),
+                    follow_redirects=True,
                 )
     return _cdn_http_client
 
@@ -60,7 +63,8 @@ async def stream_from_cdn(
         StreamingResponse that streams CDN bytes to the Immich client.
 
     Raises:
-        HTTPException: 404 for CDN 403/404, 502 for CDN 5xx or connection errors.
+        HTTPException: 404 for CDN 403/404, 416 for range-not-satisfiable,
+            502 for CDN 5xx or connection errors.
     """
     client = await get_cdn_http_client()
 
@@ -87,6 +91,13 @@ async def stream_from_cdn(
             detail="Asset not found",
         )
 
+    if cdn_response.status_code == 416:
+        await cdn_response.aclose()
+        raise HTTPException(
+            status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+            detail="Requested range not satisfiable",
+        )
+
     if cdn_response.status_code >= 400:
         await cdn_response.aclose()
         raise HTTPException(
@@ -96,14 +107,24 @@ async def stream_from_cdn(
 
     response_headers: dict[str, str] = {"Content-Type": mimetype}
 
+    # Forward useful upstream headers when present
+    _FORWARDED_HEADERS = (
+        "content-length",
+        "content-disposition",
+        "etag",
+        "last-modified",
+        "cache-control",
+    )
+    for h in _FORWARDED_HEADERS:
+        v = cdn_response.headers.get(h)
+        if v:
+            response_headers[h if h == "etag" else h.title()] = v
+
     if cdn_response.status_code == 206:
         content_range = cdn_response.headers.get("content-range")
         if content_range:
             response_headers["Content-Range"] = content_range
         response_headers["Accept-Ranges"] = "bytes"
-        content_length = cdn_response.headers.get("content-length")
-        if content_length:
-            response_headers["Content-Length"] = content_length
 
     async def _stream_and_close():
         try:

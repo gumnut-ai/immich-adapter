@@ -123,6 +123,63 @@ class TestStreamFromCdn:
         cdn_response.aclose.assert_called_once()
 
     @pytest.mark.anyio
+    async def test_cdn_416_passes_through(self, mock_cdn_response):
+        """Test CDN 416 Range Not Satisfiable is passed through as 416."""
+        cdn_response = mock_cdn_response(416)
+        mock_client = AsyncMock()
+        mock_client.build_request.return_value = Mock()
+        mock_client.send = AsyncMock(return_value=cdn_response)
+
+        with patch(
+            "routers.utils.cdn_client.get_cdn_http_client",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await stream_from_cdn(
+                    "https://cdn.example.com/video.mp4",
+                    "video/mp4",
+                    range_header="bytes=99999999-",
+                )
+
+        assert exc_info.value.status_code == 416
+        cdn_response.aclose.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_forwards_upstream_headers(self, mock_cdn_response):
+        """Test that Content-Length, caching, and Content-Disposition headers are forwarded."""
+        cdn_response = mock_cdn_response(
+            200,
+            headers={
+                "content-length": "12345",
+                "content-disposition": 'attachment; filename="photo.jpg"',
+                "etag": '"abc123"',
+                "last-modified": "Mon, 30 Mar 2026 00:00:00 GMT",
+                "cache-control": "public, max-age=31536000",
+            },
+        )
+        mock_client = AsyncMock()
+        mock_client.build_request.return_value = Mock()
+        mock_client.send = AsyncMock(return_value=cdn_response)
+
+        with patch(
+            "routers.utils.cdn_client.get_cdn_http_client",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            result = await stream_from_cdn(
+                "https://cdn.example.com/photo.jpg", "image/jpeg"
+            )
+
+        assert result.headers["Content-Length"] == "12345"
+        assert (
+            result.headers["Content-Disposition"] == 'attachment; filename="photo.jpg"'
+        )
+        assert result.headers["etag"] == '"abc123"'
+        assert result.headers["Last-Modified"] == "Mon, 30 Mar 2026 00:00:00 GMT"
+        assert result.headers["Cache-Control"] == "public, max-age=31536000"
+
+    @pytest.mark.anyio
     async def test_cdn_502_maps_to_502(self, mock_cdn_response):
         """Test CDN 5xx is mapped to adapter 502."""
         cdn_response = mock_cdn_response(502)
