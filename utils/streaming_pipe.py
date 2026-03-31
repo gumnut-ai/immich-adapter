@@ -46,11 +46,24 @@ class StreamingPipe(RawIOBase):
             )
 
     def close_writer(self) -> None:
-        """Signal EOF from the writer side."""
+        """Signal EOF from the writer side.
+
+        Drains one item if the queue is full to make room for the EOF sentinel.
+        This prevents the upload thread from hanging until the stall timeout
+        when the queue is full at EOF.
+        """
         try:
             self._queue.put(None, timeout=10)
         except queue.Full:
-            pass
+            # Drain one item to make room, then retry
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._queue.put_nowait(None)
+            except queue.Full:
+                pass
 
     def set_error(self, error: BaseException) -> None:
         """Propagate an error from either side, unblocking the other."""

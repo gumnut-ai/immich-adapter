@@ -499,7 +499,17 @@ async def _upload_buffered(
 # timeout (10 minutes) since large videos on slow connections need much longer
 # than the default 30s SDK timeout. Shared to reuse TCP/TLS connections.
 # Initialized lazily to avoid import-time side effects (e.g., SOCKS proxy checks).
+# Includes a response hook to capture JWT refreshes from photos-api.
 _streaming_http_client: httpx.Client | None = None
+
+
+def _sync_response_hook(response: httpx.Response) -> None:
+    """Capture JWT refreshes from photos-api responses (sync version)."""
+    from routers.utils.gumnut_client import set_refreshed_token
+
+    token = response.headers.get("x-new-access-token")
+    if token:
+        set_refreshed_token(token)
 
 
 def _get_streaming_http_client() -> httpx.Client:
@@ -508,6 +518,7 @@ def _get_streaming_http_client() -> httpx.Client:
         _streaming_http_client = httpx.Client(
             timeout=httpx.Timeout(600.0),
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            event_hooks={"response": [_sync_response_hook]},
         )
     return _streaming_http_client
 
