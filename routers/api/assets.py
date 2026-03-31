@@ -106,9 +106,8 @@ async def _retrieve_and_stream_variant(
 
         if not asset.asset_urls or variant not in asset.asset_urls:
             logger.warning(
-                "Asset variant '%s' not available for asset %s",
-                variant,
-                gumnut_asset_id,
+                "Asset variant not available",
+                extra={"variant": variant, "asset_id": gumnut_asset_id},
             )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

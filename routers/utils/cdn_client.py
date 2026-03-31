@@ -27,9 +27,12 @@ async def get_cdn_http_client() -> httpx.AsyncClient:
     if _cdn_http_client is None:
         async with _cdn_client_lock:
             if _cdn_http_client is None:
+                # read=120: per-chunk timeout, not total transfer time. A large
+                # file actively streaming will never hit it — it only fires if
+                # the CDN goes silent for 2 minutes, preventing hung connections.
                 _cdn_http_client = httpx.AsyncClient(
                     timeout=httpx.Timeout(
-                        connect=10.0, read=None, write=30.0, pool=30.0
+                        connect=10.0, read=120.0, write=30.0, pool=30.0
                     ),
                     limits=httpx.Limits(
                         max_connections=100, max_keepalive_connections=20
@@ -91,14 +94,19 @@ async def stream_from_cdn(
             stream=True,
         )
     except httpx.HTTPError as exc:
-        logger.warning("CDN connection error: %s", exc)
+        logger.warning(
+            "CDN connection error", extra={"cdn_url": cdn_url, "error": str(exc)}
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to fetch asset from CDN",
         ) from exc
 
     if cdn_response.status_code in (403, 404):
-        logger.warning("CDN returned %s for %s", cdn_response.status_code, cdn_url)
+        logger.warning(
+            "CDN asset not found",
+            extra={"cdn_url": cdn_url, "status_code": cdn_response.status_code},
+        )
         await cdn_response.aclose()
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -106,7 +114,7 @@ async def stream_from_cdn(
         )
 
     if cdn_response.status_code == 416:
-        logger.warning("CDN returned 416 Range Not Satisfiable for %s", cdn_url)
+        logger.warning("CDN range not satisfiable", extra={"cdn_url": cdn_url})
         error_headers: dict[str, str] = {"Accept-Ranges": "bytes"}
         if cr := cdn_response.headers.get("content-range"):
             error_headers["Content-Range"] = cr
@@ -118,7 +126,10 @@ async def stream_from_cdn(
         )
 
     if cdn_response.status_code >= 400:
-        logger.warning("CDN returned %s for %s", cdn_response.status_code, cdn_url)
+        logger.warning(
+            "CDN upstream error",
+            extra={"cdn_url": cdn_url, "status_code": cdn_response.status_code},
+        )
         await cdn_response.aclose()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
