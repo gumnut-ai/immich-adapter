@@ -36,7 +36,6 @@ from routers.api.assets import (
     update_asset_metadata,
     delete_asset_metadata,
     get_asset_metadata_by_key,
-    play_asset_video,
 )
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 from routers.immich_models import (
@@ -1236,98 +1235,3 @@ class TestGetAssetOcr:
         result = await get_asset_ocr(sample_uuid)
 
         assert result == []
-
-
-class TestPlayAssetVideo:
-    """Test the play_asset_video endpoint."""
-
-    @pytest.mark.anyio
-    async def test_play_asset_video_success(self, sample_uuid):
-        """Test video playback streams original variant from CDN."""
-        mock_client = Mock()
-        mock_client.assets.retrieve = AsyncMock(
-            return_value=_make_mock_asset_with_urls(
-                {
-                    "original": {
-                        "url": "https://cdn.example.com/video.mp4",
-                        "mimetype": "video/mp4",
-                    }
-                }
-            )
-        )
-        mock_streaming_response = Mock()
-        mock_request = Mock()
-        mock_request.headers = {}
-
-        with patch(
-            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
-        ) as mock_cdn:
-            mock_cdn.return_value = mock_streaming_response
-            result = await play_asset_video(
-                sample_uuid, request=mock_request, client=mock_client
-            )
-
-        assert result is mock_streaming_response
-        mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/video.mp4",
-            "video/mp4",
-            range_header=None,
-            forwarded_headers=(
-                "content-length",
-                "etag",
-                "last-modified",
-                "cache-control",
-            ),
-        )
-
-    @pytest.mark.anyio
-    async def test_play_asset_video_with_range_header(self, sample_uuid):
-        """Test video playback forwards Range header for seeking."""
-        mock_client = Mock()
-        mock_client.assets.retrieve = AsyncMock(
-            return_value=_make_mock_asset_with_urls(
-                {
-                    "original": {
-                        "url": "https://cdn.example.com/video.mp4",
-                        "mimetype": "video/mp4",
-                    }
-                }
-            )
-        )
-        mock_request = Mock()
-        mock_request.headers = {"range": "bytes=1000-2000"}
-
-        with patch(
-            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
-        ) as mock_cdn:
-            mock_cdn.return_value = Mock()
-            await play_asset_video(
-                sample_uuid, request=mock_request, client=mock_client
-            )
-
-        mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/video.mp4",
-            "video/mp4",
-            range_header="bytes=1000-2000",
-            forwarded_headers=(
-                "content-length",
-                "etag",
-                "last-modified",
-                "cache-control",
-            ),
-        )
-
-    @pytest.mark.anyio
-    async def test_play_asset_video_not_found(self, sample_uuid):
-        """Test video playback when asset not found."""
-        mock_client = Mock()
-        mock_client.assets.retrieve = AsyncMock(side_effect=Exception("404 Not found"))
-        mock_request = Mock()
-        mock_request.headers = {}
-
-        with pytest.raises(HTTPException) as exc_info:
-            await play_asset_video(
-                sample_uuid, request=mock_request, client=mock_client
-            )
-
-        assert exc_info.value.status_code == 404

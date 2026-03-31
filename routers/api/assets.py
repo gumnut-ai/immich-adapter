@@ -10,7 +10,6 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
-    Request,
     UploadFile,
     File,
     Form,
@@ -779,20 +778,17 @@ async def get_asset_metadata_by_key(
 @router.get("/{id}/video/playback")
 async def play_asset_video(
     id: UUID,
-    request: Request,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> StreamingResponse:
+):
     """
     Play the video for a specific asset.
-
-    Streams the original video from CDN. Forwards Range headers for seeking.
+    This is a stub implementation — CDN streaming worked for Immich web but
+    crashes the iOS mobile client. See GUM-467 for the full implementation.
+    Returns HTTP 200 (OK) as specified by the Immich API.
     """
-    range_header = request.headers.get("range")
-    return await _retrieve_and_stream_variant(
-        id, client, "original", range_header=range_header
-    )
+    return Response(status_code=status.HTTP_200_OK)
 
 
 @router.get("/{id}/ocr")

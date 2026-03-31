@@ -32,9 +32,11 @@ def _extract_person_fields(
     is_favorite = gumnut_person.is_favorite
     is_hidden = gumnut_person.is_hidden
     updated_at = gumnut_person.updated_at
-    thumbnail_path = ""
-    if gumnut_person.asset_urls and "thumbnail" in gumnut_person.asset_urls:
-        thumbnail_path = gumnut_person.asset_urls["thumbnail"].url
+    # thumbnailPath is a server-side filesystem path in upstream Immich. Neither
+    # the web nor mobile client uses it for image loading — web cache-busts via
+    # updatedAt, and mobile stores it but never references it. A stable placeholder
+    # is safe and avoids leaking internal URLs (CDN or otherwise) in API responses.
+    thumbnail_path = f"/gumnut/people/{person_id}/thumbnail"
 
     # Ensure updated_at is a datetime object
     if updated_at is None:
