@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 import asyncio
 import base64
 import logging
+import queue
 from datetime import datetime
 
 import httpx
@@ -259,6 +260,30 @@ def _parse_datetime(value: str | None, fallback: datetime) -> datetime:
         return fallback
 
 
+def _extract_upload_fields(
+    fields: dict[str, str],
+) -> tuple[str, str, datetime, datetime]:
+    """Extract and validate common upload fields from a form data dict.
+
+    Returns (device_asset_id, device_id, file_created_at, file_modified_at).
+    Raises ValueError if required fields are missing.
+    """
+    device_asset_id = fields.get("deviceAssetId", "")
+    device_id = fields.get("deviceId", "")
+    file_created_at_str = fields.get("fileCreatedAt", "")
+
+    if not device_asset_id or not device_id or not file_created_at_str:
+        raise ValueError(
+            "Missing required fields: deviceAssetId, deviceId, fileCreatedAt"
+        )
+
+    file_modified_at_str = fields.get("fileModifiedAt") or None
+    file_created_at = _parse_datetime(file_created_at_str, datetime.now())
+    file_modified_at = _parse_datetime(file_modified_at_str, file_created_at)
+
+    return device_asset_id, device_id, file_created_at, file_modified_at
+
+
 def _handle_upload_error(e: Exception) -> AssetMediaResponseDto | JSONResponse:
     """Map upload exceptions to Immich-compatible HTTP responses."""
     error_msg = str(e).lower()
@@ -384,26 +409,27 @@ async def _upload_buffered(
         asset_data_raw = form.get("assetData")
         # Duck-type check: Starlette's UploadFile may not pass isinstance against
         # FastAPI's UploadFile in all environments, so fall back to attribute check.
-        if not (hasattr(asset_data_raw, "filename") and asset_data_raw.filename):
+        if not (
+            hasattr(asset_data_raw, "filename")
+            and getattr(asset_data_raw, "filename", None)
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="File has no filename",
             )
         asset_data: UploadFile = asset_data_raw  # type: ignore[assignment]
 
-        device_asset_id = str(form.get("deviceAssetId", ""))
-        device_id = str(form.get("deviceId", ""))
-        file_created_at_str = str(form.get("fileCreatedAt", ""))
-        file_modified_at_str = str(form.get("fileModifiedAt", "")) or None
-
-        if not device_asset_id or not device_id or not file_created_at_str:
+        # Convert Starlette form values to plain strings for shared helper
+        fields = {key: str(value) for key, value in form.items() if key != "assetData"}
+        try:
+            device_asset_id, device_id, file_created_at, file_modified_at = (
+                _extract_upload_fields(fields)
+            )
+        except ValueError as ve:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Missing required fields: deviceAssetId, deviceId, fileCreatedAt",
+                detail=str(ve),
             )
-
-        file_created_at = _parse_datetime(file_created_at_str, datetime.now())
-        file_modified_at = _parse_datetime(file_modified_at_str, file_created_at)
 
         try:
             # Drop iOS live photo .MOV files — they upload as separate video files
@@ -454,7 +480,7 @@ async def _upload_buffered(
             )
 
         except Exception as e:
-            logger.warning(
+            logger.error(
                 "Upload failed",
                 extra={
                     "file_name": asset_data.filename,
@@ -469,9 +495,21 @@ async def _upload_buffered(
             return _handle_upload_error(e)
 
 
-# Timeout for streaming uploads to photos-api (10 minutes). Large videos on
-# slow connections need much longer than the default 30s SDK timeout.
-_STREAMING_UPLOAD_TIMEOUT = httpx.Timeout(600.0)
+# Shared sync httpx client for streaming uploads to photos-api. Uses a long
+# timeout (10 minutes) since large videos on slow connections need much longer
+# than the default 30s SDK timeout. Shared to reuse TCP/TLS connections.
+# Initialized lazily to avoid import-time side effects (e.g., SOCKS proxy checks).
+_streaming_http_client: httpx.Client | None = None
+
+
+def _get_streaming_http_client() -> httpx.Client:
+    global _streaming_http_client
+    if _streaming_http_client is None:
+        _streaming_http_client = httpx.Client(
+            timeout=httpx.Timeout(600.0),
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _streaming_http_client
 
 
 async def _upload_streaming(
@@ -509,15 +547,31 @@ async def _upload_streaming(
         )
 
     parse_error: BaseException | None = None
+    chunk_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=64)
 
-    async def feed_parser() -> None:
+    def run_parser() -> None:
+        """Run the multipart parser in a single thread, reading chunks from a queue."""
         nonlocal parse_error
         try:
-            async for chunk in request.stream():
-                await asyncio.to_thread(parser.write, chunk)
-            await asyncio.to_thread(parser.finalize)
+            while True:
+                chunk = chunk_queue.get(timeout=300)
+                if chunk is None:
+                    break
+                parser.write(chunk)
+            parser.finalize()
         except Exception as e:
             parse_error = e
+            pipe.set_error(e)
+            raise
+
+    async def feed_chunks() -> None:
+        """Read request body and enqueue chunks for the parser thread."""
+        try:
+            async for chunk in request.stream():
+                await asyncio.to_thread(chunk_queue.put, chunk)
+            await asyncio.to_thread(chunk_queue.put, None)
+        except Exception as e:
+            parse_error = e  # noqa: F841
             pipe.set_error(e)
             raise
 
@@ -527,35 +581,24 @@ async def _upload_streaming(
 
         filename = form_parser.filename
         content_type = form_parser.content_type
-        fields = form_parser.form_fields
 
-        device_asset_id = fields.get("deviceAssetId", "")
-        device_id = fields.get("deviceId", "")
-        file_created_at_str = fields.get("fileCreatedAt", "")
-        file_modified_at_str = fields.get("fileModifiedAt")
+        device_asset_id, device_id, file_created_at, file_modified_at = (
+            _extract_upload_fields(form_parser.form_fields)
+        )
 
-        if not device_asset_id or not device_id or not file_created_at_str:
-            raise ValueError(
-                "Missing required fields: deviceAssetId, deviceId, fileCreatedAt"
-            )
-
-        file_created_at = _parse_datetime(file_created_at_str, datetime.now())
-        file_modified_at = _parse_datetime(file_modified_at_str, file_created_at)
-
-        with httpx.Client(timeout=_STREAMING_UPLOAD_TIMEOUT) as http:
-            response = http.post(
-                f"{settings.gumnut_api_base_url}/api/assets",
-                headers={"Authorization": f"Bearer {jwt_token}"},
-                files={
-                    "asset_data": (filename, cast(IO[bytes], pipe), content_type),
-                },
-                data={
-                    "device_asset_id": device_asset_id,
-                    "device_id": device_id,
-                    "file_created_at": file_created_at.isoformat(),
-                    "file_modified_at": file_modified_at.isoformat(),
-                },
-            )
+        response = _get_streaming_http_client().post(
+            f"{settings.gumnut_api_base_url}/api/assets",
+            headers={"Authorization": f"Bearer {jwt_token}"},
+            files={
+                "asset_data": (filename, cast(IO[bytes], pipe), content_type),
+            },
+            data={
+                "device_asset_id": device_asset_id,
+                "device_id": device_id,
+                "file_created_at": file_created_at.isoformat(),
+                "file_modified_at": file_modified_at.isoformat(),
+            },
+        )
 
         if response.status_code == 429:
             raise HTTPException(
@@ -577,22 +620,24 @@ async def _upload_streaming(
 
         return response.json()
 
-    parse_task: asyncio.Task | None = None
+    feed_task: asyncio.Task | None = None
     try:
         with sentry_sdk.start_span(
             op="http.client", name="gumnut.assets.create.streaming"
         ) as span:
             span.set_data("upload.strategy", "streaming")
 
-            parse_task = asyncio.create_task(feed_parser())
+            # Run parser in a dedicated thread (reads from chunk_queue),
+            # feed chunks from the event loop, and upload concurrently.
+            feed_task = asyncio.create_task(feed_chunks())
+            parser_future = asyncio.get_event_loop().run_in_executor(None, run_parser)
             result = await asyncio.to_thread(sync_upload)
 
-            # Wait for parsing to complete (may raise if client disconnected)
+            # Wait for feed + parser to complete
             try:
-                await parse_task
+                await feed_task
+                await parser_future
             except Exception:
-                # If parsing failed but upload succeeded, the upload result is
-                # still valid (all data was piped before the error).
                 if parse_error is not None:
                     logger.warning(
                         "Parser error after upload completed",
@@ -605,7 +650,7 @@ async def _upload_streaming(
         asset_id = result.get("id", "")
         asset_status = result.get("status", "created")
 
-        if asset_status == "duplicate":
+        if asset_status == AssetMediaStatus.duplicate.value:
             return JSONResponse(
                 content={"id": asset_id, "status": AssetMediaStatus.duplicate.value},
                 status_code=status.HTTP_200_OK,
@@ -624,7 +669,7 @@ async def _upload_streaming(
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(
+        logger.error(
             "Streaming upload failed",
             extra={
                 "filename": form_parser.filename,
@@ -636,11 +681,11 @@ async def _upload_streaming(
         )
         return _handle_upload_error(e)
     finally:
-        if parse_task is not None and not parse_task.done():
+        if feed_task is not None and not feed_task.done():
             pipe.set_error(Exception("Upload aborted"))
-            parse_task.cancel()
+            feed_task.cancel()
             try:
-                await parse_task
+                await feed_task
             except (asyncio.CancelledError, Exception):
                 pass
 
