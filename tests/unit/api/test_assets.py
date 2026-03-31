@@ -324,16 +324,69 @@ class TestCheckExistingAssets:
         assert str(second_uuid) in result.existingIds
 
 
+def _make_mock_request(
+    content_length: int = 1024,
+    form_data: dict | None = None,
+    mock_file: Mock | None = None,
+) -> Mock:
+    """Create a mock Request for upload_asset tests.
+
+    The request has a small content-length (below default threshold) to trigger
+    the buffered path, with form() returning the given form data + file.
+    """
+    request = Mock()
+    request.headers = {
+        "content-length": str(content_length),
+        "content-type": "multipart/form-data; boundary=---abc123",
+    }
+
+    class _State:
+        jwt_token = "test-jwt-token"
+
+    request.state = _State()
+
+    # Build form dict from form_data + file
+    if form_data is None:
+        form_data = {
+            "deviceAssetId": "device-123",
+            "deviceId": "device-456",
+            "fileCreatedAt": "2023-01-01T12:00:00Z",
+            "fileModifiedAt": "2023-01-01T12:00:00Z",
+        }
+    if mock_file is None:
+        mock_file = Mock()
+        mock_file.filename = "test.jpg"
+        mock_file.content_type = "image/jpeg"
+        mock_file.file = BytesIO(b"fake image data")
+        mock_file.seek = AsyncMock()
+
+    merged = {**form_data, "assetData": mock_file}
+
+    # request.form() is an async context manager
+    form_ctx = AsyncMock()
+    form_ctx.__aenter__ = AsyncMock(return_value=merged)
+    form_ctx.__aexit__ = AsyncMock(return_value=False)
+    request.form = Mock(return_value=form_ctx)
+
+    return request
+
+
+def _make_mock_settings(threshold: int = 200 * 1024 * 1024) -> Mock:
+    """Create a mock Settings with a given streaming threshold."""
+    settings = Mock()
+    settings.streaming_upload_threshold_bytes = threshold
+    settings.gumnut_api_base_url = "http://localhost:8000"
+    return settings
+
+
 class TestUploadAsset:
     """Test the upload_asset endpoint."""
 
     @pytest.mark.anyio
     async def test_upload_asset_success(self, sample_uuid, mock_current_user):
-        """Test successful asset upload."""
-        # Setup - create mock client
+        """Test successful asset upload via buffered path."""
         mock_client = Mock()
 
-        # Mock the gumnut asset response with proper Gumnut ID format
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
@@ -348,64 +401,49 @@ class TestUploadAsset:
         mock_gumnut_asset.people = []
         mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
 
-        # Mock the file data
         mock_file = Mock()
         mock_file.filename = "test.jpg"
         mock_file.content_type = "image/jpeg"
         mock_file.file = BytesIO(b"fake image data")
         mock_file.seek = AsyncMock()
 
-        # Execute
+        request = _make_mock_request(mock_file=mock_file)
+        settings = _make_mock_settings()
+
         with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
             result = await upload_asset(
-                assetData=mock_file,
-                deviceAssetId="device-123",
-                deviceId="device-456",
-                fileCreatedAt="2023-01-01T12:00:00Z",
-                fileModifiedAt="2023-01-01T12:00:00Z",
-                isFavorite=False,
-                duration="",
+                request=request,
                 client=mock_client,
                 current_user=mock_current_user,
+                settings=settings,
             )
 
-        # Assert
         assert isinstance(result, AssetMediaResponseDto)
         assert result.id == str(sample_uuid)
         assert result.status == AssetMediaStatus.created
         mock_client.assets.create.assert_called_once()
-        # Verify file object is streamed directly, not buffered as bytes
         call_kwargs = mock_client.assets.create.call_args
         assert call_kwargs.kwargs["asset_data"][1] is mock_file.file
 
     @pytest.mark.anyio
     async def test_upload_asset_duplicate(self, sample_uuid, mock_current_user):
         """Test upload asset with duplicate error returns 200 with duplicate status."""
-        # Setup - create mock client
         mock_client = Mock()
         mock_client.assets.create = AsyncMock(
             side_effect=Exception("Asset already exists")
         )
 
-        # Mock the file data
-        mock_file = Mock()
-        mock_file.filename = "test.jpg"
-        mock_file.content_type = "image/jpeg"
-        mock_file.file = BytesIO(b"fake image data")
-        mock_file.seek = AsyncMock()
+        request = _make_mock_request()
+        settings = _make_mock_settings()
 
-        # Execute
         with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
             result = await upload_asset(
-                assetData=mock_file,
-                deviceAssetId="device-123",
-                deviceId="device-456",
-                fileCreatedAt="2023-01-01T12:00:00Z",
+                request=request,
                 client=mock_client,
                 current_user=mock_current_user,
+                settings=settings,
             )
 
-        # Assert - returns JSONResponse with 200 status for duplicates
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
         assert (
@@ -416,29 +454,21 @@ class TestUploadAsset:
     @pytest.mark.anyio
     async def test_upload_asset_api_error(self, mock_current_user):
         """Test upload asset with API error."""
-        # Setup - create mock client
         mock_client = Mock()
         mock_client.assets.create = AsyncMock(
             side_effect=Exception("401 Invalid API key")
         )
 
-        # Mock the file data
-        mock_file = Mock()
-        mock_file.filename = "test.jpg"
-        mock_file.content_type = "image/jpeg"
-        mock_file.file = BytesIO(b"fake image data")
-        mock_file.seek = AsyncMock()
+        request = _make_mock_request()
+        settings = _make_mock_settings()
 
-        # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
             with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
                 await upload_asset(
-                    assetData=mock_file,
-                    deviceAssetId="device-123",
-                    deviceId="device-456",
-                    fileCreatedAt="2023-01-01T12:00:00Z",
+                    request=request,
                     client=mock_client,
                     current_user=mock_current_user,
+                    settings=settings,
                 )
 
         assert exc_info.value.status_code == 401
@@ -448,10 +478,8 @@ class TestUploadAsset:
         self, sample_uuid, mock_current_user
     ):
         """Test that upload_asset emits on_upload_success and AssetUploadReadyV1 events."""
-        # Setup - create mock client
         mock_client = Mock()
 
-        # Mock the gumnut asset response
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
@@ -466,46 +494,31 @@ class TestUploadAsset:
         mock_gumnut_asset.people = []
         mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
 
-        # Mock the file data
-        mock_file = Mock()
-        mock_file.filename = "test.jpg"
-        mock_file.content_type = "image/jpeg"
-        mock_file.file = BytesIO(b"fake image data")
-        mock_file.seek = AsyncMock()
+        request = _make_mock_request()
+        settings = _make_mock_settings()
 
-        # Execute with mocked emit_event
         with patch(
             "routers.api.assets.emit_user_event", new_callable=AsyncMock
         ) as mock_emit:
             await upload_asset(
-                assetData=mock_file,
-                deviceAssetId="device-123",
-                deviceId="device-456",
-                fileCreatedAt="2023-01-01T12:00:00Z",
+                request=request,
                 client=mock_client,
                 current_user=mock_current_user,
+                settings=settings,
             )
 
-            # Assert - emit_event should be called twice
             assert mock_emit.call_count == 2
-
-            # First call should be on_upload_success
             first_call = mock_emit.call_args_list[0]
             assert first_call[0][0] == WebSocketEvent.UPLOAD_SUCCESS
             assert first_call[0][1] == mock_current_user.id
 
-            # Second call should be AssetUploadReadyV1
             second_call = mock_emit.call_args_list[1]
             assert second_call[0][0] == WebSocketEvent.ASSET_UPLOAD_READY_V1
             assert second_call[0][1] == mock_current_user.id
 
     @pytest.mark.anyio
     async def test_upload_live_photo_mov_is_dropped(self, mock_current_user):
-        """Test that iOS live photo .MOV files are silently dropped.
-
-        The Immich mobile client sends .MOV files with content_type
-        "application/octet-stream", so detection relies on filename extension.
-        """
+        """Test that iOS live photo .MOV files are silently dropped."""
         mock_client = Mock()
 
         mock_file = Mock()
@@ -514,18 +527,19 @@ class TestUploadAsset:
         mock_file.file = BytesIO(b"fake live photo data")
         mock_file.seek = AsyncMock()
 
+        request = _make_mock_request(mock_file=mock_file)
+        settings = _make_mock_settings()
+
         with patch("routers.api.assets.is_live_photo_video", return_value=True):
             result = await upload_asset(
-                assetData=mock_file,
-                deviceAssetId="device-123",
-                deviceId="device-456",
-                fileCreatedAt="2023-01-01T12:00:00Z",
+                request=request,
                 client=mock_client,
                 current_user=mock_current_user,
+                settings=settings,
             )
 
         assert isinstance(result, AssetMediaResponseDto)
-        assert UUID(result.id)  # valid UUID
+        assert UUID(result.id)
         assert result.status == AssetMediaStatus.created
         mock_client.assets.create.assert_not_called()
 
@@ -542,18 +556,19 @@ class TestUploadAsset:
         mock_file.file = BytesIO(b"fake live photo data")
         mock_file.seek = AsyncMock()
 
+        request = _make_mock_request(mock_file=mock_file)
+        settings = _make_mock_settings()
+
         with patch("routers.api.assets.is_live_photo_video", return_value=True):
             result = await upload_asset(
-                assetData=mock_file,
-                deviceAssetId="device-123",
-                deviceId="device-456",
-                fileCreatedAt="2023-01-01T12:00:00Z",
+                request=request,
                 client=mock_client,
                 current_user=mock_current_user,
+                settings=settings,
             )
 
         assert isinstance(result, AssetMediaResponseDto)
-        assert UUID(result.id)  # valid UUID
+        assert UUID(result.id)
         assert result.status == AssetMediaStatus.created
         mock_client.assets.create.assert_not_called()
 
@@ -582,17 +597,18 @@ class TestUploadAsset:
         mock_file.file = BytesIO(b"fake video data")
         mock_file.seek = AsyncMock()
 
+        request = _make_mock_request(mock_file=mock_file)
+        settings = _make_mock_settings()
+
         with (
             patch("routers.api.assets.is_live_photo_video", return_value=False),
             patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
         ):
             result = await upload_asset(
-                assetData=mock_file,
-                deviceAssetId="device-123",
-                deviceId="device-456",
-                fileCreatedAt="2023-01-01T12:00:00Z",
+                request=request,
                 client=mock_client,
                 current_user=mock_current_user,
+                settings=settings,
             )
 
         assert isinstance(result, AssetMediaResponseDto)
@@ -605,10 +621,8 @@ class TestUploadAsset:
         self, sample_uuid, mock_current_user
     ):
         """Test that WebSocket emission errors don't fail the upload."""
-        # Setup - create mock client
         mock_client = Mock()
 
-        # Mock the gumnut asset response
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
@@ -623,32 +637,79 @@ class TestUploadAsset:
         mock_gumnut_asset.people = []
         mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
 
-        # Mock the file data
-        mock_file = Mock()
-        mock_file.filename = "test.jpg"
-        mock_file.content_type = "image/jpeg"
-        mock_file.file = BytesIO(b"fake image data")
-        mock_file.seek = AsyncMock()
+        request = _make_mock_request()
+        settings = _make_mock_settings()
 
-        # Execute with emit_event that raises a SocketIOError
         with patch(
             "routers.api.assets.emit_user_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("WebSocket error"),
         ):
             result = await upload_asset(
-                assetData=mock_file,
-                deviceAssetId="device-123",
-                deviceId="device-456",
-                fileCreatedAt="2023-01-01T12:00:00Z",
+                request=request,
                 client=mock_client,
                 current_user=mock_current_user,
+                settings=settings,
             )
 
-            # Upload should still succeed despite WebSocket error
             assert isinstance(result, AssetMediaResponseDto)
             assert result.id == str(sample_uuid)
             assert result.status == AssetMediaStatus.created
+
+    @pytest.mark.anyio
+    async def test_upload_strategy_selection_buffered(self, mock_current_user):
+        """Test that small content-length selects buffered strategy."""
+        mock_client = Mock()
+        mock_client.assets.create = AsyncMock(
+            side_effect=Exception("Asset already exists")
+        )
+
+        # Content-Length 1024 < threshold 100MB → buffered
+        request = _make_mock_request(content_length=1024)
+        settings = _make_mock_settings(threshold=100 * 1024 * 1024)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        # Buffered path was used (form() was called)
+        request.form.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_upload_strategy_selection_streaming(self, mock_current_user):
+        """Test that large content-length selects streaming strategy."""
+        request = Mock()
+        request.headers = {
+            "content-length": str(200 * 1024 * 1024),  # 200MB > threshold
+            "content-type": "multipart/form-data; boundary=---abc123",
+        }
+
+        class _State:
+            jwt_token = "test-jwt-token"
+
+        request.state = _State()
+
+        settings = _make_mock_settings(threshold=100 * 1024 * 1024)
+
+        # Streaming path calls request.stream(), not request.form()
+        with patch(
+            "routers.api.assets._upload_streaming", new_callable=AsyncMock
+        ) as mock_streaming:
+            mock_streaming.return_value = AssetMediaResponseDto(
+                id=str(uuid4()), status=AssetMediaStatus.created
+            )
+            await upload_asset(
+                request=request,
+                client=Mock(),
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        mock_streaming.assert_called_once()
 
 
 class TestUpdateAssets:
