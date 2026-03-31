@@ -11,6 +11,9 @@ from io import RawIOBase
 # the parser or upload thread dies unexpectedly.
 _STALL_TIMEOUT = 300  # 5 minutes
 
+# Short timeout for retry loops so errors are observed quickly.
+_POLL_INTERVAL = 1.0
+
 
 class StreamingPipe(RawIOBase):
     """Thread-safe pipe bridging multipart parser to httpx upload.
@@ -29,45 +32,60 @@ class StreamingPipe(RawIOBase):
         self._queue: queue.Queue[bytes | None] = queue.Queue(maxsize=maxsize)
         self._error: BaseException | None = None
         self._leftover = b""
+        self._writer_closed = False
 
     def put(self, data: bytes) -> None:
         """Feed data into the pipe. Called by parser callbacks.
 
-        Blocks if the queue is full (backpressure).
-        Raises if an error has been set from either side.
+        Uses a short timeout loop so set_error() is observed quickly rather
+        than blocking for the full stall timeout.
         """
+        elapsed = 0.0
+        while True:
+            if self._error:
+                raise self._error
+            try:
+                self._queue.put(data, timeout=_POLL_INTERVAL)
+                break
+            except queue.Full:
+                elapsed += _POLL_INTERVAL
+                if elapsed >= _STALL_TIMEOUT:
+                    raise TimeoutError(
+                        f"Upload pipe stalled — queue full for {_STALL_TIMEOUT}s"
+                    )
         if self._error:
             raise self._error
-        try:
-            self._queue.put(data, timeout=_STALL_TIMEOUT)
-        except queue.Full:
-            raise TimeoutError(
-                f"Upload pipe stalled — queue full for {_STALL_TIMEOUT}s"
-            )
 
     def close_writer(self) -> None:
         """Signal EOF from the writer side.
 
-        Drains one item if the queue is full to make room for the EOF sentinel.
-        This prevents the upload thread from hanging until the stall timeout
-        when the queue is full at EOF.
+        Retries with short timeout until the sentinel is enqueued, checking
+        for errors between attempts so we don't block indefinitely.
         """
-        try:
-            self._queue.put(None, timeout=10)
-        except queue.Full:
-            # Drain one item to make room, then retry
+        if self._writer_closed:
+            return
+        self._writer_closed = True
+        while True:
+            if self._error:
+                return
             try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                self._queue.put_nowait(None)
+                self._queue.put(None, timeout=_POLL_INTERVAL)
+                return
             except queue.Full:
-                pass
+                continue
 
     def set_error(self, error: BaseException) -> None:
-        """Propagate an error from either side, unblocking the other."""
+        """Propagate an error from either side, unblocking the other.
+
+        Drains the queue to free space so a blocked producer can complete
+        and observe the error.
+        """
         self._error = error
+        try:
+            while True:
+                self._queue.get_nowait()
+        except queue.Empty:
+            pass
         try:
             self._queue.put_nowait(None)
         except queue.Full:

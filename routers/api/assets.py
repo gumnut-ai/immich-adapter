@@ -662,8 +662,14 @@ async def _upload_streaming(
         asset_status = result.get("status", "created")
 
         if asset_status == AssetMediaStatus.duplicate.value:
+            # Normalize ID to UUID for Immich client compatibility, matching
+            # the buffered path's all-zero UUID for duplicates.
+            dup_uuid = safe_uuid_from_asset_id(asset_id) if asset_id else UUID(int=0)
             return JSONResponse(
-                content={"id": asset_id, "status": AssetMediaStatus.duplicate.value},
+                content={
+                    "id": str(dup_uuid),
+                    "status": AssetMediaStatus.duplicate.value,
+                },
                 status_code=status.HTTP_200_OK,
             )
 
