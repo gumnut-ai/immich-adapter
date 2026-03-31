@@ -208,6 +208,10 @@ def sample_gumnut_person():
     person.is_hidden = False
     person.thumbnail_face_id = "face-456"
     person.thumbnail_face_url = "https://example.com/thumbnail.jpg"
+    thumbnail_variant = Mock()
+    thumbnail_variant.url = "https://cdn.example.com/person-thumbnail.jpg"
+    thumbnail_variant.mimetype = "image/jpeg"
+    person.asset_urls = {"thumbnail": thumbnail_variant}
     person.asset_count = 5
     person.created_at = datetime.now(timezone.utc)
     person.updated_at = datetime.now(timezone.utc)
@@ -227,6 +231,10 @@ def multiple_gumnut_people():
         person.is_hidden = False  # Default to not hidden
         person.thumbnail_face_id = f"face-{i}"
         person.thumbnail_face_url = f"https://example.com/thumbnail-{i}.jpg"
+        thumbnail_variant = Mock()
+        thumbnail_variant.url = f"https://cdn.example.com/person-thumbnail-{i}.jpg"
+        thumbnail_variant.mimetype = "image/jpeg"
+        person.asset_urls = {"thumbnail": thumbnail_variant}
         person.asset_count = (i + 1) * 5
         person.created_at = datetime.now(timezone.utc)
         person.updated_at = datetime.now(timezone.utc)

@@ -1,7 +1,7 @@
 """Tests for people.py endpoints."""
 
 import pytest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 from uuid import uuid4
 from datetime import datetime, timezone, timedelta
@@ -479,6 +479,7 @@ def _make_person(
     person.is_favorite = is_favorite
     person.thumbnail_face_id = None
     person.thumbnail_face_url = None
+    person.asset_urls = None
     person.asset_count = asset_count
     person.created_at = created_at or datetime.now(timezone.utc)
     person.updated_at = datetime.now(timezone.utc)
@@ -730,40 +731,50 @@ class TestGetThumbnail:
 
     @pytest.mark.anyio
     async def test_get_thumbnail_success(self, sample_gumnut_person, sample_uuid):
-        """Test successful thumbnail retrieval."""
-        # Setup - mock only the Gumnut client
+        """Test successful thumbnail retrieval via CDN."""
         mock_client = Mock()
-
-        # Setup person with thumbnail
-        sample_gumnut_person.thumbnail_face_id = "face-123"
         mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
+        mock_streaming_response = Mock()
 
-        # Mock the thumbnail download response
-        mock_response = Mock()
-        mock_response.read = AsyncMock(return_value=b"fake image data")
-        mock_response.headers = {"content-type": "image/jpeg"}
-        mock_client.faces.download_thumbnail = AsyncMock(return_value=mock_response)
+        with patch(
+            "routers.api.people.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = mock_streaming_response
+            result = await get_thumbnail(sample_uuid, client=mock_client)
 
-        # Execute
-        result = await get_thumbnail(sample_uuid, client=mock_client)
-
-        # Assert
-        assert result.media_type == "image/jpeg"
-        assert result.body == b"fake image data"
+        assert result is mock_streaming_response
         mock_client.people.retrieve.assert_called_once()
-        mock_client.faces.download_thumbnail.assert_called_once_with("face-123")
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/person-thumbnail.jpg", "image/jpeg"
+        )
 
     @pytest.mark.anyio
     async def test_get_thumbnail_no_thumbnail(self, sample_gumnut_person, sample_uuid):
-        """Test thumbnail retrieval when person has no thumbnail."""
-        # Setup - mock only the Gumnut client
+        """Test thumbnail retrieval when person has no asset_urls."""
         mock_client = Mock()
-
-        # Setup person without thumbnail
-        sample_gumnut_person.thumbnail_face_id = None
+        sample_gumnut_person.asset_urls = None
         mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
 
-        # Execute & Assert
+        with pytest.raises(HTTPException) as exc_info:
+            await get_thumbnail(sample_uuid, client=mock_client)
+
+        assert exc_info.value.status_code == 404
+        assert "Person or thumbnail not found" in str(exc_info.value.detail)
+
+    @pytest.mark.anyio
+    async def test_get_thumbnail_no_thumbnail_key(
+        self, sample_gumnut_person, sample_uuid
+    ):
+        """Test thumbnail retrieval when asset_urls has no thumbnail key."""
+        mock_client = Mock()
+        sample_gumnut_person.asset_urls = {
+            "original": {
+                "url": "https://cdn.example.com/orig.jpg",
+                "mimetype": "image/jpeg",
+            }
+        }
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
+
         with pytest.raises(HTTPException) as exc_info:
             await get_thumbnail(sample_uuid, client=mock_client)
 
@@ -773,13 +784,11 @@ class TestGetThumbnail:
     @pytest.mark.anyio
     async def test_get_thumbnail_person_not_found(self, sample_uuid):
         """Test thumbnail retrieval when person doesn't exist."""
-        # Setup - mock only the Gumnut client
         mock_client = Mock()
         mock_client.people.retrieve = AsyncMock(
             side_effect=Exception("404 Person not found")
         )
 
-        # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
             await get_thumbnail(sample_uuid, client=mock_client)
 

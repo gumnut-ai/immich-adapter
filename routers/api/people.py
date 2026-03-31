@@ -1,11 +1,13 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from uuid import UUID
 import logging
 
 from gumnut import AsyncGumnut
 from gumnut.types import PersonResponse
 
+from routers.utils.cdn_client import stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.immich_models import (
@@ -309,51 +311,33 @@ async def delete_people(
 async def get_thumbnail(
     id: UUID,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> Response:
+) -> StreamingResponse:
     """
     Get a thumbnail for a person.
-    Uses the shared download logic with size defaulting to thumbnail if not specified.
+    Retrieves person metadata and streams the thumbnail from CDN.
     """
     try:
         gumnut_person = await client.people.retrieve(uuid_to_gumnut_person_id(id))
 
-        if not gumnut_person or not gumnut_person.thumbnail_face_id:
-            raise HTTPException(status_code=404, detail="Person or thumbnail not found")
+        if (
+            not gumnut_person
+            or not gumnut_person.asset_urls
+            or "thumbnail" not in gumnut_person.asset_urls
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Person or thumbnail not found",
+            )
 
-        gumnut_response = await client.faces.download_thumbnail(
-            gumnut_person.thumbnail_face_id
-        )
+        variant_info = gumnut_person.asset_urls["thumbnail"]
+        cdn_url = variant_info.url
+        mimetype = variant_info.mimetype
 
-        # Get the content and headers from the Gumnut response
-        content = await gumnut_response.read()
-        content_type = gumnut_response.headers.get(
-            "content-type", "application/octet-stream"
-        )
-
-        # Extract filename from content-disposition header if available
-        content_disposition = gumnut_response.headers.get("content-disposition", "")
-        filename = None
-        if 'filename="' in content_disposition:
-            filename = content_disposition.split('filename="')[1].split('"')[0]
-
-        # Build response headers
-        response_headers = {
-            "Content-Type": content_type,
-        }
-        if filename:
-            response_headers["Content-Disposition"] = f'inline; filename="{filename}"'
-
-        return Response(
-            content=content,
-            media_type=content_type,
-            headers=response_headers,
-        )
+        return await stream_from_cdn(cdn_url, mimetype)
 
     except HTTPException:
-        # Re-raise HTTP exceptions (like 404 for no thumbnail)
         raise
     except Exception as e:
-        # log the error
         logger.warning(f"Error fetching thumbnail for person {id}: {e}")
         raise map_gumnut_error(e, "Failed to fetch person thumbnail") from e
 
