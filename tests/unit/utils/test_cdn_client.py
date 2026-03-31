@@ -180,7 +180,7 @@ class TestStreamFromCdn:
     @pytest.mark.anyio
     async def test_forwards_content_disposition_when_requested(self, mock_cdn_response):
         """Test that Content-Disposition is forwarded when explicitly included."""
-        from routers.utils.cdn_client import _DEFAULT_FORWARDED_HEADERS
+        from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS
 
         cdn_response = mock_cdn_response(
             200,
@@ -200,7 +200,7 @@ class TestStreamFromCdn:
             result = await stream_from_cdn(
                 "https://cdn.example.com/photo.jpg",
                 "image/jpeg",
-                forwarded_headers=_DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
+                forwarded_headers=DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
             )
 
         assert (

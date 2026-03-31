@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from uuid import UUID
 import logging
@@ -324,7 +324,10 @@ async def get_thumbnail(
             or not gumnut_person.asset_urls
             or "thumbnail" not in gumnut_person.asset_urls
         ):
-            raise HTTPException(status_code=404, detail="Person or thumbnail not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Person or thumbnail not found",
+            )
 
         variant_info = gumnut_person.asset_urls["thumbnail"]
         cdn_url = variant_info.url

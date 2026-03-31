@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Literal
 from uuid import UUID, uuid4
 import base64
 import logging
@@ -20,7 +20,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 from gumnut import AsyncGumnut, GumnutError
 
-from routers.utils.cdn_client import _DEFAULT_FORWARDED_HEADERS, stream_from_cdn
+from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.utils.current_user import get_current_user, get_current_user_id
@@ -71,7 +71,9 @@ router = APIRouter(
 )
 
 
-_IMMICH_SIZE_TO_VARIANT: dict[AssetMediaSize, str] = {
+AssetVariant = Literal["thumbnail", "preview", "fullsize", "original"]
+
+_IMMICH_SIZE_TO_VARIANT: dict[AssetMediaSize, AssetVariant] = {
     AssetMediaSize.fullsize: "fullsize",
     AssetMediaSize.preview: "preview",
     AssetMediaSize.thumbnail: "thumbnail",
@@ -81,9 +83,9 @@ _IMMICH_SIZE_TO_VARIANT: dict[AssetMediaSize, str] = {
 async def _retrieve_and_stream_variant(
     asset_uuid: UUID,
     client: AsyncGumnut,
-    variant: str,
+    variant: AssetVariant,
     range_header: str | None = None,
-    forwarded_headers: tuple[str, ...] = _DEFAULT_FORWARDED_HEADERS,
+    forwarded_headers: tuple[str, ...] = DEFAULT_FORWARDED_HEADERS,
 ) -> StreamingResponse:
     """Retrieve asset metadata and stream the requested variant from CDN.
 
@@ -103,6 +105,11 @@ async def _retrieve_and_stream_variant(
         asset = await client.assets.retrieve(gumnut_asset_id)
 
         if not asset.asset_urls or variant not in asset.asset_urls:
+            logger.warning(
+                "Asset variant '%s' not available for asset %s",
+                variant,
+                gumnut_asset_id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Asset variant '{variant}' not available",
@@ -688,7 +695,7 @@ async def download_asset(
         id,
         client,
         "original",
-        forwarded_headers=_DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
+        forwarded_headers=DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
     )
 
 
@@ -785,7 +792,7 @@ async def play_asset_video(
     """
     Play the video for a specific asset.
     This is a stub implementation — CDN streaming worked for Immich web but
-    crashes the iOS mobile client. See GUM-467 for the full implementation.
+    crashes the iOS mobile client. Full video streaming support is planned.
     Returns HTTP 200 (OK) as specified by the Immich API.
     """
     return Response(status_code=status.HTTP_200_OK)

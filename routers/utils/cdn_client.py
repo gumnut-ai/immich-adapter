@@ -48,7 +48,7 @@ async def close_cdn_http_client() -> None:
         _cdn_http_client = None
 
 
-_DEFAULT_FORWARDED_HEADERS = (
+DEFAULT_FORWARDED_HEADERS = (
     "content-length",
     "etag",
     "last-modified",
@@ -60,7 +60,7 @@ async def stream_from_cdn(
     cdn_url: str,
     mimetype: str,
     range_header: str | None = None,
-    forwarded_headers: tuple[str, ...] = _DEFAULT_FORWARDED_HEADERS,
+    forwarded_headers: tuple[str, ...] = DEFAULT_FORWARDED_HEADERS,
 ) -> StreamingResponse:
     """Stream asset bytes from a signed CDN URL.
 
@@ -70,7 +70,7 @@ async def stream_from_cdn(
         range_header: Optional Range header value to forward for video seeking.
         forwarded_headers: Upstream headers to forward. Defaults exclude
             content-disposition; callers that need it (e.g. /original download)
-            should pass ``_DEFAULT_FORWARDED_HEADERS + ("content-disposition",)``.
+            should pass ``DEFAULT_FORWARDED_HEADERS + ("content-disposition",)``.
 
     Returns:
         StreamingResponse that streams CDN bytes to the Immich client.
@@ -98,6 +98,7 @@ async def stream_from_cdn(
         ) from exc
 
     if cdn_response.status_code in (403, 404):
+        logger.warning("CDN returned %s for %s", cdn_response.status_code, cdn_url)
         await cdn_response.aclose()
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -105,6 +106,7 @@ async def stream_from_cdn(
         )
 
     if cdn_response.status_code == 416:
+        logger.warning("CDN returned 416 Range Not Satisfiable for %s", cdn_url)
         error_headers: dict[str, str] = {"Accept-Ranges": "bytes"}
         if cr := cdn_response.headers.get("content-range"):
             error_headers["Content-Range"] = cr
@@ -116,6 +118,7 @@ async def stream_from_cdn(
         )
 
     if cdn_response.status_code >= 400:
+        logger.warning("CDN returned %s for %s", cdn_response.status_code, cdn_url)
         await cdn_response.aclose()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

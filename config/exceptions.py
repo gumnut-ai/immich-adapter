@@ -23,6 +23,7 @@ async def _immich_http_exception_handler(
             "statusCode": exc.status_code,
             "error": error_name,
         },
+        headers=exc.headers,
     )
 
 
