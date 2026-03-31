@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 MAX_FIELD_BYTES = 64 * 1024  # 64KB — cap for non-file form fields
 
+# Fields that must be present before the file part starts.
+_REQUIRED_FIELDS = {"deviceAssetId", "deviceId", "fileCreatedAt"}
+
 
 class StreamingFormParser:
     """Parses multipart form data, streaming file content to a pipe.
@@ -127,6 +130,13 @@ class StreamingFormParser:
         if filename:
             if self._file_seen:
                 raise ValueError("Multiple file parts are not supported")
+            # Verify required fields arrived before the file part
+            missing = [k for k in _REQUIRED_FIELDS if k not in self._form_fields]
+            if missing:
+                raise ValueError(
+                    "Required fields must precede file part in streaming mode: "
+                    + ", ".join(sorted(missing))
+                )
             # This is a file part
             self._current_is_file = True
             self._file_seen = True
@@ -156,3 +166,14 @@ class StreamingFormParser:
             self._form_fields[self._current_field_name] = (
                 self._current_field_data.decode("utf-8")
             )
+
+    def mark_finalized(self) -> None:
+        """Call after parser.finalize() to handle missing file part.
+
+        If no file part was seen, sets an error on the pipe and signals
+        headers_ready so the upload thread fails immediately.
+        """
+        if not self._file_seen:
+            error = ValueError("Missing file part 'assetData'")
+            self._pipe.set_error(error)
+            self._headers_ready.set()

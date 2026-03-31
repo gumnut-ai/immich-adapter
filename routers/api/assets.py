@@ -371,14 +371,12 @@ async def upload_asset(
     except ValueError:
         content_length = None
 
-    transfer_encoding = request.headers.get("transfer-encoding", "").lower()
-    is_chunked = "chunked" in transfer_encoding
-
-    use_streaming = (
-        threshold == 0
-        or is_chunked
-        or content_length is None
-        or content_length > threshold
+    # Only stream when we know the size exceeds the threshold (or threshold is 0
+    # to force streaming). Missing/invalid Content-Length and chunked transfers
+    # fall through to the buffered path to preserve live photo detection, which
+    # requires file seeks incompatible with streaming.
+    use_streaming = threshold == 0 or (
+        content_length is not None and content_length > threshold
     )
 
     strategy = "streaming" if use_streaming else "buffered"
@@ -388,7 +386,6 @@ async def upload_asset(
         extra={
             "strategy": strategy,
             "content_length": content_length,
-            "is_chunked": is_chunked,
             "threshold": threshold,
         },
     )
@@ -523,6 +520,14 @@ def _get_streaming_http_client() -> httpx.Client:
     return _streaming_http_client
 
 
+def close_streaming_http_client() -> None:
+    """Close the shared streaming httpx client. Call on application shutdown."""
+    global _streaming_http_client
+    if _streaming_http_client is not None:
+        _streaming_http_client.close()
+        _streaming_http_client = None
+
+
 async def _upload_streaming(
     request: Request,
     current_user: UserResponseDto,
@@ -570,6 +575,7 @@ async def _upload_streaming(
                     break
                 parser.write(chunk)
             parser.finalize()
+            form_parser.mark_finalized()
         except Exception as e:
             parse_error = e
             pipe.set_error(e)
@@ -577,13 +583,19 @@ async def _upload_streaming(
 
     async def feed_chunks() -> None:
         """Read request body and enqueue chunks for the parser thread."""
+        nonlocal parse_error
         try:
             async for chunk in request.stream():
                 await asyncio.to_thread(chunk_queue.put, chunk)
             await asyncio.to_thread(chunk_queue.put, None)
         except Exception as e:
-            parse_error = e  # noqa: F841
+            parse_error = e
             pipe.set_error(e)
+            # Unblock run_parser if it's waiting on chunk_queue.get()
+            try:
+                chunk_queue.put_nowait(None)
+            except queue.Full:
+                pass
             raise
 
     def sync_upload() -> dict:

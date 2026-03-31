@@ -33,6 +33,7 @@ class StreamingPipe(RawIOBase):
         self._error: BaseException | None = None
         self._leftover = b""
         self._writer_closed = False
+        self._eof = False
 
     def put(self, data: bytes) -> None:
         """Feed data into the pipe. Called by parser callbacks.
@@ -65,6 +66,7 @@ class StreamingPipe(RawIOBase):
         if self._writer_closed:
             return
         self._writer_closed = True
+        elapsed = 0.0
         while True:
             if self._error:
                 return
@@ -72,7 +74,11 @@ class StreamingPipe(RawIOBase):
                 self._queue.put(None, timeout=_POLL_INTERVAL)
                 return
             except queue.Full:
-                continue
+                elapsed += _POLL_INTERVAL
+                if elapsed >= _STALL_TIMEOUT:
+                    raise TimeoutError(
+                        f"Upload pipe stalled — queue full for {_STALL_TIMEOUT}s"
+                    )
 
     def set_error(self, error: BaseException) -> None:
         """Propagate an error from either side, unblocking the other.
@@ -98,6 +104,8 @@ class StreamingPipe(RawIOBase):
         """
         if self._error:
             raise self._error
+        if self._eof:
+            return 0
 
         # Serve leftover from a previous partial read first
         if self._leftover:
@@ -112,7 +120,11 @@ class StreamingPipe(RawIOBase):
             raise TimeoutError(f"Upload pipe stalled — no data for {_STALL_TIMEOUT}s")
 
         if data is None:
-            return 0  # EOF
+            # If we were unblocked due to set_error(), raise instead of EOF.
+            if self._error:
+                raise self._error
+            self._eof = True
+            return 0
 
         if self._error:
             raise self._error

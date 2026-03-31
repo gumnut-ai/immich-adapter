@@ -75,7 +75,12 @@ class TestStreamingFormParser:
 
         assert not parser_handler.headers_ready.is_set()
 
-        body, ct_header = _build_multipart_body({"field": "value"})
+        fields = {
+            "deviceAssetId": "dev-123",
+            "deviceId": "dev-456",
+            "fileCreatedAt": "2023-01-01T12:00:00Z",
+        }
+        body, ct_header = _build_multipart_body(fields)
         parser = parser_handler.create_parser(ct_header)
         parser.write(body)
         parser.finalize()
@@ -89,7 +94,20 @@ class TestStreamingFormParser:
         parser_handler = StreamingFormParser(pipe)
 
         boundary = "----TestBoundary123"
+        # Include required fields before the first file part
         body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="deviceAssetId"\r\n'
+            f"\r\n"
+            f"dev-123\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="deviceId"\r\n'
+            f"\r\n"
+            f"dev-456\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="fileCreatedAt"\r\n'
+            f"\r\n"
+            f"2023-01-01T12:00:00Z\r\n"
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="assetData"; filename="file1.jpg"\r\n'
             f"Content-Type: image/jpeg\r\n"
@@ -108,6 +126,29 @@ class TestStreamingFormParser:
         )
 
         with pytest.raises(ValueError, match="Multiple file parts"):
+            parser.write(body)
+
+    def test_rejects_file_before_required_fields(self):
+        """Test that file part before required fields raises an error."""
+        pipe = StreamingPipe(maxsize=64)
+        parser_handler = StreamingFormParser(pipe)
+
+        boundary = "----TestBoundary123"
+        # File part without preceding required fields
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="assetData"; filename="test.jpg"\r\n'
+            f"Content-Type: image/jpeg\r\n"
+            f"\r\n"
+            f"data\r\n"
+            f"--{boundary}--\r\n"
+        ).encode()
+
+        parser = parser_handler.create_parser(
+            f"multipart/form-data; boundary={boundary}"
+        )
+
+        with pytest.raises(ValueError, match="Required fields must precede"):
             parser.write(body)
 
     def test_field_size_limit(self):
@@ -136,7 +177,11 @@ class TestStreamingFormParser:
         pipe = StreamingPipe(maxsize=64)
         parser_handler = StreamingFormParser(pipe)
 
-        fields = {"deviceAssetId": "dev-123"}
+        fields = {
+            "deviceAssetId": "dev-123",
+            "deviceId": "dev-456",
+            "fileCreatedAt": "2023-01-01T12:00:00Z",
+        }
         file_data = b"A" * 1000
         body, ct_header = _build_multipart_body(fields, file_data=file_data)
 
