@@ -382,12 +382,13 @@ async def _upload_buffered(
     """Standard buffered upload path — Starlette spools file to /tmp."""
     async with request.form() as form:
         asset_data_raw = form.get("assetData")
-        if not isinstance(asset_data_raw, UploadFile) or not asset_data_raw.filename:
-            if not hasattr(asset_data_raw, "filename") or not asset_data_raw.filename:  # type: ignore[union-attr]
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="File has no filename",
-                )
+        # Duck-type check: Starlette's UploadFile may not pass isinstance against
+        # FastAPI's UploadFile in all environments, so fall back to attribute check.
+        if not (hasattr(asset_data_raw, "filename") and asset_data_raw.filename):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="File has no filename",
+            )
         asset_data: UploadFile = asset_data_raw  # type: ignore[assignment]
 
         device_asset_id = str(form.get("deviceAssetId", ""))
@@ -480,6 +481,17 @@ async def _upload_streaming(
 ) -> AssetMediaResponseDto | JSONResponse:
     """Streaming upload path — pipes file data to photos-api without buffering to /tmp.
 
+    Uses raw httpx.Client (sync) instead of the async Gumnut SDK because httpx's
+    async multipart encoder calls file.read() synchronously on the event loop,
+    which would deadlock with a blocking pipe. The trade-off is no SDK-level retry
+    for transient errors — acceptable for large uploads where retrying would
+    re-transfer the entire file.
+
+    iOS live photo .MOV detection is skipped here because it requires file seeks
+    (random access), which is incompatible with streaming. Live photo videos are
+    always small (1-5MB), well below the default 100MB threshold, so they take
+    the buffered path where the check runs.
+
     Uses a three-thread pipeline:
     - Event loop: reads request.stream() and dispatches chunks to parser thread
     - Parser thread: runs python-multipart parser, pushes file data to pipe
@@ -565,6 +577,7 @@ async def _upload_streaming(
 
         return response.json()
 
+    parse_task: asyncio.Task | None = None
     try:
         with sentry_sdk.start_span(
             op="http.client", name="gumnut.assets.create.streaming"
@@ -622,6 +635,14 @@ async def _upload_streaming(
             exc_info=True,
         )
         return _handle_upload_error(e)
+    finally:
+        if parse_task is not None and not parse_task.done():
+            pipe.set_error(Exception("Upload aborted"))
+            parse_task.cancel()
+            try:
+                await parse_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 @router.put("", status_code=204)
