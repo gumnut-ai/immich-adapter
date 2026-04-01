@@ -21,6 +21,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 from gumnut import AsyncGumnut, GumnutError
+from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
@@ -308,17 +309,17 @@ def _handle_upload_error(e: Exception) -> AssetMediaResponseDto | JSONResponse:
 
 
 async def _emit_upload_events(
-    gumnut_asset: object,
+    gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
 ) -> None:
     """Emit WebSocket events after a successful upload."""
     try:
-        asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)  # type: ignore[arg-type]
+        asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
         await emit_user_event(
             WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response
         )
 
-        payload = build_asset_upload_ready_payload(gumnut_asset, current_user.id)  # type: ignore[arg-type]
+        payload = build_asset_upload_ready_payload(gumnut_asset, current_user.id)
         await emit_user_event(
             WebSocketEvent.ASSET_UPLOAD_READY_V1, current_user.id, payload
         )
@@ -651,6 +652,19 @@ async def _upload_streaming(
             _extract_upload_fields(form_parser.form_fields)
         )
 
+        content_length = request.headers.get("content-length", "unknown")
+        logger.info(
+            "Streaming %s to photos-api (%s bytes)",
+            filename,
+            content_length,
+            extra={
+                "upload_filename": filename,
+                "content_type": content_type,
+                "content_length": content_length,
+                "device_asset_id": device_asset_id,
+            },
+        )
+
         response = _get_streaming_http_client().post(
             f"{settings.gumnut_api_base_url}/api/assets",
             headers={"Authorization": f"Bearer {jwt_token}"},
@@ -662,6 +676,16 @@ async def _upload_streaming(
                 "device_id": device_id,
                 "file_created_at": file_created_at.isoformat(),
                 "file_modified_at": file_modified_at.isoformat(),
+            },
+        )
+
+        logger.info(
+            "photos-api responded %d for %s",
+            response.status_code,
+            filename,
+            extra={
+                "status_code": response.status_code,
+                "upload_filename": filename,
             },
         )
 
@@ -748,7 +772,7 @@ async def _upload_streaming(
         logger.error(
             "Streaming upload failed",
             extra={
-                "filename": form_parser.filename,
+                "upload_filename": form_parser.filename,
                 "content_type": form_parser.content_type,
                 "strategy": "streaming",
                 "error": str(e),
