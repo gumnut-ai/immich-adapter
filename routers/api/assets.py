@@ -4,6 +4,7 @@ import asyncio
 import base64
 import logging
 import queue
+import threading
 from datetime import datetime
 
 import httpx
@@ -25,7 +26,10 @@ from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client,
+    set_refreshed_token,
+)
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
@@ -301,9 +305,15 @@ def _handle_upload_error(e: Exception) -> AssetMediaResponseDto | JSONResponse:
             status_code=status.HTTP_200_OK,
         )
     elif check_for_error_by_code(e, 413) or "too large" in error_msg:
-        raise HTTPException(status_code=413, detail="Asset file too large")
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Asset file too large",
+        )
     elif check_for_error_by_code(e, 415) or "unsupported" in error_msg:
-        raise HTTPException(status_code=415, detail="Unsupported media type")
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported media type",
+        )
     else:
         raise map_gumnut_error(e, "Failed to upload asset") from e
 
@@ -419,7 +429,7 @@ async def _upload_buffered(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="File has no filename",
             )
-        asset_data: UploadFile = asset_data_raw  # type: ignore[assignment]
+        asset_data = cast(UploadFile, asset_data_raw)
 
         # Convert Starlette form values to plain strings for shared helper
         fields = {key: str(value) for key, value in form.items() if key != "assetData"}
@@ -503,12 +513,11 @@ async def _upload_buffered(
 # Initialized lazily to avoid import-time side effects (e.g., SOCKS proxy checks).
 # Includes a response hook to capture JWT refreshes from photos-api.
 _streaming_http_client: httpx.Client | None = None
+_streaming_client_lock = threading.Lock()
 
 
 def _sync_response_hook(response: httpx.Response) -> None:
     """Capture JWT refreshes from photos-api responses (sync version)."""
-    from routers.utils.gumnut_client import set_refreshed_token
-
     token = response.headers.get("x-new-access-token")
     if token:
         set_refreshed_token(token)
@@ -517,20 +526,25 @@ def _sync_response_hook(response: httpx.Response) -> None:
 def _get_streaming_http_client() -> httpx.Client:
     global _streaming_http_client
     if _streaming_http_client is None:
-        _streaming_http_client = httpx.Client(
-            timeout=httpx.Timeout(600.0),
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-            event_hooks={"response": [_sync_response_hook]},
-        )
+        with _streaming_client_lock:
+            if _streaming_http_client is None:
+                _streaming_http_client = httpx.Client(
+                    timeout=httpx.Timeout(600.0),
+                    limits=httpx.Limits(
+                        max_connections=10, max_keepalive_connections=5
+                    ),
+                    event_hooks={"response": [_sync_response_hook]},
+                )
     return _streaming_http_client
 
 
 def close_streaming_http_client() -> None:
     """Close the shared streaming httpx client. Call on application shutdown."""
     global _streaming_http_client
-    if _streaming_http_client is not None:
-        _streaming_http_client.close()
-        _streaming_http_client = None
+    with _streaming_client_lock:
+        if _streaming_http_client is not None:
+            _streaming_http_client.close()
+            _streaming_http_client = None
 
 
 async def _upload_streaming(
@@ -691,20 +705,34 @@ async def _upload_streaming(
 
         if response.status_code == 429:
             raise HTTPException(
-                status_code=502,
+                status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Service temporarily unavailable",
             )
 
         if response.status_code not in (200, 201):
-            # Try to extract error detail from response body
+            # Log the real detail server-side; return controlled message to client
             try:
                 body = response.json()
                 detail = body.get("detail", response.text)
             except Exception:
                 detail = response.text
+            logger.warning(
+                "photos-api upload error",
+                extra={
+                    "status_code": response.status_code,
+                    "detail": str(detail)[:500],
+                    "upload_filename": filename,
+                },
+            )
+            # Map 5xx to 502 (upstream error); forward 4xx as-is
+            client_status = (
+                status.HTTP_502_BAD_GATEWAY
+                if response.status_code >= 500
+                else response.status_code
+            )
             raise HTTPException(
-                status_code=response.status_code,
-                detail=str(detail),
+                status_code=client_status,
+                detail="Upload failed",
             )
 
         return response.json()
@@ -765,9 +793,13 @@ async def _upload_streaming(
     except HTTPException:
         raise
     except (ValueError, ValidationError) as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    except TimeoutError as e:
-        raise HTTPException(status_code=408, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
+    except TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="Upload timed out"
+        )
     except Exception as e:
         logger.error(
             "Streaming upload failed",
@@ -785,7 +817,7 @@ async def _upload_streaming(
             pipe.set_error(parse_error)
 
         if feed_task is not None and not feed_task.done():
-            if not pipe._error:
+            if not pipe.has_error:
                 pipe.set_error(Exception("Upload aborted"))
             feed_task.cancel()
             try:

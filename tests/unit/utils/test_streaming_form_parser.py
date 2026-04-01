@@ -232,7 +232,7 @@ class TestStreamingFormParser:
             f"multipart/form-data; boundary={boundary}"
         )
 
-        with pytest.raises(ValueError, match="Unexpected file field"):
+        with pytest.raises(ValueError, match="File field name must be 'assetData'"):
             parser.write(body)
 
     def test_chunked_parsing(self):

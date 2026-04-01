@@ -8,10 +8,16 @@ This is a simplified version of photos-api's StreamingFormHandler, adapted for
 the proxy use case (no checksums, no S3, just form fields + pipe).
 """
 
+from __future__ import annotations
+
 import logging
 import threading
+from typing import TYPE_CHECKING
 
 from python_multipart.multipart import MultipartParser, parse_options_header
+
+if TYPE_CHECKING:
+    from python_multipart.multipart import MultipartCallbacks
 
 from utils.streaming_pipe import StreamingPipe
 
@@ -83,7 +89,7 @@ class StreamingFormParser:
         if not boundary:
             raise ValueError("Missing multipart boundary in Content-Type header")
 
-        callbacks = {
+        callbacks: MultipartCallbacks = {
             "on_part_begin": self._on_part_begin,
             "on_part_data": self._on_part_data,
             "on_part_end": self._on_part_end,
@@ -93,7 +99,7 @@ class StreamingFormParser:
             "on_headers_finished": self._on_headers_finished,
         }
 
-        return MultipartParser(boundary, callbacks)  # type: ignore[arg-type]
+        return MultipartParser(boundary, callbacks)
 
     # --- Synchronous callbacks (called by MultipartParser.write) ---
 
@@ -131,9 +137,7 @@ class StreamingFormParser:
             if self._file_seen:
                 raise ValueError("Multiple file parts are not supported")
             if field_name != "assetData":
-                raise ValueError(
-                    f"Unexpected file field '{field_name}'; expected 'assetData'"
-                )
+                raise ValueError("File field name must be 'assetData'")
             # Verify required fields arrived before the file part
             missing = [k for k in _REQUIRED_FIELDS if k not in self._form_fields]
             if missing:

@@ -35,6 +35,11 @@ class StreamingPipe(RawIOBase):
         self._writer_closed = False
         self._eof = False
 
+    @property
+    def has_error(self) -> bool:
+        """Whether an error has been set on this pipe."""
+        return self._error is not None
+
     def put(self, data: bytes) -> None:
         """Feed data into the pipe. Called by parser callbacks.
 
@@ -97,10 +102,15 @@ class StreamingPipe(RawIOBase):
         except queue.Full:
             pass
 
-    def readinto(self, b: bytearray | memoryview) -> int:  # type: ignore[override]
+    def readinto(self, b: bytearray) -> int:
         """Read data into buffer. Called by httpx via RawIOBase protocol.
 
         Blocks until data is available or EOF/error is signaled.
+
+        Note: typed as bytearray (narrower than the base class WriteableBuffer)
+        because we need slice assignment. Python's IO machinery and httpx always
+        pass bytearray. The override warning is suppressed at the call to super
+        in tests if needed — runtime behavior is correct.
         """
         if self._error:
             raise self._error
