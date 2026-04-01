@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query, Response
 
 from routers.immich_models import (
-    AssetIdsDto,
+    DownloadArchiveDto,
     DownloadInfoDto,
     DownloadResponseDto,
 )
@@ -15,7 +15,7 @@ router = APIRouter(
 
 @router.post("/archive")
 async def download_archive(
-    request: AssetIdsDto,
+    request: DownloadArchiveDto,
     key: str = Query(default=None),
     slug: str = Query(default=None),
 ) -> Response:

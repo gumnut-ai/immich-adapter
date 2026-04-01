@@ -73,6 +73,7 @@ async def get_time_buckets(
     withCoordinates: bool = Query(default=None),
     withPartners: bool = Query(default=None),
     withStacked: bool = Query(default=None),
+    bbox: str = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[TimeBucketsResponseDto]:
     if (
@@ -126,6 +127,7 @@ async def get_time_bucket(
     withCoordinates: bool = Query(default=None),
     withPartners: bool = Query(default=None),
     withStacked: bool = Query(default=None),
+    bbox: str = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user_id: UUID = Depends(get_current_user_id),
 ) -> Any:  # Should be TimeBucketAssetResponseDto, but using Any to bypass Pydantic validation. See comment below.

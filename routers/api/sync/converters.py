@@ -20,6 +20,7 @@ from routers.immich_models import (
     SyncAlbumV1,
     SyncAssetExifV1,
     SyncAssetFaceV1,
+    SyncAssetFaceV2,
     SyncAssetV1,
     SyncAuthUserV1,
     SyncPersonV1,
@@ -215,7 +216,7 @@ def gumnut_exif_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         orientation=str(exif.orientation) if exif.orientation is not None else None,
         profileDescription=exif.profile_description,
         projectionType=exif.projection_type,
-        rating=exif.rating,
+        rating=exif.rating if exif.rating is not None and exif.rating != -1 else None,
         state=exif.state,
         timeZone=format_timezone_immich(exif.original_datetime),
     )
@@ -286,6 +287,34 @@ def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
         imageWidth=0,
         sourceType="machine-learning",
         personId=person_id,
+    )
+
+
+def gumnut_face_to_sync_face_v2(face: FaceResponse) -> SyncAssetFaceV2:
+    """Convert Gumnut FaceResponse to Immich SyncAssetFaceV2 format.
+
+    Same as V1 but adds deletedAt (always None — Gumnut has no soft-delete
+    on faces) and isVisible (always True — Gumnut has no face visibility control).
+    """
+    bounding_box = face.bounding_box
+
+    person_id = None
+    if face.person_id:
+        person_id = str(safe_uuid_from_person_id(face.person_id))
+
+    return SyncAssetFaceV2(
+        id=str(safe_uuid_from_face_id(face.id)),
+        assetId=str(safe_uuid_from_asset_id(face.asset_id)),
+        boundingBoxX1=bounding_box.get("x", 0),
+        boundingBoxX2=bounding_box.get("x", 0) + bounding_box.get("w", 0),
+        boundingBoxY1=bounding_box.get("y", 0),
+        boundingBoxY2=bounding_box.get("y", 0) + bounding_box.get("h", 0),
+        imageHeight=0,
+        imageWidth=0,
+        sourceType="machine-learning",
+        personId=person_id,
+        deletedAt=None,
+        isVisible=True,
     )
 
 

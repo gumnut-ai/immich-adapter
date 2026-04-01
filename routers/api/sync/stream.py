@@ -77,6 +77,7 @@ _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.AssetExifsV1, "exif", SyncEntityType.AssetExifV1),
     (SyncRequestType.PeopleV1, "person", SyncEntityType.PersonV1),
     (SyncRequestType.AssetFacesV1, "face", SyncEntityType.AssetFaceV1),
+    (SyncRequestType.AssetFacesV2, "face", SyncEntityType.AssetFaceV2),
 ]
 
 # Order for streaming delete events — reverse of FK dependency order.
@@ -94,7 +95,11 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
 # Supported SyncRequestTypes (used to detect unsupported types requested by client)
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
-    | {SyncRequestType.AuthUsersV1, SyncRequestType.UsersV1}
+    | {
+        SyncRequestType.AuthUsersV1,
+        SyncRequestType.UsersV1,
+        SyncRequestType.AssetEditsV1,
+    }
 )
 
 
@@ -244,7 +249,8 @@ async def _stream_entity_type(
                 # face_updated event from clustering will deliver the correct
                 # person_id in the same or a future sync cycle.
                 if (
-                    sync_entity_type == SyncEntityType.AssetFaceV1
+                    sync_entity_type
+                    in (SyncEntityType.AssetFaceV1, SyncEntityType.AssetFaceV2)
                     and event.event_type == "face_created"
                     and isinstance(entity, FaceResponse)
                     and entity.person_id is not None
@@ -256,7 +262,8 @@ async def _stream_entity_type(
                 # entity's current state, which may reference a person
                 # assigned by a later clustering run.
                 elif (
-                    sync_entity_type == SyncEntityType.AssetFaceV1
+                    sync_entity_type
+                    in (SyncEntityType.AssetFaceV1, SyncEntityType.AssetFaceV2)
                     and event.event_type == "face_updated"
                     and isinstance(entity, FaceResponse)
                     and isinstance(event.payload, dict)
