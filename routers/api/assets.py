@@ -516,7 +516,9 @@ async def _upload_streaming(
 
     pipeline: StreamingUploadPipeline | None = None
     try:
-        pipeline = StreamingUploadPipeline(request, settings, jwt_token)
+        pipeline = StreamingUploadPipeline(
+            request, settings.gumnut_api_base_url, jwt_token
+        )
         result = await pipeline.execute(_extract_upload_fields)
 
         asset_id = result.get("id", "")

@@ -25,7 +25,6 @@ import httpx
 import sentry_sdk
 from fastapi import HTTPException, Request, status
 
-from config.settings import Settings
 from routers.utils.gumnut_client import set_refreshed_token
 from services.streaming_form_parser import StreamingFormParser
 from services.streaming_pipe import StreamingPipe
@@ -80,11 +79,11 @@ class StreamingUploadPipeline:
     def __init__(
         self,
         request: Request,
-        settings: Settings,
+        api_base_url: str,
         jwt_token: str,
     ) -> None:
         self._request = request
-        self._settings = settings
+        self._api_base_url = api_base_url
         self._jwt_token = jwt_token
 
         self._pipe = StreamingPipe(maxsize=64)
@@ -213,7 +212,7 @@ class StreamingUploadPipeline:
         )
 
         response = _get_streaming_http_client().post(
-            f"{self._settings.gumnut_api_base_url}/api/assets",
+            f"{self._api_base_url}/api/assets",
             headers={"Authorization": f"Bearer {self._jwt_token}"},
             files={
                 "asset_data": (

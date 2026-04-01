@@ -80,12 +80,6 @@ def _make_mock_request(body: bytes, content_type: str) -> MagicMock:
     return request
 
 
-def _make_mock_settings(base_url: str = "http://localhost:8000") -> MagicMock:
-    settings = MagicMock()
-    settings.gumnut_api_base_url = base_url
-    return settings
-
-
 def _make_httpx_response(
     status_code: int = 201,
     json_data: dict | None = None,
@@ -110,7 +104,7 @@ class TestStreamingUploadPipeline:
         """Test the full pipeline: feed → parse → upload → result."""
         body, ct_header = _build_multipart_body()
         request = _make_mock_request(body, ct_header)
-        settings = _make_mock_settings()
+        base_url = "http://localhost:8000"
         response = _make_httpx_response(
             201, {"id": "asset_abc123", "status": "created"}
         )
@@ -122,7 +116,7 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, settings, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
             result = await pipeline.execute(_extract_fields)
 
         assert result["id"] == "asset_abc123"
@@ -134,7 +128,7 @@ class TestStreamingUploadPipeline:
         """Test that upstream 5xx is mapped to 502."""
         body, ct_header = _build_multipart_body()
         request = _make_mock_request(body, ct_header)
-        settings = _make_mock_settings()
+        base_url = "http://localhost:8000"
         response = _make_httpx_response(500, {"detail": "Internal server error"})
 
         mock_client = MagicMock()
@@ -144,7 +138,7 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, settings, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
             with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
@@ -155,7 +149,7 @@ class TestStreamingUploadPipeline:
         """Test that upstream 429 is mapped to 502."""
         body, ct_header = _build_multipart_body()
         request = _make_mock_request(body, ct_header)
-        settings = _make_mock_settings()
+        base_url = "http://localhost:8000"
         response = _make_httpx_response(429, {"detail": "Rate limited"})
 
         mock_client = MagicMock()
@@ -165,7 +159,7 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, settings, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
             with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
@@ -176,7 +170,7 @@ class TestStreamingUploadPipeline:
         """Test that x-new-access-token from photos-api is captured."""
         body, ct_header = _build_multipart_body()
         request = _make_mock_request(body, ct_header)
-        settings = _make_mock_settings()
+        base_url = "http://localhost:8000"
         response = _make_httpx_response(
             201,
             {"id": "asset_abc123", "status": "created"},
@@ -193,7 +187,7 @@ class TestStreamingUploadPipeline:
             ),
             patch("services.streaming_upload.set_refreshed_token") as mock_set,
         ):
-            pipeline = StreamingUploadPipeline(request, settings, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
             await pipeline.execute(_extract_fields)
 
         assert pipeline.refreshed_token == "new-jwt-token"
@@ -204,7 +198,7 @@ class TestStreamingUploadPipeline:
         """Test that a duplicate response is returned correctly."""
         body, ct_header = _build_multipart_body()
         request = _make_mock_request(body, ct_header)
-        settings = _make_mock_settings()
+        base_url = "http://localhost:8000"
         response = _make_httpx_response(
             200, {"id": "asset_existing", "status": "duplicate"}
         )
@@ -216,7 +210,7 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, settings, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
             result = await pipeline.execute(_extract_fields)
 
         assert result["status"] == "duplicate"
@@ -226,7 +220,7 @@ class TestStreamingUploadPipeline:
         """Test that 4xx errors from photos-api are forwarded with their status code."""
         body, ct_header = _build_multipart_body()
         request = _make_mock_request(body, ct_header)
-        settings = _make_mock_settings()
+        base_url = "http://localhost:8000"
         response = _make_httpx_response(413, {"detail": "Too large"})
 
         mock_client = MagicMock()
@@ -236,7 +230,7 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, settings, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
             with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
