@@ -581,17 +581,41 @@ async def _upload_streaming(
             pipe.set_error(e)
             raise
 
+    def _put_chunk_blocking(chunk_data: bytes | None) -> None:
+        """Put a chunk into chunk_queue with 1s timeout loop.
+
+        Checks parse_error between attempts so a failed parser thread is
+        detected quickly rather than blocking a thread pool worker forever.
+        """
+        elapsed = 0.0
+        while True:
+            if parse_error is not None:
+                raise parse_error
+            try:
+                chunk_queue.put(chunk_data, timeout=1.0)
+                return
+            except queue.Full:
+                elapsed += 1.0
+                if elapsed >= 300:
+                    raise TimeoutError("chunk_queue stalled — full for 300s")
+
     async def feed_chunks() -> None:
         """Read request body and enqueue chunks for the parser thread."""
         nonlocal parse_error
         try:
             async for chunk in request.stream():
-                await asyncio.to_thread(chunk_queue.put, chunk)
-            await asyncio.to_thread(chunk_queue.put, None)
+                await asyncio.to_thread(_put_chunk_blocking, chunk)
+            await asyncio.to_thread(_put_chunk_blocking, None)
         except Exception as e:
-            parse_error = e
+            if parse_error is None:
+                parse_error = e
             pipe.set_error(e)
-            # Unblock run_parser if it's waiting on chunk_queue.get()
+            # Drain + unblock run_parser if it's waiting on chunk_queue.get()
+            try:
+                while True:
+                    chunk_queue.get_nowait()
+            except queue.Empty:
+                pass
             try:
                 chunk_queue.put_nowait(None)
             except queue.Full:

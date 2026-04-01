@@ -130,6 +130,10 @@ class StreamingFormParser:
         if filename:
             if self._file_seen:
                 raise ValueError("Multiple file parts are not supported")
+            if field_name != "assetData":
+                raise ValueError(
+                    f"Unexpected file field '{field_name}'; expected 'assetData'"
+                )
             # Verify required fields arrived before the file part
             missing = [k for k in _REQUIRED_FIELDS if k not in self._form_fields]
             if missing:
