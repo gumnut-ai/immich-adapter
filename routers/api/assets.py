@@ -506,7 +506,13 @@ async def _upload_streaming(
     current_user: UserResponseDto,
     settings: Settings,
 ) -> AssetMediaResponseDto | JSONResponse:
-    """Streaming upload path — pipes file data to photos-api without buffering."""
+    """Streaming upload path — pipes file data to photos-api without buffering.
+
+    Note: requires multipart form fields (deviceAssetId, deviceId, fileCreatedAt)
+    to precede the file part. All known Immich clients send fields first. Clients
+    that send the file before fields will receive a 422 error; those uploads fall
+    below the streaming threshold in practice, so they use the buffered path.
+    """
     jwt_token = getattr(request.state, "jwt_token", None)
     if not jwt_token:
         raise HTTPException(
