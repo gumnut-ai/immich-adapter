@@ -5,6 +5,8 @@ import pytest
 from services.streaming_form_parser import StreamingFormParser
 from services.streaming_pipe import StreamingPipe
 
+pytestmark = pytest.mark.anyio
+
 
 def _build_multipart_body(
     fields: dict[str, str],
@@ -40,7 +42,7 @@ def _build_multipart_body(
 
 
 class TestStreamingFormParser:
-    def test_parses_form_fields_and_file(self):
+    async def test_parses_form_fields_and_file(self):
         """Test that form fields and file data are correctly parsed."""
         pipe = StreamingPipe(maxsize=64)
         parser_handler = StreamingFormParser(pipe)
@@ -68,7 +70,7 @@ class TestStreamingFormParser:
         # Pipe should be closed (EOF)
         assert pipe.read(1024) == b""
 
-    def test_headers_ready_event_fires(self):
+    async def test_headers_ready_event_fires(self):
         """Test that headers_ready is set when file part headers are parsed."""
         pipe = StreamingPipe(maxsize=64)
         parser_handler = StreamingFormParser(pipe)
@@ -88,7 +90,7 @@ class TestStreamingFormParser:
         assert parser_handler.headers_ready.is_set()
         assert parser_handler.filename == "test.jpg"
 
-    def test_rejects_multiple_file_parts(self):
+    async def test_rejects_multiple_file_parts(self):
         """Test that multiple file parts raise an error."""
         pipe = StreamingPipe(maxsize=64)
         parser_handler = StreamingFormParser(pipe)
@@ -128,7 +130,7 @@ class TestStreamingFormParser:
         with pytest.raises(ValueError, match="Multiple file parts"):
             parser.write(body)
 
-    def test_rejects_file_before_required_fields(self):
+    async def test_rejects_file_before_required_fields(self):
         """Test that file part before required fields raises an error."""
         pipe = StreamingPipe(maxsize=64)
         parser_handler = StreamingFormParser(pipe)
@@ -151,7 +153,7 @@ class TestStreamingFormParser:
         with pytest.raises(ValueError, match="Required fields must precede"):
             parser.write(body)
 
-    def test_field_size_limit(self):
+    async def test_field_size_limit(self):
         """Test that oversized form fields are rejected."""
         pipe = StreamingPipe(maxsize=64)
         parser_handler = StreamingFormParser(pipe)
@@ -164,7 +166,7 @@ class TestStreamingFormParser:
         with pytest.raises(ValueError, match="exceeds .* byte limit"):
             parser.write(body)
 
-    def test_missing_boundary_raises(self):
+    async def test_missing_boundary_raises(self):
         """Test that missing boundary raises ValueError."""
         pipe = StreamingPipe(maxsize=64)
         parser_handler = StreamingFormParser(pipe)
@@ -172,7 +174,7 @@ class TestStreamingFormParser:
         with pytest.raises(ValueError, match="Missing multipart boundary"):
             parser_handler.create_parser("multipart/form-data")
 
-    def test_mark_finalized_missing_file_part(self):
+    async def test_mark_finalized_missing_file_part(self):
         """Test that mark_finalized sets error and wakes waiter when no file part seen."""
         pipe = StreamingPipe(maxsize=64)
         parser_handler = StreamingFormParser(pipe)
@@ -201,7 +203,7 @@ class TestStreamingFormParser:
         with pytest.raises(ValueError, match="Missing file part"):
             pipe.read(1)
 
-    def test_rejects_wrong_file_field_name(self):
+    async def test_rejects_wrong_file_field_name(self):
         """Test that a file part with the wrong field name is rejected."""
         pipe = StreamingPipe(maxsize=64)
         parser_handler = StreamingFormParser(pipe)
@@ -235,7 +237,7 @@ class TestStreamingFormParser:
         with pytest.raises(ValueError, match="File field name must be 'assetData'"):
             parser.write(body)
 
-    def test_chunked_parsing(self):
+    async def test_chunked_parsing(self):
         """Test that parsing works when body arrives in small chunks."""
         pipe = StreamingPipe(maxsize=64)
         parser_handler = StreamingFormParser(pipe)

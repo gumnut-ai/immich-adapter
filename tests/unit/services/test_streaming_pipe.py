@@ -6,9 +6,11 @@ import pytest
 
 from services.streaming_pipe import StreamingPipe
 
+pytestmark = pytest.mark.anyio
+
 
 class TestStreamingPipe:
-    def test_put_and_read_basic(self):
+    async def test_put_and_read_basic(self):
         """Test basic put/read data flow."""
         pipe = StreamingPipe(maxsize=4)
         pipe.put(b"hello")
@@ -22,7 +24,7 @@ class TestStreamingPipe:
         result = pipe.read(1024)
         assert result == b""  # EOF
 
-    def test_readinto_partial(self):
+    async def test_readinto_partial(self):
         """Test readinto with a buffer smaller than the chunk."""
         pipe = StreamingPipe(maxsize=4)
         pipe.put(b"hello world")
@@ -39,7 +41,7 @@ class TestStreamingPipe:
         assert n2 == 6
         assert buf2[:n2] == b" world"
 
-    def test_eof_returns_zero(self):
+    async def test_eof_returns_zero(self):
         """Test that readinto returns 0 on EOF."""
         pipe = StreamingPipe(maxsize=4)
         pipe.close_writer()
@@ -47,7 +49,7 @@ class TestStreamingPipe:
         buf = bytearray(10)
         assert pipe.readinto(buf) == 0
 
-    def test_error_propagation_to_reader(self):
+    async def test_error_propagation_to_reader(self):
         """Test that set_error causes read to raise."""
         pipe = StreamingPipe(maxsize=4)
         pipe.set_error(ValueError("test error"))
@@ -55,7 +57,7 @@ class TestStreamingPipe:
         with pytest.raises(ValueError, match="test error"):
             pipe.read(1024)
 
-    def test_error_propagation_to_writer(self):
+    async def test_error_propagation_to_writer(self):
         """Test that set_error causes put to raise."""
         pipe = StreamingPipe(maxsize=4)
         pipe.set_error(ValueError("test error"))
@@ -63,7 +65,7 @@ class TestStreamingPipe:
         with pytest.raises(ValueError, match="test error"):
             pipe.put(b"data")
 
-    def test_concurrent_put_and_read(self):
+    async def test_concurrent_put_and_read(self):
         """Test concurrent producer/consumer threads."""
         pipe = StreamingPipe(maxsize=4)
         chunks = [b"chunk1", b"chunk2", b"chunk3"]
@@ -87,9 +89,11 @@ class TestStreamingPipe:
         t2.start()
         t1.join(timeout=5)
         t2.join(timeout=5)
+        assert not t1.is_alive()
+        assert not t2.is_alive()
 
         assert received == chunks
 
-    def test_readable(self):
+    async def test_readable(self):
         pipe = StreamingPipe()
         assert pipe.readable() is True
