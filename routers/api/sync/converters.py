@@ -26,7 +26,7 @@ from routers.immich_models import (
     SyncPersonV1,
     SyncUserV1,
 )
-from routers.utils.asset_conversion import mime_type_to_asset_type
+from routers.utils.asset_conversion import _normalize_rating, mime_type_to_asset_type
 from routers.utils.datetime_utils import (
     format_timezone_immich,
     to_actual_utc,
@@ -216,7 +216,7 @@ def gumnut_exif_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         orientation=str(exif.orientation) if exif.orientation is not None else None,
         profileDescription=exif.profile_description,
         projectionType=exif.projection_type,
-        rating=exif.rating if exif.rating is not None and exif.rating != -1 else None,
+        rating=_normalize_rating(exif.rating),
         state=exif.state,
         timeZone=format_timezone_immich(exif.original_datetime),
     )
@@ -293,29 +293,11 @@ def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
 def gumnut_face_to_sync_face_v2(face: FaceResponse) -> SyncAssetFaceV2:
     """Convert Gumnut FaceResponse to Immich SyncAssetFaceV2 format.
 
-    Same as V1 but adds deletedAt (always None — Gumnut has no soft-delete
+    Delegates to V1 and adds deletedAt (always None — Gumnut has no soft-delete
     on faces) and isVisible (always True — Gumnut has no face visibility control).
     """
-    bounding_box = face.bounding_box
-
-    person_id = None
-    if face.person_id:
-        person_id = str(safe_uuid_from_person_id(face.person_id))
-
-    return SyncAssetFaceV2(
-        id=str(safe_uuid_from_face_id(face.id)),
-        assetId=str(safe_uuid_from_asset_id(face.asset_id)),
-        boundingBoxX1=bounding_box.get("x", 0),
-        boundingBoxX2=bounding_box.get("x", 0) + bounding_box.get("w", 0),
-        boundingBoxY1=bounding_box.get("y", 0),
-        boundingBoxY2=bounding_box.get("y", 0) + bounding_box.get("h", 0),
-        imageHeight=0,
-        imageWidth=0,
-        sourceType="machine-learning",
-        personId=person_id,
-        deletedAt=None,
-        isVisible=True,
-    )
+    v1 = gumnut_face_to_sync_face_v1(face)
+    return SyncAssetFaceV2(**v1.model_dump(), deletedAt=None, isVisible=True)
 
 
 def gumnut_album_asset_to_sync_album_to_asset_v1(
