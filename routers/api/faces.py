@@ -74,16 +74,14 @@ async def get_faces(
     try:
         gumnut_asset_id = uuid_to_gumnut_asset_id(id)
 
-        # Fetch faces and asset in parallel would be ideal, but the SDK
-        # doesn't support gather natively. Fetch sequentially.
-        faces_page = await client.faces.list(asset_id=gumnut_asset_id)
+        faces = [f async for f in client.faces.list(asset_id=gumnut_asset_id)]
         asset = await client.assets.retrieve(gumnut_asset_id)
 
         image_width = asset.width or 0
         image_height = asset.height or 0
 
         # Batch-fetch unique people referenced by faces
-        person_ids = {f.person_id for f in faces_page.data if f.person_id}
+        person_ids = {f.person_id for f in faces if f.person_id}
         people_by_id: dict[str, PersonResponseDto] = {}
         for person_id in person_ids:
             try:
@@ -96,7 +94,7 @@ async def get_faces(
                 )
 
         result: List[AssetFaceResponseDto] = []
-        for face in faces_page.data:
+        for face in faces:
             bb = face.bounding_box
             person = people_by_id.get(face.person_id) if face.person_id else None
 
@@ -117,7 +115,7 @@ async def get_faces(
         return result
 
     except Exception as e:
-        raise map_gumnut_error(e, "get faces")
+        raise map_gumnut_error(e, "Failed to fetch faces") from e
 
 
 @router.post("", status_code=201)

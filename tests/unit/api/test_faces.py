@@ -68,7 +68,7 @@ class TestGetFaces:
         )
 
         mock_client = Mock()
-        mock_client.faces.list = AsyncMock(return_value=mock_sync_cursor_page([face]))
+        mock_client.faces.list = Mock(return_value=mock_sync_cursor_page([face]))
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_asset(gumnut_asset_id, width=1920, height=1080)
         )
@@ -93,7 +93,7 @@ class TestGetFaces:
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
         mock_client = Mock()
-        mock_client.faces.list = AsyncMock(return_value=mock_sync_cursor_page([]))
+        mock_client.faces.list = Mock(return_value=mock_sync_cursor_page([]))
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_asset(gumnut_asset_id)
         )
@@ -113,7 +113,7 @@ class TestGetFaces:
         person = _make_person(person_id, name="Calvin")
 
         mock_client = Mock()
-        mock_client.faces.list = AsyncMock(return_value=mock_sync_cursor_page([face]))
+        mock_client.faces.list = Mock(return_value=mock_sync_cursor_page([face]))
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_asset(gumnut_asset_id)
         )
@@ -138,7 +138,7 @@ class TestGetFaces:
         person = _make_person(person_id)
 
         mock_client = Mock()
-        mock_client.faces.list = AsyncMock(
+        mock_client.faces.list = Mock(
             return_value=mock_sync_cursor_page([face1, face2])
         )
         mock_client.assets.retrieve = AsyncMock(
@@ -166,7 +166,7 @@ class TestGetFaces:
         face = _make_face(asset_id=gumnut_asset_id, person_id=person_id)
 
         mock_client = Mock()
-        mock_client.faces.list = AsyncMock(return_value=mock_sync_cursor_page([face]))
+        mock_client.faces.list = Mock(return_value=mock_sync_cursor_page([face]))
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_asset(gumnut_asset_id)
         )
@@ -190,7 +190,7 @@ class TestGetFaces:
         face.id = uuid_to_gumnut_face_id(face_uuid)
 
         mock_client = Mock()
-        mock_client.faces.list = AsyncMock(return_value=mock_sync_cursor_page([face]))
+        mock_client.faces.list = Mock(return_value=mock_sync_cursor_page([face]))
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_asset(gumnut_asset_id)
         )
@@ -198,3 +198,19 @@ class TestGetFaces:
         result = await get_faces(id=asset_uuid, client=mock_client)
 
         assert result[0].id == face_uuid
+
+    @pytest.mark.anyio
+    async def test_sdk_error_mapped_to_http_exception(self):
+        """Test that SDK errors from faces.list are mapped via map_gumnut_error."""
+        from fastapi import HTTPException
+
+        asset_uuid = uuid4()
+
+        mock_client = Mock()
+        mock_client.faces.list = Mock(side_effect=Exception("Something went wrong"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_faces(id=asset_uuid, client=mock_client)
+
+        assert exc_info.value.status_code == 500
+        assert "Failed to fetch faces" in exc_info.value.detail
