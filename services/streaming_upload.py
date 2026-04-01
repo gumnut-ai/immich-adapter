@@ -110,9 +110,7 @@ class StreamingUploadPipeline:
                 try:
                     chunk = self._chunk_queue.get(timeout=300)
                 except queue.Empty:
-                    raise TimeoutError(
-                        "Timed out waiting for request body chunks"
-                    )
+                    raise TimeoutError("Timed out waiting for request body chunks")
                 if chunk is None:
                     break
                 self._parser.write(chunk)
@@ -211,23 +209,31 @@ class StreamingUploadPipeline:
             },
         )
 
-        response = _get_streaming_http_client().post(
-            f"{self._api_base_url}/api/assets",
-            headers={"Authorization": f"Bearer {self._jwt_token}"},
-            files={
-                "asset_data": (
-                    filename,
-                    cast(IO[bytes], self._pipe),
-                    content_type,
-                ),
-            },
-            data={
-                "device_asset_id": device_asset_id,
-                "device_id": device_id,
-                "file_created_at": file_created_at.isoformat(),
-                "file_modified_at": file_modified_at.isoformat(),
-            },
-        )
+        try:
+            response = _get_streaming_http_client().post(
+                f"{self._api_base_url}/api/assets",
+                headers={"Authorization": f"Bearer {self._jwt_token}"},
+                files={
+                    "asset_data": (
+                        filename,
+                        cast(IO[bytes], self._pipe),
+                        content_type,
+                    ),
+                },
+                data={
+                    "device_asset_id": device_asset_id,
+                    "device_id": device_id,
+                    "file_created_at": file_created_at.isoformat(),
+                    "file_modified_at": file_modified_at.isoformat(),
+                },
+            )
+        except httpx.TimeoutException as e:
+            raise TimeoutError("Upstream upload timed out") from e
+        except httpx.HTTPError as e:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Upload failed",
+            ) from e
 
         logger.info(
             "photos-api responded %d for %s",

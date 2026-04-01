@@ -326,7 +326,7 @@ async def _emit_upload_events(
         await emit_user_event(
             WebSocketEvent.ASSET_UPLOAD_READY_V1, current_user.id, payload
         )
-    except (ValidationError, SocketIOError) as ws_error:
+    except Exception as ws_error:
         logger.warning(
             "Failed to emit WebSocket event after upload",
             extra={

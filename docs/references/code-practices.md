@@ -85,6 +85,7 @@ asset_id: Annotated[UUID | SkipJsonSchema[None], Query(alias="assetId")] = None,
 - Use model factories for test data creation
 - Do not assert on logging in tests — logging is non-functional behavior. Tests should assert on observable outputs (return values, side effects, emitted events), not on whether a particular log message was emitted.
 - When mocking SDK paginator calls used with `async for` (e.g., `client.faces.list`), use `Mock(return_value=MockSyncCursorPage([...]))` — not `AsyncMock`. `AsyncMock` wraps the return in a coroutine, which breaks `async for` iteration. Use `AsyncMock` only for calls consumed with `await`.
+- Do not add `__init__.py` to test directories — the project uses pytest's rootdir-based import resolution. Adding `__init__.py` switches pytest to package-based imports, breaking test discovery.
 
 ## Logging
 
@@ -96,3 +97,5 @@ logger.info("WebSocket connected", extra={"sid": sid, "user_id": user_id, "devic
 ```
 
 This enables better searching and correlation in Sentry.
+
+**Reserved `extra` keys**: Python's `LogRecord` has reserved attributes (`filename`, `module`, `name`, `msg`, `args`, `levelname`, `pathname`, `lineno`, etc.). Using these as `extra` keys causes a `KeyError` at runtime. Use prefixed names instead (e.g., `upload_filename` instead of `filename`).

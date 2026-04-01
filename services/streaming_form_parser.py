@@ -157,14 +157,14 @@ class StreamingFormParser:
 
     def _on_part_data(self, data: bytes, start: int, end: int) -> None:
         chunk = data[start:end]
+        if not chunk:
+            return
 
         if self._current_is_file:
             self._pipe.put(chunk)
         else:
             if len(self._current_field_data) + len(chunk) > MAX_FIELD_BYTES:
-                raise ValueError(
-                    f"Form field exceeds {MAX_FIELD_BYTES} byte limit"
-                )
+                raise ValueError(f"Form field exceeds {MAX_FIELD_BYTES} byte limit")
             self._current_field_data.extend(chunk)
 
     def _on_part_end(self) -> None:

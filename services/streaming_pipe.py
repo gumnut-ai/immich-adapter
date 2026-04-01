@@ -42,6 +42,8 @@ class StreamingPipe(RawIOBase):
         Uses a short timeout loop so set_error() is observed quickly rather
         than blocking for the full stall timeout.
         """
+        if not data:
+            return
         elapsed = 0.0
         while True:
             if self._error:
