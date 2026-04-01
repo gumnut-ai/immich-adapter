@@ -399,7 +399,7 @@ async def upload_asset(
     )
 
     if use_streaming:
-        return await _upload_streaming(request, current_user, settings)
+        return await _upload_streaming(request, client, current_user, settings)
     else:
         return await _upload_buffered(request, client, current_user)
 
@@ -502,6 +502,7 @@ async def _upload_buffered(
 
 async def _upload_streaming(
     request: Request,
+    client: AsyncGumnut,
     current_user: UserResponseDto,
     settings: Settings,
 ) -> AssetMediaResponseDto | JSONResponse:
@@ -531,6 +532,17 @@ async def _upload_streaming(
             )
 
         asset_uuid = safe_uuid_from_asset_id(asset_id)
+
+        # Fetch asset metadata for WebSocket events (lightweight GET, no file data)
+        try:
+            gumnut_asset = await client.assets.retrieve(asset_id)
+            await _emit_upload_events(gumnut_asset, current_user)
+        except Exception as ws_err:
+            logger.warning(
+                "Failed to emit WebSocket events for streaming upload",
+                extra={"asset_id": asset_id, "error": str(ws_err)},
+            )
+
         return AssetMediaResponseDto(
             id=str(asset_uuid), status=AssetMediaStatus.created
         )
