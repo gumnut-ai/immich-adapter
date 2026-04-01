@@ -18,7 +18,8 @@ import asyncio
 import logging
 import queue
 import threading
-from typing import IO, cast
+from collections.abc import Callable
+from typing import IO, Any, cast
 
 import httpx
 import sentry_sdk
@@ -37,13 +38,6 @@ _streaming_http_client: httpx.Client | None = None
 _streaming_client_lock = threading.Lock()
 
 
-def _sync_response_hook(response: httpx.Response) -> None:
-    """Capture JWT refreshes from photos-api responses (sync version)."""
-    token = response.headers.get("x-new-access-token")
-    if token:
-        set_refreshed_token(token)
-
-
 def _get_streaming_http_client() -> httpx.Client:
     global _streaming_http_client
     if _streaming_http_client is None:
@@ -54,7 +48,6 @@ def _get_streaming_http_client() -> httpx.Client:
                     limits=httpx.Limits(
                         max_connections=10, max_keepalive_connections=5
                     ),
-                    event_hooks={"response": [_sync_response_hook]},
                 )
     return _streaming_http_client
 
@@ -177,7 +170,7 @@ class StreamingUploadPipeline:
 
     def _sync_upload(
         self,
-        extract_fields_fn: object,
+        extract_fields_fn: Callable[[dict[str, str]], Any],
     ) -> dict:
         """Run the sync httpx POST to photos-api.
 
@@ -196,7 +189,7 @@ class StreamingUploadPipeline:
         content_type = self._form_parser.content_type
 
         device_asset_id, device_id, file_created_at, file_modified_at = (
-            extract_fields_fn(self._form_parser.form_fields)  # type: ignore[operator]
+            extract_fields_fn(self._form_parser.form_fields)
         )
 
         content_length = self._request.headers.get("content-length", "unknown")
@@ -279,7 +272,7 @@ class StreamingUploadPipeline:
 
     # --- Main orchestration ---
 
-    async def execute(self, extract_fields_fn: object) -> dict:
+    async def execute(self, extract_fields_fn: Callable[[dict[str, str]], Any]) -> dict:
         """Run the full streaming upload pipeline.
 
         Args:

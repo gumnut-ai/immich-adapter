@@ -7,12 +7,8 @@ httpx sync upload (consumer) without buffering the entire file to disk or memory
 import queue
 from io import RawIOBase
 
-# Timeout in seconds for blocking operations. Prevents permanent hangs if either
-# the parser or upload thread dies unexpectedly.
-_STALL_TIMEOUT = 300  # 5 minutes
-
-# Short timeout for retry loops so errors are observed quickly.
-_POLL_INTERVAL = 1.0
+_STALL_TIMEOUT_SECONDS = 300  # 5 minutes
+_POLL_INTERVAL_SECONDS = 1.0
 
 
 class StreamingPipe(RawIOBase):
@@ -51,13 +47,13 @@ class StreamingPipe(RawIOBase):
             if self._error:
                 raise self._error
             try:
-                self._queue.put(data, timeout=_POLL_INTERVAL)
+                self._queue.put(data, timeout=_POLL_INTERVAL_SECONDS)
                 break
             except queue.Full:
-                elapsed += _POLL_INTERVAL
-                if elapsed >= _STALL_TIMEOUT:
+                elapsed += _POLL_INTERVAL_SECONDS
+                if elapsed >= _STALL_TIMEOUT_SECONDS:
                     raise TimeoutError(
-                        f"Upload pipe stalled — queue full for {_STALL_TIMEOUT}s"
+                        f"Upload pipe stalled — queue full for {_STALL_TIMEOUT_SECONDS}s"
                     )
         if self._error:
             raise self._error
@@ -76,13 +72,13 @@ class StreamingPipe(RawIOBase):
             if self._error:
                 return
             try:
-                self._queue.put(None, timeout=_POLL_INTERVAL)
+                self._queue.put(None, timeout=_POLL_INTERVAL_SECONDS)
                 return
             except queue.Full:
-                elapsed += _POLL_INTERVAL
-                if elapsed >= _STALL_TIMEOUT:
+                elapsed += _POLL_INTERVAL_SECONDS
+                if elapsed >= _STALL_TIMEOUT_SECONDS:
                     raise TimeoutError(
-                        f"Upload pipe stalled — queue full for {_STALL_TIMEOUT}s"
+                        f"Upload pipe stalled — queue full for {_STALL_TIMEOUT_SECONDS}s"
                     )
 
     def set_error(self, error: BaseException) -> None:
@@ -125,9 +121,11 @@ class StreamingPipe(RawIOBase):
             return n
 
         try:
-            data = self._queue.get(timeout=_STALL_TIMEOUT)
+            data = self._queue.get(timeout=_STALL_TIMEOUT_SECONDS)
         except queue.Empty:
-            raise TimeoutError(f"Upload pipe stalled — no data for {_STALL_TIMEOUT}s")
+            raise TimeoutError(
+                f"Upload pipe stalled — no data for {_STALL_TIMEOUT_SECONDS}s"
+            )
 
         if data is None:
             # If we were unblocked due to set_error(), raise instead of EOF.
