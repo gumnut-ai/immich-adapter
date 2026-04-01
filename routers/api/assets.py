@@ -514,8 +514,9 @@ async def _upload_streaming(
             detail="Authentication required",
         )
 
-    pipeline = StreamingUploadPipeline(request, settings, jwt_token)
+    pipeline: StreamingUploadPipeline | None = None
     try:
+        pipeline = StreamingUploadPipeline(request, settings, jwt_token)
         result = await pipeline.execute(_extract_upload_fields)
 
         asset_id = result.get("id", "")
@@ -570,8 +571,8 @@ async def _upload_streaming(
         logger.error(
             "Streaming upload failed",
             extra={
-                "upload_filename": pipeline.form_parser.filename,
-                "content_type": pipeline.form_parser.content_type,
+                "upload_filename": pipeline.form_parser.filename if pipeline else None,
+                "content_type": pipeline.form_parser.content_type if pipeline else None,
                 "strategy": "streaming",
                 "error": str(e),
             },

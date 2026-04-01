@@ -108,7 +108,12 @@ class StreamingUploadPipeline:
         """Run the multipart parser, reading chunks from the queue."""
         try:
             while True:
-                chunk = self._chunk_queue.get(timeout=300)
+                try:
+                    chunk = self._chunk_queue.get(timeout=300)
+                except queue.Empty:
+                    raise TimeoutError(
+                        "Timed out waiting for request body chunks"
+                    )
                 if chunk is None:
                     break
                 self._parser.write(chunk)
@@ -187,6 +192,8 @@ class StreamingUploadPipeline:
 
         filename = self._form_parser.filename
         content_type = self._form_parser.content_type
+        if not filename or not content_type:
+            raise ValueError("Missing file part 'assetData'")
 
         device_asset_id, device_id, file_created_at, file_modified_at = (
             extract_fields_fn(self._form_parser.form_fields)
@@ -335,7 +342,7 @@ class StreamingUploadPipeline:
 
             self._drain_and_signal_parser_exit()
 
-            if parser_future is not None and not parser_future.done():
+            if parser_future is not None:
                 try:
                     await asyncio.wait_for(parser_future, timeout=5)
                 except (asyncio.TimeoutError, Exception):

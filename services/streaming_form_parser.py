@@ -163,7 +163,7 @@ class StreamingFormParser:
         else:
             if len(self._current_field_data) + len(chunk) > MAX_FIELD_BYTES:
                 raise ValueError(
-                    f"Form field '{self._current_field_name}' exceeds {MAX_FIELD_BYTES} byte limit"
+                    f"Form field exceeds {MAX_FIELD_BYTES} byte limit"
                 )
             self._current_field_data.extend(chunk)
 
