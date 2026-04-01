@@ -75,6 +75,9 @@ async def get_faces(
         gumnut_asset_id = uuid_to_gumnut_asset_id(id)
 
         faces = [f async for f in client.faces.list(asset_id=gumnut_asset_id)]
+        if not faces:
+            return []
+
         asset = await client.assets.retrieve(gumnut_asset_id)
 
         image_width = asset.width or 0
@@ -95,7 +98,7 @@ async def get_faces(
 
         result: List[AssetFaceResponseDto] = []
         for face in faces:
-            bb = face.bounding_box
+            bb = face.bounding_box or {}
             person = people_by_id.get(face.person_id) if face.person_id else None
 
             result.append(
