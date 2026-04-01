@@ -92,14 +92,17 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
     SyncEntityType.AssetDeleteV1,
 ]
 
+# Request types that are accepted but have no Gumnut equivalent.
+# Prevents "unsupported" warnings while making the no-op explicit.
+_NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
+    SyncRequestType.AssetEditsV1: SyncEntityType.AssetEditV1,
+}
+
 # Supported SyncRequestTypes (used to detect unsupported types requested by client)
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
-    | {
-        SyncRequestType.AuthUsersV1,
-        SyncRequestType.UsersV1,
-        SyncRequestType.AssetEditsV1,
-    }
+    | {SyncRequestType.AuthUsersV1, SyncRequestType.UsersV1}
+    | _NOOP_REQUEST_TYPES.keys()
 )
 
 
@@ -516,6 +519,17 @@ async def generate_sync_stream(
                     event_counts.get(sync_entity_type.value, 0) + count
                 )
                 total_events += count
+
+        # Log no-op types that were requested but intentionally not processed
+        noop_requested = requested_types & _NOOP_REQUEST_TYPES.keys()
+        if noop_requested:
+            logger.info(
+                "No-op sync types requested (accepted but not processed)",
+                extra={
+                    "user_id": owner_id,
+                    "noop_types": sorted(t.value for t in noop_requested),
+                },
+            )
 
         # Phase 2: Yield buffered deletes in reverse FK dependency order
         # (children before parents) so the client can clean up FK references
