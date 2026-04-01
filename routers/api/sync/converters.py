@@ -26,7 +26,7 @@ from routers.immich_models import (
     SyncPersonV1,
     SyncUserV1,
 )
-from routers.utils.asset_conversion import _normalize_rating, mime_type_to_asset_type
+from routers.utils.asset_conversion import normalize_rating, mime_type_to_asset_type
 from routers.utils.datetime_utils import (
     format_timezone_immich,
     to_actual_utc,
@@ -216,7 +216,7 @@ def gumnut_exif_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         orientation=str(exif.orientation) if exif.orientation is not None else None,
         profileDescription=exif.profile_description,
         projectionType=exif.projection_type,
-        rating=_normalize_rating(exif.rating),
+        rating=normalize_rating(exif.rating),
         state=exif.state,
         timeZone=format_timezone_immich(exif.original_datetime),
     )
