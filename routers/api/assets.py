@@ -1,10 +1,7 @@
-from typing import IO, List, Literal, NamedTuple, cast
+from typing import List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
-import asyncio
 import base64
 import logging
-import queue
-import threading
 from datetime import datetime
 
 import httpx
@@ -26,18 +23,14 @@ from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
-from routers.utils.gumnut_client import (
-    get_authenticated_gumnut_client,
-    set_refreshed_token,
-)
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
 from socketio.exceptions import SocketIOError
 
+from services.streaming_upload import StreamingUploadPipeline
 from services.websockets import emit_user_event, WebSocketEvent
-from utils.streaming_form_parser import StreamingFormParser
-from utils.streaming_pipe import StreamingPipe
 from routers.immich_models import (
     AssetBulkDeleteDto,
     AssetBulkUpdateDto,
@@ -507,73 +500,12 @@ async def _upload_buffered(
             return _handle_upload_error(e)
 
 
-# Shared sync httpx client for streaming uploads to photos-api. Uses a long
-# timeout (10 minutes) since large videos on slow connections need much longer
-# than the default 30s SDK timeout. Shared to reuse TCP/TLS connections.
-# Initialized lazily to avoid import-time side effects (e.g., SOCKS proxy checks).
-# Includes a response hook to capture JWT refreshes from photos-api.
-_streaming_http_client: httpx.Client | None = None
-_streaming_client_lock = threading.Lock()
-
-
-def _sync_response_hook(response: httpx.Response) -> None:
-    """Capture JWT refreshes from photos-api responses (sync version)."""
-    token = response.headers.get("x-new-access-token")
-    if token:
-        set_refreshed_token(token)
-
-
-def _get_streaming_http_client() -> httpx.Client:
-    global _streaming_http_client
-    if _streaming_http_client is None:
-        with _streaming_client_lock:
-            if _streaming_http_client is None:
-                _streaming_http_client = httpx.Client(
-                    timeout=httpx.Timeout(600.0),
-                    limits=httpx.Limits(
-                        max_connections=10, max_keepalive_connections=5
-                    ),
-                    event_hooks={"response": [_sync_response_hook]},
-                )
-    return _streaming_http_client
-
-
-def close_streaming_http_client() -> None:
-    """Close the shared streaming httpx client. Call on application shutdown."""
-    global _streaming_http_client
-    with _streaming_client_lock:
-        if _streaming_http_client is not None:
-            _streaming_http_client.close()
-            _streaming_http_client = None
-
-
 async def _upload_streaming(
     request: Request,
     current_user: UserResponseDto,
     settings: Settings,
 ) -> AssetMediaResponseDto | JSONResponse:
-    """Streaming upload path — pipes file data to photos-api without buffering to /tmp.
-
-    Uses raw httpx.Client (sync) instead of the async Gumnut SDK because httpx's
-    async multipart encoder calls file.read() synchronously on the event loop,
-    which would deadlock with a blocking pipe. The trade-off is no SDK-level retry
-    for transient errors — acceptable for large uploads where retrying would
-    re-transfer the entire file.
-
-    iOS live photo .MOV detection is skipped here because it requires file seeks
-    (random access), which is incompatible with streaming. Live photo videos are
-    always small (1-5MB), well below the default 100MB threshold, so they take
-    the buffered path where the check runs.
-
-    Uses a three-thread pipeline:
-    - Event loop: reads request.stream() and dispatches chunks to parser thread
-    - Parser thread: runs python-multipart parser, pushes file data to pipe
-    - Upload thread: runs sync httpx POST, reads file data from pipe
-    """
-    pipe = StreamingPipe(maxsize=64)
-    form_parser = StreamingFormParser(pipe)
-    parser = form_parser.create_parser(request.headers.get("content-type", ""))
-
+    """Streaming upload path — pipes file data to photos-api without buffering."""
     jwt_token = getattr(request.state, "jwt_token", None)
     if not jwt_token:
         raise HTTPException(
@@ -581,196 +513,14 @@ async def _upload_streaming(
             detail="Authentication required",
         )
 
-    parse_error: BaseException | None = None
-    chunk_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=64)
-
-    def run_parser() -> None:
-        """Run the multipart parser in a single thread, reading chunks from a queue."""
-        nonlocal parse_error
-        try:
-            while True:
-                chunk = chunk_queue.get(timeout=300)
-                if chunk is None:
-                    break
-                parser.write(chunk)
-            parser.finalize()
-            form_parser.mark_finalized()
-        except Exception as e:
-            parse_error = e
-            pipe.set_error(e)
-            # Wake sync_upload if it's waiting on headers_ready
-            form_parser.headers_ready.set()
-            raise
-
-    def _put_chunk_blocking(chunk_data: bytes | None) -> None:
-        """Put a chunk into chunk_queue with 1s timeout loop.
-
-        Checks parse_error between attempts so a failed parser thread is
-        detected quickly rather than blocking a thread pool worker forever.
-        """
-        elapsed = 0.0
-        while True:
-            if parse_error is not None:
-                raise parse_error
-            try:
-                chunk_queue.put(chunk_data, timeout=1.0)
-                return
-            except queue.Full:
-                elapsed += 1.0
-                if elapsed >= 300:
-                    raise TimeoutError("chunk_queue stalled — full for 300s")
-
-    def _drain_and_signal_parser_exit() -> None:
-        """Drain chunk_queue and send sentinel to unblock run_parser."""
-        try:
-            while True:
-                chunk_queue.get_nowait()
-        except queue.Empty:
-            pass
-        try:
-            chunk_queue.put_nowait(None)
-        except queue.Full:
-            pass
-
-    async def feed_chunks() -> None:
-        """Read request body and enqueue chunks for the parser thread."""
-        nonlocal parse_error
-        try:
-            async for chunk in request.stream():
-                await asyncio.to_thread(_put_chunk_blocking, chunk)
-            await asyncio.to_thread(_put_chunk_blocking, None)
-        except asyncio.CancelledError:
-            # Unblock parser thread on cancellation; pipe error is already
-            # set by the caller before cancel.
-            _drain_and_signal_parser_exit()
-            raise
-        except Exception as e:
-            if parse_error is None:
-                parse_error = e
-            pipe.set_error(e)
-            _drain_and_signal_parser_exit()
-            raise
-
-    def sync_upload() -> dict:
-        if not form_parser.headers_ready.wait(timeout=30):
-            raise TimeoutError("Timed out waiting for file part headers")
-
-        # headers_ready may have been set by the parser's error handler
-        if parse_error is not None:
-            raise parse_error
-
-        filename = form_parser.filename
-        content_type = form_parser.content_type
-
-        device_asset_id, device_id, file_created_at, file_modified_at = (
-            _extract_upload_fields(form_parser.form_fields)
-        )
-
-        content_length = request.headers.get("content-length", "unknown")
-        logger.info(
-            "Streaming %s to photos-api (%s bytes)",
-            filename,
-            content_length,
-            extra={
-                "upload_filename": filename,
-                "content_type": content_type,
-                "content_length": content_length,
-                "device_asset_id": device_asset_id,
-            },
-        )
-
-        response = _get_streaming_http_client().post(
-            f"{settings.gumnut_api_base_url}/api/assets",
-            headers={"Authorization": f"Bearer {jwt_token}"},
-            files={
-                "asset_data": (filename, cast(IO[bytes], pipe), content_type),
-            },
-            data={
-                "device_asset_id": device_asset_id,
-                "device_id": device_id,
-                "file_created_at": file_created_at.isoformat(),
-                "file_modified_at": file_modified_at.isoformat(),
-            },
-        )
-
-        logger.info(
-            "photos-api responded %d for %s",
-            response.status_code,
-            filename,
-            extra={
-                "status_code": response.status_code,
-                "upload_filename": filename,
-            },
-        )
-
-        if response.status_code == 429:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Service temporarily unavailable",
-            )
-
-        if response.status_code not in (200, 201):
-            # Log the real detail server-side; return controlled message to client
-            try:
-                body = response.json()
-                detail = body.get("detail", response.text)
-            except Exception:
-                detail = response.text
-            logger.warning(
-                "photos-api upload error",
-                extra={
-                    "status_code": response.status_code,
-                    "detail": str(detail)[:500],
-                    "upload_filename": filename,
-                },
-            )
-            # Map 5xx to 502 (upstream error); forward 4xx as-is
-            client_status = (
-                status.HTTP_502_BAD_GATEWAY
-                if response.status_code >= 500
-                else response.status_code
-            )
-            raise HTTPException(
-                status_code=client_status,
-                detail="Upload failed",
-            )
-
-        return response.json()
-
-    feed_task: asyncio.Task[None] | None = None
-    parser_future: asyncio.Future[None] | None = None
+    pipeline = StreamingUploadPipeline(request, settings, jwt_token)
     try:
-        with sentry_sdk.start_span(
-            op="http.client", name="gumnut.assets.create.streaming"
-        ) as span:
-            span.set_data("upload.strategy", "streaming")
-
-            # Run parser in a dedicated thread (reads from chunk_queue),
-            # feed chunks from the event loop, and upload concurrently.
-            feed_task = asyncio.create_task(feed_chunks())
-            parser_future = asyncio.get_running_loop().run_in_executor(None, run_parser)
-            result = await asyncio.to_thread(sync_upload)
-
-            # Wait for feed + parser to complete
-            try:
-                await feed_task
-                await parser_future
-            except Exception:
-                if parse_error is not None:
-                    logger.warning(
-                        "Parser error after upload completed",
-                        extra={"error": str(parse_error)},
-                    )
-
-            span.set_data("upload.filename", form_parser.filename)
-            span.set_data("upload.content_type", form_parser.content_type)
+        result = await pipeline.execute(_extract_upload_fields)
 
         asset_id = result.get("id", "")
         asset_status = result.get("status", "created")
 
         if asset_status == AssetMediaStatus.duplicate.value:
-            # Normalize ID to UUID for Immich client compatibility, matching
-            # the buffered path's all-zero UUID for duplicates.
             dup_uuid = safe_uuid_from_asset_id(asset_id) if asset_id else UUID(int=0)
             return JSONResponse(
                 content={
@@ -779,11 +529,6 @@ async def _upload_streaming(
                 },
                 status_code=status.HTTP_200_OK,
             )
-
-        # Emit WebSocket events — we don't have a typed AssetResponse from the SDK,
-        # so we skip the WebSocket events for streamed uploads. The photos-api will
-        # trigger background tasks that eventually emit their own events.
-        # TODO: parse result into AssetResponse for WebSocket events if needed
 
         asset_uuid = safe_uuid_from_asset_id(asset_id)
         return AssetMediaResponseDto(
@@ -800,38 +545,27 @@ async def _upload_streaming(
         raise HTTPException(
             status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="Upload timed out"
         )
+    except httpx.HTTPError as e:
+        logger.error(
+            "Streaming upload connection error",
+            extra={"error": str(e), "strategy": "streaming"},
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Upload failed"
+        )
     except Exception as e:
         logger.error(
             "Streaming upload failed",
             extra={
-                "upload_filename": form_parser.filename,
-                "content_type": form_parser.content_type,
+                "upload_filename": pipeline.form_parser.filename,
+                "content_type": pipeline.form_parser.content_type,
                 "strategy": "streaming",
                 "error": str(e),
             },
             exc_info=True,
         )
         return _handle_upload_error(e)
-    finally:
-        if parse_error is not None:
-            pipe.set_error(parse_error)
-
-        if feed_task is not None and not feed_task.done():
-            if not pipe.has_error:
-                pipe.set_error(Exception("Upload aborted"))
-            feed_task.cancel()
-            try:
-                await feed_task
-            except (asyncio.CancelledError, Exception):
-                pass
-
-        _drain_and_signal_parser_exit()
-
-        if parser_future is not None and not parser_future.done():
-            try:
-                await asyncio.wait_for(parser_future, timeout=5)
-            except (asyncio.TimeoutError, Exception):
-                pass
 
 
 @router.put("", status_code=204)

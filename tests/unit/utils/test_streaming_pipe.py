@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from utils.streaming_pipe import StreamingPipe
+from services.streaming_pipe import StreamingPipe
 
 
 class TestStreamingPipe:

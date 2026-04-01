@@ -19,7 +19,7 @@ from python_multipart.multipart import MultipartParser, parse_options_header
 if TYPE_CHECKING:
     from python_multipart.multipart import MultipartCallbacks
 
-from utils.streaming_pipe import StreamingPipe
+from services.streaming_pipe import StreamingPipe
 
 logger = logging.getLogger(__name__)
 

@@ -2,8 +2,8 @@
 
 import pytest
 
-from utils.streaming_form_parser import StreamingFormParser
-from utils.streaming_pipe import StreamingPipe
+from services.streaming_form_parser import StreamingFormParser
+from services.streaming_pipe import StreamingPipe
 
 
 def _build_multipart_body(
