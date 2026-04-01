@@ -172,6 +172,69 @@ class TestStreamingFormParser:
         with pytest.raises(ValueError, match="Missing multipart boundary"):
             parser_handler.create_parser("multipart/form-data")
 
+    def test_mark_finalized_missing_file_part(self):
+        """Test that mark_finalized sets error and wakes waiter when no file part seen."""
+        pipe = StreamingPipe(maxsize=64)
+        parser_handler = StreamingFormParser(pipe)
+
+        boundary = "----TestBoundary123"
+        # Body with only form fields, no file part
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="deviceAssetId"\r\n'
+            f"\r\n"
+            f"dev-123\r\n"
+            f"--{boundary}--\r\n"
+        ).encode()
+
+        parser = parser_handler.create_parser(
+            f"multipart/form-data; boundary={boundary}"
+        )
+        parser.write(body)
+        parser.finalize()
+        parser_handler.mark_finalized()
+
+        # headers_ready should be set so the upload thread wakes immediately
+        assert parser_handler.headers_ready.is_set()
+
+        # Reading from the pipe should raise the error
+        with pytest.raises(ValueError, match="Missing file part"):
+            pipe.read(1)
+
+    def test_rejects_wrong_file_field_name(self):
+        """Test that a file part with the wrong field name is rejected."""
+        pipe = StreamingPipe(maxsize=64)
+        parser_handler = StreamingFormParser(pipe)
+
+        boundary = "----TestBoundary123"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="deviceAssetId"\r\n'
+            f"\r\n"
+            f"dev-123\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="deviceId"\r\n'
+            f"\r\n"
+            f"dev-456\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="fileCreatedAt"\r\n'
+            f"\r\n"
+            f"2023-01-01T12:00:00Z\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="wrongName"; filename="test.jpg"\r\n'
+            f"Content-Type: image/jpeg\r\n"
+            f"\r\n"
+            f"data\r\n"
+            f"--{boundary}--\r\n"
+        ).encode()
+
+        parser = parser_handler.create_parser(
+            f"multipart/form-data; boundary={boundary}"
+        )
+
+        with pytest.raises(ValueError, match="Unexpected file field"):
+            parser.write(body)
+
     def test_chunked_parsing(self):
         """Test that parsing works when body arrives in small chunks."""
         pipe = StreamingPipe(maxsize=64)

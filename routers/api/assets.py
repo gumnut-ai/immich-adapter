@@ -579,6 +579,8 @@ async def _upload_streaming(
         except Exception as e:
             parse_error = e
             pipe.set_error(e)
+            # Wake sync_upload if it's waiting on headers_ready
+            form_parser.headers_ready.set()
             raise
 
     def _put_chunk_blocking(chunk_data: bytes | None) -> None:
@@ -599,6 +601,18 @@ async def _upload_streaming(
                 if elapsed >= 300:
                     raise TimeoutError("chunk_queue stalled — full for 300s")
 
+    def _drain_and_signal_parser_exit() -> None:
+        """Drain chunk_queue and send sentinel to unblock run_parser."""
+        try:
+            while True:
+                chunk_queue.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            chunk_queue.put_nowait(None)
+        except queue.Full:
+            pass
+
     async def feed_chunks() -> None:
         """Read request body and enqueue chunks for the parser thread."""
         nonlocal parse_error
@@ -606,25 +620,25 @@ async def _upload_streaming(
             async for chunk in request.stream():
                 await asyncio.to_thread(_put_chunk_blocking, chunk)
             await asyncio.to_thread(_put_chunk_blocking, None)
+        except asyncio.CancelledError:
+            # Unblock parser thread on cancellation; pipe error is already
+            # set by the caller before cancel.
+            _drain_and_signal_parser_exit()
+            raise
         except Exception as e:
             if parse_error is None:
                 parse_error = e
             pipe.set_error(e)
-            # Drain + unblock run_parser if it's waiting on chunk_queue.get()
-            try:
-                while True:
-                    chunk_queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                chunk_queue.put_nowait(None)
-            except queue.Full:
-                pass
+            _drain_and_signal_parser_exit()
             raise
 
     def sync_upload() -> dict:
         if not form_parser.headers_ready.wait(timeout=30):
             raise TimeoutError("Timed out waiting for file part headers")
+
+        # headers_ready may have been set by the parser's error handler
+        if parse_error is not None:
+            raise parse_error
 
         filename = form_parser.filename
         content_type = form_parser.content_type
@@ -667,7 +681,8 @@ async def _upload_streaming(
 
         return response.json()
 
-    feed_task: asyncio.Task | None = None
+    feed_task: asyncio.Task[None] | None = None
+    parser_future: asyncio.Future[None] | None = None
     try:
         with sentry_sdk.start_span(
             op="http.client", name="gumnut.assets.create.streaming"
@@ -677,7 +692,7 @@ async def _upload_streaming(
             # Run parser in a dedicated thread (reads from chunk_queue),
             # feed chunks from the event loop, and upload concurrently.
             feed_task = asyncio.create_task(feed_chunks())
-            parser_future = asyncio.get_event_loop().run_in_executor(None, run_parser)
+            parser_future = asyncio.get_running_loop().run_in_executor(None, run_parser)
             result = await asyncio.to_thread(sync_upload)
 
             # Wait for feed + parser to complete
@@ -721,6 +736,10 @@ async def _upload_streaming(
 
     except HTTPException:
         raise
+    except (ValueError, ValidationError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except TimeoutError as e:
+        raise HTTPException(status_code=408, detail=str(e))
     except Exception as e:
         logger.error(
             "Streaming upload failed",
@@ -734,12 +753,24 @@ async def _upload_streaming(
         )
         return _handle_upload_error(e)
     finally:
+        if parse_error is not None:
+            pipe.set_error(parse_error)
+
         if feed_task is not None and not feed_task.done():
-            pipe.set_error(Exception("Upload aborted"))
+            if not pipe._error:
+                pipe.set_error(Exception("Upload aborted"))
             feed_task.cancel()
             try:
                 await feed_task
             except (asyncio.CancelledError, Exception):
+                pass
+
+        _drain_and_signal_parser_exit()
+
+        if parser_future is not None and not parser_future.done():
+            try:
+                await asyncio.wait_for(parser_future, timeout=5)
+            except (asyncio.TimeoutError, Exception):
                 pass
 
 
