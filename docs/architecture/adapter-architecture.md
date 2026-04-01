@@ -324,7 +324,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 
 | Area | Why stubbed |
 |------|-------------|
-| Faces | Face CRUD not exposed via Gumnut SDK for direct manipulation |
+| Faces | List faces per asset is implemented; create, update, delete, reassign are stubs |
 | Libraries | Gumnut has a different library model |
 | Tags | Not yet implemented in Gumnut |
 | Map | Location data not yet surfaced |

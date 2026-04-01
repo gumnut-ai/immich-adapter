@@ -84,6 +84,7 @@ asset_id: Annotated[UUID | SkipJsonSchema[None], Query(alias="assetId")] = None,
 - Run tests from the project directory, not repository root
 - Use model factories for test data creation
 - Do not assert on logging in tests — logging is non-functional behavior. Tests should assert on observable outputs (return values, side effects, emitted events), not on whether a particular log message was emitted.
+- When mocking SDK paginator calls used with `async for` (e.g., `client.faces.list`), use `Mock(return_value=MockSyncCursorPage([...]))` — not `AsyncMock`. `AsyncMock` wraps the return in a coroutine, which breaks `async for` iteration. Use `AsyncMock` only for calls consumed with `await`.
 
 ## Logging
 
