@@ -488,6 +488,14 @@ async def generate_sync_stream(
             if request_type not in requested_types:
                 continue
 
+            # Skip V1 faces when V2 is also requested — both map to the same
+            # gumnut "face" entity type and would stream duplicate events.
+            if (
+                request_type == SyncRequestType.AssetFacesV1
+                and SyncRequestType.AssetFacesV2 in requested_types
+            ):
+                continue
+
             # Get checkpoint for this entity type
             checkpoint = checkpoint_map.get(sync_entity_type)
 

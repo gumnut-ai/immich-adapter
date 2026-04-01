@@ -133,7 +133,9 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
         modifyDate=modify_date,
         orientation=str(orientation) if orientation else None,
         timeZone=time_zone,
-        rating=int(float(rating)) if rating and int(float(rating)) != -1 else None,
+        rating=int(float(rating))
+        if rating is not None and int(float(rating)) != -1
+        else None,
         projectionType=str(projection_type) if projection_type else None,
     )
 
@@ -212,7 +214,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
         orientation=str(orientation) if orientation else None,
         profileDescription=None,  # Not available from Gumnut EXIF
         projectionType=str(projection_type) if projection_type else None,
-        rating=int(rating) if rating and int(rating) != -1 else None,
+        rating=int(rating) if rating is not None and int(rating) != -1 else None,
         state=str(state) if state else None,
         timeZone=time_zone,
     )

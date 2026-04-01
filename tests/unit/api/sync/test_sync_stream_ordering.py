@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from routers.api.sync.fk_integrity import _GUMNUT_TYPE_TO_SYNC_TYPE
+from routers.api.sync.fk_integrity import _GUMNUT_TYPE_TO_SYNC_TYPES
 from routers.api.sync.stream import (
     _DELETE_TYPE_ORDER,
     _SYNC_TYPE_ORDER,
@@ -437,10 +437,10 @@ class TestUpsertsBeforeDeletes:
 
 
 class TestGumnutTypeToSyncTypeConsistency:
-    """Ensure _GUMNUT_TYPE_TO_SYNC_TYPE in fk_integrity stays aligned with _SYNC_TYPE_ORDER in stream."""
+    """Ensure _GUMNUT_TYPE_TO_SYNC_TYPES in fk_integrity stays aligned with _SYNC_TYPE_ORDER in stream."""
 
     def test_fk_integrity_map_matches_stream_order(self):
-        """The duplicated _GUMNUT_TYPE_TO_SYNC_TYPE must cover every gumnut
+        """The duplicated _GUMNUT_TYPE_TO_SYNC_TYPES must cover every gumnut
         entity type in _SYNC_TYPE_ORDER, and each mapped sync type must appear
         among that entity's entries in _SYNC_TYPE_ORDER."""
         # Build a mapping of gumnut_type -> set of all sync types in _SYNC_TYPE_ORDER
@@ -450,21 +450,22 @@ class TestGumnutTypeToSyncTypeConsistency:
 
         # Every gumnut type in _SYNC_TYPE_ORDER must be in the FK map
         for gumnut_type in stream_types:
-            assert gumnut_type in _GUMNUT_TYPE_TO_SYNC_TYPE, (
+            assert gumnut_type in _GUMNUT_TYPE_TO_SYNC_TYPES, (
                 f"gumnut type {gumnut_type!r} in _SYNC_TYPE_ORDER but missing "
-                f"from _GUMNUT_TYPE_TO_SYNC_TYPE"
+                f"from _GUMNUT_TYPE_TO_SYNC_TYPES"
             )
 
-        # Every entry in the FK map must reference a valid sync type from _SYNC_TYPE_ORDER
-        for gumnut_type, sync_type in _GUMNUT_TYPE_TO_SYNC_TYPE.items():
+        # Every entry in the FK map must reference valid sync types from _SYNC_TYPE_ORDER
+        for gumnut_type, sync_types in _GUMNUT_TYPE_TO_SYNC_TYPES.items():
             assert gumnut_type in stream_types, (
-                f"gumnut type {gumnut_type!r} in _GUMNUT_TYPE_TO_SYNC_TYPE but "
+                f"gumnut type {gumnut_type!r} in _GUMNUT_TYPE_TO_SYNC_TYPES but "
                 f"missing from _SYNC_TYPE_ORDER"
             )
-            assert sync_type in stream_types[gumnut_type], (
-                f"_GUMNUT_TYPE_TO_SYNC_TYPE[{gumnut_type!r}] = {sync_type!r} "
-                f"not in _SYNC_TYPE_ORDER entries: {stream_types[gumnut_type]}"
-            )
+            for sync_type in sync_types:
+                assert sync_type in stream_types[gumnut_type], (
+                    f"_GUMNUT_TYPE_TO_SYNC_TYPES[{gumnut_type!r}] contains {sync_type!r} "
+                    f"not in _SYNC_TYPE_ORDER entries: {stream_types[gumnut_type]}"
+                )
 
 
 class TestDeleteTypeOrderCompleteness:
