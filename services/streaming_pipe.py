@@ -85,7 +85,8 @@ class StreamingPipe(RawIOBase):
         """Propagate an error from either side, unblocking the other.
 
         Drains the queue to free space so a blocked producer can complete
-        and observe the error.
+        and observe the error. Uses a bounded retry to guarantee the EOF
+        sentinel is delivered, unblocking any reader stuck in queue.get().
         """
         self._error = error
         try:
@@ -93,10 +94,16 @@ class StreamingPipe(RawIOBase):
                 self._queue.get_nowait()
         except queue.Empty:
             pass
-        try:
-            self._queue.put_nowait(None)
-        except queue.Full:
-            pass
+
+        elapsed = 0.0
+        while True:
+            try:
+                self._queue.put(None, timeout=_POLL_INTERVAL_SECONDS)
+                return
+            except queue.Full:
+                elapsed += _POLL_INTERVAL_SECONDS
+                if elapsed >= _STALL_TIMEOUT_SECONDS:
+                    return
 
     def readinto(self, b: bytearray) -> int:
         """Read data into buffer. Called by httpx via RawIOBase protocol.

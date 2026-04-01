@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from services.streaming_upload import StreamingUploadPipeline
 
@@ -144,7 +145,7 @@ class TestStreamingUploadPipeline:
             return_value=mock_client,
         ):
             pipeline = StreamingUploadPipeline(request, settings, "test-jwt")
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
         assert exc_info.value.status_code == 502
@@ -165,7 +166,7 @@ class TestStreamingUploadPipeline:
             return_value=mock_client,
         ):
             pipeline = StreamingUploadPipeline(request, settings, "test-jwt")
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
         assert exc_info.value.status_code == 502
@@ -236,7 +237,7 @@ class TestStreamingUploadPipeline:
             return_value=mock_client,
         ):
             pipeline = StreamingUploadPipeline(request, settings, "test-jwt")
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
         # 4xx should be forwarded as-is, not mapped to 502
