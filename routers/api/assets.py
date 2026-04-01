@@ -1,4 +1,4 @@
-from typing import IO, List, Literal, cast
+from typing import IO, List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 import asyncio
 import base64
@@ -260,12 +260,16 @@ def _parse_datetime(value: str | None, fallback: datetime) -> datetime:
         return fallback
 
 
-def _extract_upload_fields(
-    fields: dict[str, str],
-) -> tuple[str, str, datetime, datetime]:
+class UploadFields(NamedTuple):
+    device_asset_id: str
+    device_id: str
+    file_created_at: datetime
+    file_modified_at: datetime
+
+
+def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
     """Extract and validate common upload fields from a form data dict.
 
-    Returns (device_asset_id, device_id, file_created_at, file_modified_at).
     Raises ValueError if required fields are missing.
     """
     device_asset_id = fields.get("deviceAssetId", "")
@@ -281,7 +285,7 @@ def _extract_upload_fields(
     file_created_at = _parse_datetime(file_created_at_str, datetime.now())
     file_modified_at = _parse_datetime(file_modified_at_str, file_created_at)
 
-    return device_asset_id, device_id, file_created_at, file_modified_at
+    return UploadFields(device_asset_id, device_id, file_created_at, file_modified_at)
 
 
 def _handle_upload_error(e: Exception) -> AssetMediaResponseDto | JSONResponse:
