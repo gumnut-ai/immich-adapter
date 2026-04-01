@@ -18,16 +18,18 @@ FK_REFERENCES: dict[str, list[tuple[str, str]]] = {
     "album": [("album_cover_asset_id", "asset")],
 }
 
-# Map gumnut entity type -> SyncEntityType for FK checkpoint lookups.
+# Map gumnut entity type -> SyncEntityType(s) for FK checkpoint lookups.
 # Derived from the canonical type order in stream.py; duplicated here to
 # avoid a circular import (fk_integrity is imported by stream).
-_GUMNUT_TYPE_TO_SYNC_TYPE: dict[str, SyncEntityType] = {
-    "asset": SyncEntityType.AssetV1,
-    "album": SyncEntityType.AlbumV1,
-    "album_asset": SyncEntityType.AlbumToAssetV1,
-    "exif": SyncEntityType.AssetExifV1,
-    "person": SyncEntityType.PersonV1,
-    "face": SyncEntityType.AssetFaceV1,
+# Entity types with multiple versions (e.g., face V1/V2) list all variants
+# so checkpoint lookups match regardless of which version the client synced.
+_GUMNUT_TYPE_TO_SYNC_TYPES: dict[str, list[SyncEntityType]] = {
+    "asset": [SyncEntityType.AssetV1],
+    "album": [SyncEntityType.AlbumV1],
+    "album_asset": [SyncEntityType.AlbumToAssetV1],
+    "exif": [SyncEntityType.AssetExifV1],
+    "person": [SyncEntityType.PersonV1],
+    "face": [SyncEntityType.AssetFaceV1, SyncEntityType.AssetFaceV2],
 }
 
 
@@ -94,8 +96,8 @@ def check_fk_references(
 
         # If the referenced entity type has a checkpoint, skip the check —
         # the referenced entity may have been synced in a prior cycle
-        ref_sync_type = _GUMNUT_TYPE_TO_SYNC_TYPE.get(ref_type)
-        if ref_sync_type and ref_sync_type in checkpoint_map:
+        ref_sync_types = _GUMNUT_TYPE_TO_SYNC_TYPES.get(ref_type)
+        if ref_sync_types and any(t in checkpoint_map for t in ref_sync_types):
             continue
 
         if ref_id not in stats.streamed_ids.get(ref_type, set()):
@@ -139,8 +141,8 @@ def null_deleted_fk_references(
         if ref_id is None:
             continue
 
-        ref_sync_type = _GUMNUT_TYPE_TO_SYNC_TYPE.get(ref_type)
-        if ref_sync_type and ref_sync_type in checkpoint_map:
+        ref_sync_types = _GUMNUT_TYPE_TO_SYNC_TYPES.get(ref_type)
+        if ref_sync_types and any(t in checkpoint_map for t in ref_sync_types):
             continue
 
         if ref_id in stats.not_found_ids.get(ref_type, set()):

@@ -1100,3 +1100,101 @@ class TestAlbumPayloadOverrideDeletedAsset:
             "album_updated should null album_cover_asset_id when the referenced "
             "asset was deleted (404 on fetch)"
         )
+
+
+class TestAssetFaceV2Converter:
+    """Tests for the AssetFaceV2 sync converter."""
+
+    @pytest.mark.anyio
+    async def test_face_v2_adds_deleted_at_and_is_visible(self):
+        """AssetFaceV2 events include deletedAt=None and isVisible=True."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_created",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV2,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+            stats=SyncStreamStats(),
+            checkpoint_map={},
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        assert event_data["type"] == "AssetFaceV2"
+        assert event_data["data"]["deletedAt"] is None
+        assert event_data["data"]["isVisible"] is True
+        # face_created should null out person_id
+        assert event_data["data"]["personId"] is None
+
+    @pytest.mark.anyio
+    async def test_face_v2_updated_uses_payload_person_id(self):
+        """face_updated V2 events use payload person_id and include V2 fields."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+
+        # Payload carries a different person_id than current state
+        payload_person_uuid = UUID("00000000-0000-0000-0000-000000000002")
+        payload_person_id = uuid_to_gumnut_person_id(payload_person_uuid)
+
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+            payload={"person_id": payload_person_id},
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV2,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+            stats=SyncStreamStats(),
+            checkpoint_map={},
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        assert event_data["type"] == "AssetFaceV2"
+        assert event_data["data"]["personId"] == str(payload_person_uuid)
+        assert event_data["data"]["deletedAt"] is None
+        assert event_data["data"]["isVisible"] is True

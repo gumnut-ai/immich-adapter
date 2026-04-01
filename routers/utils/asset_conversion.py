@@ -27,6 +27,14 @@ from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
 from routers.utils.person_conversion import convert_gumnut_person_to_immich_with_faces
 
 
+def normalize_rating(rating: float | int | None) -> int | None:
+    """Normalize a rating value: convert -1 (deprecated 'unrated') to None."""
+    if rating is None:
+        return None
+    value = int(float(rating))
+    return None if value == -1 else value
+
+
 def mime_type_to_asset_type(mime_type: str) -> AssetTypeEnum:
     """
     Convert a MIME type string to an Immich AssetTypeEnum.
@@ -133,7 +141,7 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
         modifyDate=modify_date,
         orientation=str(orientation) if orientation else None,
         timeZone=time_zone,
-        rating=int(float(rating)) if rating else None,
+        rating=normalize_rating(rating),
         projectionType=str(projection_type) if projection_type else None,
     )
 
@@ -212,7 +220,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
         orientation=str(orientation) if orientation else None,
         profileDescription=None,  # Not available from Gumnut EXIF
         projectionType=str(projection_type) if projection_type else None,
-        rating=int(rating) if rating else None,
+        rating=normalize_rating(rating),
         state=str(state) if state else None,
         timeZone=time_zone,
     )

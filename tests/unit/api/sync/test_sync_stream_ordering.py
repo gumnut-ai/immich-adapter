@@ -6,9 +6,11 @@ from uuid import UUID
 
 import pytest
 
-from routers.api.sync.fk_integrity import _GUMNUT_TYPE_TO_SYNC_TYPE
+from routers.api.sync.fk_integrity import _GUMNUT_TYPE_TO_SYNC_TYPES
 from routers.api.sync.stream import (
     _DELETE_TYPE_ORDER,
+    _NOOP_REQUEST_TYPES,
+    _SUPPORTED_REQUEST_TYPES,
     _SYNC_TYPE_ORDER,
     generate_sync_stream,
 )
@@ -437,20 +439,35 @@ class TestUpsertsBeforeDeletes:
 
 
 class TestGumnutTypeToSyncTypeConsistency:
-    """Ensure _GUMNUT_TYPE_TO_SYNC_TYPE in fk_integrity stays aligned with _SYNC_TYPE_ORDER in stream."""
+    """Ensure _GUMNUT_TYPE_TO_SYNC_TYPES in fk_integrity stays aligned with _SYNC_TYPE_ORDER in stream."""
 
     def test_fk_integrity_map_matches_stream_order(self):
-        """The duplicated _GUMNUT_TYPE_TO_SYNC_TYPE must match the canonical
-        _SYNC_TYPE_ORDER so FK checkpoint lookups stay correct."""
-        expected = {
-            gumnut_type: sync_type for _, gumnut_type, sync_type in _SYNC_TYPE_ORDER
-        }
-        assert _GUMNUT_TYPE_TO_SYNC_TYPE == expected, (
-            f"_GUMNUT_TYPE_TO_SYNC_TYPE in fk_integrity.py has diverged from "
-            f"_SYNC_TYPE_ORDER in stream.py.\n"
-            f"  Expected: {expected}\n"
-            f"  Actual:   {dict(_GUMNUT_TYPE_TO_SYNC_TYPE)}"
-        )
+        """The duplicated _GUMNUT_TYPE_TO_SYNC_TYPES must cover every gumnut
+        entity type in _SYNC_TYPE_ORDER, and each mapped sync type must appear
+        among that entity's entries in _SYNC_TYPE_ORDER."""
+        # Build a mapping of gumnut_type -> set of all sync types in _SYNC_TYPE_ORDER
+        stream_types: dict[str, set] = {}
+        for _, gumnut_type, sync_type in _SYNC_TYPE_ORDER:
+            stream_types.setdefault(gumnut_type, set()).add(sync_type)
+
+        # Every gumnut type in _SYNC_TYPE_ORDER must be in the FK map
+        for gumnut_type in stream_types:
+            assert gumnut_type in _GUMNUT_TYPE_TO_SYNC_TYPES, (
+                f"gumnut type {gumnut_type!r} in _SYNC_TYPE_ORDER but missing "
+                f"from _GUMNUT_TYPE_TO_SYNC_TYPES"
+            )
+
+        # Every entry in the FK map must reference valid sync types from _SYNC_TYPE_ORDER
+        for gumnut_type, sync_types in _GUMNUT_TYPE_TO_SYNC_TYPES.items():
+            assert gumnut_type in stream_types, (
+                f"gumnut type {gumnut_type!r} in _GUMNUT_TYPE_TO_SYNC_TYPES but "
+                f"missing from _SYNC_TYPE_ORDER"
+            )
+            for sync_type in sync_types:
+                assert sync_type in stream_types[gumnut_type], (
+                    f"_GUMNUT_TYPE_TO_SYNC_TYPES[{gumnut_type!r}] contains {sync_type!r} "
+                    f"not in _SYNC_TYPE_ORDER entries: {stream_types[gumnut_type]}"
+                )
 
 
 class TestDeleteTypeOrderCompleteness:
@@ -472,3 +489,124 @@ class TestDeleteTypeOrderCompleteness:
             f"Delete types handled by _make_delete_sync_event but missing "
             f"from _DELETE_TYPE_ORDER: {missing}"
         )
+
+
+class TestFaceV1V2DedupGuard:
+    """Ensure V1 faces are skipped when V2 is also requested."""
+
+    @pytest.mark.anyio
+    async def test_both_v1_and_v2_requested_emits_only_v2(self):
+        """When both AssetFacesV1 and V2 are requested, only V2 events are emitted."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_created",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.AssetFacesV1, SyncRequestType.AssetFacesV2]
+        )
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        face_types = {e["type"] for e in events if "Face" in e["type"]}
+        assert "AssetFaceV2" in face_types, "V2 face events should be emitted"
+        assert "AssetFaceV1" not in face_types, (
+            "V1 face events should be skipped when V2 requested"
+        )
+
+    @pytest.mark.anyio
+    async def test_only_v1_requested_emits_v1(self):
+        """When only AssetFacesV1 is requested, V1 events are emitted."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_created",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        face_types = {e["type"] for e in events if "Face" in e["type"]}
+        assert "AssetFaceV1" in face_types
+        assert "AssetFaceV2" not in face_types
+
+    @pytest.mark.anyio
+    async def test_only_v2_requested_emits_v2(self):
+        """When only AssetFacesV2 is requested, V2 events are emitted."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_created",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV2])
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        face_types = {e["type"] for e in events if "Face" in e["type"]}
+        assert "AssetFaceV2" in face_types
+        assert "AssetFaceV1" not in face_types
+
+
+class TestNoopRequestTypes:
+    """Ensure _NOOP_REQUEST_TYPES are handled correctly."""
+
+    def test_noop_types_are_subset_of_supported(self):
+        """All noop request types must be in _SUPPORTED_REQUEST_TYPES."""
+        missing = _NOOP_REQUEST_TYPES.keys() - _SUPPORTED_REQUEST_TYPES
+        assert not missing, (
+            f"Noop types missing from _SUPPORTED_REQUEST_TYPES: {missing}"
+        )
+
+    @pytest.mark.anyio
+    async def test_noop_type_alongside_real_type_completes(self):
+        """Requesting AssetEditsV1 alongside a real type completes without error."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.AssetEditsV1, SyncRequestType.UsersV1]
+        )
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        event_types = [e["type"] for e in events]
+        assert "SyncCompleteV1" in event_types, "Stream should complete normally"
+        assert "AssetEditV1" not in event_types, "No edit events should be emitted"

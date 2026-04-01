@@ -77,6 +77,7 @@ _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.AssetExifsV1, "exif", SyncEntityType.AssetExifV1),
     (SyncRequestType.PeopleV1, "person", SyncEntityType.PersonV1),
     (SyncRequestType.AssetFacesV1, "face", SyncEntityType.AssetFaceV1),
+    (SyncRequestType.AssetFacesV2, "face", SyncEntityType.AssetFaceV2),
 ]
 
 # Order for streaming delete events — reverse of FK dependency order.
@@ -91,10 +92,17 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
     SyncEntityType.AssetDeleteV1,
 ]
 
+# Request types that are accepted but have no Gumnut equivalent.
+# Prevents "unsupported" warnings while making the no-op explicit.
+_NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
+    SyncRequestType.AssetEditsV1: SyncEntityType.AssetEditV1,
+}
+
 # Supported SyncRequestTypes (used to detect unsupported types requested by client)
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
     | {SyncRequestType.AuthUsersV1, SyncRequestType.UsersV1}
+    | _NOOP_REQUEST_TYPES.keys()
 )
 
 
@@ -244,7 +252,8 @@ async def _stream_entity_type(
                 # face_updated event from clustering will deliver the correct
                 # person_id in the same or a future sync cycle.
                 if (
-                    sync_entity_type == SyncEntityType.AssetFaceV1
+                    sync_entity_type
+                    in (SyncEntityType.AssetFaceV1, SyncEntityType.AssetFaceV2)
                     and event.event_type == "face_created"
                     and isinstance(entity, FaceResponse)
                     and entity.person_id is not None
@@ -256,7 +265,8 @@ async def _stream_entity_type(
                 # entity's current state, which may reference a person
                 # assigned by a later clustering run.
                 elif (
-                    sync_entity_type == SyncEntityType.AssetFaceV1
+                    sync_entity_type
+                    in (SyncEntityType.AssetFaceV1, SyncEntityType.AssetFaceV2)
                     and event.event_type == "face_updated"
                     and isinstance(entity, FaceResponse)
                     and isinstance(event.payload, dict)
@@ -481,6 +491,14 @@ async def generate_sync_stream(
             if request_type not in requested_types:
                 continue
 
+            # Skip V1 faces when V2 is also requested — both map to the same
+            # gumnut "face" entity type and would stream duplicate events.
+            if (
+                request_type == SyncRequestType.AssetFacesV1
+                and SyncRequestType.AssetFacesV2 in requested_types
+            ):
+                continue
+
             # Get checkpoint for this entity type
             checkpoint = checkpoint_map.get(sync_entity_type)
 
@@ -501,6 +519,17 @@ async def generate_sync_stream(
                     event_counts.get(sync_entity_type.value, 0) + count
                 )
                 total_events += count
+
+        # Log no-op types that were requested but intentionally not processed
+        noop_requested = requested_types & _NOOP_REQUEST_TYPES.keys()
+        if noop_requested:
+            logger.info(
+                "No-op sync types requested (accepted but not processed)",
+                extra={
+                    "user_id": owner_id,
+                    "noop_types": sorted(t.value for t in noop_requested),
+                },
+            )
 
         # Phase 2: Yield buffered deletes in reverse FK dependency order
         # (children before parents) so the client can clean up FK references

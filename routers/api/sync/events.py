@@ -32,6 +32,7 @@ from routers.api.sync.converters import (
     gumnut_asset_to_sync_asset_v1,
     gumnut_exif_to_sync_exif_v1,
     gumnut_face_to_sync_face_v1,
+    gumnut_face_to_sync_face_v2,
     gumnut_person_to_sync_person_v1,
 )
 from routers.api.sync.types import EntityType
@@ -291,7 +292,10 @@ def convert_entity_to_sync_event(
             cast(AlbumAssetResponse, entity)
         )
     elif gumnut_entity_type == "face":
-        sync_model = gumnut_face_to_sync_face_v1(cast(FaceResponse, entity))
+        if sync_entity_type == SyncEntityType.AssetFaceV2:
+            sync_model = gumnut_face_to_sync_face_v2(cast(FaceResponse, entity))
+        else:
+            sync_model = gumnut_face_to_sync_face_v1(cast(FaceResponse, entity))
     elif gumnut_entity_type == "exif":
         sync_model = gumnut_exif_to_sync_exif_v1(cast(AssetResponse, entity))
     else:

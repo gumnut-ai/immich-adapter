@@ -20,12 +20,13 @@ from routers.immich_models import (
     SyncAlbumV1,
     SyncAssetExifV1,
     SyncAssetFaceV1,
+    SyncAssetFaceV2,
     SyncAssetV1,
     SyncAuthUserV1,
     SyncPersonV1,
     SyncUserV1,
 )
-from routers.utils.asset_conversion import mime_type_to_asset_type
+from routers.utils.asset_conversion import normalize_rating, mime_type_to_asset_type
 from routers.utils.datetime_utils import (
     format_timezone_immich,
     to_actual_utc,
@@ -215,7 +216,7 @@ def gumnut_exif_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         orientation=str(exif.orientation) if exif.orientation is not None else None,
         profileDescription=exif.profile_description,
         projectionType=exif.projection_type,
-        rating=exif.rating,
+        rating=normalize_rating(exif.rating),
         state=exif.state,
         timeZone=format_timezone_immich(exif.original_datetime),
     )
@@ -287,6 +288,16 @@ def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
         sourceType="machine-learning",
         personId=person_id,
     )
+
+
+def gumnut_face_to_sync_face_v2(face: FaceResponse) -> SyncAssetFaceV2:
+    """Convert Gumnut FaceResponse to Immich SyncAssetFaceV2 format.
+
+    Delegates to V1 and adds deletedAt (always None — Gumnut has no soft-delete
+    on faces) and isVisible (always True — Gumnut has no face visibility control).
+    """
+    v1 = gumnut_face_to_sync_face_v1(face)
+    return SyncAssetFaceV2(**v1.model_dump(), deletedAt=None, isVisible=True)
 
 
 def gumnut_album_asset_to_sync_album_to_asset_v1(

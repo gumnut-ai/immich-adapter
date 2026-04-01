@@ -8,6 +8,7 @@ from routers.immich_models import (
     AssetIdsResponseDto,
     SharedLinkCreateDto,
     SharedLinkEditDto,
+    SharedLinkLoginDto,
     SharedLinkResponseDto,
     SharedLinkType,
 )
@@ -39,6 +40,35 @@ async def create_shared_link(
 ) -> SharedLinkResponseDto:
     """
     Create a shared link
+    This is a stub implementation that returns a fake shared link response.
+    """
+    now = datetime.now(timezone.utc)
+    return SharedLinkResponseDto(
+        album=None,
+        allowDownload=True,
+        allowUpload=False,
+        assets=[],
+        createdAt=now,
+        description="Shared link",
+        expiresAt=now,
+        id=str(uuid4()),
+        key="dummy-key",
+        password="",
+        showMetadata=True,
+        slug="dummy-slug",
+        token="dummy-token",
+        type=SharedLinkType.INDIVIDUAL,
+        userId=str(current_user_id),
+    )
+
+
+@router.post("/login")
+async def login_shared_link(
+    request: SharedLinkLoginDto,
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> SharedLinkResponseDto:
+    """
+    Login to a shared link with a password.
     This is a stub implementation that returns a fake shared link response.
     """
     now = datetime.now(timezone.utc)
@@ -179,8 +209,6 @@ async def add_shared_link_assets(
 async def remove_shared_link_assets(
     id: UUID,
     request: AssetIdsDto,
-    key: str = Query(default=None),
-    slug: str = Query(default=None),
 ) -> List[AssetIdsResponseDto]:
     """
     Remove assets from a shared link
