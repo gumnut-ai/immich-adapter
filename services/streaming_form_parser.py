@@ -126,10 +126,10 @@ class StreamingFormParser:
 
     def _on_headers_finished(self) -> None:
         content_disposition = self._current_headers.get("content-disposition", "")
-        _, params = parse_options_header(content_disposition)
+        _, params = parse_options_header(content_disposition.encode("latin-1"))
 
-        field_name = params.get(b"name", b"").decode("utf-8")
-        filename = params.get(b"filename", b"").decode("utf-8")
+        field_name = params.get(b"name", b"").decode("utf-8", errors="replace")
+        filename = params.get(b"filename", b"").decode("utf-8", errors="replace")
 
         self._current_field_name = field_name
 

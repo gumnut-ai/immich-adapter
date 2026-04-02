@@ -45,7 +45,8 @@ class Settings(BaseSettings):
 
     # Streaming upload threshold in bytes. Uploads with Content-Length above this
     # stream directly to photos-api without buffering to /tmp. Uploads below use
-    # the standard buffered UploadFile path. Set to 0 to stream all uploads.
+    # the standard buffered UploadFile path. Set to 0 to stream all uploads
+    # (note: streaming skips iOS live photo .MOV detection).
     streaming_upload_threshold_bytes: int = 100 * 1024 * 1024  # 100MB
 
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)

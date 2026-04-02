@@ -43,7 +43,9 @@ def _get_streaming_http_client() -> httpx.Client:
         with _streaming_client_lock:
             if _streaming_http_client is None:
                 _streaming_http_client = httpx.Client(
-                    timeout=httpx.Timeout(600.0),
+                    timeout=httpx.Timeout(
+                        connect=30.0, read=600.0, write=600.0, pool=30.0
+                    ),
                     limits=httpx.Limits(
                         max_connections=10, max_keepalive_connections=5
                     ),
@@ -58,12 +60,6 @@ def close_streaming_http_client() -> None:
         if _streaming_http_client is not None:
             _streaming_http_client.close()
             _streaming_http_client = None
-
-
-# --- Upload field extraction ---
-
-# Reuse the shared helper from assets.py — imported by callers and passed
-# to execute() via the result dict, so no circular import.
 
 
 class StreamingUploadPipeline:
@@ -147,10 +143,15 @@ class StreamingUploadPipeline:
                 self._chunk_queue.get_nowait()
         except queue.Empty:
             pass
-        try:
-            self._chunk_queue.put_nowait(None)
-        except queue.Full:
-            pass
+        for _ in range(10):
+            try:
+                self._chunk_queue.put(None, timeout=0.1)
+                return
+            except queue.Full:
+                try:
+                    self._chunk_queue.get_nowait()
+                except queue.Empty:
+                    pass
 
     async def _feed_chunks(self) -> None:
         """Read request body and enqueue chunks for the parser thread."""
@@ -173,7 +174,7 @@ class StreamingUploadPipeline:
     def _sync_upload(
         self,
         extract_fields_fn: Callable[[dict[str, str]], Any],
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Run the sync httpx POST to photos-api.
 
         Args:
@@ -209,6 +210,10 @@ class StreamingUploadPipeline:
             },
         )
 
+        # Bypasses the Gumnut SDK because the pipe-backed body is non-replayable,
+        # making SDK-level retry impossible. The shared httpx client's response hook
+        # captures x-new-access-token for propagation, but if the JWT expires during
+        # a multi-minute upload, the request will fail with no recovery path.
         try:
             response = _get_streaming_http_client().post(
                 f"{self._api_base_url}/api/assets",
@@ -284,7 +289,9 @@ class StreamingUploadPipeline:
 
     # --- Main orchestration ---
 
-    async def execute(self, extract_fields_fn: Callable[[dict[str, str]], Any]) -> dict:
+    async def execute(
+        self, extract_fields_fn: Callable[[dict[str, str]], Any]
+    ) -> dict[str, Any]:
         """Run the full streaming upload pipeline.
 
         Args:
@@ -322,9 +329,10 @@ class StreamingUploadPipeline:
                     await parser_future
                 except Exception:
                     if self._parse_error is not None:
-                        logger.warning(
+                        logger.error(
                             "Parser error after upload completed",
                             extra={"error": str(self._parse_error)},
+                            exc_info=self._parse_error,
                         )
 
                 span.set_data("upload.filename", self._form_parser.filename)

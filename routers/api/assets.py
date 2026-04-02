@@ -399,7 +399,9 @@ async def upload_asset(
     )
 
     if use_streaming:
-        return await _upload_streaming(request, client, current_user, settings)
+        return await _upload_streaming(
+            request, client, current_user, settings.gumnut_api_base_url
+        )
     else:
         return await _upload_buffered(request, client, current_user)
 
@@ -488,7 +490,7 @@ async def _upload_buffered(
             logger.error(
                 "Upload failed",
                 extra={
-                    "file_name": asset_data.filename,
+                    "upload_filename": asset_data.filename,
                     "content_type": asset_data.content_type,
                     "device_asset_id": device_asset_id,
                     "device_id": device_id,
@@ -504,7 +506,7 @@ async def _upload_streaming(
     request: Request,
     client: AsyncGumnut,
     current_user: UserResponseDto,
-    settings: Settings,
+    api_base_url: str,
 ) -> AssetMediaResponseDto | JSONResponse:
     """Streaming upload path — pipes file data to photos-api without buffering.
 
@@ -522,9 +524,7 @@ async def _upload_streaming(
 
     pipeline: StreamingUploadPipeline | None = None
     try:
-        pipeline = StreamingUploadPipeline(
-            request, settings.gumnut_api_base_url, jwt_token
-        )
+        pipeline = StreamingUploadPipeline(request, api_base_url, jwt_token)
         result = await pipeline.execute(_extract_upload_fields)
 
         asset_id = result.get("id", "")
