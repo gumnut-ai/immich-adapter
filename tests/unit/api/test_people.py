@@ -386,7 +386,7 @@ class TestGetAllPeople:
         assert result.total == 3
         assert result.hidden == 0
         assert result.hasNextPage is False  # No pagination in this case
-        mock_client.people.list.assert_called_once()
+        mock_client.people.list.assert_called_once_with(name_filter="all")
 
     @pytest.mark.anyio
     async def test_get_all_people_with_pagination(

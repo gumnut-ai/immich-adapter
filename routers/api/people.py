@@ -243,7 +243,7 @@ async def get_all_people(
     """
     try:
         # Get all people from Gumnut
-        gumnut_people = client.people.list()
+        gumnut_people = client.people.list(name_filter="all")
         all_people = [p async for p in gumnut_people]
 
         # Count hidden before filtering so the response includes the total
