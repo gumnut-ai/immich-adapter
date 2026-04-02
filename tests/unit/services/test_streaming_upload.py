@@ -234,5 +234,27 @@ class TestStreamingUploadPipeline:
             with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
-        # 4xx should be forwarded as-is, not mapped to 502
+        # 4xx (other than 401) should be forwarded as-is, not mapped to 502
         assert exc_info.value.status_code == 413
+
+    @pytest.mark.anyio
+    async def test_401_mapped_to_502(self):
+        """Test that 401 from photos-api maps to 502 (adapter's JWT expired, not client's session)."""
+        body, ct_header = _build_multipart_body()
+        request = _make_mock_request(body, ct_header)
+        base_url = "http://localhost:8000"
+        response = _make_httpx_response(401, {"detail": "Unauthorized"})
+
+        mock_client = MagicMock()
+        mock_client.post.return_value = response
+
+        with patch(
+            "services.streaming_upload._get_streaming_http_client",
+            return_value=mock_client,
+        ):
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
+            with pytest.raises(HTTPException) as exc_info:
+                await pipeline.execute(_extract_fields)
+
+        # 401 from photos-api is an internal auth issue, not the client's
+        assert exc_info.value.status_code == 502

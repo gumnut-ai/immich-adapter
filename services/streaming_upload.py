@@ -211,8 +211,8 @@ class StreamingUploadPipeline:
         )
 
         # Bypasses the Gumnut SDK because the pipe-backed body is non-replayable,
-        # making SDK-level retry impossible. The shared httpx client's response hook
-        # captures x-new-access-token for propagation, but if the JWT expires during
+        # making SDK-level retry impossible. Token refresh is captured from the
+        # response headers after the POST completes, but if the JWT expires during
         # a multi-minute upload, the request will fail with no recovery path.
         try:
             response = _get_streaming_http_client().post(
@@ -270,9 +270,12 @@ class StreamingUploadPipeline:
                     "upload_filename": filename,
                 },
             )
+            # Map upstream 5xx and 401 to 502: a 401 from photos-api means
+            # the adapter's internal JWT expired, not the client's session.
+            # Forwarding 401 would cause Immich clients to clear their session.
             client_status = (
                 status.HTTP_502_BAD_GATEWAY
-                if response.status_code >= 500
+                if response.status_code >= 500 or response.status_code == 401
                 else response.status_code
             )
             raise HTTPException(
