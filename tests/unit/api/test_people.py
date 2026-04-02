@@ -1003,9 +1003,7 @@ class TestReassignFaces:
         mock_face.person_id = uuid_to_gumnut_person_id(sample_uuid)
 
         mock_client = Mock()
-        mock_client.faces.list = AsyncMock(
-            return_value=mock_sync_cursor_page([mock_face])
-        )
+        mock_client.faces.list = Mock(return_value=mock_sync_cursor_page([mock_face]))
         mock_client.faces.update = AsyncMock()
         mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
 
@@ -1019,7 +1017,6 @@ class TestReassignFaces:
         mock_client.faces.list.assert_called_once_with(
             person_id=uuid_to_gumnut_person_id(sample_uuid),
             asset_id=uuid_to_gumnut_asset_id(asset_uuid),
-            limit=1,
         )
         # Verify face was reassigned to target person
         mock_client.faces.update.assert_called_once_with(
@@ -1038,7 +1035,7 @@ class TestReassignFaces:
         asset_uuid = uuid4()
 
         mock_client = Mock()
-        mock_client.faces.list = AsyncMock(
+        mock_client.faces.list = Mock(
             return_value=mock_sync_cursor_page([])  # No face found
         )
         mock_client.faces.update = AsyncMock()
@@ -1060,7 +1057,7 @@ class TestReassignFaces:
         asset_uuid = uuid4()
 
         mock_client = Mock()
-        mock_client.faces.list = AsyncMock(
+        mock_client.faces.list = Mock(
             side_effect=Exception("500 Internal Server Error")
         )
 
