@@ -447,6 +447,7 @@ async def reassign_faces(
                     "No face found for source person on asset, skipping",
                     extra={
                         "source_person_id": gumnut_source_person_id,
+                        "target_person_id": gumnut_target_person_id,
                         "asset_id": gumnut_asset_id,
                     },
                 )

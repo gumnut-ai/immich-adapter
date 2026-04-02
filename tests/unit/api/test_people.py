@@ -1069,3 +1069,119 @@ class TestReassignFaces:
             await reassign_faces(sample_uuid, request, client=mock_client)
 
         assert exc_info.value.status_code == 500
+
+    @pytest.mark.anyio
+    async def test_reassign_faces_multiple_faces_on_asset(
+        self, sample_uuid, sample_gumnut_person, mock_sync_cursor_page
+    ):
+        """All faces for (source person, asset) should be reassigned, not just the first."""
+        target_uuid = uuid4()
+        asset_uuid = uuid4()
+
+        mock_face_1 = Mock()
+        mock_face_1.id = "face_aaa"
+        mock_face_2 = Mock()
+        mock_face_2.id = "face_bbb"
+
+        mock_client = Mock()
+        mock_client.faces.list = Mock(
+            return_value=mock_sync_cursor_page([mock_face_1, mock_face_2])
+        )
+        mock_client.faces.update = AsyncMock()
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
+
+        request = AssetFaceUpdateDto(
+            data=[AssetFaceUpdateItem(assetId=asset_uuid, personId=target_uuid)]
+        )
+
+        result = await reassign_faces(sample_uuid, request, client=mock_client)
+
+        # Both faces should be updated
+        assert mock_client.faces.update.call_count == 2
+        mock_client.faces.update.assert_any_call(
+            "face_aaa", person_id=uuid_to_gumnut_person_id(target_uuid)
+        )
+        mock_client.faces.update.assert_any_call(
+            "face_bbb", person_id=uuid_to_gumnut_person_id(target_uuid)
+        )
+        assert len(result) == 1
+
+    @pytest.mark.anyio
+    async def test_reassign_faces_multi_target_dedup_and_ordering(
+        self, sample_uuid, mock_sync_cursor_page
+    ):
+        """Multiple items targeting the same person should dedup; order is first-seen."""
+        target_1 = uuid4()
+        target_2 = uuid4()
+        asset_a = uuid4()
+        asset_b = uuid4()
+        asset_c = uuid4()
+
+        mock_face_a = Mock(id="face_a")
+        mock_face_b = Mock(id="face_b")
+        mock_face_c = Mock(id="face_c")
+
+        # Return one face per asset
+        mock_client = Mock()
+        mock_client.faces.list = Mock(
+            side_effect=[
+                mock_sync_cursor_page([mock_face_a]),
+                mock_sync_cursor_page([mock_face_b]),
+                mock_sync_cursor_page([mock_face_c]),
+            ]
+        )
+        mock_client.faces.update = AsyncMock()
+
+        # Create distinct person mocks so we can verify ordering
+        person_1 = Mock()
+        person_1.id = uuid_to_gumnut_person_id(target_1)
+        person_1.name = "Person One"
+        person_1.birth_date = None
+        person_1.is_favorite = False
+        person_1.is_hidden = False
+        person_1.thumbnail_face_id = None
+        person_1.thumbnail_face_url = None
+        person_1.asset_urls = None
+        person_1.asset_count = 1
+        person_1.created_at = datetime.now(timezone.utc)
+        person_1.updated_at = datetime.now(timezone.utc)
+
+        person_2 = Mock()
+        person_2.id = uuid_to_gumnut_person_id(target_2)
+        person_2.name = "Person Two"
+        person_2.birth_date = None
+        person_2.is_favorite = False
+        person_2.is_hidden = False
+        person_2.thumbnail_face_id = None
+        person_2.thumbnail_face_url = None
+        person_2.asset_urls = None
+        person_2.asset_count = 1
+        person_2.created_at = datetime.now(timezone.utc)
+        person_2.updated_at = datetime.now(timezone.utc)
+
+        async def mock_retrieve(person_id):
+            if person_id == uuid_to_gumnut_person_id(target_1):
+                return person_1
+            return person_2
+
+        mock_client.people.retrieve = AsyncMock(side_effect=mock_retrieve)
+
+        # Request: A→target_1, B→target_2, C→target_1
+        request = AssetFaceUpdateDto(
+            data=[
+                AssetFaceUpdateItem(assetId=asset_a, personId=target_1),
+                AssetFaceUpdateItem(assetId=asset_b, personId=target_2),
+                AssetFaceUpdateItem(assetId=asset_c, personId=target_1),
+            ]
+        )
+
+        result = await reassign_faces(sample_uuid, request, client=mock_client)
+
+        # All 3 faces updated
+        assert mock_client.faces.update.call_count == 3
+        # Result should have 2 people in first-seen order: target_1 then target_2
+        assert len(result) == 2
+        assert result[0].name == "Person One"
+        assert result[1].name == "Person Two"
+        # people.retrieve called once per unique target, not 3 times
+        assert mock_client.people.retrieve.call_count == 2
