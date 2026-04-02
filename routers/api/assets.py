@@ -1,25 +1,27 @@
-from typing import List, Literal
+from typing import List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 import base64
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
+import httpx
 import sentry_sdk
 
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
-    UploadFile,
-    File,
-    Form,
     Query,
+    Request,
+    UploadFile,
     Response,
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 from gumnut import AsyncGumnut, GumnutError
+from gumnut.types.asset_response import AssetResponse
 
+from config.settings import Settings, get_settings
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
@@ -27,6 +29,7 @@ from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
 from socketio.exceptions import SocketIOError
 
+from services.streaming_upload import StreamingUploadPipeline
 from services.websockets import emit_user_event, WebSocketEvent
 from routers.immich_models import (
     AssetBulkDeleteDto,
@@ -245,6 +248,98 @@ async def check_existing_assets(
     return CheckExistingAssetsResponseDto(existingIds=existing_ids)
 
 
+def _parse_datetime(value: str | None, fallback: datetime) -> datetime:
+    """Parse an ISO 8601 datetime string, falling back to the given default."""
+    if not value:
+        return fallback
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        # Normalize naive datetimes to match the fallback's timezone
+        if dt.tzinfo is None and fallback.tzinfo is not None:
+            dt = dt.replace(tzinfo=fallback.tzinfo)
+        return dt
+    except (ValueError, AttributeError):
+        return fallback
+
+
+class UploadFields(NamedTuple):
+    device_asset_id: str
+    device_id: str
+    file_created_at: datetime
+    file_modified_at: datetime
+
+
+def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
+    """Extract and validate common upload fields from a form data dict.
+
+    Raises ValueError if required fields are missing.
+    """
+    device_asset_id = fields.get("deviceAssetId", "")
+    device_id = fields.get("deviceId", "")
+    file_created_at_str = fields.get("fileCreatedAt", "")
+
+    if not device_asset_id or not device_id or not file_created_at_str:
+        raise ValueError(
+            "Missing required fields: deviceAssetId, deviceId, fileCreatedAt"
+        )
+
+    file_modified_at_str = fields.get("fileModifiedAt") or None
+    file_created_at = _parse_datetime(file_created_at_str, datetime.now(timezone.utc))
+    file_modified_at = _parse_datetime(file_modified_at_str, file_created_at)
+
+    return UploadFields(device_asset_id, device_id, file_created_at, file_modified_at)
+
+
+def _handle_upload_error(e: Exception) -> AssetMediaResponseDto | JSONResponse:
+    """Map upload exceptions to Immich-compatible HTTP responses."""
+    error_msg = str(e).lower()
+    if "duplicate" in error_msg or "already exists" in error_msg:
+        return JSONResponse(
+            content={
+                "id": "00000000-0000-0000-0000-000000000000",
+                "status": AssetMediaStatus.duplicate.value,
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    elif check_for_error_by_code(e, 413) or "too large" in error_msg:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Asset file too large",
+        )
+    elif check_for_error_by_code(e, 415) or "unsupported" in error_msg:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported media type",
+        )
+    else:
+        raise map_gumnut_error(e, "Failed to upload asset") from e
+
+
+async def _emit_upload_events(
+    gumnut_asset: AssetResponse,
+    current_user: UserResponseDto,
+) -> None:
+    """Emit WebSocket events after a successful upload."""
+    try:
+        asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
+        await emit_user_event(
+            WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response
+        )
+
+        payload = build_asset_upload_ready_payload(gumnut_asset, current_user.id)
+        await emit_user_event(
+            WebSocketEvent.ASSET_UPLOAD_READY_V1, current_user.id, payload
+        )
+    except Exception as ws_error:
+        logger.warning(
+            "Failed to emit WebSocket event after upload",
+            extra={
+                "gumnut_id": getattr(gumnut_asset, "id", "unknown"),
+                "error": str(ws_error),
+            },
+        )
+
+
 @router.post(
     "",
     status_code=201,
@@ -266,156 +361,236 @@ async def check_existing_assets(
     },
 )
 async def upload_asset(
-    assetData: UploadFile = File(...),
-    deviceAssetId: str = Form(...),
-    deviceId: str = Form(...),
-    fileCreatedAt: str = Form(...),
-    fileModifiedAt: str = Form(None),
-    isFavorite: bool = Form(False),
-    duration: str = Form(None),
-    key: str = Query(default=None),
-    slug: str = Query(default=None),
+    request: Request,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
 ) -> AssetMediaResponseDto | JSONResponse:
     """
     Upload an asset using the Gumnut SDK.
     Creates a new asset in Gumnut from the provided asset data.
     Returns 201 on success, 200 if the asset is a duplicate.
+
+    Uses a dual-path strategy:
+    - Small files (below threshold): buffered via Starlette's UploadFile
+    - Large files (above threshold): streamed directly to photos-api
     """
+    threshold = settings.streaming_upload_threshold_bytes
 
+    raw_cl = request.headers.get("content-length")
     try:
-        # Parse datetime from form data
+        content_length: int | None = int(raw_cl) if raw_cl is not None else None
+    except ValueError:
+        content_length = None
+
+    # Only stream when we know the size exceeds the threshold (or threshold is 0
+    # to force streaming). Missing/invalid Content-Length and chunked transfers
+    # fall through to the buffered path to preserve live photo detection, which
+    # requires file seeks incompatible with streaming.
+    use_streaming = threshold == 0 or (
+        content_length is not None and content_length > threshold
+    )
+
+    strategy = "streaming" if use_streaming else "buffered"
+    logger.info(
+        "Upload strategy: %s",
+        strategy,
+        extra={
+            "strategy": strategy,
+            "content_length": content_length,
+            "threshold": threshold,
+        },
+    )
+
+    if use_streaming:
+        return await _upload_streaming(
+            request, client, current_user, settings.gumnut_api_base_url
+        )
+    else:
+        return await _upload_buffered(request, client, current_user)
+
+
+async def _upload_buffered(
+    request: Request,
+    client: AsyncGumnut,
+    current_user: UserResponseDto,
+) -> AssetMediaResponseDto | JSONResponse:
+    """Standard buffered upload path — Starlette spools file to /tmp."""
+    async with request.form() as form:
+        asset_data_raw = form.get("assetData")
+        # Duck-type check: Starlette's UploadFile may not pass isinstance against
+        # FastAPI's UploadFile in all environments, so fall back to attribute check.
+        if not (
+            hasattr(asset_data_raw, "filename")
+            and getattr(asset_data_raw, "filename", None)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="File has no filename",
+            )
+        asset_data = cast(UploadFile, asset_data_raw)
+
+        # Convert Starlette form values to plain strings for shared helper
+        fields = {key: str(value) for key, value in form.items() if key != "assetData"}
         try:
-            file_created_at = datetime.fromisoformat(
-                fileCreatedAt.replace("Z", "+00:00")
+            device_asset_id, device_id, file_created_at, file_modified_at = (
+                _extract_upload_fields(fields)
             )
-        except (ValueError, AttributeError):
-            file_created_at = datetime.now()
+        except ValueError as ve:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(ve),
+            )
 
-        file_modified_at = file_created_at
-        if fileModifiedAt:
-            try:
-                file_modified_at = datetime.fromisoformat(
-                    fileModifiedAt.replace("Z", "+00:00")
+        try:
+            # Drop iOS live photo .MOV files — they upload as separate video files
+            # that would become orphan assets since Gumnut doesn't support live photos.
+            filename_lower = (asset_data.filename or "").lower()
+            may_be_video = (
+                asset_data.content_type and asset_data.content_type.startswith("video/")
+            ) or filename_lower.endswith((".mov", ".mp4", ".m4v"))
+            if may_be_video and is_live_photo_video(asset_data.file):
+                logger.info(
+                    "Dropping iOS live photo video",
+                    extra={
+                        "device_asset_id": device_asset_id,
+                        "device_id": device_id,
+                        "upload_filename": asset_data.filename,
+                        "content_type": asset_data.content_type,
+                    },
                 )
-            except (ValueError, AttributeError):
-                file_modified_at = file_created_at
+                return AssetMediaResponseDto(
+                    id=str(uuid4()),
+                    status=AssetMediaStatus.created,
+                )
 
-        # Drop iOS live photo .MOV files — they upload as separate video files
-        # that would become orphan assets since Gumnut doesn't support live photos.
-        # The Immich mobile client sends .MOV files with content_type
-        # "application/octet-stream", so we check both the content type and the
-        # file extension to determine if this might be a video.
-        filename_lower = (assetData.filename or "").lower()
-        may_be_video = (
-            assetData.content_type and assetData.content_type.startswith("video/")
-        ) or filename_lower.endswith((".mov", ".mp4", ".m4v"))
-        if may_be_video and is_live_photo_video(assetData.file):
-            logger.info(
-                "Dropping iOS live photo video",
-                extra={
-                    "device_asset_id": deviceAssetId,
-                    "device_id": deviceId,
-                    "upload_filename": assetData.filename,
-                    "content_type": assetData.content_type,
-                },
-            )
-            # Unique ID for the dropped asset. Currently unused by the Immich
-            # mobile client, but included for future safety so responses
-            # don't collide.
+            await asset_data.seek(0)
+            with sentry_sdk.start_span(
+                op="http.client", name="gumnut.assets.create"
+            ) as span:
+                span.set_data("upload.filename", asset_data.filename)
+                span.set_data("upload.content_type", asset_data.content_type)
+                span.set_data("upload.strategy", "buffered")
+                gumnut_asset = await client.assets.create(
+                    asset_data=(
+                        asset_data.filename,
+                        asset_data.file,
+                        asset_data.content_type,
+                    ),
+                    device_asset_id=device_asset_id,
+                    device_id=device_id,
+                    file_created_at=file_created_at,
+                    file_modified_at=file_modified_at,
+                )
+
+            asset_uuid = safe_uuid_from_asset_id(gumnut_asset.id)
+            await _emit_upload_events(gumnut_asset, current_user)
+
             return AssetMediaResponseDto(
-                id=str(uuid4()),
-                status=AssetMediaStatus.created,
+                id=str(asset_uuid), status=AssetMediaStatus.created
             )
 
-        # Stream the file to Gumnut SDK without loading into memory.
-        await assetData.seek(0)
-        with sentry_sdk.start_span(
-            op="http.client", name="gumnut.assets.create"
-        ) as span:
-            span.set_data("upload.filename", assetData.filename)
-            span.set_data("upload.content_type", assetData.content_type)
-            span.set_data("upload.device_asset_id", deviceAssetId)
-            span.set_data("upload.device_id", deviceId)
-            gumnut_asset = await client.assets.create(
-                asset_data=(
-                    assetData.filename,
-                    assetData.file,
-                    assetData.content_type,
-                ),
-                device_asset_id=deviceAssetId,
-                device_id=deviceId,
-                file_created_at=file_created_at,
-                file_modified_at=file_modified_at,
+        except Exception as e:
+            logger.error(
+                "Upload failed",
+                extra={
+                    "upload_filename": asset_data.filename,
+                    "content_type": asset_data.content_type,
+                    "device_asset_id": device_asset_id,
+                    "device_id": device_id,
+                    "strategy": "buffered",
+                    "error": str(e),
+                },
+                exc_info=True,
             )
-            span.set_data("upload.gumnut_asset_id", gumnut_asset.id)
+            return _handle_upload_error(e)
 
-        # Get the asset ID from the AssetResponse
-        asset_id = gumnut_asset.id
 
-        # Convert to UUID format for response
+async def _upload_streaming(
+    request: Request,
+    client: AsyncGumnut,
+    current_user: UserResponseDto,
+    api_base_url: str,
+) -> AssetMediaResponseDto | JSONResponse:
+    """Streaming upload path — pipes file data to photos-api without buffering.
+
+    Note: requires multipart form fields (deviceAssetId, deviceId, fileCreatedAt)
+    to precede the file part. All known Immich clients send fields first. Clients
+    that send the file before fields will receive a 422 error; those uploads fall
+    below the streaming threshold in practice, so they use the buffered path.
+    """
+    jwt_token = getattr(request.state, "jwt_token", None)
+    if not jwt_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+
+    pipeline: StreamingUploadPipeline | None = None
+    try:
+        pipeline = StreamingUploadPipeline(request, api_base_url, jwt_token)
+        result = await pipeline.execute(_extract_upload_fields)
+
+        asset_id = result.get("id", "")
+        asset_status = result.get("status", "created")
+
+        if asset_status == AssetMediaStatus.duplicate.value:
+            dup_uuid = safe_uuid_from_asset_id(asset_id) if asset_id else UUID(int=0)
+            return JSONResponse(
+                content={
+                    "id": str(dup_uuid),
+                    "status": AssetMediaStatus.duplicate.value,
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
         asset_uuid = safe_uuid_from_asset_id(asset_id)
 
-        # Emit WebSocket events for real-time updates
+        # Fetch asset metadata for WebSocket events (lightweight GET, no file data)
         try:
-            # Build AssetResponseDto for on_upload_success event
-            asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
-            await emit_user_event(
-                WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response
-            )
-
-            # Build payload for AssetUploadReadyV1 event
-            payload = build_asset_upload_ready_payload(gumnut_asset, current_user.id)
-            await emit_user_event(
-                WebSocketEvent.ASSET_UPLOAD_READY_V1, current_user.id, payload
-            )
-        except (ValidationError, SocketIOError) as ws_error:
+            gumnut_asset = await client.assets.retrieve(asset_id)
+            await _emit_upload_events(gumnut_asset, current_user)
+        except Exception as ws_err:
             logger.warning(
-                "Failed to emit WebSocket event after upload",
-                extra={
-                    "gumnut_id": str(asset_id),
-                    "immich_id": str(asset_uuid),
-                    "error": str(ws_error),
-                },
+                "Failed to emit WebSocket events for streaming upload",
+                extra={"asset_id": asset_id, "error": str(ws_err)},
             )
 
         return AssetMediaResponseDto(
             id=str(asset_uuid), status=AssetMediaStatus.created
         )
 
+    except HTTPException:
+        raise
+    except (ValueError, ValidationError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
+    except TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="Upload timed out"
+        )
+    except httpx.HTTPError as e:
+        logger.error(
+            "Streaming upload connection error",
+            extra={"error": str(e), "strategy": "streaming"},
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Upload failed"
+        )
     except Exception as e:
-        logger.warning(
-            "Upload failed",
+        logger.error(
+            "Streaming upload failed",
             extra={
-                "file_name": assetData.filename,
-                "content_type": assetData.content_type,
-                "device_asset_id": deviceAssetId,
-                "device_id": deviceId,
+                "upload_filename": pipeline.form_parser.filename if pipeline else None,
+                "content_type": pipeline.form_parser.content_type if pipeline else None,
+                "strategy": "streaming",
                 "error": str(e),
             },
             exc_info=True,
         )
-        # Handle specific upload error cases first
-        error_msg = str(e).lower()
-        if "duplicate" in error_msg or "already exists" in error_msg:
-            # If it's a duplicate, we still need an asset ID
-            # This is a simplified approach - in a real implementation you'd extract the existing asset ID
-            # Return 200 (not 201) for duplicates, matching Immich server behavior
-            return JSONResponse(
-                content={
-                    "id": "00000000-0000-0000-0000-000000000000",
-                    "status": AssetMediaStatus.duplicate.value,
-                },
-                status_code=status.HTTP_200_OK,
-            )
-        elif check_for_error_by_code(e, 413) or "too large" in error_msg:
-            raise HTTPException(status_code=413, detail="Asset file too large")
-        elif check_for_error_by_code(e, 415) or "unsupported" in error_msg:
-            raise HTTPException(status_code=415, detail="Unsupported media type")
-        else:
-            # Use the general error mapper for other cases
-            raise map_gumnut_error(e, "Failed to upload asset") from e
+        return _handle_upload_error(e)
 
 
 @router.put("", status_code=204)

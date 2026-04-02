@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from config.exceptions import configure_exception_handlers
 from config.sentry import init_sentry
@@ -40,12 +42,16 @@ from routers.api import (
     view,
 )
 from services import websockets
+from services.streaming_upload import close_streaming_http_client
 from routers.utils.cdn_client import close_cdn_http_client
 from routers.utils.gumnut_client import close_shared_http_client
 from utils.redis_client import check_redis_connection, close_redis_client
+from config.settings import get_settings
 
 init_logging()
 init_sentry()
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -57,10 +63,18 @@ async def lifespan(app: FastAPI):
     # Startup: verify required services are available
     await check_redis_connection()
 
+    settings = get_settings()
+    if settings.streaming_upload_threshold_bytes == 0:
+        logger.warning(
+            "streaming_upload_threshold_bytes=0: all uploads use streaming path, "
+            "which skips iOS live photo .MOV detection"
+        )
+
     yield
     # Ensure singleton HTTP clients are closed on shutdown
     await close_shared_http_client()
     await close_cdn_http_client()
+    close_streaming_http_client()
     # Close Redis client
     await close_redis_client()
 

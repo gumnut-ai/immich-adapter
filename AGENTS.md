@@ -28,6 +28,8 @@
 - Always prefer editing existing files over creating new ones
 - Always use `uv run` to execute Python commands (e.g., `uv run pytest`, `uv run python`). Never use bare `python` or `pip` — pyenv versions may not match `.python-version`
 - When starting work outside of `/gumnut:start-linear-task`, always create a new branch from `main` before making changes. Don't modify files on an existing feature branch for unrelated work
+- `services/` is for stateful classes with methods (stores, pipelines, WebSocket handlers). `utils/` is for stateless utility functions and helpers. Don't put classes with state in `utils/`.
+- Accept specific parameters rather than the full `Settings` object in constructors. This keeps classes decoupled from the config layer and easier to test.
 
 ### Working with Files
 
