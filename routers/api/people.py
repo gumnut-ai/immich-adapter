@@ -462,5 +462,7 @@ async def reassign_faces(
 
         return result
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise map_gumnut_error(e, "Failed to reassign faces") from e
