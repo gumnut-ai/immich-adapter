@@ -15,7 +15,9 @@ from socketio.exceptions import SocketIOError
 from services.websockets import WebSocketEvent
 
 from routers.api.assets import (
+    _extract_upload_fields,
     _immich_checksum_to_base64,
+    _parse_datetime,
     bulk_upload_check,
     check_existing_assets,
     copy_asset,
@@ -1402,3 +1404,61 @@ class TestGetAssetOcr:
         result = await get_asset_ocr(sample_uuid)
 
         assert result == []
+
+
+class TestParseDateTime:
+    """Tests for _parse_datetime helper."""
+
+    def test_valid_iso_with_z_suffix(self):
+        fallback = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        result = _parse_datetime("2023-06-15T10:30:00Z", fallback)
+        assert result.year == 2023
+        assert result.month == 6
+        assert result.tzinfo is not None
+
+    def test_naive_datetime_gets_fallback_tz(self):
+        fallback = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        result = _parse_datetime("2023-06-15T10:30:00", fallback)
+        assert result.year == 2023
+        assert result.tzinfo == timezone.utc
+
+    def test_invalid_string_returns_fallback(self):
+        fallback = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        assert _parse_datetime("not-a-date", fallback) == fallback
+
+    def test_empty_string_returns_fallback(self):
+        fallback = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        assert _parse_datetime("", fallback) == fallback
+
+    def test_none_returns_fallback(self):
+        fallback = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        assert _parse_datetime(None, fallback) == fallback
+
+
+class TestExtractUploadFields:
+    """Tests for _extract_upload_fields helper."""
+
+    def test_valid_fields(self):
+        fields = {
+            "deviceAssetId": "device-123",
+            "deviceId": "device-456",
+            "fileCreatedAt": "2023-06-15T10:30:00Z",
+            "fileModifiedAt": "2023-06-15T11:00:00Z",
+        }
+        result = _extract_upload_fields(fields)
+        assert result.device_asset_id == "device-123"
+        assert result.device_id == "device-456"
+        assert result.file_created_at.year == 2023
+
+    def test_missing_required_field_raises(self):
+        with pytest.raises(ValueError, match="Missing required"):
+            _extract_upload_fields({"deviceAssetId": "x", "deviceId": "y"})
+
+    def test_file_modified_at_defaults_to_created(self):
+        fields = {
+            "deviceAssetId": "x",
+            "deviceId": "y",
+            "fileCreatedAt": "2023-06-15T10:30:00Z",
+        }
+        result = _extract_upload_fields(fields)
+        assert result.file_modified_at == result.file_created_at
