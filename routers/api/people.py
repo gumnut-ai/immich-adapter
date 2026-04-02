@@ -416,11 +416,51 @@ async def merge_person(id: UUID, request: MergePersonDto) -> List[BulkIdResponse
 
 @router.put("/{id}/reassign")
 async def reassign_faces(
-    id: UUID, request: AssetFaceUpdateDto
+    id: UUID,
+    request: AssetFaceUpdateDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[PersonResponseDto]:
+    """Reassign faces from one person to other people.
+
+    For each item in the request, finds the face belonging to the source person
+    (URL {id}) on the given asset and reassigns it to the target person (body
+    personId). Returns the list of target people that received faces.
     """
-    Reassign faces to a person.
-    Returns an empty list.
-    """
-    # XXX understand how Gumnut and Immich handle face objects
-    return []
+    try:
+        gumnut_source_person_id = uuid_to_gumnut_person_id(id)
+        target_person_ids: set[str] = set()
+
+        for item in request.data:
+            gumnut_asset_id = uuid_to_gumnut_asset_id(item.assetId)
+            gumnut_target_person_id = uuid_to_gumnut_person_id(item.personId)
+
+            # Find the face belonging to the source person on this asset
+            faces_page = await client.faces.list(
+                person_id=gumnut_source_person_id,
+                asset_id=gumnut_asset_id,
+                limit=1,
+            )
+            if not faces_page.data:
+                logger.warning(
+                    "No face found for source person on asset, skipping",
+                    extra={
+                        "source_person_id": gumnut_source_person_id,
+                        "asset_id": gumnut_asset_id,
+                    },
+                )
+                continue
+
+            face_id = faces_page.data[0].id
+            await client.faces.update(face_id, person_id=gumnut_target_person_id)
+            target_person_ids.add(gumnut_target_person_id)
+
+        # Fetch and return the target people in Immich format
+        result: List[PersonResponseDto] = []
+        for person_id in target_person_ids:
+            gumnut_person = await client.people.retrieve(person_id)
+            result.append(convert_gumnut_person_to_immich(gumnut_person))
+
+        return result
+
+    except Exception as e:
+        raise map_gumnut_error(e, "Failed to reassign faces") from e

@@ -26,6 +26,7 @@ from routers.utils.gumnut_id_conversion import (
 )
 from routers.immich_models import (
     AssetFaceUpdateDto,
+    AssetFaceUpdateItem,
     BulkIdsDto,
     Error1,
     MergePersonDto,
@@ -979,13 +980,95 @@ class TestReassignFaces:
     """Test the reassign_faces endpoint."""
 
     @pytest.mark.anyio
-    async def test_reassign_faces_stub(self, sample_uuid):
-        """Test reassign faces stub implementation."""
-        # Setup
+    async def test_reassign_faces_empty_data(self, sample_uuid):
+        """Test reassign with no face items returns empty list."""
+        mock_client = Mock()
         request = AssetFaceUpdateDto(data=[])
 
-        # Execute
-        result = await reassign_faces(sample_uuid, request)
+        result = await reassign_faces(sample_uuid, request, client=mock_client)
 
-        # Assert
-        assert result == []  # Stub implementation returns empty list
+        assert result == []
+
+    @pytest.mark.anyio
+    async def test_reassign_faces_success(
+        self, sample_uuid, sample_gumnut_person, mock_sync_cursor_page
+    ):
+        """Test successful face reassignment."""
+        target_uuid = uuid4()
+        asset_uuid = uuid4()
+
+        # Mock face found on source person's asset
+        mock_face = Mock()
+        mock_face.id = "face_abc123"
+        mock_face.person_id = uuid_to_gumnut_person_id(sample_uuid)
+
+        mock_client = Mock()
+        mock_client.faces.list = AsyncMock(
+            return_value=mock_sync_cursor_page([mock_face])
+        )
+        mock_client.faces.update = AsyncMock()
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
+
+        request = AssetFaceUpdateDto(
+            data=[AssetFaceUpdateItem(assetId=asset_uuid, personId=target_uuid)]
+        )
+
+        result = await reassign_faces(sample_uuid, request, client=mock_client)
+
+        # Verify face was looked up by source person + asset
+        mock_client.faces.list.assert_called_once_with(
+            person_id=uuid_to_gumnut_person_id(sample_uuid),
+            asset_id=uuid_to_gumnut_asset_id(asset_uuid),
+            limit=1,
+        )
+        # Verify face was reassigned to target person
+        mock_client.faces.update.assert_called_once_with(
+            "face_abc123", person_id=uuid_to_gumnut_person_id(target_uuid)
+        )
+        # Verify target person was fetched and returned
+        assert len(result) == 1
+        assert hasattr(result[0], "name")
+
+    @pytest.mark.anyio
+    async def test_reassign_faces_no_face_found_skips(
+        self, sample_uuid, mock_sync_cursor_page
+    ):
+        """Test that missing faces are skipped without error."""
+        target_uuid = uuid4()
+        asset_uuid = uuid4()
+
+        mock_client = Mock()
+        mock_client.faces.list = AsyncMock(
+            return_value=mock_sync_cursor_page([])  # No face found
+        )
+        mock_client.faces.update = AsyncMock()
+
+        request = AssetFaceUpdateDto(
+            data=[AssetFaceUpdateItem(assetId=asset_uuid, personId=target_uuid)]
+        )
+
+        result = await reassign_faces(sample_uuid, request, client=mock_client)
+
+        # Face update should not have been called
+        mock_client.faces.update.assert_not_called()
+        assert result == []
+
+    @pytest.mark.anyio
+    async def test_reassign_faces_api_error(self, sample_uuid):
+        """Test error handling during reassignment."""
+        target_uuid = uuid4()
+        asset_uuid = uuid4()
+
+        mock_client = Mock()
+        mock_client.faces.list = AsyncMock(
+            side_effect=Exception("500 Internal Server Error")
+        )
+
+        request = AssetFaceUpdateDto(
+            data=[AssetFaceUpdateItem(assetId=asset_uuid, personId=target_uuid)]
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await reassign_faces(sample_uuid, request, client=mock_client)
+
+        assert exc_info.value.status_code == 500
