@@ -711,6 +711,112 @@ class TestUploadAsset:
 
         mock_streaming.assert_called_once()
 
+    @pytest.mark.anyio
+    async def test_upload_strategy_threshold_boundary_uses_buffered(
+        self, mock_current_user
+    ):
+        """Content-Length exactly at threshold uses buffered (strict > comparison)."""
+        threshold = 100 * 1024 * 1024
+        mock_client = Mock()
+        mock_client.assets.create = AsyncMock(
+            side_effect=Exception("Asset already exists")
+        )
+
+        request = _make_mock_request(content_length=threshold)
+        settings = _make_mock_settings(threshold=threshold)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        # At boundary → buffered path (form() called)
+        request.form.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_upload_strategy_missing_content_length_uses_buffered(
+        self, mock_current_user
+    ):
+        """Missing Content-Length header falls through to buffered path."""
+        mock_client = Mock()
+        mock_client.assets.create = AsyncMock(
+            side_effect=Exception("Asset already exists")
+        )
+
+        request = _make_mock_request(content_length=1024)
+        # Remove content-length header to simulate missing
+        del request.headers["content-length"]
+        settings = _make_mock_settings(threshold=100 * 1024 * 1024)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        request.form.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_upload_strategy_invalid_content_length_uses_buffered(
+        self, mock_current_user
+    ):
+        """Non-numeric Content-Length falls through to buffered path."""
+        mock_client = Mock()
+        mock_client.assets.create = AsyncMock(
+            side_effect=Exception("Asset already exists")
+        )
+
+        request = _make_mock_request(content_length=1024)
+        request.headers["content-length"] = "not-a-number"
+        settings = _make_mock_settings(threshold=100 * 1024 * 1024)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        request.form.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_upload_strategy_threshold_zero_forces_streaming(
+        self, mock_current_user
+    ):
+        """threshold=0 forces all uploads to streaming regardless of size."""
+        request = Mock()
+        request.headers = {
+            "content-length": "1024",  # Small file
+            "content-type": "multipart/form-data; boundary=---abc123",
+        }
+
+        class _State:
+            jwt_token = "test-jwt-token"
+
+        request.state = _State()
+        settings = _make_mock_settings(threshold=0)
+
+        with patch(
+            "routers.api.assets._upload_streaming", new_callable=AsyncMock
+        ) as mock_streaming:
+            mock_streaming.return_value = AssetMediaResponseDto(
+                id=str(uuid4()), status=AssetMediaStatus.created
+            )
+            await upload_asset(
+                request=request,
+                client=Mock(),
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        mock_streaming.assert_called_once()
+
 
 class TestUpdateAssets:
     """Test the update_assets endpoint."""

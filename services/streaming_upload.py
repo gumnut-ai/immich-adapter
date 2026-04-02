@@ -66,7 +66,7 @@ class StreamingUploadPipeline:
     """Coordinates the three-thread streaming upload pipeline.
 
     Usage:
-        pipeline = StreamingUploadPipeline(request, settings, jwt_token)
+        pipeline = StreamingUploadPipeline(request, api_base_url, jwt_token)
         result = await pipeline.execute(extract_fields_fn)
         # result is the JSON dict from photos-api
         # pipeline.refreshed_token has the JWT if photos-api refreshed it
