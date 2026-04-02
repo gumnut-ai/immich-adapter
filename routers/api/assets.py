@@ -2,7 +2,7 @@ from typing import List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 import base64
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 import sentry_sdk
@@ -253,7 +253,11 @@ def _parse_datetime(value: str | None, fallback: datetime) -> datetime:
     if not value:
         return fallback
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        # Normalize naive datetimes to match the fallback's timezone
+        if dt.tzinfo is None and fallback.tzinfo is not None:
+            dt = dt.replace(tzinfo=fallback.tzinfo)
+        return dt
     except (ValueError, AttributeError):
         return fallback
 
@@ -280,7 +284,7 @@ def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
         )
 
     file_modified_at_str = fields.get("fileModifiedAt") or None
-    file_created_at = _parse_datetime(file_created_at_str, datetime.now())
+    file_created_at = _parse_datetime(file_created_at_str, datetime.now(timezone.utc))
     file_modified_at = _parse_datetime(file_modified_at_str, file_created_at)
 
     return UploadFields(device_asset_id, device_id, file_created_at, file_modified_at)

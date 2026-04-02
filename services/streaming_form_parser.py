@@ -172,7 +172,7 @@ class StreamingFormParser:
             self._pipe.close_writer()
         else:
             self._form_fields[self._current_field_name] = (
-                self._current_field_data.decode("utf-8")
+                self._current_field_data.decode("utf-8", errors="replace")
             )
 
     def mark_finalized(self) -> None:

@@ -335,7 +335,7 @@ class StreamingUploadPipeline:
                         logger.error(
                             "Parser error after upload completed",
                             extra={"error": str(self._parse_error)},
-                            exc_info=self._parse_error,
+                            exc_info=True,
                         )
 
                 span.set_data("upload.filename", self._form_parser.filename)
