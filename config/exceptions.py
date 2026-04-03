@@ -8,9 +8,10 @@ from fastapi.responses import JSONResponse
 
 
 async def _immich_http_exception_handler(
-    request: Request, exc: HTTPException
+    request: Request, exc: Exception
 ) -> JSONResponse:
     """Format HTTP errors in Immich's expected format."""
+    assert isinstance(exc, HTTPException)
     try:
         error_name = HTTPStatus(exc.status_code).phrase
     except ValueError:
@@ -33,4 +34,4 @@ def configure_exception_handlers(app: FastAPI) -> None:
     This function registers handlers that convert application exceptions
     to appropriate HTTP responses. Add new exception handlers here as needed.
     """
-    app.add_exception_handler(HTTPException, _immich_http_exception_handler)  # type: ignore
+    app.add_exception_handler(HTTPException, _immich_http_exception_handler)
