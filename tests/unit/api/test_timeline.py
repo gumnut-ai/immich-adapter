@@ -722,6 +722,55 @@ class TestGetTimeBucket:
             assert result["localOffsetHours"][3] == 0
 
 
+class TestTimezoneAwareTimeBucket:
+    """Test that timezone-aware timeBucket values are handled correctly.
+
+    The Immich client may send UTC-aware timestamps (e.g. "2025-10-01T00:00:00.000Z").
+    The adapter must strip timezone info so that date boundaries use naive local time,
+    consistent with how the counts endpoint groups by date_trunc("month", local_datetime).
+    """
+
+    @pytest.mark.anyio
+    async def test_utc_timebucket_stripped_to_naive(self, mock_sync_cursor_page):
+        """UTC-aware timeBucket produces the same naive boundaries as a naive one."""
+        mock_client = Mock()
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            await call_get_time_bucket(
+                timeBucket="2025-10-01T00:00:00.000Z", client=mock_client
+            )
+
+            mock_client.assets.list.assert_called_once_with(
+                extra_query={
+                    "local_datetime_after": "2025-10-01T00:00:00",
+                    "local_datetime_before": "2025-11-01T00:00:00",
+                }
+            )
+
+    @pytest.mark.anyio
+    async def test_positive_offset_timebucket_stripped_to_naive(
+        self, mock_sync_cursor_page
+    ):
+        """Timezone-aware timeBucket with positive offset is stripped to naive."""
+        mock_client = Mock()
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            await call_get_time_bucket(
+                timeBucket="2024-06-01T00:00:00+05:30", client=mock_client
+            )
+
+            mock_client.assets.list.assert_called_once_with(
+                extra_query={
+                    "local_datetime_after": "2024-06-01T00:00:00",
+                    "local_datetime_before": "2024-07-01T00:00:00",
+                }
+            )
+
+
 class TestDateRangeFiltering:
     """Test that date-range query parameters are computed correctly."""
 
