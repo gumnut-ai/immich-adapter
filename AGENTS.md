@@ -14,6 +14,13 @@
    - `uv run ty check` (type checking)
    - `uv run pytest` (tests)
 
+### Type Checking: ty and pyright coexistence
+
+- **ty** is the CI type checker (`uv run ty check`). It runs in CI and locally before committing.
+- **pyright** remains as the editor LSP (installed by the IDE extension, not in dev dependencies). It provides in-editor type checking and autocompletion.
+- The `unused-type-ignore-comment = "ignore"` rule in `pyproject.toml` prevents ty from flagging `# type: ignore` comments that exist for pyright's benefit.
+- When suppressing type errors, use bare `# type: ignore` — not `# type: ignore[code]` with pyright-specific codes (e.g., `[arg-type]`). ty does not recognize pyright error codes, so `# type: ignore[arg-type]` will not suppress the ty error.
+
 ## AI-Specific Behavior
 
 ### Comments
