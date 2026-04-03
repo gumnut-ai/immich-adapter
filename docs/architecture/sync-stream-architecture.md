@@ -1,5 +1,5 @@
 ---
-title: Sync Stream Architecture
+title: "Sync Stream Architecture"
 last-updated: 2026-04-02
 ---
 
