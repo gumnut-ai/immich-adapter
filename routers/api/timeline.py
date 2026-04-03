@@ -148,10 +148,12 @@ async def get_time_bucket(
 
     try:
         # Compute month boundaries from timeBucket for server-side date filtering.
-        # timeBucket is a naive local datetime from the Immich client (e.g. "2024-01-01T00:00:00").
-        # We pass naive timestamps to match the photos-api local_datetime column, which is also naive.
+        # The Immich client may send naive ("2024-01-01T00:00:00") or UTC-aware
+        # ("2024-01-01T00:00:00.000Z") timestamps. We always strip timezone info
+        # so boundaries are naive, matching the photos-api counts endpoint which
+        # groups by date_trunc("month", local_datetime) on the naive column.
         # Uses a half-open interval [month_start, next_month_start) for clean boundaries.
-        bucket_date = datetime.fromisoformat(timeBucket)
+        bucket_date = datetime.fromisoformat(timeBucket).replace(tzinfo=None)
         month_start = bucket_date.replace(
             day=1, hour=0, minute=0, second=0, microsecond=0
         )
