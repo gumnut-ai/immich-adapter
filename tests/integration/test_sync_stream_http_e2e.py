@@ -193,7 +193,7 @@ def create_asset_response(
     )
 
 
-def create_exif_response(asset_id: str, exif_data: dict) -> ExifResponse:
+def create_exif_response(asset_id: str, exif_data: dict) -> ExifResponse:  # type: ignore
     """Create an ExifResponse from test data."""
     return ExifResponse(
         asset_id=asset_id,
@@ -209,7 +209,7 @@ def create_exif_response(asset_id: str, exif_data: dict) -> ExifResponse:
     )
 
 
-def create_face_response(asset_id: str, face_data: dict) -> FaceResponse:
+def create_face_response(asset_id: str, face_data: dict) -> FaceResponse:  # type: ignore
     """Create a FaceResponse from test data."""
     return FaceResponse(
         id=face_data["id"],
@@ -253,7 +253,7 @@ def create_person_response(
     )
 
 
-def create_event(
+def create_event(  # type: ignore
     entity_type: str,
     entity_id: str,
     event_type: str,
@@ -293,7 +293,7 @@ def mock_session():
         is_pending_sync_reset=False,
     )
     # Mock the get_jwt method to return a usable token
-    session.get_jwt = Mock(return_value="real-jwt-token")
+    session.get_jwt = Mock(return_value="real-jwt-token")  # type: ignore
     return session
 
 
@@ -362,17 +362,17 @@ def mock_gumnut_client(mock_gumnut_user):
         # Create exif response (needed for both asset and exif entity fetching)
         exif_resp = None
         if asset_data.get("exif"):
-            exif_resp = create_exif_response(asset_data["id"], asset_data["exif"])
+            exif_resp = create_exif_response(asset_data["id"], asset_data["exif"])  # type: ignore
 
         # Create asset response with exif attached (for exif entity fetching)
         asset_resp = create_asset_response(asset_data, exif=exif_resp)
-        asset_responses[asset_data["id"]] = asset_resp
+        asset_responses[asset_data["id"]] = asset_resp  # type: ignore
 
         # Asset event
         mock_events["asset"].append(
             create_event(
                 entity_type="asset",
-                entity_id=asset_data["id"],
+                entity_id=asset_data["id"],  # type: ignore
                 event_type="asset_updated",
                 cursor=f"cursor_asset_{i}",
             )
@@ -383,7 +383,7 @@ def mock_gumnut_client(mock_gumnut_user):
             mock_events["exif"].append(
                 create_event(
                     entity_type="exif",
-                    entity_id=asset_data["id"],
+                    entity_id=asset_data["id"],  # type: ignore
                     event_type="exif_updated",
                     cursor=f"cursor_exif_{i}",
                 )
@@ -391,8 +391,8 @@ def mock_gumnut_client(mock_gumnut_user):
 
         # Face events
         for j, face_data in enumerate(asset_data.get("faces", [])):
-            face_resp = create_face_response(asset_data["id"], face_data)
-            face_responses[face_data["id"]] = face_resp
+            face_resp = create_face_response(asset_data["id"], face_data)  # type: ignore
+            face_responses[face_data["id"]] = face_resp  # type: ignore
             mock_events["face"].append(
                 create_event(
                     entity_type="face",
@@ -405,11 +405,11 @@ def mock_gumnut_client(mock_gumnut_user):
     # Album events
     for i, album_data in enumerate(TEST_ALBUMS_DATA):
         album_resp = create_album_response(album_data)
-        album_responses[album_data["id"]] = album_resp
+        album_responses[album_data["id"]] = album_resp  # type: ignore
         mock_events["album"].append(
             create_event(
                 entity_type="album",
-                entity_id=album_data["id"],
+                entity_id=album_data["id"],  # type: ignore
                 event_type="album_updated",
                 cursor=f"cursor_album_{i}",
             )
@@ -588,13 +588,13 @@ class TestSyncStreamHTTPE2E:
         # Note: exposure time uses EXPECTED_EXPOSURE_TIMES for known outputs
         expected_exif = {
             (
-                a["exif"]["make"],
-                a["exif"]["model"],
-                a["exif"]["lens_model"],
-                a["exif"]["f_number"],
-                a["exif"]["focal_length"],
-                a["exif"]["iso"],
-                EXPECTED_EXPOSURE_TIMES[a["id"]],
+                a["exif"]["make"],  # type: ignore
+                a["exif"]["model"],  # type: ignore
+                a["exif"]["lens_model"],  # type: ignore
+                a["exif"]["f_number"],  # type: ignore
+                a["exif"]["focal_length"],  # type: ignore
+                a["exif"]["iso"],  # type: ignore
+                EXPECTED_EXPOSURE_TIMES[a["id"]],  # type: ignore
             )
             for a in TEST_ASSETS_DATA
             if a.get("exif")
@@ -637,13 +637,13 @@ class TestSyncStreamHTTPE2E:
         expected_bounding_boxes = set()
         for asset in TEST_ASSETS_DATA:
             for face in asset.get("faces", []):
-                bb = face["bounding_box"]
+                bb = face["bounding_box"]  # type: ignore
                 expected_bounding_boxes.add(
                     (
-                        bb["x"],  # X1
-                        bb["y"],  # Y1
-                        bb["x"] + bb["w"],  # X2
-                        bb["y"] + bb["h"],  # Y2
+                        bb["x"],  # X1  # type: ignore
+                        bb["y"],  # Y1  # type: ignore
+                        bb["x"] + bb["w"],  # X2  # type: ignore
+                        bb["y"] + bb["h"],  # Y2  # type: ignore
                     )
                 )
 

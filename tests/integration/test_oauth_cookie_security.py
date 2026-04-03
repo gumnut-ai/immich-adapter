@@ -157,7 +157,7 @@ class TestOAuthCookieSecurity:
             updated_at=now,
             is_pending_sync_reset=False,
         )
-        mock_session.get_jwt = Mock(return_value="decrypted-jwt-token")
+        mock_session.get_jwt = Mock(return_value="decrypted-jwt-token")  # type: ignore
         mock_session_store.get_by_id.return_value = mock_session
         mock_session_store.update_stored_jwt.return_value = True
 

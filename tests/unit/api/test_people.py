@@ -47,7 +47,7 @@ def call_get_all_people(**kwargs):
         "withHidden": None,
     }
     defaults.update(kwargs)
-    return get_all_people(**defaults)
+    return get_all_people(**defaults)  # type: ignore
 
 
 class TestCreatePerson:

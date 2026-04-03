@@ -338,7 +338,7 @@ class TestSessionLookupErrors:
 
         mock_session_store = AsyncMock()
         session = create_test_session()
-        session.get_jwt = MagicMock(side_effect=JWTEncryptionError("decryption failed"))
+        session.get_jwt = MagicMock(side_effect=JWTEncryptionError("decryption failed"))  # type: ignore
         mock_session_store.get_by_id.return_value = session
 
         async def mock_get_session_store():

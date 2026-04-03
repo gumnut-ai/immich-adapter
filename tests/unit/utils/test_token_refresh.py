@@ -97,7 +97,7 @@ class TestTokenRefreshIntegration:
             updated_at=now,
             is_pending_sync_reset=False,
         )
-        mock_session.get_jwt = MagicMock(return_value="decrypted-jwt-token")
+        mock_session.get_jwt = MagicMock(return_value="decrypted-jwt-token")  # type: ignore
         store.get_by_id.return_value = mock_session
         store.update_stored_jwt.return_value = True
         return store

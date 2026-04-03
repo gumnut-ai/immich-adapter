@@ -28,11 +28,3 @@ exclude = ["tools/"]
 
 [tool.ty.rules]
 unused-type-ignore-comment = "ignore"
-
-[[tool.ty.overrides]]
-include = ["tests/"]
-
-[tool.ty.overrides.rules]
-invalid-argument-type = "ignore"
-invalid-assignment = "ignore"
-not-subscriptable = "ignore"
