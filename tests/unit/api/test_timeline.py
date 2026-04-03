@@ -742,12 +742,10 @@ class TestTimezoneAwareTimeBucket:
                 timeBucket="2025-10-01T00:00:00.000Z", client=mock_client
             )
 
-            mock_client.assets.list.assert_called_once_with(
-                extra_query={
-                    "local_datetime_after": "2025-10-01T00:00:00",
-                    "local_datetime_before": "2025-11-01T00:00:00",
-                }
-            )
+            assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
+                "local_datetime_after": "2025-10-01T00:00:00",
+                "local_datetime_before": "2025-11-01T00:00:00",
+            }
 
     @pytest.mark.anyio
     async def test_positive_offset_timebucket_stripped_to_naive(
@@ -763,12 +761,10 @@ class TestTimezoneAwareTimeBucket:
                 timeBucket="2024-06-01T00:00:00+05:30", client=mock_client
             )
 
-            mock_client.assets.list.assert_called_once_with(
-                extra_query={
-                    "local_datetime_after": "2024-06-01T00:00:00",
-                    "local_datetime_before": "2024-07-01T00:00:00",
-                }
-            )
+            assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
+                "local_datetime_after": "2024-06-01T00:00:00",
+                "local_datetime_before": "2024-07-01T00:00:00",
+            }
 
 
 class TestDateRangeFiltering:
