@@ -11,7 +11,7 @@
 
    - `uv run ruff format` (auto-fix formatting)
    - `uv run ruff check` (linting)
-   - `uv run pyright` (type checking)
+   - `uv run ty check` (type checking)
    - `uv run pytest` (tests)
 
 ## AI-Specific Behavior

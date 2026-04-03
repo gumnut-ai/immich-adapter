@@ -33,4 +33,4 @@ def configure_exception_handlers(app: FastAPI) -> None:
     This function registers handlers that convert application exceptions
     to appropriate HTTP responses. Add new exception handlers here as needed.
     """
-    app.add_exception_handler(HTTPException, _immich_http_exception_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(HTTPException, _immich_http_exception_handler)  # type: ignore

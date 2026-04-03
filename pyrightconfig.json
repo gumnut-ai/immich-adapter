@@ -1,7 +1,0 @@
-{
-  "typeCheckingMode": "basic",
-  "exclude": [
-    "tools/**",
-    ".venv/**"
-  ]
-}

@@ -94,7 +94,7 @@ See [docs/references/uvicorn-settings.md](docs/references/uvicorn-settings.md) f
 
 - **Lint**: `uv run ruff check --fix`
 - **Format**: `uv run ruff format`
-- **Type check**: `uv run pyright`
+- **Type check**: `uv run ty check`
 - **Test**: `uv run pytest`
 - **Test single file**: `uv run pytest tests/path/to/test_file.py::test_function_name`
 

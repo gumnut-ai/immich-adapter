@@ -183,7 +183,7 @@ async def get_features() -> ServerFeaturesDto:
 
 @router.get("/config")
 async def get_config() -> ServerConfigDto:
-    return ServerConfigDto(**fake_config)
+    return ServerConfigDto(**fake_config)  # type: ignore
 
 
 @router.get("/about")
@@ -193,7 +193,7 @@ async def get_about() -> ServerAboutResponseDto:
 
 @router.get("/storage")
 async def get_storage() -> ServerStorageResponseDto:
-    return ServerStorageResponseDto(**fake_storage)
+    return ServerStorageResponseDto(**fake_storage)  # type: ignore
 
 
 @router.get("/version-history")

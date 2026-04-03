@@ -107,7 +107,7 @@ class StreamingPipe(RawIOBase):
                 if elapsed >= _STALL_TIMEOUT_SECONDS:
                     return
 
-    def readinto(self, b: bytearray) -> int:
+    def readinto(self, b: bytearray) -> int:  # type: ignore
         """Read data into buffer. Called by httpx via RawIOBase protocol.
 
         Blocks until data is available or EOF/error is signaled.

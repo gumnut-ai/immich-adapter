@@ -231,11 +231,11 @@ async def update_person(
 
 @router.get("")
 async def get_all_people(
-    closestAssetId: UUID = Query(default=None),
-    closestPersonId: UUID = Query(default=None),
+    closestAssetId: UUID | None = Query(default=None),
+    closestPersonId: UUID | None = Query(default=None),
     page: int = Query(default=1, ge=1, type="number"),
     size: int = Query(default=500, ge=1, le=1000, type="number"),
-    withHidden: bool = Query(default=None),
+    withHidden: bool | None = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> PeopleResponseDto:
     """
