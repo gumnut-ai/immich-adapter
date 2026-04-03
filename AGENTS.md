@@ -1,3 +1,7 @@
+# Important
+
+Before starting work, read `README.md` for project setup and consult the Documentation Map below for relevant docs.
+
 # Pre-Commit Commands
 
 Run from the `immich-adapter/` directory:
@@ -11,9 +15,7 @@ Run from the `immich-adapter/` directory:
 
 This file is a concise quick-reference. Detailed content belongs in the appropriate `docs/` subdirectory, not here. Add new topics to the table below and create a corresponding doc file.
 
-Doc directories: `docs/architecture/` (system architecture), `docs/design-docs/` (design decisions with status frontmatter), `docs/references/` (coding patterns, conventions), `docs/guides/` (setup and workflow guides).
-
-Detailed docs are in the `docs/` directory. Consult these when working in the relevant areas:
+Detailed docs live in subdirectories: `docs/architecture/` (system architecture), `docs/design-docs/` (design decisions with status frontmatter), `docs/references/` (coding patterns, conventions), `docs/guides/` (setup and workflow guides). Consult these when working in the relevant areas:
 
 ## Architecture
 
