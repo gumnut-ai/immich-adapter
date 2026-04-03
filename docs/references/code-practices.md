@@ -17,9 +17,6 @@ Style, patterns, and conventions for the immich-adapter codebase.
 
 ## Project Conventions
 
-- **Emojis**: Only use emojis if the user explicitly requests it.
-- **Documentation files**: Never proactively create documentation files (*.md) unless explicitly requested.
-- **File creation**: Always prefer editing existing files over creating new ones.
 - **Comments**: Never reference internal issue tracker IDs (e.g., `GUM-123`) in code comments. This is a public repository and not everyone has access to our bug tracker. Comments on fixes should include all relevant context inline so that the reasoning is self-contained.
 - **Module organization**: `services/` is for stateful classes with methods (stores, pipelines, WebSocket handlers). `utils/` is for stateless utility functions and helpers. Don't put classes with state in `utils/`.
 - **Constructor parameters**: Accept specific parameters rather than the full `Settings` object in constructors. This keeps classes decoupled from the config layer and easier to test.

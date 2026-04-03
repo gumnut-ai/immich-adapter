@@ -9,7 +9,7 @@ The sync stream (`routers/api/sync/stream.py`) consumes events from photos-api a
 
 ## Two-Phase Ordering
 
-The stream yields all upserts first (in FK dependency order per `_SYNC_TYPE_ORDER`), then all deletes (in reverse FK order per `_DELETE_TYPE_ORDER`). This prevents FK constraint violations in the mobile client — parents exist before children reference them, and children are cleaned up before parents are removed. See `docs/design-docs/sync-stream-event-ordering.md` for the full design rationale and history.
+The stream yields all upserts first (in FK dependency order per `_SYNC_TYPE_ORDER`), then all deletes (in reverse FK order per `_DELETE_TYPE_ORDER`). This prevents FK constraint violations in the mobile client — parents exist before children reference them, and children are cleaned up before parents are removed. See the [sync stream event ordering design doc](../design-docs/sync-stream-event-ordering.md) for the full design rationale and history.
 
 ## Event Classification
 
