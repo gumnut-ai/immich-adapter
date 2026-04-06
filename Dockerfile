@@ -22,8 +22,8 @@ FROM ghcr.io/immich-app/immich-server:${IMMICH_VERSION} AS immich-source
 # ============================================================================
 FROM python:3.14-slim AS builder
 
-# Copy uv from official image
-COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /usr/local/bin/uv
+# Copy uv from official image (pinned by digest for reproducible builds)
+COPY --from=ghcr.io/astral-sh/uv:0.11.3@sha256:90bbb3c16635e9627f49eec6539f956d70746c409209041800a0280b93152823 /uv /usr/local/bin/uv
 
 # Set working directory
 WORKDIR /app
