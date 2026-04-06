@@ -17,6 +17,11 @@ dependencies = [
     "user-agents>=2.2.0",
 ]
 
+[tool.uv]
+exclude-newer = "14 days"
+# First-party SDK publishes frequently; exempt from the cooldown window.
+exclude-newer-package = { gumnut-sdk = false }
+
 [dependency-groups]
 dev = [
     "pyright>=1.1.403",
