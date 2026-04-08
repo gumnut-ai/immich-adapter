@@ -901,6 +901,46 @@ class TestUploadAsset:
 
         mock_streaming.assert_called_once()
 
+    @pytest.mark.anyio
+    async def test_streaming_upload_duplicate_returns_real_id(
+        self, sample_uuid, mock_current_user
+    ):
+        """Test that streaming path returns real asset ID for duplicates (HTTP 200)."""
+        gumnut_id = uuid_to_gumnut_asset_id(sample_uuid)
+
+        request = Mock()
+        request.headers = {
+            "content-length": str(300 * 1024 * 1024),
+            "content-type": "multipart/form-data; boundary=---abc123",
+        }
+
+        class _State:
+            jwt_token = "test-jwt-token"
+
+        request.state = _State()
+
+        settings = _make_mock_settings(threshold=100 * 1024 * 1024)
+
+        mock_pipeline_instance = Mock()
+        mock_pipeline_instance.execute = AsyncMock(
+            return_value={"id": gumnut_id, "_http_status": 200}
+        )
+
+        with patch(
+            "routers.api.assets.StreamingUploadPipeline",
+            return_value=mock_pipeline_instance,
+        ):
+            result = await upload_asset(
+                request=request,
+                client=Mock(),
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        assert result.body == f'{{"id":"{sample_uuid}","status":"duplicate"}}'.encode()
+
 
 class TestUpdateAssets:
     """Test the update_assets endpoint."""
