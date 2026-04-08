@@ -387,8 +387,6 @@ class TestUploadAsset:
     @pytest.mark.anyio
     async def test_upload_asset_success(self, sample_uuid, mock_current_user):
         """Test successful asset upload via buffered path."""
-        mock_client = Mock()
-
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
@@ -401,7 +399,15 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
+
+        mock_raw_response = Mock()
+        mock_raw_response.status_code = 201
+        mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
+
+        mock_client = Mock()
+        mock_client.assets.with_raw_response.create = AsyncMock(
+            return_value=mock_raw_response
+        )
 
         mock_file = Mock()
         mock_file.filename = "test.jpg"
@@ -423,15 +429,47 @@ class TestUploadAsset:
         assert isinstance(result, AssetMediaResponseDto)
         assert result.id == str(sample_uuid)
         assert result.status == AssetMediaStatus.created
-        mock_client.assets.create.assert_called_once()
-        call_kwargs = mock_client.assets.create.call_args
+        mock_client.assets.with_raw_response.create.assert_called_once()
+        call_kwargs = mock_client.assets.with_raw_response.create.call_args
         assert call_kwargs.kwargs["asset_data"][1] is mock_file.file
 
     @pytest.mark.anyio
-    async def test_upload_asset_duplicate(self, sample_uuid, mock_current_user):
-        """Test upload asset with duplicate error returns 200 with duplicate status."""
+    async def test_upload_asset_duplicate_returns_real_id(
+        self, sample_uuid, mock_current_user
+    ):
+        """Test that duplicate upload (HTTP 200 from photos-api) returns the real asset ID."""
+        mock_gumnut_asset = Mock()
+        mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+
+        mock_raw_response = Mock()
+        mock_raw_response.status_code = 200
+        mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
+
         mock_client = Mock()
-        mock_client.assets.create = AsyncMock(
+        mock_client.assets.with_raw_response.create = AsyncMock(
+            return_value=mock_raw_response
+        )
+
+        request = _make_mock_request()
+        settings = _make_mock_settings()
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            result = await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        assert result.body == f'{{"id":"{sample_uuid}","status":"duplicate"}}'.encode()
+
+    @pytest.mark.anyio
+    async def test_upload_asset_duplicate_error_fallback(self, mock_current_user):
+        """Test that unexpected duplicate errors fall back to placeholder UUID."""
+        mock_client = Mock()
+        mock_client.assets.with_raw_response.create = AsyncMock(
             side_effect=Exception("Asset already exists")
         )
 
@@ -454,10 +492,36 @@ class TestUploadAsset:
         )
 
     @pytest.mark.anyio
+    async def test_upload_asset_duplicate_error_extracts_id_from_body(
+        self, sample_uuid, mock_current_user
+    ):
+        """Test that error handler extracts real ID from SDK exception body."""
+        error = Exception("Asset already exists")
+        error.body = {"id": uuid_to_gumnut_asset_id(sample_uuid)}  # type: ignore[attr-defined]
+
+        mock_client = Mock()
+        mock_client.assets.with_raw_response.create = AsyncMock(side_effect=error)
+
+        request = _make_mock_request()
+        settings = _make_mock_settings()
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            result = await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        assert result.body == f'{{"id":"{sample_uuid}","status":"duplicate"}}'.encode()
+
+    @pytest.mark.anyio
     async def test_upload_asset_api_error(self, mock_current_user):
         """Test upload asset with API error."""
         mock_client = Mock()
-        mock_client.assets.create = AsyncMock(
+        mock_client.assets.with_raw_response.create = AsyncMock(
             side_effect=Exception("401 Invalid API key")
         )
 
@@ -480,8 +544,6 @@ class TestUploadAsset:
         self, sample_uuid, mock_current_user
     ):
         """Test that upload_asset emits on_upload_success and AssetUploadReadyV1 events."""
-        mock_client = Mock()
-
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
@@ -494,7 +556,15 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
+
+        mock_raw_response = Mock()
+        mock_raw_response.status_code = 201
+        mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
+
+        mock_client = Mock()
+        mock_client.assets.with_raw_response.create = AsyncMock(
+            return_value=mock_raw_response
+        )
 
         request = _make_mock_request()
         settings = _make_mock_settings()
@@ -543,7 +613,7 @@ class TestUploadAsset:
         assert isinstance(result, AssetMediaResponseDto)
         assert UUID(result.id)
         assert result.status == AssetMediaStatus.created
-        mock_client.assets.create.assert_not_called()
+        mock_client.assets.with_raw_response.create.assert_not_called()
 
     @pytest.mark.anyio
     async def test_upload_live_photo_mov_with_video_content_type_is_dropped(
@@ -572,13 +642,11 @@ class TestUploadAsset:
         assert isinstance(result, AssetMediaResponseDto)
         assert UUID(result.id)
         assert result.status == AssetMediaStatus.created
-        mock_client.assets.create.assert_not_called()
+        mock_client.assets.with_raw_response.create.assert_not_called()
 
     @pytest.mark.anyio
     async def test_upload_regular_video_proceeds(self, sample_uuid, mock_current_user):
         """Test that regular video uploads are not dropped."""
-        mock_client = Mock()
-
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
@@ -591,7 +659,15 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 10240
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
+
+        mock_raw_response = Mock()
+        mock_raw_response.status_code = 201
+        mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
+
+        mock_client = Mock()
+        mock_client.assets.with_raw_response.create = AsyncMock(
+            return_value=mock_raw_response
+        )
 
         mock_file = Mock()
         mock_file.filename = "video.mp4"
@@ -616,15 +692,13 @@ class TestUploadAsset:
         assert isinstance(result, AssetMediaResponseDto)
         assert result.id == str(sample_uuid)
         assert result.status == AssetMediaStatus.created
-        mock_client.assets.create.assert_called_once()
+        mock_client.assets.with_raw_response.create.assert_called_once()
 
     @pytest.mark.anyio
     async def test_upload_asset_websocket_error_does_not_fail_upload(
         self, sample_uuid, mock_current_user
     ):
         """Test that WebSocket emission errors don't fail the upload."""
-        mock_client = Mock()
-
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
@@ -637,7 +711,15 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.exif = None
         mock_gumnut_asset.people = []
-        mock_client.assets.create = AsyncMock(return_value=mock_gumnut_asset)
+
+        mock_raw_response = Mock()
+        mock_raw_response.status_code = 201
+        mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
+
+        mock_client = Mock()
+        mock_client.assets.with_raw_response.create = AsyncMock(
+            return_value=mock_raw_response
+        )
 
         request = _make_mock_request()
         settings = _make_mock_settings()
@@ -662,7 +744,7 @@ class TestUploadAsset:
     async def test_upload_strategy_selection_buffered(self, mock_current_user):
         """Test that small content-length selects buffered strategy."""
         mock_client = Mock()
-        mock_client.assets.create = AsyncMock(
+        mock_client.assets.with_raw_response.create = AsyncMock(
             side_effect=Exception("Asset already exists")
         )
 
@@ -720,7 +802,7 @@ class TestUploadAsset:
         """Content-Length exactly at threshold uses buffered (strict > comparison)."""
         threshold = 100 * 1024 * 1024
         mock_client = Mock()
-        mock_client.assets.create = AsyncMock(
+        mock_client.assets.with_raw_response.create = AsyncMock(
             side_effect=Exception("Asset already exists")
         )
 
@@ -744,7 +826,7 @@ class TestUploadAsset:
     ):
         """Missing Content-Length header falls through to buffered path."""
         mock_client = Mock()
-        mock_client.assets.create = AsyncMock(
+        mock_client.assets.with_raw_response.create = AsyncMock(
             side_effect=Exception("Asset already exists")
         )
 
@@ -769,7 +851,7 @@ class TestUploadAsset:
     ):
         """Non-numeric Content-Length falls through to buffered path."""
         mock_client = Mock()
-        mock_client.assets.create = AsyncMock(
+        mock_client.assets.with_raw_response.create = AsyncMock(
             side_effect=Exception("Asset already exists")
         )
 

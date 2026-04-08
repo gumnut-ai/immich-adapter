@@ -294,9 +294,18 @@ def _handle_upload_error(e: Exception) -> AssetMediaResponseDto | JSONResponse:
     """Map upload exceptions to Immich-compatible HTTP responses."""
     error_msg = str(e).lower()
     if "duplicate" in error_msg or "already exists" in error_msg:
+        # Try to extract the real asset ID from the exception body (SDK errors
+        # preserve the API response). Fall back to a placeholder UUID.
+        dup_id = "00000000-0000-0000-0000-000000000000"
+        body = getattr(e, "body", None)
+        if isinstance(body, dict) and body.get("id"):
+            try:
+                dup_id = str(safe_uuid_from_asset_id(body["id"]))
+            except Exception:
+                pass
         return JSONResponse(
             content={
-                "id": "00000000-0000-0000-0000-000000000000",
+                "id": dup_id,
                 "status": AssetMediaStatus.duplicate.value,
             },
             status_code=status.HTTP_200_OK,
@@ -471,7 +480,7 @@ async def _upload_buffered(
                 span.set_data("upload.filename", asset_data.filename)
                 span.set_data("upload.content_type", asset_data.content_type)
                 span.set_data("upload.strategy", "buffered")
-                gumnut_asset = await client.assets.create(
+                raw_response = await client.assets.with_raw_response.create(
                     asset_data=(
                         asset_data.filename,
                         asset_data.file,
@@ -483,7 +492,18 @@ async def _upload_buffered(
                     file_modified_at=file_modified_at,
                 )
 
+            gumnut_asset = await raw_response.parse()
             asset_uuid = safe_uuid_from_asset_id(gumnut_asset.id)
+
+            if raw_response.status_code == 200:
+                return JSONResponse(
+                    content={
+                        "id": str(asset_uuid),
+                        "status": AssetMediaStatus.duplicate.value,
+                    },
+                    status_code=status.HTTP_200_OK,
+                )
+
             await _emit_upload_events(gumnut_asset, current_user)
 
             return AssetMediaResponseDto(
@@ -532,9 +552,9 @@ async def _upload_streaming(
         result = await pipeline.execute(_extract_upload_fields)
 
         asset_id = result.get("id", "")
-        asset_status = result.get("status", "created")
+        http_status = result.pop("_http_status", 201)
 
-        if asset_status == AssetMediaStatus.duplicate.value:
+        if http_status == 200:
             dup_uuid = safe_uuid_from_asset_id(asset_id) if asset_id else UUID(int=0)
             return JSONResponse(
                 content={

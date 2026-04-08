@@ -288,7 +288,9 @@ class StreamingUploadPipeline:
         if new_token:
             self.refreshed_token = new_token
 
-        return response.json()
+        result = response.json()
+        result["_http_status"] = response.status_code
+        return result
 
     # --- Main orchestration ---
 
