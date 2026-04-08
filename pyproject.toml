@@ -17,6 +17,14 @@ dependencies = [
     "user-agents>=2.2.0",
 ]
 
+[tool.uv]
+# Supply chain guard: only resolve packages published ≥ 14 days ago.
+# Most compromised packages are detected and yanked within 1–2 weeks,
+# so this window lets the ecosystem catch problems before we pull them in.
+exclude-newer = "14 days"
+# First-party SDK publishes frequently; exempt from the cooldown window.
+exclude-newer-package = { gumnut-sdk = false }
+
 [dependency-groups]
 dev = [
     "pyright>=1.1.403",
