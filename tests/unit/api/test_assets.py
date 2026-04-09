@@ -466,58 +466,6 @@ class TestUploadAsset:
         assert result.body == f'{{"id":"{sample_uuid}","status":"duplicate"}}'.encode()
 
     @pytest.mark.anyio
-    async def test_upload_asset_duplicate_error_fallback(self, mock_current_user):
-        """Test that unexpected duplicate errors fall back to placeholder UUID."""
-        mock_client = Mock()
-        mock_client.assets.with_raw_response.create = AsyncMock(
-            side_effect=Exception("Asset already exists")
-        )
-
-        request = _make_mock_request()
-        settings = _make_mock_settings()
-
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            result = await upload_asset(
-                request=request,
-                client=mock_client,
-                current_user=mock_current_user,
-                settings=settings,
-            )
-
-        assert isinstance(result, JSONResponse)
-        assert result.status_code == 200
-        assert (
-            result.body
-            == b'{"id":"00000000-0000-0000-0000-000000000000","status":"duplicate"}'
-        )
-
-    @pytest.mark.anyio
-    async def test_upload_asset_duplicate_error_extracts_id_from_body(
-        self, sample_uuid, mock_current_user
-    ):
-        """Test that error handler extracts real ID from SDK exception body."""
-        error = Exception("Asset already exists")
-        error.body = {"id": uuid_to_gumnut_asset_id(sample_uuid)}  # type: ignore[attr-defined]
-
-        mock_client = Mock()
-        mock_client.assets.with_raw_response.create = AsyncMock(side_effect=error)
-
-        request = _make_mock_request()
-        settings = _make_mock_settings()
-
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            result = await upload_asset(
-                request=request,
-                client=mock_client,
-                current_user=mock_current_user,
-                settings=settings,
-            )
-
-        assert isinstance(result, JSONResponse)
-        assert result.status_code == 200
-        assert result.body == f'{{"id":"{sample_uuid}","status":"duplicate"}}'.encode()
-
-    @pytest.mark.anyio
     async def test_upload_asset_api_error(self, mock_current_user):
         """Test upload asset with API error."""
         mock_client = Mock()
@@ -745,20 +693,21 @@ class TestUploadAsset:
         """Test that small content-length selects buffered strategy."""
         mock_client = Mock()
         mock_client.assets.with_raw_response.create = AsyncMock(
-            side_effect=Exception("Asset already exists")
+            side_effect=Exception("test error")
         )
 
         # Content-Length 1024 < threshold 100MB → buffered
         request = _make_mock_request(content_length=1024)
         settings = _make_mock_settings(threshold=100 * 1024 * 1024)
 
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            await upload_asset(
-                request=request,
-                client=mock_client,
-                current_user=mock_current_user,
-                settings=settings,
-            )
+        with pytest.raises(HTTPException):
+            with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+                await upload_asset(
+                    request=request,
+                    client=mock_client,
+                    current_user=mock_current_user,
+                    settings=settings,
+                )
 
         # Buffered path was used (form() was called)
         request.form.assert_called_once()
@@ -803,19 +752,20 @@ class TestUploadAsset:
         threshold = 100 * 1024 * 1024
         mock_client = Mock()
         mock_client.assets.with_raw_response.create = AsyncMock(
-            side_effect=Exception("Asset already exists")
+            side_effect=Exception("test error")
         )
 
         request = _make_mock_request(content_length=threshold)
         settings = _make_mock_settings(threshold=threshold)
 
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            await upload_asset(
-                request=request,
-                client=mock_client,
-                current_user=mock_current_user,
-                settings=settings,
-            )
+        with pytest.raises(HTTPException):
+            with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+                await upload_asset(
+                    request=request,
+                    client=mock_client,
+                    current_user=mock_current_user,
+                    settings=settings,
+                )
 
         # At boundary → buffered path (form() called)
         request.form.assert_called_once()
@@ -827,7 +777,7 @@ class TestUploadAsset:
         """Missing Content-Length header falls through to buffered path."""
         mock_client = Mock()
         mock_client.assets.with_raw_response.create = AsyncMock(
-            side_effect=Exception("Asset already exists")
+            side_effect=Exception("test error")
         )
 
         request = _make_mock_request(content_length=1024)
@@ -835,13 +785,14 @@ class TestUploadAsset:
         del request.headers["content-length"]
         settings = _make_mock_settings(threshold=100 * 1024 * 1024)
 
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            await upload_asset(
-                request=request,
-                client=mock_client,
-                current_user=mock_current_user,
-                settings=settings,
-            )
+        with pytest.raises(HTTPException):
+            with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+                await upload_asset(
+                    request=request,
+                    client=mock_client,
+                    current_user=mock_current_user,
+                    settings=settings,
+                )
 
         request.form.assert_called_once()
 
@@ -852,20 +803,21 @@ class TestUploadAsset:
         """Non-numeric Content-Length falls through to buffered path."""
         mock_client = Mock()
         mock_client.assets.with_raw_response.create = AsyncMock(
-            side_effect=Exception("Asset already exists")
+            side_effect=Exception("test error")
         )
 
         request = _make_mock_request(content_length=1024)
         request.headers["content-length"] = "not-a-number"
         settings = _make_mock_settings(threshold=100 * 1024 * 1024)
 
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            await upload_asset(
-                request=request,
-                client=mock_client,
-                current_user=mock_current_user,
-                settings=settings,
-            )
+        with pytest.raises(HTTPException):
+            with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+                await upload_asset(
+                    request=request,
+                    client=mock_client,
+                    current_user=mock_current_user,
+                    settings=settings,
+                )
 
         request.form.assert_called_once()
 

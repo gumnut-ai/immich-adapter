@@ -291,26 +291,13 @@ def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
 
 
 def _handle_upload_error(e: Exception) -> AssetMediaResponseDto | JSONResponse:
-    """Map upload exceptions to Immich-compatible HTTP responses."""
+    """Map upload exceptions to Immich-compatible HTTP responses.
+
+    Note: Duplicate detection is handled upstream via HTTP status codes
+    (photos-api returns 200 for duplicates, 201 for new assets), not here.
+    """
     error_msg = str(e).lower()
-    if "duplicate" in error_msg or "already exists" in error_msg:
-        # Try to extract the real asset ID from the exception body (SDK errors
-        # preserve the API response). Fall back to a placeholder UUID.
-        dup_id = "00000000-0000-0000-0000-000000000000"
-        body = getattr(e, "body", None)
-        if isinstance(body, dict) and body.get("id"):
-            try:
-                dup_id = str(safe_uuid_from_asset_id(body["id"]))
-            except Exception:
-                pass
-        return JSONResponse(
-            content={
-                "id": dup_id,
-                "status": AssetMediaStatus.duplicate.value,
-            },
-            status_code=status.HTTP_200_OK,
-        )
-    elif check_for_error_by_code(e, 413) or "too large" in error_msg:
+    if check_for_error_by_code(e, 413) or "too large" in error_msg:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="Asset file too large",
