@@ -495,7 +495,7 @@ async def _upload_buffered(
             gumnut_asset = await raw_response.parse()
             asset_uuid = safe_uuid_from_asset_id(gumnut_asset.id)
 
-            if raw_response.status_code == 200:
+            if raw_response.status_code == status.HTTP_200_OK:
                 return JSONResponse(
                     content={
                         "id": str(asset_uuid),
@@ -552,9 +552,9 @@ async def _upload_streaming(
         result = await pipeline.execute(_extract_upload_fields)
 
         asset_id = result.get("id", "")
-        http_status = result.pop("_http_status", 201)
+        http_status = result.pop("_http_status", status.HTTP_201_CREATED)
 
-        if http_status == 200:
+        if http_status == status.HTTP_200_OK:
             dup_uuid = safe_uuid_from_asset_id(asset_id) if asset_id else UUID(int=0)
             return JSONResponse(
                 content={

@@ -289,7 +289,10 @@ class StreamingUploadPipeline:
             self.refreshed_token = new_token
 
         result = response.json()
-        result["_http_status"] = response.status_code
+        if isinstance(result, dict):
+            result["_http_status"] = response.status_code
+        else:
+            result = {"_http_status": response.status_code, "data": result}
         return result
 
     # --- Main orchestration ---
