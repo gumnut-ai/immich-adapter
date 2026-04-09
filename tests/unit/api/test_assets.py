@@ -1,5 +1,7 @@
 """Tests for assets.py endpoints."""
 
+import json
+
 import pytest
 from datetime import datetime, timezone
 from io import BytesIO
@@ -463,7 +465,10 @@ class TestUploadAsset:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
-        assert result.body == f'{{"id":"{sample_uuid}","status":"duplicate"}}'.encode()
+        assert json.loads(result.body) == {
+            "id": str(sample_uuid),
+            "status": "duplicate",
+        }
 
     @pytest.mark.anyio
     async def test_upload_asset_api_error(self, mock_current_user):
@@ -874,9 +879,8 @@ class TestUploadAsset:
         settings = _make_mock_settings(threshold=100 * 1024 * 1024)
 
         mock_pipeline_instance = Mock()
-        mock_pipeline_instance.execute = AsyncMock(
-            return_value={"id": gumnut_id, "_http_status": 200}
-        )
+        mock_pipeline_instance.execute = AsyncMock(return_value={"id": gumnut_id})
+        mock_pipeline_instance.last_status_code = 200
 
         with patch(
             "routers.api.assets.StreamingUploadPipeline",
@@ -891,7 +895,10 @@ class TestUploadAsset:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
-        assert result.body == f'{{"id":"{sample_uuid}","status":"duplicate"}}'.encode()
+        assert json.loads(result.body) == {
+            "id": str(sample_uuid),
+            "status": "duplicate",
+        }
 
 
 class TestUpdateAssets:
