@@ -290,27 +290,6 @@ def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
     return UploadFields(device_asset_id, device_id, file_created_at, file_modified_at)
 
 
-def _handle_upload_error(e: Exception) -> AssetMediaResponseDto | JSONResponse:
-    """Map upload exceptions to Immich-compatible HTTP responses.
-
-    Note: Duplicate detection is handled upstream via HTTP status codes
-    (photos-api returns 200 for duplicates, 201 for new assets), not here.
-    """
-    error_msg = str(e).lower()
-    if check_for_error_by_code(e, 413) or "too large" in error_msg:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Asset file too large",
-        )
-    elif check_for_error_by_code(e, 415) or "unsupported" in error_msg:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Unsupported media type",
-        )
-    else:
-        raise map_gumnut_error(e, "Failed to upload asset") from e
-
-
 async def _emit_upload_events(
     gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
@@ -510,7 +489,7 @@ async def _upload_buffered(
                 },
                 exc_info=True,
             )
-            return _handle_upload_error(e)
+            raise map_gumnut_error(e, "Failed to upload asset") from e
 
 
 async def _upload_streaming(
@@ -608,7 +587,7 @@ async def _upload_streaming(
             },
             exc_info=True,
         )
-        return _handle_upload_error(e)
+        raise map_gumnut_error(e, "Failed to upload asset") from e
 
 
 @router.put("", status_code=204)
