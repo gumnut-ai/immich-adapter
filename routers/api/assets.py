@@ -446,6 +446,9 @@ async def _upload_buffered(
                 span.set_data("upload.filename", asset_data.filename)
                 span.set_data("upload.content_type", asset_data.content_type)
                 span.set_data("upload.strategy", "buffered")
+                # Use with_raw_response to access the HTTP status code:
+                # photos-api returns 200 for duplicates, 201 for new assets,
+                # but the SDK parses both into the same AssetResponse type.
                 raw_response = await client.assets.with_raw_response.create(
                     asset_data=(
                         asset_data.filename,
