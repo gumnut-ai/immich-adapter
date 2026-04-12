@@ -465,7 +465,7 @@ class TestUploadAsset:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
-        assert json.loads(result.body) == {
+        assert json.loads(bytes(result.body)) == {
             "id": str(sample_uuid),
             "status": "duplicate",
         }
@@ -895,7 +895,7 @@ class TestUploadAsset:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
-        assert json.loads(result.body) == {
+        assert json.loads(bytes(result.body)) == {
             "id": str(sample_uuid),
             "status": "duplicate",
         }
