@@ -539,10 +539,21 @@ async def _upload_streaming(
         result = await pipeline.execute(_extract_upload_fields)
 
         asset_id = result.get("id", "")
-        http_status = pipeline.last_status_code or status.HTTP_201_CREATED
+
+        if pipeline.last_status_code is None:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Streaming pipeline did not capture upstream status code",
+            )
+        http_status = pipeline.last_status_code
 
         if http_status == status.HTTP_200_OK:
-            dup_uuid = safe_uuid_from_asset_id(asset_id) if asset_id else UUID(int=0)
+            if not asset_id:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Duplicate response from upstream missing asset ID",
+                )
+            dup_uuid = safe_uuid_from_asset_id(asset_id)
             return JSONResponse(
                 content={
                     "id": str(dup_uuid),

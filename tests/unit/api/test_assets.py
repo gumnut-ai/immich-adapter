@@ -900,6 +900,76 @@ class TestUploadAsset:
             "status": "duplicate",
         }
 
+    @pytest.mark.anyio
+    async def test_streaming_upload_duplicate_missing_id_raises(
+        self, mock_current_user
+    ):
+        """Test that streaming duplicate with no asset ID raises 502."""
+        request = Mock()
+        request.headers = {
+            "content-length": str(300 * 1024 * 1024),
+            "content-type": "multipart/form-data; boundary=---abc123",
+        }
+
+        class _State:
+            jwt_token = "test-jwt-token"
+
+        request.state = _State()
+
+        settings = _make_mock_settings(threshold=100 * 1024 * 1024)
+
+        mock_pipeline_instance = Mock()
+        mock_pipeline_instance.execute = AsyncMock(return_value={})
+        mock_pipeline_instance.last_status_code = 200
+
+        with patch(
+            "routers.api.assets.StreamingUploadPipeline",
+            return_value=mock_pipeline_instance,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await upload_asset(
+                    request=request,
+                    client=Mock(),
+                    current_user=mock_current_user,
+                    settings=settings,
+                )
+
+        assert exc_info.value.status_code == 502
+
+    @pytest.mark.anyio
+    async def test_streaming_upload_missing_status_code_raises(self, mock_current_user):
+        """Test that missing pipeline.last_status_code raises 502."""
+        request = Mock()
+        request.headers = {
+            "content-length": str(300 * 1024 * 1024),
+            "content-type": "multipart/form-data; boundary=---abc123",
+        }
+
+        class _State:
+            jwt_token = "test-jwt-token"
+
+        request.state = _State()
+
+        settings = _make_mock_settings(threshold=100 * 1024 * 1024)
+
+        mock_pipeline_instance = Mock()
+        mock_pipeline_instance.execute = AsyncMock(return_value={"id": "asset_123"})
+        mock_pipeline_instance.last_status_code = None
+
+        with patch(
+            "routers.api.assets.StreamingUploadPipeline",
+            return_value=mock_pipeline_instance,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await upload_asset(
+                    request=request,
+                    client=Mock(),
+                    current_user=mock_current_user,
+                    settings=settings,
+                )
+
+        assert exc_info.value.status_code == 502
+
 
 class TestUpdateAssets:
     """Test the update_assets endpoint."""
