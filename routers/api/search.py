@@ -1,3 +1,4 @@
+import logging
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from uuid import UUID
@@ -27,8 +28,10 @@ from routers.immich_models import (
     StatisticsSearchDto,
     UserResponseDto,
 )
-from routers.api.timeline import _fetch_asset_counts
+from routers.api.timeline import fetch_asset_counts
 from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/search",
@@ -145,7 +148,7 @@ async def search_asset_statistics(
 ) -> SearchStatisticsResponseDto:
     """Get asset count statistics."""
     try:
-        buckets = await _fetch_asset_counts(client)
+        buckets = await fetch_asset_counts(client)
         total = sum(bucket.count for bucket in buckets)
         return SearchStatisticsResponseDto(total=total)
     except Exception as e:

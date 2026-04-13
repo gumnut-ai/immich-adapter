@@ -30,7 +30,7 @@ router = APIRouter(
 )
 
 
-async def _fetch_asset_counts(
+async def fetch_asset_counts(
     client: AsyncGumnut,
     *,
     album_id: str | None = None,
@@ -87,7 +87,7 @@ async def get_time_buckets(
         album_id = uuid_to_gumnut_album_id(albumId) if albumId else None
         person_id = uuid_to_gumnut_person_id(personId) if personId else None
 
-        raw_buckets = await _fetch_asset_counts(
+        raw_buckets = await fetch_asset_counts(
             client, album_id=album_id, person_id=person_id
         )
 

@@ -260,6 +260,45 @@ class TestSearchMetadata:
         assert call_kwargs["person_ids"] == [gumnut_person_id]
 
     @pytest.mark.anyio
+    async def test_converts_search_results_to_immich_assets(self, mock_current_user):
+        """Test that non-empty search results are converted via convert_gumnut_asset_to_immich."""
+        from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
+
+        asset_uuid = uuid4()
+        gumnut_asset = Mock()
+        gumnut_asset.id = uuid_to_gumnut_asset_id(asset_uuid)
+        gumnut_asset.original_file_name = "sunset.jpg"
+        gumnut_asset.mime_type = "image/jpeg"
+        gumnut_asset.checksum = "abc123"
+        gumnut_asset.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        gumnut_asset.updated_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        gumnut_asset.width = 1920
+        gumnut_asset.height = 1080
+        gumnut_asset.file_size_bytes = 1024000
+        gumnut_asset.exif = None
+        gumnut_asset.people = []
+
+        search_item = Mock()
+        search_item.asset = gumnut_asset
+
+        search_response = Mock()
+        search_response.data = [search_item]
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = MetadataSearchDto(description="sunset")
+
+        result = await search_assets(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.assets.count == 1
+        assert len(result.assets.items) == 1
+        assert result.assets.items[0].id == str(asset_uuid)
+        assert result.assets.items[0].originalFileName == "sunset.jpg"
+
+    @pytest.mark.anyio
     async def test_sdk_error_mapped_to_http_exception(self, mock_current_user):
         """Test that SDK errors are mapped via map_gumnut_error."""
         from fastapi import HTTPException
