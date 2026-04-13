@@ -2,7 +2,7 @@ import logging
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from gumnut import AsyncGumnut
 
 from routers.immich_models import (
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 @router.delete("/{id}", status_code=204)
 async def delete_face(
     id: UUID,
-    request: AssetFaceDeleteDto,
+    request: AssetFaceDeleteDto | None = Body(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ):
     """Deletes a specific face by ID."""

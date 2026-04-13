@@ -46,6 +46,19 @@ class TestDeleteFace:
         mock_client.faces.delete.assert_called_once_with(gumnut_face_id)
 
     @pytest.mark.anyio
+    async def test_deletes_face_without_body(self):
+        """Test that delete_face works when no request body is provided."""
+        face_uuid = uuid4()
+        gumnut_face_id = uuid_to_gumnut_face_id(face_uuid)
+
+        mock_client = Mock()
+        mock_client.faces.delete = AsyncMock()
+
+        await delete_face(id=face_uuid, request=None, client=mock_client)
+
+        mock_client.faces.delete.assert_called_once_with(gumnut_face_id)
+
+    @pytest.mark.anyio
     async def test_sdk_error_mapped_to_http_exception(self):
         """Test that SDK errors are mapped via map_gumnut_error."""
         from fastapi import HTTPException
