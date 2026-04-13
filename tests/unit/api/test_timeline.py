@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from routers.api.timeline import (
     get_time_buckets,
     get_time_bucket,
-    _fetch_asset_counts,
+    fetch_asset_counts,
 )
 from routers.immich_models import (
     AssetOrder,
@@ -90,7 +90,7 @@ def call_get_time_bucket(timeBucket, **kwargs):
 
 
 class TestFetchAssetCounts:
-    """Test the _fetch_asset_counts helper."""
+    """Test the fetch_asset_counts helper."""
 
     @pytest.mark.anyio
     async def test_single_page(self):
@@ -105,7 +105,7 @@ class TestFetchAssetCounts:
             )
         )
 
-        result = await _fetch_asset_counts(mock_client)
+        result = await fetch_asset_counts(mock_client)
 
         assert len(result) == 2
         assert result[0].count == 5
@@ -126,7 +126,7 @@ class TestFetchAssetCounts:
             ]
         )
 
-        result = await _fetch_asset_counts(mock_client)
+        result = await fetch_asset_counts(mock_client)
 
         assert len(result) == 2
         assert mock_client.assets.counts.call_count == 2
@@ -140,7 +140,7 @@ class TestFetchAssetCounts:
         mock_client = Mock()
         mock_client.assets.counts = AsyncMock(return_value=_make_counts_response([]))
 
-        await _fetch_asset_counts(mock_client, album_id="album-123")
+        await fetch_asset_counts(mock_client, album_id="album-123")
 
         kwargs = mock_client.assets.counts.call_args[1]
         assert kwargs["album_id"] == "album-123"
@@ -151,7 +151,7 @@ class TestFetchAssetCounts:
         mock_client = Mock()
         mock_client.assets.counts = AsyncMock(return_value=_make_counts_response([]))
 
-        await _fetch_asset_counts(mock_client, person_id="person-456")
+        await fetch_asset_counts(mock_client, person_id="person-456")
 
         kwargs = mock_client.assets.counts.call_args[1]
         assert kwargs["person_id"] == "person-456"
@@ -162,7 +162,7 @@ class TestFetchAssetCounts:
         mock_client = Mock()
         mock_client.assets.counts = AsyncMock(return_value=_make_counts_response([]))
 
-        result = await _fetch_asset_counts(mock_client)
+        result = await fetch_asset_counts(mock_client)
 
         assert result == []
 

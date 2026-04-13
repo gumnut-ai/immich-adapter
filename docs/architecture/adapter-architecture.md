@@ -313,9 +313,10 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 |------|-----------|-------|
 | Assets | Upload, download (original + thumbnail), delete, bulk delete, existence check, statistics | Streaming downloads via `StreamingResponse` |
 | Albums | CRUD, add/remove assets, statistics | User sharing not supported (returns 501) |
-| People | CRUD, list with pagination/sort/filter, thumbnails, statistics | Merge and face reassign are stubs |
+| People | CRUD, list with pagination/sort/filter, thumbnails, statistics | Merge is a stub |
+| Faces | List, delete, reassign | Create is a stub |
 | Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling |
-| Search | Smart search (text query) | Metadata search, places, suggestions are stubs |
+| Search | Smart search, metadata search, person search, statistics | Places, suggestions, explore are stubs |
 | Sync | Full sync, delta sync, stream, ack | Two-phase ordering, checkpoint management |
 | Auth | OAuth login/callback, logout, session management | Clerk OAuth via Photos API |
 | WebSockets | Real-time upload/delete notifications | Socket.IO with room-based messaging |
@@ -324,7 +325,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 
 | Area | Why stubbed |
 |------|-------------|
-| Faces | List faces per asset is implemented; create, update, delete, reassign are stubs |
+| Faces | Create is a stub (SDK doesn't support face creation) |
 | Libraries | Gumnut has a different library model |
 | Tags | Not yet implemented in Gumnut |
 | Map | Location data not yet surfaced |
