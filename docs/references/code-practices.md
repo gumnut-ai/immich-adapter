@@ -79,8 +79,9 @@ asset_id: Annotated[UUID | SkipJsonSchema[None], Query(alias="assetId")] = None,
 1. **Generate models**: Use `generate_immich_models.py` to create up-to-date Pydantic models (see [development tools](development-tools.md))
 2. **Import models**: Use generated models from `routers.immich_models` for type safety
 3. **Define parameters**: Follow the parameter conventions above
-4. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
-5. **Test endpoints**: Verify responses match Immich API expectations
+4. **Verify parameter semantics**: Check the Immich OpenAPI spec (`https://api.immich.app/endpoints/`) or source code to confirm what each URL path and body parameter represents. URL `{id}` parameters don't always refer to the entity being queried — e.g., in `PUT /people/{id}/reassign`, `{id}` is the target person (reassign TO), not the source.
+5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
+6. **Test endpoints**: Verify responses match Immich API expectations
 
 ### Exception Handling
 
