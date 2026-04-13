@@ -36,23 +36,6 @@ router = APIRouter(
 )
 
 
-fake_search_response = SearchResponseDto(
-    albums=SearchAlbumResponseDto(
-        count=0,
-        facets=[],
-        items=[],
-        total=0,
-    ),
-    assets=SearchAssetResponseDto(
-        count=0,
-        facets=[],
-        items=[],
-        nextPage="",
-        total=0,
-    ),
-)
-
-
 @router.get("/explore")
 async def get_explore_data(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
@@ -118,7 +101,7 @@ async def search_person(
     """Search for people by name."""
     try:
         people = [p async for p in client.people.list(name=name)]
-        if not withHidden:
+        if withHidden is False:
             people = [p for p in people if not p.is_hidden]
         return [convert_gumnut_person_to_immich(p) for p in people]
     except Exception as e:
@@ -161,8 +144,10 @@ async def search_asset_statistics(
 ) -> SearchStatisticsResponseDto:
     """Get asset count statistics."""
     try:
-        counts = await client.assets.counts(limit=200)
-        total = sum(bucket.count for bucket in counts.data)
+        from routers.api.timeline import _fetch_asset_counts
+
+        buckets = await _fetch_asset_counts(client)
+        total = sum(bucket.count for bucket in buckets)
         return SearchStatisticsResponseDto(total=total)
     except Exception as e:
         raise map_gumnut_error(e, "Failed to get search statistics") from e
