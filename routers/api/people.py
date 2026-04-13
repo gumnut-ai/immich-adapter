@@ -425,13 +425,16 @@ async def reassign_faces(
     The URL {id} is the target person (who to reassign faces TO).
     For each item in the request, finds the face belonging to the source person
     (body personId) on the given asset and reassigns it to the target person
-    (URL {id}). Returns the target person for each item that had faces reassigned.
+    (URL {id}). Returns the target person if any faces were reassigned.
     """
     try:
         gumnut_target_person_id = uuid_to_gumnut_person_id(id)
-        target_person: PersonResponseDto | None = None
-        results: List[PersonResponseDto] = []
 
+        # Validate and cache the target person before modifying any faces
+        gumnut_person = await client.people.retrieve(gumnut_target_person_id)
+        target_person = convert_gumnut_person_to_immich(gumnut_person)
+
+        any_reassigned = False
         for item in request.data:
             gumnut_asset_id = uuid_to_gumnut_asset_id(item.assetId)
             gumnut_source_person_id = uuid_to_gumnut_person_id(item.personId)
@@ -457,14 +460,9 @@ async def reassign_faces(
 
             for face in faces:
                 await client.faces.update(face.id, person_id=gumnut_target_person_id)
+            any_reassigned = True
 
-            # Fetch target person once, return for each successful item
-            if target_person is None:
-                gumnut_person = await client.people.retrieve(gumnut_target_person_id)
-                target_person = convert_gumnut_person_to_immich(gumnut_person)
-            results.append(target_person)
-
-        return results
+        return [target_person] if any_reassigned else []
 
     except HTTPException:
         raise

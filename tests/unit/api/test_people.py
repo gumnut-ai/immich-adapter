@@ -980,9 +980,10 @@ class TestReassignFaces:
     """Test the reassign_faces endpoint."""
 
     @pytest.mark.anyio
-    async def test_reassign_faces_empty_data(self, sample_uuid):
+    async def test_reassign_faces_empty_data(self, sample_uuid, sample_gumnut_person):
         """Test reassign with no face items returns empty list."""
         mock_client = Mock()
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
         request = AssetFaceUpdateDto(data=[])
 
         result = await reassign_faces(sample_uuid, request, client=mock_client)
@@ -1033,7 +1034,7 @@ class TestReassignFaces:
 
     @pytest.mark.anyio
     async def test_reassign_faces_no_face_found_skips(
-        self, sample_uuid, mock_sync_cursor_page
+        self, sample_uuid, sample_gumnut_person, mock_sync_cursor_page
     ):
         """Test that missing faces are skipped without error."""
         target_uuid = sample_uuid  # URL param = target
@@ -1041,6 +1042,7 @@ class TestReassignFaces:
         asset_uuid = uuid4()
 
         mock_client = Mock()
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
         mock_client.faces.list = Mock(
             return_value=mock_sync_cursor_page([])  # No face found
         )
@@ -1057,13 +1059,14 @@ class TestReassignFaces:
         assert result == []
 
     @pytest.mark.anyio
-    async def test_reassign_faces_api_error(self, sample_uuid):
+    async def test_reassign_faces_api_error(self, sample_uuid, sample_gumnut_person):
         """Test error handling during reassignment."""
         target_uuid = sample_uuid  # URL param = target
         source_uuid = uuid4()  # body personId = source
         asset_uuid = uuid4()
 
         mock_client = Mock()
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
         mock_client.faces.list = Mock(
             side_effect=Exception("500 Internal Server Error")
         )
@@ -1116,7 +1119,7 @@ class TestReassignFaces:
 
     @pytest.mark.anyio
     async def test_reassign_faces_multiple_sources_to_single_target(
-        self, sample_uuid, mock_sync_cursor_page
+        self, sample_uuid, sample_gumnut_person, mock_sync_cursor_page
     ):
         """Multiple items with different source persons all reassign to the URL target."""
         target_uuid = sample_uuid  # URL param = single target
@@ -1132,6 +1135,7 @@ class TestReassignFaces:
 
         # Return one face per asset
         mock_client = Mock()
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
         mock_client.faces.list = Mock(
             side_effect=[
                 mock_sync_cursor_page([mock_face_a]),
@@ -1140,22 +1144,6 @@ class TestReassignFaces:
             ]
         )
         mock_client.faces.update = AsyncMock()
-
-        # Mock target person
-        target_person = Mock()
-        target_person.id = uuid_to_gumnut_person_id(target_uuid)
-        target_person.name = "Target Person"
-        target_person.birth_date = None
-        target_person.is_favorite = False
-        target_person.is_hidden = False
-        target_person.thumbnail_face_id = None
-        target_person.thumbnail_face_url = None
-        target_person.asset_urls = None
-        target_person.asset_count = 1
-        target_person.created_at = datetime.now(timezone.utc)
-        target_person.updated_at = datetime.now(timezone.utc)
-
-        mock_client.people.retrieve = AsyncMock(return_value=target_person)
 
         # Request: faces from source_1 and source_2 across 3 assets
         request = AssetFaceUpdateDto(
@@ -1179,9 +1167,9 @@ class TestReassignFaces:
         assert list_calls[1][1]["person_id"] == uuid_to_gumnut_person_id(source_2)
         assert list_calls[2][1]["person_id"] == uuid_to_gumnut_person_id(source_1)
 
-        # Result: target person returned once per successful item
-        assert len(result) == 3
-        assert all(r.name == "Target Person" for r in result)
+        # Result: target person returned once (not per item)
+        assert len(result) == 1
+        assert hasattr(result[0], "name")
 
-        # Target person fetched only once (cached)
+        # Target person fetched once upfront
         assert mock_client.people.retrieve.call_count == 1
