@@ -1,5 +1,4 @@
 import logging
-from datetime import date
 from typing import List
 from uuid import UUID
 
@@ -19,6 +18,8 @@ from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_face_id,
     uuid_to_gumnut_asset_id,
+    uuid_to_gumnut_face_id,
+    uuid_to_gumnut_person_id,
 )
 from routers.utils.person_conversion import convert_gumnut_person_to_immich
 
@@ -32,37 +33,35 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 
-fake_person_response: PersonResponseDto = PersonResponseDto(
-    birthDate=date(1970, 1, 1),
-    id="d6773835-4b91-4c7d-8667-26bd5daa1a45",
-    isHidden=False,
-    name="Ted Mao",
-    thumbnailPath="",
-)
-
-
 @router.delete("/{id}", status_code=204)
 async def delete_face(
     id: UUID,
     request: AssetFaceDeleteDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ):
-    """
-    Deletes a specific face by ID.
-    This is a stub implementation that returns a empty response.
-    """
-    return
+    """Deletes a specific face by ID."""
+    try:
+        gumnut_face_id = uuid_to_gumnut_face_id(id)
+        await client.faces.delete(gumnut_face_id)
+    except Exception as e:
+        raise map_gumnut_error(e, "Failed to delete face") from e
 
 
 @router.put("/{id}", response_model=PersonResponseDto)
 async def reassign_faces_by_id(
     id: UUID,
     request: FaceDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ):
-    """
-    Reassigns a face to a different person.
-    This is a stub implementation that returns a empty response.
-    """
-    return fake_person_response
+    """Reassigns a face to a different person."""
+    try:
+        gumnut_face_id = uuid_to_gumnut_face_id(id)
+        gumnut_person_id = uuid_to_gumnut_person_id(request.id)
+        await client.faces.update(gumnut_face_id, person_id=gumnut_person_id)
+        gumnut_person = await client.people.retrieve(gumnut_person_id)
+        return convert_gumnut_person_to_immich(gumnut_person)
+    except Exception as e:
+        raise map_gumnut_error(e, "Failed to reassign face") from e
 
 
 @router.get("")

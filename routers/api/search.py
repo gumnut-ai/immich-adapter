@@ -6,7 +6,9 @@ from gumnut import AsyncGumnut
 
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.current_user import get_current_user
-from routers.utils.error_mapping import check_for_error_by_code
+from routers.utils.error_mapping import check_for_error_by_code, map_gumnut_error
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_person_id
+from routers.utils.person_conversion import convert_gumnut_person_to_immich
 from routers.immich_models import (
     PersonResponseDto,
     SearchAlbumResponseDto,
@@ -113,12 +115,14 @@ async def search_person(
     withHidden: bool = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[PersonResponseDto]:
-    """
-    Return a list of people.
-    Gumnut currently does not support searching for people by name, so this is a stub implementation that returns an empty list.
-    """
-
-    return []
+    """Search for people by name."""
+    try:
+        people = [p async for p in client.people.list(name=name)]
+        if not withHidden:
+            people = [p for p in people if not p.is_hidden]
+        return [convert_gumnut_person_to_immich(p) for p in people]
+    except Exception as e:
+        raise map_gumnut_error(e, "Failed to search people") from e
 
 
 @router.get("/places")
@@ -155,23 +159,58 @@ async def search_asset_statistics(
     request: StatisticsSearchDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> SearchStatisticsResponseDto:
-    """
-    Get search statistics.
-    This is a stub implementation that returns zero counts.
-    """
-    return SearchStatisticsResponseDto(total=0)
+    """Get asset count statistics."""
+    try:
+        counts = await client.assets.counts(limit=200)
+        total = sum(bucket.count for bucket in counts.data)
+        return SearchStatisticsResponseDto(total=total)
+    except Exception as e:
+        raise map_gumnut_error(e, "Failed to get search statistics") from e
 
 
 @router.post("/metadata")
 async def search_assets(
     request: MetadataSearchDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> SearchResponseDto:
-    """
-    Search for assets by metadata.
-    This is a stub implementation that returns empty results.
-    """
-    return fake_search_response
+    """Search for assets by metadata filters."""
+    try:
+        person_ids = None
+        if request.personIds:
+            person_ids = [uuid_to_gumnut_person_id(pid) for pid in request.personIds]
+
+        limit = int(request.size) if request.size else 50
+        page = int(request.page) if request.page else 1
+
+        gumnut_results = await client.search.search(
+            query=request.description,
+            captured_after=request.takenAfter,
+            captured_before=request.takenBefore,
+            person_ids=person_ids,
+            limit=limit,
+            page=page,
+        )
+
+        immich_assets = []
+        if gumnut_results and gumnut_results.data:
+            for item in gumnut_results.data:
+                immich_assets.append(
+                    convert_gumnut_asset_to_immich(item.asset, current_user)
+                )
+
+        return SearchResponseDto(
+            albums=SearchAlbumResponseDto(count=0, facets=[], items=[], total=0),
+            assets=SearchAssetResponseDto(
+                count=len(immich_assets),
+                facets=[],
+                items=immich_assets,
+                nextPage="",
+                total=len(immich_assets),
+            ),
+        )
+    except Exception as e:
+        raise map_gumnut_error(e, "Failed to search assets by metadata") from e
 
 
 @router.post("/smart")
