@@ -9,8 +9,6 @@ from routers.api.search import search_person, search_assets, search_asset_statis
 from routers.immich_models import (
     MetadataSearchDto,
     StatisticsSearchDto,
-    UserAvatarColor,
-    UserResponseDto,
 )
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_person_id,
@@ -39,18 +37,6 @@ def _make_count_bucket(count: int, time_bucket: datetime) -> Mock:
     bucket.count = count
     bucket.time_bucket = time_bucket
     return bucket
-
-
-def _make_current_user() -> UserResponseDto:
-    """Create a mock current user."""
-    return UserResponseDto(
-        id=str(uuid4()),
-        email="test@example.com",
-        name="Test User",
-        profileImagePath="",
-        avatarColor=UserAvatarColor.primary,
-        profileChangedAt=datetime.now(timezone.utc),
-    )
 
 
 class TestSearchPerson:
@@ -205,7 +191,7 @@ class TestSearchMetadata:
     """Test the search_assets (metadata) endpoint."""
 
     @pytest.mark.anyio
-    async def test_passes_filters_to_sdk(self):
+    async def test_passes_filters_to_sdk(self, mock_current_user):
         """Test that metadata search passes filters to SDK correctly."""
         search_response = Mock()
         search_response.data = []
@@ -220,10 +206,9 @@ class TestSearchMetadata:
             size=10,
             page=1,
         )
-        current_user = _make_current_user()
 
         await search_assets(
-            request=request, client=mock_client, current_user=current_user
+            request=request, client=mock_client, current_user=mock_current_user
         )
 
         mock_client.search.search.assert_called_once_with(
@@ -236,7 +221,7 @@ class TestSearchMetadata:
         )
 
     @pytest.mark.anyio
-    async def test_returns_empty_results(self):
+    async def test_returns_empty_results(self, mock_current_user):
         """Test that empty results are handled correctly."""
         search_response = Mock()
         search_response.data = []
@@ -245,17 +230,16 @@ class TestSearchMetadata:
         mock_client.search.search = AsyncMock(return_value=search_response)
 
         request = MetadataSearchDto(description="nonexistent")
-        current_user = _make_current_user()
 
         result = await search_assets(
-            request=request, client=mock_client, current_user=current_user
+            request=request, client=mock_client, current_user=mock_current_user
         )
 
         assert result.assets.count == 0
         assert result.assets.items == []
 
     @pytest.mark.anyio
-    async def test_converts_person_ids(self):
+    async def test_converts_person_ids(self, mock_current_user):
         """Test that Immich person UUIDs are converted to Gumnut IDs."""
         person_uuid = uuid4()
         gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
@@ -267,17 +251,16 @@ class TestSearchMetadata:
         mock_client.search.search = AsyncMock(return_value=search_response)
 
         request = MetadataSearchDto(personIds=[person_uuid])
-        current_user = _make_current_user()
 
         await search_assets(
-            request=request, client=mock_client, current_user=current_user
+            request=request, client=mock_client, current_user=mock_current_user
         )
 
         call_kwargs = mock_client.search.search.call_args[1]
         assert call_kwargs["person_ids"] == [gumnut_person_id]
 
     @pytest.mark.anyio
-    async def test_sdk_error_mapped_to_http_exception(self):
+    async def test_sdk_error_mapped_to_http_exception(self, mock_current_user):
         """Test that SDK errors are mapped via map_gumnut_error."""
         from fastapi import HTTPException
 
@@ -287,11 +270,10 @@ class TestSearchMetadata:
         )
 
         request = MetadataSearchDto()
-        current_user = _make_current_user()
 
         with pytest.raises(HTTPException) as exc_info:
             await search_assets(
-                request=request, client=mock_client, current_user=current_user
+                request=request, client=mock_client, current_user=mock_current_user
             )
 
         assert exc_info.value.status_code == 500
