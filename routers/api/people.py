@@ -428,6 +428,9 @@ async def reassign_faces(
     (URL {id}). Returns the target person if any faces were reassigned.
     """
     try:
+        if not request.data:
+            return []
+
         gumnut_target_person_id = uuid_to_gumnut_person_id(id)
 
         # Validate and cache the target person before modifying any faces

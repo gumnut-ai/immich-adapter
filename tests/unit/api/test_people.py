@@ -980,15 +980,16 @@ class TestReassignFaces:
     """Test the reassign_faces endpoint."""
 
     @pytest.mark.anyio
-    async def test_reassign_faces_empty_data(self, sample_uuid, sample_gumnut_person):
-        """Test reassign with no face items returns empty list."""
+    async def test_reassign_faces_empty_data(self, sample_uuid):
+        """Test reassign with no face items returns empty list without API calls."""
         mock_client = Mock()
-        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
         request = AssetFaceUpdateDto(data=[])
 
         result = await reassign_faces(sample_uuid, request, client=mock_client)
 
         assert result == []
+        # No API calls should be made for empty data
+        mock_client.people.retrieve.assert_not_called()
 
     @pytest.mark.anyio
     async def test_reassign_faces_success(
