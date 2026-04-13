@@ -420,19 +420,21 @@ async def reassign_faces(
     request: AssetFaceUpdateDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[PersonResponseDto]:
-    """Reassign faces from one person to other people.
+    """Reassign faces to a person.
 
+    The URL {id} is the target person (who to reassign faces TO).
     For each item in the request, finds the face belonging to the source person
-    (URL {id}) on the given asset and reassigns it to the target person (body
-    personId). Returns the list of target people that received faces.
+    (body personId) on the given asset and reassigns it to the target person
+    (URL {id}). Returns the target person for each item that had faces reassigned.
     """
     try:
-        gumnut_source_person_id = uuid_to_gumnut_person_id(id)
-        seen_targets: dict[str, None] = {}
+        gumnut_target_person_id = uuid_to_gumnut_person_id(id)
+        target_person: PersonResponseDto | None = None
+        results: List[PersonResponseDto] = []
 
         for item in request.data:
             gumnut_asset_id = uuid_to_gumnut_asset_id(item.assetId)
-            gumnut_target_person_id = uuid_to_gumnut_person_id(item.personId)
+            gumnut_source_person_id = uuid_to_gumnut_person_id(item.personId)
 
             # Find all faces belonging to the source person on this asset
             faces = [
@@ -455,15 +457,14 @@ async def reassign_faces(
 
             for face in faces:
                 await client.faces.update(face.id, person_id=gumnut_target_person_id)
-            seen_targets[gumnut_target_person_id] = None
 
-        # Fetch and return the target people in Immich format (insertion order)
-        result: List[PersonResponseDto] = []
-        for person_id in seen_targets:
-            gumnut_person = await client.people.retrieve(person_id)
-            result.append(convert_gumnut_person_to_immich(gumnut_person))
+            # Fetch target person once, return for each successful item
+            if target_person is None:
+                gumnut_person = await client.people.retrieve(gumnut_target_person_id)
+                target_person = convert_gumnut_person_to_immich(gumnut_person)
+            results.append(target_person)
 
-        return result
+        return results
 
     except HTTPException:
         raise
