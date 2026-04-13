@@ -290,31 +290,6 @@ def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
     return UploadFields(device_asset_id, device_id, file_created_at, file_modified_at)
 
 
-def _handle_upload_error(e: Exception) -> AssetMediaResponseDto | JSONResponse:
-    """Map upload exceptions to Immich-compatible HTTP responses."""
-    error_msg = str(e).lower()
-    if "duplicate" in error_msg or "already exists" in error_msg:
-        return JSONResponse(
-            content={
-                "id": "00000000-0000-0000-0000-000000000000",
-                "status": AssetMediaStatus.duplicate.value,
-            },
-            status_code=status.HTTP_200_OK,
-        )
-    elif check_for_error_by_code(e, 413) or "too large" in error_msg:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Asset file too large",
-        )
-    elif check_for_error_by_code(e, 415) or "unsupported" in error_msg:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Unsupported media type",
-        )
-    else:
-        raise map_gumnut_error(e, "Failed to upload asset") from e
-
-
 async def _emit_upload_events(
     gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
@@ -471,7 +446,10 @@ async def _upload_buffered(
                 span.set_data("upload.filename", asset_data.filename)
                 span.set_data("upload.content_type", asset_data.content_type)
                 span.set_data("upload.strategy", "buffered")
-                gumnut_asset = await client.assets.create(
+                # Use with_raw_response to access the HTTP status code:
+                # photos-api returns 200 for duplicates, 201 for new assets,
+                # but the SDK parses both into the same AssetResponse type.
+                raw_response = await client.assets.with_raw_response.create(
                     asset_data=(
                         asset_data.filename,
                         asset_data.file,
@@ -483,7 +461,18 @@ async def _upload_buffered(
                     file_modified_at=file_modified_at,
                 )
 
+            gumnut_asset = await raw_response.parse()
             asset_uuid = safe_uuid_from_asset_id(gumnut_asset.id)
+
+            if raw_response.status_code == status.HTTP_200_OK:
+                return JSONResponse(
+                    content={
+                        "id": str(asset_uuid),
+                        "status": AssetMediaStatus.duplicate.value,
+                    },
+                    status_code=status.HTTP_200_OK,
+                )
+
             await _emit_upload_events(gumnut_asset, current_user)
 
             return AssetMediaResponseDto(
@@ -503,7 +492,7 @@ async def _upload_buffered(
                 },
                 exc_info=True,
             )
-            return _handle_upload_error(e)
+            raise map_gumnut_error(e, "Failed to upload asset") from e
 
 
 async def _upload_streaming(
@@ -532,10 +521,21 @@ async def _upload_streaming(
         result = await pipeline.execute(_extract_upload_fields)
 
         asset_id = result.get("id", "")
-        asset_status = result.get("status", "created")
 
-        if asset_status == AssetMediaStatus.duplicate.value:
-            dup_uuid = safe_uuid_from_asset_id(asset_id) if asset_id else UUID(int=0)
+        if pipeline.last_status_code is None:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Streaming pipeline did not capture upstream status code",
+            )
+        http_status = pipeline.last_status_code
+
+        if http_status == status.HTTP_200_OK:
+            if not asset_id:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Duplicate response from upstream missing asset ID",
+                )
+            dup_uuid = safe_uuid_from_asset_id(asset_id)
             return JSONResponse(
                 content={
                     "id": str(dup_uuid),
@@ -590,7 +590,7 @@ async def _upload_streaming(
             },
             exc_info=True,
         )
-        return _handle_upload_error(e)
+        raise map_gumnut_error(e, "Failed to upload asset") from e
 
 
 @router.put("", status_code=204)

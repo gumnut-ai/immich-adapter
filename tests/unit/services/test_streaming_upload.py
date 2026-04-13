@@ -121,6 +121,7 @@ class TestStreamingUploadPipeline:
 
         assert result["id"] == "asset_abc123"
         assert result["status"] == "created"
+        assert pipeline.last_status_code == 201
         mock_client.post.assert_called_once()
 
     @pytest.mark.anyio
@@ -214,6 +215,7 @@ class TestStreamingUploadPipeline:
             result = await pipeline.execute(_extract_fields)
 
         assert result["status"] == "duplicate"
+        assert pipeline.last_status_code == 200
 
     @pytest.mark.anyio
     async def test_4xx_forwarded_as_is(self):

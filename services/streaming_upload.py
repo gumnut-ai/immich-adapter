@@ -69,6 +69,7 @@ class StreamingUploadPipeline:
         pipeline = StreamingUploadPipeline(request, api_base_url, jwt_token)
         result = await pipeline.execute(extract_fields_fn)
         # result is the JSON dict from photos-api
+        # pipeline.last_status_code has the HTTP status (200=duplicate, 201=created)
         # pipeline.refreshed_token has the JWT if photos-api refreshed it
     """
 
@@ -92,6 +93,7 @@ class StreamingUploadPipeline:
 
         # Populated after successful upload
         self.refreshed_token: str | None = None
+        self.last_status_code: int | None = None
 
     @property
     def form_parser(self) -> StreamingFormParser:
@@ -288,6 +290,7 @@ class StreamingUploadPipeline:
         if new_token:
             self.refreshed_token = new_token
 
+        self.last_status_code = response.status_code
         return response.json()
 
     # --- Main orchestration ---
