@@ -36,6 +36,7 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 | Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Docker deployment, Render configuration |
 | Checksum support | `docs/design-docs/checksum-support.md` | File integrity, checksum validation, deduplication |
 | Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Sync FK integrity, event ordering, face/person deletion issues |
+| Large upload timeout | `docs/design-docs/large-upload-timeout.md` | Streaming upload pipeline, large file upload failures, Immich client timeout limits |
 
 ## Guides
 
