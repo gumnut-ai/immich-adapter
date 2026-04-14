@@ -85,6 +85,16 @@ When the client disconnects at 60 seconds, `_feed_chunks` raises `ClientDisconne
 
 None of these are the bottleneck — the Immich client's 60-second timeout is the binding constraint.
 
+## Workaround
+
+Upload large files through the **Immich web app** instead of the mobile app. The web app uses `XMLHttpRequest` without setting a timeout, so uploads can run as long as needed. A 3.5 GB upload at ~50 MB/s takes ~70 seconds — well within the browser's unlimited timeout.
+
+Limitations:
+- The file must be accessible from the computer running the browser
+- The browser tab must stay open during the upload
+
+This only affects the mobile app's 60-second timeout. The upload pipeline through the adapter is the same for both clients.
+
 ## Options
 
 ### Option A: Chunked Upload Support
