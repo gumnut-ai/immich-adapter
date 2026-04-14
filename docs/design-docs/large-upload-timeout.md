@@ -35,41 +35,41 @@ The upload endpoint (`POST /api/assets`) does not override these defaults for la
 
 ### Evidence
 
-Production request logs confirm the 60-second cutoff:
+Render request logs (ingress layer) confirm the 60-second cutoff. Sizes and durations are rounded from representative samples; no user-identifying data is included.
 
-| File | Size | Duration | Status | Result |
-|------|------|----------|--------|--------|
-| 540 MB video | 540 MB | 13s | 201 | Success |
-| 1.07 GB video | 1.07 GB | 25s | 201 | Success |
-| 1.45 GB video | 1.45 GB | 33s | 201 | Success |
-| 3.52 GB video | 3.52 GB | 61s | 499 | Client disconnected |
-| 3.73 GB video | 3.73 GB | 60s | 502 | Client disconnected |
+| File | Size (approx.) | Duration | Status | Result |
+|------|----------------|----------|--------|--------|
+| Video | ~500 MB | ~13s | 201 | Success |
+| Video | ~1 GB | ~25s | 201 | Success |
+| Video | ~1.5 GB | ~33s | 201 | Success |
+| Video | ~3.5 GB | ~61s | 499 | Client disconnected |
+| Video | ~3.7 GB | ~60s | 502 | Client disconnected |
 
-HTTP 499 ("Client Closed Request") confirms the client terminates the connection, not the server. The 502 on the other request is the adapter's error response after detecting the client disconnect.
+HTTP 499 is an ingress-layer status code ("client closed request") confirming the client terminates the connection, not the server. The 502 on the other request is the adapter's mapped error response (via `map_gumnut_error`) after detecting the `ClientDisconnect`.
 
 ### Pipeline Throughput
 
-The streaming upload pipeline (client → adapter → upstream API) sustains ~50 MB/s. At this rate:
+The streaming upload pipeline (client → adapter → upstream API) sustains approximately 50 MB/s (decimal megabytes). Actual throughput varies with network conditions and upstream processing overhead. Approximate transfer times at this rate:
 
-- 2.5 GB completes in ~50s (within the 60s window)
-- 3.0 GB requires ~60s (borderline)
-- 3.5 GB requires ~70s (exceeds the window)
+- ~2.5 GB completes in ~50s — typically within the 60s window
+- ~3 GB requires ~60s — borderline, may succeed or fail depending on conditions
+- ~3.5 GB requires ~70s — consistently exceeds the window
 
-The pipeline cannot be made fast enough to handle arbitrarily large files within a fixed 60-second timeout.
+Files in the 2.5–3 GB range are borderline; files above ~3 GB consistently fail. The pipeline cannot be made fast enough to handle arbitrarily large files within a fixed 60-second timeout.
 
 ## How the Streaming Upload Pipeline Works
 
-The adapter streams uploads without buffering the entire file to disk. Three concurrent threads form a pipeline:
+The adapter streams uploads without buffering the entire file to disk. Three concurrent workers (one async task and two thread-pool workers) form a pipeline:
 
 ```
 Immich client ──► _feed_chunks() ──► queue ──► _run_parser() ──► pipe ──► _sync_upload() ──► upstream API
-                  (async, reads         (multipart               (sync httpx POST,
-                   request body)         parser thread)            reads from pipe)
+                  (asyncio task,        (thread-pool worker,       (thread-pool worker,
+                   reads request body)   multipart parser)          sync httpx POST)
 ```
 
-1. **`_feed_chunks`** — Async task that reads chunks from the Immich client's HTTP request body and enqueues them
-2. **`_run_parser`** — Thread that dequeues chunks, runs the multipart parser, and writes file data into a `StreamingPipe`
-3. **`_sync_upload`** — Thread that sends a sync httpx POST to the upstream API, with the pipe as the request body
+1. **`_feed_chunks`** — Asyncio task that reads chunks from the Immich client's HTTP request body and enqueues them
+2. **`_run_parser`** — Thread-pool worker that dequeues chunks, runs the multipart parser, and writes file data into a `StreamingPipe`
+3. **`_sync_upload`** — Thread-pool worker that sends a sync httpx POST to the upstream API, with the pipe as the request body
 
 When the client disconnects at 60 seconds, `_feed_chunks` raises `ClientDisconnect`, which propagates through the pipeline. The httpx POST to the upstream API is interrupted, the upstream API sees its own `ClientDisconnect`, and any in-progress S3 multipart upload is aborted.
 
@@ -128,6 +128,6 @@ If large upload failures become a higher priority before upstream ships, Option 
 
 ## Related Issues
 
-- Immich upstream branch: `feat/server-chunked-uploads`
-- Immich commit `#27237`: Removed `timeoutIntervalForResource = 300` on iOS but left the 60-second `timeoutIntervalForRequest`
-- Immich commit `#27399` (on chunked uploads branch): "fix(mobile): low upload timeout on android"
+- Immich upstream branch: [`feat/server-chunked-uploads`](https://github.com/immich-app/immich/tree/feat/server-chunked-uploads)
+- Immich PR [#27237](https://github.com/immich-app/immich/pull/27237): Removed `timeoutIntervalForResource = 300` on iOS but left the 60-second `timeoutIntervalForRequest`
+- Immich PR [#27399](https://github.com/immich-app/immich/pull/27399) (on chunked uploads branch): "fix(mobile): low upload timeout on android"
