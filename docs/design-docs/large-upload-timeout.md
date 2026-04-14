@@ -37,13 +37,15 @@ The upload endpoint (`POST /api/assets`) does not override these defaults for la
 
 Render request logs (ingress layer) confirm the 60-second cutoff. Sizes and durations are rounded from representative samples; no user-identifying data is included.
 
-| File | Size (approx.) | Duration | Status | Result |
-|------|----------------|----------|--------|--------|
+| File | Size (approx.) | Time to completion or abort | Status | Result |
+|------|----------------|----------------------------|--------|--------|
 | Video | ~500 MB | ~13s | 201 | Success |
 | Video | ~1 GB | ~25s | 201 | Success |
 | Video | ~1.5 GB | ~33s | 201 | Success |
-| Video | ~3.5 GB | ~61s | 499 | Client disconnected |
-| Video | ~3.7 GB | ~60s | 502 | Client disconnected |
+| Video | ~3.5 GB | ~61s (aborted) | 499 | Client disconnected |
+| Video | ~3.7 GB | ~60s (aborted) | 502 | Client disconnected |
+
+For successful uploads, the duration is the full request round-trip. For failed uploads, it is the time until the client disconnected — **not** the time a complete upload would have taken. The failed uploads transferred only 75–89% of the file before the timeout fired.
 
 HTTP 499 is an ingress-layer status code ("client closed request") confirming the client terminates the connection, not the server. The 502 on the other request is the adapter's mapped error response (via `map_gumnut_error`) after detecting the `ClientDisconnect`.
 
@@ -87,7 +89,7 @@ None of these are the bottleneck — the Immich client's 60-second timeout is th
 
 ## Workaround
 
-Upload large files through the **Immich web app** instead of the mobile app. The web app uses `XMLHttpRequest` without setting a timeout, so uploads can run as long as needed. A 3.5 GB upload at ~50 MB/s takes ~70 seconds — well within the browser's unlimited timeout.
+Upload large files through the **Immich web app** instead of the mobile app. The web app uses `XMLHttpRequest` without setting an application-level timeout, so uploads are not subject to the mobile client's 60-second limit. A ~3.5 GB upload at ~50 MB/s takes ~70 seconds, which completes without issue in typical browser environments.
 
 Limitations:
 - The file must be accessible from the computer running the browser
