@@ -257,11 +257,15 @@ The search module has 3 real implementations (metadata, smart, person) and 6 stu
 | `GET /search/cities` | Empty list | **Low** — City list for location filtering |
 | `POST /search/random` | Empty list | **Low** — Random photo selection |
 
-**Dependency**: Places/cities/suggestions need backend location data (same as map markers gap #3a). Random and explore could be adapter-only with existing asset APIs. Large-assets needs file size data.
+**Dependency**: Per-endpoint breakdown:
+- **Places/cities**: Need reverse geocoding for human-readable place names — tied to gap #3b, not #3a (GPS coordinates alone don't provide place names).
+- **Suggestions**: In v2.7.5, `SearchSuggestionType` includes `country`, `state`, `city` (location-based, tied to #3b) and `camera-make`, `camera-model` (EXIF-based, potentially adapter-only if EXIF data is already in the backend).
+- **Random/explore**: Adapter-only with existing asset APIs.
+- **Large-assets**: Needs file size data from backend.
 
-**Effort**: **M** total for the adapter-implementable ones (random, explore). Location-based search is tied to the map markers gap (#3a).
+**Effort**: **M** total for the adapter-implementable ones (random, explore, camera suggestions). Location-based search is tied to reverse geocoding (#3b).
 
-**Recommendation**: **Close** random and explore (S each, adapter-only). Location-based search endpoints close when map markers (#3a) closes.
+**Recommendation**: **Close** random and explore (S each, adapter-only). Camera suggestions may be closeable independently (S, adapter-only if EXIF data available). Location-based endpoints close when reverse geocoding (#3b) closes.
 
 ---
 
@@ -413,9 +417,9 @@ The faces module has 3 real implementations but the create endpoint is stubbed.
 
 **User impact**: **Low** — Face creation is typically automated (ML-driven face detection). Manual face creation is rare.
 
-**Dependency**: **Both** — Gumnut SDK needs a face creation method. Backend may already support it but the SDK hasn't exposed it.
+**Dependency**: **Both** — The Photos API does not currently have a face creation endpoint, so the backend needs to add one. The SDK (auto-generated from the API spec) will then expose it, and the adapter can call it.
 
-**Effort**: **S** — Likely just SDK and adapter changes if the backend already supports face creation.
+**Effort**: **S** — Backend endpoint is straightforward (face creation with person assignment). SDK is auto-generated. Adapter translation is minimal.
 
 **Recommendation**: **Close** — Small effort, completes the faces module.
 
@@ -431,7 +435,7 @@ Person merge is listed as a stub in the adapter architecture doc.
 
 **Dependency**: **Adapter-only** — All required SDK calls already exist: `faces.list(person_id=...)` to enumerate a person's faces, `faces.update(face_id, person_id=target)` to reassign each face, and `people.delete(source_id)` to remove the source person. These are the same calls used by the existing `reassign_faces` and `delete_person` endpoints.
 
-**Effort**: **S** — Implement merge as: for each source person, list all faces → reassign each to the target person → delete the source person.
+**Effort**: **S** — Implement merge as: for each source person, list all faces (paginate fully via the SDK's async iterator) → reassign each to the target person → delete the source person only after all reassignments succeed. Partial failure handling: if a reassignment fails mid-merge, the source person should not be deleted (faces would be orphaned).
 
 **Recommendation**: **Close** — Important for people management UX, small effort, no backend work needed.
 
@@ -636,7 +640,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 |-----|--------|------------|-----------|
 | #14 Server features endpoint | S | Adapter-only | Quick win — hides unsupported UI elements |
 | #22 People merge | S | Adapter-only | Completes people management UX |
-| #21 Face create | S | Both (may be S) | Completes faces module |
+| #21 Face create | S | Both | Completes faces module |
 | #12 Search random/explore | S | Adapter-only | Easy adapter-only work |
 | #4 Trash / soft-delete | M | Both | Data safety feature |
 | #5 Download / archive | M | Adapter-only | Pure adapter work, clear user value |
