@@ -24,6 +24,7 @@ from routers.immich_models import (
     Error1,
 )
 from routers.utils.gumnut_id_conversion import (
+    uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
     safe_uuid_from_asset_id,
 )
@@ -285,7 +286,7 @@ class TestGetAlbumInfo:
             multiple_gumnut_assets
         )
 
-        # Execute (pass withoutAssets=False explicitly; the Query default is not None when called directly)
+        # Execute
         result = await get_album_info(
             sample_uuid,
             withoutAssets=False,
@@ -299,7 +300,9 @@ class TestGetAlbumInfo:
         assert hasattr(result, "albumName")
         assert result.albumName == "Test Album"  # From sample_gumnut_album.name
         mock_client.albums.retrieve.assert_called_once()
-        mock_client.assets.list.assert_called_once()
+        mock_client.assets.list.assert_called_once_with(
+            album_id=uuid_to_gumnut_album_id(sample_uuid)
+        )
 
     @pytest.mark.anyio
     async def test_get_album_info_uses_gumnut_asset_count(
@@ -318,7 +321,7 @@ class TestGetAlbumInfo:
         # Return empty assets list
         mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
-        # Execute (pass withoutAssets=False explicitly; the Query default is not None when called directly)
+        # Execute
         result = await get_album_info(
             sample_uuid,
             withoutAssets=False,
@@ -342,7 +345,7 @@ class TestGetAlbumInfo:
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
         mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
-        # Execute (pass withoutAssets=False explicitly; the Query default is not None when called directly)
+        # Execute
         result = await get_album_info(
             sample_uuid,
             withoutAssets=False,
