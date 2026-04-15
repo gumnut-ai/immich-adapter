@@ -62,3 +62,20 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+  check-immich-version-sync:
+    name: Check Immich version sync
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Verify .immich-container-tag matches Dockerfile ARG
+        run: |
+          TAG=$(cat .immich-container-tag)
+          DOCKERFILE_VERSION=$(grep -E '^ARG IMMICH_VERSION=' Dockerfile | cut -d= -f2)
+          if [ "$TAG" != "$DOCKERFILE_VERSION" ]; then
+            echo "::error::Mismatch: .immich-container-tag=$TAG but Dockerfile ARG IMMICH_VERSION=$DOCKERFILE_VERSION. See docs/references/code-practices.md § 'Bumping the Immich Version'."
+            exit 1
+          fi

@@ -2,7 +2,12 @@ from typing import List
 from uuid import UUID
 from fastapi import APIRouter
 
-from routers.immich_models import BulkIdsDto, DuplicateResponseDto
+from routers.immich_models import (
+    BulkIdResponseDto,
+    BulkIdsDto,
+    DuplicateResolveDto,
+    DuplicateResponseDto,
+)
 
 
 router = APIRouter(
@@ -40,3 +45,13 @@ async def delete_duplicates(request: BulkIdsDto):
     """
 
     return
+
+
+@router.post("/resolve")
+async def resolve_duplicates(request: DuplicateResolveDto) -> List[BulkIdResponseDto]:
+    """
+    Resolve duplicate groups by syncing metadata and deleting/trashing duplicates.
+    Gumnut currently does not support finding duplicates, so this is a stub implementation that returns an empty list.
+    """
+
+    return []
