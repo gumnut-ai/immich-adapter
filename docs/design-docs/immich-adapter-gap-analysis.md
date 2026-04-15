@@ -246,7 +246,7 @@ Immich has an in-app notification system for events like album sharing invitatio
 
 ### 12. Search Gaps (6 stub endpoints within search module)
 
-The search module has 3 real implementations (metadata, smart, person) and 5 stubs.
+The search module has 3 real implementations (metadata, smart, person) and 6 stubs.
 
 | Endpoint | Current behavior | Impact |
 |----------|-----------------|--------|
@@ -298,7 +298,7 @@ Most server info endpoints return hardcoded fake data (storage, statistics, feat
 | `GET /server/license` | Fake license | **None** — Gumnut isn't licensed this way |
 | Other (6) | Version info, ping | **None** — Already functional or cosmetic |
 
-**Dependency**: **Both** for features/config (need to reflect actual Gumnut capabilities). **Adapter-only** for storage/statistics (could query backend and translate).
+**Dependency**: `GET /server/features` is **Adapter-only** — the adapter can set accurate static flags now based on what it actually implements. `GET /server/config` is **Both** if config values need to reflect backend-managed settings (e.g., actual trash retention days). Storage/statistics are **Adapter-only** (could query backend and translate).
 
 **Effort**: **S** — Most of these are about returning accurate data rather than implementing new functionality. The features endpoint is the most important: it should reflect what Gumnut actually supports so Immich clients hide unsupported UI elements.
 
@@ -691,7 +691,7 @@ Many stubs currently return fake success responses (HTTP 200 with dummy data), w
 
 **Recommended approach**: Stubs for user-facing mutation endpoints (create, update, delete) should return an appropriate error rather than fake success:
 
-- **Read endpoints** (list, get): Return empty lists or 404 for entity lookups. This is generally harmless — users see "no items" rather than a broken feature.
+- **Read endpoints** (list, get): Return empty lists or 404 for entity lookups. This is generally harmless — users see "no items" rather than a broken feature. **Caveat**: If the corresponding write stub returns fake success (e.g., creating a shared link appears to succeed), a subsequent read returning empty looks like data loss rather than an unsupported feature. For these cases, switching the write stub to 501 first eliminates the inconsistency.
 - **Write endpoints** (create, update, delete): Return 501 Not Implemented with a clear message (e.g., `"Shared links are not yet supported"`). This is honest and prevents users from thinking data was saved.
 - **Endpoints that disable Immich UI**: Some Immich client features check whether an endpoint returns success before showing UI elements. Returning 501 on these endpoints may cause the client to hide the feature entirely, which is the desired behavior for unimplemented features.
 
@@ -717,7 +717,7 @@ This document's accuracy can be verified by:
 1. **Running the API compatibility tool** against the full Immich v2.7.5 spec to confirm endpoint coverage:
    ```bash
    uv run tools/validate_api_compatibility.py \
-     --immich-spec=https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json \
+     --immich-spec=https://raw.githubusercontent.com/immich-app/immich/v2.7.5/open-api/immich-openapi-specs.json \
      --adapter-spec=http://localhost:3001/openapi.json
    ```
 2. **Testing each stub endpoint** to confirm it returns the documented behavior
