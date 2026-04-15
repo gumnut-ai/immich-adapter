@@ -84,19 +84,35 @@ Immich tags allow hierarchical labeling of assets (e.g., `vacation/2024/beach`).
 
 ---
 
-### 3. Map / Location (2 endpoints)
+### 3a. Map Markers (1 endpoint)
 
-Immich has a map view showing photo locations on a world map, with reverse geocoding for place names.
+Immich has a map view showing photo locations on a world map based on GPS coordinates from EXIF data.
 
-**Current behavior**: Both endpoints return empty lists. The map view in the Immich web UI shows a blank map with no markers.
+**Current behavior**: `GET /map/markers` returns an empty list. The map view in the Immich web UI shows a blank map with no markers.
 
 **User impact**: **Medium** — Users with geotagged photos expect to browse by location. The map tab is visible in the UI but empty.
 
-**Dependency**: **Both** — Gumnut Photos API needs to surface GPS coordinates from EXIF data (it may already store them but not expose them via the API). Adapter needs to translate location data to Immich's `MapMarkerResponseDto`. Reverse geocoding may require a geocoding service integration on the backend.
+**Dependency**: **Both** — Gumnut Photos API needs to surface GPS coordinates from EXIF data (it may already store them but not expose them via the API). Adapter needs to translate location data to Immich's `MapMarkerResponseDto`.
 
-**Effort**: **M** — If GPS data is already stored in the backend, exposing it is straightforward. Reverse geocoding adds complexity (external service dependency).
+**Effort**: **S–M** — If GPS data is already stored in the backend, exposing it is straightforward. Adapter translation is S.
 
-**Recommendation**: **Close** — Moderate effort, good user value for geotagged photo libraries.
+**Recommendation**: **Close** — Good user value for geotagged photo libraries.
+
+---
+
+### 3b. Reverse Geocoding (1 endpoint)
+
+Immich's reverse geocoding translates GPS coordinates into human-readable place names (city, state, country).
+
+**Current behavior**: `GET /map/reverse-geocode` returns an empty list.
+
+**User impact**: **Low** — Place names enhance the map and search experience but are not required for basic map functionality (markers work without them).
+
+**Dependency**: **Both** — Requires integration with an external geocoding service (e.g., Nominatim, Google Geocoding API, or a local database like GeoNames). The backend would need to store resolved place names and provide a geocoding endpoint or background job.
+
+**Effort**: **M–L** — External service integration, caching strategy for resolved locations, and potentially a background job to backfill existing geotagged assets.
+
+**Recommendation**: **Revisit later** — Map markers (3a) provide the core value; reverse geocoding can be added independently.
 
 ---
 
@@ -108,11 +124,11 @@ Immich supports soft-delete with a configurable retention period. Trashed items 
 
 **User impact**: **High** — Users who accidentally delete photos have no recovery path. The Immich UI shows a "Trash" section that's always empty, and the "Restore" option does nothing. This is a data safety issue.
 
-**Dependency**: **Both** — Gumnut Photos API may already support soft-delete (check `deleted_at` or similar fields). If not, the backend needs a soft-delete model with retention. Adapter needs to route delete calls through the soft-delete path and expose the trash listing.
+**Dependency**: **Both** — Gumnut Photos API does not currently support soft-delete (no `deleted_at` or trash model exists). The backend needs a soft-delete model with configurable retention, and the adapter needs to route delete calls through the soft-delete path and expose the trash listing.
 
-**Effort**: **M** — If backend supports soft-delete, adapter work is S. If backend needs soft-delete support, the combined effort is M.
+**Effort**: **M** — Backend needs a soft-delete column, retention policy, and purge mechanism. Adapter needs to translate Immich's `force` parameter on delete (force=true → permanent, force=false → soft-delete) and implement trash listing/restore/empty endpoints.
 
-**Recommendation**: **Close** — Data safety feature with high user value. Investigate whether the backend already has soft-delete capabilities.
+**Recommendation**: **Close** — Data safety feature with high user value.
 
 ---
 
@@ -228,7 +244,7 @@ Immich has an in-app notification system for events like album sharing invitatio
 
 ---
 
-### 12. Search Gaps (5 stub endpoints within search module)
+### 12. Search Gaps (6 stub endpoints within search module)
 
 The search module has 3 real implementations (metadata, smart, person) and 5 stubs.
 
@@ -241,11 +257,11 @@ The search module has 3 real implementations (metadata, smart, person) and 5 stu
 | `GET /search/cities` | Empty list | **Low** — City list for location filtering |
 | `POST /search/random` | Empty list | **Low** — Random photo selection |
 
-**Dependency**: Places/cities/suggestions need backend location data (same as map gap). Random and explore could be adapter-only with existing asset APIs. Large-assets needs file size data.
+**Dependency**: Places/cities/suggestions need backend location data (same as map markers gap #3a). Random and explore could be adapter-only with existing asset APIs. Large-assets needs file size data.
 
-**Effort**: **M** total for the adapter-implementable ones (random, explore). Location-based search is tied to the map gap (#3).
+**Effort**: **M** total for the adapter-implementable ones (random, explore). Location-based search is tied to the map markers gap (#3a).
 
-**Recommendation**: **Close** random and explore (S each, adapter-only). Location-based search endpoints close when map (#3) closes.
+**Recommendation**: **Close** random and explore (S each, adapter-only). Location-based search endpoints close when map markers (#3a) closes.
 
 ---
 
@@ -286,7 +302,7 @@ Most server info endpoints return hardcoded fake data (storage, statistics, feat
 
 **Effort**: **S** — Most of these are about returning accurate data rather than implementing new functionality. The features endpoint is the most important: it should reflect what Gumnut actually supports so Immich clients hide unsupported UI elements.
 
-> **Design decision —** The `GET /server/features` endpoint is the highest-value fix in this group. Currently, the adapter sets `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, and `trash: true` — all for features that are not implemented. Setting these to `false` would cause Immich clients to hide the corresponding UI tabs, reducing user confusion. This is a quick win.
+> **Design decision —** The `GET /server/features` endpoint is the highest-value fix in this group. Currently, the adapter sets `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, `trash: true`, and `sidecar: true` — all for features that are not implemented. Setting these to `false` would cause Immich clients to hide the corresponding UI elements, reducing user confusion. This is a quick win.
 
 **Recommendation**: **Close** the features endpoint (S, adapter-only). Revisit storage/statistics if admin features are needed.
 
@@ -409,15 +425,15 @@ The faces module has 3 real implementations but the create endpoint is stubbed.
 
 Person merge is listed as a stub in the adapter architecture doc.
 
-**Current behavior**: The merge endpoint exists but may not fully work.
+**Current behavior**: The merge endpoint exists but returns an empty list without performing any work.
 
 **User impact**: **Medium** — When face clustering creates separate people entries for the same person, users need merge to combine them. Without it, people management becomes tedious.
 
-**Dependency**: **Both** — Backend needs a person merge operation that reassigns all faces from source person to target.
+**Dependency**: **Adapter-only** — All required SDK calls already exist: `faces.list(person_id=...)` to enumerate a person's faces, `faces.update(face_id, person_id=target)` to reassign each face, and `people.delete(source_id)` to remove the source person. These are the same calls used by the existing `reassign_faces` and `delete_person` endpoints.
 
-**Effort**: **S** — If the backend supports face reassignment (which it does), merge is a sequence of reassign calls + source person deletion.
+**Effort**: **S** — Implement merge as: for each source person, list all faces → reassign each to the target person → delete the source person.
 
-**Recommendation**: **Close** — Important for people management UX, small effort.
+**Recommendation**: **Close** — Important for people management UX, small effort, no backend work needed.
 
 ---
 
@@ -619,7 +635,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 | Gap | Effort | Dependency | Rationale |
 |-----|--------|------------|-----------|
 | #14 Server features endpoint | S | Adapter-only | Quick win — hides unsupported UI elements |
-| #22 People merge | S | Both (may be S) | Completes people management UX |
+| #22 People merge | S | Adapter-only | Completes people management UX |
 | #21 Face create | S | Both (may be S) | Completes faces module |
 | #12 Search random/explore | S | Adapter-only | Easy adapter-only work |
 | #4 Trash / soft-delete | M | Both | Data safety feature |
@@ -630,7 +646,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 
 | Gap | Effort | Dependency | Rationale |
 |-----|--------|------------|-----------|
-| #3 Map / location | M | Both | Good value if EXIF GPS data exists in backend |
+| #3a Map markers | S–M | Both | Good value if EXIF GPS data exists in backend |
 | #34 Performance (pagination) | L | Both | Scaling requirement |
 | #8 Memories | L | Both | Engagement feature |
 | #2 Tags | L | Both | Power-user organization |
@@ -639,6 +655,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 
 | Gap | Effort | Dependency | Rationale |
 |-----|--------|------------|-----------|
+| #3b Reverse geocoding | M–L | Both | Map markers provide core value without it |
 | #1 Shared links | XL | Both | High value but major backend work |
 | #9 Partners | XL | Both | Family use case, deep auth changes |
 | #23 Album sharing | XL | Both | Blocked by sharing infrastructure |
@@ -680,7 +697,7 @@ Many stubs currently return fake success responses (HTTP 200 with dummy data), w
 
 The `GET /server/features` fix (gap #14) is the primary mechanism for hiding unsupported UI. Switching write stubs to 501 is a complementary measure for features that the features endpoint doesn't control.
 
-> **Design decision —** Changing stubs from fake-success to 501 is a low-risk improvement that should be done alongside the server features endpoint fix (gap #14). Together, they give users an honest picture of what the adapter supports. Read-only stubs can continue returning empty data since this is harmless.
+> **Design decision —** Changing stubs from fake-success to 501 is a low-risk improvement that should be done alongside the server features endpoint fix (gap #14). Together, they give users an honest picture of what the adapter supports. Read-only stubs can continue returning empty data since this is harmless. Before bulk-converting stubs to 501, test how Immich web and mobile clients display 501 errors to ensure they degrade gracefully — if clients show confusing errors or crash, a softer approach (e.g., 404 with a descriptive message) may be preferable for some endpoints.
 
 ## Newer Immich Version Considerations
 
