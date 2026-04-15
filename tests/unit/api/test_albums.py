@@ -281,13 +281,16 @@ class TestGetAlbumInfo:
         # Setup - create mock client
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
-        mock_client.albums.assets_associations.list = AsyncMock(
-            return_value=mock_sync_cursor_page(multiple_gumnut_assets)
+        mock_client.assets.list.return_value = mock_sync_cursor_page(
+            multiple_gumnut_assets
         )
 
-        # Execute
+        # Execute (pass withoutAssets=False explicitly; the Query default is not None when called directly)
         result = await get_album_info(
-            sample_uuid, client=mock_client, current_user=mock_current_user
+            sample_uuid,
+            withoutAssets=False,
+            client=mock_client,
+            current_user=mock_current_user,
         )
 
         # Assert
@@ -296,12 +299,13 @@ class TestGetAlbumInfo:
         assert hasattr(result, "albumName")
         assert result.albumName == "Test Album"  # From sample_gumnut_album.name
         mock_client.albums.retrieve.assert_called_once()
-        mock_client.albums.assets_associations.list.assert_called_once()
+        mock_client.assets.list.assert_called_once()
 
     @pytest.mark.anyio
     async def test_get_album_info_uses_gumnut_asset_count(
         self,
         sample_gumnut_album,
+        mock_sync_cursor_page,
         sample_uuid,
         mock_current_user,
     ):
@@ -312,11 +316,14 @@ class TestGetAlbumInfo:
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
         # Return empty assets list
-        mock_client.albums.assets_associations.list = AsyncMock(return_value=[])
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
-        # Execute
+        # Execute (pass withoutAssets=False explicitly; the Query default is not None when called directly)
         result = await get_album_info(
-            sample_uuid, client=mock_client, current_user=mock_current_user
+            sample_uuid,
+            withoutAssets=False,
+            client=mock_client,
+            current_user=mock_current_user,
         )
 
         # Assert - should use album.asset_count (42) from the Gumnut album object
@@ -324,7 +331,7 @@ class TestGetAlbumInfo:
 
     @pytest.mark.anyio
     async def test_get_album_info_with_album_cover_asset_id(
-        self, sample_gumnut_album, sample_uuid, mock_current_user
+        self, sample_gumnut_album, mock_sync_cursor_page, sample_uuid, mock_current_user
     ):
         """Test that album_cover_asset_id is converted to albumThumbnailAssetId in get_album_info."""
         # Setup - set album_cover_asset_id on the album
@@ -333,11 +340,14 @@ class TestGetAlbumInfo:
 
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
-        mock_client.albums.assets_associations.list = AsyncMock(return_value=[])
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
-        # Execute
+        # Execute (pass withoutAssets=False explicitly; the Query default is not None when called directly)
         result = await get_album_info(
-            sample_uuid, client=mock_client, current_user=mock_current_user
+            sample_uuid,
+            withoutAssets=False,
+            client=mock_client,
+            current_user=mock_current_user,
         )
 
         # Assert - verify albumThumbnailAssetId is set correctly
@@ -352,8 +362,6 @@ class TestGetAlbumInfo:
         # Setup - create mock client
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
-        # Mock assets list to return an empty iterable to avoid the "Mock object is not iterable" error
-        mock_client.albums.assets_associations.list = AsyncMock(return_value=[])
 
         # Execute
         result = await get_album_info(
@@ -368,8 +376,8 @@ class TestGetAlbumInfo:
         assert hasattr(result, "id")
         assert result.albumName == "Test Album"  # From sample_gumnut_album.name
         mock_client.albums.retrieve.assert_called_once()
-        # Note: The current implementation always fetches assets but only processes them when withoutAssets is falsy
-        mock_client.albums.assets_associations.list.assert_called_once()
+        # withoutAssets=True skips the assets.list call entirely
+        mock_client.assets.list.assert_not_called()
 
     @pytest.mark.anyio
     async def test_get_album_info_not_found(self, sample_uuid, mock_current_user):

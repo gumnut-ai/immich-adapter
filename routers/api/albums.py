@@ -127,13 +127,10 @@ async def get_album_info(
         # Retrieve the specific album from Gumnut
         gumnut_album = await client.albums.retrieve(gumnut_album_id)
 
-        # Also retrieve the assets for this album
-        gumnut_assets = await client.albums.assets_associations.list(gumnut_album_id)
-
         # Convert assets to AssetResponseDto format
         immich_assets = []
-        if not withoutAssets and gumnut_assets:
-            for gumnut_asset in gumnut_assets:
+        if not withoutAssets:
+            async for gumnut_asset in client.assets.list(album_id=gumnut_album_id):
                 try:
                     immich_asset = convert_gumnut_asset_to_immich(
                         gumnut_asset, current_user
