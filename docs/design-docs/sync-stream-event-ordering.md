@@ -2,7 +2,7 @@
 title: "Sync Stream Event Ordering"
 status: active
 created: 2026-03-13
-last-updated: 2026-03-15
+last-updated: 2026-04-16
 ---
 
 # Sync Stream Event Ordering
@@ -59,6 +59,29 @@ The payload fix solved the time-window problem but introduced a deletion-orderin
 The two-phase fix handles ordering within a sync cycle, but the payload override can still reference an entity that was deleted after the event was recorded. On a fresh sync (no prior data), the deleted entity returns 404 during fetch and is never streamed. The face/album arrives with a reference to a non-existent entity, causing an FK violation.
 
 Fix: after applying a payload override, check if the referenced entity ID is in the set of IDs that returned 404 during fetch (`stats.not_found_ids`). If so, null it out. The guard is skipped when the referenced entity type has a checkpoint, since the entity may exist on the client from a prior sync cycle. Applies to both `face_updated` (person_id) and `album_updated` (album_cover_asset_id).
+
+### Fix 5: Verify payload references against production (GUM-545)
+
+Fix 4 only populated `not_found_ids` for entities deleted within the current sync window — if the referenced entity was deleted before the window started, the adapter never tried to fetch it and had no 404 to record. Combined with Fix 4's checkpoint-skip guard ("the entity may exist on the client from a prior sync cycle"), this leaked stale payload references across cycles:
+
+1. Prior cycle: client acked `person_created P1` and, later, `person_deleted P1`. Client no longer has P1 locally, but `PersonV1` checkpoint has advanced past both events.
+2. Current cycle: `face_updated` with payload `{"person_id": P1}` sits in the face window; no person events remain for the face's clustering runs outside this window.
+3. Fix 4's guard skipped the null-out because `PersonV1` was in `checkpoint_map`. The payload person_id leaked through.
+4. Mobile client tried to insert the face referencing P1 — SQLite FK violation (`asset_face_entity` → `person`), sync stuck.
+
+Concrete production timeline for the face that surfaced GUM-545 (event IDs from photos-api):
+
+- 79099 `person_created P1`
+- 79100 `face_updated` payload person_id=P1
+- 79117 `face_updated` payload person_id=P_mid (clustering reassigned)
+- 79161 `person_deleted P1`
+- 79183 `face_updated` payload person_id=P_final (current state)
+
+Any client whose `AssetFaceV1` checkpoint lags at cursor < 79100 while `PersonV1` is past 79161 will receive the stale event 79100 and FK-fail.
+
+Fix: scan each event batch for payload-referenced FK IDs before streaming (see `extract_payload_fk_refs` in `fk_integrity.py`) and batch-fetch any IDs that are neither already streamed nor already known-404. Missing IDs from that fetch populate `stats.not_found_ids` — which is now authoritative about production existence regardless of the client's checkpoint state. The checkpoint-skip guard in `null_deleted_fk_references` is removed: a confirmed 404 overrides any assumption about what the client may still hold, because the client necessarily processed the corresponding `*_deleted` event in the cycle that advanced its checkpoint. Applies to both `face_updated` (person_id) and `album_updated` (album_cover_asset_id).
+
+Cost: one extra bulk list call per face/album batch that contains payload references to entities not seen elsewhere in the cycle. In practice this is one call per cycle for most sessions.
 
 ## How the Real Immich Server Avoids This
 

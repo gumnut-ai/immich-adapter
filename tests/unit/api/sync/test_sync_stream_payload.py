@@ -25,6 +25,7 @@ from tests.unit.api.sync.conftest import (
     TEST_UUID,
     collect_stream,
     create_mock_album_data,
+    create_mock_asset_data,
     create_mock_entity_page,
     create_mock_event,
     create_mock_events_response,
@@ -285,8 +286,16 @@ class TestFacePersonIdOverride:
             payload={"person_id": payload_person_id},
         )
 
+        # The adapter verifies payload-referenced people exist in production
+        # before using them; mock people.list to return the referenced person.
+        payload_person_data = create_mock_person_data(updated_at)
+        payload_person_data.id = payload_person_id
+
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.people.list.return_value = create_mock_entity_page(
+            [payload_person_data]
+        )
 
         sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
@@ -486,13 +495,35 @@ class TestAlbumCoverPayloadOverride:
         self,
         album_data: Any,
         album_event: Any,
+        payload_cover_assets: list[Any] | None = None,
     ) -> dict[str, Any]:
-        """Stream a single album event and return the parsed sync event data."""
+        """Stream a single album event and return the parsed sync event data.
+
+        ``payload_cover_assets`` lets callers control what the adapter sees
+        when it verifies that a payload-referenced album_cover_asset_id still
+        exists in production. Default (None): treat the referenced asset as
+        extant by mirroring the payload cover id into an asset mock so the
+        verification fetch succeeds. Pass an empty list to simulate the asset
+        being deleted.
+        """
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
         mock_client.events.get.return_value = create_mock_events_response([album_event])
         mock_client.albums.list.return_value = create_mock_entity_page([album_data])
+
+        if payload_cover_assets is None:
+            payload_cover_id: str | None = None
+            if isinstance(album_event.payload, dict):
+                payload_cover_id = album_event.payload.get("album_cover_asset_id")
+            payload_cover_assets = []
+            if payload_cover_id:
+                cover_asset = create_mock_asset_data(updated_at)
+                cover_asset.id = payload_cover_id
+                payload_cover_assets = [cover_asset]
+        mock_client.assets.list.return_value = create_mock_entity_page(
+            payload_cover_assets
+        )
 
         results = []
         async for item in _stream_entity_type(
@@ -701,15 +732,17 @@ class TestFacePayloadOverrideDeletedPerson:
 
     @pytest.mark.anyio
     async def test_face_updated_keeps_person_id_when_person_synced_prior_cycle(self):
-        """face_updated payload person_id is kept when person was synced in a prior cycle.
+        """face_updated payload person_id is kept when person still exists in prod.
 
         Scenario (incremental sync, person checkpoint exists):
         1. Person P1 was synced in a prior cycle (client has it locally)
         2. face_updated event recorded with person_id=P1 in payload
         3. Person P1 is NOT modified in this sync window (no person events)
-        4. The adapter should keep person_id=P1 -- the client already has it
+        4. Person P1 still exists in production (verification fetch returns it)
+        5. The adapter should keep person_id=P1 -- the client has it locally
+           and the reference is still valid
 
-        This ensures the fix for deleted persons doesn't break incremental syncs
+        This ensures the Fix 5 verification doesn't break incremental syncs
         where the person exists but simply wasn't modified in this window.
         """
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
@@ -733,8 +766,15 @@ class TestFacePayloadOverrideDeletedPerson:
             payload={"person_id": payload_person_id},
         )
 
+        # Verification fetch: P1 still exists in production
+        payload_person_data = create_mock_person_data(updated_at)
+        payload_person_data.id = payload_person_id
+
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.people.list.return_value = create_mock_entity_page(
+            [payload_person_data]
+        )
 
         sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
@@ -1017,6 +1057,98 @@ class TestFacePayloadOverrideDeletedPerson:
                 f"person was deleted (404)"
             )
 
+    @pytest.mark.anyio
+    async def test_face_updated_nulls_person_id_when_person_deleted_across_cycles(
+        self,
+    ):
+        """GUM-545 regression: deleted person across sync cycles still nulls out.
+
+        The Fix 4 guard only covered fresh syncs: it skipped the null-out when
+        a PersonV1 checkpoint existed, assuming "the client must still have
+        this person from a prior sync." That assumption is wrong when the
+        person was deleted server-side between cycles — the client's
+        person_deleted event already removed it locally.
+
+        Scenario (reproduces GUM-545):
+        - Prior cycle(s): client received person P1 (checkpoint advanced past
+          P1 creation) and the subsequent person_deleted P1 (checkpoint past
+          delete). Client no longer has P1 locally.
+        - Current cycle: no new person events (all that's left for faces).
+          face_updated event for F is in the window with payload person_id=P1
+          (stale reference from when clustering assigned F to P1).
+        - The adapter must verify P1 still exists in prod and, seeing it
+          doesn't (404), null out the reference — even though PersonV1 has a
+          checkpoint.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        # The deleted person's ID (not in the current window, not returned
+        # by people.list — matches production state where the person is gone)
+        deleted_person_uuid = UUID("00000000-0000-0000-0000-000000000099")
+        deleted_person_id = uuid_to_gumnut_person_id(deleted_person_uuid)
+
+        # Face currently references a different live person (re-clustered)
+        face_data = create_mock_face_data(updated_at)
+        assert face_data.person_id != deleted_person_id
+
+        # face_updated event's payload carries the stale deleted person_id
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+            payload={"person_id": deleted_person_id},
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([face_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        # Verification fetch returns empty — person is deleted in prod
+        mock_client.people.list.return_value = create_mock_entity_page([])
+
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        # PersonV1 checkpoint exists: client synced persons in a prior cycle
+        # (and processed the delete event for this person). This is the state
+        # that made Fix 4 skip the null-out and leak the stale reference.
+        checkpoint_map = {
+            SyncEntityType.PersonV1: Checkpoint(
+                entity_type=SyncEntityType.PersonV1,
+                cursor="prior_cursor",
+                updated_at=updated_at,
+            ),
+        }
+
+        stats = SyncStreamStats()
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="face",
+            sync_entity_type=SyncEntityType.AssetFaceV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+            stats=stats,
+            checkpoint_map=checkpoint_map,
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, _count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        assert event_data["data"]["personId"] is None, (
+            "face_updated must null person_id when the payload references a "
+            "person deleted in a prior cycle — PersonV1 checkpoint does not "
+            "prove the client still holds the person locally"
+        )
+        assert deleted_person_id in stats.not_found_ids["person"], (
+            "Verification step should have recorded the deleted person in "
+            "not_found_ids so null_deleted_fk_references can strip the reference"
+        )
+
 
 class TestAlbumPayloadOverrideDeletedAsset:
     """Tests for album_updated payload override when the referenced asset is deleted.
@@ -1101,6 +1233,75 @@ class TestAlbumPayloadOverrideDeletedAsset:
             "asset was deleted (404 on fetch)"
         )
 
+    @pytest.mark.anyio
+    async def test_album_updated_nulls_cover_when_asset_deleted_across_cycles(self):
+        """Same GUM-545 failure mode, applied to album cover references.
+
+        Scenario: client has an AssetV1 checkpoint past the cover asset's
+        delete. The current cycle replays an older album_updated event whose
+        payload references the deleted asset. Fix 5 must verify the asset
+        still exists in prod and null the reference on 404, even though an
+        AssetV1 checkpoint exists.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        deleted_asset_uuid = UUID("00000000-0000-0000-0000-000000000088")
+        deleted_asset_id = uuid_to_gumnut_asset_id(deleted_asset_uuid)
+
+        album_data = create_mock_album_data(
+            updated_at, album_cover_asset_id=None, asset_count=0
+        )
+        album_event = create_mock_event(
+            entity_type="album",
+            entity_id=album_data.id,
+            event_type="album_updated",
+            created_at=updated_at,
+            cursor="cursor_a1",
+            payload={"album_cover_asset_id": deleted_asset_id},
+        )
+
+        mock_client.events.get.return_value = create_mock_events_response([album_event])
+        mock_client.albums.list.return_value = create_mock_entity_page([album_data])
+        # Verification fetch returns empty -- the asset was deleted in prod
+        mock_client.assets.list.return_value = create_mock_entity_page([])
+
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+        checkpoint_map = {
+            SyncEntityType.AssetV1: Checkpoint(
+                entity_type=SyncEntityType.AssetV1,
+                cursor="prior_cursor",
+                updated_at=updated_at,
+            ),
+        }
+
+        stats = SyncStreamStats()
+        results = []
+        async for item in _stream_entity_type(
+            gumnut_client=mock_client,
+            gumnut_entity_type="album",
+            sync_entity_type=SyncEntityType.AlbumV1,
+            owner_id=str(TEST_UUID),
+            checkpoint=None,
+            sync_started_at=sync_started_at,
+            stats=stats,
+            checkpoint_map=checkpoint_map,
+        ):
+            results.append(item)
+
+        assert len(results) == 1
+        json_line, _count = results[0]
+        event_data = json.loads(json_line.strip())
+
+        assert event_data["data"]["thumbnailAssetId"] is None, (
+            "album_updated must null thumbnailAssetId when the payload cover "
+            "references an asset deleted across sync cycles, even with an "
+            "AssetV1 checkpoint"
+        )
+        assert deleted_asset_id in stats.not_found_ids["asset"]
+
 
 class TestAssetFaceV2Converter:
     """Tests for the AssetFaceV2 sync converter."""
@@ -1172,8 +1373,15 @@ class TestAssetFaceV2Converter:
             payload={"person_id": payload_person_id},
         )
 
+        # Verification fetch: the payload-referenced person still exists in prod
+        payload_person_data = create_mock_person_data(updated_at)
+        payload_person_data.id = payload_person_id
+
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.people.list.return_value = create_mock_entity_page(
+            [payload_person_data]
+        )
 
         sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 

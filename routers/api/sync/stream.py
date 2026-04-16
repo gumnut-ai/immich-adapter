@@ -40,6 +40,7 @@ from routers.api.sync.events import (
 from routers.api.sync.fk_integrity import (
     SyncStreamStats,
     check_fk_references,
+    extract_payload_fk_refs,
     null_deleted_fk_references,
     payload_override,
 )
@@ -184,6 +185,31 @@ async def _stream_entity_type(
         if not_returned:
             stats.not_found_ids[gumnut_entity_type].update(not_returned)
 
+        # Verify that IDs referenced in event payloads (e.g. face_updated's
+        # person_id, album_updated's album_cover_asset_id) still exist in
+        # production. The payload override captures the causally-consistent
+        # value at event time, but the referenced entity may have been deleted
+        # since. A confirmed 404 adds the ID to stats.not_found_ids so
+        # null_deleted_fk_references can strip the reference before the event
+        # reaches the client — otherwise the client hits a SQLite FK violation
+        # (e.g., asset_face_entity → person) on insert. See the
+        # sync-stream-event-ordering design doc, "Fix 5".
+        payload_refs = extract_payload_fk_refs(gumnut_entity_type, events)
+        for ref_type, ref_ids in payload_refs.items():
+            unknown_ids = (
+                ref_ids
+                - stats.streamed_ids.get(ref_type, set())
+                - stats.not_found_ids.get(ref_type, set())
+            )
+            if not unknown_ids:
+                continue
+            ref_map, _ = await fetch_entities_map(
+                gumnut_client, ref_type, list(unknown_ids)
+            )
+            missing = unknown_ids - ref_map.keys()
+            if missing:
+                stats.not_found_ids[ref_type].update(missing)
+
         # Process events in order
         for event in events:
             if event.event_type in _SKIPPED_EVENT_TYPES:
@@ -298,14 +324,15 @@ async def _stream_entity_type(
                         )
 
                 # Null FK fields that reference entities confirmed deleted
-                # (returned 404 during fetch). Uses FK_REFERENCES to
-                # discover which fields to check. Skipped when the
-                # referenced entity type has a checkpoint.
+                # (returned 404 during fetch or payload-ref verification above).
+                # A confirmed 404 is authoritative regardless of the client's
+                # checkpoint state — if the entity is gone in prod, any prior
+                # client copy has been cleaned up by an earlier person/asset
+                # delete event.
                 entity = null_deleted_fk_references(
                     gumnut_entity_type,
                     entity,
                     stats,
-                    checkpoint_map,
                     event.event_type,
                     event.cursor,
                 )
