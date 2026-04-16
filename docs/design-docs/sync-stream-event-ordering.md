@@ -110,6 +110,14 @@ If the stream is interrupted between phase 1 (upserts) and phase 2 (deletes), de
 
 This is an acceptable tradeoff: permanently stuck sync (the bug) is far worse than occasionally stale deleted entities (recoverable).
 
+## Known Tradeoff: Fix 5 Verification Uses Current State, Not Snapshot
+
+The Fix 5 verification fetch (`people.list` / `assets.list` for payload-referenced IDs) reads the live production state of those entities, while the surrounding event stream is bounded by `created_at_lt=sync_started_at` (a point-in-time snapshot). If a person or asset is deleted *during* a sync cycle — after `sync_started_at` but before the face/album phase runs the verification — the verification will see a 404 and null the reference even though it was valid at the snapshot. The corresponding `*_deleted` event falls outside the current cycle's window (its cursor > `sync_started_at`), so it arrives in the next cycle instead.
+
+End-state impact: none. The client still receives the delete event in the next cycle; the face/album converges to the same final state (orphan reference, or cascaded to NULL). The only visible difference is a brief interval where the client shows the reference already nulled instead of "valid but about to be deleted." For the concrete GUM-545 FK-violation failure mode this is strictly safer (no stuck sync), and the cosmetic inconsistency resolves within one sync cycle.
+
+Making the verification snapshot-aware would require either an event-timeline check (query for `*_deleted` events with cursor ≤ `sync_started_at`) or a cross-repo `as_of` parameter on the list endpoints. Both add meaningful complexity for a cosmetic win; not implemented.
+
 ## Future Alternative: Direct Entity Queries
 
 A potential long-term alternative is querying entity endpoints directly (like the real Immich server) rather than replaying events:
