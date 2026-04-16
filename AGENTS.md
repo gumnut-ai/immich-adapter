@@ -37,6 +37,7 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 | Checksum support | `docs/design-docs/checksum-support.md` | File integrity, checksum validation, deduplication |
 | Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Sync FK integrity, event ordering, face/person deletion issues |
 | Large upload timeout | `docs/design-docs/large-upload-timeout.md` | Streaming upload pipeline, large file upload failures, Immich client timeout limits |
+| Immich adapter gap analysis | `docs/design-docs/immich-adapter-gap-analysis.md` | Prioritizing adapter work, evaluating stub endpoints, assessing feature gaps |
 
 ## Guides
 
