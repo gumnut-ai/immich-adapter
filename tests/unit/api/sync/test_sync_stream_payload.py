@@ -1061,15 +1061,15 @@ class TestFacePayloadOverrideDeletedPerson:
     async def test_face_updated_nulls_person_id_when_person_deleted_across_cycles(
         self,
     ):
-        """GUM-545 regression: deleted person across sync cycles still nulls out.
+        """Regression: payload references to persons deleted across sync cycles must be nulled.
 
-        The Fix 4 guard only covered fresh syncs: it skipped the null-out when
-        a PersonV1 checkpoint existed, assuming "the client must still have
-        this person from a prior sync." That assumption is wrong when the
-        person was deleted server-side between cycles — the client's
-        person_deleted event already removed it locally.
+        The prior fix's checkpoint-skip guard covered only fresh syncs: it
+        skipped the null-out when a PersonV1 checkpoint existed, assuming
+        "the client must still have this person from a prior sync." That
+        assumption is wrong when the person was deleted server-side between
+        cycles — the client's person_deleted event already removed it locally.
 
-        Scenario (reproduces GUM-545):
+        Scenario:
         - Prior cycle(s): client received person P1 (checkpoint advanced past
           P1 creation) and the subsequent person_deleted P1 (checkpoint past
           delete). Client no longer has P1 locally.
@@ -1235,13 +1235,15 @@ class TestAlbumPayloadOverrideDeletedAsset:
 
     @pytest.mark.anyio
     async def test_album_updated_nulls_cover_when_asset_deleted_across_cycles(self):
-        """Same GUM-545 failure mode, applied to album cover references.
+        """Regression: payload cover references to assets deleted across cycles must be nulled.
 
-        Scenario: client has an AssetV1 checkpoint past the cover asset's
-        delete. The current cycle replays an older album_updated event whose
-        payload references the deleted asset. Fix 5 must verify the asset
-        still exists in prod and null the reference on 404, even though an
-        AssetV1 checkpoint exists.
+        Same cross-cycle failure mode as faces: the client has an AssetV1
+        checkpoint past the cover asset's delete event. The current cycle
+        replays an older album_updated event whose payload references the
+        deleted asset. The adapter must verify the asset still exists in prod
+        and null the reference on 404, even though an AssetV1 checkpoint
+        exists (the checkpoint does not prove the client still holds the
+        asset locally — it has already processed the delete).
         """
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
