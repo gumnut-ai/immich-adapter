@@ -2,7 +2,7 @@
 title: "Sync Stream Event Ordering"
 status: active
 created: 2026-03-13
-last-updated: 2026-03-15
+last-updated: 2026-04-16
 ---
 
 # Sync Stream Event Ordering
@@ -60,6 +60,29 @@ The two-phase fix handles ordering within a sync cycle, but the payload override
 
 Fix: after applying a payload override, check if the referenced entity ID is in the set of IDs that returned 404 during fetch (`stats.not_found_ids`). If so, null it out. The guard is skipped when the referenced entity type has a checkpoint, since the entity may exist on the client from a prior sync cycle. Applies to both `face_updated` (person_id) and `album_updated` (album_cover_asset_id).
 
+### Fix 5: Verify payload references against production (GUM-545)
+
+Fix 4 only populated `not_found_ids` for entities deleted within the current sync window — if the referenced entity was deleted before the window started, the adapter never tried to fetch it and had no 404 to record. Combined with Fix 4's checkpoint-skip guard ("the entity may exist on the client from a prior sync cycle"), this leaked stale payload references across cycles:
+
+1. Prior cycle: client acked `person_created P1` and, later, `person_deleted P1`. Client no longer has P1 locally, but `PersonV1` checkpoint has advanced past both events.
+2. Current cycle: `face_updated` with payload `{"person_id": P1}` sits in the face window; no person events remain for the face's clustering runs outside this window.
+3. Fix 4's guard skipped the null-out because `PersonV1` was in `checkpoint_map`. The payload person_id leaked through.
+4. Mobile client tried to insert the face referencing P1 — SQLite FK violation (`asset_face_entity` → `person`), sync stuck.
+
+Concrete production timeline for the face that surfaced GUM-545 (event IDs from photos-api):
+
+- 79099 `person_created P1`
+- 79100 `face_updated` payload person_id=P1
+- 79117 `face_updated` payload person_id=P_mid (clustering reassigned)
+- 79161 `person_deleted P1`
+- 79183 `face_updated` payload person_id=P_final (current state)
+
+Any client whose `AssetFaceV1` checkpoint lags at cursor < 79100 while `PersonV1` is past 79161 will receive the stale event 79100 and FK-fail.
+
+Fix: scan each event batch for payload-referenced FK IDs before streaming (see `extract_payload_fk_refs` in `fk_integrity.py`) and batch-fetch any IDs that are neither already streamed nor already known-404. Missing IDs from that fetch populate `stats.not_found_ids` — which is now authoritative about production existence regardless of the client's checkpoint state. The checkpoint-skip guard in `null_deleted_fk_references` is removed: a confirmed 404 overrides any assumption about what the client may still hold, because the client necessarily processed the corresponding `*_deleted` event in the cycle that advanced its checkpoint. Applies to both `face_updated` (person_id) and `album_updated` (album_cover_asset_id).
+
+Cost: one extra bulk list call per event batch per referenced type for IDs not yet streamed or already-known 404 in this cycle. Verified-present IDs are not memoized across batches, so a live entity referenced by events spanning multiple `EVENTS_PAGE_SIZE=200` batches (e.g., large re-clustering runs) is re-fetched once per batch. In practice this collapses to one call per cycle per referenced type for most sessions (single batch, single call).
+
 ## How the Real Immich Server Avoids This
 
 The real Immich server (`server/src/services/sync.service.ts`) has a fundamentally different architecture:
@@ -86,6 +109,14 @@ Delete events use separate SyncEntityTypes (e.g., `PersonDeleteV1` vs `PersonV1`
 If the stream is interrupted between phase 1 (upserts) and phase 2 (deletes), delete events whose cursors fall before the acked upsert cursor may be lost on resume. The client retains stale entities until the next full sync.
 
 This is an acceptable tradeoff: permanently stuck sync (the bug) is far worse than occasionally stale deleted entities (recoverable).
+
+## Known Tradeoff: Fix 5 Verification Uses Current State, Not Snapshot
+
+The Fix 5 verification fetch (`people.list` / `assets.list` for payload-referenced IDs) reads the live production state of those entities, while the surrounding event stream is bounded by `created_at_lt=sync_started_at` (a point-in-time snapshot). If a person or asset is deleted *during* a sync cycle — after `sync_started_at` but before the face/album phase runs the verification — the verification will see a 404 and null the reference even though it was valid at the snapshot. The corresponding `*_deleted` event falls outside the current cycle's window (its cursor > `sync_started_at`), so it arrives in the next cycle instead.
+
+End-state impact: none. The client still receives the delete event in the next cycle; the face/album converges to the same final state (orphan reference, or cascaded to NULL). The only visible difference is a brief interval where the client shows the reference already nulled instead of "valid but about to be deleted." For the concrete GUM-545 FK-violation failure mode this is strictly safer (no stuck sync), and the cosmetic inconsistency resolves within one sync cycle.
+
+Making the verification snapshot-aware would require either an event-timeline check (query for `*_deleted` events with cursor ≤ `sync_started_at`) or a cross-repo `as_of` parameter on the list endpoints. Both add meaningful complexity for a cosmetic win; not implemented.
 
 ## Future Alternative: Direct Entity Queries
 

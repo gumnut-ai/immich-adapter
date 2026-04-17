@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-04-02
+last-updated: 2026-04-16
 ---
 
 # Sync Stream Architecture
@@ -21,11 +21,11 @@ Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync eve
 
 ## Face person_id Handling
 
-`face_created` events have person_id nulled out (face detection never assigns a person). `face_updated` events use the causally-consistent person_id from the event payload instead of current entity state. After payload override, person_id is nulled if the person returned 404 during fetch (deleted entity) and no person checkpoint exists.
+`face_created` events have person_id nulled out (face detection never assigns a person). `face_updated` events use the causally-consistent person_id from the event payload instead of current entity state. For every face batch, payload person_ids are collected (see `extract_payload_fk_refs`) and verified against production via `people.list` — IDs that return 404 are recorded in `stats.not_found_ids["person"]` and nulled out on the outgoing event, regardless of whether a `PersonV1` checkpoint exists. This prevents stale payload references (from clustering runs that predate a person's deletion) from leaking across sync cycles and causing FK violations on the client.
 
 ## Album Cover Handling
 
-`album_updated` events use the causally-consistent `album_cover_asset_id` from the event payload instead of the entity's current computed cover (which is derived at fetch time via a lateral join and may reference an asset outside the sync window). After payload override, cover is nulled if the asset returned 404 during fetch and no asset checkpoint exists.
+`album_updated` events use the causally-consistent `album_cover_asset_id` from the event payload instead of the entity's current computed cover (which is derived at fetch time via a lateral join and may reference an asset outside the sync window). Payload cover asset IDs are verified against production the same way face person_ids are — 404s null the cover regardless of `AssetV1` checkpoint state.
 
 ## Adding a New Sync Type Version
 
