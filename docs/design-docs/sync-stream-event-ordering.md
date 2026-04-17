@@ -81,7 +81,7 @@ Any client whose `AssetFaceV1` checkpoint lags at cursor < 79100 while `PersonV1
 
 Fix: scan each event batch for payload-referenced FK IDs before streaming (see `extract_payload_fk_refs` in `fk_integrity.py`) and batch-fetch any IDs that are neither already streamed nor already known-404. Missing IDs from that fetch populate `stats.not_found_ids` — which is now authoritative about production existence regardless of the client's checkpoint state. The checkpoint-skip guard in `null_deleted_fk_references` is removed: a confirmed 404 overrides any assumption about what the client may still hold, because the client necessarily processed the corresponding `*_deleted` event in the cycle that advanced its checkpoint. Applies to both `face_updated` (person_id) and `album_updated` (album_cover_asset_id).
 
-Cost: one extra bulk list call per face/album batch that contains payload references to entities not seen elsewhere in the cycle. In practice this is one call per cycle for most sessions.
+Cost: one extra bulk list call per event batch per referenced type for IDs not yet streamed or already-known 404 in this cycle. Verified-present IDs are not memoized across batches, so a live entity referenced by events spanning multiple `EVENTS_PAGE_SIZE=200` batches (e.g., large re-clustering runs) is re-fetched once per batch. In practice this collapses to one call per cycle per referenced type for most sessions (single batch, single call).
 
 ## How the Real Immich Server Avoids This
 

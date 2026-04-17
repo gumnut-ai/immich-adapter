@@ -209,6 +209,15 @@ async def _stream_entity_type(
             missing = unknown_ids - ref_map.keys()
             if missing:
                 stats.not_found_ids[ref_type].update(missing)
+                logger.info(
+                    "Payload FK verification found deleted entities",
+                    extra={
+                        "entity_type": gumnut_entity_type,
+                        "referenced_type": ref_type,
+                        "missing_count": len(missing),
+                        "missing_ids": sorted(missing),
+                    },
+                )
 
         # Process events in order
         for event in events:

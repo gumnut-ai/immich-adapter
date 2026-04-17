@@ -38,6 +38,11 @@ class PayloadFKOverride(NamedTuple):
 # (see payload_override). Used to collect referenced IDs up front so we can
 # verify they still exist in production, regardless of whether the referenced
 # entity type is being streamed in this cycle.
+#
+# Invariant: every (event_type, payload_key, referenced_type) entry here must
+# have a matching (field=payload_key, referenced_type) entry in FK_REFERENCES
+# for the same entity type — otherwise null_deleted_fk_references will not
+# null the payload-overridden field when its referenced entity 404s.
 PAYLOAD_FK_OVERRIDES: dict[str, list[PayloadFKOverride]] = {
     "face": [
         PayloadFKOverride(
