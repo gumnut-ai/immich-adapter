@@ -2,8 +2,8 @@
 
 Every request into immich-adapter gets a `channel` tag indicating how the
 user interacted: `immich-mobile-android`, `immich-mobile-ios`, `immich-web`,
-or the generic `immich-adapter` fallback when the User-Agent doesn't match
-any known client. Unlike the photos-api equivalent middleware — which leaves
+or the generic `immich-api` fallback when the User-Agent doesn't match any
+known client. Unlike the photos-api equivalent middleware — which leaves
 unclassified requests untagged — every request here is tagged because all
 traffic through this service is adapter traffic by definition. Tagging at
 request entry lets Sentry aggregate traffic, latency, and error rates per
@@ -48,7 +48,7 @@ def resolve_channel(user_agent: str) -> str:
     if ua.startswith("Mozilla/") and _BROWSER_RE.search(ua):
         return "immich-web"
 
-    return "immich-adapter"
+    return "immich-api"
 
 
 class ChannelTaggingMiddleware(BaseHTTPMiddleware):

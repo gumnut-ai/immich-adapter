@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 from routers.middleware.channel_middleware import (
     CHANNEL_TAG,
@@ -39,11 +41,11 @@ class TestResolveChannel:
                 "Firefox/125.0",
                 "immich-web",
             ),
-            # Unknown UAs fall back to generic immich-adapter tag
-            ("", "immich-adapter"),
-            ("curl/8.4.0", "immich-adapter"),
-            ("Mozilla/5.0 (unknown bot)", "immich-adapter"),
-            ("Python/3.13 requests/2.31", "immich-adapter"),
+            # Unknown UAs fall back to the generic immich-api tag
+            ("", "immich-api"),
+            ("curl/8.4.0", "immich-api"),
+            ("Mozilla/5.0 (unknown bot)", "immich-api"),
+            ("Python/3.13 requests/2.31", "immich-api"),
         ],
     )
     def test_classification(self, user_agent: str, expected: str):
@@ -71,8 +73,8 @@ class TestChannelTaggingMiddleware:
                 "Mozilla/5.0 (Macintosh) AppleWebKit/605 Chrome/122",
                 "immich-web",
             ),
-            ("curl/8.4.0", "immich-adapter"),
-            ("", "immich-adapter"),
+            ("curl/8.4.0", "immich-api"),
+            ("", "immich-api"),
         ],
     )
     def test_tag_set_on_active_scope(
@@ -116,8 +118,6 @@ class TestChannelTaggingMiddleware:
         """Verify ChannelTaggingMiddleware runs outermost, so responses from a
         downstream middleware that short-circuits (e.g., AuthMiddleware 401)
         still have the channel tag attached."""
-        from starlette.middleware.base import BaseHTTPMiddleware
-        from starlette.responses import JSONResponse
 
         class _ShortCircuit401(BaseHTTPMiddleware):
             async def dispatch(self, request, call_next):
