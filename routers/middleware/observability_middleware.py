@@ -11,8 +11,6 @@ Currently emits one span attribute:
 
 Registered last in `main.py` so it wraps outermost and attaches attributes
 even on auth 401 short-circuits from `AuthMiddleware`.
-
-Mirrors the photos-api `ObservabilityTagsMiddleware`. See GUM-570.
 """
 
 from __future__ import annotations
