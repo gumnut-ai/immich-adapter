@@ -7,6 +7,7 @@ from config.logging import init_logging
 from contextlib import asynccontextmanager
 
 from routers.middleware.auth_middleware import AuthMiddleware
+from routers.middleware.observability_middleware import ObservabilityTagsMiddleware
 from routers import static, well_known
 from routers.utils.spa_static_files import SPAStaticFiles
 from routers.api.sync import routes as sync_routes
@@ -90,6 +91,12 @@ configure_exception_handlers(app)
 
 # Add authentication middleware
 app.add_middleware(AuthMiddleware)
+
+# Attach `user_agent.original` to Sentry spans. Added last so it wraps
+# outermost in the Starlette stack and runs before auth — guarantees the
+# attribute is attached even on 401s from `AuthMiddleware`.
+# See routers/middleware/observability_middleware.py.
+app.add_middleware(ObservabilityTagsMiddleware)
 
 # Mount Socket.IO app first
 app.mount("/api/socket.io", websockets.socket_app)
