@@ -61,6 +61,8 @@ This format is enforced by the global exception handler in `config/exceptions.py
 
 **Note:** In middleware (e.g., `auth_middleware.py`), you must return `JSONResponse` directly with this format, as `HTTPException` raised in `BaseHTTPMiddleware.dispatch()` is not caught by FastAPI's exception handlers due to Starlette's middleware architecture.
 
+**Middleware registration order:** `app.add_middleware()` prepends to the Starlette stack — the **last** `add_middleware` call wraps outermost and runs **first** on every request. Middleware that must run before an auth or rate-limit short-circuit (e.g., Sentry tags that should attach even on 401/429) must be added last in `main.py`, not first.
+
 For the full error handling strategy including rate limit protection and per-item error tracking, see the [adapter architecture doc](../architecture/adapter-architecture.md#error-handling).
 
 ### Defining Endpoint Parameters
