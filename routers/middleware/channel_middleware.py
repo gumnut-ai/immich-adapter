@@ -3,8 +3,11 @@
 Every request into immich-adapter gets a `channel` tag indicating how the
 user interacted: `immich-mobile-android`, `immich-mobile-ios`, `immich-web`,
 or the generic `immich-adapter` fallback when the User-Agent doesn't match
-any known client. Tagging at request entry lets Sentry aggregate traffic,
-latency, and error rates per channel without sampling Render request logs.
+any known client. Unlike the photos-api equivalent middleware — which leaves
+unclassified requests untagged — every request here is tagged because all
+traffic through this service is adapter traffic by definition. Tagging at
+request entry lets Sentry aggregate traffic, latency, and error rates per
+channel without sampling Render request logs.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ CHANNEL_TAG = "channel"
 # `immich-{ios,android}/<version>` form documented in the GUM-561 spec as a
 # safety net for future client versions.
 _IMMICH_MOBILE_RE = re.compile(
-    r"^(?:Immich_(?P<platform1>iOS|Android)_|immich-(?P<platform2>ios|android)/)",
+    r"^(?:Immich_|immich-)(ios|android)[_/]",
     re.IGNORECASE,
 )
 
@@ -36,7 +39,7 @@ def resolve_channel(user_agent: str) -> str:
 
     match = _IMMICH_MOBILE_RE.match(ua)
     if match:
-        platform = (match.group("platform1") or match.group("platform2") or "").lower()
+        platform = match.group(1).lower()
         if platform == "android":
             return "immich-mobile-android"
         if platform == "ios":

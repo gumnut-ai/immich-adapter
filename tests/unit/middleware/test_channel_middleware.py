@@ -111,3 +111,40 @@ class TestChannelTaggingMiddleware:
 
         assert response.status_code == 200
         mock_set_tag.assert_called_once_with(CHANNEL_TAG, "immich-mobile-ios")
+
+    def test_tag_set_before_early_rejection(self):
+        """Verify ChannelTaggingMiddleware runs outermost, so responses from a
+        downstream middleware that short-circuits (e.g., AuthMiddleware 401)
+        still have the channel tag attached."""
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.responses import JSONResponse
+
+        class _ShortCircuit401(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                return JSONResponse({"detail": "unauthorized"}, status_code=401)
+
+        app = FastAPI()
+        # Mirror the registration order in main.py: auth-type middleware first,
+        # ChannelTaggingMiddleware last (wraps outermost, runs first).
+        app.add_middleware(_ShortCircuit401)
+        app.add_middleware(ChannelTaggingMiddleware)
+
+        @app.get("/api/assets")
+        async def _assets():
+            return {"ok": True}
+
+        with (
+            patch(
+                "routers.middleware.channel_middleware.sentry_sdk.set_tag"
+            ) as mock_set_tag,
+            patch(
+                "routers.middleware.channel_middleware.sentry_sdk.get_current_span",
+                return_value=None,
+            ),
+        ):
+            response = TestClient(app).get(
+                "/api/assets", headers={"user-agent": "Immich_iOS_1.94.0"}
+            )
+
+        assert response.status_code == 401
+        mock_set_tag.assert_called_once_with(CHANNEL_TAG, "immich-mobile-ios")
