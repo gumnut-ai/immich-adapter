@@ -7,6 +7,7 @@ from config.logging import init_logging
 from contextlib import asynccontextmanager
 
 from routers.middleware.auth_middleware import AuthMiddleware
+from routers.middleware.channel_middleware import ChannelTaggingMiddleware
 from routers import static, well_known
 from routers.utils.spa_static_files import SPAStaticFiles
 from routers.api.sync import routes as sync_routes
@@ -90,6 +91,11 @@ configure_exception_handlers(app)
 
 # Add authentication middleware
 app.add_middleware(AuthMiddleware)
+
+# Tag Sentry transactions with the interaction channel (mobile / web / generic).
+# Added last so it wraps outermost in the Starlette stack and runs before
+# AuthMiddleware — guarantees the tag is attached even on 401 responses.
+app.add_middleware(ChannelTaggingMiddleware)
 
 # Mount Socket.IO app first
 app.mount("/api/socket.io", websockets.socket_app)
