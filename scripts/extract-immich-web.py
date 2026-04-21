@@ -297,6 +297,14 @@ Examples:
             print_error("Warning: Expected files may be missing")
             return 1
 
+        # Record the extracted tag so the adapter can detect drift between
+        # static/ and .immich-container-tag at startup. See main.py lifespan.
+        # Written after verification so a failed extraction doesn't leave a
+        # stale marker claiming success.
+        marker = output_dir / ".extracted-tag"
+        marker.write_text(tag + "\n")
+        print_info(f"Wrote extraction marker: {marker} = {tag}")
+
         print_success("Done! Container cleaned up.")
         return 0
 

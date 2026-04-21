@@ -39,6 +39,8 @@ Run the extraction script to pull the web files from the Immich Docker image int
 
 The script reads the Immich version from `.immich-container-tag`, pulls `ghcr.io/immich-app/immich-server:<tag>`, and copies the pre-built web files into `static/`. The `-f` flag overwrites any existing files.
 
+The script also writes a marker file `static/.extracted-tag` recording which tag it extracted. The adapter reads this marker at startup and logs a loud warning if it no longer matches `.immich-container-tag` — your cue to re-run the extraction. CI and fresh clones (no marker present) are unaffected.
+
 Other useful options:
 
 ```bash
