@@ -9,7 +9,7 @@ last-updated: 2026-04-20
 
 ## Context
 
-The backend half of this work is designed in `photos/docs/design-docs/trash-soft-delete-retention.md` (GUM-556) and already merged as a design. It adds a nullable `deleted_at` column on `assets`, splits `AssetService.delete_assets()` into `trash_assets` / `restore_assets` / `purge_assets`, emits new `ASSET_TRASHED` / `ASSET_RESTORED` events, filters trashed rows from every user-facing query, and schedules a retention-driven purge task. The backend also exposes a privileged ids-only fetch that includes trashed rows (for sync hydration) and exposes `deleted_at` on `AssetResponse`.
+The backend half of this work is already designed and ships the following guarantees that this adapter design relies on: a nullable `deleted_at` field on the asset response; `trash_assets` / `restore_assets` / `purge_assets` SDK methods replacing the single `delete_assets` call; new `ASSET_TRASHED` / `ASSET_RESTORED` events alongside `ASSET_DELETED`; trashed rows filtered out of every user-facing query by default; a retention-driven purge task; and a privileged ids-only fetch that includes trashed rows for sync hydration.
 
 This doc covers the adapter half. Today:
 
@@ -233,12 +233,12 @@ Tests:
 
 ## Dependencies
 
-Backend PRs from `photos/docs/design-docs/trash-soft-delete-retention.md`:
+Backend rollout ships in two phases that this doc refers to as PR 1 and PR 2:
 
 - PR 1 (schema + service methods + filtering) — required for adapter PR A and PR B to ship meaningfully.
 - PR 2 (default-delete cutover + purge task + config) — required for the timeline trash page to remain useful (without PR 2, `trashDays` is aspirational because nothing ever purges).
 
-Additional backend surface this adapter design requires beyond what the backend doc already scopes:
+Additional backend surface this adapter design requires beyond what the backend design already scopes:
 
 - A way to paginate the caller's trashed assets by id (backend's `list_trashed_assets`, called out in the backend design) — needed for `/trash/restore` and `/trash/empty`.
 - A way to request trashed-only counts for the timeline-buckets `isTrashed=true` flow, and trashed-only counts for `/api/assets/statistics?isTrashed=true`. The backend design mentions filtering trashed rows from the counts endpoint; it does not explicitly add a "trashed-only" inverse. Flag this on the backend PR so the inverse filter rides in the same change, not a follow-up.
