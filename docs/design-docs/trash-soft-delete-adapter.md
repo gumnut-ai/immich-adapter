@@ -48,8 +48,8 @@ Non-goals:
 
 Split the flow in `delete_assets` (`routers/api/assets.py:609`):
 
-- `force=False` (Immich default): call the backend's `trash_assets` endpoint with the full id list in a single request. Backend returns the ids that actually transitioned (live → trashed). For each transitioned id, emit a WebSocket `on_asset_trash` event; see *WebSocket events* below.
-- `force=True`: call the backend's `purge_assets` endpoint with the full id list. Backend returns the ids that were actually purged. Emit `on_asset_delete` per purged id.
+- `force=False` (Immich default): call the backend's `trash_assets` endpoint with the full id list in a single request. Backend returns the ids that actually transitioned (live → trashed). Emit a single batched `on_asset_trash` WebSocket event with the full transitioned-id array; see *WebSocket events* below for the array-payload contract.
+- `force=True`: call the backend's `purge_assets` endpoint with the full id list. Backend returns the ids that were actually purged. Emit one `on_asset_delete` event per purged id (Immich's wire shape is single-id per event for permanent deletes).
 
 Both paths replace the current per-id loop: today's code issues one `client.assets.delete(...)` per id and swallows 404s individually. The new paths should issue one bulk call per request and preserve the "return 204 and keep going" semantics by letting the backend skip ids it cannot transition (it already no-ops on already-trashed / already-deleted, per the backend design's `UPDATE ... WHERE deleted_at IS NULL RETURNING id` contract). Partial failures at the network layer still map through `map_gumnut_error` and surface as a single adapter 5xx to the client.
 
@@ -59,9 +59,9 @@ The exact REST shape on the backend side — `POST /api/assets/trash` vs. `DELET
 
 `routers/api/trash.py` is replaced end to end:
 
-- `POST /api/trash/restore/assets` → call backend `restore_assets` with the DTO id list. Emit `on_asset_restore` for every id the backend reports restored. Return `TrashResponseDto(count=<restored>)`.
-- `POST /api/trash/restore` → restore **all** of the caller's trashed assets. Immich's native `TrashService.restore(auth)` takes no id list (see `immich/server/src/services/trash.service.ts:27`). The backend exposes `list_trashed_assets()` per-library; the adapter enumerates the caller's trashed ids (paginated) and calls `restore_assets` with them. Return the total restored count, and emit `on_asset_restore` in batches so the event payload stays bounded.
-- `POST /api/trash/empty` → purge **all** of the caller's trashed assets. Same enumeration pattern: list trashed ids, then call the backend's `purge_assets`. Return the count purged. Emit `on_asset_delete` per purged id.
+- `POST /api/trash/restore/assets` → call backend `restore_assets` with the DTO id list. Emit a single batched `on_asset_restore` WebSocket event carrying the full restored-id array. Return `TrashResponseDto(count=<restored>)`.
+- `POST /api/trash/restore` → restore **all** of the caller's trashed assets. Immich's native `TrashService.restore(auth)` takes no id list (see `immich/server/src/services/trash.service.ts:27`). The backend exposes `list_trashed_assets()` per-library; the adapter enumerates the caller's trashed ids (paginated) and calls `restore_assets` with them. Return the total restored count. Emit one batched `on_asset_restore` event per enumeration page (the restored-id array is bounded by the page size) rather than one per id or one mega-event across all pages.
+- `POST /api/trash/empty` → purge **all** of the caller's trashed assets. Same enumeration pattern: list trashed ids, then call the backend's `purge_assets`. Return the count purged. Emit one `on_asset_delete` event per purged id (Immich's wire shape is single-id per event for permanent deletes).
 
 Immich's native `POST /trash/empty` returns immediately and queues the deletions to a background job (`TrashService.empty` → `AssetEmptyTrash` queue). The backend's `purge_assets` is also async-safe: it commits the DELETE + outbox together, and storage/CDN cleanup runs on `on_commit` via `AssetStorageCleanupTask`. So the adapter can call `purge_assets` synchronously and return the count; the user-visible behavior (assets disappear from the trash view immediately, storage frees shortly after) is indistinguishable from Immich's native behavior.
 
@@ -176,38 +176,36 @@ Alternative considered: add a photos-api endpoint that exposes `trash_retention_
 
 ## Migration / Rollout Plan
 
-Depends on backend PR 1 (schema + service methods) landing first. Backend PR 2 (the default-delete behavior cutover) and the adapter PR below can ship in either order, because:
+All three adapter PRs below depend on backend PR 1 (schema + `deleted_at` on `AssetResponse` + `trash_assets` / `restore_assets` / `purge_assets` service methods + `list_assets_including_trashed` privileged fetch + `list_trashed_assets`) landing and the Gumnut SDK being regenerated against it. Merging any adapter PR before that deploys will 5xx against production because the SDK fields and endpoints it calls don't exist yet.
 
-- Until backend PR 2 lands, `DELETE /api/assets/{id}` on the backend still hard-deletes. The adapter's `force=false` branch calls the new `trash_assets` service, which exists after PR 1. Existing per-id `client.assets.delete` callers (if any remain) unchanged.
+Backend PR 2 (the default-delete behavior cutover + scheduled purge task) can ship in either order relative to the adapter PRs below, because:
+
+- Until backend PR 2 lands, `DELETE /api/assets/{id}` on the backend still hard-deletes. The adapter's `force=false` branch calls the new `trash_assets` service directly, which exists after PR 1, so the adapter's behavior is correct regardless.
 - Backend PR 2 removes the `delete_assets` wrapper and registers the purge task; it does not change the service-method API the adapter uses.
 
-Suggested adapter PR order (single PR is fine if reviewers prefer; these split out if the diff gets large):
+Suggested adapter PR order (single PR is fine if reviewers prefer; these split out if the diff gets large). **All three gate on backend PR 1 deploy.**
 
-**PR A — DTO conversions + sync stream hydration**
+**PR A — DTO conversions + sync stream hydration** (gated on backend PR 1)
 
 1. Add `deleted_at` passthrough in `convert_gumnut_asset_to_immich`, `gumnut_asset_to_sync_asset_v1`, and `build_asset_upload_ready_payload`.
 2. Switch `fetch_entities_map`'s `asset` branch to the privileged (include-trashed) fetch for sync-stream callers. Keep the default `assets.list` for every other caller (`timeline.py`, `albums.py`, `people.py`, `assets.py`, `search.py`).
-3. Update `trashDays` in server config to read from env.
+3. Update `trashDays` in server config to read from env. (Step 3 is the only item that is technically backend-independent; it can be hoisted into an earlier PR if there's reason to, but batching it with PR A keeps the trash work in one place.)
 
-Before backend PR 1 ships, `deleted_at` is always null on the wire, so all three changes are no-ops in production; safe to land early.
+Before backend PR 2 cuts over the default delete behavior, `deleted_at` is always null in production. PR A's DTO changes and privileged-fetch switch are correct no-ops in that regime: DTOs serialize `deletedAt: null`, the sync stream hydrates assets exactly as today (no trashed rows to see differently), and the stream produces the same output as before. So PR A can land any time **after** backend PR 1 deploys and **before or after** backend PR 2 cuts over — it is not safe to land before backend PR 1.
 
-**PR B — delete endpoint honors `force` + trash router + WebSocket events**
+**PR B — delete endpoint honors `force` + trash router + WebSocket events** (gated on backend PR 1)
 
 1. Add `WebSocketEvent.ASSET_TRASH` / `ASSET_RESTORE`.
 2. Rewrite `delete_assets` to branch on `force` and call `trash_assets` / `purge_assets` (bulk) with matching WebSocket emissions.
 3. Rewrite `routers/api/trash.py` to back all three endpoints against backend primitives (enumerate via `list_trashed_assets` for the restore-all and empty-trash flows).
 
-PR B requires backend PR 1 (trash/restore/purge service methods) to be available. If it lands before backend PR 1, the endpoints 5xx on call — safe but broken. Gate PR B merge on backend PR 1 deploy.
-
-**PR C — timeline/statistics `isTrashed` + search `withDeleted` pass-through**
+**PR C — timeline/statistics `isTrashed` + search `withDeleted` pass-through** (gated on backend PR 1 plus the trashed-counts / trashed-listing additions called out under *Dependencies*)
 
 1. Replace the `isTrashed=true → []` short-circuits in `get_time_buckets` and wire trashed counts.
 2. Populate real `isTrashed` values in `get_time_bucket` responses and branch the asset fetch based on `isTrashed`.
 3. Pass `isTrashed` through to the backend in `get_asset_statistics`.
 
-Depends on the backend adding a trashed-counts / trashed-listing pagination endpoint (small addition, called out above).
-
-Rollback: all three PRs are revertible independently. PR A is pure additive — reverting returns the null-everywhere behavior. PR B revert restores the hard-delete-ignores-force behavior (the current bug). PR C revert restores the empty-trash-view behavior. There is no migration or persistent state on the adapter side to roll back.
+Rollback: all three PRs are revertible independently. PR A revert returns the null-everywhere DTOs and the default (exclude-trashed) sync hydration — correct behavior again in the pre-PR-2 regime, and stale-but-safe after PR 2 (trash events get dropped silently until PR A re-lands). PR B revert restores the hard-delete-ignores-force behavior (the current bug). PR C revert restores the empty-trash-view behavior. There is no migration or persistent state on the adapter side to roll back.
 
 ## Verification
 
