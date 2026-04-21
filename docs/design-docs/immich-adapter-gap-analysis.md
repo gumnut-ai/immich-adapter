@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-04-15
+last-updated: 2026-04-21
 ---
 
 # Immich Adapter Gap Analysis
@@ -293,7 +293,7 @@ Most server info endpoints return hardcoded fake data (storage, statistics, feat
 
 | Endpoint | Current behavior | Impact |
 |----------|-----------------|--------|
-| `GET /server/features` | Hardcoded feature flags | **Medium** — Clients use this to enable/disable UI features. Incorrect flags may show UI for non-existent features. |
+| `GET /server/features` | Static flags, accurate (GUM-552) | **None** — Flags now reflect actual adapter capabilities. |
 | `GET /server/config` | Hardcoded config | **Medium** — OAuth config and trash settings are hardcoded. |
 | `GET /server/storage` | Fake disk usage | **Low** — Cosmetic in admin panel |
 | `GET /server/statistics` | All zeros | **Low** — Admin panel stats |
@@ -306,9 +306,9 @@ Most server info endpoints return hardcoded fake data (storage, statistics, feat
 
 **Effort**: **S** — Most of these are about returning accurate data rather than implementing new functionality. The features endpoint is the most important: it should reflect what Gumnut actually supports so Immich clients hide unsupported UI elements.
 
-> **Design decision —** The `GET /server/features` endpoint is the highest-value fix in this group. Currently, the adapter sets `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, `trash: true`, and `sidecar: true` — all for features that are not implemented. Setting these to `false` would cause Immich clients to hide the corresponding UI elements, reducing user confusion. This is a quick win.
+> **Design decision —** The `GET /server/features` endpoint is the highest-value fix in this group. Previously the adapter set `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, `trash: true`, and `sidecar: true` for features that aren't implemented. GUM-552 flipped those flags to `false` so Immich clients hide the corresponding UI. `smartSearch`, `facialRecognition`, `search`, `oauth`, and `oauthAutoLaunch` remain `true` because they are backed by real implementations.
 
-**Recommendation**: **Close** the features endpoint (S, adapter-only). Revisit storage/statistics if admin features are needed.
+**Recommendation**: **Closed** for features (GUM-552). Revisit storage/statistics if admin features are needed.
 
 ---
 
