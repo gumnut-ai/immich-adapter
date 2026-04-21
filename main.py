@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from config.exceptions import configure_exception_handlers
@@ -55,6 +56,32 @@ init_sentry()
 logger = logging.getLogger(__name__)
 
 
+def _warn_on_web_bundle_drift() -> None:
+    # The marker is written by scripts/extract-immich-web.py. It only exists
+    # on developer machines that have run the extraction; CI and fresh
+    # clones silently skip this check.
+    tag_file = Path(".immich-container-tag")
+    marker_file = Path("static/.extracted-tag")
+    if not (tag_file.exists() and marker_file.exists()):
+        return
+    expected = tag_file.read_text().strip()
+    actual = marker_file.read_text().strip()
+    if expected != actual:
+        bar = "=" * 72
+        logger.warning(
+            "\n%s\n"
+            "  IMMICH WEB BUNDLE IS STALE\n"
+            "  .immich-container-tag: %s\n"
+            "  static/.extracted-tag: %s\n"
+            "  Run: ./scripts/extract-immich-web.py -f ./static\n"
+            "%s",
+            bar,
+            expected,
+            actual,
+            bar,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -70,6 +97,8 @@ async def lifespan(app: FastAPI):
             "streaming_upload_threshold_bytes=0: all uploads use streaming path, "
             "which skips iOS live photo .MOV detection"
         )
+
+    _warn_on_web_bundle_drift()
 
     yield
     # Ensure singleton HTTP clients are closed on shutdown
