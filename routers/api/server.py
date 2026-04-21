@@ -28,16 +28,23 @@ router = APIRouter(
 )
 
 
-fake_features = {
+# Feature flags advertised to Immich clients. Each flag must reflect what the
+# adapter actually implements — clients use these to show/hide UI, so flipping
+# one to True without a working implementation surfaces non-functional UI.
+server_features = {
     "smartSearch": True,
     "facialRecognition": True,
-    "duplicateDetection": True,
-    "map": True,
-    "reverseGeocoding": True,
+    # Duplicate detection endpoints are stubs; no dedup is performed.
+    "duplicateDetection": False,
+    # Map + reverse geocoding endpoints are stubs; no location data is served.
+    "map": False,
+    "reverseGeocoding": False,
     "importFaces": False,
-    "sidecar": True,
+    # Sidecar (.xmp) files are not processed.
+    "sidecar": False,
     "search": True,
-    "trash": True,
+    # Trash endpoints are stubs; delete goes straight through.
+    "trash": False,
     "oauth": True,
     # Auto-redirect to OAuth provider on login page instead of showing login form
     "oauthAutoLaunch": True,
@@ -178,7 +185,7 @@ fake_media_types = {
 
 @router.get("/features")
 async def get_features() -> ServerFeaturesDto:
-    return ServerFeaturesDto(**fake_features)
+    return ServerFeaturesDto(**server_features)
 
 
 @router.get("/config")
