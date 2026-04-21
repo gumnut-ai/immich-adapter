@@ -76,6 +76,8 @@ def sample_gumnut_asset():
     asset.duration_in_seconds = None
     asset.library_id = "library-789"
     asset.checksum = "abc123"
+    asset.width = 1920
+    asset.height = 1080
     asset.people = []  # Empty list for people
     asset.exif = None  # No EXIF data
     return asset
