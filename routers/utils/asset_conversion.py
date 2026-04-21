@@ -267,7 +267,7 @@ def build_asset_upload_ready_payload(
         duration=None,
         fileCreatedAt=file_created_at,
         fileModifiedAt=file_modified_at,
-        height=None,
+        height=int(gumnut_asset.height) if gumnut_asset.height else None,
         isEdited=False,
         isFavorite=False,
         libraryId=None,
@@ -277,7 +277,7 @@ def build_asset_upload_ready_payload(
         stackId=None,
         type=mime_type_to_asset_type(gumnut_asset.mime_type),
         visibility=AssetVisibility.timeline,
-        width=None,
+        width=int(gumnut_asset.width) if gumnut_asset.width else None,
     )
 
     sync_exif = extract_sync_exif(gumnut_asset, asset_uuid)
@@ -349,7 +349,7 @@ def convert_gumnut_asset_to_immich(
         createdAt=created_at_fallback,
         duration="00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else "",
         hasMetadata=True,
-        height=None,
+        height=float(gumnut_asset.height) if gumnut_asset.height else None,
         isArchived=False,
         isEdited=False,
         isFavorite=False,
@@ -360,6 +360,6 @@ def convert_gumnut_asset_to_immich(
         owner=current_user,
         thumbhash="",
         visibility=AssetVisibility.timeline,
-        width=None,
+        width=float(gumnut_asset.width) if gumnut_asset.width else None,
         people=people,
     )
