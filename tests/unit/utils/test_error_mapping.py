@@ -149,7 +149,9 @@ class TestLogUpstreamResponse:
         )
 
         matching_records = [
-            record for record in caplog.records if record.getMessage() == "upstream response"
+            record
+            for record in caplog.records
+            if record.getMessage() == "upstream response"
         ]
         assert matching_records
 
