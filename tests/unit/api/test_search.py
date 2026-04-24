@@ -275,7 +275,7 @@ class TestSearchMetadata:
         gumnut_asset.width = 1920
         gumnut_asset.height = 1080
         gumnut_asset.file_size_bytes = 1024000
-        gumnut_asset.exif = None
+        gumnut_asset.metadata = None
         gumnut_asset.people = []
 
         search_item = Mock()

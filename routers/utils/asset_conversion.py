@@ -2,7 +2,7 @@
 Utility functions for converting Gumnut assets to Immich format.
 
 This module provides shared functionality for converting asset data from the Gumnut API
-to the Immich API format, including EXIF data processing.
+to the Immich API format, including metadata (camera/EXIF/GPS/location) processing.
 """
 
 from datetime import datetime, timezone
@@ -68,30 +68,28 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     Returns:
         ExifResponseDto object with processed EXIF data
     """
-    # Handle case where exif might be None
-    if gumnut_asset.exif is None:
+    # Handle case where metadata might be None
+    if gumnut_asset.metadata is None:
         return ExifResponseDto()
 
-    exif = gumnut_asset.exif
+    metadata = gumnut_asset.metadata
 
-    # Extract EXIF fields directly from Gumnut Exif object
-    # Note: These fields may not all be present in the Gumnut Exif type, using direct access where available
-    make = exif.make
-    model = exif.model
-    lens_model = exif.lens_model
-    f_number = exif.f_number
-    focal_length = exif.focal_length
-    iso = exif.iso
-    exposure_time = exif.exposure_time
-    latitude = exif.latitude
-    longitude = exif.longitude
-    city = exif.city
-    state = exif.state
-    country = exif.country
-    description = exif.description
-    orientation = exif.orientation
-    rating = exif.rating
-    projection_type = exif.projection_type
+    make = metadata.make
+    model = metadata.model
+    lens_model = metadata.lens_model
+    f_number = metadata.f_number
+    focal_length = metadata.focal_length
+    iso = metadata.iso
+    exposure_time = metadata.exposure_time
+    latitude = metadata.latitude
+    longitude = metadata.longitude
+    city = metadata.city
+    state = metadata.state
+    country = metadata.country
+    description = metadata.description
+    orientation = metadata.orientation
+    rating = metadata.rating
+    projection_type = metadata.projection_type
 
     # convert exposure_time (float) to a fraction string like "1/66"
     if exposure_time is not None:
@@ -102,13 +100,12 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
             exposure_time_str = f"1/{denominator}"
         exposure_time = exposure_time_str
 
-    # Map Gumnut datetime fields to our expected names
     # Extract timezone before converting to UTC (need original offset for Immich format)
-    time_zone = format_timezone_immich(exif.original_datetime)
+    time_zone = format_timezone_immich(metadata.original_datetime)
 
-    # Convert EXIF datetimes to actual UTC for Immich compatibility
-    date_time_original = to_actual_utc(exif.original_datetime)
-    modify_date = to_actual_utc(exif.modified_datetime)
+    # Convert datetimes to actual UTC for Immich compatibility
+    date_time_original = to_actual_utc(metadata.original_datetime)
+    modify_date = to_actual_utc(metadata.modified_datetime)
 
     width = gumnut_asset.width
     height = gumnut_asset.height
@@ -148,36 +145,38 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
 
 def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAssetExifV1:
     """
-    Extract EXIF information from a Gumnut AssetResponse for sync events.
+    Extract metadata from a Gumnut AssetResponse for sync events.
 
     Args:
         gumnut_asset: The Gumnut AssetResponse object
         asset_uuid: The asset UUID string
 
     Returns:
-        SyncAssetExifV1 object with EXIF data from the asset
+        SyncAssetExifV1 object with metadata from the asset
     """
-    exif = gumnut_asset.exif
+    metadata = gumnut_asset.metadata
 
-    # Extract EXIF fields, defaulting to None if not available
-    make = getattr(exif, "make", None) if exif else None
-    model = getattr(exif, "model", None) if exif else None
-    lens_model = getattr(exif, "lens_model", None) if exif else None
-    f_number = getattr(exif, "f_number", None) if exif else None
-    focal_length = getattr(exif, "focal_length", None) if exif else None
-    iso = getattr(exif, "iso", None) if exif else None
-    exposure_time = getattr(exif, "exposure_time", None) if exif else None
-    latitude = getattr(exif, "latitude", None) if exif else None
-    longitude = getattr(exif, "longitude", None) if exif else None
-    city = getattr(exif, "city", None) if exif else None
-    state = getattr(exif, "state", None) if exif else None
-    country = getattr(exif, "country", None) if exif else None
-    description = getattr(exif, "description", None) if exif else None
-    orientation = getattr(exif, "orientation", None) if exif else None
-    rating = getattr(exif, "rating", None) if exif else None
-    projection_type = getattr(exif, "projection_type", None) if exif else None
-    date_time_original = getattr(exif, "original_datetime", None) if exif else None
-    modify_date = getattr(exif, "modified_datetime", None) if exif else None
+    # Extract metadata fields, defaulting to None if not available
+    make = getattr(metadata, "make", None) if metadata else None
+    model = getattr(metadata, "model", None) if metadata else None
+    lens_model = getattr(metadata, "lens_model", None) if metadata else None
+    f_number = getattr(metadata, "f_number", None) if metadata else None
+    focal_length = getattr(metadata, "focal_length", None) if metadata else None
+    iso = getattr(metadata, "iso", None) if metadata else None
+    exposure_time = getattr(metadata, "exposure_time", None) if metadata else None
+    latitude = getattr(metadata, "latitude", None) if metadata else None
+    longitude = getattr(metadata, "longitude", None) if metadata else None
+    city = getattr(metadata, "city", None) if metadata else None
+    state = getattr(metadata, "state", None) if metadata else None
+    country = getattr(metadata, "country", None) if metadata else None
+    description = getattr(metadata, "description", None) if metadata else None
+    orientation = getattr(metadata, "orientation", None) if metadata else None
+    rating = getattr(metadata, "rating", None) if metadata else None
+    projection_type = getattr(metadata, "projection_type", None) if metadata else None
+    date_time_original = (
+        getattr(metadata, "original_datetime", None) if metadata else None
+    )
+    modify_date = getattr(metadata, "modified_datetime", None) if metadata else None
 
     # Convert exposure_time (float) to a fraction string like "1/66"
     exposure_time_str = None
@@ -191,7 +190,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
     # Extract timezone before converting to UTC (need original offset for Immich format)
     time_zone = format_timezone_immich(date_time_original)
 
-    # Convert EXIF datetimes to actual UTC for Immich compatibility
+    # Convert datetimes to actual UTC for Immich compatibility
     date_time_original = to_actual_utc(date_time_original)
     modify_date = to_actual_utc(modify_date)
 
@@ -209,7 +208,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
         if gumnut_asset.file_size_bytes
         else None,
         focalLength=float(focal_length) if focal_length else None,
-        fps=None,  # Not available from Gumnut EXIF
+        fps=None,  # Not available from Gumnut metadata
         iso=int(iso) if iso else None,
         latitude=float(latitude) if latitude else None,
         lensModel=str(lens_model) if lens_model else None,
@@ -218,7 +217,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
         model=str(model) if model else None,
         modifyDate=modify_date,
         orientation=str(orientation) if orientation else None,
-        profileDescription=None,  # Not available from Gumnut EXIF
+        profileDescription=None,  # Not available from Gumnut metadata
         projectionType=str(projection_type) if projection_type else None,
         rating=normalize_rating(rating),
         state=str(state) if state else None,
@@ -241,21 +240,21 @@ def build_asset_upload_ready_payload(
     """
     asset_uuid = str(safe_uuid_from_asset_id(gumnut_asset.id))
 
-    # Extract EXIF datetimes for proper Immich compatibility
-    exif_original_dt = (
-        gumnut_asset.exif.original_datetime if gumnut_asset.exif else None
+    # Extract metadata datetimes for proper Immich compatibility
+    metadata_original_dt = (
+        gumnut_asset.metadata.original_datetime if gumnut_asset.metadata else None
     )
-    exif_modified_dt = (
-        gumnut_asset.exif.modified_datetime if gumnut_asset.exif else None
+    metadata_modified_dt = (
+        gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
     )
 
-    # fileCreatedAt: EXIF capture time in actual UTC, fallback to upload time
-    file_created_at = to_actual_utc(exif_original_dt) or gumnut_asset.created_at
-    # fileModifiedAt: EXIF modify time in actual UTC, fallback to upload time
-    file_modified_at = to_actual_utc(exif_modified_dt) or gumnut_asset.updated_at
-    # localDateTime: EXIF capture time in keepLocalTime format, fallback to upload time
+    # fileCreatedAt: capture time in actual UTC, fallback to upload time
+    file_created_at = to_actual_utc(metadata_original_dt) or gumnut_asset.created_at
+    # fileModifiedAt: modify time in actual UTC, fallback to upload time
+    file_modified_at = to_actual_utc(metadata_modified_dt) or gumnut_asset.updated_at
+    # localDateTime: capture time in keepLocalTime format, fallback to upload time
     local_date_time = (
-        to_immich_local_datetime(exif_original_dt) or gumnut_asset.created_at
+        to_immich_local_datetime(metadata_original_dt) or gumnut_asset.created_at
     )
 
     sync_asset = SyncAssetV1(
@@ -303,24 +302,26 @@ def convert_gumnut_asset_to_immich(
     mime_type = gumnut_asset.mime_type or "application/octet-stream"
     checksum = gumnut_asset.checksum or ""
 
-    # Extract EXIF datetimes for proper Immich compatibility
-    exif_original_dt = (
-        gumnut_asset.exif.original_datetime if gumnut_asset.exif else None
+    # Extract metadata datetimes for proper Immich compatibility
+    metadata_original_dt = (
+        gumnut_asset.metadata.original_datetime if gumnut_asset.metadata else None
     )
-    exif_modified_dt = (
-        gumnut_asset.exif.modified_datetime if gumnut_asset.exif else None
+    metadata_modified_dt = (
+        gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
     )
 
     # Get fallback timestamps from upload times
     created_at_fallback = gumnut_asset.created_at or datetime.now(timezone.utc)
     updated_at_fallback = gumnut_asset.updated_at or datetime.now(timezone.utc)
 
-    # fileCreatedAt: EXIF capture time in actual UTC, fallback to upload time
-    file_created_at = to_actual_utc(exif_original_dt) or created_at_fallback
-    # fileModifiedAt: EXIF modify time in actual UTC, fallback to upload time
-    file_modified_at = to_actual_utc(exif_modified_dt) or updated_at_fallback
-    # localDateTime: EXIF capture time in keepLocalTime format, fallback to upload time
-    local_date_time = to_immich_local_datetime(exif_original_dt) or created_at_fallback
+    # fileCreatedAt: capture time in actual UTC, fallback to upload time
+    file_created_at = to_actual_utc(metadata_original_dt) or created_at_fallback
+    # fileModifiedAt: modify time in actual UTC, fallback to upload time
+    file_modified_at = to_actual_utc(metadata_modified_dt) or updated_at_fallback
+    # localDateTime: capture time in keepLocalTime format, fallback to upload time
+    local_date_time = (
+        to_immich_local_datetime(metadata_original_dt) or created_at_fallback
+    )
 
     # Determine asset type based on MIME type
     asset_type = mime_type_to_asset_type(mime_type)

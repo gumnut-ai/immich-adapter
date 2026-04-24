@@ -33,10 +33,10 @@ from tests.unit.api.sync.conftest import (
     create_mock_album_data,
     create_mock_asset_data,
     create_mock_entity_page,
-    create_mock_exif_data,
     create_mock_event,
     create_mock_events_response,
     create_mock_face_data,
+    create_mock_metadata_data,
     create_mock_gumnut_client,
     create_mock_person_data,
     create_mock_session,
@@ -337,28 +337,28 @@ class TestGenerateSyncStream:
         assert events[1]["type"] == "SyncCompleteV1"
 
     @pytest.mark.anyio
-    async def test_streams_exif_when_requested(self):
-        """EXIF data is streamed when AssetExifsV1 is requested."""
+    async def test_streams_metadata_when_requested(self):
+        """Metadata is streamed (as AssetExifV1) when AssetExifsV1 is requested."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        exif_data = create_mock_exif_data(updated_at)
-        # For exif, we need an asset with exif attached
-        asset_with_exif = create_mock_asset_data(updated_at)
-        asset_with_exif.id = exif_data.asset_id
-        asset_with_exif.exif = exif_data
+        metadata_data = create_mock_metadata_data(updated_at)
+        # For metadata, we need an asset with metadata attached
+        asset_with_metadata = create_mock_asset_data(updated_at)
+        asset_with_metadata.id = metadata_data.asset_id
+        asset_with_metadata.metadata = metadata_data
 
         mock_event = create_mock_event(
-            entity_type="exif",
-            entity_id=exif_data.asset_id,
-            event_type="exif_created",
+            entity_type="metadata",
+            entity_id=metadata_data.asset_id,
+            event_type="metadata_updated",
             created_at=updated_at,
-            cursor="cursor_exif_1",
+            cursor="cursor_metadata_1",
         )
         mock_client.events.get.return_value = create_mock_events_response([mock_event])
         mock_client.assets.list.return_value = create_mock_entity_page(
-            [asset_with_exif]
+            [asset_with_metadata]
         )
 
         request = SyncStreamDto(types=[SyncRequestType.AssetExifsV1])
@@ -657,33 +657,6 @@ class TestGenerateSyncStream:
         assert len(events) == 2
         assert events[0]["type"] == "AssetFaceDeleteV1"
         assert "assetFaceId" in events[0]["data"]
-
-    @pytest.mark.anyio
-    async def test_skips_exif_deleted_event(self):
-        """exif_deleted events are silently skipped."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        mock_user = create_mock_user(updated_at)
-        mock_client = create_mock_gumnut_client(mock_user)
-
-        mock_event = create_mock_event(
-            entity_type="exif",
-            entity_id="some-asset-id",
-            event_type="exif_deleted",
-            created_at=updated_at,
-            cursor="cursor_del_5",
-        )
-        mock_client.events.get.return_value = create_mock_events_response([mock_event])
-
-        request = SyncStreamDto(types=[SyncRequestType.AssetExifsV1])
-        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
-
-        events = await collect_stream(
-            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
-        )
-
-        # Only SyncCompleteV1 — exif_deleted was skipped
-        assert len(events) == 1
-        assert events[0]["type"] == "SyncCompleteV1"
 
     @pytest.mark.anyio
     async def test_skips_missing_entity(self):

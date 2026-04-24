@@ -69,7 +69,7 @@ _GUMNUT_TYPE_TO_SYNC_TYPES: dict[str, list[SyncEntityType]] = {
     "asset": [SyncEntityType.AssetV1],
     "album": [SyncEntityType.AlbumV1],
     "album_asset": [SyncEntityType.AlbumToAssetV1],
-    "exif": [SyncEntityType.AssetExifV1],
+    "metadata": [SyncEntityType.AssetExifV1],
     "person": [SyncEntityType.PersonV1],
     "face": [SyncEntityType.AssetFaceV1, SyncEntityType.AssetFaceV2],
 }

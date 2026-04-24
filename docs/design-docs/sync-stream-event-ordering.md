@@ -23,7 +23,7 @@ When a person is deleted and their faces are reassigned:
 
 The sync stream is split into two phases:
 
-- **Phase 1 (Upserts):** Stream creates/updates for all entity types in FK dependency order (assets → albums → album_assets → exifs → persons → faces)
+- **Phase 1 (Upserts):** Stream creates/updates for all entity types in FK dependency order (assets → albums → album_assets → metadata → persons → faces)
 - **Phase 2 (Deletes):** Stream deletes for all entity types in reverse FK dependency order (faces → album_assets → persons → albums → assets)
 
 This ensures:

@@ -156,7 +156,7 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     asset.width = 1920
     asset.height = 1080
     asset.file_size_bytes = 1059218
-    asset.exif = None
+    asset.metadata = None
     return asset
 
 
@@ -177,32 +177,31 @@ def create_mock_album_data(
     )
 
 
-def create_mock_exif_data(updated_at: datetime) -> Mock:
-    """Create mock exif data for entity fetch."""
-    exif = Mock()
-    exif.asset_id = uuid_to_gumnut_asset_id(TEST_UUID)
-    exif.city = "San Francisco"
-    exif.country = "USA"
-    exif.state = "California"
-    exif.description = None
-    exif.original_datetime = updated_at
-    exif.modified_datetime = None
-    exif.exposure_time = 0.01
-    exif.f_number = 2.8
-    exif.focal_length = 50.0
-    exif.iso = 100
-    exif.latitude = 37.7749
-    exif.longitude = -122.4194
-    exif.lens_model = "50mm f/1.8"
-    exif.make = "Canon"
-    exif.model = "EOS R5"
-    exif.orientation = 1
-    exif.profile_description = None
-    exif.projection_type = None
-    exif.rating = None
-    exif.fps = None
-    exif.updated_at = updated_at
-    return exif
+def create_mock_metadata_data(updated_at: datetime) -> Mock:
+    """Create mock metadata data for entity fetch."""
+    metadata = Mock()
+    metadata.asset_id = uuid_to_gumnut_asset_id(TEST_UUID)
+    metadata.city = "San Francisco"
+    metadata.country = "USA"
+    metadata.state = "California"
+    metadata.description = None
+    metadata.original_datetime = updated_at
+    metadata.modified_datetime = None
+    metadata.exposure_time = 0.01
+    metadata.f_number = 2.8
+    metadata.focal_length = 50.0
+    metadata.iso = 100
+    metadata.latitude = 37.7749
+    metadata.longitude = -122.4194
+    metadata.lens_model = "50mm f/1.8"
+    metadata.make = "Canon"
+    metadata.model = "EOS R5"
+    metadata.orientation = 1
+    metadata.projection_type = None
+    metadata.rating = None
+    metadata.fps = None
+    metadata.updated_at = updated_at
+    return metadata
 
 
 def create_mock_person_data(updated_at: datetime) -> Mock:
@@ -261,7 +260,7 @@ __all__ = [
     "create_mock_asset_data",
     "create_mock_album_data",
     "create_mock_album_asset_data",
-    "create_mock_exif_data",
+    "create_mock_metadata_data",
     "create_mock_person_data",
     "create_mock_face_data",
     "create_mock_entity_page",

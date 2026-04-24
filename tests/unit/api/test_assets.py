@@ -399,7 +399,7 @@ class TestUploadAsset:
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
         mock_gumnut_asset.file_size_bytes = 1024
-        mock_gumnut_asset.exif = None
+        mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
 
         mock_raw_response = Mock()
@@ -507,7 +507,7 @@ class TestUploadAsset:
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
         mock_gumnut_asset.file_size_bytes = 1024
-        mock_gumnut_asset.exif = None
+        mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
 
         mock_raw_response = Mock()
@@ -610,7 +610,7 @@ class TestUploadAsset:
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
         mock_gumnut_asset.file_size_bytes = 10240
-        mock_gumnut_asset.exif = None
+        mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
 
         mock_raw_response = Mock()
@@ -662,7 +662,7 @@ class TestUploadAsset:
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
         mock_gumnut_asset.file_size_bytes = 1024
-        mock_gumnut_asset.exif = None
+        mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
 
         mock_raw_response = Mock()

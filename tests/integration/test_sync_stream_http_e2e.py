@@ -19,8 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gumnut.types.album_response import AlbumResponse
-from gumnut.types.asset_response import AssetResponse
-from gumnut.types.exif_response import ExifResponse
+from gumnut.types.asset_response import AssetResponse, Metadata
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
@@ -64,7 +63,7 @@ TEST_ASSETS_DATA = [
         "local_datetime": "2024-02-25T06:57:27.660000-08:00",
         "checksum": "DR00pgYMC13XiSPf+jNy26nU7l/jzvMVLaB5EBRZQOA=",
         "checksum_sha1": "PaDX6+c+Lhjpm5/ciXUROL1ryaU=",
-        "exif": {
+        "metadata": {
             "make": "NIKON CORPORATION",
             "model": "NIKON Z 6_2",
             "lens_model": "NIKKOR Z 70-200mm f/2.8 VR S",
@@ -86,7 +85,7 @@ TEST_ASSETS_DATA = [
         "local_datetime": "2024-02-24T08:03:10.290000-08:00",
         "checksum": "yPtguJL00ZTGGaaK0QN1uGQILEltlX4lZvZgzVowLZw=",
         "checksum_sha1": "brALG7dXmBNlyka47z1l2mBICXQ=",
-        "exif": {
+        "metadata": {
             "make": "NIKON CORPORATION",
             "model": "NIKON Z 6_2",
             "lens_model": "NIKKOR Z 70-200mm f/2.8 VR S",
@@ -108,7 +107,7 @@ TEST_ASSETS_DATA = [
         "local_datetime": "2023-10-12T13:36:25.510000-07:00",
         "checksum": "nJ7tPpZocEqFkgfg8oVxdRkP76erAVaDuQdsZ2Vhwwo=",
         "checksum_sha1": "AO8u7EyZx+TpfVcc1ccu/BbXTBM=",
-        "exif": {
+        "metadata": {
             "make": "NIKON CORPORATION",
             "model": "NIKON Z 6_2",
             "lens_model": "NIKKOR Z 70-200mm f/2.8 VR S",
@@ -136,7 +135,7 @@ TEST_ASSETS_DATA = [
         "local_datetime": "2011-05-07T16:19:38.900000Z",
         "checksum": "uUFqCn/vc8B8GiOtWRc+uRWjL4jg67nHNGw92WmFz+o=",
         "checksum_sha1": "Ry1EUP0D2lTMKQo+GlFrCKJFoDk=",
-        "exif": {
+        "metadata": {
             "make": "NIKON CORPORATION",
             "model": "NIKON D7000",
             "lens_model": "70.0-300.0 mm f/4.5-5.6",
@@ -173,7 +172,7 @@ def parse_datetime(dt_str: str) -> datetime:
 
 
 def create_asset_response(
-    asset_data: dict, exif: ExifResponse | None = None
+    asset_data: dict, metadata: Metadata | None = None
 ) -> AssetResponse:
     """Create an AssetResponse from test data."""
     return AssetResponse(
@@ -189,23 +188,23 @@ def create_asset_response(
         updated_at=datetime.now(timezone.utc),
         checksum=asset_data["checksum"],
         checksum_sha1=asset_data.get("checksum_sha1"),
-        exif=exif,
+        metadata=metadata,
     )
 
 
-def create_exif_response(asset_id: str, exif_data: dict) -> ExifResponse:
-    """Create an ExifResponse from test data."""
-    return ExifResponse(
+def create_metadata_response(asset_id: str, metadata_data: dict) -> Metadata:
+    """Create a Metadata object from test data."""
+    return Metadata(
         asset_id=asset_id,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
-        make=exif_data.get("make"),
-        model=exif_data.get("model"),
-        lens_model=exif_data.get("lens_model"),
-        f_number=exif_data.get("f_number"),
-        focal_length=exif_data.get("focal_length"),
-        iso=exif_data.get("iso"),
-        exposure_time=exif_data.get("exposure_time"),
+        make=metadata_data.get("make"),
+        model=metadata_data.get("model"),
+        lens_model=metadata_data.get("lens_model"),
+        f_number=metadata_data.get("f_number"),
+        focal_length=metadata_data.get("focal_length"),
+        iso=metadata_data.get("iso"),
+        exposure_time=metadata_data.get("exposure_time"),
     )
 
 
@@ -339,7 +338,7 @@ def mock_gumnut_client(mock_gumnut_user):
     Create mock Gumnut client with comprehensive test data.
 
     Uses events API (lightweight events) with separate entity batch fetching.
-    Includes: assets, exif, faces, albums, persons
+    Includes: assets, metadata, faces, albums, persons
     """
     client = Mock()
     client.users.me = AsyncMock(return_value=mock_gumnut_user)
@@ -352,20 +351,22 @@ def mock_gumnut_client(mock_gumnut_user):
 
     mock_events: dict[str, list[Mock]] = {
         "asset": [],
-        "exif": [],
+        "metadata": [],
         "face": [],
         "album": [],
         "person": [],
     }
 
     for i, asset_data in enumerate(TEST_ASSETS_DATA):
-        # Create exif response (needed for both asset and exif entity fetching)
-        exif_resp = None
-        if asset_data.get("exif"):
-            exif_resp = create_exif_response(asset_data["id"], asset_data["exif"])
+        # Create metadata response (needed for both asset and metadata fetching)
+        metadata_resp = None
+        if asset_data.get("metadata"):
+            metadata_resp = create_metadata_response(
+                asset_data["id"], asset_data["metadata"]
+            )
 
-        # Create asset response with exif attached (for exif entity fetching)
-        asset_resp = create_asset_response(asset_data, exif=exif_resp)
+        # Create asset response with metadata attached (for metadata fetching)
+        asset_resp = create_asset_response(asset_data, metadata=metadata_resp)
         asset_responses[asset_data["id"]] = asset_resp
 
         # Asset event
@@ -378,14 +379,14 @@ def mock_gumnut_client(mock_gumnut_user):
             )
         )
 
-        # Exif event (entity_id = asset_id since exif is 1:1 with asset)
-        if asset_data.get("exif"):
-            mock_events["exif"].append(
+        # Metadata event (entity_id = asset_id since metadata is 1:1 with asset)
+        if asset_data.get("metadata"):
+            mock_events["metadata"].append(
                 create_event(
-                    entity_type="exif",
+                    entity_type="metadata",
                     entity_id=asset_data["id"],
-                    event_type="exif_updated",
-                    cursor=f"cursor_exif_{i}",
+                    event_type="metadata_updated",
+                    cursor=f"cursor_metadata_{i}",
                 )
             )
 
@@ -572,34 +573,34 @@ class TestSyncStreamHTTPE2E:
         for event in asset_events:
             assert event["data"]["deletedAt"] is None
 
-    def test_sync_stream_exif_data(self, client):
-        """Test that EXIF data is returned correctly.
+    def test_sync_stream_metadata_data(self, client):
+        """Test that metadata is returned correctly (as Immich AssetExifV1).
 
         Uses explicit expected values to validate the contract rather than
         re-implementing the transformation logic.
         """
         events = post_sync_stream(client, ["AuthUsersV1", "AssetsV1", "AssetExifsV1"])
-        exif_events = [e for e in events if e["type"] == "AssetExifV1"]
+        metadata_events = [e for e in events if e["type"] == "AssetExifV1"]
 
-        assert len(exif_events) == len(TEST_ASSETS_DATA)
+        assert len(metadata_events) == len(TEST_ASSETS_DATA)
 
-        # Build expected EXIF values from test data (all 7 fields)
+        # Build expected values from test data (all 7 fields)
         # Note: snake_case in test data maps to camelCase in Immich output
         # Note: exposure time uses EXPECTED_EXPOSURE_TIMES for known outputs
-        expected_exif = {
+        expected_metadata = {
             (
-                a["exif"]["make"],
-                a["exif"]["model"],
-                a["exif"]["lens_model"],
-                a["exif"]["f_number"],
-                a["exif"]["focal_length"],
-                a["exif"]["iso"],
+                a["metadata"]["make"],
+                a["metadata"]["model"],
+                a["metadata"]["lens_model"],
+                a["metadata"]["f_number"],
+                a["metadata"]["focal_length"],
+                a["metadata"]["iso"],
                 EXPECTED_EXPOSURE_TIMES[a["id"]],
             )
             for a in TEST_ASSETS_DATA
-            if a.get("exif")
+            if a.get("metadata")
         }
-        actual_exif = {
+        actual_metadata = {
             (
                 e["data"]["make"],
                 e["data"]["model"],
@@ -609,10 +610,10 @@ class TestSyncStreamHTTPE2E:
                 e["data"]["iso"],
                 e["data"]["exposureTime"],
             )
-            for e in exif_events
+            for e in metadata_events
         }
 
-        assert actual_exif == expected_exif
+        assert actual_metadata == expected_metadata
 
     def test_sync_stream_face_data(self, client):
         """Test that face data is returned with correct bounding box transformation.
@@ -802,7 +803,9 @@ class TestSyncStreamHTTPE2E:
         expected_cursors: dict[str, set[str]] = {
             "AuthUserV1": {TEST_USER_UPDATED_AT.isoformat()},
             "AssetV1": {f"cursor_asset_{i}" for i in range(len(TEST_ASSETS_DATA))},
-            "AssetExifV1": {f"cursor_exif_{i}" for i in range(len(TEST_ASSETS_DATA))},
+            "AssetExifV1": {
+                f"cursor_metadata_{i}" for i in range(len(TEST_ASSETS_DATA))
+            },
             "AlbumV1": {f"cursor_album_{i}" for i in range(len(TEST_ALBUMS_DATA))},
             "PersonV1": {"cursor_person_0"},
             "AssetFaceV1": face_cursors,
