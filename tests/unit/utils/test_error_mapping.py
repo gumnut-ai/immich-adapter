@@ -2,10 +2,17 @@
 Tests for error mapping utilities.
 """
 
+import logging
+
 import pytest
 from fastapi import HTTPException
 
-from routers.utils.error_mapping import check_for_error_by_code, map_gumnut_error
+import routers.utils.error_mapping as error_mapping_module
+from routers.utils.error_mapping import (
+    check_for_error_by_code,
+    map_gumnut_error,
+    upstream_status_log_level,
+)
 
 
 class TestCheckForErrorByCode:
@@ -77,6 +84,26 @@ class TestCheckForErrorByCode:
             check_for_error_by_code(error_none, 404)
 
 
+class TestUpstreamStatusLogLevel:
+    """Test centralized status -> log level policy for upstream responses."""
+
+    @pytest.mark.parametrize(
+        ("status_code", "expected_level"),
+        [
+            (400, logging.WARNING),
+            (401, logging.WARNING),
+            (403, logging.WARNING),
+            (404, logging.INFO),
+            (422, logging.WARNING),
+            (429, logging.WARNING),
+            (500, logging.ERROR),
+            (503, logging.ERROR),
+        ],
+    )
+    def test_upstream_status_log_level_policy(self, status_code, expected_level):
+        assert upstream_status_log_level(status_code) == expected_level
+
+
 class TestMapGumnutError:
     """Test the map_gumnut_error function."""
 
@@ -108,6 +135,78 @@ class TestMapGumnutError:
         assert isinstance(result, HTTPException)
         assert result.status_code == 403
         assert result.detail == "Access denied"
+
+    @pytest.mark.parametrize(
+        ("status_code", "expected_level"),
+        [
+            (401, logging.WARNING),
+            (403, logging.WARNING),
+            (404, logging.INFO),
+            (422, logging.WARNING),
+            (429, logging.WARNING),
+            (500, logging.ERROR),
+        ],
+    )
+    def test_map_error_logs_with_status_policy(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        status_code: int,
+        expected_level: int,
+    ):
+        """Status-based log level should follow upstream response policy."""
+
+        class MockSDKError(Exception):
+            def __init__(self, message, status_code):
+                super().__init__(message)
+                self.status_code = status_code
+
+        caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
+
+        result = map_gumnut_error(
+            MockSDKError("Upstream request failed", status_code),
+            "Failed to upload asset",
+        )
+
+        assert result.status_code == status_code
+
+        status_records = [
+            record
+            for record in caplog.records
+            if getattr(record, "status_code", None) == status_code
+        ]
+        assert status_records
+        assert status_records[-1].levelno == expected_level
+
+    def test_rate_limit_error_maps_to_502_and_logs_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """RateLimitError should be mapped to 502 and logged at WARNING."""
+
+        class FakeRateLimitError(Exception):
+            pass
+
+        monkeypatch.setattr(error_mapping_module, "RateLimitError", FakeRateLimitError)
+        caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
+
+        result = error_mapping_module.map_gumnut_error(
+            FakeRateLimitError("429 Too many requests"),
+            "Failed to upload asset",
+        )
+
+        assert result.status_code == 502
+        assert (
+            result.detail == "Failed to upload asset: Upstream temporarily unavailable"
+        )
+
+        matching_records = [
+            record
+            for record in caplog.records
+            if "rate-limited request" in record.getMessage()
+        ]
+        assert matching_records
+        assert matching_records[-1].levelno == logging.WARNING
 
     def test_map_error_with_string_patterns(self):
         """Test mapping error using string pattern matching fallback."""

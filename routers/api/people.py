@@ -9,7 +9,11 @@ from gumnut.types import PersonResponse
 
 from routers.utils.cdn_client import stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
+from routers.utils.error_mapping import (
+    get_upstream_status_code,
+    log_upstream_response,
+    map_gumnut_error,
+)
 from routers.immich_models import (
     AssetFaceUpdateDto,
     BulkIdResponseDto,
@@ -161,21 +165,25 @@ async def update_people(
             results.append(
                 BulkIdResponseDto(id=person_item.id, success=False, error=error)
             )
-            logger.warning(
-                "HTTPException in bulk person update for %s: %s %s",
-                person_item.id,
-                he.status_code,
-                he.detail,
+            log_upstream_response(
+                logger,
+                context="update_people",
+                status_code=he.status_code,
+                message=(
+                    f"HTTPException in bulk person update for {person_item.id}: "
+                    f"{he.status_code} {he.detail}"
+                ),
+                extra={"person_id": person_item.id},
             )
         except Exception as e:
-            error_msg = str(e).lower()
-            if check_for_error_by_code(e, 404) or "not found" in error_msg:
+            upstream_status_code = get_upstream_status_code(e)
+            if upstream_status_code == 404:
                 results.append(
                     BulkIdResponseDto(
                         id=person_item.id, success=False, error=Error1.not_found
                     )
                 )
-            elif check_for_error_by_code(e, 401) or "invalid api key" in error_msg:
+            elif upstream_status_code in (401, 403):
                 results.append(
                     BulkIdResponseDto(
                         id=person_item.id, success=False, error=Error1.no_permission
@@ -187,6 +195,14 @@ async def update_people(
                         id=person_item.id, success=False, error=Error1.unknown
                     )
                 )
+
+            log_upstream_response(
+                logger,
+                context="update_people",
+                status_code=upstream_status_code or 500,
+                message=f"Failed bulk person update for {person_item.id}: {e}",
+                extra={"person_id": person_item.id},
+            )
 
     return results
 

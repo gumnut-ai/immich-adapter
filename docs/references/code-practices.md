@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-04-02
+last-updated: 2026-04-24
 ---
 
 # Code Practices
@@ -117,7 +117,7 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 - All tests should be async and use `@pytest.mark.anyio` decorator
 - Run tests from the project directory, not repository root
 - Use model factories for test data creation
-- Do not assert on logging in tests — logging is non-functional behavior. Tests should assert on observable outputs (return values, side effects, emitted events), not on whether a particular log message was emitted.
+- Avoid asserting on logging in tests by default — logging is usually non-functional behavior. Exception: when log level itself is an explicit contract (for example, upstream status severity policy), assertions may verify level/metadata while avoiding brittle full-message matching.
 - When mocking SDK paginator calls used with `async for` (e.g., `client.faces.list`), use `Mock(return_value=MockSyncCursorPage([...]))` — not `AsyncMock`. `AsyncMock` wraps the return in a coroutine, which breaks `async for` iteration. Use `AsyncMock` only for calls consumed with `await`.
 - Do not add `__init__.py` to test directories — the project uses pytest's rootdir-based import resolution. Adding `__init__.py` switches pytest to package-based imports, breaking test discovery.
 
@@ -131,6 +131,16 @@ logger.info("WebSocket connected", extra={"sid": sid, "user_id": user_id, "devic
 ```
 
 This enables better searching and correlation in Sentry.
+
+### Upstream response log levels
+
+For responses/errors from upstream photos-api/Gumnut calls, use status-based severity:
+
+- `404` → `INFO`
+- Other `4xx` (including `400`, `401`, `403`, `422`, `429`) → `WARNING`
+- `5xx` → `ERROR`
+
+When possible, use shared helpers in `routers/utils/error_mapping.py` (`upstream_status_log_level` / `log_upstream_response`) instead of ad-hoc `if/else` logging branches.
 
 **Reserved `extra` keys**: Python's `LogRecord` has reserved attributes (`filename`, `module`, `name`, `msg`, `args`, `levelname`, `pathname`, `lineno`, etc.). Using these as `extra` keys causes a `KeyError` at runtime. Use prefixed names instead (e.g., `upload_filename` instead of `filename`).
 

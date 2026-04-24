@@ -7,7 +7,6 @@ repeated calls to the Gumnut backend.
 
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
-import logging
 
 from fastapi import Depends, Request
 from gumnut import AsyncGumnut
@@ -22,8 +21,6 @@ from routers.immich_models import (
 from routers.utils.error_mapping import map_gumnut_error
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
-
-logger = logging.getLogger(__name__)
 
 
 async def get_current_user_admin(
@@ -47,7 +44,6 @@ async def get_current_user_admin(
     try:
         user = await client.users.me()
     except Exception as e:
-        logger.error(f"Failed to fetch user from Gumnut: {e}")
         raise map_gumnut_error(e, "Failed to fetch user details") from e
 
     # Map Gumnut UserResponse to Immich UserAdminResponseDto

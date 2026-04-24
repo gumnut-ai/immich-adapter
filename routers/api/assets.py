@@ -24,7 +24,11 @@ from gumnut.types.asset_response import AssetResponse
 from config.settings import Settings, get_settings
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
+from routers.utils.error_mapping import (
+    get_upstream_status_code,
+    log_upstream_response,
+    map_gumnut_error,
+)
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
 from socketio.exceptions import SocketIOError
@@ -258,7 +262,7 @@ def _parse_datetime(value: str | None, fallback: datetime) -> datetime:
         if dt.tzinfo is None and fallback.tzinfo is not None:
             dt = dt.replace(tzinfo=fallback.tzinfo)
         return dt
-    except (ValueError, AttributeError):
+    except ValueError, AttributeError:
         return fallback
 
 
@@ -480,18 +484,6 @@ async def _upload_buffered(
             )
 
         except Exception as e:
-            logger.error(
-                "Upload failed",
-                extra={
-                    "upload_filename": asset_data.filename,
-                    "content_type": asset_data.content_type,
-                    "device_asset_id": device_asset_id,
-                    "device_id": device_id,
-                    "strategy": "buffered",
-                    "error": str(e),
-                },
-                exc_info=True,
-            )
             raise map_gumnut_error(e, "Failed to upload asset") from e
 
 
@@ -580,16 +572,6 @@ async def _upload_streaming(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="Upload failed"
         )
     except Exception as e:
-        logger.error(
-            "Streaming upload failed",
-            extra={
-                "upload_filename": pipeline.form_parser.filename if pipeline else None,
-                "content_type": pipeline.form_parser.content_type if pipeline else None,
-                "strategy": "streaming",
-                "error": str(e),
-            },
-            exc_info=True,
-        )
         raise map_gumnut_error(e, "Failed to upload asset") from e
 
 
@@ -643,14 +625,20 @@ async def delete_assets(
                     )
 
             except GumnutError as asset_error:
-                # Log individual asset errors but continue with other deletions
-                if (
-                    check_for_error_by_code(asset_error, 404)
-                    or "not found" in str(asset_error).lower()
+                # Log individual asset errors but continue with other deletions.
+                # 404 means asset is already gone; this is expected during sync.
+                status_code = get_upstream_status_code(asset_error)
+
+                if status_code == 404 or (
+                    status_code is None and "not found" in str(asset_error).lower()
                 ):
+                    status_code = 404
                     # Asset already deleted or doesn't exist, continue
-                    logger.warning(
-                        f"Warning: Asset {asset_uuid} not found during deletion",
+                    log_upstream_response(
+                        logger,
+                        context="delete_assets",
+                        status_code=status_code,
+                        message=f"Asset {asset_uuid} not found during deletion",
                         extra={
                             "asset_id": str(asset_uuid),
                             "gumnut_id": str(gumnut_asset_id),
@@ -658,17 +646,20 @@ async def delete_assets(
                         },
                     )
                     continue
-                else:
-                    # For other errors, log but continue
-                    logger.warning(
-                        f"Warning: Failed to delete asset {asset_uuid}",
-                        extra={
-                            "asset_id": str(asset_uuid),
-                            "gumnut_id": str(gumnut_asset_id),
-                            "error": str(asset_error),
-                        },
-                    )
-                    continue
+
+                # For other errors, log but continue
+                log_upstream_response(
+                    logger,
+                    context="delete_assets",
+                    status_code=status_code or 500,
+                    message=f"Failed to delete asset {asset_uuid}",
+                    extra={
+                        "asset_id": str(asset_uuid),
+                        "gumnut_id": str(gumnut_asset_id),
+                        "error": str(asset_error),
+                    },
+                )
+                continue
 
         # Return 204 No Content on successful completion
         return Response(status_code=204)
