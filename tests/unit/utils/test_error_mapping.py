@@ -10,6 +10,8 @@ from fastapi import HTTPException
 import routers.utils.error_mapping as error_mapping_module
 from routers.utils.error_mapping import (
     check_for_error_by_code,
+    get_upstream_status_code,
+    log_upstream_response,
     map_gumnut_error,
     upstream_status_log_level,
 )
@@ -102,6 +104,59 @@ class TestUpstreamStatusLogLevel:
     )
     def test_upstream_status_log_level_policy(self, status_code, expected_level):
         assert upstream_status_log_level(status_code) == expected_level
+
+
+class TestGetUpstreamStatusCode:
+    """Test status code extraction helper."""
+
+    @pytest.mark.parametrize(
+        ("message", "expected"),
+        [
+            ("Not found", 404),
+            ("404 missing", 404),
+            ("Unauthorized request", 401),
+            ("Invalid API key", 401),
+            ("403 Forbidden", 403),
+            ("forbidden resource", 403),
+            ("400 bad request", 400),
+            ("Malformed bad request payload", 400),
+            ("Some random error", None),
+        ],
+    )
+    def test_get_upstream_status_code_fallback(self, message, expected):
+        assert get_upstream_status_code(Exception(message)) == expected
+
+
+class TestLogUpstreamResponse:
+    """Test shared upstream logging helper behavior."""
+
+    def test_helper_fields_override_conflicting_extra(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
+
+        log_upstream_response(
+            error_mapping_module.logger,
+            context="authoritative-context",
+            status_code=404,
+            message="upstream response",
+            extra={
+                "context": "caller-context",
+                "status_code": 999,
+                "custom_field": "kept",
+            },
+        )
+
+        matching_records = [
+            record for record in caplog.records if record.getMessage() == "upstream response"
+        ]
+        assert matching_records
+
+        record = matching_records[-1]
+        assert getattr(record, "context", None) == "authoritative-context"
+        assert getattr(record, "status_code", None) == 404
+        assert getattr(record, "custom_field", None) == "kept"
 
 
 class TestMapGumnutError:

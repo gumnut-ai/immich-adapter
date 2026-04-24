@@ -36,19 +36,19 @@ def log_upstream_response(
     status_code: int,
     message: str,
     extra: dict[str, Any] | None = None,
+    exc_info: bool = False,
 ) -> None:
     """Log an upstream response/error using the shared status-to-level policy."""
-    log_extra: dict[str, Any] = {
-        "context": context,
-        "status_code": status_code,
-    }
-    if extra:
-        log_extra.update(extra)
+    log_extra: dict[str, Any] = dict(extra or {})
+    # Helper fields are authoritative and must not be overridden by caller extra.
+    log_extra["context"] = context
+    log_extra["status_code"] = status_code
 
     logger_obj.log(
         upstream_status_log_level(status_code),
         message,
         extra=log_extra,
+        exc_info=exc_info,
     )
 
 
@@ -57,7 +57,7 @@ def get_upstream_status_code(e: Exception) -> int | None:
     if hasattr(e, "status_code"):
         try:
             return int(getattr(e, "status_code"))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return None
 
     msg = str(e)
@@ -93,7 +93,13 @@ def check_for_error_by_code(e: Exception, code: int) -> bool:
     return False
 
 
-def map_gumnut_error(e: Exception, context: str) -> HTTPException:
+def map_gumnut_error(
+    e: Exception,
+    context: str,
+    *,
+    extra: dict[str, Any] | None = None,
+    exc_info: bool = False,
+) -> HTTPException:
     """
     Map Gumnut SDK exceptions to appropriate HTTP exceptions.
 
@@ -113,6 +119,8 @@ def map_gumnut_error(e: Exception, context: str) -> HTTPException:
             context=context,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             message="SDK retries exhausted for rate-limited request",
+            extra=extra,
+            exc_info=exc_info,
         )
         return HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -133,12 +141,15 @@ def map_gumnut_error(e: Exception, context: str) -> HTTPException:
     # If the SDK exposes HTTP status, use it
     if hasattr(e, "status_code"):
         code = int(getattr(e, "status_code"))
+        log_extra: dict[str, Any] = dict(extra or {})
+        log_extra["error_detail"] = str(detail)[:500]
         log_upstream_response(
             logger,
             context=context,
             status_code=code,
             message=f"Gumnut SDK error in {context}: {msg}",
-            extra={"error_detail": str(detail)[:500]},
+            extra=log_extra,
+            exc_info=exc_info,
         )
         return HTTPException(status_code=code, detail=detail)
 
@@ -151,6 +162,8 @@ def map_gumnut_error(e: Exception, context: str) -> HTTPException:
             context=context,
             status_code=code,
             message=f"Gumnut SDK error in {context}: {msg}",
+            extra=extra,
+            exc_info=exc_info,
         )
         return HTTPException(status_code=404, detail=f"{context}: Not found")
     elif code == 401:
@@ -159,6 +172,8 @@ def map_gumnut_error(e: Exception, context: str) -> HTTPException:
             context=context,
             status_code=code,
             message=f"Gumnut SDK error in {context}: {msg}",
+            extra=extra,
+            exc_info=exc_info,
         )
         return HTTPException(status_code=401, detail=f"{context}: Invalid API key")
     elif code == 403:
@@ -167,6 +182,8 @@ def map_gumnut_error(e: Exception, context: str) -> HTTPException:
             context=context,
             status_code=code,
             message=f"Gumnut SDK error in {context}: {msg}",
+            extra=extra,
+            exc_info=exc_info,
         )
         return HTTPException(status_code=403, detail=f"{context}: Access denied")
     elif code == 400:
@@ -175,6 +192,8 @@ def map_gumnut_error(e: Exception, context: str) -> HTTPException:
             context=context,
             status_code=code,
             message=f"Gumnut SDK error in {context}: {msg}",
+            extra=extra,
+            exc_info=exc_info,
         )
         return HTTPException(status_code=400, detail=f"{context}: Bad request")
 
@@ -184,5 +203,7 @@ def map_gumnut_error(e: Exception, context: str) -> HTTPException:
         context=context,
         status_code=500,
         message=f"Gumnut SDK error in {context}: {msg}",
+        extra=extra,
+        exc_info=exc_info,
     )
     return HTTPException(status_code=500, detail=f"{context}: {msg}")

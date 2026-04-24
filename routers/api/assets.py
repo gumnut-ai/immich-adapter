@@ -484,7 +484,18 @@ async def _upload_buffered(
             )
 
         except Exception as e:
-            raise map_gumnut_error(e, "Failed to upload asset") from e
+            raise map_gumnut_error(
+                e,
+                "Failed to upload asset",
+                extra={
+                    "upload_filename": asset_data.filename,
+                    "content_type": asset_data.content_type,
+                    "device_asset_id": device_asset_id,
+                    "device_id": device_id,
+                    "strategy": "buffered",
+                },
+                exc_info=True,
+            ) from e
 
 
 async def _upload_streaming(
@@ -572,7 +583,24 @@ async def _upload_streaming(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="Upload failed"
         )
     except Exception as e:
-        raise map_gumnut_error(e, "Failed to upload asset") from e
+        log_extra = {"strategy": "streaming"}
+        if pipeline is not None:
+            form_parser = pipeline.form_parser
+            if form_parser.filename:
+                log_extra["upload_filename"] = form_parser.filename
+            if form_parser.content_type:
+                log_extra["content_type"] = form_parser.content_type
+            if device_asset_id := form_parser.form_fields.get("deviceAssetId"):
+                log_extra["device_asset_id"] = device_asset_id
+            if device_id := form_parser.form_fields.get("deviceId"):
+                log_extra["device_id"] = device_id
+
+        raise map_gumnut_error(
+            e,
+            "Failed to upload asset",
+            extra=log_extra,
+            exc_info=True,
+        ) from e
 
 
 @router.put("", status_code=204)
