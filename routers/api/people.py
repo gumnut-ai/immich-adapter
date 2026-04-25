@@ -8,7 +8,11 @@ from gumnut import APIStatusError, AsyncGumnut, GumnutError
 from gumnut.types import PersonResponse
 
 from routers.utils.cdn_client import stream_from_cdn
-from routers.utils.error_mapping import classify_bulk_item_error, log_upstream_response
+from routers.utils.error_mapping import (
+    classify_bulk_item_error,
+    log_bulk_transport_error,
+    log_upstream_response,
+)
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.immich_models import (
     AssetFaceUpdateDto,
@@ -166,22 +170,26 @@ async def update_people(
                 ),
                 extra={"person_id": person_item.id},
             )
-        except APIStatusError as e:
-            error = Error1[classify_bulk_item_error(e)]
+        except APIStatusError as person_error:
             results.append(
-                BulkIdResponseDto(id=person_item.id, success=False, error=error)
+                BulkIdResponseDto(
+                    id=person_item.id,
+                    success=False,
+                    error=classify_bulk_item_error(person_error, Error1),
+                )
             )
             log_upstream_response(
                 logger,
                 context="update_people",
-                status_code=e.status_code,
-                message=f"Failed bulk person update for {person_item.id}: {e}",
+                status_code=person_error.status_code,
+                message=f"Failed bulk person update for {person_item.id}: {person_error}",
                 extra={"person_id": person_item.id},
             )
         except ValueError as ve:
-            # Malformed person id in the bulk request must not abort the batch:
-            # Immich's PeopleUpdateItem.id is typed as `str`, so UUID(...) can
-            # raise here even when other items in the batch are well-formed.
+            # Immich's PeopleUpdateItem.id is typed as `str` (the OpenAPI spec
+            # switches between str and UUID for people ids), so UUID(...) can
+            # raise here on malformed input. A single bad id must not abort
+            # the batch.
             results.append(
                 BulkIdResponseDto(
                     id=person_item.id, success=False, error=Error1.unknown
@@ -191,20 +199,16 @@ async def update_people(
                 "Invalid person id in bulk update",
                 extra={"person_id": person_item.id, "error": str(ve)},
             )
-        except GumnutError as e:
-            # Transport / schema-mismatch / generic SDK errors must not abort
-            # the batch — record per-item so the bulk endpoint still returns
-            # a complete results list.
+        except GumnutError as person_error:
             results.append(
                 BulkIdResponseDto(
                     id=person_item.id, success=False, error=Error1.unknown
                 )
             )
-            log_upstream_response(
+            log_bulk_transport_error(
                 logger,
                 context="update_people",
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                message=f"Transport error in bulk person update for {person_item.id}: {e}",
+                exc=person_error,
                 extra={"person_id": person_item.id},
             )
 

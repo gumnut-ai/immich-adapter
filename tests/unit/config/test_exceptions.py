@@ -12,7 +12,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from gumnut import (
-    APIConnectionError,
     APIResponseValidationError,
     AuthenticationError,
     BadRequestError,
@@ -131,12 +130,9 @@ class TestGumnutErrorHandler:
         assert records[-1].levelno == logging.ERROR
 
     def test_api_connection_error_maps_to_502(self):
-        import httpx
+        from tests.conftest import make_sdk_connection_error
 
-        request = httpx.Request("GET", "http://test.local/")
-        err = APIConnectionError(request=request)
-
-        response = _client(err).get("/boom")
+        response = _client(make_sdk_connection_error()).get("/boom")
 
         assert response.status_code == 502
         assert response.json()["message"] == "Upstream unreachable"

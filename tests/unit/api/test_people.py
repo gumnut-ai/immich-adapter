@@ -213,13 +213,11 @@ class TestUpdatePeople:
     @pytest.mark.anyio
     async def test_update_people_connection_error_does_not_abort_batch(self):
         """A transport error on one item must not abort the bulk operation."""
-        import httpx
-        from gumnut import APIConnectionError
+        from tests.conftest import make_sdk_connection_error
 
-        request_obj = httpx.Request("PUT", "http://test.local/")
         mock_client = Mock()
         mock_client.people.update = AsyncMock(
-            side_effect=[None, APIConnectionError(request=request_obj)]
+            side_effect=[None, make_sdk_connection_error("PUT")]
         )
 
         person_id1 = str(uuid4())

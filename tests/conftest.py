@@ -14,7 +14,7 @@ from uuid import uuid4
 from typing import List, Any
 
 import httpx
-from gumnut import APIStatusError, NotFoundError
+from gumnut import APIConnectionError, APIStatusError, NotFoundError
 
 from routers.immich_models import UserResponseDto, UserAvatarColor
 from routers.utils.gumnut_id_conversion import (
@@ -38,6 +38,11 @@ def make_sdk_status_error(
     request = httpx.Request("GET", "http://test.local/")
     response = httpx.Response(status_code, request=request)
     return cls(message, response=response, body=body)
+
+
+def make_sdk_connection_error(method: str = "GET") -> APIConnectionError:
+    """Construct an SDK APIConnectionError for tests (transport-failure path)."""
+    return APIConnectionError(request=httpx.Request(method, "http://test.local/"))
 
 
 @pytest.fixture

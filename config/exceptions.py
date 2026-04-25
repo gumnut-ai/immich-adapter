@@ -93,11 +93,8 @@ async def _gumnut_error_handler(request: Request, exc: GumnutError) -> JSONRespo
         return _immich_response(exc.status_code, detail)
 
     if isinstance(exc, APIResponseValidationError):
-        # Schema mismatch is always actionable (SDK/upstream contract bug),
-        # regardless of the underlying upstream HTTP status — which is
-        # typically 2xx since the response was syntactically successful.
-        # Log at the 502 client-facing severity (ERROR) instead of letting
-        # the upstream 2xx demote it to INFO.
+        # Schema mismatch is a contract bug — log at 502 ERROR severity, not
+        # the upstream 2xx (which would demote to INFO).
         log_upstream_response(
             logger,
             context=context,

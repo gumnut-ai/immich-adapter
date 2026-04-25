@@ -1071,13 +1071,11 @@ class TestDeleteAssets:
     @pytest.mark.anyio
     async def test_delete_assets_connection_error_does_not_abort_batch(self):
         """A transport error on one item must not abort the batch."""
-        import httpx
-        from gumnut import APIConnectionError
+        from tests.conftest import make_sdk_connection_error
 
         mock_client = Mock()
-        request_obj = httpx.Request("DELETE", "http://test.local/")
         mock_client.assets.delete = AsyncMock(
-            side_effect=[None, APIConnectionError(request=request_obj)]
+            side_effect=[None, make_sdk_connection_error("DELETE")]
         )
 
         asset_ids = [uuid4(), uuid4()]

@@ -25,8 +25,10 @@ from config.settings import Settings, get_settings
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import (
+    log_bulk_transport_error,
     log_upstream_response,
     map_gumnut_error,
+    truncated_error_detail,
 )
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
@@ -628,7 +630,7 @@ async def delete_assets(
                 extra={
                     "asset_id": str(asset_uuid),
                     "gumnut_id": str(gumnut_asset_id),
-                    "error_detail": str(asset_error)[:500],
+                    "error_detail": truncated_error_detail(asset_error),
                 },
             )
         except APIStatusError as asset_error:
@@ -641,21 +643,18 @@ async def delete_assets(
                 extra={
                     "asset_id": str(asset_uuid),
                     "gumnut_id": str(gumnut_asset_id),
-                    "error_detail": str(asset_error)[:500],
+                    "error_detail": truncated_error_detail(asset_error),
                 },
             )
         except GumnutError as asset_error:
-            # Transport / schema-mismatch / generic SDK errors must not abort
-            # the batch — Immich expects best-effort partial deletion.
-            log_upstream_response(
+            # Immich expects best-effort partial deletion; record per-item.
+            log_bulk_transport_error(
                 logger,
                 context="delete_assets",
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                message=f"Transport error deleting asset {asset_uuid}",
+                exc=asset_error,
                 extra={
                     "asset_id": str(asset_uuid),
                     "gumnut_id": str(gumnut_asset_id),
-                    "error_detail": str(asset_error)[:500],
                 },
             )
 

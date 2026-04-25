@@ -11,18 +11,31 @@ upload paths logging filename / device ids / `exc_info`).
 """
 
 import logging
-from typing import Any
+from enum import Enum
+from typing import Any, TypeVar
 
 from fastapi import HTTPException, status
 from gumnut import (
     APIStatusError,
     AuthenticationError,
+    GumnutError,
     NotFoundError,
     PermissionDeniedError,
     RateLimitError,
 )
 
 logger = logging.getLogger(__name__)
+
+# Truncation cap for the `error_detail` field on upstream log records — keeps
+# Sentry / log search tractable while preserving enough context to debug.
+ERROR_DETAIL_MAX_CHARS = 500
+
+E = TypeVar("E", bound=Enum)
+
+
+def truncated_error_detail(exc: Exception) -> str:
+    """Stringify and truncate an exception for the `error_detail` log field."""
+    return str(exc)[:ERROR_DETAIL_MAX_CHARS]
 
 
 def extract_detail_from_status_error(exc: APIStatusError) -> str:
@@ -41,19 +54,44 @@ def extract_detail_from_status_error(exc: APIStatusError) -> str:
     return exc.message or f"Upstream HTTP {exc.status_code}"
 
 
-def classify_bulk_item_error(exc: APIStatusError) -> str:
-    """Classify a per-item APIStatusError for bulk endpoints.
+def classify_bulk_item_error(exc: APIStatusError, enum_cls: type[E]) -> E:
+    """Classify a per-item APIStatusError as an `Error1` / `BulkIdErrorReason` value.
 
-    Returns one of `"not_found"`, `"no_permission"`, or `"unknown"` — the
-    canonical buckets used by Immich's `Error1` / `BulkIdErrorReason` enums.
-    Per-endpoint nuances (e.g. mapping `ConflictError` to "duplicate") are
-    layered by the caller.
+    Maps to the canonical `not_found` / `no_permission` / `unknown` buckets
+    on the supplied enum. Per-endpoint nuances (e.g. mapping `ConflictError`
+    to `duplicate`) are layered by the caller via an earlier `except`.
     """
     if isinstance(exc, NotFoundError):
-        return "not_found"
+        return enum_cls["not_found"]
     if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
-        return "no_permission"
-    return "unknown"
+        return enum_cls["no_permission"]
+    return enum_cls["unknown"]
+
+
+def log_bulk_transport_error(
+    logger_obj: logging.Logger,
+    *,
+    context: str,
+    exc: GumnutError,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Log a per-item transport / schema-mismatch error from a bulk endpoint.
+
+    Use after catching a non-APIStatusError `GumnutError` inside a per-item
+    loop. The caller is responsible for recording the failure on the
+    response (e.g. appending an `unknown` `BulkIdResponseDto`) — this just
+    centralizes the log shape (502 client severity + truncated detail) so
+    every bulk endpoint emits the same field set.
+    """
+    log_extra: dict[str, Any] = dict(extra or {})
+    log_extra["error_detail"] = truncated_error_detail(exc)
+    log_upstream_response(
+        logger_obj,
+        context=context,
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        message=f"Transport error in {context}",
+        extra=log_extra,
+    )
 
 
 def upstream_status_log_level(status_code: int) -> int:
@@ -145,7 +183,7 @@ def map_gumnut_error(
         detail = extract_detail_from_status_error(e)
 
         log_extra: dict[str, Any] = dict(extra or {})
-        log_extra["error_detail"] = str(detail)[:500]
+        log_extra["error_detail"] = detail[:ERROR_DETAIL_MAX_CHARS]
         log_upstream_response(
             logger,
             context=context,
