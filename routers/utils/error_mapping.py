@@ -14,9 +14,46 @@ import logging
 from typing import Any
 
 from fastapi import HTTPException, status
-from gumnut import APIStatusError, RateLimitError
+from gumnut import (
+    APIStatusError,
+    AuthenticationError,
+    NotFoundError,
+    PermissionDeniedError,
+    RateLimitError,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def extract_detail_from_status_error(exc: APIStatusError) -> str:
+    """Extract a clean detail message from a Gumnut SDK status error.
+
+    Tries `body.detail`, then `body.message`, then `body.error`, then
+    `exc.message`, then a synthesized fallback. Used by both the global
+    GumnutError handler and `map_gumnut_error`.
+    """
+    body = exc.body
+    if isinstance(body, dict):
+        for key in ("detail", "message", "error"):
+            value = body.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return exc.message or f"Upstream HTTP {exc.status_code}"
+
+
+def classify_bulk_item_error(exc: APIStatusError) -> str:
+    """Classify a per-item APIStatusError for bulk endpoints.
+
+    Returns one of `"not_found"`, `"no_permission"`, or `"unknown"` — the
+    canonical buckets used by Immich's `Error1` / `BulkIdErrorReason` enums.
+    Per-endpoint nuances (e.g. mapping `ConflictError` to "duplicate") are
+    layered by the caller.
+    """
+    if isinstance(exc, NotFoundError):
+        return "not_found"
+    if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
+        return "no_permission"
+    return "unknown"
 
 
 def upstream_status_log_level(status_code: int) -> int:
@@ -105,16 +142,7 @@ def map_gumnut_error(
         )
 
     if isinstance(e, APIStatusError):
-        body = e.body
-        detail: str | None = None
-        if isinstance(body, dict):
-            for key in ("detail", "message", "error"):
-                value = body.get(key)
-                if isinstance(value, str) and value:
-                    detail = value
-                    break
-        if not detail:
-            detail = e.message or f"Upstream HTTP {e.status_code}"
+        detail = extract_detail_from_status_error(e)
 
         log_extra: dict[str, Any] = dict(extra or {})
         log_extra["error_detail"] = str(detail)[:500]

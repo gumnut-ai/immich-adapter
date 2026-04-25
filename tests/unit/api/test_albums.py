@@ -2,7 +2,6 @@
 
 import pytest
 from unittest.mock import AsyncMock, Mock
-from fastapi import HTTPException
 from gumnut import NotFoundError
 from uuid import uuid4
 
@@ -443,49 +442,43 @@ class TestAddAssetsToAlbum:
     """Test the add_assets_to_album endpoint."""
 
     @pytest.mark.anyio
-    async def test_add_assets_success(self, sample_gumnut_album, sample_uuid):
+    async def test_add_assets_success(self, sample_uuid):
         """Test successful addition of assets to album."""
-        # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
         mock_client.albums.assets_associations.add = AsyncMock(return_value=None)
 
         asset_id1 = uuid4()
         asset_id2 = uuid4()
+        request = BulkIdsDto(ids=[asset_id1, asset_id2])
 
-        asset_ids = [asset_id1, asset_id2]
-        request = BulkIdsDto(ids=asset_ids)
-
-        # Execute
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        # Assert
         assert len(result) == 2
         assert all(item.success is True for item in result)
         assert result[0].id == str(asset_id1)
         assert result[1].id == str(asset_id2)
-        mock_client.albums.retrieve.assert_called_once()
         assert mock_client.albums.assets_associations.add.call_count == 2
 
     @pytest.mark.anyio
-    async def test_add_assets_album_not_found(self, mock_gumnut_client, sample_uuid):
-        """Album-not-found short-circuits with HTTPException 404."""
+    async def test_add_assets_not_found(self, mock_gumnut_client, sample_uuid):
+        """A NotFoundError on the per-asset add is captured as Error1.not_found."""
         request = BulkIdsDto(ids=[uuid4()])
-        mock_gumnut_client.albums.retrieve = AsyncMock(
+        mock_gumnut_client.albums.assets_associations.add = AsyncMock(
             side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
         )
 
-        with pytest.raises(HTTPException) as exc_info:
-            await add_assets_to_album(sample_uuid, request, client=mock_gumnut_client)
+        result = await add_assets_to_album(
+            sample_uuid, request, client=mock_gumnut_client
+        )
 
-        assert exc_info.value.status_code == 404
+        assert len(result) == 1
+        assert result[0].success is False
+        assert result[0].error == Error1.not_found
 
     @pytest.mark.anyio
-    async def test_add_assets_mixed_results(self, sample_gumnut_album, sample_uuid):
+    async def test_add_assets_mixed_results(self, sample_uuid):
         """Per-asset NotFoundError is captured as Error1.not_found, others as unknown."""
         mock_client = Mock()
-        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
-
         mock_client.albums.assets_associations.add = AsyncMock(
             side_effect=[
                 None,
@@ -506,6 +499,23 @@ class TestAddAssetsToAlbum:
         assert result[1].id == str(asset_id2)
         assert result[1].error == Error1.not_found
 
+    @pytest.mark.anyio
+    async def test_add_assets_duplicate(self, sample_uuid):
+        """A ConflictError from the SDK is mapped to Error1.duplicate."""
+        from gumnut import ConflictError
+
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=make_sdk_status_error(409, "duplicate", cls=ConflictError)
+        )
+
+        request = BulkIdsDto(ids=[uuid4()])
+        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        assert len(result) == 1
+        assert result[0].success is False
+        assert result[0].error == Error1.duplicate
+
 
 class TestUpdateAlbum:
     """Test the update_album endpoint."""
@@ -515,10 +525,7 @@ class TestUpdateAlbum:
         self, sample_gumnut_album, sample_uuid, mock_current_user
     ):
         """Test successful album update."""
-        # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
-        # Update the sample to have the name we want to test
         sample_gumnut_album.name = "Updated Album"
         sample_gumnut_album.description = "Updated Description"
         mock_client.albums.update = AsyncMock(return_value=sample_gumnut_album)
@@ -527,16 +534,11 @@ class TestUpdateAlbum:
             albumName="Updated Album", description="Updated Description"
         )
 
-        # Execute
         result = await update_album(
             sample_uuid, request, client=mock_client, current_user=mock_current_user
         )
 
-        # Assert
-        # Now result is a real AlbumResponseDto, so use attribute access
-        assert hasattr(result, "albumName")
         assert result.albumName == "Updated Album"
-        mock_client.albums.retrieve.assert_called_once()
         mock_client.albums.update.assert_called_once()
 
     @pytest.mark.anyio
@@ -544,12 +546,10 @@ class TestUpdateAlbum:
         self, sample_gumnut_album, sample_uuid, mock_current_user
     ):
         """Test that album_cover_asset_id is converted to albumThumbnailAssetId in update_album."""
-        # Setup - set album_cover_asset_id on the updated album
         cover_asset_id = uuid_to_gumnut_asset_id(uuid4())
         sample_gumnut_album.album_cover_asset_id = cover_asset_id
 
         mock_client = Mock()
-        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
         sample_gumnut_album.name = "Updated Album"
         sample_gumnut_album.description = "Updated Description"
         mock_client.albums.update = AsyncMock(return_value=sample_gumnut_album)
@@ -568,16 +568,16 @@ class TestUpdateAlbum:
         assert result.albumThumbnailAssetId == expected_uuid
 
     @pytest.mark.anyio
-    async def test_update_album_not_found(
+    async def test_update_album_not_found_propagates(
         self, mock_gumnut_client, sample_uuid, mock_current_user
     ):
-        """A NotFoundError on the existence check short-circuits with HTTPException 404."""
+        """A NotFoundError from the SDK bubbles up to the global handler."""
         request = UpdateAlbumDto(albumName="Updated Album")
-        mock_gumnut_client.albums.retrieve = AsyncMock(
+        mock_gumnut_client.albums.update = AsyncMock(
             side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
         )
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(NotFoundError):
             await update_album(
                 sample_uuid,
                 request,
@@ -585,35 +585,26 @@ class TestUpdateAlbum:
                 current_user=mock_current_user,
             )
 
-        assert exc_info.value.status_code == 404
-
 
 class TestRemoveAssetFromAlbum:
     """Test the remove_asset_from_album endpoint."""
 
     @pytest.mark.anyio
-    async def test_remove_assets_success(self, sample_gumnut_album, sample_uuid):
+    async def test_remove_assets_success(self, sample_uuid):
         """Test successful removal of assets from album."""
-        # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
         mock_client.albums.assets_associations.remove = AsyncMock(return_value=None)
 
         asset_id1 = uuid4()
         asset_id2 = uuid4()
+        request = BulkIdsDto(ids=[asset_id1, asset_id2])
 
-        asset_ids = [asset_id1, asset_id2]
-        request = BulkIdsDto(ids=asset_ids)
-
-        # Execute
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        # Assert
         assert len(result) == 2
         assert all(item.success is True for item in result)
         assert result[0].id == str(asset_id1)
         assert result[1].id == str(asset_id2)
-        mock_client.albums.retrieve.assert_called_once()
         assert mock_client.albums.assets_associations.remove.call_count == 2
 
 
@@ -621,33 +612,26 @@ class TestDeleteAlbum:
     """Test the delete_album endpoint."""
 
     @pytest.mark.anyio
-    async def test_delete_album_success(
-        self, mock_gumnut_client, sample_gumnut_album, sample_uuid
-    ):
+    async def test_delete_album_success(self, mock_gumnut_client, sample_uuid):
         """Test successful album deletion."""
-        # Setup
-        mock_gumnut_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
         mock_gumnut_client.albums.delete = AsyncMock(return_value=None)
 
-        # Execute
         result = await delete_album(sample_uuid, client=mock_gumnut_client)
 
-        # Assert
         assert result.status_code == 204
-        mock_gumnut_client.albums.retrieve.assert_called_once()
         mock_gumnut_client.albums.delete.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_delete_album_not_found(self, mock_gumnut_client, sample_uuid):
-        """A NotFoundError on the existence check short-circuits with HTTPException 404."""
-        mock_gumnut_client.albums.retrieve = AsyncMock(
+    async def test_delete_album_not_found_propagates(
+        self, mock_gumnut_client, sample_uuid
+    ):
+        """A NotFoundError from the SDK bubbles up to the global handler."""
+        mock_gumnut_client.albums.delete = AsyncMock(
             side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
         )
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(NotFoundError):
             await delete_album(sample_uuid, client=mock_gumnut_client)
-
-        assert exc_info.value.status_code == 404
 
 
 class TestAddAssetsToAlbums:

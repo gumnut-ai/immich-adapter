@@ -4,18 +4,12 @@ from fastapi.responses import StreamingResponse
 from uuid import UUID
 import logging
 
-from gumnut import (
-    APIStatusError,
-    AsyncGumnut,
-    AuthenticationError,
-    NotFoundError,
-    PermissionDeniedError,
-)
+from gumnut import APIStatusError, AsyncGumnut
 from gumnut.types import PersonResponse
 
 from routers.utils.cdn_client import stream_from_cdn
+from routers.utils.error_mapping import classify_bulk_item_error, log_upstream_response
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.error_mapping import log_upstream_response
 from routers.immich_models import (
     AssetFaceUpdateDto,
     BulkIdResponseDto,
@@ -173,12 +167,7 @@ async def update_people(
                 extra={"person_id": person_item.id},
             )
         except APIStatusError as e:
-            if isinstance(e, NotFoundError):
-                error = Error1.not_found
-            elif isinstance(e, (AuthenticationError, PermissionDeniedError)):
-                error = Error1.no_permission
-            else:
-                error = Error1.unknown
+            error = Error1[classify_bulk_item_error(e)]
             results.append(
                 BulkIdResponseDto(id=person_item.id, success=False, error=error)
             )
@@ -297,14 +286,10 @@ async def get_thumbnail(
     """
     gumnut_person = await client.people.retrieve(uuid_to_gumnut_person_id(id))
 
-    if (
-        not gumnut_person
-        or not gumnut_person.asset_urls
-        or "thumbnail" not in gumnut_person.asset_urls
-    ):
+    if not gumnut_person.asset_urls or "thumbnail" not in gumnut_person.asset_urls:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Person or thumbnail not found",
+            detail="Person thumbnail not available",
         )
 
     variant_info = gumnut_person.asset_urls["thumbnail"]
@@ -320,8 +305,6 @@ async def get_person(
     Get details for a specific person.
     """
     gumnut_person = await client.people.retrieve(uuid_to_gumnut_person_id(id))
-    if not gumnut_person:
-        raise HTTPException(status_code=404, detail="Person not found")
     return convert_gumnut_person_to_immich(gumnut_person)
 
 

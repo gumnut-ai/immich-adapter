@@ -3,8 +3,9 @@ from uuid import UUID
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from gumnut import APIStatusError, AsyncGumnut, NotFoundError
+from gumnut import APIStatusError, AsyncGumnut, ConflictError
 
+from routers.utils.error_mapping import classify_bulk_item_error
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.current_user import get_current_user
 from routers.immich_models import (
@@ -164,15 +165,6 @@ async def add_assets_to_album(
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
-    # Verify album exists first
-    try:
-        await client.albums.retrieve(gumnut_album_id)
-    except NotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Album not found {id} -> {gumnut_album_id}",
-        )
-
     response = []
     for asset_uuid in request.ids:
         asset_uuid_str = str(asset_uuid)
@@ -182,15 +174,14 @@ async def add_assets_to_album(
                 gumnut_album_id, asset_ids=[gumnut_asset_id]
             )
             response.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
+        except ConflictError:
+            response.append(
+                BulkIdResponseDto(
+                    id=asset_uuid_str, success=False, error=Error1.duplicate
+                )
+            )
         except APIStatusError as asset_error:
-            # Per-asset duplicate / not-found / other errors must not abort the bulk op.
-            error_msg = str(asset_error).lower()
-            if "duplicate" in error_msg or "already exists" in error_msg:
-                error = Error1.duplicate
-            elif isinstance(asset_error, NotFoundError):
-                error = Error1.not_found
-            else:
-                error = Error1.unknown
+            error = Error1[classify_bulk_item_error(asset_error)]
             response.append(
                 BulkIdResponseDto(id=asset_uuid_str, success=False, error=error)
             )
@@ -212,11 +203,6 @@ async def update_album(
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
-    try:
-        current_album = await client.albums.retrieve(gumnut_album_id)
-    except NotFoundError:
-        raise HTTPException(status_code=404, detail="Album not found")
-
     update_params = {}
     if request.albumName is not None:
         update_params["name"] = request.albumName
@@ -224,9 +210,11 @@ async def update_album(
         update_params["description"] = request.description
 
     if update_params:
+        # SDK raises NotFoundError on missing album → handled by global handler.
         updated_album = await client.albums.update(gumnut_album_id, **update_params)
     else:
-        updated_album = current_album
+        # No-op update still needs to validate existence.
+        updated_album = await client.albums.retrieve(gumnut_album_id)
 
     return convert_gumnut_album_to_immich(updated_album, current_user, asset_count=0)
 
@@ -244,14 +232,6 @@ async def remove_asset_from_album(
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
-    try:
-        await client.albums.retrieve(gumnut_album_id)
-    except NotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Album not found {id} -> {gumnut_album_id}",
-        )
-
     response = []
     for asset_uuid in request.ids:
         asset_uuid_str = str(asset_uuid)
@@ -262,13 +242,7 @@ async def remove_asset_from_album(
             )
             response.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
         except APIStatusError as asset_error:
-            error_msg = str(asset_error).lower()
-            if isinstance(asset_error, NotFoundError) or (
-                "not in album" in error_msg or "not member" in error_msg
-            ):
-                error = Error1.not_found
-            else:
-                error = Error1.unknown
+            error = Error1[classify_bulk_item_error(asset_error)]
             response.append(
                 BulkIdResponseDto(id=asset_uuid_str, success=False, error=error)
             )
@@ -285,14 +259,8 @@ async def delete_album(
     Delete an album using the Gumnut SDK.
     """
 
-    gumnut_album_id = uuid_to_gumnut_album_id(id)
-
-    try:
-        await client.albums.retrieve(gumnut_album_id)
-    except NotFoundError:
-        raise HTTPException(status_code=404, detail="Album not found")
-
-    await client.albums.delete(gumnut_album_id)
+    # SDK raises NotFoundError on missing album → handled by global handler.
+    await client.albums.delete(uuid_to_gumnut_album_id(id))
     return Response(status_code=204)
 
 
@@ -318,29 +286,16 @@ async def add_assets_to_albums(
 
     for album_uuid in request.albumIds:
         try:
-            gumnut_album_id = uuid_to_gumnut_album_id(album_uuid)
-
-            try:
-                await client.albums.retrieve(gumnut_album_id)
-            except NotFoundError:
-                if first_error is None:
-                    first_error = BulkIdErrorReason.not_found
-                continue
-
             await client.albums.assets_associations.add(
-                gumnut_album_id, asset_ids=gumnut_asset_ids
+                uuid_to_gumnut_album_id(album_uuid), asset_ids=gumnut_asset_ids
             )
             successful_operations += 1
-
+        except ConflictError:
+            if first_error is None:
+                first_error = BulkIdErrorReason.duplicate
         except APIStatusError as album_error:
             if first_error is None:
-                error_msg = str(album_error).lower()
-                if isinstance(album_error, NotFoundError):
-                    first_error = BulkIdErrorReason.not_found
-                elif "duplicate" in error_msg or "already exists" in error_msg:
-                    first_error = BulkIdErrorReason.duplicate
-                else:
-                    first_error = BulkIdErrorReason.unknown
+                first_error = BulkIdErrorReason[classify_bulk_item_error(album_error)]
 
     if successful_operations == total_operations:
         return AlbumsAddAssetsResponseDto(success=True)

@@ -757,7 +757,7 @@ class TestGetThumbnail:
             await get_thumbnail(sample_uuid, client=mock_client)
 
         assert exc_info.value.status_code == 404
-        assert "Person or thumbnail not found" in str(exc_info.value.detail)
+        assert "Person thumbnail not available" in str(exc_info.value.detail)
 
     @pytest.mark.anyio
     async def test_get_thumbnail_no_thumbnail_key(
@@ -777,7 +777,7 @@ class TestGetThumbnail:
             await get_thumbnail(sample_uuid, client=mock_client)
 
         assert exc_info.value.status_code == 404
-        assert "Person or thumbnail not found" in str(exc_info.value.detail)
+        assert "Person thumbnail not available" in str(exc_info.value.detail)
 
     @pytest.mark.anyio
     async def test_get_thumbnail_person_not_found(self, sample_uuid):

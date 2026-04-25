@@ -14,7 +14,11 @@ from gumnut import (
     RateLimitError,
 )
 
-from routers.utils.error_mapping import log_upstream_response, logger
+from routers.utils.error_mapping import (
+    extract_detail_from_status_error,
+    log_upstream_response,
+    logger,
+)
 
 
 def _immich_response(status_code: int, message: str) -> JSONResponse:
@@ -41,17 +45,6 @@ async def _immich_http_exception_handler(
     if exc.headers:
         response.headers.update(exc.headers)
     return response
-
-
-def _detail_from_status_error(exc: APIStatusError) -> str:
-    """Extract a clean detail message from a Gumnut SDK status error."""
-    body = exc.body
-    if isinstance(body, dict):
-        for key in ("detail", "message", "error"):
-            value = body.get(key)
-            if isinstance(value, str) and value:
-                return value
-    return exc.message or f"Upstream HTTP {exc.status_code}"
 
 
 def _route_context(request: Request) -> str:
@@ -87,7 +80,7 @@ async def _gumnut_error_handler(request: Request, exc: GumnutError) -> JSONRespo
         )
 
     if isinstance(exc, APIStatusError):
-        detail = _detail_from_status_error(exc)
+        detail = extract_detail_from_status_error(exc)
         log_extra: dict[str, Any] = {"error_detail": detail[:500]}
         log_upstream_response(
             logger,
