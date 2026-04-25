@@ -1,12 +1,20 @@
 """
 Error mapping utilities for handling Gumnut SDK exceptions.
+
+Most adapter routes do not need to map SDK errors at all — `GumnutError` and
+its subclasses are caught by the global handler in `config/exceptions.py` and
+turned into Immich-shaped HTTP responses there.
+
+Use `map_gumnut_error` only when a call site needs to enrich the upstream log
+record with structured context that the global handler does not have (e.g.
+upload paths logging filename / device ids / `exc_info`).
 """
 
 import logging
 from typing import Any
 
 from fastapi import HTTPException, status
-from gumnut import RateLimitError
+from gumnut import APIStatusError, RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -52,47 +60,6 @@ def log_upstream_response(
     )
 
 
-def get_upstream_status_code(e: Exception) -> int | None:
-    """Best-effort extraction of upstream HTTP status code from an exception."""
-    if hasattr(e, "status_code"):
-        try:
-            return int(getattr(e, "status_code"))
-        except (TypeError, ValueError):
-            return None
-
-    msg = str(e)
-    msg_lower = msg.lower()
-    if "404" in msg or "not found" in msg_lower:
-        return 404
-    if "401" in msg or "invalid api key" in msg_lower or "unauthorized" in msg_lower:
-        return 401
-    if "403" in msg or "forbidden" in msg_lower:
-        return 403
-    if "400" in msg or "bad request" in msg_lower:
-        return 400
-
-    return None
-
-
-def check_for_error_by_code(e: Exception, code: int) -> bool:
-    """
-    Check if an exception represents a specific HTTP error code.
-
-    Args:
-        e: The exception to check
-        code: The HTTP status code to check for
-
-    Returns:
-        True if the exception represents the specified error code, False otherwise
-    """
-    # Check if the SDK exposes HTTP status code
-    if hasattr(e, "status_code"):
-        status_code = int(getattr(e, "status_code"))
-        return status_code == code
-
-    return False
-
-
 def map_gumnut_error(
     e: Exception,
     context: str,
@@ -101,7 +68,13 @@ def map_gumnut_error(
     exc_info: bool = False,
 ) -> HTTPException:
     """
-    Map Gumnut SDK exceptions to appropriate HTTP exceptions.
+    Map a Gumnut SDK exception to an HTTPException, logging at the upstream
+    severity policy.
+
+    Prefer letting SDK errors bubble to the global GumnutError handler
+    (`config/exceptions.py`). Use this helper only when the call site has
+    enriching log context (filename, device ids, etc.) that the global handler
+    cannot provide.
 
     Args:
         e: The exception from the Gumnut SDK
@@ -115,9 +88,8 @@ def map_gumnut_error(
     Returns:
         HTTPException with appropriate status code and detail message
     """
-    # Rate limit errors from photos-api must never reach Immich clients,
-    # which have no 429 handling and would break (sync failures, broken
-    # thumbnails). Map to 502 so the client sees an upstream error instead.
+    # Rate-limit errors must never surface as 429 to Immich clients (no 429
+    # handling on the client side; would break sync, thumbnails, uploads).
     if isinstance(e, RateLimitError):
         log_upstream_response(
             logger,
@@ -132,83 +104,40 @@ def map_gumnut_error(
             detail=f"{context}: Upstream temporarily unavailable",
         )
 
-    msg = str(e)
+    if isinstance(e, APIStatusError):
+        body = e.body
+        detail: str | None = None
+        if isinstance(body, dict):
+            for key in ("detail", "message", "error"):
+                value = body.get(key)
+                if isinstance(value, str) and value:
+                    detail = value
+                    break
+        if not detail:
+            detail = e.message or f"Upstream HTTP {e.status_code}"
 
-    # Try to extract clean message from SDK exception body
-    detail = None
-    body = getattr(e, "body", None)
-    if isinstance(body, dict):
-        detail = body.get("detail") or body.get("message") or body.get("error")
-
-    if not detail:
-        detail = msg
-
-    # If the SDK exposes HTTP status, use it
-    if hasattr(e, "status_code"):
-        code = int(getattr(e, "status_code"))
         log_extra: dict[str, Any] = dict(extra or {})
         log_extra["error_detail"] = str(detail)[:500]
         log_upstream_response(
             logger,
             context=context,
-            status_code=code,
-            message=f"Gumnut SDK error in {context}: {msg}",
+            status_code=e.status_code,
+            message=f"Gumnut SDK error in {context}: {e.message}",
             extra=log_extra,
             exc_info=exc_info,
         )
-        return HTTPException(status_code=code, detail=detail)
+        return HTTPException(status_code=e.status_code, detail=detail)
 
-    # Fallback to string matching for common HTTP errors
-    # This is still brittle but better than duplicating everywhere
-    code = get_upstream_status_code(e)
-    if code == 404:
-        log_upstream_response(
-            logger,
-            context=context,
-            status_code=code,
-            message=f"Gumnut SDK error in {context}: {msg}",
-            extra=extra,
-            exc_info=exc_info,
-        )
-        return HTTPException(status_code=404, detail=f"{context}: Not found")
-    elif code == 401:
-        log_upstream_response(
-            logger,
-            context=context,
-            status_code=code,
-            message=f"Gumnut SDK error in {context}: {msg}",
-            extra=extra,
-            exc_info=exc_info,
-        )
-        return HTTPException(status_code=401, detail=f"{context}: Invalid API key")
-    elif code == 403:
-        log_upstream_response(
-            logger,
-            context=context,
-            status_code=code,
-            message=f"Gumnut SDK error in {context}: {msg}",
-            extra=extra,
-            exc_info=exc_info,
-        )
-        return HTTPException(status_code=403, detail=f"{context}: Access denied")
-    elif code == 400:
-        log_upstream_response(
-            logger,
-            context=context,
-            status_code=code,
-            message=f"Gumnut SDK error in {context}: {msg}",
-            extra=extra,
-            exc_info=exc_info,
-        )
-        return HTTPException(status_code=400, detail=f"{context}: Bad request")
-
-    # Final fallback to 500
+    # Non-SDK exception (transport error, programmer error, etc.) — map to 500.
     log_upstream_response(
         logger,
         context=context,
-        status_code=500,
-        message=f"Gumnut SDK error in {context}: {msg}",
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        message=f"Unhandled error in {context}: {e}",
         extra=extra,
         exc_info=exc_info,
     )
-    return HTTPException(status_code=500, detail=f"{context}: {msg}")
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"{context}: {e}",
+    )

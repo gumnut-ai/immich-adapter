@@ -11,7 +11,6 @@ from fastapi.responses import JSONResponse
 from uuid import UUID, uuid4
 import base64
 
-from gumnut import GumnutError
 from socketio.exceptions import SocketIOError
 
 from services.websockets import WebSocketEvent
@@ -472,10 +471,15 @@ class TestUploadAsset:
 
     @pytest.mark.anyio
     async def test_upload_asset_api_error(self, mock_current_user):
-        """Test upload asset with API error."""
+        """An auth error during upload is mapped to 401 via map_gumnut_error."""
+        from gumnut import AuthenticationError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.assets.with_raw_response.create = AsyncMock(
-            side_effect=Exception("401 Invalid API key")
+            side_effect=make_sdk_status_error(
+                401, "Invalid API key", cls=AuthenticationError
+            )
         )
 
         request = _make_mock_request()
@@ -1016,14 +1020,16 @@ class TestDeleteAssets:
     @pytest.mark.anyio
     async def test_delete_assets_partial_failure(self):
         """Test deletion with some assets not found."""
-        # Setup - create mock client
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
 
-        # First delete succeeds, second fails with 404
+        # First delete succeeds, second fails with NotFoundError (already gone).
         mock_client.assets.delete = AsyncMock(
             side_effect=[
-                None,  # Success
-                GumnutError("404 Not found"),  # Failure
+                None,
+                make_sdk_status_error(404, "Not found", cls=NotFoundError),
             ]
         )
 
@@ -1031,13 +1037,12 @@ class TestDeleteAssets:
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
         current_user_id = uuid4()
 
-        # Execute
         with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
             result = await delete_assets(
                 request, client=mock_client, current_user_id=current_user_id
             )
 
-        # Assert - should still return 204 even with partial failures
+        # Per-item errors are logged and skipped; bulk endpoint still returns 204.
         assert result.status_code == 204
         assert mock_client.assets.delete.call_count == 2
 
@@ -1151,17 +1156,16 @@ class TestGetAssetStatistics:
         assert result.videos == 0
 
     @pytest.mark.anyio
-    async def test_get_asset_statistics_gumnut_error(self):
-        """Test handling of Gumnut API errors."""
-        # Setup - create mock client
+    async def test_get_asset_statistics_propagates_sdk_error(self):
+        """SDK errors bubble up to the global GumnutError handler."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
-        mock_client.assets.list.side_effect = Exception("API Error")
+        mock_client.assets.list.side_effect = make_sdk_status_error(500, "boom")
 
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(APIStatusError):
             await get_asset_statistics(client=mock_client)
-
-        assert exc_info.value.status_code == 500
 
 
 class TestGetRandom:
@@ -1245,19 +1249,22 @@ class TestGetAssetInfo:
         mock_client.assets.retrieve.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_get_asset_info_not_found(self, sample_uuid, mock_current_user):
-        """Test handling of asset not found."""
-        # Setup - create mock client
-        mock_client = Mock()
-        mock_client.assets.retrieve = AsyncMock(side_effect=Exception("404 Not found"))
+    async def test_get_asset_info_not_found_propagates(
+        self, sample_uuid, mock_current_user
+    ):
+        """A NotFoundError on retrieve bubbles up to the global handler."""
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
 
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
+        )
+
+        with pytest.raises(NotFoundError):
             await get_asset_info(
                 sample_uuid, client=mock_client, current_user=mock_current_user
             )
-
-        assert exc_info.value.status_code == 404
 
 
 def _make_mock_asset_with_urls(variant_map: dict[str, dict[str, str]]):
@@ -1350,15 +1357,18 @@ class TestViewAsset:
         )
 
     @pytest.mark.anyio
-    async def test_view_asset_not_found(self, sample_uuid):
-        """Test handling of asset not found during view."""
+    async def test_view_asset_not_found_propagates(self, sample_uuid):
+        """A NotFoundError on retrieve bubbles up to the global handler."""
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
-        mock_client.assets.retrieve = AsyncMock(side_effect=Exception("404 Not found"))
+        mock_client.assets.retrieve = AsyncMock(
+            side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
+        )
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(NotFoundError):
             await view_asset(sample_uuid, client=mock_client)
-
-        assert exc_info.value.status_code == 404
 
     @pytest.mark.anyio
     async def test_view_asset_missing_variant(self, sample_uuid):

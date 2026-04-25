@@ -104,38 +104,41 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 - Wrap low-level exceptions (e.g., Redis, HTTP client errors) in domain-specific exceptions
 - Example: `SessionStore` catches `redis.exceptions.RedisError` and raises `SessionStoreError`
 
+### Gumnut SDK Errors
+
+The global handler in `config/exceptions.py` maps any `GumnutError` raised during request handling to an Immich-shaped JSON response, so most routes do **not** need to wrap SDK calls in `try/except`. Just call the SDK and let the error bubble:
+
+```python
+@router.get("/{id}")
+async def get_album(id: UUID, client: AsyncGumnut = Depends(get_authenticated_gumnut_client)):
+    return await client.albums.retrieve(uuid_to_gumnut_album_id(id))
+```
+
+The handler dispatches by isinstance against the typed Stainless exception hierarchy (`APIStatusError` subclasses → mapped status; `RateLimitError` → 502; `APIConnectionError` → 502; `APIResponseValidationError` → 502; generic `GumnutError` → 500).
+
+For per-item handling inside bulk endpoints (where one failure shouldn't abort the batch), catch the specific typed exception and continue:
+
+```python
+for asset_uuid in request.ids:
+    try:
+        await client.assets.delete(uuid_to_gumnut_asset_id(asset_uuid))
+    except NotFoundError:
+        # Already gone; expected during sync.
+        continue
+    except APIStatusError as e:
+        log_upstream_response(logger, ..., status_code=e.status_code, ...)
+        continue
+```
+
+Use `map_gumnut_error(e, context, extra=..., exc_info=True)` only when the call site needs to enrich the upstream log record with context the global handler can't see — most commonly the upload paths logging filename / device ids / tracebacks.
+
 ### Immich Client Error Handling
 
 - **Observed behavior:** Immich mobile and web clients have no HTTP 429 (rate limit) handling. A 429 causes sync failures, broken thumbnails, and upload errors with no automatic recovery.
 - **Adapter contract:**
   - Never forward 429 responses from photos-api to Immich clients.
   - The Gumnut SDK (Stainless-generated) has built-in retry for 429, 5xx, and connection errors with exponential backoff, ±25% jitter, and `Retry-After` header support (see [SDK retry docs](https://www.stainless.com/docs/sdks/configure/client/#retries)). Configure `max_retries` on the client — **do not add a custom retry wrapper** on top, as it will stack with SDK retry and cause retry amplification.
-  - The global `GumnutError` exception handler (in `config/exceptions.py`) catches `RateLimitError` explicitly and returns 502 (not 429) to Immich clients. The same handler is what `map_gumnut_error` (legacy per-callsite helper) wraps for callers that need to enrich the log record with rich call-site context (e.g., upload paths threading `upload_filename` / `device_asset_id`).
-
-### Upstream error mapping
-
-Two paths exist for mapping `gumnut.GumnutError` subclasses to client responses:
-
-1. **Global exception handler (preferred)** — `config/exceptions.py` registers `_gumnut_error_handler` for `GumnutError`. Any uncaught SDK exception bubbling out of a route is mapped to an Immich-shaped JSON response based on its type. New routes should not catch and convert SDK exceptions — let them bubble.
-2. **`map_gumnut_error` (legacy / rich-context callsites)** — `routers/utils/error_mapping.py` exposes the same mapping as a callable, accepting `extra=` and `exc_info=` for callers that need to attach call-site context (filename, device IDs, etc.) to the log record. Used by upload paths and a few other sites that have richer context than the route alone provides.
-
-#### Mapping policy
-
-The handler treats the adapter as an HTTP gateway in front of photos-api (per RFC 9110), so transport-layer failures and unusable upstream responses surface as 502 Bad Gateway rather than 5xx-from-the-adapter or pass-through.
-
-| SDK exception | Adapter response | Rationale |
-|---|---|---|
-| `RateLimitError` (429) | **502** "Upstream temporarily unavailable" | Immich mobile/web clients have no 429 handling — passing 429 through breaks sync, thumbnails, and uploads. 502 is correct (gateway can't fulfil); 503 would falsely imply the adapter itself is overloaded. |
-| `APIStatusError` (400 / 401 / 403 / 404 / 409 / 422 / 5xx) | Pass-through with `body.detail` / `body.message` / `body.error` | These status codes carry semantic information Immich clients can act on (validation, missing resource, permission). Transparent forwarding is the default. |
-| `APIResponseValidationError` | **502** "Upstream returned invalid response" | Upstream replied 2xx but the body didn't match the SDK schema. From the client's perspective, the gateway can't fulfil — same shape as transport failure. |
-| `APIConnectionError` / `APITimeoutError` | **502** "Upstream unreachable" | Transport failure with no HTTP response from upstream — canonical Bad Gateway scenario. |
-| Generic `GumnutError` (catch-all) | **500** "Internal error" | An SDK error that doesn't match any of the above is an adapter bug or unhandled SDK state, not a gateway condition — surface as 500. |
-
-#### Exception: upstream-401 from adapter-internal-auth calls
-
-A 401 response from photos-api on a call that uses the adapter's internal JWT (e.g., `client.users.me()`, the streaming upload path) means the adapter's JWT expired or is malformed — **not** that the Immich client's session is invalid. Forwarding 401 in that case would cause the Immich client to clear its session.
-
-Routes whose upstream calls authenticate with adapter-internal credentials must catch `APIStatusError` themselves and translate `status_code == 401` to 502 "Upstream temporarily unavailable" before letting the global handler take it. See `services/streaming_upload.py` (`status_code == 401 → 502`) for the canonical pattern.
+  - The global `GumnutError` handler catches `RateLimitError` explicitly and returns 502 (not 429) to Immich clients. `map_gumnut_error` does the same when called directly from upload paths.
 
 ## Testing
 

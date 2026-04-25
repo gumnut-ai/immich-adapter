@@ -18,14 +18,13 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
-from gumnut import AsyncGumnut, GumnutError
+from gumnut import APIStatusError, AsyncGumnut, NotFoundError
 from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import (
-    get_upstream_status_code,
     log_upstream_response,
     map_gumnut_error,
 )
@@ -106,36 +105,26 @@ async def _retrieve_and_stream_variant(
     Returns:
         StreamingResponse streaming CDN bytes to the Immich client.
     """
-    try:
-        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+    gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+    asset = await client.assets.retrieve(gumnut_asset_id)
 
-        asset = await client.assets.retrieve(gumnut_asset_id)
-
-        if not asset.asset_urls or variant not in asset.asset_urls:
-            logger.warning(
-                "Asset variant not available",
-                extra={"variant": variant, "asset_id": gumnut_asset_id},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Asset variant '{variant}' not available",
-            )
-
-        variant_info = asset.asset_urls[variant]
-        cdn_url = variant_info.url
-        mimetype = variant_info.mimetype
-
-        return await stream_from_cdn(
-            cdn_url,
-            mimetype,
-            range_header=range_header,
-            forwarded_headers=forwarded_headers,
+    if not asset.asset_urls or variant not in asset.asset_urls:
+        logger.warning(
+            "Asset variant not available",
+            extra={"variant": variant, "asset_id": gumnut_asset_id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Asset variant '{variant}' not available",
         )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch asset") from e
+    variant_info = asset.asset_urls[variant]
+    return await stream_from_cdn(
+        variant_info.url,
+        variant_info.mimetype,
+        range_header=range_header,
+        forwarded_headers=forwarded_headers,
+    )
 
 
 def _immich_checksum_to_base64(checksum: str) -> str:
@@ -180,54 +169,39 @@ async def bulk_upload_check(
     Check which assets from a bulk upload already exist in Gumnut.
     """
 
-    try:
-        results = []
-        # Convert Immich checksums (hex or base64) to base64 for Gumnut
-        # Build a map to avoid converting each checksum twice
-        checksum_to_b64 = {
-            asset.checksum: _immich_checksum_to_base64(asset.checksum)
-            for asset in request.assets
-        }
+    results = []
+    # Build a map to avoid converting each checksum twice
+    checksum_to_b64 = {
+        asset.checksum: _immich_checksum_to_base64(asset.checksum)
+        for asset in request.assets
+    }
 
-        existing_assets_response = await client.assets.check_existence(
-            checksum_sha1s=list(checksum_to_b64.values())
-        )
-        existing_assets = existing_assets_response.assets
+    existing_assets_response = await client.assets.check_existence(
+        checksum_sha1s=list(checksum_to_b64.values())
+    )
 
-        # Build a lookup map from base64 checksum to existing asset
-        b64_to_existing_asset = {
-            existing_asset.checksum_sha1: existing_asset
-            for existing_asset in existing_assets
-            if existing_asset.checksum_sha1
-        }
+    b64_to_existing_asset = {
+        existing_asset.checksum_sha1: existing_asset
+        for existing_asset in existing_assets_response.assets
+        if existing_asset.checksum_sha1
+    }
 
-        for asset in request.assets:
-            # Look up the pre-computed base64 checksum
-            checksum_b64 = checksum_to_b64[asset.checksum]
-            existing_asset = b64_to_existing_asset.get(checksum_b64)
+    for asset in request.assets:
+        existing_asset = b64_to_existing_asset.get(checksum_to_b64[asset.checksum])
+        if existing_asset:
+            results.append(
+                {
+                    "id": asset.id,
+                    "action": "reject",
+                    "reason": "duplicate",
+                    "assetId": str(safe_uuid_from_asset_id(existing_asset.id)),
+                    "isTrashed": False,
+                }
+            )
+        else:
+            results.append({"id": asset.id, "action": "accept"})
 
-            if existing_asset:
-                results.append(
-                    {
-                        "id": asset.id,
-                        "action": "reject",
-                        "reason": "duplicate",
-                        "assetId": str(safe_uuid_from_asset_id(existing_asset.id)),
-                        "isTrashed": False,
-                    }
-                )
-            else:
-                results.append(
-                    {
-                        "id": asset.id,
-                        "action": "accept",
-                    }
-                )
-
-        return AssetBulkUploadCheckResponseDto(results=results)
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to check bulk upload assets") from e
+    return AssetBulkUploadCheckResponseDto(results=results)
 
 
 @router.post("/exist")
@@ -238,17 +212,13 @@ async def check_existing_assets(
     """
     Check if multiple assets exist on the server and return all existing.
     """
-    try:
-        existing_assets_response = await client.assets.check_existence(
-            device_id=request.deviceId, device_asset_ids=request.deviceAssetIds
-        )
-        existing_ids = [
-            str(safe_uuid_from_asset_id(asset.id))
-            for asset in existing_assets_response.assets
-        ]
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to check existing assets") from e
-
+    existing_assets_response = await client.assets.check_existence(
+        device_id=request.deviceId, device_asset_ids=request.deviceAssetIds
+    )
+    existing_ids = [
+        str(safe_uuid_from_asset_id(asset.id))
+        for asset in existing_assets_response.assets
+    ]
     return CheckExistingAssetsResponseDto(existingIds=existing_ids)
 
 
@@ -627,73 +597,56 @@ async def delete_assets(
     Deletes assets by their IDs. The force parameter is ignored as Gumnut handles deletion directly.
     """
 
-    try:
-        # Process each asset ID for deletion
-        for asset_uuid in request.ids:
+    for asset_uuid in request.ids:
+        try:
+            gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+            await client.assets.delete(gumnut_asset_id)
+
             try:
-                gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
-
-                await client.assets.delete(gumnut_asset_id)
-
-                # Emit WebSocket event for real-time timeline sync
-                try:
-                    await emit_user_event(
-                        WebSocketEvent.ASSET_DELETE,
-                        str(current_user_id),
-                        str(asset_uuid),
-                    )
-                except SocketIOError as ws_error:
-                    logger.warning(
-                        "Failed to emit WebSocket event after asset delete",
-                        extra={
-                            "asset_id": str(asset_uuid),
-                            "gumnut_id": str(gumnut_asset_id),
-                            "error": str(ws_error),
-                        },
-                    )
-
-            except GumnutError as asset_error:
-                # Log individual asset errors but continue with other deletions.
-                # 404 means asset is already gone; this is expected during sync.
-                status_code = get_upstream_status_code(asset_error)
-
-                if status_code == 404 or (
-                    status_code is None and "not found" in str(asset_error).lower()
-                ):
-                    status_code = 404
-                    # Asset already deleted or doesn't exist, continue
-                    log_upstream_response(
-                        logger,
-                        context="delete_assets",
-                        status_code=status_code,
-                        message=f"Asset {asset_uuid} not found during deletion",
-                        extra={
-                            "asset_id": str(asset_uuid),
-                            "gumnut_id": str(gumnut_asset_id),
-                            "error": str(asset_error),
-                        },
-                    )
-                    continue
-
-                # For other errors, log but continue
-                log_upstream_response(
-                    logger,
-                    context="delete_assets",
-                    status_code=status_code or 500,
-                    message=f"Failed to delete asset {asset_uuid}",
+                await emit_user_event(
+                    WebSocketEvent.ASSET_DELETE,
+                    str(current_user_id),
+                    str(asset_uuid),
+                )
+            except SocketIOError as ws_error:
+                logger.warning(
+                    "Failed to emit WebSocket event after asset delete",
                     extra={
                         "asset_id": str(asset_uuid),
                         "gumnut_id": str(gumnut_asset_id),
-                        "error": str(asset_error),
+                        "error": str(ws_error),
                     },
                 )
-                continue
 
-        # Return 204 No Content on successful completion
-        return Response(status_code=204)
+        except NotFoundError as asset_error:
+            # Asset is already gone; expected during sync, log and continue.
+            log_upstream_response(
+                logger,
+                context="delete_assets",
+                status_code=404,
+                message=f"Asset {asset_uuid} not found during deletion",
+                extra={
+                    "asset_id": str(asset_uuid),
+                    "gumnut_id": str(gumnut_asset_id),
+                    "error": str(asset_error),
+                },
+            )
+        except APIStatusError as asset_error:
+            # Log other per-item upstream errors but keep going so the bulk
+            # delete completes for the remaining assets.
+            log_upstream_response(
+                logger,
+                context="delete_assets",
+                status_code=asset_error.status_code,
+                message=f"Failed to delete asset {asset_uuid}",
+                extra={
+                    "asset_id": str(asset_uuid),
+                    "gumnut_id": str(gumnut_asset_id),
+                    "error": str(asset_error),
+                },
+            )
 
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to delete assets") from e
+    return Response(status_code=204)
 
 
 @router.get("/device/{deviceId}", deprecated=True)
@@ -721,34 +674,25 @@ async def get_asset_statistics(
     Counts total assets and categorizes them by type (images vs videos) using mime_type.
     """
 
-    try:
-        # Get all assets from Gumnut
-        gumnut_assets = client.assets.list()
+    gumnut_assets = client.assets.list()
 
-        # Count assets by type
-        total_assets = 0
-        image_count = 0
-        video_count = 0
+    total_assets = 0
+    image_count = 0
+    video_count = 0
 
-        async for asset in gumnut_assets:
-            total_assets += 1
+    async for asset in gumnut_assets:
+        total_assets += 1
+        asset_type = mime_type_to_asset_type(asset.mime_type)
+        if asset_type == AssetTypeEnum.IMAGE:
+            image_count += 1
+        elif asset_type == AssetTypeEnum.VIDEO:
+            video_count += 1
 
-            # Check mime_type to determine if it's an image or video
-            asset_type = mime_type_to_asset_type(asset.mime_type)
-            if asset_type == AssetTypeEnum.IMAGE:
-                image_count += 1
-            elif asset_type == AssetTypeEnum.VIDEO:
-                video_count += 1
-            # Note: Other types (audio, etc.) are not counted separately but are included in total
-
-        return AssetStatsResponseDto(
-            images=image_count,
-            videos=video_count,
-            total=total_assets,
-        )
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch asset statistics") from e
+    return AssetStatsResponseDto(
+        images=image_count,
+        videos=video_count,
+        total=total_assets,
+    )
 
 
 @router.get("/random", deprecated=True)
@@ -815,19 +759,9 @@ async def get_asset_info(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetResponseDto:
-    try:
-        gumnut_asset_id = uuid_to_gumnut_asset_id(id)
-
-        # Retrieve the specific asset from Gumnut
-        gumnut_asset = await client.assets.retrieve(gumnut_asset_id)
-
-        # Convert Gumnut asset to AssetResponseDto format
-        immich_asset = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
-
-        return immich_asset
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch asset") from e
+    gumnut_asset_id = uuid_to_gumnut_asset_id(id)
+    gumnut_asset = await client.assets.retrieve(gumnut_asset_id)
+    return convert_gumnut_asset_to_immich(gumnut_asset, current_user)
 
 
 @router.get(

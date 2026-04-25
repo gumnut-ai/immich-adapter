@@ -18,7 +18,6 @@ from routers.immich_models import (
     UserResponseDto,
     UserStatus,
 )
-from routers.utils.error_mapping import map_gumnut_error
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
 
@@ -40,11 +39,8 @@ async def get_current_user_admin(
     if hasattr(request.state, "current_user_admin"):
         return request.state.current_user_admin
 
-    # Fetch from Gumnut backend
-    try:
-        user = await client.users.me()
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch user details") from e
+    # Fetch from Gumnut backend (SDK errors bubble to the global GumnutError handler)
+    user = await client.users.me()
 
     # Map Gumnut UserResponse to Immich UserAdminResponseDto
     # Combine first_name and last_name into Immich's single "name" field

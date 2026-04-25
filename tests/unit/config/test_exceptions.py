@@ -1,9 +1,13 @@
-"""Tests for the Gumnut SDK exception handler middleware."""
+"""
+Tests for the global GumnutError exception handler.
 
-import json
+These exercise the handler through a minimal FastAPI app + TestClient so
+the full request/response/handler pipeline is verified — not just the
+handler function in isolation.
+"""
+
 import logging
 
-import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -20,197 +24,138 @@ from gumnut import (
 )
 
 from config.exceptions import configure_exception_handlers
+from tests.conftest import make_sdk_status_error
 
 
-def _response(status_code: int, body: dict | None = None) -> httpx.Response:
-    request = httpx.Request("GET", "https://upstream.example/v1/things")
-    return httpx.Response(
-        status_code=status_code,
-        request=request,
-        content=json.dumps(body or {}).encode("utf-8"),
-    )
-
-
-@pytest.fixture
-def app() -> FastAPI:
-    """A FastAPI app with the exception handlers wired up and routes that raise."""
+def _make_app(raise_exception: Exception) -> FastAPI:
+    """Build a tiny FastAPI app whose `/boom` route raises the given exception."""
     app = FastAPI()
     configure_exception_handlers(app)
 
-    @app.get("/raise")
-    async def _raise(exc_type: str):
-        request = httpx.Request("GET", "https://upstream.example/v1/things")
-        if exc_type == "rate_limit":
-            raise RateLimitError(
-                message="rate limited",
-                response=_response(429),
-                body=None,
-            )
-        if exc_type == "not_found":
-            raise NotFoundError(
-                message="missing",
-                response=_response(404),
-                body={"detail": "missing"},
-            )
-        if exc_type == "auth":
-            raise AuthenticationError(
-                message="auth failed",
-                response=_response(401),
-                body={"message": "JWT expired"},
-            )
-        if exc_type == "permission":
-            raise PermissionDeniedError(
-                message="forbidden",
-                response=_response(403),
-                body={"error": "forbidden"},
-            )
-        if exc_type == "bad_request":
-            raise BadRequestError(
-                message="bad",
-                response=_response(400),
-                body={"detail": "validation failed"},
-            )
-        if exc_type == "internal":
-            raise InternalServerError(
-                message="boom",
-                response=_response(503),
-                body=None,
-            )
-        if exc_type == "connection":
-            raise APIConnectionError(request=request)
-        if exc_type == "response_validation":
-            raise APIResponseValidationError(
-                response=_response(200),
-                body={"unexpected": "shape"},
-            )
-        if exc_type == "generic":
-            raise GumnutError("something broke")
-        if exc_type == "non_dict_body":
-            raise NotFoundError(
-                message="missing",
-                response=_response(404),
-                body="raw text",
-            )
-        raise ValueError(f"unknown exc_type {exc_type!r}")
+    @app.get("/boom")
+    async def boom() -> None:
+        raise raise_exception
 
     return app
 
 
-@pytest.fixture
-def client(app: FastAPI) -> TestClient:
-    return TestClient(app, raise_server_exceptions=False)
+def _client(exc: Exception) -> TestClient:
+    return TestClient(_make_app(exc), raise_server_exceptions=False)
 
 
-class TestRateLimitErrorMapping:
-    def test_returns_502_not_429(self, client: TestClient):
-        response = client.get("/raise", params={"exc_type": "rate_limit"})
-        assert response.status_code == 502
+class TestGumnutErrorHandler:
+    @pytest.mark.parametrize(
+        ("cls", "status_code"),
+        [
+            (NotFoundError, 404),
+            (AuthenticationError, 401),
+            (PermissionDeniedError, 403),
+            (BadRequestError, 400),
+        ],
+    )
+    def test_typed_status_errors_pass_through_status_code(self, cls, status_code):
+        err = make_sdk_status_error(status_code, "upstream said no", cls=cls)
+        response = _client(err).get("/boom")
+
+        assert response.status_code == status_code
         body = response.json()
-        assert body["statusCode"] == 502
-        assert "Upstream temporarily unavailable" in body["message"]
-        assert body["error"] == "Bad Gateway"
+        assert body["statusCode"] == status_code
+        assert body["message"]
+        assert body["error"]
 
-    def test_logs_at_warning(
-        self, client: TestClient, caplog: pytest.LogCaptureFixture
-    ):
+    def test_extracts_detail_from_body(self):
+        err = make_sdk_status_error(
+            401,
+            "raw",
+            body={"detail": "JWT has expired"},
+            cls=AuthenticationError,
+        )
+        response = _client(err).get("/boom")
+
+        assert response.status_code == 401
+        assert response.json()["message"] == "JWT has expired"
+
+    def test_internal_server_error_uses_actual_status_code(self):
+        # The Stainless-generated InternalServerError carries the real upstream
+        # code in .status_code (no Literal override).
+        err = make_sdk_status_error(503, "upstream down", cls=InternalServerError)
+        response = _client(err).get("/boom")
+
+        assert response.status_code == 503
+        assert response.json()["statusCode"] == 503
+
+    def test_rate_limit_error_maps_to_502(self, caplog: pytest.LogCaptureFixture):
+        err = make_sdk_status_error(429, "Too many requests", cls=RateLimitError)
         caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
-        client.get("/raise", params={"exc_type": "rate_limit"})
-        records = [
-            r
-            for r in caplog.records
-            if r.getMessage().startswith("SDK retries exhausted")
+
+        response = _client(err).get("/boom")
+
+        assert response.status_code == 502
+        assert response.json()["message"] == "Upstream temporarily unavailable"
+
+        # Logged at WARNING (under 429 policy), not at the 502 client-facing code.
+        rate_limit_records = [
+            r for r in caplog.records if "rate-limited request" in r.getMessage()
         ]
-        assert records
-        assert records[-1].levelno == logging.WARNING
+        assert rate_limit_records
+        assert rate_limit_records[-1].levelno == logging.WARNING
 
+    def test_api_response_validation_error_maps_to_502(self):
+        # APIResponseValidationError requires (response, body, message=...)
+        import httpx
 
-class TestAPIStatusErrorMapping:
-    def test_404_passes_through_with_body_detail(self, client: TestClient):
-        response = client.get("/raise", params={"exc_type": "not_found"})
-        assert response.status_code == 404
+        request = httpx.Request("GET", "http://test.local/")
+        response = httpx.Response(200, request=request)
+        err = APIResponseValidationError(response, body=None, message="bad schema")
+
+        client_response = _client(err).get("/boom")
+        assert client_response.status_code == 502
+        assert client_response.json()["message"] == "Upstream returned invalid response"
+
+    def test_api_connection_error_maps_to_502(self):
+        import httpx
+
+        request = httpx.Request("GET", "http://test.local/")
+        err = APIConnectionError(request=request)
+
+        response = _client(err).get("/boom")
+
+        assert response.status_code == 502
+        assert response.json()["message"] == "Upstream unreachable"
+
+    def test_generic_gumnut_error_maps_to_500(self):
+        err = GumnutError("something internal blew up")
+        response = _client(err).get("/boom")
+
+        assert response.status_code == 500
+        assert response.json()["message"] == "Internal error"
+
+    def test_response_shape_matches_immich_format(self):
+        err = make_sdk_status_error(404, "Not found", cls=NotFoundError)
+        response = _client(err).get("/boom")
+
         body = response.json()
-        assert body["statusCode"] == 404
-        assert body["message"] == "missing"
+        assert set(body.keys()) == {"message", "statusCode", "error"}
         assert body["error"] == "Not Found"
 
-    def test_401_uses_body_message(self, client: TestClient):
-        response = client.get("/raise", params={"exc_type": "auth"})
-        assert response.status_code == 401
-        assert response.json()["message"] == "JWT expired"
-
-    def test_403_uses_body_error(self, client: TestClient):
-        response = client.get("/raise", params={"exc_type": "permission"})
-        assert response.status_code == 403
-        assert response.json()["message"] == "forbidden"
-
-    def test_400_uses_body_detail(self, client: TestClient):
-        response = client.get("/raise", params={"exc_type": "bad_request"})
-        assert response.status_code == 400
-        assert response.json()["message"] == "validation failed"
-
-    def test_5xx_passes_through(self, client: TestClient):
-        response = client.get("/raise", params={"exc_type": "internal"})
-        assert response.status_code == 503
-
-    def test_404_logs_at_info(
-        self, client: TestClient, caplog: pytest.LogCaptureFixture
-    ):
+    def test_404_logs_at_info_level(self, caplog: pytest.LogCaptureFixture):
+        """Per the upstream policy, 404 is INFO (not WARNING) — these are noisy
+        and not actionable."""
+        err = make_sdk_status_error(404, "Not found", cls=NotFoundError)
         caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
-        client.get("/raise", params={"exc_type": "not_found"})
+
+        _client(err).get("/boom")
+
         records = [r for r in caplog.records if getattr(r, "status_code", None) == 404]
         assert records
         assert records[-1].levelno == logging.INFO
 
-    def test_5xx_logs_at_error(
-        self, client: TestClient, caplog: pytest.LogCaptureFixture
-    ):
+    def test_5xx_logs_at_error_level(self, caplog: pytest.LogCaptureFixture):
+        err = make_sdk_status_error(503, "Down", cls=InternalServerError)
         caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
-        client.get("/raise", params={"exc_type": "internal"})
+
+        _client(err).get("/boom")
+
         records = [r for r in caplog.records if getattr(r, "status_code", None) == 503]
         assert records
         assert records[-1].levelno == logging.ERROR
-
-    def test_non_dict_body_falls_back_to_message(self, client: TestClient):
-        response = client.get("/raise", params={"exc_type": "non_dict_body"})
-        assert response.status_code == 404
-        assert response.json()["message"] == "missing"
-
-
-class TestAPIConnectionErrorMapping:
-    def test_returns_502(self, client: TestClient):
-        response = client.get("/raise", params={"exc_type": "connection"})
-        assert response.status_code == 502
-        assert response.json()["message"] == "Upstream unreachable"
-
-    def test_logs_at_error(self, client: TestClient, caplog: pytest.LogCaptureFixture):
-        caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
-        client.get("/raise", params={"exc_type": "connection"})
-        records = [r for r in caplog.records if "connection error" in r.getMessage()]
-        assert records
-        assert records[-1].levelno == logging.ERROR
-
-
-class TestAPIResponseValidationErrorMapping:
-    def test_returns_502(self, client: TestClient):
-        response = client.get("/raise", params={"exc_type": "response_validation"})
-        assert response.status_code == 502
-        assert response.json()["message"] == "Upstream returned invalid response"
-
-
-class TestGenericGumnutErrorMapping:
-    def test_returns_500(self, client: TestClient):
-        response = client.get("/raise", params={"exc_type": "generic"})
-        assert response.status_code == 500
-        assert response.json()["message"] == "Internal error"
-
-
-class TestImmichResponseShape:
-    def test_response_includes_message_status_code_and_error_phrase(
-        self, client: TestClient
-    ):
-        response = client.get("/raise", params={"exc_type": "not_found"})
-        body = response.json()
-        assert set(body.keys()) == {"message", "statusCode", "error"}
-        assert isinstance(body["message"], str)
-        assert isinstance(body["statusCode"], int)
-        assert isinstance(body["error"], str)

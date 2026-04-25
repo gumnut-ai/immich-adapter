@@ -3,10 +3,9 @@ from uuid import UUID
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from gumnut import AsyncGumnut
+from gumnut import APIStatusError, AsyncGumnut, NotFoundError
 
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.utils.current_user import get_current_user
 from routers.immich_models import (
     AlbumResponseDto,
@@ -56,25 +55,18 @@ async def get_all_albums(
         # Shared albums not supported in this adapter
         return []
 
-    try:
-        kwargs = {}
-        if asset_id:
-            kwargs["asset_id"] = uuid_to_gumnut_asset_id(asset_id)
+    kwargs = {}
+    if asset_id:
+        kwargs["asset_id"] = uuid_to_gumnut_asset_id(asset_id)
 
-        gumnut_albums = client.albums.list(**kwargs)
+    gumnut_albums = client.albums.list(**kwargs)
 
-        # Convert Gumnut albums to AlbumResponseDto format
-        immich_albums = [
-            convert_gumnut_album_to_immich(
-                album, current_user, asset_count=album.asset_count
-            )
-            async for album in gumnut_albums
-        ]
-
-        return immich_albums
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch albums") from e
+    return [
+        convert_gumnut_album_to_immich(
+            album, current_user, asset_count=album.asset_count
+        )
+        async for album in gumnut_albums
+    ]
 
 
 @router.get("/statistics")
@@ -86,25 +78,16 @@ async def get_album_statistics(
     Since Gumnut doesn't support shared albums, all albums are considered owned and not shared.
     """
 
-    try:
-        # Get all albums to count them
-        gumnut_albums = client.albums.list()
+    gumnut_albums = client.albums.list()
+    albums_list = [a async for a in gumnut_albums]
+    total_albums = len(albums_list)
 
-        # Count albums by converting AsyncPaginator to list
-        albums_list = [a async for a in gumnut_albums]
-        total_albums = len(albums_list)
-
-        # Since Gumnut doesn't support shared albums, all albums are:
-        # - owned by the current user
-        # - not shared
-        return AlbumStatisticsResponseDto(
-            notShared=total_albums,  # All albums are not shared
-            owned=total_albums,  # All albums are owned by current user
-            shared=0,  # No shared albums in Gumnut
-        )
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch album statistics") from e
+    # Gumnut doesn't support shared albums, so all albums are owned and unshared.
+    return AlbumStatisticsResponseDto(
+        notShared=total_albums,
+        owned=total_albums,
+        shared=0,
+    )
 
 
 @router.get("/{id}")
@@ -121,38 +104,29 @@ async def get_album_info(
     If withoutAssets is False, also fetch and include the album's assets.
     """
 
-    try:
-        gumnut_album_id = uuid_to_gumnut_album_id(id)
+    gumnut_album_id = uuid_to_gumnut_album_id(id)
 
-        # Retrieve the specific album from Gumnut
-        gumnut_album = await client.albums.retrieve(gumnut_album_id)
+    # Retrieve the specific album from Gumnut
+    gumnut_album = await client.albums.retrieve(gumnut_album_id)
 
-        # Convert assets to AssetResponseDto format
-        immich_assets = []
-        if not withoutAssets:
-            async for gumnut_asset in client.assets.list(album_id=gumnut_album_id):
-                try:
-                    immich_asset = convert_gumnut_asset_to_immich(
-                        gumnut_asset, current_user
-                    )
-                    immich_assets.append(immich_asset)
-                except Exception as convert_error:
-                    logger.warning(
-                        f"Warning: Could not convert asset {gumnut_asset}: {convert_error}"
-                    )
+    immich_assets = []
+    if not withoutAssets:
+        async for gumnut_asset in client.assets.list(album_id=gumnut_album_id):
+            try:
+                immich_assets.append(
+                    convert_gumnut_asset_to_immich(gumnut_asset, current_user)
+                )
+            except Exception as convert_error:
+                logger.warning(
+                    f"Warning: Could not convert asset {gumnut_asset}: {convert_error}"
+                )
 
-        # Convert Gumnut album to AlbumResponseDto format using utility function
-        immich_album = convert_gumnut_album_to_immich(
-            gumnut_album,
-            current_user,
-            assets=immich_assets,
-            asset_count=gumnut_album.asset_count,
-        )
-
-        return immich_album
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch album") from e
+    return convert_gumnut_album_to_immich(
+        gumnut_album,
+        current_user,
+        assets=immich_assets,
+        asset_count=gumnut_album.asset_count,
+    )
 
 
 @router.post("", status_code=201)
@@ -166,25 +140,13 @@ async def create_album(
     Note: albumUsers and assetIds are not supported by the Gumnut SDK.
     """
 
-    try:
-        album_name = request.albumName or ""
+    gumnut_album = await client.albums.create(
+        name=request.albumName or "",
+        description=request.description,
+        # Note: albumUsers and assetIds are not supported in this adapter
+    )
 
-        # Create the album
-        gumnut_album = await client.albums.create(
-            name=album_name,
-            description=request.description,
-            # Note: albumUsers and assetIds are not supported in this adapter
-        )
-
-        # Convert Gumnut album to AlbumResponseDto format using utility function
-        immich_album = convert_gumnut_album_to_immich(
-            gumnut_album, current_user, asset_count=0
-        )
-
-        return immich_album
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to create album") from e
+    return convert_gumnut_album_to_immich(gumnut_album, current_user, asset_count=0)
 
 
 @router.put("/{id}/assets")
@@ -200,68 +162,40 @@ async def add_assets_to_album(
     Returns a list of results indicating success/failure for each asset.
     """
 
+    gumnut_album_id = uuid_to_gumnut_album_id(id)
+
+    # Verify album exists first
     try:
-        gumnut_album_id = uuid_to_gumnut_album_id(id)
+        await client.albums.retrieve(gumnut_album_id)
+    except NotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Album not found {id} -> {gumnut_album_id}",
+        )
 
-        # Verify album exists first
+    response = []
+    for asset_uuid in request.ids:
+        asset_uuid_str = str(asset_uuid)
         try:
-            await client.albums.retrieve(gumnut_album_id)
-        except Exception as e:
-            if check_for_error_by_code(e, 404):
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Album not found {id} -> {gumnut_album_id}",
-                )
-            raise  # Re-raise other exceptions
+            gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+            await client.albums.assets_associations.add(
+                gumnut_album_id, asset_ids=[gumnut_asset_id]
+            )
+            response.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
+        except APIStatusError as asset_error:
+            # Per-asset duplicate / not-found / other errors must not abort the bulk op.
+            error_msg = str(asset_error).lower()
+            if "duplicate" in error_msg or "already exists" in error_msg:
+                error = Error1.duplicate
+            elif isinstance(asset_error, NotFoundError):
+                error = Error1.not_found
+            else:
+                error = Error1.unknown
+            response.append(
+                BulkIdResponseDto(id=asset_uuid_str, success=False, error=error)
+            )
 
-        # Process each asset ID
-        response = []
-
-        for asset_uuid in request.ids:
-            asset_uuid_str = str(asset_uuid)
-            try:
-                gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
-
-                # Add asset to album using Gumnut SDK
-                await client.albums.assets_associations.add(
-                    gumnut_album_id, asset_ids=[gumnut_asset_id]
-                )
-
-                # Success response
-                response.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
-
-            except Exception as asset_error:
-                # Handle individual asset errors
-                error_msg = str(asset_error).lower()
-                if "duplicate" in error_msg or "already exists" in error_msg:
-                    response.append(
-                        BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error1.duplicate
-                        )
-                    )
-                elif (
-                    check_for_error_by_code(asset_error, 404)
-                    or "not found" in error_msg
-                ):
-                    response.append(
-                        BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error1.not_found
-                        )
-                    )
-                else:
-                    response.append(
-                        BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error1.unknown
-                        )
-                    )
-
-        return response
-
-    except HTTPException:
-        # Re-raise HTTP exceptions (like 404 for album not found)
-        raise
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to update album assets") from e
+    return response
 
 
 @router.patch("/{id}")
@@ -276,43 +210,25 @@ async def update_album(
     Only name and description are supported by the Gumnut SDK.
     """
 
+    gumnut_album_id = uuid_to_gumnut_album_id(id)
+
     try:
-        gumnut_album_id = uuid_to_gumnut_album_id(id)
+        current_album = await client.albums.retrieve(gumnut_album_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Album not found")
 
-        # Verify album exists first
-        try:
-            current_album = await client.albums.retrieve(gumnut_album_id)
-        except Exception as e:
-            if check_for_error_by_code(e, 404):
-                raise HTTPException(status_code=404, detail="Album not found")
-            raise  # Re-raise other exceptions
+    update_params = {}
+    if request.albumName is not None:
+        update_params["name"] = request.albumName
+    if request.description is not None:
+        update_params["description"] = request.description
 
-        # Prepare update parameters
-        update_params = {}
-        if request.albumName is not None:
-            update_params["name"] = request.albumName
-        if request.description is not None:
-            update_params["description"] = request.description
+    if update_params:
+        updated_album = await client.albums.update(gumnut_album_id, **update_params)
+    else:
+        updated_album = current_album
 
-        # Only call update if there are supported parameters to update
-        if update_params:
-            updated_album = await client.albums.update(gumnut_album_id, **update_params)
-        else:
-            # No supported updates, return current album
-            updated_album = current_album
-
-        # Convert Gumnut album to AlbumResponseDto format using utility function
-        immich_album = convert_gumnut_album_to_immich(
-            updated_album, current_user, asset_count=0
-        )
-
-        return immich_album
-
-    except HTTPException:
-        # Re-raise HTTP exceptions (like 404 for album not found)
-        raise
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to update album") from e
+    return convert_gumnut_album_to_immich(updated_album, current_user, asset_count=0)
 
 
 @router.delete("/{id}/assets")
@@ -326,68 +242,38 @@ async def remove_asset_from_album(
     Returns a list of results indicating success/failure for each asset removal.
     """
 
+    gumnut_album_id = uuid_to_gumnut_album_id(id)
+
     try:
-        gumnut_album_id = uuid_to_gumnut_album_id(id)
+        await client.albums.retrieve(gumnut_album_id)
+    except NotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Album not found {id} -> {gumnut_album_id}",
+        )
 
-        # Verify album exists first
+    response = []
+    for asset_uuid in request.ids:
+        asset_uuid_str = str(asset_uuid)
         try:
-            await client.albums.retrieve(gumnut_album_id)
-        except Exception as e:
-            if check_for_error_by_code(e, 404):
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Album not found {id} -> {gumnut_album_id}",
-                )
-            raise  # Re-raise other exceptions
+            gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+            await client.albums.assets_associations.remove(
+                gumnut_album_id, asset_ids=[gumnut_asset_id]
+            )
+            response.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
+        except APIStatusError as asset_error:
+            error_msg = str(asset_error).lower()
+            if isinstance(asset_error, NotFoundError) or (
+                "not in album" in error_msg or "not member" in error_msg
+            ):
+                error = Error1.not_found
+            else:
+                error = Error1.unknown
+            response.append(
+                BulkIdResponseDto(id=asset_uuid_str, success=False, error=error)
+            )
 
-        # Process each asset ID
-        response = []
-
-        for asset_uuid in request.ids:
-            asset_uuid_str = str(asset_uuid)
-            try:
-                gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
-
-                # Remove asset from album using Gumnut SDK
-                await client.albums.assets_associations.remove(
-                    gumnut_album_id, asset_ids=[gumnut_asset_id]
-                )
-
-                # Success response
-                response.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
-
-            except Exception as asset_error:
-                # Handle individual asset errors
-                error_msg = str(asset_error).lower()
-                if (
-                    check_for_error_by_code(asset_error, 404)
-                    or "not found" in error_msg
-                ):
-                    response.append(
-                        BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error1.not_found
-                        )
-                    )
-                elif "not in album" in error_msg or "not member" in error_msg:
-                    response.append(
-                        BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error1.not_found
-                        )
-                    )
-                else:
-                    response.append(
-                        BulkIdResponseDto(
-                            id=asset_uuid_str, success=False, error=Error1.unknown
-                        )
-                    )
-
-        return response
-
-    except HTTPException:
-        # Re-raise HTTP exceptions (like 404 for album not found)
-        raise
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to remove album assets") from e
+    return response
 
 
 @router.delete("/{id}", status_code=204)
@@ -399,28 +285,15 @@ async def delete_album(
     Delete an album using the Gumnut SDK.
     """
 
+    gumnut_album_id = uuid_to_gumnut_album_id(id)
+
     try:
-        gumnut_album_id = uuid_to_gumnut_album_id(id)
+        await client.albums.retrieve(gumnut_album_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Album not found")
 
-        # Verify album exists first
-        try:
-            await client.albums.retrieve(gumnut_album_id)
-        except Exception as e:
-            if check_for_error_by_code(e, 404):
-                raise HTTPException(status_code=404, detail="Album not found")
-            raise  # Re-raise other exceptions
-
-        # Delete the album using Gumnut SDK
-        await client.albums.delete(gumnut_album_id)
-
-        # Return 204 No Content response
-        return Response(status_code=204)
-
-    except HTTPException:
-        # Re-raise HTTP exceptions (like 404 for album not found)
-        raise
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to delete album") from e
+    await client.albums.delete(gumnut_album_id)
+    return Response(status_code=204)
 
 
 @router.put("/assets")
@@ -435,59 +308,45 @@ async def add_assets_to_albums(
     Returns a single result indicating overall success/failure.
     """
 
-    try:
-        gumnut_asset_ids = [
-            uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in request.assetIds
-        ]
+    gumnut_asset_ids = [
+        uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in request.assetIds
+    ]
 
-        successful_operations = 0
-        total_operations = len(request.albumIds)
-        first_error = None
+    successful_operations = 0
+    total_operations = len(request.albumIds)
+    first_error: BulkIdErrorReason | None = None
 
-        for album_uuid in request.albumIds:
+    for album_uuid in request.albumIds:
+        try:
+            gumnut_album_id = uuid_to_gumnut_album_id(album_uuid)
+
             try:
-                gumnut_album_id = uuid_to_gumnut_album_id(album_uuid)
-
-                # Verify album exists first
-                try:
-                    await client.albums.retrieve(gumnut_album_id)
-                except Exception as e:
-                    if check_for_error_by_code(e, 404):
-                        if first_error is None:
-                            first_error = BulkIdErrorReason.not_found
-                        continue
-                    raise  # Re-raise other exceptions
-
-                # Add assets to album using Gumnut SDK
-                await client.albums.assets_associations.add(
-                    gumnut_album_id, asset_ids=gumnut_asset_ids
-                )
-                successful_operations += 1
-
-            except Exception as album_error:
-                # Handle individual album errors
-                error_msg = str(album_error).lower()
+                await client.albums.retrieve(gumnut_album_id)
+            except NotFoundError:
                 if first_error is None:
-                    if (
-                        check_for_error_by_code(album_error, 404)
-                        or "not found" in error_msg
-                    ):
-                        first_error = BulkIdErrorReason.not_found
-                    elif "duplicate" in error_msg or "already exists" in error_msg:
-                        first_error = BulkIdErrorReason.duplicate
-                    else:
-                        first_error = BulkIdErrorReason.unknown
+                    first_error = BulkIdErrorReason.not_found
+                continue
 
-        # Return success only if all operations succeeded
-        if successful_operations == total_operations:
-            return AlbumsAddAssetsResponseDto(success=True)
-        else:
-            return AlbumsAddAssetsResponseDto(
-                success=False, error=first_error or BulkIdErrorReason.unknown
+            await client.albums.assets_associations.add(
+                gumnut_album_id, asset_ids=gumnut_asset_ids
             )
+            successful_operations += 1
 
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to add assets to albums") from e
+        except APIStatusError as album_error:
+            if first_error is None:
+                error_msg = str(album_error).lower()
+                if isinstance(album_error, NotFoundError):
+                    first_error = BulkIdErrorReason.not_found
+                elif "duplicate" in error_msg or "already exists" in error_msg:
+                    first_error = BulkIdErrorReason.duplicate
+                else:
+                    first_error = BulkIdErrorReason.unknown
+
+    if successful_operations == total_operations:
+        return AlbumsAddAssetsResponseDto(success=True)
+    return AlbumsAddAssetsResponseDto(
+        success=False, error=first_error or BulkIdErrorReason.unknown
+    )
 
 
 @router.delete("/{id}/user/{userId}", status_code=204)
