@@ -4,12 +4,16 @@ from fastapi.responses import StreamingResponse
 from uuid import UUID
 import logging
 
-from gumnut import AsyncGumnut
+from gumnut import APIStatusError, AsyncGumnut, GumnutError
 from gumnut.types import PersonResponse
 
 from routers.utils.cdn_client import stream_from_cdn
+from routers.utils.error_mapping import (
+    classify_bulk_item_error,
+    log_bulk_transport_error,
+    log_upstream_response,
+)
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.error_mapping import map_gumnut_error, check_for_error_by_code
 from routers.immich_models import (
     AssetFaceUpdateDto,
     BulkIdResponseDto,
@@ -95,18 +99,13 @@ async def create_person(
     """
     Create a new person.
     """
-    try:
-        gumnut_person = await client.people.create(
-            name=person_data.name,
-            birth_date=person_data.birthDate,
-            is_favorite=person_data.isFavorite,
-            is_hidden=person_data.isHidden,
-        )
-
-        return convert_gumnut_person_to_immich(gumnut_person)
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to create person") from e
+    gumnut_person = await client.people.create(
+        name=person_data.name,
+        birth_date=person_data.birthDate,
+        is_favorite=person_data.isFavorite,
+        is_hidden=person_data.isHidden,
+    )
+    return convert_gumnut_person_to_immich(gumnut_person)
 
 
 @router.put("")
@@ -161,32 +160,57 @@ async def update_people(
             results.append(
                 BulkIdResponseDto(id=person_item.id, success=False, error=error)
             )
-            logger.warning(
-                "HTTPException in bulk person update for %s: %s %s",
-                person_item.id,
-                he.status_code,
-                he.detail,
+            log_upstream_response(
+                logger,
+                context="update_people",
+                status_code=he.status_code,
+                message=(
+                    f"HTTPException in bulk person update for {person_item.id}: "
+                    f"{he.status_code} {he.detail}"
+                ),
+                extra={"person_id": person_item.id},
             )
-        except Exception as e:
-            error_msg = str(e).lower()
-            if check_for_error_by_code(e, 404) or "not found" in error_msg:
-                results.append(
-                    BulkIdResponseDto(
-                        id=person_item.id, success=False, error=Error1.not_found
-                    )
+        except APIStatusError as person_error:
+            results.append(
+                BulkIdResponseDto(
+                    id=person_item.id,
+                    success=False,
+                    error=classify_bulk_item_error(person_error, Error1),
                 )
-            elif check_for_error_by_code(e, 401) or "invalid api key" in error_msg:
-                results.append(
-                    BulkIdResponseDto(
-                        id=person_item.id, success=False, error=Error1.no_permission
-                    )
+            )
+            log_upstream_response(
+                logger,
+                context="update_people",
+                status_code=person_error.status_code,
+                message=f"Failed bulk person update for {person_item.id}: {person_error}",
+                extra={"person_id": person_item.id},
+            )
+        except ValueError as ve:
+            # Immich's PeopleUpdateItem.id is typed as `str` (the OpenAPI spec
+            # switches between str and UUID for people ids), so UUID(...) can
+            # raise here on malformed input. A single bad id must not abort
+            # the batch.
+            results.append(
+                BulkIdResponseDto(
+                    id=person_item.id, success=False, error=Error1.unknown
                 )
-            else:
-                results.append(
-                    BulkIdResponseDto(
-                        id=person_item.id, success=False, error=Error1.unknown
-                    )
+            )
+            logger.warning(
+                "Invalid person id in bulk update",
+                extra={"person_id": person_item.id, "error": str(ve)},
+            )
+        except GumnutError as person_error:
+            results.append(
+                BulkIdResponseDto(
+                    id=person_item.id, success=False, error=Error1.unknown
                 )
+            )
+            log_bulk_transport_error(
+                logger,
+                context="update_people",
+                exc=person_error,
+                extra={"person_id": person_item.id},
+            )
 
     return results
 
@@ -200,33 +224,25 @@ async def update_person(
     """
     Update a person by their id.
     """
-    try:
-        # Update the person using Gumnut SDK - only pass parameters that are not None
-        update_kwargs = {}
-        gumnut_person_id = uuid_to_gumnut_person_id(id)
-        if person_data.name is not None:
-            update_kwargs["name"] = person_data.name
-        if person_data.birthDate is not None:
-            update_kwargs["birth_date"] = person_data.birthDate
-        if person_data.isFavorite is not None:
-            update_kwargs["is_favorite"] = person_data.isFavorite
-        if person_data.isHidden is not None:
-            update_kwargs["is_hidden"] = person_data.isHidden
-        if person_data.featureFaceAssetId is not None:
-            update_kwargs["thumbnail_face_id"] = await _resolve_thumbnail_face_id(
-                client, gumnut_person_id, person_data.featureFaceAssetId
-            )
-
-        gumnut_person = await client.people.update(
-            person_id=gumnut_person_id, **update_kwargs
+    update_kwargs = {}
+    gumnut_person_id = uuid_to_gumnut_person_id(id)
+    if person_data.name is not None:
+        update_kwargs["name"] = person_data.name
+    if person_data.birthDate is not None:
+        update_kwargs["birth_date"] = person_data.birthDate
+    if person_data.isFavorite is not None:
+        update_kwargs["is_favorite"] = person_data.isFavorite
+    if person_data.isHidden is not None:
+        update_kwargs["is_hidden"] = person_data.isHidden
+    if person_data.featureFaceAssetId is not None:
+        update_kwargs["thumbnail_face_id"] = await _resolve_thumbnail_face_id(
+            client, gumnut_person_id, person_data.featureFaceAssetId
         )
 
-        return convert_gumnut_person_to_immich(gumnut_person)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to update person") from e
+    gumnut_person = await client.people.update(
+        person_id=gumnut_person_id, **update_kwargs
+    )
+    return convert_gumnut_person_to_immich(gumnut_person)
 
 
 @router.get("")
@@ -241,40 +257,30 @@ async def get_all_people(
     """
     Get all people with optional pagination and filtering.
     """
-    try:
-        # Get all people from Gumnut
-        gumnut_people = client.people.list(name_filter="all")
-        all_people = [p async for p in gumnut_people]
+    gumnut_people = client.people.list(name_filter="all")
+    all_people = [p async for p in gumnut_people]
 
-        # Count hidden before filtering so the response includes the total
-        hidden_count = sum(1 for p in all_people if p.is_hidden)
+    # Count hidden before filtering so the response includes the total
+    hidden_count = sum(1 for p in all_people if p.is_hidden)
 
-        # Filter hidden people first (before sorting and pagination)
-        if withHidden is False:
-            all_people = [p for p in all_people if not p.is_hidden]
+    if withHidden is False:
+        all_people = [p for p in all_people if not p.is_hidden]
 
-        # Sort to match Immich's expected ordering
-        all_people.sort(key=_immich_people_sort_key)
+    all_people.sort(key=_immich_people_sort_key)
 
-        total_count = len(all_people)
+    total_count = len(all_people)
 
-        # Apply pagination after filtering and sorting
-        start_index = (page - 1) * size
-        end_index = start_index + size
-        page_people = all_people[start_index:end_index]
-        has_next_page = end_index < total_count
+    start_index = (page - 1) * size
+    end_index = start_index + size
+    page_people = all_people[start_index:end_index]
+    has_next_page = end_index < total_count
 
-        converted_people = [convert_gumnut_person_to_immich(p) for p in page_people]
-
-        return PeopleResponseDto(
-            people=converted_people,
-            hasNextPage=has_next_page,
-            total=total_count,
-            hidden=hidden_count,
-        )
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch people") from e
+    return PeopleResponseDto(
+        people=[convert_gumnut_person_to_immich(p) for p in page_people],
+        hasNextPage=has_next_page,
+        total=total_count,
+        hidden=hidden_count,
+    )
 
 
 @router.delete("", status_code=204)
@@ -285,14 +291,9 @@ async def delete_people(
     """
     Delete multiple people by their ids.
     """
-    try:
-        for person_id in request.ids:
-            await client.people.delete(uuid_to_gumnut_person_id(person_id))
-
-        return Response(status_code=204)
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to delete people") from e
+    for person_id in request.ids:
+        await client.people.delete(uuid_to_gumnut_person_id(person_id))
+    return Response(status_code=204)
 
 
 @router.get(
@@ -316,30 +317,16 @@ async def get_thumbnail(
     Get a thumbnail for a person.
     Retrieves person metadata and streams the thumbnail from CDN.
     """
-    try:
-        gumnut_person = await client.people.retrieve(uuid_to_gumnut_person_id(id))
+    gumnut_person = await client.people.retrieve(uuid_to_gumnut_person_id(id))
 
-        if (
-            not gumnut_person
-            or not gumnut_person.asset_urls
-            or "thumbnail" not in gumnut_person.asset_urls
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Person or thumbnail not found",
-            )
+    if not gumnut_person.asset_urls or "thumbnail" not in gumnut_person.asset_urls:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Person thumbnail not available",
+        )
 
-        variant_info = gumnut_person.asset_urls["thumbnail"]
-        cdn_url = variant_info.url
-        mimetype = variant_info.mimetype
-
-        return await stream_from_cdn(cdn_url, mimetype)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"Error fetching thumbnail for person {id}: {e}")
-        raise map_gumnut_error(e, "Failed to fetch person thumbnail") from e
+    variant_info = gumnut_person.asset_urls["thumbnail"]
+    return await stream_from_cdn(variant_info.url, variant_info.mimetype)
 
 
 @router.get("/{id}")
@@ -350,19 +337,8 @@ async def get_person(
     """
     Get details for a specific person.
     """
-    try:
-        gumnut_person = await client.people.retrieve(uuid_to_gumnut_person_id(id))
-
-        if not gumnut_person:
-            raise HTTPException(status_code=404, detail="Person not found")
-
-        return convert_gumnut_person_to_immich(gumnut_person)
-
-    except HTTPException:
-        # Re-raise HTTP exceptions (like 404 for person not found)
-        raise
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch person") from e
+    gumnut_person = await client.people.retrieve(uuid_to_gumnut_person_id(id))
+    return convert_gumnut_person_to_immich(gumnut_person)
 
 
 @router.get("/{id}/statistics")
@@ -373,18 +349,11 @@ async def get_person_statistics(
     """
     Get asset statistics for a specific person.
     """
-    try:
-        gumnut_assets = client.assets.list(person_id=uuid_to_gumnut_person_id(id))
+    gumnut_assets = client.assets.list(person_id=uuid_to_gumnut_person_id(id))
 
-        if not gumnut_assets:
-            return PersonStatisticsResponseDto(assets=0)
-        else:
-            return PersonStatisticsResponseDto(
-                assets=len([a async for a in gumnut_assets])
-            )
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to fetch person statistics") from e
+    if not gumnut_assets:
+        return PersonStatisticsResponseDto(assets=0)
+    return PersonStatisticsResponseDto(assets=len([a async for a in gumnut_assets]))
 
 
 @router.delete("/{id}", status_code=204)
@@ -395,13 +364,8 @@ async def delete_person(
     """
     Delete a person by their id.
     """
-    try:
-        await client.people.delete(uuid_to_gumnut_person_id(id))
-
-        return Response(status_code=204)
-
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to delete person") from e
+    await client.people.delete(uuid_to_gumnut_person_id(id))
+    return Response(status_code=204)
 
 
 @router.post("/{id}/merge")
@@ -427,47 +391,40 @@ async def reassign_faces(
     (body personId) on the given asset and reassigns it to the target person
     (URL {id}). Returns the target person if any faces were reassigned.
     """
-    try:
-        if not request.data:
-            return []
+    if not request.data:
+        return []
 
-        gumnut_target_person_id = uuid_to_gumnut_person_id(id)
+    gumnut_target_person_id = uuid_to_gumnut_person_id(id)
 
-        # Validate and cache the target person before modifying any faces
-        gumnut_person = await client.people.retrieve(gumnut_target_person_id)
-        target_person = convert_gumnut_person_to_immich(gumnut_person)
+    # Validate and cache the target person before modifying any faces
+    gumnut_person = await client.people.retrieve(gumnut_target_person_id)
+    target_person = convert_gumnut_person_to_immich(gumnut_person)
 
-        any_reassigned = False
-        for item in request.data:
-            gumnut_asset_id = uuid_to_gumnut_asset_id(item.assetId)
-            gumnut_source_person_id = uuid_to_gumnut_person_id(item.personId)
+    any_reassigned = False
+    for item in request.data:
+        gumnut_asset_id = uuid_to_gumnut_asset_id(item.assetId)
+        gumnut_source_person_id = uuid_to_gumnut_person_id(item.personId)
 
-            # Find all faces belonging to the source person on this asset
-            faces = [
-                f
-                async for f in client.faces.list(
-                    person_id=gumnut_source_person_id,
-                    asset_id=gumnut_asset_id,
-                )
-            ]
-            if not faces:
-                logger.warning(
-                    "No face found for source person on asset, skipping",
-                    extra={
-                        "source_person_id": gumnut_source_person_id,
-                        "target_person_id": gumnut_target_person_id,
-                        "asset_id": gumnut_asset_id,
-                    },
-                )
-                continue
+        faces = [
+            f
+            async for f in client.faces.list(
+                person_id=gumnut_source_person_id,
+                asset_id=gumnut_asset_id,
+            )
+        ]
+        if not faces:
+            logger.warning(
+                "No face found for source person on asset, skipping",
+                extra={
+                    "source_person_id": gumnut_source_person_id,
+                    "target_person_id": gumnut_target_person_id,
+                    "asset_id": gumnut_asset_id,
+                },
+            )
+            continue
 
-            for face in faces:
-                await client.faces.update(face.id, person_id=gumnut_target_person_id)
-            any_reassigned = True
+        for face in faces:
+            await client.faces.update(face.id, person_id=gumnut_target_person_id)
+        any_reassigned = True
 
-        return [target_person] if any_reassigned else []
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise map_gumnut_error(e, "Failed to reassign faces") from e
+    return [target_person] if any_reassigned else []

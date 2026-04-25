@@ -201,20 +201,17 @@ class TestGetFaces:
         assert result[0].id == face_uuid
 
     @pytest.mark.anyio
-    async def test_sdk_error_mapped_to_http_exception(self):
-        """Test that SDK errors from faces.list are mapped via map_gumnut_error."""
-        from fastapi import HTTPException
+    async def test_sdk_error_propagates(self):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
 
         asset_uuid = uuid4()
-
         mock_client = Mock()
-        mock_client.faces.list = Mock(side_effect=Exception("Something went wrong"))
+        mock_client.faces.list = Mock(side_effect=make_sdk_status_error(500, "boom"))
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(APIStatusError):
             await get_faces(id=asset_uuid, client=mock_client)
-
-        assert exc_info.value.status_code == 500
-        assert "Failed to fetch faces" in exc_info.value.detail
 
 
 class TestDeleteFace:
@@ -248,22 +245,20 @@ class TestDeleteFace:
         mock_client.faces.delete.assert_called_once_with(gumnut_face_id)
 
     @pytest.mark.anyio
-    async def test_sdk_error_mapped_to_http_exception(self):
-        """Test that SDK errors are mapped via map_gumnut_error."""
-        from fastapi import HTTPException
+    async def test_sdk_error_propagates(self):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
 
         face_uuid = uuid4()
         mock_client = Mock()
         mock_client.faces.delete = AsyncMock(
-            side_effect=Exception("Something went wrong")
+            side_effect=make_sdk_status_error(500, "boom")
         )
 
         request = AssetFaceDeleteDto(force=False)
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(APIStatusError):
             await delete_face(id=face_uuid, request=request, client=mock_client)
-
-        assert exc_info.value.status_code == 500
-        assert "Failed to delete face" in exc_info.value.detail
 
 
 class TestReassignFace:
@@ -296,23 +291,21 @@ class TestReassignFace:
         assert result.id == str(safe_uuid_from_person_id(gumnut_person_id))
 
     @pytest.mark.anyio
-    async def test_sdk_error_mapped_to_http_exception(self):
-        """Test that SDK errors are mapped via map_gumnut_error."""
-        from fastapi import HTTPException
+    async def test_sdk_error_propagates(self):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
 
         face_uuid = uuid4()
         person_uuid = uuid4()
 
         mock_client = Mock()
         mock_client.faces.update = AsyncMock(
-            side_effect=Exception("Something went wrong")
+            side_effect=make_sdk_status_error(500, "boom")
         )
 
         request = FaceDto(id=person_uuid)
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(APIStatusError):
             await reassign_faces_by_id(
                 id=face_uuid, request=request, client=mock_client
             )
-
-        assert exc_info.value.status_code == 500
-        assert "Failed to reassign face" in exc_info.value.detail

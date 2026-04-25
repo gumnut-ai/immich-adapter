@@ -13,12 +13,43 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from typing import List, Any
 
+import httpx
+from gumnut import APIConnectionError, APIStatusError, NotFoundError
+
 from routers.immich_models import UserResponseDto, UserAvatarColor
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_person_id,
 )
+
+
+def make_sdk_status_error(
+    status_code: int,
+    message: str = "upstream error",
+    body: object | None = None,
+    *,
+    cls: type[APIStatusError] = APIStatusError,
+) -> APIStatusError:
+    """Construct a Gumnut SDK APIStatusError for tests.
+
+    Use a typed subclass (e.g. NotFoundError) when isinstance dispatch matters.
+    """
+    request = httpx.Request("GET", "http://test.local/")
+    response = httpx.Response(status_code, request=request)
+    return cls(message, response=response, body=body)
+
+
+def make_sdk_connection_error(method: str = "GET") -> APIConnectionError:
+    """Construct an SDK APIConnectionError for tests (transport-failure path)."""
+    return APIConnectionError(request=httpx.Request(method, "http://test.local/"))
+
+
+@pytest.fixture
+def sdk_not_found_error():
+    """A NotFoundError instance suitable for `side_effect=` in mocks."""
+    return make_sdk_status_error(404, "Not found", cls=NotFoundError)
+
 
 # Configure anyio to use only asyncio backend
 pytest_plugins = ("anyio",)

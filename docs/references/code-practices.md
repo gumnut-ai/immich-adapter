@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-04-02
+last-updated: 2026-04-24
 ---
 
 # Code Practices
@@ -104,20 +104,48 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 - Wrap low-level exceptions (e.g., Redis, HTTP client errors) in domain-specific exceptions
 - Example: `SessionStore` catches `redis.exceptions.RedisError` and raises `SessionStoreError`
 
+### Gumnut SDK Errors
+
+The global handler in `config/exceptions.py` maps any `GumnutError` raised during request handling to an Immich-shaped JSON response, so most routes do **not** need to wrap SDK calls in `try/except`. Just call the SDK and let the error bubble:
+
+```python
+@router.get("/{id}")
+async def get_album(id: UUID, client: AsyncGumnut = Depends(get_authenticated_gumnut_client)):
+    return await client.albums.retrieve(uuid_to_gumnut_album_id(id))
+```
+
+The handler dispatches by isinstance against the typed Stainless exception hierarchy (`APIStatusError` subclasses → mapped status; `RateLimitError` → 502; `APIConnectionError` → 502; `APIResponseValidationError` → 502; generic `GumnutError` → 500).
+
+For per-item handling inside bulk endpoints (where one failure shouldn't abort the batch), catch the specific typed exception and continue:
+
+```python
+for asset_uuid in request.ids:
+    try:
+        await client.assets.delete(uuid_to_gumnut_asset_id(asset_uuid))
+    except NotFoundError:
+        # Already gone; expected during sync.
+        continue
+    except APIStatusError as e:
+        log_upstream_response(logger, ..., status_code=e.status_code, ...)
+        continue
+```
+
+Use `map_gumnut_error(e, context, extra=..., exc_info=True)` only when the call site needs to enrich the upstream log record with context the global handler can't see — most commonly the upload paths logging filename / device ids / tracebacks.
+
 ### Immich Client Error Handling
 
 - **Observed behavior:** Immich mobile and web clients have no HTTP 429 (rate limit) handling. A 429 causes sync failures, broken thumbnails, and upload errors with no automatic recovery.
 - **Adapter contract:**
   - Never forward 429 responses from photos-api to Immich clients.
   - The Gumnut SDK (Stainless-generated) has built-in retry for 429, 5xx, and connection errors with exponential backoff, ±25% jitter, and `Retry-After` header support (see [SDK retry docs](https://www.stainless.com/docs/sdks/configure/client/#retries)). Configure `max_retries` on the client — **do not add a custom retry wrapper** on top, as it will stack with SDK retry and cause retry amplification.
-  - `map_gumnut_error` must catch `RateLimitError` explicitly and return 502 (not 429) to Immich clients. The default error mapping would pass through the 429 status code.
+  - The global `GumnutError` handler catches `RateLimitError` explicitly and returns 502 (not 429) to Immich clients. `map_gumnut_error` does the same when called directly from upload paths.
 
 ## Testing
 
 - All tests should be async and use `@pytest.mark.anyio` decorator
 - Run tests from the project directory, not repository root
 - Use model factories for test data creation
-- Do not assert on logging in tests — logging is non-functional behavior. Tests should assert on observable outputs (return values, side effects, emitted events), not on whether a particular log message was emitted.
+- Avoid asserting on logging in tests by default — logging is usually non-functional behavior. Exception: when log level itself is an explicit contract (for example, upstream status severity policy), assertions may verify level/metadata while avoiding brittle full-message matching.
 - When mocking SDK paginator calls used with `async for` (e.g., `client.faces.list`), use `Mock(return_value=MockSyncCursorPage([...]))` — not `AsyncMock`. `AsyncMock` wraps the return in a coroutine, which breaks `async for` iteration. Use `AsyncMock` only for calls consumed with `await`.
 - Do not add `__init__.py` to test directories — the project uses pytest's rootdir-based import resolution. Adding `__init__.py` switches pytest to package-based imports, breaking test discovery.
 
@@ -131,6 +159,16 @@ logger.info("WebSocket connected", extra={"sid": sid, "user_id": user_id, "devic
 ```
 
 This enables better searching and correlation in Sentry.
+
+### Upstream response log levels
+
+For responses/errors from upstream photos-api/Gumnut calls, use status-based severity:
+
+- `404` → `INFO`
+- Other `4xx` (including `400`, `401`, `403`, `422`, `429`) → `WARNING`
+- `5xx` → `ERROR`
+
+When possible, use shared helpers in `routers/utils/error_mapping.py` (`upstream_status_log_level` / `log_upstream_response`) instead of ad-hoc `if/else` logging branches.
 
 **Reserved `extra` keys**: Python's `LogRecord` has reserved attributes (`filename`, `module`, `name`, `msg`, `args`, `levelname`, `pathname`, `lineno`, etc.). Using these as `extra` keys causes a `KeyError` at runtime. Use prefixed names instead (e.g., `upload_filename` instead of `filename`).
 

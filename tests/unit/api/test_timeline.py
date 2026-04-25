@@ -2,7 +2,6 @@
 
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
-from fastapi import HTTPException
 from uuid import uuid4
 from datetime import datetime, timezone, timedelta
 
@@ -267,29 +266,34 @@ class TestGetTimeBuckets:
         assert result == []
 
     @pytest.mark.anyio
-    async def test_get_time_buckets_gumnut_error(self):
-        """Test handling of Gumnut API errors."""
-        mock_client = Mock()
-        mock_client.assets.counts = AsyncMock(side_effect=Exception("API Error"))
+    async def test_get_time_buckets_propagates_sdk_error(self):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
 
-        with pytest.raises(HTTPException) as exc_info:
-            await call_get_time_buckets(client=mock_client)
-
-        assert exc_info.value.status_code == 500
-        assert "Failed to fetch timeline buckets" in str(exc_info.value.detail)
-
-    @pytest.mark.anyio
-    async def test_get_time_buckets_auth_error(self):
-        """Test handling of authentication errors."""
         mock_client = Mock()
         mock_client.assets.counts = AsyncMock(
-            side_effect=Exception("401 Invalid API key")
+            side_effect=make_sdk_status_error(500, "boom")
         )
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(APIStatusError):
             await call_get_time_buckets(client=mock_client)
 
-        assert exc_info.value.status_code == 401
+    @pytest.mark.anyio
+    async def test_get_time_buckets_propagates_auth_error(self):
+        """Authentication errors bubble up as AuthenticationError."""
+        from gumnut import AuthenticationError
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.assets.counts = AsyncMock(
+            side_effect=make_sdk_status_error(
+                401, "Invalid API key", cls=AuthenticationError
+            )
+        )
+
+        with pytest.raises(AuthenticationError):
+            await call_get_time_buckets(client=mock_client)
 
     @pytest.mark.anyio
     async def test_get_time_buckets_normalizes_to_month_start(self):
@@ -525,31 +529,34 @@ class TestGetTimeBucket:
             )
 
     @pytest.mark.anyio
-    async def test_get_time_bucket_gumnut_error(self):
-        """Test handling of Gumnut API errors."""
-        mock_client = Mock()
-        mock_client.assets.list.side_effect = Exception("API Error")
+    async def test_get_time_bucket_propagates_sdk_error(self):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
 
-        with pytest.raises(HTTPException) as exc_info:
+        mock_client = Mock()
+        mock_client.assets.list.side_effect = make_sdk_status_error(500, "boom")
+
+        with pytest.raises(APIStatusError):
             await call_get_time_bucket(
                 timeBucket="2024-01-01T00:00:00", client=mock_client
             )
-
-        assert exc_info.value.status_code == 500
-        assert "Failed to fetch timeline bucket" in str(exc_info.value.detail)
 
     @pytest.mark.anyio
-    async def test_get_time_bucket_auth_error(self):
-        """Test handling of authentication errors."""
-        mock_client = Mock()
-        mock_client.assets.list.side_effect = Exception("401 Invalid API key")
+    async def test_get_time_bucket_propagates_auth_error(self):
+        """Authentication errors bubble up as AuthenticationError."""
+        from gumnut import AuthenticationError
+        from tests.conftest import make_sdk_status_error
 
-        with pytest.raises(HTTPException) as exc_info:
+        mock_client = Mock()
+        mock_client.assets.list.side_effect = make_sdk_status_error(
+            401, "Invalid API key", cls=AuthenticationError
+        )
+
+        with pytest.raises(AuthenticationError):
             await call_get_time_bucket(
                 timeBucket="2024-01-01T00:00:00", client=mock_client
             )
-
-        assert exc_info.value.status_code == 401
 
     @pytest.mark.anyio
     async def test_get_time_bucket_timezone_offsets(self, mock_sync_cursor_page):
