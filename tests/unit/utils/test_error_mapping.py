@@ -126,6 +126,28 @@ class TestGetUpstreamStatusCode:
     def test_get_upstream_status_code_fallback(self, message, expected):
         assert get_upstream_status_code(Exception(message)) == expected
 
+    @pytest.mark.parametrize(
+        ("status_code_attr", "expected"),
+        [
+            (404, 404),
+            ("401", 401),
+            (None, None),
+            ("not-a-number", None),
+        ],
+    )
+    def test_get_upstream_status_code_attribute(self, status_code_attr, expected):
+        class SDKError(Exception):
+            def __init__(self, message, status_code):
+                super().__init__(message)
+                self.status_code = status_code
+
+        # Message contains "404" / "not found" tokens to confirm the helper
+        # uses the attribute and does not fall through to string matching.
+        assert (
+            get_upstream_status_code(SDKError("not found", status_code_attr))
+            == expected
+        )
+
 
 class TestLogUpstreamResponse:
     """Test shared upstream logging helper behavior."""
@@ -159,6 +181,31 @@ class TestLogUpstreamResponse:
         assert getattr(record, "context", None) == "authoritative-context"
         assert getattr(record, "status_code", None) == 404
         assert getattr(record, "custom_field", None) == "kept"
+
+    def test_helper_propagates_exc_info(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
+
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            log_upstream_response(
+                error_mapping_module.logger,
+                context="ctx",
+                status_code=500,
+                message="upstream traceback",
+                exc_info=True,
+            )
+
+        matching_records = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "upstream traceback"
+        ]
+        assert matching_records
+
+        record = matching_records[-1]
+        assert record.exc_info is not None
+        assert record.exc_info[0] is ValueError
 
 
 class TestMapGumnutError:
@@ -233,6 +280,33 @@ class TestMapGumnutError:
         ]
         assert status_records
         assert status_records[-1].levelno == expected_level
+
+    def test_map_error_propagates_extra_to_log_record(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """Caller-supplied extra fields should land on the upstream log record."""
+
+        class MockSDKError(Exception):
+            def __init__(self, message, status_code):
+                super().__init__(message)
+                self.status_code = status_code
+
+        caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
+
+        map_gumnut_error(
+            MockSDKError("Upstream request failed", 500),
+            "Failed to upload asset",
+            extra={"upload_filename": "img.jpg", "device_asset_id": "abc"},
+        )
+
+        matching_records = [
+            record
+            for record in caplog.records
+            if getattr(record, "upload_filename", None) == "img.jpg"
+        ]
+        assert matching_records
+        assert getattr(matching_records[-1], "device_asset_id", None) == "abc"
 
     def test_rate_limit_error_maps_to_502_and_logs_warning(
         self,

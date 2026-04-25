@@ -262,7 +262,7 @@ def _parse_datetime(value: str | None, fallback: datetime) -> datetime:
         if dt.tzinfo is None and fallback.tzinfo is not None:
             dt = dt.replace(tzinfo=fallback.tzinfo)
         return dt
-    except ValueError, AttributeError:
+    except (ValueError, AttributeError):
         return fallback
 
 

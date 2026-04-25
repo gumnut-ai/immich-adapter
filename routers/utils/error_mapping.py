@@ -106,6 +106,11 @@ def map_gumnut_error(
     Args:
         e: The exception from the Gumnut SDK
         context: Context string describing what operation failed
+        extra: Optional structured fields merged into the upstream log record.
+            Caller-supplied "context" / "status_code" keys are overridden by
+            this helper's authoritative values.
+        exc_info: When True, attach the current exception traceback to the
+            emitted log record.
 
     Returns:
         HTTPException with appropriate status code and detail message

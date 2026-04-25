@@ -364,7 +364,7 @@ class StreamingUploadPipeline:
                 feed_task.cancel()
                 try:
                     await feed_task
-                except asyncio.CancelledError, Exception:
+                except (asyncio.CancelledError, Exception):
                     pass
 
             self._drain_and_signal_parser_exit()
@@ -372,5 +372,5 @@ class StreamingUploadPipeline:
             if parser_future is not None:
                 try:
                     await asyncio.wait_for(parser_future, timeout=5)
-                except asyncio.TimeoutError, Exception:
+                except (asyncio.TimeoutError, Exception):
                     pass
