@@ -116,8 +116,26 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 
 Two paths exist for mapping `gumnut.GumnutError` subclasses to client responses:
 
-1. **Global exception handler (preferred)** — `config/exceptions.py` registers `_gumnut_error_handler` for `GumnutError`. Any uncaught SDK exception bubbling out of a route is mapped to an Immich-shaped JSON response based on its type (`APIStatusError` → real status code, `RateLimitError` → 502, `APIConnectionError` → 502, `APIResponseValidationError` → 502, generic → 500). New routes should not catch and convert SDK exceptions — let them bubble.
+1. **Global exception handler (preferred)** — `config/exceptions.py` registers `_gumnut_error_handler` for `GumnutError`. Any uncaught SDK exception bubbling out of a route is mapped to an Immich-shaped JSON response based on its type. New routes should not catch and convert SDK exceptions — let them bubble.
 2. **`map_gumnut_error` (legacy / rich-context callsites)** — `routers/utils/error_mapping.py` exposes the same mapping as a callable, accepting `extra=` and `exc_info=` for callers that need to attach call-site context (filename, device IDs, etc.) to the log record. Used by upload paths and a few other sites that have richer context than the route alone provides.
+
+#### Mapping policy
+
+The handler treats the adapter as an HTTP gateway in front of photos-api (per RFC 9110), so transport-layer failures and unusable upstream responses surface as 502 Bad Gateway rather than 5xx-from-the-adapter or pass-through.
+
+| SDK exception | Adapter response | Rationale |
+|---|---|---|
+| `RateLimitError` (429) | **502** "Upstream temporarily unavailable" | Immich mobile/web clients have no 429 handling — passing 429 through breaks sync, thumbnails, and uploads. 502 is correct (gateway can't fulfil); 503 would falsely imply the adapter itself is overloaded. |
+| `APIStatusError` (400 / 401 / 403 / 404 / 409 / 422 / 5xx) | Pass-through with `body.detail` / `body.message` / `body.error` | These status codes carry semantic information Immich clients can act on (validation, missing resource, permission). Transparent forwarding is the default. |
+| `APIResponseValidationError` | **502** "Upstream returned invalid response" | Upstream replied 2xx but the body didn't match the SDK schema. From the client's perspective, the gateway can't fulfil — same shape as transport failure. |
+| `APIConnectionError` / `APITimeoutError` | **502** "Upstream unreachable" | Transport failure with no HTTP response from upstream — canonical Bad Gateway scenario. |
+| Generic `GumnutError` (catch-all) | **500** "Internal error" | An SDK error that doesn't match any of the above is an adapter bug or unhandled SDK state, not a gateway condition — surface as 500. |
+
+#### Exception: upstream-401 from adapter-internal-auth calls
+
+A 401 response from photos-api on a call that uses the adapter's internal JWT (e.g., `client.users.me()`, the streaming upload path) means the adapter's JWT expired or is malformed — **not** that the Immich client's session is invalid. Forwarding 401 in that case would cause the Immich client to clear its session.
+
+Routes whose upstream calls authenticate with adapter-internal credentials must catch `APIStatusError` themselves and translate `status_code == 401` to 502 "Upstream temporarily unavailable" before letting the global handler take it. See `services/streaming_upload.py` (`status_code == 401 → 502`) for the canonical pattern.
 
 ## Testing
 

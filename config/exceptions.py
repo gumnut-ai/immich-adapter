@@ -64,6 +64,31 @@ def _route_context(request: Request) -> str:
 async def _gumnut_error_handler(request: Request, exc: GumnutError) -> JSONResponse:
     """Map any Gumnut SDK exception to an Immich-shaped JSON response.
 
+    Mapping policy (all mappings treat the adapter as an HTTP gateway in
+    front of photos-api, so 5xx-from-upstream-or-transport is reported as
+    502 Bad Gateway, per RFC 9110):
+
+    - RateLimitError (429) → 502 "Upstream temporarily unavailable".
+      Immich mobile/web clients have no 429 handling; passing 429 through
+      breaks sync, thumbnails, and uploads. 502 is correct (gateway can't
+      fulfil); 503 would imply the adapter itself is overloaded.
+    - APIStatusError (other 4xx/5xx) → pass through the upstream code
+      with detail extracted from body. Status codes like 400/403/404/409/
+      422 carry semantic information that Immich clients can act on, so
+      transparent forwarding is the default. (Caveat: a 401 from photos-
+      api on adapter-internal-auth calls means the adapter's JWT expired,
+      not the client's session — those call sites must NOT use this
+      handler. See `services/streaming_upload.py` for the 401→502 case.)
+    - APIResponseValidationError → 502 "Upstream returned invalid
+      response". Upstream replied 2xx but the body didn't match the SDK's
+      schema; from the client's perspective the gateway can't fulfil.
+    - APIConnectionError / APITimeoutError → 502 "Upstream unreachable".
+      Transport failure with no HTTP response from upstream — canonical
+      Bad Gateway scenario.
+    - Generic GumnutError → 500 "Internal error". An SDK error that
+      doesn't match any of the above is an adapter bug or unhandled SDK
+      state, not a gateway condition — surface as 500.
+
     Routes that need to enrich the log record with call-site context
     (e.g. upload paths) should catch the SDK exception themselves and use
     `map_gumnut_error(extra=..., exc_info=True)` instead of letting the
@@ -71,8 +96,6 @@ async def _gumnut_error_handler(request: Request, exc: GumnutError) -> JSONRespo
     """
     context = _route_context(request)
 
-    # RateLimitError must never surface as 429 to Immich clients — they
-    # have no 429 handling and would break (sync failures, broken thumbs).
     if isinstance(exc, RateLimitError):
         log_upstream_response(
             logger,
@@ -125,7 +148,6 @@ async def _gumnut_error_handler(request: Request, exc: GumnutError) -> JSONRespo
             "Upstream unreachable",
         )
 
-    # Generic GumnutError fallback (no HTTP status, not transport).
     log_upstream_response(
         logger,
         context=context,
