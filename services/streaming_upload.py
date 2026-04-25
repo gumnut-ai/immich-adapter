@@ -25,7 +25,7 @@ import httpx
 import sentry_sdk
 from fastapi import HTTPException, Request, status
 
-from routers.utils.error_mapping import log_upstream_response
+from routers.utils.error_mapping import ERROR_DETAIL_MAX_CHARS, log_upstream_response
 from routers.utils.gumnut_client import set_refreshed_token
 from services.streaming_form_parser import StreamingFormParser
 from services.streaming_pipe import StreamingPipe
@@ -267,7 +267,7 @@ class StreamingUploadPipeline:
                 message=f"photos-api upload error for {filename}",
                 extra={
                     "upload_filename": filename,
-                    "error_detail": detail[:500],
+                    "error_detail": detail[:ERROR_DETAIL_MAX_CHARS],
                 },
             )
 

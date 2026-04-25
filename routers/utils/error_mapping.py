@@ -16,6 +16,8 @@ from typing import Any, TypeVar
 
 from fastapi import HTTPException, status
 from gumnut import (
+    APIConnectionError,
+    APIResponseValidationError,
     APIStatusError,
     AuthenticationError,
     GumnutError,
@@ -90,6 +92,32 @@ def log_bulk_transport_error(
         context=context,
         status_code=status.HTTP_502_BAD_GATEWAY,
         message=f"Transport error in {context}",
+        extra=log_extra,
+    )
+
+
+def log_bulk_status_error(
+    logger_obj: logging.Logger,
+    *,
+    context: str,
+    exc: APIStatusError,
+    message: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Log a per-item upstream HTTP error from a bulk endpoint.
+
+    Sibling of `log_bulk_transport_error` for the `APIStatusError` arm of a
+    per-item try/except. Uses `exc.status_code` for severity dispatch and
+    folds truncated `error_detail` into the log record so every bulk endpoint
+    emits the same field set.
+    """
+    log_extra: dict[str, Any] = dict(extra or {})
+    log_extra["error_detail"] = truncated_error_detail(exc)
+    log_upstream_response(
+        logger_obj,
+        context=context,
+        status_code=exc.status_code,
+        message=message,
         extra=log_extra,
     )
 
@@ -193,6 +221,36 @@ def map_gumnut_error(
             exc_info=exc_info,
         )
         return HTTPException(status_code=e.status_code, detail=detail)
+
+    if isinstance(e, APIResponseValidationError):
+        # Schema mismatch is a contract bug — log at 502 ERROR severity, not
+        # the upstream 2xx (which would demote to INFO).
+        log_upstream_response(
+            logger,
+            context=context,
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            message=f"Gumnut SDK returned invalid response in {context}: {e.message}",
+            extra=extra,
+            exc_info=exc_info,
+        )
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"{context}: Upstream returned invalid response",
+        )
+
+    if isinstance(e, APIConnectionError):
+        log_upstream_response(
+            logger,
+            context=context,
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            message=f"Gumnut SDK connection error in {context}: {e.message}",
+            extra=extra,
+            exc_info=exc_info,
+        )
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"{context}: Upstream unreachable",
+        )
 
     # Non-SDK exception (transport error, programmer error, etc.) — map to 500.
     log_upstream_response(

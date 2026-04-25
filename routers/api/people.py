@@ -10,6 +10,7 @@ from gumnut.types import PersonResponse
 from routers.utils.cdn_client import stream_from_cdn
 from routers.utils.error_mapping import (
     classify_bulk_item_error,
+    log_bulk_status_error,
     log_bulk_transport_error,
     log_upstream_response,
 )
@@ -178,10 +179,10 @@ async def update_people(
                     error=classify_bulk_item_error(person_error, Error1),
                 )
             )
-            log_upstream_response(
+            log_bulk_status_error(
                 logger,
                 context="update_people",
-                status_code=person_error.status_code,
+                exc=person_error,
                 message=f"Failed bulk person update for {person_item.id}: {person_error}",
                 extra={"person_id": person_item.id},
             )

@@ -7,6 +7,7 @@ from gumnut import APIStatusError, AsyncGumnut, ConflictError, GumnutError
 
 from routers.utils.error_mapping import (
     classify_bulk_item_error,
+    log_bulk_status_error,
     log_bulk_transport_error,
 )
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
@@ -191,6 +192,13 @@ async def add_assets_to_album(
                     error=classify_bulk_item_error(asset_error, Error1),
                 )
             )
+            log_bulk_status_error(
+                logger,
+                context="add_assets_to_album",
+                exc=asset_error,
+                message=f"Failed to add asset {asset_uuid_str} to album {id}",
+                extra={"asset_id": asset_uuid_str, "album_id": str(id)},
+            )
         except GumnutError as asset_error:
             response.append(
                 BulkIdResponseDto(
@@ -267,6 +275,13 @@ async def remove_asset_from_album(
                     error=classify_bulk_item_error(asset_error, Error1),
                 )
             )
+            log_bulk_status_error(
+                logger,
+                context="remove_asset_from_album",
+                exc=asset_error,
+                message=f"Failed to remove asset {asset_uuid_str} from album {id}",
+                extra={"asset_id": asset_uuid_str, "album_id": str(id)},
+            )
         except GumnutError as asset_error:
             response.append(
                 BulkIdResponseDto(
@@ -329,6 +344,13 @@ async def add_assets_to_albums(
         except APIStatusError as album_error:
             if first_error is None:
                 first_error = classify_bulk_item_error(album_error, BulkIdErrorReason)
+            log_bulk_status_error(
+                logger,
+                context="add_assets_to_albums",
+                exc=album_error,
+                message=f"Failed to add assets to album {album_uuid}",
+                extra={"album_id": str(album_uuid)},
+            )
         except GumnutError as album_error:
             if first_error is None:
                 first_error = BulkIdErrorReason.unknown

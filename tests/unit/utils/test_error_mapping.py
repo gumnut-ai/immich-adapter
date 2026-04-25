@@ -4,9 +4,11 @@ Tests for error mapping utilities.
 
 import logging
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from gumnut import (
+    APIResponseValidationError,
     AuthenticationError,
     BadRequestError,
     NotFoundError,
@@ -15,11 +17,13 @@ from gumnut import (
 
 import routers.utils.error_mapping as error_mapping_module
 from routers.utils.error_mapping import (
+    ERROR_DETAIL_MAX_CHARS,
+    log_bulk_status_error,
     log_upstream_response,
     map_gumnut_error,
     upstream_status_log_level,
 )
-from tests.conftest import make_sdk_status_error
+from tests.conftest import make_sdk_connection_error, make_sdk_status_error
 
 
 class TestUpstreamStatusLogLevel:
@@ -290,3 +294,105 @@ class TestMapGumnutError:
         assert records
         assert getattr(records[-1], "status_code", None) == 404
         assert getattr(records[-1], "custom_field", None) == "kept"
+
+    def test_response_validation_error_maps_to_502_and_logs_error(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """APIResponseValidationError → 502 ERROR, regardless of upstream status."""
+        caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
+
+        request = httpx.Request("GET", "http://test.local/")
+        # Schema mismatch on a 200 — the upstream HTTP status is fine; the bug
+        # is in the body. Severity must come from the 502 we surface, not 200.
+        response = httpx.Response(200, request=request)
+        err = APIResponseValidationError(response, body=None, message="bad schema")
+
+        result = map_gumnut_error(err, "Failed to upload asset")
+
+        assert result.status_code == 502
+        assert (
+            result.detail
+            == "Failed to upload asset: Upstream returned invalid response"
+        )
+
+        matching = [
+            r
+            for r in caplog.records
+            if getattr(r, "context", None) == "Failed to upload asset"
+        ]
+        assert matching
+        assert matching[-1].levelno == logging.ERROR
+        assert getattr(matching[-1], "status_code", None) == 502
+
+    def test_connection_error_maps_to_502_and_logs_error(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """APIConnectionError → 502 ERROR with `Upstream unreachable` detail."""
+        caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
+
+        result = map_gumnut_error(
+            make_sdk_connection_error(),
+            "Failed to upload asset",
+        )
+
+        assert result.status_code == 502
+        assert result.detail == "Failed to upload asset: Upstream unreachable"
+
+        matching = [
+            r
+            for r in caplog.records
+            if getattr(r, "context", None) == "Failed to upload asset"
+        ]
+        assert matching
+        assert matching[-1].levelno == logging.ERROR
+
+
+class TestLogBulkStatusError:
+    """Test the per-item bulk-endpoint status-error log helper."""
+
+    def test_uses_status_code_for_severity_and_includes_truncated_detail(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """404 → INFO, error_detail folded into the record and truncated."""
+        caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
+
+        long_msg = "x" * (ERROR_DETAIL_MAX_CHARS + 50)
+        log_bulk_status_error(
+            error_mapping_module.logger,
+            context="delete_assets",
+            exc=make_sdk_status_error(404, long_msg, cls=NotFoundError),
+            message="Asset not found during deletion",
+            extra={"asset_id": "abc"},
+        )
+
+        matching = [
+            r
+            for r in caplog.records
+            if r.getMessage() == "Asset not found during deletion"
+        ]
+        assert matching
+        record = matching[-1]
+        assert record.levelno == logging.INFO
+        assert getattr(record, "context", None) == "delete_assets"
+        assert getattr(record, "status_code", None) == 404
+        assert getattr(record, "asset_id", None) == "abc"
+        assert len(getattr(record, "error_detail", "")) == ERROR_DETAIL_MAX_CHARS
+
+    def test_500_status_logs_at_error(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
+
+        log_bulk_status_error(
+            error_mapping_module.logger,
+            context="add_assets_to_album",
+            exc=make_sdk_status_error(500, "boom"),
+            message="Failed to add asset",
+        )
+
+        matching = [
+            r for r in caplog.records if r.getMessage() == "Failed to add asset"
+        ]
+        assert matching
+        assert matching[-1].levelno == logging.ERROR

@@ -15,6 +15,7 @@ from gumnut import (
 )
 
 from routers.utils.error_mapping import (
+    ERROR_DETAIL_MAX_CHARS,
     extract_detail_from_status_error,
     log_upstream_response,
     logger,
@@ -81,7 +82,7 @@ async def _gumnut_error_handler(request: Request, exc: GumnutError) -> JSONRespo
 
     if isinstance(exc, APIStatusError):
         detail = extract_detail_from_status_error(exc)
-        log_extra: dict[str, Any] = {"error_detail": detail[:500]}
+        log_extra: dict[str, Any] = {"error_detail": detail[:ERROR_DETAIL_MAX_CHARS]}
         log_upstream_response(
             logger,
             context=context,

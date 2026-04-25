@@ -25,10 +25,9 @@ from config.settings import Settings, get_settings
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import (
+    log_bulk_status_error,
     log_bulk_transport_error,
-    log_upstream_response,
     map_gumnut_error,
-    truncated_error_detail,
 )
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
@@ -622,28 +621,26 @@ async def delete_assets(
 
         except NotFoundError as asset_error:
             # Asset is already gone; expected during sync, log and continue.
-            log_upstream_response(
+            log_bulk_status_error(
                 logger,
                 context="delete_assets",
-                status_code=404,
+                exc=asset_error,
                 message=f"Asset {asset_uuid} not found during deletion",
                 extra={
                     "asset_id": str(asset_uuid),
                     "gumnut_id": str(gumnut_asset_id),
-                    "error_detail": truncated_error_detail(asset_error),
                 },
             )
         except APIStatusError as asset_error:
             # Don't abort bulk delete on individual upstream errors.
-            log_upstream_response(
+            log_bulk_status_error(
                 logger,
                 context="delete_assets",
-                status_code=asset_error.status_code,
+                exc=asset_error,
                 message=f"Failed to delete asset {asset_uuid}",
                 extra={
                     "asset_id": str(asset_uuid),
                     "gumnut_id": str(gumnut_asset_id),
-                    "error_detail": truncated_error_detail(asset_error),
                 },
             )
         except GumnutError as asset_error:
