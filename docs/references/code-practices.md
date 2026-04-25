@@ -110,7 +110,14 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 - **Adapter contract:**
   - Never forward 429 responses from photos-api to Immich clients.
   - The Gumnut SDK (Stainless-generated) has built-in retry for 429, 5xx, and connection errors with exponential backoff, ±25% jitter, and `Retry-After` header support (see [SDK retry docs](https://www.stainless.com/docs/sdks/configure/client/#retries)). Configure `max_retries` on the client — **do not add a custom retry wrapper** on top, as it will stack with SDK retry and cause retry amplification.
-  - `map_gumnut_error` must catch `RateLimitError` explicitly and return 502 (not 429) to Immich clients. The default error mapping would pass through the 429 status code.
+  - The global `GumnutError` exception handler (in `config/exceptions.py`) catches `RateLimitError` explicitly and returns 502 (not 429) to Immich clients. The same handler is what `map_gumnut_error` (legacy per-callsite helper) wraps for callers that need to enrich the log record with rich call-site context (e.g., upload paths threading `upload_filename` / `device_asset_id`).
+
+### Upstream error mapping
+
+Two paths exist for mapping `gumnut.GumnutError` subclasses to client responses:
+
+1. **Global exception handler (preferred)** — `config/exceptions.py` registers `_gumnut_error_handler` for `GumnutError`. Any uncaught SDK exception bubbling out of a route is mapped to an Immich-shaped JSON response based on its type (`APIStatusError` → real status code, `RateLimitError` → 502, `APIConnectionError` → 502, `APIResponseValidationError` → 502, generic → 500). New routes should not catch and convert SDK exceptions — let them bubble.
+2. **`map_gumnut_error` (legacy / rich-context callsites)** — `routers/utils/error_mapping.py` exposes the same mapping as a callable, accepting `extra=` and `exc_info=` for callers that need to attach call-site context (filename, device IDs, etc.) to the log record. Used by upload paths and a few other sites that have richer context than the route alone provides.
 
 ## Testing
 
