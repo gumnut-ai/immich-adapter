@@ -83,37 +83,36 @@ class TestCreatePerson:
         )
 
     @pytest.mark.anyio
-    async def test_create_person_api_error(self):
-        """Test person creation with API error."""
-        # Setup - mock only the Gumnut client
+    async def test_create_person_propagates_auth_error(self):
+        """Auth errors bubble up as AuthenticationError."""
+        from gumnut import AuthenticationError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.people.create = AsyncMock(
-            side_effect=Exception("401 Invalid API key")
+            side_effect=make_sdk_status_error(
+                401, "Invalid API key", cls=AuthenticationError
+            )
         )
 
         request = PersonCreateDto(name="John Doe")
-
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(AuthenticationError):
             await create_person(request, client=mock_client)
-
-        assert exc_info.value.status_code == 401
 
     @pytest.mark.anyio
-    async def test_create_person_general_error(self):
-        """Test person creation with general error."""
-        # Setup - mock only the Gumnut client
+    async def test_create_person_propagates_5xx(self):
+        """Generic SDK errors bubble up to the global GumnutError handler."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
-        mock_client.people.create = AsyncMock(side_effect=Exception("Unknown error"))
+        mock_client.people.create = AsyncMock(
+            side_effect=make_sdk_status_error(500, "Unknown error")
+        )
 
         request = PersonCreateDto(name="John Doe")
-
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(APIStatusError):
             await create_person(request, client=mock_client)
-
-        assert exc_info.value.status_code == 500
-        assert "Failed to create person" in str(exc_info.value.detail)
 
 
 class TestUpdatePeople:
@@ -149,14 +148,16 @@ class TestUpdatePeople:
     @pytest.mark.anyio
     async def test_update_people_mixed_results(self):
         """Test bulk people update with some failures."""
-        # Setup - mock only the Gumnut client
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
 
         # First update succeeds, second fails
         mock_client.people.update = AsyncMock(
             side_effect=[
-                None,  # Success
-                Exception("404 Person not found"),  # Failure
+                None,
+                make_sdk_status_error(404, "Person not found", cls=NotFoundError),
             ]
         )
 
@@ -209,6 +210,62 @@ class TestUpdatePeople:
         # Check that only non-None fields were passed
         assert mock_client.people.update.call_count == 2
 
+    @pytest.mark.anyio
+    async def test_update_people_connection_error_does_not_abort_batch(self):
+        """A transport error on one item must not abort the bulk operation."""
+        from tests.conftest import make_sdk_connection_error
+
+        mock_client = Mock()
+        mock_client.people.update = AsyncMock(
+            side_effect=[None, make_sdk_connection_error("PUT")]
+        )
+
+        person_id1 = str(uuid4())
+        person_id2 = str(uuid4())
+        request = PeopleUpdateDto(
+            people=[
+                PeopleUpdateItem(id=person_id1, name="Good"),
+                PeopleUpdateItem(id=person_id2, name="Bad"),
+            ]
+        )
+
+        result = await update_people(request, client=mock_client)
+
+        assert len(result) == 2
+        assert result[0].success is True
+        assert result[0].id == person_id1
+        assert result[1].success is False
+        assert result[1].id == person_id2
+        assert result[1].error == Error1.unknown
+
+    @pytest.mark.anyio
+    async def test_update_people_malformed_uuid_does_not_abort_batch(self):
+        """A malformed UUID in one item must not abort the bulk operation.
+
+        Immich's `PeopleUpdateItem.id` is typed as `str` (the OpenAPI spec
+        switches between str and UUID for people ids), so `UUID(...)` can
+        raise `ValueError` here even when other items in the batch are
+        well-formed.
+        """
+        mock_client = Mock()
+        mock_client.people.update = AsyncMock(return_value=None)
+
+        valid_id = str(uuid4())
+        person_updates = [
+            PeopleUpdateItem(id="not-a-uuid", name="Bad"),
+            PeopleUpdateItem(id=valid_id, name="Good"),
+        ]
+        request = PeopleUpdateDto(people=person_updates)
+
+        result = await update_people(request, client=mock_client)
+
+        assert len(result) == 2
+        assert result[0].success is False
+        assert result[0].id == "not-a-uuid"
+        assert result[0].error == Error1.unknown
+        assert result[1].success is True
+        assert result[1].id == valid_id
+
 
 class TestUpdatePerson:
     """Test the update_person endpoint."""
@@ -236,20 +293,20 @@ class TestUpdatePerson:
 
     @pytest.mark.anyio
     async def test_update_person_not_found(self, sample_uuid):
-        """Test updating non-existent person."""
-        # Setup - mock only the Gumnut client
+        """A NotFoundError on update bubbles up to the global handler."""
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.people.update = AsyncMock(
-            side_effect=Exception("404 Person not found")
+            side_effect=make_sdk_status_error(
+                404, "Person not found", cls=NotFoundError
+            )
         )
 
         request = PersonUpdateDto(name="Updated Name")
-
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(NotFoundError):
             await update_person(sample_uuid, request, client=mock_client)
-
-        assert exc_info.value.status_code == 404  # Now properly mapped as 404
 
     @pytest.mark.anyio
     async def test_update_person_with_feature_face_asset_id(
@@ -449,18 +506,16 @@ class TestGetAllPeople:
         assert result.hasNextPage is False
 
     @pytest.mark.anyio
-    async def test_get_all_people_gumnut_error(self):
-        """Test handling of Gumnut API errors."""
-        # Setup - mock only the Gumnut client
+    async def test_get_all_people_propagates_sdk_error(self):
+        """SDK errors bubble up to the global GumnutError handler."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
-        mock_client.people.list.side_effect = Exception("API Error")
+        mock_client.people.list.side_effect = make_sdk_status_error(500, "boom")
 
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(APIStatusError):
             await call_get_all_people(client=mock_client)
-
-        assert exc_info.value.status_code == 500
-        assert "Failed to fetch people" in str(exc_info.value.detail)
 
 
 def _make_person(
@@ -691,40 +746,38 @@ class TestDeletePeople:
         assert mock_client.people.delete.call_count == 2
 
     @pytest.mark.anyio
-    async def test_delete_people_not_found(self):
-        """Test deletion with person not found."""
-        # Setup - mock only the Gumnut client
+    async def test_delete_people_not_found_propagates(self):
+        """A NotFoundError on delete bubbles up to the global handler."""
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.people.delete = AsyncMock(
-            side_effect=Exception("404 Person not found")
+            side_effect=make_sdk_status_error(
+                404, "Person not found", cls=NotFoundError
+            )
         )
 
-        person_ids = [uuid4()]
-        request = BulkIdsDto(ids=person_ids)
-
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        request = BulkIdsDto(ids=[uuid4()])
+        with pytest.raises(NotFoundError):
             await delete_people(request, client=mock_client)
-
-        assert exc_info.value.status_code == 404
 
     @pytest.mark.anyio
-    async def test_delete_people_api_error(self):
-        """Test deletion with API error."""
-        # Setup - mock only the Gumnut client
+    async def test_delete_people_propagates_auth_error(self):
+        """Auth errors bubble up to the global handler."""
+        from gumnut import AuthenticationError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.people.delete = AsyncMock(
-            side_effect=Exception("401 Invalid API key")
+            side_effect=make_sdk_status_error(
+                401, "Invalid API key", cls=AuthenticationError
+            )
         )
 
-        person_ids = [uuid4()]
-        request = BulkIdsDto(ids=person_ids)
-
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        request = BulkIdsDto(ids=[uuid4()])
+        with pytest.raises(AuthenticationError):
             await delete_people(request, client=mock_client)
-
-        assert exc_info.value.status_code == 401
 
 
 class TestGetThumbnail:
@@ -760,7 +813,7 @@ class TestGetThumbnail:
             await get_thumbnail(sample_uuid, client=mock_client)
 
         assert exc_info.value.status_code == 404
-        assert "Person or thumbnail not found" in str(exc_info.value.detail)
+        assert "Person thumbnail not available" in str(exc_info.value.detail)
 
     @pytest.mark.anyio
     async def test_get_thumbnail_no_thumbnail_key(
@@ -780,20 +833,23 @@ class TestGetThumbnail:
             await get_thumbnail(sample_uuid, client=mock_client)
 
         assert exc_info.value.status_code == 404
-        assert "Person or thumbnail not found" in str(exc_info.value.detail)
+        assert "Person thumbnail not available" in str(exc_info.value.detail)
 
     @pytest.mark.anyio
     async def test_get_thumbnail_person_not_found(self, sample_uuid):
-        """Test thumbnail retrieval when person doesn't exist."""
+        """A NotFoundError bubbles up to the global handler."""
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.people.retrieve = AsyncMock(
-            side_effect=Exception("404 Person not found")
+            side_effect=make_sdk_status_error(
+                404, "Person not found", cls=NotFoundError
+            )
         )
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(NotFoundError):
             await get_thumbnail(sample_uuid, client=mock_client)
-
-        assert exc_info.value.status_code == 404
 
 
 class TestGetPerson:
@@ -817,34 +873,36 @@ class TestGetPerson:
         mock_client.people.retrieve.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_get_person_not_found(self, sample_uuid):
-        """Test person retrieval when person doesn't exist."""
-        # Setup - mock only the Gumnut client
+    async def test_get_person_not_found_propagates(self, sample_uuid):
+        """A NotFoundError on retrieve bubbles up to the global handler."""
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.people.retrieve = AsyncMock(
-            side_effect=Exception("404 Person not found")
+            side_effect=make_sdk_status_error(
+                404, "Person not found", cls=NotFoundError
+            )
         )
 
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(NotFoundError):
             await get_person(sample_uuid, client=mock_client)
-
-        assert exc_info.value.status_code == 404
 
     @pytest.mark.anyio
-    async def test_get_person_api_error(self, sample_uuid):
-        """Test person retrieval with API error."""
-        # Setup - mock only the Gumnut client
+    async def test_get_person_propagates_auth_error(self, sample_uuid):
+        """Auth errors bubble up to the global handler."""
+        from gumnut import AuthenticationError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.people.retrieve = AsyncMock(
-            side_effect=Exception("401 Invalid API key")
+            side_effect=make_sdk_status_error(
+                401, "Invalid API key", cls=AuthenticationError
+            )
         )
 
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(AuthenticationError):
             await get_person(sample_uuid, client=mock_client)
-
-        assert exc_info.value.status_code == 401
 
 
 class TestGetPersonStatistics:
@@ -899,17 +957,18 @@ class TestGetPersonStatistics:
         assert result.assets == 0
 
     @pytest.mark.anyio
-    async def test_get_person_statistics_not_found(self, sample_uuid):
-        """Test person statistics when person doesn't exist."""
-        # Setup - mock only the Gumnut client
+    async def test_get_person_statistics_not_found_propagates(self, sample_uuid):
+        """A NotFoundError on assets.list bubbles up to the global handler."""
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
-        mock_client.assets.list.side_effect = Exception("404 Person not found")
+        mock_client.assets.list.side_effect = make_sdk_status_error(
+            404, "Person not found", cls=NotFoundError
+        )
 
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(NotFoundError):
             await get_person_statistics(sample_uuid, client=mock_client)
-
-        assert exc_info.value.status_code == 404
 
 
 class TestDeletePerson:
@@ -930,34 +989,36 @@ class TestDeletePerson:
         mock_client.people.delete.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_delete_person_not_found(self, sample_uuid):
-        """Test deletion of non-existent person."""
-        # Setup - mock only the Gumnut client
+    async def test_delete_person_not_found_propagates(self, sample_uuid):
+        """A NotFoundError on delete bubbles up to the global handler."""
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.people.delete = AsyncMock(
-            side_effect=Exception("404 Person not found")
+            side_effect=make_sdk_status_error(
+                404, "Person not found", cls=NotFoundError
+            )
         )
 
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(NotFoundError):
             await delete_person(sample_uuid, client=mock_client)
-
-        assert exc_info.value.status_code == 404
 
     @pytest.mark.anyio
-    async def test_delete_person_api_error(self, sample_uuid):
-        """Test deletion with API error."""
-        # Setup - mock only the Gumnut client
+    async def test_delete_person_propagates_auth_error(self, sample_uuid):
+        """Auth errors bubble up to the global handler."""
+        from gumnut import AuthenticationError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.people.delete = AsyncMock(
-            side_effect=Exception("401 Invalid API key")
+            side_effect=make_sdk_status_error(
+                401, "Invalid API key", cls=AuthenticationError
+            )
         )
 
-        # Execute & Assert
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(AuthenticationError):
             await delete_person(sample_uuid, client=mock_client)
-
-        assert exc_info.value.status_code == 401
 
 
 class TestMergePerson:
@@ -1066,20 +1127,21 @@ class TestReassignFaces:
         source_uuid = uuid4()  # body personId = source
         asset_uuid = uuid4()
 
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
         mock_client.faces.list = Mock(
-            side_effect=Exception("500 Internal Server Error")
+            side_effect=make_sdk_status_error(500, "Internal Server Error")
         )
 
         request = AssetFaceUpdateDto(
             data=[AssetFaceUpdateItem(assetId=asset_uuid, personId=source_uuid)]
         )
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(APIStatusError):
             await reassign_faces(target_uuid, request, client=mock_client)
-
-        assert exc_info.value.status_code == 500
 
     @pytest.mark.anyio
     async def test_reassign_faces_multiple_faces_on_asset(

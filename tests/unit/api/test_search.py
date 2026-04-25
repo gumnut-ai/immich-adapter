@@ -113,22 +113,20 @@ class TestSearchPerson:
         assert result == []
 
     @pytest.mark.anyio
-    async def test_sdk_error_mapped_to_http_exception(self):
-        """Test that SDK errors are mapped via map_gumnut_error."""
-        from fastapi import HTTPException
+    async def test_sdk_error_propagates(self):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
-        mock_client.people.list = Mock(side_effect=Exception("Something went wrong"))
+        mock_client.people.list = Mock(side_effect=make_sdk_status_error(500, "boom"))
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(APIStatusError):
             await search_person(
                 name="Test",
                 withHidden=None,  # type: ignore[arg-type]
                 client=mock_client,
             )
-
-        assert exc_info.value.status_code == 500
-        assert "Failed to search people" in exc_info.value.detail
 
 
 class TestSearchStatistics:
@@ -170,21 +168,19 @@ class TestSearchStatistics:
         assert result.total == 0
 
     @pytest.mark.anyio
-    async def test_sdk_error_mapped_to_http_exception(self):
-        """Test that SDK errors are mapped via map_gumnut_error."""
-        from fastapi import HTTPException
+    async def test_sdk_error_propagates(self):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
         mock_client.assets.counts = AsyncMock(
-            side_effect=Exception("Something went wrong")
+            side_effect=make_sdk_status_error(500, "boom")
         )
 
         request = StatisticsSearchDto()
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(APIStatusError):
             await search_asset_statistics(request=request, client=mock_client)
-
-        assert exc_info.value.status_code == 500
-        assert "Failed to get search statistics" in exc_info.value.detail
 
 
 class TestSearchMetadata:
@@ -299,21 +295,19 @@ class TestSearchMetadata:
         assert result.assets.items[0].originalFileName == "sunset.jpg"
 
     @pytest.mark.anyio
-    async def test_sdk_error_mapped_to_http_exception(self, mock_current_user):
-        """Test that SDK errors are mapped via map_gumnut_error."""
-        from fastapi import HTTPException
+    async def test_sdk_error_propagates(self, mock_current_user):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
         mock_client.search.search = AsyncMock(
-            side_effect=Exception("Something went wrong")
+            side_effect=make_sdk_status_error(500, "boom")
         )
 
         request = MetadataSearchDto()
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(APIStatusError):
             await search_assets(
                 request=request, client=mock_client, current_user=mock_current_user
             )
-
-        assert exc_info.value.status_code == 500
-        assert "Failed to search assets by metadata" in exc_info.value.detail

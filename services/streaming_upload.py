@@ -25,6 +25,7 @@ import httpx
 import sentry_sdk
 from fastapi import HTTPException, Request, status
 
+from routers.utils.error_mapping import log_upstream_response
 from routers.utils.gumnut_client import set_refreshed_token
 from services.streaming_form_parser import StreamingFormParser
 from services.streaming_pipe import StreamingPipe
@@ -242,15 +243,33 @@ class StreamingUploadPipeline:
                 detail="Upload failed",
             ) from e
 
-        logger.info(
-            "photos-api responded %d for %s",
-            response.status_code,
-            filename,
-            extra={
-                "status_code": response.status_code,
-                "upload_filename": filename,
-            },
-        )
+        detail: str | None = None
+        if response.status_code in (200, 201):
+            logger.info(
+                "photos-api responded %d for %s",
+                response.status_code,
+                filename,
+                extra={
+                    "status_code": response.status_code,
+                    "upload_filename": filename,
+                },
+            )
+        else:
+            try:
+                body = response.json()
+                detail = str(body.get("detail", response.text))
+            except Exception:
+                detail = response.text
+            log_upstream_response(
+                logger,
+                context="streaming_upload",
+                status_code=response.status_code,
+                message=f"photos-api upload error for {filename}",
+                extra={
+                    "upload_filename": filename,
+                    "error_detail": detail[:500],
+                },
+            )
 
         if response.status_code == 429:
             raise HTTPException(
@@ -259,19 +278,8 @@ class StreamingUploadPipeline:
             )
 
         if response.status_code not in (200, 201):
-            try:
-                body = response.json()
-                detail = body.get("detail", response.text)
-            except Exception:
+            if detail is None:
                 detail = response.text
-            logger.warning(
-                "photos-api upload error",
-                extra={
-                    "status_code": response.status_code,
-                    "detail": str(detail)[:500],
-                    "upload_filename": filename,
-                },
-            )
             # Map upstream 5xx and 401 to 502: a 401 from photos-api means
             # the adapter's internal JWT expired, not the client's session.
             # Forwarding 401 would cause Immich clients to clear their session.
