@@ -290,18 +290,34 @@ All HTTP errors conform to Immich's expected format:
 
 Route handlers raise `HTTPException(status_code=..., detail="...")` and a global handler formats the response. Middleware returns `JSONResponse` directly (since `HTTPException` doesn't work in `BaseHTTPMiddleware`).
 
+### Gumnut SDK error mapping
+
+A global `GumnutError` exception handler in `config/exceptions.py` (registered in `main.py`) maps any Stainless SDK exception raised during request handling to an Immich-shaped JSON response. Routes do not need per-call `try/except` for SDK errors — they bubble to the handler.
+
+Dispatch is by `isinstance` against the typed SDK hierarchy:
+
+| SDK exception | Client status | Detail |
+|---------------|---------------|--------|
+| `RateLimitError` | 502 | "Upstream temporarily unavailable" |
+| `APIStatusError` subclasses (`NotFoundError`, `AuthenticationError`, …) | `exc.status_code` | from `body.detail` / `body.message` / `body.error` / `exc.message` |
+| `APIResponseValidationError` | 502 | "Upstream returned invalid response" |
+| `APIConnectionError` / `APITimeoutError` | 502 | "Upstream unreachable" |
+| generic `GumnutError` | 500 | "Internal error" |
+
+`map_gumnut_error` in `routers/utils/error_mapping.py` is reserved for the upload paths (`_upload_buffered`, `_upload_streaming`), which need to enrich the upstream log record with call-site context (filename, device IDs, `exc_info=True`) that the global handler can't see.
+
 ### Rate limit protection
 
 Immich clients have no HTTP 429 handling — a rate limit response causes sync failures, broken thumbnails, and upload errors with no automatic recovery. The adapter protects against this:
 
 1. The Gumnut SDK (Stainless-generated) has built-in retry with exponential backoff and jitter for 429/5xx responses
-2. If SDK retries are exhausted, `map_gumnut_error` catches `RateLimitError` and returns **502 Bad Gateway** (not 429) to Immich clients. 502 is semantically correct — the adapter is a gateway and the upstream is unavailable. 503 would imply the adapter itself is overloaded, which isn't the case.
+2. If SDK retries are exhausted, the global `GumnutError` handler maps `RateLimitError` to **502 Bad Gateway** (not 429) for Immich clients. 502 is semantically correct — the adapter is a gateway and the upstream is unavailable. 503 would imply the adapter itself is overloaded, which isn't the case. (The upload paths' `map_gumnut_error` does the same when called directly.)
 3. Immich clients display a generic error on 5xx and do not automatically retry — there is no risk of tight retry loops from the client side
 4. Custom retry wrappers must not be added on top of SDK retry (causes retry amplification)
 
 ### Per-item error handling
 
-Bulk operations (delete assets, update people, add assets to albums) process items individually and track per-item results. A failure on one item doesn't abort the entire operation — the adapter continues processing remaining items and returns a result array with success/error status per item.
+Bulk operations (delete assets, update people, add assets to albums) process items individually and track per-item results. A failure on one item doesn't abort the entire operation — the adapter continues processing remaining items and returns a result array with success/error status per item. The shared `classify_bulk_item_error()` helper in `routers/utils/error_mapping.py` maps `APIStatusError` subclasses to the canonical `not_found` / `no_permission` / `unknown` buckets; per-endpoint nuances (e.g. `ConflictError` → `duplicate`) are layered on top.
 
 ## Endpoint Implementation Status
 

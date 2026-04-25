@@ -210,6 +210,64 @@ class TestUpdatePeople:
         # Check that only non-None fields were passed
         assert mock_client.people.update.call_count == 2
 
+    @pytest.mark.anyio
+    async def test_update_people_connection_error_does_not_abort_batch(self):
+        """A transport error on one item must not abort the bulk operation."""
+        import httpx
+        from gumnut import APIConnectionError
+
+        request_obj = httpx.Request("PUT", "http://test.local/")
+        mock_client = Mock()
+        mock_client.people.update = AsyncMock(
+            side_effect=[None, APIConnectionError(request=request_obj)]
+        )
+
+        person_id1 = str(uuid4())
+        person_id2 = str(uuid4())
+        request = PeopleUpdateDto(
+            people=[
+                PeopleUpdateItem(id=person_id1, name="Good"),
+                PeopleUpdateItem(id=person_id2, name="Bad"),
+            ]
+        )
+
+        result = await update_people(request, client=mock_client)
+
+        assert len(result) == 2
+        assert result[0].success is True
+        assert result[0].id == person_id1
+        assert result[1].success is False
+        assert result[1].id == person_id2
+        assert result[1].error == Error1.unknown
+
+    @pytest.mark.anyio
+    async def test_update_people_malformed_uuid_does_not_abort_batch(self):
+        """A malformed UUID in one item must not abort the bulk operation.
+
+        Immich's `PeopleUpdateItem.id` is typed as `str` (the OpenAPI spec
+        switches between str and UUID for people ids), so `UUID(...)` can
+        raise `ValueError` here even when other items in the batch are
+        well-formed.
+        """
+        mock_client = Mock()
+        mock_client.people.update = AsyncMock(return_value=None)
+
+        valid_id = str(uuid4())
+        person_updates = [
+            PeopleUpdateItem(id="not-a-uuid", name="Bad"),
+            PeopleUpdateItem(id=valid_id, name="Good"),
+        ]
+        request = PeopleUpdateDto(people=person_updates)
+
+        result = await update_people(request, client=mock_client)
+
+        assert len(result) == 2
+        assert result[0].success is False
+        assert result[0].id == "not-a-uuid"
+        assert result[0].error == Error1.unknown
+        assert result[1].success is True
+        assert result[1].id == valid_id
+
 
 class TestUpdatePerson:
     """Test the update_person endpoint."""

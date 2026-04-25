@@ -2,10 +2,10 @@ from typing import Annotated, List
 from uuid import UUID
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from gumnut import APIStatusError, AsyncGumnut, ConflictError
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from gumnut import APIStatusError, AsyncGumnut, ConflictError, GumnutError
 
-from routers.utils.error_mapping import classify_bulk_item_error
+from routers.utils.error_mapping import classify_bulk_item_error, log_upstream_response
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.current_user import get_current_user
 from routers.immich_models import (
@@ -185,6 +185,22 @@ async def add_assets_to_album(
             response.append(
                 BulkIdResponseDto(id=asset_uuid_str, success=False, error=error)
             )
+        except GumnutError as asset_error:
+            response.append(
+                BulkIdResponseDto(
+                    id=asset_uuid_str, success=False, error=Error1.unknown
+                )
+            )
+            log_upstream_response(
+                logger,
+                context="add_assets_to_album",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                message=f"Transport error adding asset {asset_uuid} to album",
+                extra={
+                    "asset_id": asset_uuid_str,
+                    "error_detail": str(asset_error)[:500],
+                },
+            )
 
     return response
 
@@ -246,6 +262,22 @@ async def remove_asset_from_album(
             response.append(
                 BulkIdResponseDto(id=asset_uuid_str, success=False, error=error)
             )
+        except GumnutError as asset_error:
+            response.append(
+                BulkIdResponseDto(
+                    id=asset_uuid_str, success=False, error=Error1.unknown
+                )
+            )
+            log_upstream_response(
+                logger,
+                context="remove_asset_from_album",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                message=f"Transport error removing asset {asset_uuid} from album",
+                extra={
+                    "asset_id": asset_uuid_str,
+                    "error_detail": str(asset_error)[:500],
+                },
+            )
 
     return response
 
@@ -296,6 +328,19 @@ async def add_assets_to_albums(
         except APIStatusError as album_error:
             if first_error is None:
                 first_error = BulkIdErrorReason[classify_bulk_item_error(album_error)]
+        except GumnutError as album_error:
+            if first_error is None:
+                first_error = BulkIdErrorReason.unknown
+            log_upstream_response(
+                logger,
+                context="add_assets_to_albums",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                message=f"Transport error adding assets to album {album_uuid}",
+                extra={
+                    "album_id": str(album_uuid),
+                    "error_detail": str(album_error)[:500],
+                },
+            )
 
     if successful_operations == total_operations:
         return AlbumsAddAssetsResponseDto(success=True)

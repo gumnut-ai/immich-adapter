@@ -4,7 +4,7 @@ from fastapi.responses import StreamingResponse
 from uuid import UUID
 import logging
 
-from gumnut import APIStatusError, AsyncGumnut
+from gumnut import APIStatusError, AsyncGumnut, GumnutError
 from gumnut.types import PersonResponse
 
 from routers.utils.cdn_client import stream_from_cdn
@@ -176,6 +176,35 @@ async def update_people(
                 context="update_people",
                 status_code=e.status_code,
                 message=f"Failed bulk person update for {person_item.id}: {e}",
+                extra={"person_id": person_item.id},
+            )
+        except ValueError as ve:
+            # Malformed person id in the bulk request must not abort the batch:
+            # Immich's PeopleUpdateItem.id is typed as `str`, so UUID(...) can
+            # raise here even when other items in the batch are well-formed.
+            results.append(
+                BulkIdResponseDto(
+                    id=person_item.id, success=False, error=Error1.unknown
+                )
+            )
+            logger.warning(
+                "Invalid person id in bulk update",
+                extra={"person_id": person_item.id, "error": str(ve)},
+            )
+        except GumnutError as e:
+            # Transport / schema-mismatch / generic SDK errors must not abort
+            # the batch — record per-item so the bulk endpoint still returns
+            # a complete results list.
+            results.append(
+                BulkIdResponseDto(
+                    id=person_item.id, success=False, error=Error1.unknown
+                )
+            )
+            log_upstream_response(
+                logger,
+                context="update_people",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                message=f"Transport error in bulk person update for {person_item.id}: {e}",
                 extra={"person_id": person_item.id},
             )
 

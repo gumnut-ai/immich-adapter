@@ -607,6 +607,42 @@ class TestRemoveAssetFromAlbum:
         assert result[1].id == str(asset_id2)
         assert mock_client.albums.assets_associations.remove.call_count == 2
 
+    @pytest.mark.anyio
+    async def test_remove_assets_not_found(self, sample_uuid):
+        """A NotFoundError on a per-asset remove is captured as Error1.not_found."""
+        mock_client = Mock()
+        mock_client.albums.assets_associations.remove = AsyncMock(
+            side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
+        )
+
+        request = BulkIdsDto(ids=[uuid4()])
+        result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
+
+        assert len(result) == 1
+        assert result[0].success is False
+        assert result[0].error == Error1.not_found
+
+    @pytest.mark.anyio
+    async def test_remove_assets_mixed_results(self, sample_uuid):
+        """One success + one APIStatusError failure returns mixed per-item results."""
+        mock_client = Mock()
+        mock_client.albums.assets_associations.remove = AsyncMock(
+            side_effect=[None, make_sdk_status_error(500, "boom")]
+        )
+
+        asset_id1 = uuid4()
+        asset_id2 = uuid4()
+        request = BulkIdsDto(ids=[asset_id1, asset_id2])
+
+        result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
+
+        assert len(result) == 2
+        assert result[0].success is True
+        assert result[0].id == str(asset_id1)
+        assert result[1].success is False
+        assert result[1].id == str(asset_id2)
+        assert result[1].error == Error1.unknown
+
 
 class TestDeleteAlbum:
     """Test the delete_album endpoint."""
@@ -640,19 +676,89 @@ class TestAddAssetsToAlbums:
     @pytest.mark.anyio
     async def test_add_assets_to_albums_success(self, sample_uuid):
         """Test successful addition of assets to multiple albums."""
-        # Setup - create mock client
         mock_client = Mock()
-        mock_client.albums.retrieve = AsyncMock(return_value=Mock())
         mock_client.albums.assets_associations.add = AsyncMock(return_value=None)
 
         album_ids = [uuid4(), uuid4()]
         asset_ids = [uuid4()]
         request = AlbumsAddAssetsDto(albumIds=album_ids, assetIds=asset_ids)
 
-        # Execute
         result = await add_assets_to_albums(request, client=mock_client)
 
-        # Assert
-        # AlbumsAddAssetsResponseDto has success and error attributes, not a results list
         assert result.success is True
         assert mock_client.albums.assets_associations.add.call_count == 2
+
+    @pytest.mark.anyio
+    async def test_add_assets_to_albums_conflict_records_duplicate(self):
+        """A ConflictError on an album add records first_error = duplicate."""
+        from gumnut import ConflictError
+
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=make_sdk_status_error(409, "duplicate", cls=ConflictError)
+        )
+
+        request = AlbumsAddAssetsDto(albumIds=[uuid4()], assetIds=[uuid4()])
+        result = await add_assets_to_albums(request, client=mock_client)
+
+        assert result.success is False
+        from routers.immich_models import BulkIdErrorReason
+
+        assert result.error == BulkIdErrorReason.duplicate
+
+    @pytest.mark.anyio
+    async def test_add_assets_to_albums_not_found_records_not_found(self):
+        """A NotFoundError on an album add records first_error = not_found."""
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
+        )
+
+        request = AlbumsAddAssetsDto(albumIds=[uuid4()], assetIds=[uuid4()])
+        result = await add_assets_to_albums(request, client=mock_client)
+
+        assert result.success is False
+        from routers.immich_models import BulkIdErrorReason
+
+        assert result.error == BulkIdErrorReason.not_found
+
+    @pytest.mark.anyio
+    async def test_add_assets_to_albums_first_error_is_sticky(self):
+        """`first_error` records the first failure across albums; later
+        failures with a different classification do not overwrite it."""
+        from gumnut import ConflictError
+
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                make_sdk_status_error(409, "duplicate", cls=ConflictError),
+                make_sdk_status_error(404, "Not found", cls=NotFoundError),
+            ]
+        )
+
+        request = AlbumsAddAssetsDto(albumIds=[uuid4(), uuid4()], assetIds=[uuid4()])
+        result = await add_assets_to_albums(request, client=mock_client)
+
+        assert result.success is False
+        from routers.immich_models import BulkIdErrorReason
+
+        assert result.error == BulkIdErrorReason.duplicate
+
+    @pytest.mark.anyio
+    async def test_add_assets_to_albums_partial_failure(self):
+        """One success + one failure returns success=False with the failure's error."""
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                None,
+                make_sdk_status_error(404, "Not found", cls=NotFoundError),
+            ]
+        )
+
+        request = AlbumsAddAssetsDto(albumIds=[uuid4(), uuid4()], assetIds=[uuid4()])
+        result = await add_assets_to_albums(request, client=mock_client)
+
+        assert result.success is False
+        from routers.immich_models import BulkIdErrorReason
+
+        assert result.error == BulkIdErrorReason.not_found

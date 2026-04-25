@@ -1047,6 +1047,52 @@ class TestDeleteAssets:
         assert mock_client.assets.delete.call_count == 2
 
     @pytest.mark.anyio
+    async def test_delete_assets_non_404_does_not_abort_batch(self):
+        """A 5xx upstream error on one item must not abort the batch."""
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.assets.delete = AsyncMock(
+            side_effect=[None, make_sdk_status_error(500, "boom")]
+        )
+
+        asset_ids = [uuid4(), uuid4()]
+        request = AssetBulkDeleteDto(ids=asset_ids, force=False)
+        current_user_id = uuid4()
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            result = await delete_assets(
+                request, client=mock_client, current_user_id=current_user_id
+            )
+
+        assert result.status_code == 204
+        assert mock_client.assets.delete.call_count == 2
+
+    @pytest.mark.anyio
+    async def test_delete_assets_connection_error_does_not_abort_batch(self):
+        """A transport error on one item must not abort the batch."""
+        import httpx
+        from gumnut import APIConnectionError
+
+        mock_client = Mock()
+        request_obj = httpx.Request("DELETE", "http://test.local/")
+        mock_client.assets.delete = AsyncMock(
+            side_effect=[None, APIConnectionError(request=request_obj)]
+        )
+
+        asset_ids = [uuid4(), uuid4()]
+        request = AssetBulkDeleteDto(ids=asset_ids, force=False)
+        current_user_id = uuid4()
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            result = await delete_assets(
+                request, client=mock_client, current_user_id=current_user_id
+            )
+
+        assert result.status_code == 204
+        assert mock_client.assets.delete.call_count == 2
+
+    @pytest.mark.anyio
     async def test_delete_assets_emits_websocket_events(self):
         """Test that delete_assets emits on_asset_delete for each deleted asset."""
         # Setup - create mock client

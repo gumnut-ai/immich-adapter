@@ -112,6 +112,24 @@ class TestGumnutErrorHandler:
         assert client_response.status_code == 502
         assert client_response.json()["message"] == "Upstream returned invalid response"
 
+    def test_api_response_validation_error_logs_at_error_even_when_upstream_2xx(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """Schema mismatches are always actionable — log at the 502 client-facing
+        severity, not the upstream 2xx (which would demote to INFO)."""
+        import httpx
+
+        request = httpx.Request("GET", "http://test.local/")
+        response = httpx.Response(200, request=request)
+        err = APIResponseValidationError(response, body=None, message="bad schema")
+        caplog.set_level(logging.INFO, logger="routers.utils.error_mapping")
+
+        _client(err).get("/boom")
+
+        records = [r for r in caplog.records if "invalid response" in r.getMessage()]
+        assert records
+        assert records[-1].levelno == logging.ERROR
+
     def test_api_connection_error_maps_to_502(self):
         import httpx
 

@@ -93,10 +93,15 @@ async def _gumnut_error_handler(request: Request, exc: GumnutError) -> JSONRespo
         return _immich_response(exc.status_code, detail)
 
     if isinstance(exc, APIResponseValidationError):
+        # Schema mismatch is always actionable (SDK/upstream contract bug),
+        # regardless of the underlying upstream HTTP status — which is
+        # typically 2xx since the response was syntactically successful.
+        # Log at the 502 client-facing severity (ERROR) instead of letting
+        # the upstream 2xx demote it to INFO.
         log_upstream_response(
             logger,
             context=context,
-            status_code=exc.status_code,
+            status_code=status.HTTP_502_BAD_GATEWAY,
             message=f"Gumnut SDK returned invalid response in {context}: {exc.message}",
             exc_info=True,
         )

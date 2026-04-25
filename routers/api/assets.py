@@ -18,7 +18,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
-from gumnut import APIStatusError, AsyncGumnut, NotFoundError
+from gumnut import APIStatusError, AsyncGumnut, GumnutError, NotFoundError
 from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
@@ -628,12 +628,11 @@ async def delete_assets(
                 extra={
                     "asset_id": str(asset_uuid),
                     "gumnut_id": str(gumnut_asset_id),
-                    "error": str(asset_error),
+                    "error_detail": str(asset_error)[:500],
                 },
             )
         except APIStatusError as asset_error:
-            # Log other per-item upstream errors but keep going so the bulk
-            # delete completes for the remaining assets.
+            # Don't abort bulk delete on individual upstream errors.
             log_upstream_response(
                 logger,
                 context="delete_assets",
@@ -642,7 +641,21 @@ async def delete_assets(
                 extra={
                     "asset_id": str(asset_uuid),
                     "gumnut_id": str(gumnut_asset_id),
-                    "error": str(asset_error),
+                    "error_detail": str(asset_error)[:500],
+                },
+            )
+        except GumnutError as asset_error:
+            # Transport / schema-mismatch / generic SDK errors must not abort
+            # the batch — Immich expects best-effort partial deletion.
+            log_upstream_response(
+                logger,
+                context="delete_assets",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                message=f"Transport error deleting asset {asset_uuid}",
+                extra={
+                    "asset_id": str(asset_uuid),
+                    "gumnut_id": str(gumnut_asset_id),
+                    "error_detail": str(asset_error)[:500],
                 },
             )
 
