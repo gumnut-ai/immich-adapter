@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import List
 from uuid import UUID
@@ -378,81 +377,34 @@ async def merge_person(
 ) -> List[BulkIdResponseDto]:
     """Merge one or more source people into the target person at ``{id}``.
 
-    For each source person: list its faces, reassign each to the target, then
-    delete the source. The source is only deleted after **all** of its faces
-    have been successfully reassigned — a partial reassignment leaves the
-    source intact so its remaining faces aren't orphaned.
+    Delegates to the Gumnut ``people.merge`` endpoint, which atomically
+    reassigns every face from the sources to the target, deletes the
+    sources, and recalculates the target's centroid embedding. The merge is
+    all-or-nothing on the server, so the per-source result list is either
+    fully success or the upstream error is surfaced.
     """
+    # Empty ids is a no-op for callers; the upstream would 422.
+    if not request.ids:
+        return []
+
+    # Self-merge is rejected client-side so Immich gets a stable 400 shape.
     if id in request.ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot merge a person into themselves",
         )
 
-    gumnut_target_person_id = uuid_to_gumnut_person_id(id)
+    await client.people.merge(
+        uuid_to_gumnut_person_id(id),
+        source_person_ids=[
+            uuid_to_gumnut_person_id(source_uuid) for source_uuid in request.ids
+        ],
+    )
 
-    # Validate target before mutating any sources.
-    await client.people.retrieve(gumnut_target_person_id)
-
-    results: List[BulkIdResponseDto] = []
-
-    for source_uuid in request.ids:
-        source_id_str = str(source_uuid)
-        try:
-            gumnut_source_person_id = uuid_to_gumnut_person_id(source_uuid)
-
-            # Materialize the face list before mutating to avoid any cursor /
-            # listing interaction with the in-flight updates.
-            faces = [
-                f async for f in client.faces.list(person_id=gumnut_source_person_id)
-            ]
-            await asyncio.gather(
-                *(
-                    client.faces.update(face.id, person_id=gumnut_target_person_id)
-                    for face in faces
-                )
-            )
-
-            await client.people.delete(gumnut_source_person_id)
-
-            results.append(
-                BulkIdResponseDto(id=source_id_str, success=True, error=None)
-            )
-        except APIStatusError as merge_error:
-            results.append(
-                BulkIdResponseDto(
-                    id=source_id_str,
-                    success=False,
-                    error=classify_bulk_item_error(merge_error, Error1),
-                )
-            )
-            log_upstream_response(
-                logger,
-                context="merge_person",
-                status_code=merge_error.status_code,
-                message=(
-                    f"Failed merging person {source_id_str} into {id}: {merge_error}"
-                ),
-                extra={
-                    "source_person_id": source_id_str,
-                    "target_person_id": str(id),
-                },
-            )
-        except GumnutError as merge_error:
-            results.append(
-                BulkIdResponseDto(id=source_id_str, success=False, error=Error1.unknown)
-            )
-            log_bulk_transport_error(
-                logger,
-                context="merge_person",
-                exc=merge_error,
-                extra={
-                    "source_person_id": source_id_str,
-                    "target_person_id": str(id),
-                },
-            )
-
-    return results
+    return [
+        BulkIdResponseDto(id=str(source_uuid), success=True, error=None)
+        for source_uuid in request.ids
+    ]
 
 
 @router.put("/{id}/reassign")

@@ -1025,36 +1025,23 @@ class TestMergePerson:
     """Test the merge_person endpoint."""
 
     @pytest.mark.anyio
-    async def test_merge_person_empty_ids(self, sample_uuid, sample_gumnut_person):
-        """Empty ids list still validates the target but returns no results."""
+    async def test_merge_person_empty_ids(self, sample_uuid):
+        """Empty ids list short-circuits without an upstream call."""
         mock_client = Mock()
-        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
-        mock_client.faces.list = Mock()
-        mock_client.faces.update = AsyncMock()
-        mock_client.people.delete = AsyncMock()
+        mock_client.people.merge = AsyncMock()
 
         request = MergePersonDto(ids=[])
 
         result = await merge_person(sample_uuid, request, client=mock_client)
 
         assert result == []
-        mock_client.people.retrieve.assert_called_once_with(
-            uuid_to_gumnut_person_id(sample_uuid)
-        )
-        mock_client.faces.list.assert_not_called()
-        mock_client.faces.update.assert_not_called()
-        mock_client.people.delete.assert_not_called()
+        mock_client.people.merge.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_merge_person_self_merge_rejected(
-        self, sample_uuid, sample_gumnut_person
-    ):
-        """Including the target id in the source list returns 400."""
+    async def test_merge_person_self_merge_rejected(self, sample_uuid):
+        """Including the target id in the source list returns 400 before any upstream call."""
         mock_client = Mock()
-        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
-        mock_client.faces.list = Mock()
-        mock_client.faces.update = AsyncMock()
-        mock_client.people.delete = AsyncMock()
+        mock_client.people.merge = AsyncMock()
 
         request = MergePersonDto(ids=[uuid4(), sample_uuid])
 
@@ -1062,29 +1049,18 @@ class TestMergePerson:
             await merge_person(sample_uuid, request, client=mock_client)
 
         assert exc_info.value.status_code == 400
-        # Target should not be retrieved when the request is rejected upfront
-        mock_client.people.retrieve.assert_not_called()
-        mock_client.faces.update.assert_not_called()
-        mock_client.people.delete.assert_not_called()
+        mock_client.people.merge.assert_not_called()
 
     @pytest.mark.anyio
     async def test_merge_person_single_source_success(
-        self, sample_uuid, sample_gumnut_person, mock_sync_cursor_page
+        self, sample_uuid, sample_gumnut_person
     ):
-        """A single source person is merged: faces reassigned, source deleted."""
+        """A single source: one upstream merge call, all-success result."""
         target_uuid = sample_uuid
         source_uuid = uuid4()
 
-        mock_face_1 = Mock(id="face_aaa")
-        mock_face_2 = Mock(id="face_bbb")
-
         mock_client = Mock()
-        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
-        mock_client.faces.list = Mock(
-            return_value=mock_sync_cursor_page([mock_face_1, mock_face_2])
-        )
-        mock_client.faces.update = AsyncMock()
-        mock_client.people.delete = AsyncMock()
+        mock_client.people.merge = AsyncMock(return_value=sample_gumnut_person)
 
         request = MergePersonDto(ids=[source_uuid])
 
@@ -1095,39 +1071,22 @@ class TestMergePerson:
         assert result[0].success is True
         assert result[0].error is None
 
-        mock_client.faces.list.assert_called_once_with(
-            person_id=uuid_to_gumnut_person_id(source_uuid)
-        )
-        assert mock_client.faces.update.call_count == 2
-        mock_client.faces.update.assert_any_call(
-            "face_aaa", person_id=uuid_to_gumnut_person_id(target_uuid)
-        )
-        mock_client.faces.update.assert_any_call(
-            "face_bbb", person_id=uuid_to_gumnut_person_id(target_uuid)
-        )
-        mock_client.people.delete.assert_called_once_with(
-            uuid_to_gumnut_person_id(source_uuid)
+        mock_client.people.merge.assert_called_once_with(
+            uuid_to_gumnut_person_id(target_uuid),
+            source_person_ids=[uuid_to_gumnut_person_id(source_uuid)],
         )
 
     @pytest.mark.anyio
     async def test_merge_person_multiple_sources_success(
-        self, sample_uuid, sample_gumnut_person, mock_sync_cursor_page
+        self, sample_uuid, sample_gumnut_person
     ):
-        """Multiple sources are each merged into the target."""
+        """Multiple sources go through a single atomic upstream merge call."""
         target_uuid = sample_uuid
         source_1 = uuid4()
         source_2 = uuid4()
 
         mock_client = Mock()
-        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
-        mock_client.faces.list = Mock(
-            side_effect=[
-                mock_sync_cursor_page([Mock(id="face_a")]),
-                mock_sync_cursor_page([Mock(id="face_b")]),
-            ]
-        )
-        mock_client.faces.update = AsyncMock()
-        mock_client.people.delete = AsyncMock()
+        mock_client.people.merge = AsyncMock(return_value=sample_gumnut_person)
 
         request = MergePersonDto(ids=[source_1, source_2])
 
@@ -1135,165 +1094,33 @@ class TestMergePerson:
 
         assert len(result) == 2
         assert all(r.success for r in result)
-        assert {r.id for r in result} == {str(source_1), str(source_2)}
+        assert [r.id for r in result] == [str(source_1), str(source_2)]
 
-        # Each source listed independently
-        list_calls = mock_client.faces.list.call_args_list
-        assert list_calls[0][1]["person_id"] == uuid_to_gumnut_person_id(source_1)
-        assert list_calls[1][1]["person_id"] == uuid_to_gumnut_person_id(source_2)
-
-        # Both sources deleted
-        assert mock_client.people.delete.call_count == 2
-        mock_client.people.delete.assert_any_call(uuid_to_gumnut_person_id(source_1))
-        mock_client.people.delete.assert_any_call(uuid_to_gumnut_person_id(source_2))
-
-    @pytest.mark.anyio
-    async def test_merge_person_source_with_no_faces_still_deletes(
-        self, sample_uuid, sample_gumnut_person, mock_sync_cursor_page
-    ):
-        """A source with no faces is still deleted (nothing to reassign)."""
-        target_uuid = sample_uuid
-        source_uuid = uuid4()
-
-        mock_client = Mock()
-        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
-        mock_client.faces.list = Mock(return_value=mock_sync_cursor_page([]))
-        mock_client.faces.update = AsyncMock()
-        mock_client.people.delete = AsyncMock()
-
-        request = MergePersonDto(ids=[source_uuid])
-
-        result = await merge_person(target_uuid, request, client=mock_client)
-
-        assert result[0].success is True
-        mock_client.faces.update.assert_not_called()
-        mock_client.people.delete.assert_called_once_with(
-            uuid_to_gumnut_person_id(source_uuid)
+        mock_client.people.merge.assert_called_once_with(
+            uuid_to_gumnut_person_id(target_uuid),
+            source_person_ids=[
+                uuid_to_gumnut_person_id(source_1),
+                uuid_to_gumnut_person_id(source_2),
+            ],
         )
 
     @pytest.mark.anyio
-    async def test_merge_person_target_not_found_bubbles(self, sample_uuid):
-        """If the target person doesn't exist, the upstream NotFoundError bubbles."""
+    async def test_merge_person_upstream_error_bubbles(self, sample_uuid):
+        """Upstream errors bubble to the global GumnutError handler — merge is atomic."""
         from gumnut import NotFoundError
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
-        mock_client.people.retrieve = AsyncMock(
+        mock_client.people.merge = AsyncMock(
             side_effect=make_sdk_status_error(
                 404, "Person not found", cls=NotFoundError
             )
         )
 
-        request = MergePersonDto(ids=[uuid4()])
+        request = MergePersonDto(ids=[uuid4(), uuid4()])
 
         with pytest.raises(NotFoundError):
             await merge_person(sample_uuid, request, client=mock_client)
-
-    @pytest.mark.anyio
-    async def test_merge_person_source_not_found_per_item(
-        self, sample_uuid, sample_gumnut_person, mock_sync_cursor_page
-    ):
-        """A missing source maps to a per-item not_found result; batch continues."""
-        from gumnut import NotFoundError
-        from tests.conftest import make_sdk_status_error
-
-        target_uuid = sample_uuid
-        good_source = uuid4()
-        missing_source = uuid4()
-
-        mock_client = Mock()
-        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
-        # First source: lists faces fine. Second source: lookup raises NotFoundError.
-        mock_client.faces.list = Mock(
-            side_effect=[
-                mock_sync_cursor_page([Mock(id="face_a")]),
-                make_sdk_status_error(404, "Not found", cls=NotFoundError),
-            ]
-        )
-        mock_client.faces.update = AsyncMock()
-        mock_client.people.delete = AsyncMock()
-
-        request = MergePersonDto(ids=[good_source, missing_source])
-
-        result = await merge_person(target_uuid, request, client=mock_client)
-
-        by_id = {r.id: r for r in result}
-        assert by_id[str(good_source)].success is True
-        assert by_id[str(missing_source)].success is False
-        assert by_id[str(missing_source)].error == Error1.not_found
-
-        # Only the good source should have been deleted
-        mock_client.people.delete.assert_called_once_with(
-            uuid_to_gumnut_person_id(good_source)
-        )
-
-    @pytest.mark.anyio
-    async def test_merge_person_face_update_failure_does_not_delete_source(
-        self, sample_uuid, sample_gumnut_person, mock_sync_cursor_page
-    ):
-        """If a face reassignment fails, the source must NOT be deleted."""
-        from tests.conftest import make_sdk_status_error
-
-        target_uuid = sample_uuid
-        source_uuid = uuid4()
-
-        mock_face = Mock(id="face_xyz")
-
-        mock_client = Mock()
-        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
-        mock_client.faces.list = Mock(return_value=mock_sync_cursor_page([mock_face]))
-        mock_client.faces.update = AsyncMock(
-            side_effect=make_sdk_status_error(500, "Internal error")
-        )
-        mock_client.people.delete = AsyncMock()
-
-        request = MergePersonDto(ids=[source_uuid])
-
-        result = await merge_person(target_uuid, request, client=mock_client)
-
-        assert len(result) == 1
-        assert result[0].id == str(source_uuid)
-        assert result[0].success is False
-        assert result[0].error == Error1.unknown
-        # Source must remain intact when a reassignment fails mid-merge.
-        mock_client.people.delete.assert_not_called()
-
-    @pytest.mark.anyio
-    async def test_merge_person_transport_error_per_item(
-        self, sample_uuid, sample_gumnut_person, mock_sync_cursor_page
-    ):
-        """Non-APIStatusError GumnutError on a source maps to unknown; batch continues."""
-        from tests.conftest import make_sdk_connection_error
-
-        target_uuid = sample_uuid
-        flaky_source = uuid4()
-        good_source = uuid4()
-
-        mock_client = Mock()
-        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
-        # First source: transport error. Second source: succeeds.
-        mock_client.faces.list = Mock(
-            side_effect=[
-                make_sdk_connection_error(),
-                mock_sync_cursor_page([Mock(id="face_ok")]),
-            ]
-        )
-        mock_client.faces.update = AsyncMock()
-        mock_client.people.delete = AsyncMock()
-
-        request = MergePersonDto(ids=[flaky_source, good_source])
-
-        result = await merge_person(target_uuid, request, client=mock_client)
-
-        by_id = {r.id: r for r in result}
-        assert by_id[str(flaky_source)].success is False
-        assert by_id[str(flaky_source)].error == Error1.unknown
-        assert by_id[str(good_source)].success is True
-
-        # Flaky source must not be deleted.
-        mock_client.people.delete.assert_called_once_with(
-            uuid_to_gumnut_person_id(good_source)
-        )
 
 
 class TestReassignFaces:
