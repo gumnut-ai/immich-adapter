@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-04-21
+last-updated: 2026-04-28
 ---
 
 # Immich Adapter Gap Analysis

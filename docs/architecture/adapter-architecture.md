@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-03-19
+last-updated: 2026-04-28
 ---
 
 # Immich Adapter Architecture
