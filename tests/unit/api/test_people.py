@@ -1106,7 +1106,7 @@ class TestMergePerson:
 
     @pytest.mark.anyio
     async def test_merge_person_upstream_error_bubbles(self, sample_uuid):
-        """Upstream errors bubble to the global GumnutError handler — merge is atomic."""
+        """Upstream errors bubble to the global GumnutError handler."""
         from gumnut import NotFoundError
         from tests.conftest import make_sdk_status_error
 
@@ -1117,7 +1117,7 @@ class TestMergePerson:
             )
         )
 
-        request = MergePersonDto(ids=[uuid4(), uuid4()])
+        request = MergePersonDto(ids=[uuid4()])
 
         with pytest.raises(NotFoundError):
             await merge_person(sample_uuid, request, client=mock_client)

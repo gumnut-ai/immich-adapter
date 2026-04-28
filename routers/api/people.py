@@ -375,19 +375,10 @@ async def merge_person(
     request: MergePersonDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[BulkIdResponseDto]:
-    """Merge one or more source people into the target person at ``{id}``.
-
-    Delegates to the Gumnut ``people.merge`` endpoint, which atomically
-    reassigns every face from the sources to the target, deletes the
-    sources, and recalculates the target's centroid embedding. The merge is
-    all-or-nothing on the server, so the per-source result list is either
-    fully success or the upstream error is surfaced.
-    """
-    # Empty ids is a no-op for callers; the upstream would 422.
+    """Merge one or more source people into the target person at ``{id}``."""
     if not request.ids:
         return []
 
-    # Self-merge is rejected client-side so Immich gets a stable 400 shape.
     if id in request.ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
