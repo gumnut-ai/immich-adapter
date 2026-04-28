@@ -36,9 +36,9 @@ async def fetch_entities_map(
 
     Returns:
         Tuple of (entity_id -> entity object mapping, set of IDs that were
-        explicitly missing — e.g., assets fetched but lacking exif data)
+        explicitly missing — e.g., assets fetched but lacking metadata)
     """
-    _SUPPORTED_TYPES = {"asset", "album", "person", "face", "album_asset", "exif"}
+    _SUPPORTED_TYPES = {"asset", "album", "person", "face", "album_asset", "metadata"}
     if gumnut_entity_type not in _SUPPORTED_TYPES:
         raise ValueError(
             f"Unsupported entity type in fetch_entities_map: {gumnut_entity_type}"
@@ -72,17 +72,19 @@ async def fetch_entities_map(
             page = await gumnut_client.album_assets.list(ids=chunk, limit=len(chunk))
             result.update({entity.id: entity for entity in page.data})
 
-        elif gumnut_entity_type == "exif":
-            # Exif is 1:1 with asset; exif events use entity_id = asset_id.
-            # Store the full AssetResponse (not just asset.exif) because the
-            # exif converter needs asset-level fields (width, height, file_size_bytes).
+        elif gumnut_entity_type == "metadata":
+            # Metadata is 1:1 with asset; metadata events use entity_id = asset_id.
+            # Store the full AssetResponse (not just asset.metadata) because the
+            # metadata converter needs asset-level fields (width, height,
+            # file_size_bytes).
             page = await gumnut_client.assets.list(ids=chunk, limit=len(chunk))
             for asset in page.data:
-                if asset.exif:
+                if asset.metadata:
                     result[asset.id] = asset
                 else:
                     logger.warning(
-                        "Missing exif on fetched asset while processing exif events",
+                        "Missing metadata on fetched asset while processing "
+                        "metadata events",
                         extra={"asset_id": asset.id},
                     )
                     missing_ids.add(asset.id)

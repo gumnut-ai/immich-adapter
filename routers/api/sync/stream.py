@@ -61,21 +61,19 @@ _DELETE_EVENT_TYPES = frozenset(
     }
 )
 
-# Event types that are intentionally skipped (not converted to sync events)
-_SKIPPED_EVENT_TYPES = frozenset(
-    {
-        "exif_deleted",  # Immich handles via asset deletion
-    }
-)
+# Event types that are intentionally skipped (not converted to sync events).
+# Empty for now — kept as a frozenset to preserve the lookup contract in
+# _stream_entity_type for future skip rules.
+_SKIPPED_EVENT_TYPES: frozenset[str] = frozenset()
 
 # Mapping from SyncRequestType to (gumnut_entity_type, SyncEntityType)
-# Order matters - assets before exif, albums before album_assets, etc.
+# Order matters - assets before metadata, albums before album_assets, etc.
 # This ordering ensures FK parents are streamed before children during upserts.
 _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.AssetsV1, "asset", SyncEntityType.AssetV1),
     (SyncRequestType.AlbumsV1, "album", SyncEntityType.AlbumV1),
     (SyncRequestType.AlbumToAssetsV1, "album_asset", SyncEntityType.AlbumToAssetV1),
-    (SyncRequestType.AssetExifsV1, "exif", SyncEntityType.AssetExifV1),
+    (SyncRequestType.AssetExifsV1, "metadata", SyncEntityType.AssetExifV1),
     (SyncRequestType.PeopleV1, "person", SyncEntityType.PersonV1),
     (SyncRequestType.AssetFacesV1, "face", SyncEntityType.AssetFaceV1),
     (SyncRequestType.AssetFacesV2, "face", SyncEntityType.AssetFaceV2),
@@ -251,10 +249,10 @@ async def _stream_entity_type(
                 entity = entities_map.get(event.entity_id)
                 if entity is None:
                     # Entity was deleted between event and fetch, or
-                    # explicitly missing (e.g., asset fetched but no exif).
-                    # For exif events, event.entity_id == asset_id, which
+                    # explicitly missing (e.g., asset fetched but no metadata).
+                    # For metadata events, event.entity_id == asset_id, which
                     # matches the asset.id stored in missing_ids by
-                    # fetch_entities_map when an asset lacks exif data.
+                    # fetch_entities_map when an asset lacks a metadata row.
                     if event.entity_id in missing_ids:
                         logger.warning(
                             "Entity explicitly missing from fetch result",

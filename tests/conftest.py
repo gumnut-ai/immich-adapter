@@ -110,7 +110,7 @@ def sample_gumnut_asset():
     asset.width = 1920
     asset.height = 1080
     asset.people = []  # Empty list for people
-    asset.exif = None  # No EXIF data
+    asset.metadata = None  # No metadata
     return asset
 
 

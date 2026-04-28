@@ -233,7 +233,7 @@ The adapter implements Immich's incremental sync protocol, allowing mobile clien
 The sync stream (`/api/sync/stream`) yields events in two phases to prevent FK constraint violations in the mobile client's SQLite database:
 
 1. **Phase 1 — Upserts:** All new/updated entities in FK dependency order (parents before children):
-   assets → albums → album_assets → exif → people → faces
+   assets → albums → album_assets → metadata → people → faces
 
 2. **Phase 2 — Deletes:** All deletions in reverse FK order (children before parents):
    faces → album_assets → people → albums → assets

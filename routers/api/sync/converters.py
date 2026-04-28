@@ -170,55 +170,61 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     )
 
 
-def gumnut_exif_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
+def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
     """
-    Convert Gumnut AssetResponse (with EXIF) to Immich SyncAssetExifV1 format.
+    Convert Gumnut AssetResponse (with metadata) to Immich SyncAssetExifV1 format.
 
-    Accepts the full AssetResponse because exif image dimensions and file size
-    live on the asset, not on the nested ExifResponse.
+    Accepts the full AssetResponse because image dimensions and file size live on
+    the asset, not on the nested Metadata object.
 
     Args:
-        asset: Gumnut asset data (must have non-None exif)
+        asset: Gumnut asset data (must have non-None metadata)
 
     Returns:
         SyncAssetExifV1 for sync stream
     """
-    exif = asset.exif
-    # Callers only pass assets that have exif, so this is always non-None
+    metadata = asset.metadata
+    # Callers only pass assets that have metadata, so this is always non-None
     # at runtime. The check satisfies the type checker.
-    if exif is None:
-        raise ValueError(f"Asset {asset.id} passed to exif converter with no exif")
+    if metadata is None:
+        raise ValueError(
+            f"Asset {asset.id} passed to metadata converter with no metadata"
+        )
 
-    # Convert EXIF datetimes to actual UTC for Immich compatibility
-    original_datetime = to_actual_utc(exif.original_datetime)
-    modified_datetime = to_actual_utc(exif.modified_datetime)
+    # Convert datetimes to actual UTC for Immich compatibility
+    original_datetime = to_actual_utc(metadata.original_datetime)
+    modified_datetime = to_actual_utc(metadata.modified_datetime)
 
     return SyncAssetExifV1(
-        assetId=str(safe_uuid_from_asset_id(exif.asset_id)),
-        city=exif.city,
-        country=exif.country,
+        assetId=str(safe_uuid_from_asset_id(metadata.asset_id)),
+        city=metadata.city,
+        country=metadata.country,
         dateTimeOriginal=original_datetime,
-        description=exif.description or "",
+        description=metadata.description or "",
         exifImageHeight=asset.height,
         exifImageWidth=asset.width,
-        exposureTime=_format_exposure_time(exif.exposure_time),
-        fNumber=exif.f_number,
+        exposureTime=_format_exposure_time(metadata.exposure_time),
+        fNumber=metadata.f_number,
         fileSizeInByte=asset.file_size_bytes,
-        focalLength=exif.focal_length,
-        fps=exif.fps,
-        iso=exif.iso,
-        latitude=exif.latitude,
-        lensModel=exif.lens_model,
-        longitude=exif.longitude,
-        make=exif.make,
-        model=exif.model,
+        focalLength=metadata.focal_length,
+        fps=metadata.fps,
+        iso=metadata.iso,
+        latitude=metadata.latitude,
+        lensModel=metadata.lens_model,
+        longitude=metadata.longitude,
+        make=metadata.make,
+        model=metadata.model,
         modifyDate=modified_datetime,
-        orientation=str(exif.orientation) if exif.orientation is not None else None,
-        profileDescription=exif.profile_description,
-        projectionType=exif.projection_type,
-        rating=normalize_rating(exif.rating),
-        state=exif.state,
-        timeZone=format_timezone_immich(exif.original_datetime),
+        orientation=str(metadata.orientation)
+        if metadata.orientation is not None
+        else None,
+        # profile_description is intentionally not surfaced on the Metadata
+        # type (per the photos-api design); always emit None.
+        profileDescription=None,
+        projectionType=metadata.projection_type,
+        rating=normalize_rating(metadata.rating),
+        state=metadata.state,
+        timeZone=format_timezone_immich(metadata.original_datetime),
     )
 
 
