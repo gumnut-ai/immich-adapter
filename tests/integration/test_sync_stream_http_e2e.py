@@ -19,7 +19,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gumnut.types.album_response import AlbumResponse
-from gumnut.types.asset_response import AssetResponse, Metadata
+from gumnut.types.asset_response import AssetResponse
+from gumnut.types.metadata_response import MetadataResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
@@ -172,7 +173,7 @@ def parse_datetime(dt_str: str) -> datetime:
 
 
 def create_asset_response(
-    asset_data: dict, metadata: Metadata | None = None
+    asset_data: dict, metadata: MetadataResponse | None = None
 ) -> AssetResponse:
     """Create an AssetResponse from test data."""
     return AssetResponse(
@@ -192,9 +193,9 @@ def create_asset_response(
     )
 
 
-def create_metadata_response(asset_id: str, metadata_data: dict) -> Metadata:
-    """Create a Metadata object from test data."""
-    return Metadata(
+def create_metadata_response(asset_id: str, metadata_data: dict) -> MetadataResponse:
+    """Create a MetadataResponse object from test data."""
+    return MetadataResponse(
         asset_id=asset_id,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),

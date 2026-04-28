@@ -1025,16 +1025,102 @@ class TestMergePerson:
     """Test the merge_person endpoint."""
 
     @pytest.mark.anyio
-    async def test_merge_person_stub(self, sample_uuid):
-        """Test merge person stub implementation."""
-        # Setup
-        request = MergePersonDto(ids=[uuid4(), uuid4()])
+    async def test_merge_person_empty_ids(self, sample_uuid):
+        """Empty ids list short-circuits without an upstream call."""
+        mock_client = Mock()
+        mock_client.people.merge = AsyncMock()
 
-        # Execute
-        result = await merge_person(sample_uuid, request)
+        request = MergePersonDto(ids=[])
 
-        # Assert
-        assert result == []  # Stub implementation returns empty list
+        result = await merge_person(sample_uuid, request, client=mock_client)
+
+        assert result == []
+        mock_client.people.merge.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_merge_person_self_merge_rejected(self, sample_uuid):
+        """Including the target id in the source list returns 400 before any upstream call."""
+        mock_client = Mock()
+        mock_client.people.merge = AsyncMock()
+
+        request = MergePersonDto(ids=[uuid4(), sample_uuid])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await merge_person(sample_uuid, request, client=mock_client)
+
+        assert exc_info.value.status_code == 400
+        mock_client.people.merge.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_merge_person_single_source_success(
+        self, sample_uuid, sample_gumnut_person
+    ):
+        """A single source: one upstream merge call, all-success result."""
+        target_uuid = sample_uuid
+        source_uuid = uuid4()
+
+        mock_client = Mock()
+        mock_client.people.merge = AsyncMock(return_value=sample_gumnut_person)
+
+        request = MergePersonDto(ids=[source_uuid])
+
+        result = await merge_person(target_uuid, request, client=mock_client)
+
+        assert len(result) == 1
+        assert result[0].id == str(source_uuid)
+        assert result[0].success is True
+        assert result[0].error is None
+
+        mock_client.people.merge.assert_called_once_with(
+            uuid_to_gumnut_person_id(target_uuid),
+            source_person_ids=[uuid_to_gumnut_person_id(source_uuid)],
+        )
+
+    @pytest.mark.anyio
+    async def test_merge_person_multiple_sources_success(
+        self, sample_uuid, sample_gumnut_person
+    ):
+        """Multiple sources go through a single atomic upstream merge call."""
+        target_uuid = sample_uuid
+        source_1 = uuid4()
+        source_2 = uuid4()
+
+        mock_client = Mock()
+        mock_client.people.merge = AsyncMock(return_value=sample_gumnut_person)
+
+        request = MergePersonDto(ids=[source_1, source_2])
+
+        result = await merge_person(target_uuid, request, client=mock_client)
+
+        assert len(result) == 2
+        assert all(r.success for r in result)
+        assert [r.id for r in result] == [str(source_1), str(source_2)]
+
+        mock_client.people.merge.assert_called_once_with(
+            uuid_to_gumnut_person_id(target_uuid),
+            source_person_ids=[
+                uuid_to_gumnut_person_id(source_1),
+                uuid_to_gumnut_person_id(source_2),
+            ],
+        )
+
+    @pytest.mark.anyio
+    async def test_merge_person_upstream_error_bubbles(self, sample_uuid):
+        """Upstream errors bubble to the global GumnutError handler."""
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.people.merge = AsyncMock(
+            side_effect=make_sdk_status_error(
+                404, "Person not found", cls=NotFoundError
+            )
+        )
+
+        request = MergePersonDto(ids=[uuid4()])
+
+        with pytest.raises(NotFoundError):
+            await merge_person(sample_uuid, request, client=mock_client)
 
 
 class TestReassignFaces:

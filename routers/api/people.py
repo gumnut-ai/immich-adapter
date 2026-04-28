@@ -1,8 +1,9 @@
+import logging
 from typing import List
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
-from uuid import UUID
-import logging
 
 from gumnut import APIStatusError, AsyncGumnut, GumnutError
 from gumnut.types import PersonResponse
@@ -369,13 +370,32 @@ async def delete_person(
 
 
 @router.post("/{id}/merge")
-async def merge_person(id: UUID, request: MergePersonDto) -> List[BulkIdResponseDto]:
-    """
-    Merge a person with one or more other people.
-    Not supported by Gumnut, so this is a stub implementation that returns an empty list.
-    """
+async def merge_person(
+    id: UUID,
+    request: MergePersonDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+) -> List[BulkIdResponseDto]:
+    """Merge one or more source people into the target person at ``{id}``."""
+    if not request.ids:
+        return []
 
-    return []
+    if id in request.ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot merge a person into themselves",
+        )
+
+    await client.people.merge(
+        uuid_to_gumnut_person_id(id),
+        source_person_ids=[
+            uuid_to_gumnut_person_id(source_uuid) for source_uuid in request.ids
+        ],
+    )
+
+    return [
+        BulkIdResponseDto(id=str(source_uuid), success=True, error=None)
+        for source_uuid in request.ids
+    ]
 
 
 @router.put("/{id}/reassign")
