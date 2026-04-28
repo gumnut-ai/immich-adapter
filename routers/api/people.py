@@ -1,8 +1,10 @@
+import asyncio
+import logging
 from typing import List
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
-from uuid import UUID
-import logging
 
 from gumnut import APIStatusError, AsyncGumnut, GumnutError
 from gumnut.types import PersonResponse
@@ -380,9 +382,6 @@ async def merge_person(
     delete the source. The source is only deleted after **all** of its faces
     have been successfully reassigned — a partial reassignment leaves the
     source intact so its remaining faces aren't orphaned.
-
-    A failure on one source doesn't abort the batch; results are returned
-    per-source.
     """
     if id in request.ids:
         raise HTTPException(
@@ -392,7 +391,7 @@ async def merge_person(
 
     gumnut_target_person_id = uuid_to_gumnut_person_id(id)
 
-    # Validate target upfront — let GumnutError bubble to the global handler.
+    # Validate target before mutating any sources.
     await client.people.retrieve(gumnut_target_person_id)
 
     results: List[BulkIdResponseDto] = []
@@ -402,13 +401,17 @@ async def merge_person(
         try:
             gumnut_source_person_id = uuid_to_gumnut_person_id(source_uuid)
 
-            # Materialize faces before mutating, mirroring reassign_faces —
-            # avoids any cursor/listing interaction with the in-flight updates.
+            # Materialize the face list before mutating to avoid any cursor /
+            # listing interaction with the in-flight updates.
             faces = [
                 f async for f in client.faces.list(person_id=gumnut_source_person_id)
             ]
-            for face in faces:
-                await client.faces.update(face.id, person_id=gumnut_target_person_id)
+            await asyncio.gather(
+                *(
+                    client.faces.update(face.id, person_id=gumnut_target_person_id)
+                    for face in faces
+                )
+            )
 
             await client.people.delete(gumnut_source_person_id)
 
