@@ -329,7 +329,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 |------|-----------|-------|
 | Assets | Upload, download (original + thumbnail), delete, bulk delete, existence check, statistics | Streaming downloads via `StreamingResponse` |
 | Albums | CRUD, add/remove assets, statistics | User sharing not supported (returns 501) |
-| People | CRUD, list with pagination/sort/filter, thumbnails, statistics | Merge is a stub |
+| People | CRUD, list with pagination/sort/filter, thumbnails, statistics, merge | |
 | Faces | List, delete, reassign | Create is a stub |
 | Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling |
 | Search | Smart search, metadata search, person search, statistics | Places, suggestions, explore are stubs |

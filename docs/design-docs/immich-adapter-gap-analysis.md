@@ -437,7 +437,7 @@ Person merge is listed as a stub in the adapter architecture doc.
 
 **Effort**: **S** — Implement merge as: for each source person, list all faces (paginate fully via the SDK's async iterator) → reassign each to the target person → delete the source person only after all reassignments succeed. Partial failure handling: if a reassignment fails mid-merge, the source person should not be deleted (faces would be orphaned).
 
-**Recommendation**: **Close** — Important for people management UX, small effort, no backend work needed.
+**Recommendation**: **Closed** (GUM-553) — implemented in `merge_person` (`routers/api/people.py`): per-source face reassignment via `faces.list` → `faces.update` → `people.delete`, with the source only deleted after all faces succeed and per-item failures returned as `BulkIdResponseDto` so a single bad source can't abort the batch. Self-merge requests are rejected with 400.
 
 ---
 

@@ -369,13 +369,87 @@ async def delete_person(
 
 
 @router.post("/{id}/merge")
-async def merge_person(id: UUID, request: MergePersonDto) -> List[BulkIdResponseDto]:
-    """
-    Merge a person with one or more other people.
-    Not supported by Gumnut, so this is a stub implementation that returns an empty list.
-    """
+async def merge_person(
+    id: UUID,
+    request: MergePersonDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+) -> List[BulkIdResponseDto]:
+    """Merge one or more source people into the target person at ``{id}``.
 
-    return []
+    For each source person: list its faces, reassign each to the target, then
+    delete the source. The source is only deleted after **all** of its faces
+    have been successfully reassigned — a partial reassignment leaves the
+    source intact so its remaining faces aren't orphaned.
+
+    A failure on one source doesn't abort the batch; results are returned
+    per-source.
+    """
+    if id in request.ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot merge a person into themselves",
+        )
+
+    gumnut_target_person_id = uuid_to_gumnut_person_id(id)
+
+    # Validate target upfront — let GumnutError bubble to the global handler.
+    await client.people.retrieve(gumnut_target_person_id)
+
+    results: List[BulkIdResponseDto] = []
+
+    for source_uuid in request.ids:
+        source_id_str = str(source_uuid)
+        try:
+            gumnut_source_person_id = uuid_to_gumnut_person_id(source_uuid)
+
+            # Materialize faces before mutating, mirroring reassign_faces —
+            # avoids any cursor/listing interaction with the in-flight updates.
+            faces = [
+                f async for f in client.faces.list(person_id=gumnut_source_person_id)
+            ]
+            for face in faces:
+                await client.faces.update(face.id, person_id=gumnut_target_person_id)
+
+            await client.people.delete(gumnut_source_person_id)
+
+            results.append(
+                BulkIdResponseDto(id=source_id_str, success=True, error=None)
+            )
+        except APIStatusError as merge_error:
+            results.append(
+                BulkIdResponseDto(
+                    id=source_id_str,
+                    success=False,
+                    error=classify_bulk_item_error(merge_error, Error1),
+                )
+            )
+            log_upstream_response(
+                logger,
+                context="merge_person",
+                status_code=merge_error.status_code,
+                message=(
+                    f"Failed merging person {source_id_str} into {id}: {merge_error}"
+                ),
+                extra={
+                    "source_person_id": source_id_str,
+                    "target_person_id": str(id),
+                },
+            )
+        except GumnutError as merge_error:
+            results.append(
+                BulkIdResponseDto(id=source_id_str, success=False, error=Error1.unknown)
+            )
+            log_bulk_transport_error(
+                logger,
+                context="merge_person",
+                exc=merge_error,
+                extra={
+                    "source_person_id": source_id_str,
+                    "target_person_id": str(id),
+                },
+            )
+
+    return results
 
 
 @router.put("/{id}/reassign")
