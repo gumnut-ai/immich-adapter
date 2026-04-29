@@ -59,8 +59,10 @@ server_features = {
 def get_fake_config() -> dict:
     """Build the server config payload at request time.
 
-    Reads `trashDays` from the TRASH_RETENTION_DAYS env var so deploy-time
-    config changes pick up on the next request without a re-import.
+    Reads `trashDays` via `get_settings()` so the value tracks the cached
+    settings instance rather than being frozen at module import. The settings
+    instance itself is `@lru_cache`d, so env var changes still require a
+    process restart — which is what deploys do.
     """
     return {
         "loginPageMessage": "",
