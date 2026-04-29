@@ -239,31 +239,46 @@ async def add_assets_to_album(
 
     added = set(bulk_response.added_assets)
     duplicate = set(bulk_response.duplicate_assets)
-    response: List[BulkIdResponseDto] = []
-    for gumnut_asset_id, asset_uuid in zip(gumnut_asset_ids, asset_uuids):
-        asset_uuid_str = str(asset_uuid)
-        if gumnut_asset_id in added:
-            response.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
-        elif gumnut_asset_id in duplicate:
-            response.append(
-                BulkIdResponseDto(
-                    id=asset_uuid_str, success=False, error=Error1.duplicate
-                )
-            )
-        else:
-            # Upstream returned 200 without classifying this asset_id either way.
-            # Shouldn't happen with the current photos-api implementation, but
-            # surface as `unknown` rather than silently dropping the item.
-            logger.warning(
-                "Asset missing from add_assets bulk response",
-                extra={"album_id": album_id_str, "asset_id": asset_uuid_str},
-            )
-            response.append(
-                BulkIdResponseDto(
-                    id=asset_uuid_str, success=False, error=Error1.unknown
-                )
-            )
-    return response
+    return [
+        _classify_add_response_item(
+            asset_uuid=asset_uuid,
+            gumnut_asset_id=gumnut_asset_id,
+            added=added,
+            duplicate=duplicate,
+            album_id_str=album_id_str,
+        )
+        for gumnut_asset_id, asset_uuid in zip(gumnut_asset_ids, asset_uuids)
+    ]
+
+
+def _classify_add_response_item(
+    *,
+    asset_uuid: UUID,
+    gumnut_asset_id: str,
+    added: set[str],
+    duplicate: set[str],
+    album_id_str: str,
+) -> BulkIdResponseDto:
+    """Map a single asset_id against an add-response's added/duplicate sets.
+
+    Used by both the bulk happy path and the per-asset fallback so they classify
+    the upstream response identically. An asset_id absent from both sets is
+    treated as ``unknown`` (with a warning) rather than silently succeeding —
+    shouldn't happen with the current photos-api implementation, but surfacing
+    it makes drift visible.
+    """
+    asset_uuid_str = str(asset_uuid)
+    if gumnut_asset_id in added:
+        return BulkIdResponseDto(id=asset_uuid_str, success=True)
+    if gumnut_asset_id in duplicate:
+        return BulkIdResponseDto(
+            id=asset_uuid_str, success=False, error=Error1.duplicate
+        )
+    logger.warning(
+        "Asset missing from add_assets bulk response",
+        extra={"album_id": album_id_str, "asset_id": asset_uuid_str},
+    )
+    return BulkIdResponseDto(id=asset_uuid_str, success=False, error=Error1.unknown)
 
 
 async def _add_single_asset(
@@ -294,11 +309,13 @@ async def _add_single_asset(
         )
         return BulkIdResponseDto(id=asset_uuid_str, success=False, error=Error1.unknown)
 
-    if gumnut_asset_id in single_response.duplicate_assets:
-        return BulkIdResponseDto(
-            id=asset_uuid_str, success=False, error=Error1.duplicate
-        )
-    return BulkIdResponseDto(id=asset_uuid_str, success=True)
+    return _classify_add_response_item(
+        asset_uuid=asset_uuid,
+        gumnut_asset_id=gumnut_asset_id,
+        added=set(single_response.added_assets),
+        duplicate=set(single_response.duplicate_assets),
+        album_id_str=album_id_str,
+    )
 
 
 @router.patch("/{id}")
