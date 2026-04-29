@@ -157,6 +157,9 @@ def multiple_gumnut_assets():
         asset.width = 1920
         asset.height = 1080
         asset.checksum = f"checksum-{i}"
+        asset.metadata = None
+        asset.people = []
+        asset.trashed_at = None
         assets.append(asset)
     return assets
 
