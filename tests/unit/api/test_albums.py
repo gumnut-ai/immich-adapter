@@ -471,7 +471,6 @@ class TestAddAssetsToAlbum:
 
         assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
         assert all(item.success is True for item in result)
-        # The endpoint should make a single bulk call, not one per asset.
         mock_client.albums.assets_associations.add.assert_called_once_with(
             uuid_to_gumnut_album_id(sample_uuid),
             asset_ids=[gumnut_id1, gumnut_id2],
@@ -479,7 +478,7 @@ class TestAddAssetsToAlbum:
 
     @pytest.mark.anyio
     async def test_add_assets_duplicates_from_response(self, sample_uuid):
-        """Duplicates are read from the response body, not inferred from a 409."""
+        """Duplicates are read from the response body."""
         new_asset = uuid4()
         dup_asset = uuid4()
         new_gid = uuid_to_gumnut_asset_id(new_asset)
@@ -540,7 +539,6 @@ class TestAddAssetsToAlbum:
         assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
         assert all(item.success is False for item in result)
         assert all(item.error == Error1.unknown for item in result)
-        # Should not retry per-item for non-404 errors.
         assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
@@ -684,7 +682,6 @@ class TestRemoveAssetFromAlbum:
 
         assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
         assert all(item.success is True for item in result)
-        # The endpoint should make a single bulk call, not one per asset.
         mock_client.albums.assets_associations.remove.assert_called_once_with(
             uuid_to_gumnut_album_id(sample_uuid),
             asset_ids=[gumnut_id1, gumnut_id2],
