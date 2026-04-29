@@ -9,7 +9,6 @@ from gumnut import (
     AsyncGumnut,
     ConflictError,
     GumnutError,
-    NotFoundError,
 )
 
 from routers.utils.error_mapping import (
@@ -206,18 +205,12 @@ async def add_assets_to_album(
     # The upstream POST /api/albums/{album_id}/assets accepts the full asset_id
     # list and returns added/duplicate split server-side, so the happy path is a
     # single round-trip. The upstream 404s the entire batch when any asset is
-    # missing or in a different library — fall back to per-item calls to recover
-    # per-asset granularity for the BulkIdResponseDto contract.
+    # missing or in a different library (no partial commit), so a bulk failure
+    # means the whole batch failed — mark every requested asset with the
+    # classified error rather than retrying per-item.
     try:
         bulk_response = await client.albums.assets_associations.add(
             gumnut_album_id, asset_ids=gumnut_asset_ids
-        )
-    except NotFoundError:
-        return await _gather_with_concurrency(
-            [
-                _add_single_asset(client, gumnut_album_id, album_id_str, asset_uuid)
-                for asset_uuid in asset_uuids
-            ]
         )
     except APIStatusError as bulk_error:
         error = classify_bulk_item_error(bulk_error, Error1)
@@ -239,83 +232,31 @@ async def add_assets_to_album(
 
     added = set(bulk_response.added_assets)
     duplicate = set(bulk_response.duplicate_assets)
-    return [
-        _classify_add_response_item(
-            asset_uuid=asset_uuid,
-            gumnut_asset_id=gumnut_asset_id,
-            added=added,
-            duplicate=duplicate,
-            album_id_str=album_id_str,
-        )
-        for gumnut_asset_id, asset_uuid in zip(gumnut_asset_ids, asset_uuids)
-    ]
-
-
-def _classify_add_response_item(
-    *,
-    asset_uuid: UUID,
-    gumnut_asset_id: str,
-    added: set[str],
-    duplicate: set[str],
-    album_id_str: str,
-) -> BulkIdResponseDto:
-    """Map a single asset_id against an add-response's added/duplicate sets.
-
-    Used by both the bulk happy path and the per-asset fallback so they classify
-    the upstream response identically. An asset_id absent from both sets is
-    treated as ``unknown`` (with a warning) rather than silently succeeding —
-    shouldn't happen with the current photos-api implementation, but surfacing
-    it makes drift visible.
-    """
-    asset_uuid_str = str(asset_uuid)
-    if gumnut_asset_id in added:
-        return BulkIdResponseDto(id=asset_uuid_str, success=True)
-    if gumnut_asset_id in duplicate:
-        return BulkIdResponseDto(
-            id=asset_uuid_str, success=False, error=Error1.duplicate
-        )
-    logger.warning(
-        "Asset missing from add_assets bulk response",
-        extra={"album_id": album_id_str, "asset_id": asset_uuid_str},
-    )
-    return BulkIdResponseDto(id=asset_uuid_str, success=False, error=Error1.unknown)
-
-
-async def _add_single_asset(
-    client: AsyncGumnut,
-    gumnut_album_id: str,
-    album_id_str: str,
-    asset_uuid: UUID,
-) -> BulkIdResponseDto:
-    """Per-asset fallback used when the bulk add 404s on a mixed valid/invalid set."""
-    asset_uuid_str = str(asset_uuid)
-    try:
-        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
-        single_response = await client.albums.assets_associations.add(
-            gumnut_album_id, asset_ids=[gumnut_asset_id]
-        )
-    except APIStatusError as asset_error:
-        return BulkIdResponseDto(
-            id=asset_uuid_str,
-            success=False,
-            error=classify_bulk_item_error(asset_error, Error1),
-        )
-    except GumnutError as asset_error:
-        log_bulk_transport_error(
-            logger,
-            context="add_assets_to_album",
-            exc=asset_error,
-            extra={"asset_id": asset_uuid_str, "album_id": album_id_str},
-        )
-        return BulkIdResponseDto(id=asset_uuid_str, success=False, error=Error1.unknown)
-
-    return _classify_add_response_item(
-        asset_uuid=asset_uuid,
-        gumnut_asset_id=gumnut_asset_id,
-        added=set(single_response.added_assets),
-        duplicate=set(single_response.duplicate_assets),
-        album_id_str=album_id_str,
-    )
+    results: list[BulkIdResponseDto] = []
+    for gumnut_asset_id, asset_uuid in zip(gumnut_asset_ids, asset_uuids):
+        asset_uuid_str = str(asset_uuid)
+        if gumnut_asset_id in added:
+            results.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
+        elif gumnut_asset_id in duplicate:
+            results.append(
+                BulkIdResponseDto(
+                    id=asset_uuid_str, success=False, error=Error1.duplicate
+                )
+            )
+        else:
+            # Shouldn't happen with the current photos-api implementation, but
+            # surface drift via a warning + unknown rather than silently
+            # succeeding.
+            logger.warning(
+                "Asset missing from add_assets bulk response",
+                extra={"album_id": album_id_str, "asset_id": asset_uuid_str},
+            )
+            results.append(
+                BulkIdResponseDto(
+                    id=asset_uuid_str, success=False, error=Error1.unknown
+                )
+            )
+    return results
 
 
 @router.patch("/{id}")

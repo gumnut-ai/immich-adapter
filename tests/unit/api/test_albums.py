@@ -501,80 +501,27 @@ class TestAddAssetsToAlbum:
         assert result[1].error == Error1.duplicate
 
     @pytest.mark.anyio
-    async def test_add_assets_not_found_falls_back_to_per_item(self, sample_uuid):
-        """A 404 on the bulk call falls back to per-item calls to identify the bad IDs."""
-        valid_asset = uuid4()
-        missing_asset = uuid4()
-        valid_gid = uuid_to_gumnut_asset_id(valid_asset)
-        missing_gid = uuid_to_gumnut_asset_id(missing_asset)
+    async def test_add_assets_not_found_marks_all(self, sample_uuid):
+        """A 404 on the bulk call marks every requested asset as not_found.
 
-        bulk_404 = make_sdk_status_error(404, "Not found", cls=NotFoundError)
-
-        async def add_side_effect(album_id, *, asset_ids, **kwargs):
-            if asset_ids == [valid_gid, missing_gid]:
-                raise bulk_404
-            if asset_ids == [valid_gid]:
-                return _add_response(added=[valid_gid])
-            if asset_ids == [missing_gid]:
-                raise make_sdk_status_error(404, "Not found", cls=NotFoundError)
-            raise AssertionError(f"unexpected asset_ids: {asset_ids}")
-
+        Upstream validates membership before any DB write, so a 404 means the
+        whole batch failed — no per-item retry, no partial commit to recover.
+        """
         mock_client = Mock()
         mock_client.albums.assets_associations.add = AsyncMock(
-            side_effect=add_side_effect
+            side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
         )
 
-        request = BulkIdsDto(ids=[valid_asset, missing_asset])
+        asset_id1 = uuid4()
+        asset_id2 = uuid4()
+        request = BulkIdsDto(ids=[asset_id1, asset_id2])
+
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert len(result) == 2
-        assert result[0].id == str(valid_asset)
-        assert result[0].success is True
-        assert result[1].id == str(missing_asset)
-        assert result[1].success is False
-        assert result[1].error == Error1.not_found
-        # 1 bulk attempt + 2 per-item fallback calls.
-        assert mock_client.albums.assets_associations.add.call_count == 3
-
-    @pytest.mark.anyio
-    async def test_add_assets_per_item_fallback_detects_duplicate(self, sample_uuid):
-        """Fallback path also reads duplicate_assets from the per-item response."""
-        valid_asset = uuid4()
-        dup_asset = uuid4()
-        missing_asset = uuid4()
-        valid_gid = uuid_to_gumnut_asset_id(valid_asset)
-        dup_gid = uuid_to_gumnut_asset_id(dup_asset)
-        missing_gid = uuid_to_gumnut_asset_id(missing_asset)
-
-        async def add_side_effect(album_id, *, asset_ids, **kwargs):
-            if asset_ids == [valid_gid, dup_gid, missing_gid]:
-                raise make_sdk_status_error(404, "Not found", cls=NotFoundError)
-            if asset_ids == [valid_gid]:
-                return _add_response(added=[valid_gid])
-            if asset_ids == [dup_gid]:
-                return _add_response(duplicate=[dup_gid])
-            if asset_ids == [missing_gid]:
-                raise make_sdk_status_error(404, "Not found", cls=NotFoundError)
-            raise AssertionError(f"unexpected asset_ids: {asset_ids}")
-
-        mock_client = Mock()
-        mock_client.albums.assets_associations.add = AsyncMock(
-            side_effect=add_side_effect
-        )
-
-        request = BulkIdsDto(ids=[valid_asset, dup_asset, missing_asset])
-        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
-
-        assert [item.id for item in result] == [
-            str(valid_asset),
-            str(dup_asset),
-            str(missing_asset),
-        ]
-        assert result[0].success is True
-        assert result[1].success is False
-        assert result[1].error == Error1.duplicate
-        assert result[2].success is False
-        assert result[2].error == Error1.not_found
+        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert all(item.success is False for item in result)
+        assert all(item.error == Error1.not_found for item in result)
+        assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
     async def test_add_assets_other_api_status_error_marks_all(self, sample_uuid):
@@ -614,38 +561,6 @@ class TestAddAssetsToAlbum:
         assert all(item.success is False for item in result)
         assert all(item.error == Error1.unknown for item in result)
         assert mock_client.albums.assets_associations.add.call_count == 1
-
-    @pytest.mark.anyio
-    async def test_add_assets_fallback_transport_error_marks_unknown(self, sample_uuid):
-        """A transport error during the per-item fallback marks just that asset as unknown."""
-        valid_asset = uuid4()
-        flaky_asset = uuid4()
-        valid_gid = uuid_to_gumnut_asset_id(valid_asset)
-        flaky_gid = uuid_to_gumnut_asset_id(flaky_asset)
-
-        async def add_side_effect(album_id, *, asset_ids, **kwargs):
-            if asset_ids == [valid_gid, flaky_gid]:
-                raise make_sdk_status_error(404, "Not found", cls=NotFoundError)
-            if asset_ids == [valid_gid]:
-                return _add_response(added=[valid_gid])
-            if asset_ids == [flaky_gid]:
-                raise make_sdk_connection_error()
-            raise AssertionError(f"unexpected asset_ids: {asset_ids}")
-
-        mock_client = Mock()
-        mock_client.albums.assets_associations.add = AsyncMock(
-            side_effect=add_side_effect
-        )
-
-        request = BulkIdsDto(ids=[valid_asset, flaky_asset])
-        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
-
-        assert len(result) == 2
-        assert result[0].id == str(valid_asset)
-        assert result[0].success is True
-        assert result[1].id == str(flaky_asset)
-        assert result[1].success is False
-        assert result[1].error == Error1.unknown
 
 
 class TestUpdateAlbum:
