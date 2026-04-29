@@ -1,6 +1,5 @@
-import asyncio
 import logging
-from typing import Annotated, Any, Coroutine, List, TypeVar
+from typing import Annotated, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -41,28 +40,6 @@ from routers.utils.album_conversion import convert_gumnut_album_to_immich
 from pydantic.json_schema import SkipJsonSchema
 
 logger = logging.getLogger(__name__)
-
-BULK_ASSOCIATION_CONCURRENCY_LIMIT = 10
-
-T = TypeVar("T")
-
-
-async def _gather_with_concurrency(coros: list[Coroutine[Any, Any, T]]) -> list[T]:
-    """Run coroutines in parallel with bounded concurrency.
-
-    Output preserves input order regardless of completion order — relied on by
-    callers to keep response ordering. If any coroutine raises, ``gather``
-    cancels pending siblings and the exception propagates, so callers must
-    catch per-item errors inside the coroutine rather than relying on this
-    helper to surface them.
-    """
-    semaphore = asyncio.Semaphore(BULK_ASSOCIATION_CONCURRENCY_LIMIT)
-
-    async def _run(coro: Coroutine[Any, Any, T]) -> T:
-        async with semaphore:
-            return await coro
-
-    return await asyncio.gather(*(_run(coro) for coro in coros))
 
 
 router = APIRouter(
@@ -369,43 +346,31 @@ async def add_assets_to_albums(
         uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in request.assetIds
     ]
 
-    async def _add_asset_ids_to_album(
-        album_uuid: UUID,
-    ) -> tuple[bool, BulkIdErrorReason | None]:
+    successful_operations = 0
+    total_operations = len(request.albumIds)
+    first_error: BulkIdErrorReason | None = None
+
+    for album_uuid in request.albumIds:
         try:
             await client.albums.assets_associations.add(
                 uuid_to_gumnut_album_id(album_uuid), asset_ids=gumnut_asset_ids
             )
-            return True, None
+            successful_operations += 1
         except ConflictError:
-            return False, BulkIdErrorReason.duplicate
+            if first_error is None:
+                first_error = BulkIdErrorReason.duplicate
         except APIStatusError as album_error:
-            return False, classify_bulk_item_error(album_error, BulkIdErrorReason)
+            if first_error is None:
+                first_error = classify_bulk_item_error(album_error, BulkIdErrorReason)
         except GumnutError as album_error:
+            if first_error is None:
+                first_error = BulkIdErrorReason.unknown
             log_bulk_transport_error(
                 logger,
                 context="add_assets_to_albums",
                 exc=album_error,
                 extra={"album_id": str(album_uuid)},
             )
-            return False, BulkIdErrorReason.unknown
-
-    album_results = await _gather_with_concurrency(
-        [_add_asset_ids_to_album(album_uuid) for album_uuid in request.albumIds]
-    )
-
-    successful_operations = sum(
-        1 for operation_success, _ in album_results if operation_success
-    )
-    total_operations = len(request.albumIds)
-    first_error = next(
-        (
-            operation_error
-            for operation_success, operation_error in album_results
-            if not operation_success
-        ),
-        None,
-    )
 
     if successful_operations == total_operations:
         return AlbumsAddAssetsResponseDto(success=True)
