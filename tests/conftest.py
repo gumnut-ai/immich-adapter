@@ -109,8 +109,10 @@ def sample_gumnut_asset():
     asset.checksum = "abc123"
     asset.width = 1920
     asset.height = 1080
+    asset.file_size_bytes = 1059218
     asset.people = []  # Empty list for people
     asset.metadata = None  # No metadata
+    asset.trashed_at = None  # Live (not trashed); set to a datetime to simulate trashed
     return asset
 
 
@@ -155,6 +157,9 @@ def multiple_gumnut_assets():
         asset.width = 1920
         asset.height = 1080
         asset.checksum = f"checksum-{i}"
+        asset.metadata = None
+        asset.people = []
+        asset.trashed_at = None
         assets.append(asset)
     return assets
 

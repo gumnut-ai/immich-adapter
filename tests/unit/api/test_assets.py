@@ -400,6 +400,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
+        mock_gumnut_asset.trashed_at = None
 
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
@@ -513,6 +514,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
+        mock_gumnut_asset.trashed_at = None
 
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
@@ -616,6 +618,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 10240
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
+        mock_gumnut_asset.trashed_at = None
 
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
@@ -668,6 +671,7 @@ class TestUploadAsset:
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
+        mock_gumnut_asset.trashed_at = None
 
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201

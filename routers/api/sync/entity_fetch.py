@@ -53,7 +53,15 @@ async def fetch_entities_map(
 
     for chunk in _batched(unique_ids, FETCH_BATCH_SIZE):
         if gumnut_entity_type == "asset":
-            page = await gumnut_client.assets.list(ids=chunk, limit=len(chunk))
+            # state="all" includes trashed assets so ASSET_TRASHED events hydrate
+            # successfully — the default live-only filter would silently drop
+            # them from page.data, dropping the event before it reaches the
+            # client. Also covers payload-ref FK verification: album_cover_asset_id
+            # pointing at a trashed asset must not be nulled out, since restore
+            # should keep the cover intact.
+            page = await gumnut_client.assets.list(
+                state="all", ids=chunk, limit=len(chunk)
+            )
             result.update({entity.id: entity for entity in page.data})
 
         elif gumnut_entity_type == "album":

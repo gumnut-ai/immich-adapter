@@ -159,7 +159,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         fileModifiedAt=fileModifiedAt,
         localDateTime=localDateTime,
         # Optional fields - use None when not available
-        deletedAt=None,
+        deletedAt=asset.trashed_at,
         duration=None,
         height=asset.height,
         libraryId=None,
