@@ -1,10 +1,16 @@
 import asyncio
 import logging
-from typing import Annotated, Awaitable, List, TypeVar
+from typing import Annotated, Any, Coroutine, List, TypeVar
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from gumnut import APIStatusError, AsyncGumnut, ConflictError, GumnutError
+from gumnut import (
+    APIStatusError,
+    AsyncGumnut,
+    ConflictError,
+    GumnutError,
+    NotFoundError,
+)
 
 from routers.utils.error_mapping import (
     classify_bulk_item_error,
@@ -42,14 +48,22 @@ BULK_ASSOCIATION_CONCURRENCY_LIMIT = 10
 T = TypeVar("T")
 
 
-async def _gather_with_concurrency(awaitables: list[Awaitable[T]]) -> list[T]:
+async def _gather_with_concurrency(coros: list[Coroutine[Any, Any, T]]) -> list[T]:
+    """Run coroutines in parallel with bounded concurrency.
+
+    Output preserves input order regardless of completion order — relied on by
+    callers to keep response ordering. If any coroutine raises, ``gather``
+    cancels pending siblings and the exception propagates, so callers must
+    catch per-item errors inside the coroutine rather than relying on this
+    helper to surface them.
+    """
     semaphore = asyncio.Semaphore(BULK_ASSOCIATION_CONCURRENCY_LIMIT)
 
-    async def _run(awaitable: Awaitable[T]) -> T:
+    async def _run(coro: Coroutine[Any, Any, T]) -> T:
         async with semaphore:
-            return await awaitable
+            return await coro
 
-    return await asyncio.gather(*(_run(awaitable) for awaitable in awaitables))
+    return await asyncio.gather(*(_run(coro) for coro in coros))
 
 
 router = APIRouter(
@@ -183,39 +197,108 @@ async def add_assets_to_album(
     """
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
+    album_id_str = str(id)
+    asset_uuids = list(request.ids)
+    gumnut_asset_ids = [
+        uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in asset_uuids
+    ]
 
-    async def _add_asset(asset_uuid: UUID) -> BulkIdResponseDto:
+    # The upstream POST /api/albums/{album_id}/assets accepts the full asset_id
+    # list and returns added/duplicate split server-side, so the happy path is a
+    # single round-trip. The upstream 404s the entire batch when any asset is
+    # missing or in a different library — fall back to per-item calls to recover
+    # per-asset granularity for the BulkIdResponseDto contract.
+    try:
+        bulk_response = await client.albums.assets_associations.add(
+            gumnut_album_id, asset_ids=gumnut_asset_ids
+        )
+    except NotFoundError:
+        return await _gather_with_concurrency(
+            [
+                _add_single_asset(client, gumnut_album_id, album_id_str, asset_uuid)
+                for asset_uuid in asset_uuids
+            ]
+        )
+    except APIStatusError as bulk_error:
+        error = classify_bulk_item_error(bulk_error, Error1)
+        return [
+            BulkIdResponseDto(id=str(asset_uuid), success=False, error=error)
+            for asset_uuid in asset_uuids
+        ]
+    except GumnutError as bulk_error:
+        log_bulk_transport_error(
+            logger,
+            context="add_assets_to_album",
+            exc=bulk_error,
+            extra={"album_id": album_id_str, "asset_count": len(asset_uuids)},
+        )
+        return [
+            BulkIdResponseDto(id=str(asset_uuid), success=False, error=Error1.unknown)
+            for asset_uuid in asset_uuids
+        ]
+
+    added = set(bulk_response.added_assets)
+    duplicate = set(bulk_response.duplicate_assets)
+    response: List[BulkIdResponseDto] = []
+    for gumnut_asset_id, asset_uuid in zip(gumnut_asset_ids, asset_uuids):
         asset_uuid_str = str(asset_uuid)
-        try:
-            gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
-            await client.albums.assets_associations.add(
-                gumnut_album_id, asset_ids=[gumnut_asset_id]
+        if gumnut_asset_id in added:
+            response.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
+        elif gumnut_asset_id in duplicate:
+            response.append(
+                BulkIdResponseDto(
+                    id=asset_uuid_str, success=False, error=Error1.duplicate
+                )
             )
-            return BulkIdResponseDto(id=asset_uuid_str, success=True)
-        except ConflictError:
-            return BulkIdResponseDto(
-                id=asset_uuid_str, success=False, error=Error1.duplicate
+        else:
+            # Upstream returned 200 without classifying this asset_id either way.
+            # Shouldn't happen with the current photos-api implementation, but
+            # surface as `unknown` rather than silently dropping the item.
+            logger.warning(
+                "Asset missing from add_assets bulk response",
+                extra={"album_id": album_id_str, "asset_id": asset_uuid_str},
             )
-        except APIStatusError as asset_error:
-            return BulkIdResponseDto(
-                id=asset_uuid_str,
-                success=False,
-                error=classify_bulk_item_error(asset_error, Error1),
+            response.append(
+                BulkIdResponseDto(
+                    id=asset_uuid_str, success=False, error=Error1.unknown
+                )
             )
-        except GumnutError as asset_error:
-            log_bulk_transport_error(
-                logger,
-                context="add_assets_to_album",
-                exc=asset_error,
-                extra={"asset_id": asset_uuid_str, "album_id": str(id)},
-            )
-            return BulkIdResponseDto(
-                id=asset_uuid_str, success=False, error=Error1.unknown
-            )
+    return response
 
-    return await _gather_with_concurrency(
-        [_add_asset(asset_uuid) for asset_uuid in request.ids]
-    )
+
+async def _add_single_asset(
+    client: AsyncGumnut,
+    gumnut_album_id: str,
+    album_id_str: str,
+    asset_uuid: UUID,
+) -> BulkIdResponseDto:
+    """Per-asset fallback used when the bulk add 404s on a mixed valid/invalid set."""
+    asset_uuid_str = str(asset_uuid)
+    try:
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        single_response = await client.albums.assets_associations.add(
+            gumnut_album_id, asset_ids=[gumnut_asset_id]
+        )
+    except APIStatusError as asset_error:
+        return BulkIdResponseDto(
+            id=asset_uuid_str,
+            success=False,
+            error=classify_bulk_item_error(asset_error, Error1),
+        )
+    except GumnutError as asset_error:
+        log_bulk_transport_error(
+            logger,
+            context="add_assets_to_album",
+            exc=asset_error,
+            extra={"asset_id": asset_uuid_str, "album_id": album_id_str},
+        )
+        return BulkIdResponseDto(id=asset_uuid_str, success=False, error=Error1.unknown)
+
+    if gumnut_asset_id in single_response.duplicate_assets:
+        return BulkIdResponseDto(
+            id=asset_uuid_str, success=False, error=Error1.duplicate
+        )
+    return BulkIdResponseDto(id=asset_uuid_str, success=True)
 
 
 @router.patch("/{id}")
@@ -260,35 +343,42 @@ async def remove_asset_from_album(
     """
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
+    album_id_str = str(id)
+    asset_uuids = list(request.ids)
+    gumnut_asset_ids = [
+        uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in asset_uuids
+    ]
 
-    async def _remove_asset(asset_uuid: UUID) -> BulkIdResponseDto:
-        asset_uuid_str = str(asset_uuid)
-        try:
-            gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
-            await client.albums.assets_associations.remove(
-                gumnut_album_id, asset_ids=[gumnut_asset_id]
-            )
-            return BulkIdResponseDto(id=asset_uuid_str, success=True)
-        except APIStatusError as asset_error:
-            return BulkIdResponseDto(
-                id=asset_uuid_str,
-                success=False,
-                error=classify_bulk_item_error(asset_error, Error1),
-            )
-        except GumnutError as asset_error:
-            log_bulk_transport_error(
-                logger,
-                context="remove_asset_from_album",
-                exc=asset_error,
-                extra={"asset_id": asset_uuid_str, "album_id": str(id)},
-            )
-            return BulkIdResponseDto(
-                id=asset_uuid_str, success=False, error=Error1.unknown
-            )
+    # The upstream DELETE /api/albums/{album_id}/assets accepts the full
+    # asset_id list, silently skips missing IDs, and returns 204. A single
+    # round-trip covers all assets — we surface batch-level errors (e.g. the
+    # album itself is missing) by mapping the same error onto every entry.
+    try:
+        await client.albums.assets_associations.remove(
+            gumnut_album_id, asset_ids=gumnut_asset_ids
+        )
+    except APIStatusError as bulk_error:
+        error = classify_bulk_item_error(bulk_error, Error1)
+        return [
+            BulkIdResponseDto(id=str(asset_uuid), success=False, error=error)
+            for asset_uuid in asset_uuids
+        ]
+    except GumnutError as bulk_error:
+        log_bulk_transport_error(
+            logger,
+            context="remove_asset_from_album",
+            exc=bulk_error,
+            extra={"album_id": album_id_str, "asset_count": len(asset_uuids)},
+        )
+        return [
+            BulkIdResponseDto(id=str(asset_uuid), success=False, error=Error1.unknown)
+            for asset_uuid in asset_uuids
+        ]
 
-    return await _gather_with_concurrency(
-        [_remove_asset(asset_uuid) for asset_uuid in request.ids]
-    )
+    return [
+        BulkIdResponseDto(id=str(asset_uuid), success=True)
+        for asset_uuid in asset_uuids
+    ]
 
 
 @router.delete("/{id}", status_code=204)
