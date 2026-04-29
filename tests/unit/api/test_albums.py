@@ -1,5 +1,6 @@
 """Tests for albums.py endpoints."""
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, Mock
 from gumnut import NotFoundError
@@ -7,6 +8,7 @@ from uuid import uuid4
 
 from tests.conftest import make_sdk_status_error
 from routers.api.albums import (
+    BULK_ASSOCIATION_CONCURRENCY_LIMIT,
     get_all_albums,
     get_album_statistics,
     get_album_info,
@@ -516,6 +518,39 @@ class TestAddAssetsToAlbum:
         assert result[0].success is False
         assert result[0].error == Error1.duplicate
 
+    @pytest.mark.anyio
+    async def test_add_assets_parallel_preserves_input_order(self, sample_uuid):
+        """Response entries keep request order even when add calls complete out of order."""
+        mock_client = Mock()
+
+        asset_id1 = uuid4()
+        asset_id2 = uuid4()
+        asset_id3 = uuid4()
+        request = BulkIdsDto(ids=[asset_id1, asset_id2, asset_id3])
+
+        delays = {
+            uuid_to_gumnut_asset_id(asset_id1): 0.03,
+            uuid_to_gumnut_asset_id(asset_id2): 0.0,
+            uuid_to_gumnut_asset_id(asset_id3): 0.01,
+        }
+
+        async def add_side_effect(*args, **kwargs):
+            gumnut_asset_id = kwargs["asset_ids"][0]
+            await asyncio.sleep(delays[gumnut_asset_id])
+
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=add_side_effect
+        )
+
+        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        assert [item.id for item in result] == [
+            str(asset_id1),
+            str(asset_id2),
+            str(asset_id3),
+        ]
+        assert all(item.success is True for item in result)
+
 
 class TestUpdateAlbum:
     """Test the update_album endpoint."""
@@ -643,6 +678,39 @@ class TestRemoveAssetFromAlbum:
         assert result[1].id == str(asset_id2)
         assert result[1].error == Error1.unknown
 
+    @pytest.mark.anyio
+    async def test_remove_assets_parallel_preserves_input_order(self, sample_uuid):
+        """Response entries keep request order even when remove calls complete out of order."""
+        mock_client = Mock()
+
+        asset_id1 = uuid4()
+        asset_id2 = uuid4()
+        asset_id3 = uuid4()
+        request = BulkIdsDto(ids=[asset_id1, asset_id2, asset_id3])
+
+        delays = {
+            uuid_to_gumnut_asset_id(asset_id1): 0.03,
+            uuid_to_gumnut_asset_id(asset_id2): 0.0,
+            uuid_to_gumnut_asset_id(asset_id3): 0.01,
+        }
+
+        async def remove_side_effect(*args, **kwargs):
+            gumnut_asset_id = kwargs["asset_ids"][0]
+            await asyncio.sleep(delays[gumnut_asset_id])
+
+        mock_client.albums.assets_associations.remove = AsyncMock(
+            side_effect=remove_side_effect
+        )
+
+        result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
+
+        assert [item.id for item in result] == [
+            str(asset_id1),
+            str(asset_id2),
+            str(asset_id3),
+        ]
+        assert all(item.success is True for item in result)
+
 
 class TestDeleteAlbum:
     """Test the delete_album endpoint."""
@@ -762,3 +830,69 @@ class TestAddAssetsToAlbums:
         from routers.immich_models import BulkIdErrorReason
 
         assert result.error == BulkIdErrorReason.not_found
+
+    @pytest.mark.anyio
+    async def test_add_assets_to_albums_uses_bounded_concurrency(self):
+        """Album fan-out runs in parallel but never exceeds the concurrency limit."""
+        mock_client = Mock()
+
+        active_calls = 0
+        max_active_calls = 0
+        call_counter_lock = asyncio.Lock()
+
+        async def add_side_effect(*args, **kwargs):
+            nonlocal active_calls, max_active_calls
+            async with call_counter_lock:
+                active_calls += 1
+                max_active_calls = max(max_active_calls, active_calls)
+
+            await asyncio.sleep(0.01)
+
+            async with call_counter_lock:
+                active_calls -= 1
+
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=add_side_effect
+        )
+
+        album_ids = [uuid4() for _ in range(BULK_ASSOCIATION_CONCURRENCY_LIMIT + 5)]
+        request = AlbumsAddAssetsDto(albumIds=album_ids, assetIds=[uuid4()])
+
+        result = await add_assets_to_albums(request, client=mock_client)
+
+        assert result.success is True
+        assert max_active_calls > 1
+        assert max_active_calls <= BULK_ASSOCIATION_CONCURRENCY_LIMIT
+
+    @pytest.mark.anyio
+    async def test_add_assets_to_albums_first_error_sticky_by_input_order(self):
+        """The sticky first error follows request order, not completion order."""
+        from gumnut import ConflictError
+        from routers.immich_models import BulkIdErrorReason
+
+        mock_client = Mock()
+
+        first_album_id = uuid4()
+        second_album_id = uuid4()
+        first_gumnut_album_id = uuid_to_gumnut_album_id(first_album_id)
+
+        async def add_side_effect(album_id, *args, **kwargs):
+            if album_id == first_gumnut_album_id:
+                await asyncio.sleep(0.03)
+                raise make_sdk_status_error(409, "duplicate", cls=ConflictError)
+
+            await asyncio.sleep(0.0)
+            raise make_sdk_status_error(404, "Not found", cls=NotFoundError)
+
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=add_side_effect
+        )
+
+        request = AlbumsAddAssetsDto(
+            albumIds=[first_album_id, second_album_id],
+            assetIds=[uuid4()],
+        )
+        result = await add_assets_to_albums(request, client=mock_client)
+
+        assert result.success is False
+        assert result.error == BulkIdErrorReason.duplicate
