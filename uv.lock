@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "2026-04-14T22:41:48.422071Z"
+exclude-newer = "2026-04-15T22:27:25.584609Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
@@ -305,7 +305,7 @@ wheels = [
 
 [[package]]
 name = "gumnut-sdk"
-version = "0.76.0"
+version = "0.77.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -315,9 +315,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b1/7b/d6c2675c6b42979ff2089f76bf12e16818a1fc133fd07e02743fea68d2b5/gumnut_sdk-0.76.0.tar.gz", hash = "sha256:58a34517ec72d6eb7416f4509c1377f2cb5351b520890feacc692f7733d7d2e6", size = 280071, upload-time = "2026-04-28T22:39:13.738Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/e4/2318e55e4d86bf0823db988a40fac37d9bd456a47200e4d0b21b3b0e24cb/gumnut_sdk-0.77.0.tar.gz", hash = "sha256:08609ca6718d4b0459a063a4e053e2d58c9e2184ea0d70ad310704451574e38f", size = 280902, upload-time = "2026-04-29T22:25:36.555Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e1/49/2e61db06f522c089b898b71905f84f7c2f454f3831ce3436ecc9c2cf7719/gumnut_sdk-0.76.0-py3-none-any.whl", hash = "sha256:714cf84ff7e417026ede5139c12bce76f997e6ff28d21494f98a60060aaee161", size = 151923, upload-time = "2026-04-28T22:39:12.189Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/79/2ce9fd2e237eb1b474fa612b2c0e9ab4618da0505390a99cddfaeea12cd0/gumnut_sdk-0.77.0-py3-none-any.whl", hash = "sha256:f99f1eca2c6d11a881e878d379c736ed50ee27d5342cd1498922fe8ef64b914e", size = 152745, upload-time = "2026-04-29T22:25:34.923Z" },
 ]
 
 [[package]]
@@ -409,7 +409,7 @@ dev = [
 requires-dist = [
     { name = "cryptography", specifier = ">=46.0.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.135.2" },
-    { name = "gumnut-sdk", specifier = ">=0.76.0" },
+    { name = "gumnut-sdk", specifier = ">=0.77.0" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "python-socketio", specifier = ">=5.13.0" },

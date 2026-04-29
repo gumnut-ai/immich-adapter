@@ -279,6 +279,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset.checksum_sha1 = "sha1checksum"
         asset.width = 1600
         asset.height = 2400
+        asset.trashed_at = None
         return asset
 
     def test_file_created_at_uses_local_datetime_not_file_created_at(self):
@@ -410,6 +411,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset.checksum_sha1 = "sha1checksum"
         asset.width = 1600
         asset.height = 2400
+        asset.trashed_at = None
 
         result = gumnut_asset_to_sync_asset_v1(asset, "owner-uuid")
 

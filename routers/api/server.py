@@ -55,20 +55,27 @@ server_features = {
     "ocr": False,
 }
 
-fake_config = {
-    "loginPageMessage": "",
-    "trashDays": 30,
-    "userDeleteDelay": 7,
-    # Shown as the OAuth button label if the login form is visible (e.g., ?autoLaunch=0)
-    "oauthButtonText": "Sign in with Gumnut",
-    "isInitialized": True,
-    "isOnboarded": True,
-    "externalDomain": "",
-    "maintenanceMode": False,
-    "publicUsers": True,
-    "mapDarkStyleUrl": "https://tiles.immich.cloud/v1/style/dark.json",
-    "mapLightStyleUrl": "https://tiles.immich.cloud/v1/style/light.json",
-}
+
+def get_fake_config() -> dict:
+    """Build the server config payload at request time.
+
+    Reads `trashDays` from the TRASH_RETENTION_DAYS env var so deploy-time
+    config changes pick up on the next request without a re-import.
+    """
+    return {
+        "loginPageMessage": "",
+        "trashDays": get_settings().trash_retention_days,
+        "userDeleteDelay": 7,
+        # Shown as the OAuth button label if the login form is visible (e.g., ?autoLaunch=0)
+        "oauthButtonText": "Sign in with Gumnut",
+        "isInitialized": True,
+        "isOnboarded": True,
+        "externalDomain": "",
+        "maintenanceMode": False,
+        "publicUsers": True,
+        "mapDarkStyleUrl": "https://tiles.immich.cloud/v1/style/dark.json",
+        "mapLightStyleUrl": "https://tiles.immich.cloud/v1/style/light.json",
+    }
 
 
 def get_fake_about() -> dict:
@@ -190,7 +197,7 @@ async def get_features() -> ServerFeaturesDto:
 
 @router.get("/config")
 async def get_config() -> ServerConfigDto:
-    return ServerConfigDto(**fake_config)
+    return ServerConfigDto(**get_fake_config())
 
 
 @router.get("/about")
