@@ -317,7 +317,12 @@ Immich clients have no HTTP 429 handling — a rate limit response causes sync f
 
 ### Per-item error handling
 
-Bulk operations (delete assets, update people, add assets to albums) process items individually and track per-item results. A failure on one item doesn't abort the entire operation — the adapter continues processing remaining items and returns a result array with success/error status per item. The shared `classify_bulk_item_error()` helper in `routers/utils/error_mapping.py` maps `APIStatusError` subclasses to the canonical `not_found` / `no_permission` / `unknown` buckets; per-endpoint nuances (e.g. `ConflictError` → `duplicate`) are layered on top.
+Bulk operations expose per-item results to Immich clients via `BulkIdResponseDto[]`, but use one of two implementation shapes depending on whether the upstream Gumnut endpoint is itself bulk-aware:
+
+1. **Single bulk SDK call** (e.g. single-album `add_assets_to_album` / `remove_asset_from_album`). The upstream accepts a list and either splits the result server-side (`add` returns `{added_assets, duplicate_assets}`) or silently skips missing IDs (`remove` returns 204). The adapter maps the response body into per-item results on success; on a bulk error, the whole batch failed (the upstream validates before any DB write), so every requested asset is annotated with the same classified error.
+2. **Per-item fan-out** (e.g. `delete_assets`, `update_people`, multi-album `add_assets_to_albums`). The upstream operates one entity at a time; the adapter loops and tracks per-item results, continuing past per-item failures.
+
+Both shapes use `classify_bulk_item_error()` in `routers/utils/error_mapping.py` to map `APIStatusError` subclasses to the canonical `not_found` / `no_permission` / `unknown` buckets. Per-endpoint nuances are layered on top — e.g. multi-album `add_assets_to_albums` still catches `ConflictError` → `duplicate` from a per-album call, though that catch is effectively dead today since the upstream returns 200 with `duplicate_assets` rather than 409 (tracked for cleanup).
 
 ## Endpoint Implementation Status
 

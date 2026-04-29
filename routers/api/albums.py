@@ -357,6 +357,10 @@ async def add_assets_to_albums(
             )
             successful_operations += 1
         except ConflictError:
+            # Dead branch under the current upstream: photos-api returns 200
+            # with duplicate_assets populated rather than 409. Kept for
+            # forward-compat; tracked for cleanup alongside the bulk-call
+            # rewrite of this endpoint.
             if first_error is None:
                 first_error = BulkIdErrorReason.duplicate
         except APIStatusError as album_error:

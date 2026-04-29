@@ -1,5 +1,7 @@
 """Tests for albums.py endpoints."""
 
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, Mock
 from gumnut import NotFoundError
@@ -559,6 +561,39 @@ class TestAddAssetsToAlbum:
         assert all(item.success is False for item in result)
         assert all(item.error == Error1.unknown for item in result)
         assert mock_client.albums.assets_associations.add.call_count == 1
+
+    @pytest.mark.anyio
+    async def test_add_assets_missing_from_response_marked_unknown(
+        self, sample_uuid, caplog
+    ):
+        """An asset_id absent from both added and duplicate sets is marked unknown.
+
+        Defensive against drift in the upstream response shape — if photos-api
+        ever introduces a third bucket (e.g. `not_found_assets`), assets falling
+        into it surface as unknown + warning instead of silently succeeding.
+        """
+        present = uuid4()
+        missing = uuid4()
+        present_gid = uuid_to_gumnut_asset_id(present)
+
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            return_value=_add_response(added=[present_gid])
+        )
+
+        request = BulkIdsDto(ids=[present, missing])
+        with caplog.at_level(logging.WARNING):
+            result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        assert result[0].id == str(present)
+        assert result[0].success is True
+        assert result[1].id == str(missing)
+        assert result[1].success is False
+        assert result[1].error == Error1.unknown
+        assert any(
+            "missing from add_assets bulk response" in record.message
+            for record in caplog.records
+        )
 
 
 class TestUpdateAlbum:
