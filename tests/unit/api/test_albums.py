@@ -1,11 +1,14 @@
 """Tests for albums.py endpoints."""
 
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, Mock
 from gumnut import NotFoundError
+from gumnut.types.albums import AssetsAssociationAddResponse
 from uuid import uuid4
 
-from tests.conftest import make_sdk_status_error
+from tests.conftest import make_sdk_connection_error, make_sdk_status_error
 from routers.api.albums import (
     get_all_albums,
     get_album_statistics,
@@ -29,6 +32,15 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
     safe_uuid_from_asset_id,
 )
+
+
+def _add_response(
+    added: list[str] | None = None, duplicate: list[str] | None = None
+) -> AssetsAssociationAddResponse:
+    return AssetsAssociationAddResponse(
+        added_assets=added or [],
+        duplicate_assets=duplicate or [],
+    )
 
 
 class TestGetAllAlbums:
@@ -443,47 +455,79 @@ class TestAddAssetsToAlbum:
 
     @pytest.mark.anyio
     async def test_add_assets_success(self, sample_uuid):
-        """Test successful addition of assets to album."""
-        mock_client = Mock()
-        mock_client.albums.assets_associations.add = AsyncMock(return_value=None)
-
+        """A single bulk call adds every asset and returns success per asset."""
         asset_id1 = uuid4()
         asset_id2 = uuid4()
-        request = BulkIdsDto(ids=[asset_id1, asset_id2])
+        gumnut_id1 = uuid_to_gumnut_asset_id(asset_id1)
+        gumnut_id2 = uuid_to_gumnut_asset_id(asset_id2)
 
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            return_value=_add_response(added=[gumnut_id1, gumnut_id2])
+        )
+
+        request = BulkIdsDto(ids=[asset_id1, asset_id2])
+        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert all(item.success is True for item in result)
+        mock_client.albums.assets_associations.add.assert_called_once_with(
+            uuid_to_gumnut_album_id(sample_uuid),
+            asset_ids=[gumnut_id1, gumnut_id2],
+        )
+
+    @pytest.mark.anyio
+    async def test_add_assets_duplicates_from_response(self, sample_uuid):
+        """Duplicates are read from the response body."""
+        new_asset = uuid4()
+        dup_asset = uuid4()
+        new_gid = uuid_to_gumnut_asset_id(new_asset)
+        dup_gid = uuid_to_gumnut_asset_id(dup_asset)
+
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            return_value=_add_response(added=[new_gid], duplicate=[dup_gid])
+        )
+
+        request = BulkIdsDto(ids=[new_asset, dup_asset])
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
         assert len(result) == 2
-        assert all(item.success is True for item in result)
-        assert result[0].id == str(asset_id1)
-        assert result[1].id == str(asset_id2)
-        assert mock_client.albums.assets_associations.add.call_count == 2
+        assert result[0].id == str(new_asset)
+        assert result[0].success is True
+        assert result[1].id == str(dup_asset)
+        assert result[1].success is False
+        assert result[1].error == Error1.duplicate
 
     @pytest.mark.anyio
-    async def test_add_assets_not_found(self, mock_gumnut_client, sample_uuid):
-        """A NotFoundError on the per-asset add is captured as Error1.not_found."""
-        request = BulkIdsDto(ids=[uuid4()])
-        mock_gumnut_client.albums.assets_associations.add = AsyncMock(
+    async def test_add_assets_not_found_marks_all(self, sample_uuid):
+        """A 404 on the bulk call marks every requested asset as not_found.
+
+        Upstream validates membership before any DB write, so a 404 means the
+        whole batch failed — no per-item retry, no partial commit to recover.
+        """
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
             side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
         )
 
-        result = await add_assets_to_album(
-            sample_uuid, request, client=mock_gumnut_client
-        )
+        asset_id1 = uuid4()
+        asset_id2 = uuid4()
+        request = BulkIdsDto(ids=[asset_id1, asset_id2])
 
-        assert len(result) == 1
-        assert result[0].success is False
-        assert result[0].error == Error1.not_found
+        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert all(item.success is False for item in result)
+        assert all(item.error == Error1.not_found for item in result)
+        assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
-    async def test_add_assets_mixed_results(self, sample_uuid):
-        """Per-asset NotFoundError is captured as Error1.not_found, others as unknown."""
+    async def test_add_assets_other_api_status_error_marks_all(self, sample_uuid):
+        """A non-404 4xx/5xx on the bulk call marks every requested asset with the same error."""
         mock_client = Mock()
         mock_client.albums.assets_associations.add = AsyncMock(
-            side_effect=[
-                None,
-                make_sdk_status_error(404, "Asset not found", cls=NotFoundError),
-            ]
+            side_effect=make_sdk_status_error(500, "boom")
         )
 
         asset_id1 = uuid4()
@@ -492,29 +536,62 @@ class TestAddAssetsToAlbum:
 
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert len(result) == 2
-        assert result[0].success is True
-        assert result[0].id == str(asset_id1)
-        assert result[1].success is False
-        assert result[1].id == str(asset_id2)
-        assert result[1].error == Error1.not_found
+        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert all(item.success is False for item in result)
+        assert all(item.error == Error1.unknown for item in result)
+        assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
-    async def test_add_assets_duplicate(self, sample_uuid):
-        """A ConflictError from the SDK is mapped to Error1.duplicate."""
-        from gumnut import ConflictError
+    async def test_add_assets_transport_error_marks_all(self, sample_uuid):
+        """An SDK transport error on the bulk call marks every asset as unknown."""
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=make_sdk_connection_error()
+        )
+
+        asset_id1 = uuid4()
+        asset_id2 = uuid4()
+        request = BulkIdsDto(ids=[asset_id1, asset_id2])
+
+        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert all(item.success is False for item in result)
+        assert all(item.error == Error1.unknown for item in result)
+        assert mock_client.albums.assets_associations.add.call_count == 1
+
+    @pytest.mark.anyio
+    async def test_add_assets_missing_from_response_marked_unknown(
+        self, sample_uuid, caplog
+    ):
+        """An asset_id absent from both added and duplicate sets is marked unknown.
+
+        Defensive against drift in the upstream response shape — if photos-api
+        ever introduces a third bucket (e.g. `not_found_assets`), assets falling
+        into it surface as unknown + warning instead of silently succeeding.
+        """
+        present = uuid4()
+        missing = uuid4()
+        present_gid = uuid_to_gumnut_asset_id(present)
 
         mock_client = Mock()
         mock_client.albums.assets_associations.add = AsyncMock(
-            side_effect=make_sdk_status_error(409, "duplicate", cls=ConflictError)
+            return_value=_add_response(added=[present_gid])
         )
 
-        request = BulkIdsDto(ids=[uuid4()])
-        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+        request = BulkIdsDto(ids=[present, missing])
+        with caplog.at_level(logging.WARNING):
+            result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert len(result) == 1
-        assert result[0].success is False
-        assert result[0].error == Error1.duplicate
+        assert result[0].id == str(present)
+        assert result[0].success is True
+        assert result[1].id == str(missing)
+        assert result[1].success is False
+        assert result[1].error == Error1.unknown
+        assert any(
+            "missing from add_assets bulk response" in record.message
+            for record in caplog.records
+        )
 
 
 class TestUpdateAlbum:
@@ -591,43 +668,49 @@ class TestRemoveAssetFromAlbum:
 
     @pytest.mark.anyio
     async def test_remove_assets_success(self, sample_uuid):
-        """Test successful removal of assets from album."""
+        """A single bulk call removes every asset and returns success per asset."""
+        asset_id1 = uuid4()
+        asset_id2 = uuid4()
+        gumnut_id1 = uuid_to_gumnut_asset_id(asset_id1)
+        gumnut_id2 = uuid_to_gumnut_asset_id(asset_id2)
+
         mock_client = Mock()
         mock_client.albums.assets_associations.remove = AsyncMock(return_value=None)
 
-        asset_id1 = uuid4()
-        asset_id2 = uuid4()
         request = BulkIdsDto(ids=[asset_id1, asset_id2])
-
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        assert len(result) == 2
+        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
         assert all(item.success is True for item in result)
-        assert result[0].id == str(asset_id1)
-        assert result[1].id == str(asset_id2)
-        assert mock_client.albums.assets_associations.remove.call_count == 2
+        mock_client.albums.assets_associations.remove.assert_called_once_with(
+            uuid_to_gumnut_album_id(sample_uuid),
+            asset_ids=[gumnut_id1, gumnut_id2],
+        )
 
     @pytest.mark.anyio
-    async def test_remove_assets_not_found(self, sample_uuid):
-        """A NotFoundError on a per-asset remove is captured as Error1.not_found."""
+    async def test_remove_assets_album_not_found_marks_all(self, sample_uuid):
+        """A 404 on the bulk call (album missing) marks every asset as not_found."""
         mock_client = Mock()
         mock_client.albums.assets_associations.remove = AsyncMock(
             side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
         )
 
-        request = BulkIdsDto(ids=[uuid4()])
+        asset_id1 = uuid4()
+        asset_id2 = uuid4()
+        request = BulkIdsDto(ids=[asset_id1, asset_id2])
+
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        assert len(result) == 1
-        assert result[0].success is False
-        assert result[0].error == Error1.not_found
+        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert all(item.success is False for item in result)
+        assert all(item.error == Error1.not_found for item in result)
 
     @pytest.mark.anyio
-    async def test_remove_assets_mixed_results(self, sample_uuid):
-        """One success + one APIStatusError failure returns mixed per-item results."""
+    async def test_remove_assets_other_error_marks_all(self, sample_uuid):
+        """A non-404 4xx/5xx marks every asset with the classified error."""
         mock_client = Mock()
         mock_client.albums.assets_associations.remove = AsyncMock(
-            side_effect=[None, make_sdk_status_error(500, "boom")]
+            side_effect=make_sdk_status_error(500, "boom")
         )
 
         asset_id1 = uuid4()
@@ -636,12 +719,27 @@ class TestRemoveAssetFromAlbum:
 
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        assert len(result) == 2
-        assert result[0].success is True
-        assert result[0].id == str(asset_id1)
-        assert result[1].success is False
-        assert result[1].id == str(asset_id2)
-        assert result[1].error == Error1.unknown
+        assert all(item.success is False for item in result)
+        assert all(item.error == Error1.unknown for item in result)
+        assert mock_client.albums.assets_associations.remove.call_count == 1
+
+    @pytest.mark.anyio
+    async def test_remove_assets_transport_error_marks_all(self, sample_uuid):
+        """An SDK transport error on the bulk call marks every asset as unknown."""
+        mock_client = Mock()
+        mock_client.albums.assets_associations.remove = AsyncMock(
+            side_effect=make_sdk_connection_error()
+        )
+
+        asset_id1 = uuid4()
+        asset_id2 = uuid4()
+        request = BulkIdsDto(ids=[asset_id1, asset_id2])
+
+        result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
+
+        assert all(item.success is False for item in result)
+        assert all(item.error == Error1.unknown for item in result)
+        assert mock_client.albums.assets_associations.remove.call_count == 1
 
 
 class TestDeleteAlbum:
