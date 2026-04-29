@@ -9,13 +9,11 @@ from fastapi.responses import JSONResponse
 from gumnut import (
     APIConnectionError,
     APIResponseValidationError,
-    APIStatusError,
     GumnutError,
-    RateLimitError,
 )
 
 from routers.utils.error_mapping import (
-    extract_detail_from_status_error,
+    classify_stainless_error,
     log_upstream_response,
     logger,
 )
@@ -64,33 +62,28 @@ async def _gumnut_error_handler(request: Request, exc: GumnutError) -> JSONRespo
     """
     context = _route_context(request)
 
-    # RateLimitError must never surface as 429 to Immich clients — they
-    # have no 429 handling and would break (sync failures, broken thumbs).
-    if isinstance(exc, RateLimitError):
+    classification = classify_stainless_error(
+        exc,
+        context=context,
+        rate_limit_response_detail="Upstream temporarily unavailable",
+    )
+    if classification is not None:
+        log_extra: dict[str, Any] = {}
+        if classification.error_detail_for_log is not None:
+            log_extra["error_detail"] = classification.error_detail_for_log
+
         log_upstream_response(
             logger,
             context=context,
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            message="SDK retries exhausted for rate-limited request",
+            status_code=classification.log_status_code,
+            message=classification.log_message,
+            extra=log_extra or None,
             exc_info=True,
         )
         return _immich_response(
-            status.HTTP_502_BAD_GATEWAY,
-            "Upstream temporarily unavailable",
+            classification.client_status_code,
+            classification.response_detail,
         )
-
-    if isinstance(exc, APIStatusError):
-        detail = extract_detail_from_status_error(exc)
-        log_extra: dict[str, Any] = {"error_detail": detail[:500]}
-        log_upstream_response(
-            logger,
-            context=context,
-            status_code=exc.status_code,
-            message=f"Gumnut SDK error in {context}: {exc.message}",
-            extra=log_extra,
-            exc_info=True,
-        )
-        return _immich_response(exc.status_code, detail)
 
     if isinstance(exc, APIResponseValidationError):
         # Schema mismatch is a contract bug — log at 502 ERROR severity, not

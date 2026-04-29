@@ -11,10 +11,13 @@ from gumnut import (
     BadRequestError,
     NotFoundError,
     PermissionDeniedError,
+    RateLimitError,
 )
 
 import routers.utils.error_mapping as error_mapping_module
 from routers.utils.error_mapping import (
+    ERROR_DETAIL_MAX_CHARS,
+    classify_stainless_error,
     log_upstream_response,
     map_gumnut_error,
     upstream_status_log_level,
@@ -99,6 +102,65 @@ class TestLogUpstreamResponse:
         record = matching_records[-1]
         assert record.exc_info is not None
         assert record.exc_info[0] is ValueError
+
+
+class TestClassifyStainlessError:
+    """Test shared Stainless SDK error classification."""
+
+    def test_rate_limit_classification(self):
+        err = make_sdk_status_error(429, "Too many requests", cls=RateLimitError)
+
+        result = classify_stainless_error(
+            err,
+            context="Failed to upload asset",
+            rate_limit_response_detail=(
+                "Failed to upload asset: Upstream temporarily unavailable"
+            ),
+        )
+
+        assert result is not None
+        assert result.client_status_code == 502
+        assert result.log_status_code == 429
+        assert result.log_message == "SDK retries exhausted for rate-limited request"
+        assert (
+            result.response_detail
+            == "Failed to upload asset: Upstream temporarily unavailable"
+        )
+        assert result.error_detail_for_log is None
+
+    def test_status_error_classification(self):
+        detail = "JWT has expired"
+        err = make_sdk_status_error(
+            401,
+            "raw",
+            body={"detail": detail},
+            cls=AuthenticationError,
+        )
+
+        result = classify_stainless_error(
+            err,
+            context="Failed to fetch user details",
+            rate_limit_response_detail="ignored for status errors",
+        )
+
+        assert result is not None
+        assert result.client_status_code == 401
+        assert result.log_status_code == 401
+        assert (
+            result.log_message
+            == "Gumnut SDK error in Failed to fetch user details: raw"
+        )
+        assert result.response_detail == detail
+        assert result.error_detail_for_log == detail[:ERROR_DETAIL_MAX_CHARS]
+
+    def test_non_stainless_error_returns_none(self):
+        result = classify_stainless_error(
+            ValueError("boom"),
+            context="ctx",
+            rate_limit_response_detail="ctx: Upstream temporarily unavailable",
+        )
+
+        assert result is None
 
 
 class TestMapGumnutError:

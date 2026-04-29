@@ -11,6 +11,7 @@ upload paths logging filename / device ids / `exc_info`).
 """
 
 import logging
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, TypeVar
 
@@ -33,6 +34,17 @@ ERROR_DETAIL_MAX_CHARS = 500
 E = TypeVar("E", bound=Enum)
 
 
+@dataclass(frozen=True)
+class StainlessErrorClassification:
+    """Shared classification result for common Stainless SDK exceptions."""
+
+    client_status_code: int
+    log_status_code: int
+    log_message: str
+    response_detail: str
+    error_detail_for_log: str | None = None
+
+
 def truncated_error_detail(exc: Exception) -> str:
     """Stringify and truncate an exception for the `error_detail` log field."""
     return str(exc)[:ERROR_DETAIL_MAX_CHARS]
@@ -52,6 +64,39 @@ def extract_detail_from_status_error(exc: APIStatusError) -> str:
             if isinstance(value, str) and value:
                 return value
     return exc.message or f"Upstream HTTP {exc.status_code}"
+
+
+def classify_stainless_error(
+    exc: Exception,
+    *,
+    context: str,
+    rate_limit_response_detail: str,
+) -> StainlessErrorClassification | None:
+    """Classify common Stainless SDK errors shared by multiple call sites.
+
+    Returns `None` when the error should be handled by caller-specific logic.
+    """
+    # Rate-limit errors must never surface as 429 to Immich clients (no 429
+    # handling on the client side; would break sync, thumbnails, uploads).
+    if isinstance(exc, RateLimitError):
+        return StainlessErrorClassification(
+            client_status_code=status.HTTP_502_BAD_GATEWAY,
+            log_status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            log_message="SDK retries exhausted for rate-limited request",
+            response_detail=rate_limit_response_detail,
+        )
+
+    if isinstance(exc, APIStatusError):
+        detail = extract_detail_from_status_error(exc)
+        return StainlessErrorClassification(
+            client_status_code=exc.status_code,
+            log_status_code=exc.status_code,
+            log_message=f"Gumnut SDK error in {context}: {exc.message}",
+            response_detail=detail,
+            error_detail_for_log=detail[:ERROR_DETAIL_MAX_CHARS],
+        )
+
+    return None
 
 
 def classify_bulk_item_error(exc: APIStatusError, enum_cls: type[E]) -> E:
@@ -163,36 +208,28 @@ def map_gumnut_error(
     Returns:
         HTTPException with appropriate status code and detail message
     """
-    # Rate-limit errors must never surface as 429 to Immich clients (no 429
-    # handling on the client side; would break sync, thumbnails, uploads).
-    if isinstance(e, RateLimitError):
+    classification = classify_stainless_error(
+        e,
+        context=context,
+        rate_limit_response_detail=f"{context}: Upstream temporarily unavailable",
+    )
+    if classification is not None:
+        log_extra: dict[str, Any] = dict(extra or {})
+        if classification.error_detail_for_log is not None:
+            log_extra["error_detail"] = classification.error_detail_for_log
+
         log_upstream_response(
             logger,
             context=context,
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            message="SDK retries exhausted for rate-limited request",
-            extra=extra,
+            status_code=classification.log_status_code,
+            message=classification.log_message,
+            extra=log_extra or None,
             exc_info=exc_info,
         )
         return HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"{context}: Upstream temporarily unavailable",
+            status_code=classification.client_status_code,
+            detail=classification.response_detail,
         )
-
-    if isinstance(e, APIStatusError):
-        detail = extract_detail_from_status_error(e)
-
-        log_extra: dict[str, Any] = dict(extra or {})
-        log_extra["error_detail"] = detail[:ERROR_DETAIL_MAX_CHARS]
-        log_upstream_response(
-            logger,
-            context=context,
-            status_code=e.status_code,
-            message=f"Gumnut SDK error in {context}: {e.message}",
-            extra=log_extra,
-            exc_info=exc_info,
-        )
-        return HTTPException(status_code=e.status_code, detail=detail)
 
     # Non-SDK exception (transport error, programmer error, etc.) — map to 500.
     log_upstream_response(
