@@ -1146,6 +1146,33 @@ class TestDeleteAssets:
         assert mock_emit.await_count == 3
 
     @pytest.mark.anyio
+    async def test_delete_assets_force_true_chunks_and_emits_per_id(self):
+        """force=True over the cap chunks bulk DELETE and emits one event per id."""
+        mock_client = Mock()
+        mock_client.delete = AsyncMock(return_value=None)
+
+        asset_ids = [uuid4() for _ in range(250)]
+        request = AssetBulkDeleteDto(ids=asset_ids, force=True)
+        current_user_id = uuid4()
+
+        with patch(
+            "routers.api.assets.emit_user_event", new_callable=AsyncMock
+        ) as mock_emit:
+            result = await delete_assets(
+                request, client=mock_client, current_user_id=current_user_id
+            )
+
+        assert result.status_code == 204
+        assert mock_client.delete.await_count == 3
+        chunk_sizes = [
+            len(call.kwargs["body"]["ids"])
+            for call in mock_client.delete.await_args_list
+        ]
+        assert chunk_sizes == [100, 100, 50]
+        # 250 per-id on_asset_delete events across all chunks.
+        assert mock_emit.await_count == 250
+
+    @pytest.mark.anyio
     async def test_delete_assets_websocket_error_does_not_fail_deletion(self):
         """WebSocket emission errors must not fail the deletion."""
         mock_client = Mock()

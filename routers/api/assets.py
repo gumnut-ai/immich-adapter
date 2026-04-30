@@ -24,7 +24,10 @@ from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    BULK_CHUNK_SIZE,
+    get_authenticated_gumnut_client,
+)
 from routers.utils.error_mapping import map_gumnut_error
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
@@ -73,11 +76,6 @@ router = APIRouter(
     tags=["assets"],
     responses={404: {"description": "Not found"}},
 )
-
-
-# Backend caps bulk-id endpoints at MAX_BULK_GET_IDS=100 per request; chunk
-# requests larger than that to stay under the cap.
-_BULK_CHUNK_SIZE = 100
 
 
 AssetVariant = Literal["thumbnail", "preview", "fullsize", "original"]
@@ -627,7 +625,7 @@ async def _bulk_permanent_delete(
     user_id: str,
 ) -> None:
     """Bulk hard-delete; emits one on_asset_delete per id."""
-    for chunk in batched(asset_uuids, _BULK_CHUNK_SIZE):
+    for chunk in batched(asset_uuids, BULK_CHUNK_SIZE):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
         await client.delete(
             "/api/assets",
@@ -657,7 +655,7 @@ async def _bulk_trash(
     user_id: str,
 ) -> None:
     """Bulk soft-delete; emits one batched on_asset_trash per chunk."""
-    for chunk in batched(asset_uuids, _BULK_CHUNK_SIZE):
+    for chunk in batched(asset_uuids, BULK_CHUNK_SIZE):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
         await client.post(
             "/api/assets/trash",

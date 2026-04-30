@@ -178,6 +178,25 @@ class TestRestoreTrash:
         assert set(payload) == {str(safe_uuid_from_asset_id(gid)) for gid in gumnut_ids}
 
     @pytest.mark.anyio
+    async def test_websocket_error_does_not_fail_restore_trash(self):
+        """SocketIOError from emit must not fail the restore-all flow."""
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+
+        gumnut_ids = [uuid_to_gumnut_asset_id(uuid4()) for _ in range(2)]
+        trashed_assets = [_make_trashed_asset_mock(gid) for gid in gumnut_ids]
+        mock_client.assets.list = Mock(return_value=MockSyncCursorPage(trashed_assets))
+
+        with patch(
+            "routers.api.trash.emit_user_event",
+            new_callable=AsyncMock,
+            side_effect=SocketIOError("ws error"),
+        ):
+            result = await restore_trash(client=mock_client, current_user_id=uuid4())
+
+        assert result.count == 2
+
+    @pytest.mark.anyio
     async def test_chunks_large_trash_lists(self):
         mock_client = Mock()
         mock_client.post = AsyncMock(return_value=None)
@@ -267,3 +286,22 @@ class TestEmptyTrash:
             for call in mock_client.delete.await_args_list
         ]
         assert chunk_sizes == [100, 50]
+
+    @pytest.mark.anyio
+    async def test_websocket_error_does_not_fail_empty_trash(self):
+        """SocketIOError from emit must not fail the empty-trash flow."""
+        mock_client = Mock()
+        mock_client.delete = AsyncMock(return_value=None)
+
+        gumnut_ids = [uuid_to_gumnut_asset_id(uuid4()) for _ in range(2)]
+        trashed_assets = [_make_trashed_asset_mock(gid) for gid in gumnut_ids]
+        mock_client.assets.list = Mock(return_value=MockSyncCursorPage(trashed_assets))
+
+        with patch(
+            "routers.api.trash.emit_user_event",
+            new_callable=AsyncMock,
+            side_effect=SocketIOError("ws error"),
+        ):
+            result = await empty_trash(client=mock_client, current_user_id=uuid4())
+
+        assert result.count == 2

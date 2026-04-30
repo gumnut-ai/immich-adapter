@@ -25,7 +25,10 @@ from routers.immich_models import (
     TrashResponseDto,
 )
 from routers.utils.current_user import get_current_user_id
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    BULK_CHUNK_SIZE,
+    get_authenticated_gumnut_client,
+)
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     uuid_to_gumnut_asset_id,
@@ -33,11 +36,6 @@ from routers.utils.gumnut_id_conversion import (
 from services.websockets import emit_user_event, WebSocketEvent
 
 logger = logging.getLogger(__name__)
-
-# Backend caps bulk-id endpoints at MAX_BULK_GET_IDS=100 per request; chunk
-# requests larger than that to stay under the cap. List enumeration uses the
-# same value for the per-page limit so each page maps to a single bulk call.
-_BULK_CHUNK_SIZE = 100
 
 
 router = APIRouter(
@@ -61,16 +59,13 @@ async def empty_trash(
     """
     user_id = str(current_user_id)
     trashed_gumnut_ids = await _list_trashed_ids(client)
-    total = 0
-    for chunk in batched(trashed_gumnut_ids, _BULK_CHUNK_SIZE):
-        chunk_list = list(chunk)
+    for chunk in batched(trashed_gumnut_ids, BULK_CHUNK_SIZE):
         await client.delete(
             "/api/assets",
-            body={"ids": chunk_list},
+            body={"ids": list(chunk)},
             cast_to=type(None),
         )
-        total += len(chunk_list)
-        for gumnut_id in chunk_list:
+        for gumnut_id in chunk:
             asset_uuid = safe_uuid_from_asset_id(gumnut_id)
             try:
                 await emit_user_event(
@@ -86,7 +81,7 @@ async def empty_trash(
                         "error": str(ws_error),
                     },
                 )
-    return TrashResponseDto(count=total)
+    return TrashResponseDto(count=len(trashed_gumnut_ids))
 
 
 @router.post("/restore")
@@ -103,16 +98,13 @@ async def restore_trash(
     """
     user_id = str(current_user_id)
     trashed_gumnut_ids = await _list_trashed_ids(client)
-    total = 0
-    for chunk in batched(trashed_gumnut_ids, _BULK_CHUNK_SIZE):
-        chunk_list = list(chunk)
+    for chunk in batched(trashed_gumnut_ids, BULK_CHUNK_SIZE):
         await client.post(
             "/api/assets/restore",
-            body={"ids": chunk_list},
+            body={"ids": list(chunk)},
             cast_to=type(None),
         )
-        total += len(chunk_list)
-        chunk_uuid_strs = [str(safe_uuid_from_asset_id(gid)) for gid in chunk_list]
+        chunk_uuid_strs = [str(safe_uuid_from_asset_id(gid)) for gid in chunk]
         try:
             await emit_user_event(
                 WebSocketEvent.ASSET_RESTORE,
@@ -127,7 +119,7 @@ async def restore_trash(
                     "error": str(ws_error),
                 },
             )
-    return TrashResponseDto(count=total)
+    return TrashResponseDto(count=len(trashed_gumnut_ids))
 
 
 @router.post("/restore/assets")
@@ -139,7 +131,7 @@ async def restore_assets(
     """Restore the caller's trashed assets identified by the given ids.
 
     Issues bulk ``POST /api/assets/restore`` calls in chunks of
-    ``_BULK_CHUNK_SIZE``. Emits a single batched ``on_asset_restore`` event
+    ``BULK_CHUNK_SIZE``. Emits a single batched ``on_asset_restore`` event
     per chunk. Already-live ids are silently skipped on the backend; the
     returned count therefore reflects the request size, not the number of
     rows that actually transitioned (the backend's restore endpoint returns
@@ -149,7 +141,7 @@ async def restore_assets(
         return TrashResponseDto(count=0)
 
     user_id = str(current_user_id)
-    for chunk in batched(request.ids, _BULK_CHUNK_SIZE):
+    for chunk in batched(request.ids, BULK_CHUNK_SIZE):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
         await client.post(
             "/api/assets/restore",
@@ -184,5 +176,5 @@ async def _list_trashed_ids(client: AsyncGumnut) -> list[str]:
     """
     return [
         asset.id
-        async for asset in client.assets.list(state="trashed", limit=_BULK_CHUNK_SIZE)
+        async for asset in client.assets.list(state="trashed", limit=BULK_CHUNK_SIZE)
     ]
