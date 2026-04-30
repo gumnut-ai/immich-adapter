@@ -35,7 +35,12 @@ class WebSocketEvent(Enum):
     # Phase 1: Can implement now
     UPLOAD_SUCCESS = "on_upload_success"
     ASSET_UPLOAD_READY_V1 = "AssetUploadReadyV1"
+    # ASSET_DELETE carries a single id per event; ASSET_TRASH/ASSET_RESTORE
+    # carry an array of ids per event — matches Immich's wire contract:
+    # on_asset_delete: [string], on_asset_trash/on_asset_restore: [string[]].
     ASSET_DELETE = "on_asset_delete"
+    ASSET_TRASH = "on_asset_trash"
+    ASSET_RESTORE = "on_asset_restore"
     SESSION_DELETE = "on_session_delete"
     SERVER_VERSION = "on_server_version"
 
@@ -214,7 +219,8 @@ async def emit_user_event(
     Emit a WebSocket event to all of a user's connected clients.
 
     Use this for events that should reach all sessions for a user:
-    UPLOAD_SUCCESS, ASSET_UPLOAD_READY_V1, ASSET_DELETE, etc.
+    UPLOAD_SUCCESS, ASSET_UPLOAD_READY_V1, ASSET_DELETE, ASSET_TRASH,
+    ASSET_RESTORE, etc.
 
     Args:
         event: The event type (from WebSocketEvent enum)
