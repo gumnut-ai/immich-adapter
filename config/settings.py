@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
     oauth_mobile_redirect_uri: str = "app.immich:///oauth-callback"
 
+    # Trash retention before scheduled purge runs on the photos-api side.
+    # Surfaced to Immich clients via /api/server/config as `trashDays` and
+    # rendered on the web trash page as "permanently deleted after N days".
+    # Must be kept in sync with photos-api's TRASH_RETENTION_DAYS at deploy time.
+    trash_retention_days: int = 90
+
     # Session encryption key for Fernet (base64-encoded 32-byte key)
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     session_encryption_key: str = ""

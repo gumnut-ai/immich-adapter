@@ -273,6 +273,7 @@ class TestSearchMetadata:
         gumnut_asset.file_size_bytes = 1024000
         gumnut_asset.metadata = None
         gumnut_asset.people = []
+        gumnut_asset.trashed_at = None
 
         search_item = Mock()
         search_item.asset = gumnut_asset

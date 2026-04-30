@@ -157,6 +157,7 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     asset.height = 1080
     asset.file_size_bytes = 1059218
     asset.metadata = None
+    asset.trashed_at = None
     return asset
 
 
