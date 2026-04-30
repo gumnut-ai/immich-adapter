@@ -119,8 +119,10 @@ class TestRestoreAssets:
 
         request = BulkIdsDto(ids=[uuid4()])
 
+        # Patch the underlying emit so the SocketIOError originates *inside*
+        # emit_user_event (which now swallows it centrally).
         with patch(
-            "routers.api.trash.emit_user_event",
+            "services.websockets._emit_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("ws error"),
         ):
@@ -209,7 +211,7 @@ class TestRestoreTrash:
         mock_client.assets.list = Mock(return_value=MockSyncCursorPage(trashed_assets))
 
         with patch(
-            "routers.api.trash.emit_user_event",
+            "services.websockets._emit_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("ws error"),
         ):
@@ -337,7 +339,7 @@ class TestEmptyTrash:
         mock_client.assets.list = Mock(return_value=MockSyncCursorPage(trashed_assets))
 
         with patch(
-            "routers.api.trash.emit_user_event",
+            "services.websockets._emit_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("ws error"),
         ):

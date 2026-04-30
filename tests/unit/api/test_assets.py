@@ -1181,8 +1181,10 @@ class TestDeleteAssets:
         request = AssetBulkDeleteDto(ids=[uuid4()], force=False)
         current_user_id = uuid4()
 
+        # Patch the underlying emit so the SocketIOError originates *inside*
+        # emit_user_event (which now swallows it centrally).
         with patch(
-            "routers.api.assets.emit_user_event",
+            "services.websockets._emit_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("WebSocket error"),
         ):

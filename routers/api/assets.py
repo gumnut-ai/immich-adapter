@@ -31,7 +31,6 @@ from routers.utils.gumnut_client import (
 from routers.utils.error_mapping import map_gumnut_error
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
-from socketio.exceptions import SocketIOError
 
 from services.streaming_upload import StreamingUploadPipeline
 from services.websockets import emit_user_event, WebSocketEvent
@@ -633,20 +632,11 @@ async def _bulk_permanent_delete(
             cast_to=type(None),
         )
         for asset_uuid in chunk:
-            try:
-                await emit_user_event(
-                    WebSocketEvent.ASSET_DELETE,
-                    user_id,
-                    str(asset_uuid),
-                )
-            except SocketIOError as ws_error:
-                logger.warning(
-                    "Failed to emit on_asset_delete after permanent delete",
-                    extra={
-                        "asset_id": str(asset_uuid),
-                        "error": str(ws_error),
-                    },
-                )
+            await emit_user_event(
+                WebSocketEvent.ASSET_DELETE,
+                user_id,
+                str(asset_uuid),
+            )
 
 
 async def _bulk_trash(
@@ -663,20 +653,11 @@ async def _bulk_trash(
             cast_to=type(None),
         )
         chunk_uuid_strs = [str(uid) for uid in chunk]
-        try:
-            await emit_user_event(
-                WebSocketEvent.ASSET_TRASH,
-                user_id,
-                chunk_uuid_strs,
-            )
-        except SocketIOError as ws_error:
-            logger.warning(
-                "Failed to emit on_asset_trash after soft delete",
-                extra={
-                    "asset_count": len(chunk_uuid_strs),
-                    "error": str(ws_error),
-                },
-            )
+        await emit_user_event(
+            WebSocketEvent.ASSET_TRASH,
+            user_id,
+            chunk_uuid_strs,
+        )
 
 
 @router.get("/device/{deviceId}", deprecated=True)

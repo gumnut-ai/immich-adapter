@@ -159,7 +159,9 @@ Starting with `on_upload_success`, but designed for future extension:
 |---|---|---|---|---|
 | `on_upload_success` | `AssetResponseDto` | Yes | Legacy | photos-api thumbnails are synchronous |
 | `AssetUploadReadyV1` | `SyncAssetV1` + `SyncAssetExifV1` | No | v2 sync | Emit alongside `on_upload_success` |
-| `on_asset_delete` | `string` (assetId) | Yes | Yes | photos-api deletion is synchronous |
+| `on_asset_delete` | `string` (assetId) | Yes | Yes | One per id; force=true permanent delete |
+| `on_asset_trash` | `string[]` (assetIds) | Yes | Yes | Batched per chunk; force=false soft delete |
+| `on_asset_restore` | `string[]` (assetIds) | Yes | Yes | Batched per chunk; restore from trash |
 | `on_session_delete` | `string` (sessionId) | Yes | No | Sessions managed by immich-adapter |
 | `on_server_version` | `ServerVersionResponseDto` | Yes | No | Sent on connect (existing) |
 
@@ -175,7 +177,6 @@ These events require features that don't exist in photos-api:
 
 | Event | Reason |
 |---|---|
-| `on_asset_trash` / `on_asset_restore` | photos-api hard-deletes (no soft-delete) |
 | `on_asset_update` | Assets are immutable after creation |
 | `on_asset_stack_update` | Stacks not implemented |
 | `on_asset_hidden` | Asset visibility not supported |
@@ -186,7 +187,7 @@ These events require features that don't exist in photos-api:
 ### Implementation Priority
 
 1. **`on_upload_success` + `AssetUploadReadyV1`** - Core upload feedback for web and mobile
-2. **`on_asset_delete`** - Timeline synchronization
+2. **`on_asset_delete` + `on_asset_trash` + `on_asset_restore`** - Timeline synchronization for hard-delete, soft-delete, and restore flows
 3. **`on_session_delete`** - Security critical; forces web logout when session deleted
 
 ### 3.3 Mobile v2 Sync Protocol
@@ -218,6 +219,8 @@ class WebSocketEvent(Enum):
     UPLOAD_SUCCESS = "on_upload_success"
     ASSET_UPLOAD_READY_V1 = "AssetUploadReadyV1"
     ASSET_DELETE = "on_asset_delete"
+    ASSET_TRASH = "on_asset_trash"
+    ASSET_RESTORE = "on_asset_restore"
     SESSION_DELETE = "on_session_delete"
     SERVER_VERSION = "on_server_version"
 
@@ -298,6 +301,8 @@ class WebSocketEvent(Enum):
     UPLOAD_SUCCESS = "on_upload_success"
     ASSET_UPLOAD_READY_V1 = "AssetUploadReadyV1"
     ASSET_DELETE = "on_asset_delete"
+    ASSET_TRASH = "on_asset_trash"
+    ASSET_RESTORE = "on_asset_restore"
     SESSION_DELETE = "on_session_delete"
     SERVER_VERSION = "on_server_version"
 
@@ -416,14 +421,14 @@ async def emit_event(event: WebSocketEvent, user_id: str, payload: EventPayload 
 ```python
 # In routers/api/assets.py (after upload completes)
 
-from routers.api.websockets import emit_event, WebSocketEvent
+from services.websockets import emit_user_event, WebSocketEvent
 
 @router.post("/assets")
 async def upload_asset(...):
     # ... upload logic ...
 
-    # Notify connected clients
-    await emit_event(WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response_dto)
+    # Fire-and-forget; SocketIOError is swallowed inside emit_user_event.
+    await emit_user_event(WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response_dto)
 
     return asset_response_dto
 ```
@@ -435,9 +440,9 @@ async def upload_asset(...):
 async def delete_assets(...):
     # ... delete logic ...
 
-    # Notify connected clients for each deleted asset
+    # No try/except needed — emit_user_event swallows SocketIOError centrally.
     for asset_id in deleted_asset_ids:
-        await emit_event(WebSocketEvent.ASSET_DELETE, current_user.id, asset_id)
+        await emit_user_event(WebSocketEvent.ASSET_DELETE, current_user.id, asset_id)
 ```
 
 ---
@@ -446,9 +451,9 @@ async def delete_assets(...):
 
 ### 5.1 Error Handling
 
-- If `emit_upload_success` is called for a user with no connected clients, it's a no-op (no error)
+- If `emit_user_event` is called for a user with no connected clients, it's a no-op (no error)
 - Session lookup failures during connect result in connection rejection
-- Emit failures should be logged but not block the upload response
+- **Emit failures are swallowed centrally**: `emit_user_event` and `emit_session_event` catch `SocketIOError` from the underlying transport, log at WARN with `exc_info=True`, and return normally. Callers must NOT wrap these in `try/except SocketIOError` — the fire-and-forget contract is type-level so emit failures cannot break the request paired with them. If a caller needs to handle other exception types (e.g., DTO conversion before the emit), it can still wrap the broader block in its own try/except.
 
 ### 5.2 Payload Serialization
 

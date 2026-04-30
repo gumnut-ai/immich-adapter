@@ -12,13 +12,11 @@ through ``AsyncGumnut.post`` / ``.delete`` directly. Errors propagate to the
 global ``GumnutError`` handler.
 """
 
-import logging
 from itertools import batched
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from gumnut import AsyncGumnut
-from socketio.exceptions import SocketIOError
 
 from routers.immich_models import (
     BulkIdsDto,
@@ -34,8 +32,6 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
 )
 from services.websockets import emit_user_event, WebSocketEvent
-
-logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
@@ -55,7 +51,10 @@ async def empty_trash(
     Enumerates the caller's trashed ids, then issues bulk
     ``DELETE /api/assets`` calls in chunks. Emits one ``on_asset_delete`` per
     purged id, matching Immich's wire shape (single-id-per-event for permanent
-    deletes). Returns the total number of ids purged.
+    deletes). The returned count reflects the upfront enumerated id list;
+    between enumeration and the chunked deletes a concurrent request could
+    transition some ids, so the count can diverge slightly from rows actually
+    purged in this call. The bulk DELETE is idempotent on already-purged ids.
     """
     user_id = str(current_user_id)
     trashed_gumnut_ids = await _list_trashed_ids(client)
@@ -67,20 +66,11 @@ async def empty_trash(
         )
         for gumnut_id in chunk:
             asset_uuid = safe_uuid_from_asset_id(gumnut_id)
-            try:
-                await emit_user_event(
-                    WebSocketEvent.ASSET_DELETE,
-                    user_id,
-                    str(asset_uuid),
-                )
-            except SocketIOError as ws_error:
-                logger.warning(
-                    "Failed to emit on_asset_delete during empty_trash",
-                    extra={
-                        "asset_id": str(asset_uuid),
-                        "error": str(ws_error),
-                    },
-                )
+            await emit_user_event(
+                WebSocketEvent.ASSET_DELETE,
+                user_id,
+                str(asset_uuid),
+            )
     return TrashResponseDto(count=len(trashed_gumnut_ids))
 
 
@@ -93,8 +83,11 @@ async def restore_trash(
 
     Enumerates the caller's trashed ids, then issues bulk
     ``POST /api/assets/restore`` calls in chunks. Emits a single batched
-    ``on_asset_restore`` event per chunk carrying the chunk's id array, and
-    returns the total restored count.
+    ``on_asset_restore`` event per chunk carrying the chunk's id array. The
+    returned count reflects the upfront enumerated id list; concurrent
+    transitions between enumeration and the chunked restores can make it
+    diverge slightly from rows actually restored in this call. The backend's
+    restore endpoint is idempotent on already-live ids.
     """
     user_id = str(current_user_id)
     trashed_gumnut_ids = await _list_trashed_ids(client)
@@ -105,20 +98,11 @@ async def restore_trash(
             cast_to=type(None),
         )
         chunk_uuid_strs = [str(safe_uuid_from_asset_id(gid)) for gid in chunk]
-        try:
-            await emit_user_event(
-                WebSocketEvent.ASSET_RESTORE,
-                user_id,
-                chunk_uuid_strs,
-            )
-        except SocketIOError as ws_error:
-            logger.warning(
-                "Failed to emit on_asset_restore during restore_trash",
-                extra={
-                    "asset_count": len(chunk_uuid_strs),
-                    "error": str(ws_error),
-                },
-            )
+        await emit_user_event(
+            WebSocketEvent.ASSET_RESTORE,
+            user_id,
+            chunk_uuid_strs,
+        )
     return TrashResponseDto(count=len(trashed_gumnut_ids))
 
 
@@ -149,20 +133,11 @@ async def restore_assets(
             cast_to=type(None),
         )
         chunk_uuid_strs = [str(uid) for uid in chunk]
-        try:
-            await emit_user_event(
-                WebSocketEvent.ASSET_RESTORE,
-                user_id,
-                chunk_uuid_strs,
-            )
-        except SocketIOError as ws_error:
-            logger.warning(
-                "Failed to emit on_asset_restore during restore_assets",
-                extra={
-                    "asset_count": len(chunk_uuid_strs),
-                    "error": str(ws_error),
-                },
-            )
+        await emit_user_event(
+            WebSocketEvent.ASSET_RESTORE,
+            user_id,
+            chunk_uuid_strs,
+        )
     return TrashResponseDto(count=len(request.ids))
 
 

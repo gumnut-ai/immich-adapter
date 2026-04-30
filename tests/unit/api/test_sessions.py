@@ -683,8 +683,10 @@ class TestDeleteSession:
         mock_session_store.get_by_id.return_value = session
         mock_session_store.delete_by_id.return_value = True
 
+        # Patch the underlying emit so the SocketIOError originates *inside*
+        # emit_session_event (which now swallows it centrally).
         with patch(
-            "routers.api.sessions.emit_session_event",
+            "services.websockets._emit_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("WebSocket error"),
         ):
