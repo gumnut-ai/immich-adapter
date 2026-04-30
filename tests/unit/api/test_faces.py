@@ -262,7 +262,12 @@ class TestDeleteFace:
 
 
 class TestReassignFace:
-    """Test the reassign_faces_by_id endpoint."""
+    """Test the reassign_faces_by_id endpoint.
+
+    Immich's PUT /faces/{id} contract is non-obvious: the URL `{id}` is the
+    target person (reassign TO) and the body `id` is the face being reassigned.
+    See routers/api/faces.py for the citation; these tests lock in that shape.
+    """
 
     @pytest.mark.anyio
     async def test_reassigns_face_to_person(self):
@@ -278,9 +283,9 @@ class TestReassignFace:
         mock_client.faces.update = AsyncMock()
         mock_client.people.retrieve = AsyncMock(return_value=person)
 
-        request = FaceDto(id=person_uuid)
+        request = FaceDto(id=face_uuid)
         result = await reassign_faces_by_id(
-            id=face_uuid, request=request, client=mock_client
+            id=person_uuid, request=request, client=mock_client
         )
 
         mock_client.faces.update.assert_called_once_with(
@@ -304,8 +309,8 @@ class TestReassignFace:
             side_effect=make_sdk_status_error(500, "boom")
         )
 
-        request = FaceDto(id=person_uuid)
+        request = FaceDto(id=face_uuid)
         with pytest.raises(APIStatusError):
             await reassign_faces_by_id(
-                id=face_uuid, request=request, client=mock_client
+                id=person_uuid, request=request, client=mock_client
             )

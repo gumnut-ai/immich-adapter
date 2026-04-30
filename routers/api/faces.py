@@ -49,9 +49,14 @@ async def reassign_faces_by_id(
     request: FaceDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ):
-    """Reassigns a face to a different person."""
-    gumnut_face_id = uuid_to_gumnut_face_id(id)
-    gumnut_person_id = uuid_to_gumnut_person_id(request.id)
+    """Re-assign the face provided in the body to the person identified by the id in the path parameter.
+
+    Despite the URL collection being /faces, Immich's contract is: path `{id}`
+    is the target person, body `id` is the face being reassigned. Verified
+    against Immich's face.controller.ts and person.service.reassignFacesById.
+    """
+    gumnut_person_id = uuid_to_gumnut_person_id(id)
+    gumnut_face_id = uuid_to_gumnut_face_id(request.id)
     await client.faces.update(gumnut_face_id, person_id=gumnut_person_id)
     gumnut_person = await client.people.retrieve(gumnut_person_id)
     return convert_gumnut_person_to_immich(gumnut_person)
