@@ -1210,6 +1210,45 @@ class TestDeleteAssets:
         mock_client.post.assert_not_awaited()
         mock_client.delete.assert_not_awaited()
 
+    @pytest.mark.anyio
+    async def test_delete_assets_force_false_propagates_sdk_error(self):
+        """SDK errors on bulk-trash bubble to the global GumnutError handler.
+
+        Pins the no-swallow contract: a future refactor that wraps client.post
+        in try/except (e.g. to ignore per-id 404s the way the legacy per-id
+        loop did) must break this test.
+        """
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.post = AsyncMock(side_effect=make_sdk_status_error(500, "boom"))
+
+        request = AssetBulkDeleteDto(ids=[uuid4()], force=False)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            with pytest.raises(APIStatusError):
+                await delete_assets(
+                    request, client=mock_client, current_user_id=uuid4()
+                )
+
+    @pytest.mark.anyio
+    async def test_delete_assets_force_true_propagates_sdk_error(self):
+        """SDK errors on bulk hard-delete bubble to the global GumnutError handler."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.delete = AsyncMock(side_effect=make_sdk_status_error(500, "boom"))
+
+        request = AssetBulkDeleteDto(ids=[uuid4()], force=True)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            with pytest.raises(APIStatusError):
+                await delete_assets(
+                    request, client=mock_client, current_user_id=uuid4()
+                )
+
 
 class TestGetAllUserAssetsByDeviceId:
     """Test the get_all_user_assets_by_device_id endpoint."""
