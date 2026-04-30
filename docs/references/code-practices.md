@@ -100,6 +100,10 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
 6. **Test endpoints**: Verify responses match Immich API expectations
 
+### Fixing Class-of-Bug Issues
+
+When a bug rooted in a recurring trap is found in one endpoint (e.g., a path/body semantic mismatch, an ID-prefix decoding mistake, or a missing source/target distinction), **audit sibling endpoints in the same router and adjacent routers for the same pattern** before closing the fix. Both reassign endpoints in the gotcha above shipped with the same swap on the same day in different PRs; fixing one without auditing the other left a production bug latent for weeks. A one-line search (`grep -rn` for the pattern, or read each handler in the affected router) is cheap insurance against the trap recurring.
+
 ### Exception Handling
 
 - Don't expose implementation details in exceptions thrown to consumers
