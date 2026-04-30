@@ -94,7 +94,10 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 1. **Generate models**: Use `generate_immich_models.py` to create up-to-date Pydantic models (see [development tools](development-tools.md))
 2. **Import models**: Use generated models from `routers.immich_models` for type safety
 3. **Define parameters**: Follow the parameter conventions above
-4. **Verify parameter semantics**: Check the Immich OpenAPI spec (`https://api.immich.app/endpoints/`) or source code to confirm what each URL path and body parameter represents. URL `{id}` parameters don't always refer to the entity being queried — e.g., in `PUT /people/{id}/reassign`, `{id}` is the target person (reassign TO), not the source.
+4. **Verify parameter semantics**: Check the Immich OpenAPI spec (`https://api.immich.app/endpoints/`) or source code (`immich/server/src/controllers/*.controller.ts` and the matching service) to confirm what each URL path and body parameter represents. URL `{id}` parameters don't always refer to the entity in the URL collection — face/person reassign endpoints in particular swap the natural reading. Both of these accept the **target person** as `{id}` in the path:
+   - `PUT /people/{id}/reassign` — `{id}` is the target person (reassign TO); body items are sources.
+   - `PUT /faces/{id}` — `{id}` is the target person (reassign TO); body `FaceDto.id` is the face being reassigned.
+   - When fixing a path/body or ID-decoding bug in one handler, audit sibling handlers in the same router (and adjacent routers) for the same trap before closing the fix. A one-line search (`grep -rn` for the pattern) is cheap insurance against the same class-of-bug recurring.
 5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
 6. **Test endpoints**: Verify responses match Immich API expectations
 
