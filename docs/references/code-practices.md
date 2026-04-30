@@ -97,12 +97,9 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 4. **Verify parameter semantics**: Check the Immich OpenAPI spec (`https://api.immich.app/endpoints/`) or source code (`immich/server/src/controllers/*.controller.ts` and the matching service) to confirm what each URL path and body parameter represents. URL `{id}` parameters don't always refer to the entity in the URL collection — face/person reassign endpoints in particular swap the natural reading. Both of these accept the **target person** as `{id}` in the path:
    - `PUT /people/{id}/reassign` — `{id}` is the target person (reassign TO); body items are sources.
    - `PUT /faces/{id}` — `{id}` is the target person (reassign TO); body `FaceDto.id` is the face being reassigned.
+   - When fixing a path/body or ID-decoding bug in one handler, audit sibling handlers in the same router (and adjacent routers) for the same trap before closing the fix. A one-line search (`grep -rn` for the pattern) is cheap insurance against the same class-of-bug recurring.
 5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
 6. **Test endpoints**: Verify responses match Immich API expectations
-
-### Fixing Class-of-Bug Issues
-
-When a bug rooted in a recurring trap is found in one endpoint (e.g., a path/body semantic mismatch, an ID-prefix decoding mistake, or a missing source/target distinction), **audit sibling endpoints in the same router and adjacent routers for the same pattern** before closing the fix. Both reassign endpoints in the gotcha above shipped with the same swap on the same day in different PRs; fixing one without auditing the other left a production bug latent for weeks. A one-line search (`grep -rn` for the pattern, or read each handler in the affected router) is cheap insurance against the trap recurring.
 
 ### Exception Handling
 
