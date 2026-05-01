@@ -1320,6 +1320,41 @@ class TestGetAssetStatistics:
         with pytest.raises(APIStatusError):
             await get_asset_statistics(client=mock_client)
 
+    @pytest.mark.anyio
+    async def test_get_asset_statistics_is_trashed_passes_state(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
+        """isTrashed=True routes to assets.list(state='trashed')."""
+        mock_client = Mock()
+
+        assets = multiple_gumnut_assets
+        assets[0].mime_type = "image/jpeg"
+        assets[1].mime_type = "video/mp4"
+        assets[2].mime_type = "image/png"
+
+        mock_client.assets.list.return_value = mock_sync_cursor_page(assets)
+
+        result = await get_asset_statistics(isTrashed=True, client=mock_client)
+
+        assert result.total == 3
+        assert result.images == 2
+        assert result.videos == 1
+        mock_client.assets.list.assert_called_once_with(state="trashed")
+
+    @pytest.mark.anyio
+    async def test_get_asset_statistics_is_trashed_false_omits_state(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
+        """isTrashed=False (or absent) calls assets.list() with no state — backend default (live) applies."""
+        mock_client = Mock()
+        mock_client.assets.list.return_value = mock_sync_cursor_page(
+            multiple_gumnut_assets
+        )
+
+        await get_asset_statistics(isTrashed=False, client=mock_client)
+
+        mock_client.assets.list.assert_called_once_with()
+
 
 class TestGetRandom:
     """Test the get_random endpoint."""

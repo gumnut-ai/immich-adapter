@@ -23,7 +23,6 @@ class TestServerFeaturesEndpoint:
             "duplicateDetection",
             "map",
             "reverseGeocoding",
-            "trash",
             "sidecar",
         ):
             assert data[flag] is False, f"{flag} must be False — endpoint is a stub"
@@ -40,6 +39,7 @@ class TestServerFeaturesEndpoint:
             "search",
             "oauth",
             "oauthAutoLaunch",
+            "trash",
         ):
             assert data[flag] is True, f"{flag} should be True"
 
