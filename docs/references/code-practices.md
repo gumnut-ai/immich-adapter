@@ -101,6 +101,12 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
 6. **Test endpoints**: Verify responses match Immich API expectations
 
+### Stub endpoints — fail closed on auth/authz checks
+
+The adapter has many stub endpoints (PIN code, session lock/unlock, change-password, etc.) that intentionally return success without doing real work, because Immich clients call them and expect a 2xx but the adapter doesn't model the underlying feature. That pattern is fine for purely informational stubs, but **don't apply it to endpoints whose contract is "tell the caller whether the request is authenticated/authorized"**. The Immich client trusts those answers — `auth_guard.dart` calls `/api/auth/validateToken` on app launch and lets the user past the login gate when the response is `authStatus=true`. A stub that always returns `True` lets unauthenticated clients past the gate, and the missing-auth failure only surfaces on the next API call (presenting as a sudden mid-session expiry rather than a missing-credential problem).
+
+Rule of thumb: a stub may safely return success when it represents a feature the adapter doesn't implement. A stub that gates on auth must consult `request.state.jwt_token` (or the equivalent middleware-populated state) and return 401 when it's absent. Use `Depends(get_authenticated_gumnut_client)` if you also need an SDK client; do an inline `getattr(request.state, "jwt_token", None)` + `HTTPException(status.HTTP_401_UNAUTHORIZED, ...)` if you don't (mirroring `routers/api/auth.py::validate_access_token`).
+
 ### Exception Handling
 
 - Don't expose implementation details in exceptions thrown to consumers
