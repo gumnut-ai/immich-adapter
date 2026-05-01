@@ -3,6 +3,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.testclient import TestClient
 
 from routers.utils.cookies import (
+    COOKIE_MAX_AGE_SECONDS,
     AuthType,
     ImmichCookie,
     set_auth_cookies,
@@ -98,6 +99,25 @@ class TestSetAuthCookies:
         set_cookie_header = response.headers.get("set-cookie", "")
         assert "Secure" not in set_cookie_header
 
+    def test_all_cookies_have_max_age(self, client):
+        """All three auth cookies must include Max-Age so iOS persists them
+        across app process death."""
+        response = client.get("/test/set-auth-cookies")
+
+        cookie_headers = response.headers.get_list("set-cookie")
+        assert COOKIE_MAX_AGE_SECONDS == 400 * 24 * 60 * 60
+        expected = f"Max-Age={COOKIE_MAX_AGE_SECONDS}"
+        for cookie_name in (
+            ImmichCookie.ACCESS_TOKEN.value,
+            ImmichCookie.AUTH_TYPE.value,
+            ImmichCookie.IS_AUTHENTICATED.value,
+        ):
+            matching = [h for h in cookie_headers if h.startswith(f"{cookie_name}=")]
+            assert matching, f"No Set-Cookie header for {cookie_name}"
+            assert expected in matching[0], (
+                f"{cookie_name} missing {expected}: {matching[0]}"
+            )
+
 
 class TestUpdateAccessTokenCookie:
     """Test cases for update_access_token_cookie function."""
@@ -140,3 +160,20 @@ class TestUpdateAccessTokenCookie:
         # Access token should have secure flag set to False
         set_cookie_header = response.headers.get("set-cookie", "")
         assert "Secure" not in set_cookie_header
+
+    def test_refreshed_token_has_max_age(self, client):
+        """Refreshed access token must include Max-Age so iOS persists it
+        across app process death."""
+        response = client.get("/test/update-token")
+
+        cookie_headers = response.headers.get_list("set-cookie")
+        expected = f"Max-Age={COOKIE_MAX_AGE_SECONDS}"
+        matching = [
+            h
+            for h in cookie_headers
+            if h.startswith(f"{ImmichCookie.ACCESS_TOKEN.value}=")
+        ]
+        assert matching, "No Set-Cookie header for access token"
+        assert expected in matching[0], (
+            f"access token missing {expected}: {matching[0]}"
+        )

@@ -3,9 +3,10 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from fastapi import HTTPException, status
 from socketio.exceptions import SocketIOError
 
-from routers.api.auth import post_logout
+from routers.api.auth import post_logout, validate_access_token
 from services.websockets import WebSocketEvent
 from routers.utils.cookies import ImmichCookie
 from services.session_store import SessionStore
@@ -210,3 +211,46 @@ class TestPostLogout:
             # Logout should still succeed despite WebSocket error
             assert result.successful is True
             mock_session_store.delete.assert_called_once()
+
+
+class TestValidateAccessToken:
+    """Tests for the /api/auth/validateToken endpoint.
+
+    The Immich auth guard calls this on app launch and trusts the result, so
+    returning authStatus=True without checking the request lets unauthenticated
+    clients past the login gate. The endpoint must 401 when no JWT is present.
+    """
+
+    @pytest.mark.anyio
+    async def test_returns_auth_status_true_when_jwt_present(self):
+        """Returns authStatus=True when the auth middleware populated jwt_token."""
+        request = Mock()
+        request.state = Mock(spec=["jwt_token"])
+        request.state.jwt_token = "valid-jwt"
+
+        result = await validate_access_token(request)
+
+        assert result.authStatus is True
+
+    @pytest.mark.anyio
+    async def test_raises_401_when_no_jwt(self):
+        """Raises 401 when no JWT was populated on request.state."""
+        request = Mock()
+        request.state = Mock(spec=[])  # no jwt_token attribute
+
+        with pytest.raises(HTTPException) as exc_info:
+            await validate_access_token(request)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+    @pytest.mark.anyio
+    async def test_raises_401_when_jwt_is_none(self):
+        """Raises 401 when jwt_token is set but None (unauthenticated request)."""
+        request = Mock()
+        request.state = Mock(spec=["jwt_token"])
+        request.state.jwt_token = None
+
+        with pytest.raises(HTTPException) as exc_info:
+            await validate_access_token(request)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
