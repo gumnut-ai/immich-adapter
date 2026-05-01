@@ -910,61 +910,54 @@ class TestGetPersonStatistics:
 
     @pytest.mark.anyio
     async def test_get_person_statistics_success(
-        self, multiple_gumnut_assets, mock_sync_cursor_page, sample_uuid
+        self, sample_gumnut_person, sample_uuid
     ):
         """Test successful person statistics retrieval."""
-        # Setup - mock only the Gumnut client
         mock_client = Mock()
-        mock_client.assets.list.return_value = mock_sync_cursor_page(
-            multiple_gumnut_assets
-        )
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
 
-        # Execute
         result = await get_person_statistics(sample_uuid, client=mock_client)
 
-        # Assert
-        assert result.assets == 3  # Number of assets from multiple_gumnut_assets
-        mock_client.assets.list.assert_called_once()
+        assert result.assets == 5  # From sample_gumnut_person.asset_count
+        mock_client.people.retrieve.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_get_person_statistics_no_assets(
-        self, mock_sync_cursor_page, sample_uuid
+    async def test_get_person_statistics_zero_assets(
+        self, sample_gumnut_person, sample_uuid
     ):
-        """Test person statistics with no assets."""
-        # Setup - mock only the Gumnut client
+        """A person with no associated assets reports zero."""
+        sample_gumnut_person.asset_count = 0
         mock_client = Mock()
-        mock_client.assets.list.return_value = None
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
 
-        # Execute
         result = await get_person_statistics(sample_uuid, client=mock_client)
 
-        # Assert
         assert result.assets == 0
 
     @pytest.mark.anyio
-    async def test_get_person_statistics_empty_assets(
-        self, mock_sync_cursor_page, sample_uuid
+    async def test_get_person_statistics_none_asset_count_treated_as_zero(
+        self, sample_gumnut_person, sample_uuid
     ):
-        """Test person statistics with empty asset list."""
-        # Setup - mock only the Gumnut client
+        """asset_count is Optional[int] in the SDK; None coerces to 0."""
+        sample_gumnut_person.asset_count = None
         mock_client = Mock()
-        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
 
-        # Execute
         result = await get_person_statistics(sample_uuid, client=mock_client)
 
-        # Assert
         assert result.assets == 0
 
     @pytest.mark.anyio
     async def test_get_person_statistics_not_found_propagates(self, sample_uuid):
-        """A NotFoundError on assets.list bubbles up to the global handler."""
+        """A NotFoundError on people.retrieve bubbles up to the global handler."""
         from gumnut import NotFoundError
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
-        mock_client.assets.list.side_effect = make_sdk_status_error(
-            404, "Person not found", cls=NotFoundError
+        mock_client.people.retrieve = AsyncMock(
+            side_effect=make_sdk_status_error(
+                404, "Person not found", cls=NotFoundError
+            )
         )
 
         with pytest.raises(NotFoundError):

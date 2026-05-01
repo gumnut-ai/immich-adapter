@@ -350,11 +350,8 @@ async def get_person_statistics(
     """
     Get asset statistics for a specific person.
     """
-    gumnut_assets = client.assets.list(person_id=uuid_to_gumnut_person_id(id))
-
-    if not gumnut_assets:
-        return PersonStatisticsResponseDto(assets=0)
-    return PersonStatisticsResponseDto(assets=len([a async for a in gumnut_assets]))
+    gumnut_person = await client.people.retrieve(uuid_to_gumnut_person_id(id))
+    return PersonStatisticsResponseDto(assets=gumnut_person.asset_count or 0)
 
 
 @router.delete("/{id}", status_code=204)
