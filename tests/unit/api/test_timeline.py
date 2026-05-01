@@ -134,6 +134,31 @@ class TestFetchAssetCounts:
         assert second_call_kwargs["local_datetime_before"] == feb_bucket.time_bucket
 
     @pytest.mark.anyio
+    async def test_pagination_preserves_state(self):
+        """state kwarg is preserved on every page, not just the first call.
+
+        fetch_asset_counts mutates kwargs in place inside its while loop to add
+        local_datetime_before. A future change that rebuilds kwargs each iteration
+        could silently drop state on subsequent pages — assert it on every call.
+        """
+        mock_client = Mock()
+        feb_bucket = _make_data(datetime(2024, 2, 1), 5)
+        jan_bucket = _make_data(datetime(2024, 1, 1), 10)
+
+        mock_client.assets.counts = AsyncMock(
+            side_effect=[
+                _make_counts_response([feb_bucket], has_more=True),
+                _make_counts_response([jan_bucket], has_more=False),
+            ]
+        )
+
+        await fetch_asset_counts(mock_client, state="trashed")
+
+        assert mock_client.assets.counts.call_count == 2
+        for call in mock_client.assets.counts.call_args_list:
+            assert call.kwargs["state"] == "trashed"
+
+    @pytest.mark.anyio
     async def test_with_album_id(self):
         """album_id is passed through as a kwarg."""
         mock_client = Mock()
@@ -279,6 +304,23 @@ class TestGetTimeBuckets:
 
         kwargs = mock_client.assets.counts.call_args[1]
         assert "state" not in kwargs
+
+    @pytest.mark.anyio
+    async def test_get_time_buckets_combines_state_with_album_id(self, sample_uuid):
+        """isTrashed=True together with albumId forwards both kwargs — neither branch
+        overwrites the other in fetch_asset_counts."""
+        mock_client = Mock()
+        mock_client.assets.counts = AsyncMock(
+            return_value=_make_counts_response([_make_data(datetime(2024, 1, 1), 1)])
+        )
+
+        await call_get_time_buckets(
+            isTrashed=True, albumId=sample_uuid, client=mock_client
+        )
+
+        kwargs = mock_client.assets.counts.call_args[1]
+        assert kwargs["state"] == "trashed"
+        assert kwargs["album_id"] == uuid_to_gumnut_album_id(sample_uuid)
 
     @pytest.mark.anyio
     async def test_get_time_buckets_empty_assets(self):
@@ -822,6 +864,41 @@ class TestGetTimeBucket:
             assert result["isTrashed"] == [False, False]
             kwargs = mock_client.assets.list.call_args.kwargs
             assert "state" not in kwargs
+
+    @pytest.mark.anyio
+    async def test_get_time_bucket_combines_state_with_album_id(
+        self, multiple_gumnut_assets, mock_sync_cursor_page, sample_uuid
+    ):
+        """isTrashed=True together with albumId forwards both kwargs — the album branch
+        does not overwrite or short-circuit the state kwarg in list_kwargs."""
+        mock_client = Mock()
+
+        assets = multiple_gumnut_assets
+        assets[0].id = uuid_to_gumnut_asset_id(uuid4())
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].mime_type = "image/jpeg"
+        assets[0].width = 1920
+        assets[0].height = 1080
+        assets[0].trashed_at = datetime(2024, 1, 20, 12, 0, 0, tzinfo=timezone.utc)
+
+        mock_client.assets.list.return_value = mock_sync_cursor_page([assets[0]])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = sample_uuid
+
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00",
+                isTrashed=True,
+                albumId=sample_uuid,
+                client=mock_client,
+            )
+
+            assert result["isTrashed"] == [True]
+            mock_client.assets.list.assert_called_once_with(
+                extra_query=JANUARY_2024_DATE_RANGE,
+                state="trashed",
+                album_id=uuid_to_gumnut_album_id(sample_uuid),
+            )
 
 
 class TestTimezoneAwareTimeBucket:
