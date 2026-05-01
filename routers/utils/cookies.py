@@ -41,7 +41,8 @@ def set_auth_cookies(
                  If not provided, secure flag defaults to True.
 
     Security flags:
-        - HttpOnly: True (prevents JavaScript access, XSS protection)
+        - HttpOnly: True for ACCESS_TOKEN and AUTH_TYPE; IS_AUTHENTICATED is
+          intentionally JS-readable so the frontend can branch on it
         - Secure: True by default, or based on secure parameter
         - SameSite: "lax" (CSRF protection while allowing some cross-site navigation)
         - Max-Age: COOKIE_MAX_AGE_SECONDS (persists across iOS app process death)

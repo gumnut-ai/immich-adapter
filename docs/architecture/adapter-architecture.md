@@ -83,7 +83,7 @@ Session storage is ~3KB per device, enabling horizontal scaling of the adapter.
 ### Session lifecycle
 
 - **TTL**: Session Redis keys are set to expire based on the underlying JWT's expiry time. When a JWT is refreshed, the TTL is updated. Sessions with no expiry persist until stale cleanup (90+ days inactive).
-- **Cookie flags**: `HttpOnly`, `Secure` (protocol-aware — disabled for local HTTP dev), `SameSite=lax`, `Max-Age=400 days` (`COOKIE_MAX_AGE_SECONDS` in `routers/utils/cookies.py`).
+- **Cookie flags**: `Secure` (protocol-aware — disabled for local HTTP dev), `SameSite=lax`, `Max-Age=400 days` (`COOKIE_MAX_AGE_SECONDS` in `routers/utils/cookies.py`); `ACCESS_TOKEN` and `AUTH_TYPE` are `HttpOnly`, `IS_AUTHENTICATED` is intentionally JS-readable as a frontend-visible flag.
 - **Why 400 days**: Without `Max-Age`/`Expires`, browsers and `HTTPCookieStorage` on iOS treat `Set-Cookie` as a session cookie that lives only in memory. iOS drops in-memory cookies when it reaps the backgrounded app, forcing a re-login on every cold launch. The upstream Immich server and the iOS client both encode a 400-day lifetime; the adapter matches so the contract is consistent across the stack. If you ever bound session lifetime, change `COOKIE_MAX_AGE_SECONDS` and the Redis session TTL together.
 - **Logout**: Deletes the Redis session key, clears cookies, emits `on_session_delete` WebSocket event to notify connected clients
 - **JWT refresh failure**: If the backend cannot refresh an expired JWT, the next request using that session returns 401. The client must re-authenticate via OAuth.
