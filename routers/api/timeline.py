@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, List
+from typing import Any, List, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -34,6 +34,7 @@ async def fetch_asset_counts(
     *,
     album_id: str | None = None,
     person_id: str | None = None,
+    state: Literal["live", "trashed", "all"] | None = None,
 ) -> list[Data]:
     """Fetch all monthly asset counts from photos-api, paginating if needed."""
     kwargs: dict[str, Any] = {"group_by": "month", "limit": PHOTOS_API_MAX_PAGE_SIZE}
@@ -41,6 +42,8 @@ async def fetch_asset_counts(
         kwargs["album_id"] = album_id
     if person_id is not None:
         kwargs["person_id"] = person_id
+    if state is not None:
+        kwargs["state"] = state
 
     all_buckets: list[Data] = []
     while True:
@@ -75,18 +78,19 @@ async def get_time_buckets(
     bbox: str = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[TimeBucketsResponseDto]:
-    if (
-        isFavorite
-        or isTrashed
-        or (visibility is not None and visibility != AssetVisibility.timeline)
+    if isFavorite or (
+        visibility is not None and visibility != AssetVisibility.timeline
     ):
-        return []  # Gumnut does not support favorites, trashed, hidden, archived or locked assets, so return empty list
+        return []  # Gumnut does not support favorites, hidden, archived or locked assets, so return empty list
 
     album_id = uuid_to_gumnut_album_id(albumId) if albumId else None
     person_id = uuid_to_gumnut_person_id(personId) if personId else None
 
     raw_buckets = await fetch_asset_counts(
-        client, album_id=album_id, person_id=person_id
+        client,
+        album_id=album_id,
+        person_id=person_id,
+        state="trashed" if isTrashed else None,
     )
 
     # Map to Immich format: normalize time_bucket to month start (YYYY-MM-01)
@@ -158,27 +162,15 @@ async def get_time_bucket(
         "local_datetime_before": next_month_start.isoformat(),
     }
 
+    list_kwargs: dict[str, Any] = {"extra_query": date_range_query}
+    if isTrashed:
+        list_kwargs["state"] = "trashed"
     if albumId:
-        gumnut_album_id = uuid_to_gumnut_album_id(albumId)
-        filtered_assets = [
-            a
-            async for a in client.assets.list(
-                album_id=gumnut_album_id,
-                extra_query=date_range_query,
-            )
-        ]
+        list_kwargs["album_id"] = uuid_to_gumnut_album_id(albumId)
     elif personId:
-        filtered_assets = [
-            a
-            async for a in client.assets.list(
-                person_id=uuid_to_gumnut_person_id(personId),
-                extra_query=date_range_query,
-            )
-        ]
-    else:
-        filtered_assets = [
-            a async for a in client.assets.list(extra_query=date_range_query)
-        ]
+        list_kwargs["person_id"] = uuid_to_gumnut_person_id(personId)
+
+    filtered_assets = [a async for a in client.assets.list(**list_kwargs)]
 
     asset_count = len(filtered_assets)
 
@@ -188,6 +180,7 @@ async def get_time_bucket(
     ratio_list = []
     visibility_list = []
     local_offset_hours_list = []
+    is_trashed_list = []
 
     for asset in filtered_assets:
         asset_id = asset.id
@@ -217,6 +210,8 @@ async def get_time_bucket(
 
         local_offset_hours_list.append(local_datetime_offset)
 
+        is_trashed_list.append(bool(asset.trashed_at))
+
     # Return as dict to bypass Pydantic validation issues with None in List[str]
     # XXX revisit this issue later
     return {
@@ -232,7 +227,7 @@ async def get_time_bucket(
         "visibility": visibility_list,
         "localOffsetHours": local_offset_hours_list,
         "isFavorite": [False] * asset_count,
-        "isTrashed": [False] * asset_count,
+        "isTrashed": is_trashed_list,
         "ownerId": [str(current_user_id)] * asset_count,
         "thumbhash": ["FBgGFYRQjHbAZpiWWpeEhWPANQZr"] * asset_count,
         "latitude": [None] * asset_count,

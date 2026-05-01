@@ -249,11 +249,36 @@ class TestGetTimeBuckets:
         result = await call_get_time_buckets(isFavorite=True)
         assert result == []
 
-        result = await call_get_time_buckets(isTrashed=True)
-        assert result == []
-
         result = await call_get_time_buckets(visibility=AssetVisibility.archive)
         assert result == []
+
+    @pytest.mark.anyio
+    async def test_get_time_buckets_is_trashed_passes_state(self):
+        """isTrashed=True routes through to backend counts with state='trashed'."""
+        mock_client = Mock()
+        mock_client.assets.counts = AsyncMock(
+            return_value=_make_counts_response([_make_data(datetime(2024, 1, 1), 4)])
+        )
+
+        result = await call_get_time_buckets(isTrashed=True, client=mock_client)
+
+        assert len(result) == 1
+        assert result[0].count == 4
+        kwargs = mock_client.assets.counts.call_args[1]
+        assert kwargs["state"] == "trashed"
+
+    @pytest.mark.anyio
+    async def test_get_time_buckets_is_trashed_false_omits_state(self):
+        """isTrashed=False (or absent) does not pass state, so the backend default (live) applies."""
+        mock_client = Mock()
+        mock_client.assets.counts = AsyncMock(
+            return_value=_make_counts_response([_make_data(datetime(2024, 1, 1), 1)])
+        )
+
+        await call_get_time_buckets(isTrashed=False, client=mock_client)
+
+        kwargs = mock_client.assets.counts.call_args[1]
+        assert "state" not in kwargs
 
     @pytest.mark.anyio
     async def test_get_time_buckets_empty_assets(self):
@@ -727,6 +752,76 @@ class TestGetTimeBucket:
             assert result["localOffsetHours"][1] == 0
             assert result["localOffsetHours"][2] == -5
             assert result["localOffsetHours"][3] == 0
+
+    @pytest.mark.anyio
+    async def test_get_time_bucket_is_trashed_passes_state_and_populates_flag(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
+        """isTrashed=True routes to assets.list(state='trashed') and the per-asset
+        isTrashed flag is sourced from each asset's trashed_at."""
+        mock_client = Mock()
+
+        assets = multiple_gumnut_assets
+        assets[0].id = uuid_to_gumnut_asset_id(uuid4())
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].mime_type = "image/jpeg"
+        assets[0].width = 1920
+        assets[0].height = 1080
+        assets[0].trashed_at = datetime(2024, 1, 20, 12, 0, 0, tzinfo=timezone.utc)
+
+        assets[1].id = uuid_to_gumnut_asset_id(uuid4())
+        assets[1].local_datetime = datetime(2024, 1, 25, 16, 0, 0, tzinfo=timezone.utc)
+        assets[1].mime_type = "image/png"
+        assets[1].width = 1080
+        assets[1].height = 1080
+        assets[1].trashed_at = datetime(2024, 1, 26, 9, 0, 0, tzinfo=timezone.utc)
+
+        mock_client.assets.list.return_value = mock_sync_cursor_page(assets[:2])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00",
+                isTrashed=True,
+                client=mock_client,
+            )
+
+            assert len(result["id"]) == 2
+            assert result["isTrashed"] == [True, True]
+            mock_client.assets.list.assert_called_once_with(
+                extra_query=JANUARY_2024_DATE_RANGE,
+                state="trashed",
+            )
+
+    @pytest.mark.anyio
+    async def test_get_time_bucket_default_path_reads_trashed_at_per_asset(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
+        """Live path reads each asset's trashed_at — defensive: backend should already
+        filter trashed rows, but the per-asset flag must reflect reality, not a constant."""
+        mock_client = Mock()
+
+        assets = multiple_gumnut_assets
+        for asset in assets[:2]:
+            asset.id = uuid_to_gumnut_asset_id(uuid4())
+            asset.local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+            asset.mime_type = "image/jpeg"
+            asset.width = 1920
+            asset.height = 1080
+        # Both assets are live (trashed_at=None from the fixture).
+        mock_client.assets.list.return_value = mock_sync_cursor_page(assets[:2])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
+
+            assert result["isTrashed"] == [False, False]
+            kwargs = mock_client.assets.list.call_args.kwargs
+            assert "state" not in kwargs
 
 
 class TestTimezoneAwareTimeBucket:

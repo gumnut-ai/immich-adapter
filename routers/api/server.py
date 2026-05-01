@@ -43,8 +43,7 @@ server_features = {
     # Sidecar (.xmp) files are not processed.
     "sidecar": False,
     "search": True,
-    # Trash endpoints are stubs; delete goes straight through.
-    "trash": False,
+    "trash": True,
     "oauth": True,
     # Auto-redirect to OAuth provider on login page instead of showing login form
     "oauthAutoLaunch": True,

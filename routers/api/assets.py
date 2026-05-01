@@ -685,7 +685,9 @@ async def get_asset_statistics(
     Counts total assets and categorizes them by type (images vs videos) using mime_type.
     """
 
-    gumnut_assets = client.assets.list()
+    gumnut_assets = (
+        client.assets.list(state="trashed") if isTrashed else client.assets.list()
+    )
 
     total_assets = 0
     image_count = 0
