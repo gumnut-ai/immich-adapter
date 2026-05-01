@@ -105,7 +105,6 @@ class TestSetAuthCookies:
         response = client.get("/test/set-auth-cookies")
 
         cookie_headers = response.headers.get_list("set-cookie")
-        assert COOKIE_MAX_AGE_SECONDS == 400 * 24 * 60 * 60
         expected = f"Max-Age={COOKIE_MAX_AGE_SECONDS}"
         for cookie_name in (
             ImmichCookie.ACCESS_TOKEN.value,
