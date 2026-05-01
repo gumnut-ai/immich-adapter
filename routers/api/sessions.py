@@ -198,7 +198,6 @@ async def delete_session(
 
     await session_store.delete_by_id(session_token)
 
-    # emit_session_event swallows SocketIOError internally — fire-and-forget.
     await emit_session_event(
         WebSocketEvent.SESSION_DELETE, session_token, session_token
     )

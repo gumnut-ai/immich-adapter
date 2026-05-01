@@ -427,7 +427,6 @@ from services.websockets import emit_user_event, WebSocketEvent
 async def upload_asset(...):
     # ... upload logic ...
 
-    # Fire-and-forget; SocketIOError is swallowed inside emit_user_event.
     await emit_user_event(WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response_dto)
 
     return asset_response_dto
@@ -440,7 +439,6 @@ async def upload_asset(...):
 async def delete_assets(...):
     # ... delete logic ...
 
-    # No try/except needed — emit_user_event swallows SocketIOError centrally.
     for asset_id in deleted_asset_ids:
         await emit_user_event(WebSocketEvent.ASSET_DELETE, current_user.id, asset_id)
 ```

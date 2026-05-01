@@ -88,7 +88,6 @@ async def post_logout(
                 extra={"error": str(e)},
                 exc_info=True,
             )
-        # emit_session_event swallows SocketIOError internally — fire-and-forget.
         await emit_session_event(
             WebSocketEvent.SESSION_DELETE, session_token, session_token
         )
