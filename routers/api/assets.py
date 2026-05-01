@@ -1,3 +1,4 @@
+from itertools import batched
 from typing import List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 import base64
@@ -18,21 +19,18 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
-from gumnut import APIStatusError, AsyncGumnut, GumnutError, NotFoundError
+from gumnut import AsyncGumnut
 from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.error_mapping import (
-    log_bulk_transport_error,
-    log_upstream_response,
-    map_gumnut_error,
-    truncated_error_detail,
+from routers.utils.gumnut_client import (
+    BULK_CHUNK_SIZE,
+    get_authenticated_gumnut_client,
 )
+from routers.utils.error_mapping import map_gumnut_error
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
-from socketio.exceptions import SocketIOError
 
 from services.streaming_upload import StreamingUploadPipeline
 from services.websockets import emit_user_event, WebSocketEvent
@@ -595,70 +593,71 @@ async def delete_assets(
     current_user_id: UUID = Depends(get_current_user_id),
 ) -> Response:
     """
-    Delete multiple assets using the Gumnut SDK.
-    Deletes assets by their IDs. The force parameter is ignored as Gumnut handles deletion directly.
+    Delete multiple assets, branching on the Immich `force` flag.
+
+    - ``force=True`` permanently deletes via the backend's bulk
+      ``DELETE /api/assets`` endpoint. Emits one ``on_asset_delete`` per id —
+      Immich's wire shape is single-id-per-event for permanent deletes.
+    - ``force=False`` or absent (Immich's native default) soft-deletes via the
+      backend's ``POST /api/assets/trash`` endpoint. Emits a single batched
+      ``on_asset_trash`` event per chunk carrying the full id array.
+
+    The backend bulk endpoints are idempotent — already-trashed or already-purged
+    rows are skipped without erroring — so the previous per-id 404 swallowing
+    is not needed. Bulk failures (validation, transport, 5xx) propagate to the
+    client via the global ``GumnutError`` handler.
     """
+    if not request.ids:
+        return Response(status_code=204)
 
-    for asset_uuid in request.ids:
-        try:
-            gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
-            await client.assets.delete(gumnut_asset_id)
-
-            try:
-                await emit_user_event(
-                    WebSocketEvent.ASSET_DELETE,
-                    str(current_user_id),
-                    str(asset_uuid),
-                )
-            except SocketIOError as ws_error:
-                logger.warning(
-                    "Failed to emit WebSocket event after asset delete",
-                    extra={
-                        "asset_id": str(asset_uuid),
-                        "gumnut_id": str(gumnut_asset_id),
-                        "error": str(ws_error),
-                    },
-                )
-
-        except NotFoundError as asset_error:
-            # Asset is already gone; expected during sync, log and continue.
-            log_upstream_response(
-                logger,
-                context="delete_assets",
-                status_code=404,
-                message=f"Asset {asset_uuid} not found during deletion",
-                extra={
-                    "asset_id": str(asset_uuid),
-                    "gumnut_id": str(gumnut_asset_id),
-                    "error_detail": truncated_error_detail(asset_error),
-                },
-            )
-        except APIStatusError as asset_error:
-            # Don't abort bulk delete on individual upstream errors.
-            log_upstream_response(
-                logger,
-                context="delete_assets",
-                status_code=asset_error.status_code,
-                message=f"Failed to delete asset {asset_uuid}",
-                extra={
-                    "asset_id": str(asset_uuid),
-                    "gumnut_id": str(gumnut_asset_id),
-                    "error_detail": truncated_error_detail(asset_error),
-                },
-            )
-        except GumnutError as asset_error:
-            # Immich expects best-effort partial deletion; record per-item.
-            log_bulk_transport_error(
-                logger,
-                context="delete_assets",
-                exc=asset_error,
-                extra={
-                    "asset_id": str(asset_uuid),
-                    "gumnut_id": str(gumnut_asset_id),
-                },
-            )
+    if request.force:
+        await _bulk_permanent_delete(client, request.ids, str(current_user_id))
+    else:
+        await _bulk_trash(client, request.ids, str(current_user_id))
 
     return Response(status_code=204)
+
+
+async def _bulk_permanent_delete(
+    client: AsyncGumnut,
+    asset_uuids: list[UUID],
+    user_id: str,
+) -> None:
+    """Bulk hard-delete; emits one on_asset_delete per id."""
+    for chunk in batched(asset_uuids, BULK_CHUNK_SIZE):
+        gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
+        await client.delete(
+            "/api/assets",
+            body={"ids": gumnut_ids},
+            cast_to=type(None),
+        )
+        for asset_uuid in chunk:
+            await emit_user_event(
+                WebSocketEvent.ASSET_DELETE,
+                user_id,
+                str(asset_uuid),
+            )
+
+
+async def _bulk_trash(
+    client: AsyncGumnut,
+    asset_uuids: list[UUID],
+    user_id: str,
+) -> None:
+    """Bulk soft-delete; emits one batched on_asset_trash per chunk."""
+    for chunk in batched(asset_uuids, BULK_CHUNK_SIZE):
+        gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
+        await client.post(
+            "/api/assets/trash",
+            body={"ids": gumnut_ids},
+            cast_to=type(None),
+        )
+        chunk_uuid_strs = [str(uid) for uid in chunk]
+        await emit_user_event(
+            WebSocketEvent.ASSET_TRASH,
+            user_id,
+            chunk_uuid_strs,
+        )
 
 
 @router.get("/device/{deviceId}", deprecated=True)

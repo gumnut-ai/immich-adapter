@@ -453,6 +453,28 @@ class TestEmitUserEvent:
         await emit_user_event(WebSocketEvent.ASSET_UPLOAD_READY_V1, "user_123", "data")
         assert mock_sio_emit.call_args[0][0] == "AssetUploadReadyV1"
 
+    @pytest.mark.anyio
+    async def test_swallows_socketio_error(self, caplog):
+        """SocketIOError is logged at WARN and never propagated to callers.
+
+        Pins the fire-and-forget contract for the centralized handler so
+        callers don't reintroduce per-site try/except blocks.
+        """
+        from socketio.exceptions import SocketIOError
+
+        with patch.object(
+            sio, "emit", new_callable=AsyncMock, side_effect=SocketIOError("boom")
+        ):
+            with caplog.at_level("WARNING", logger="services.websockets"):
+                # Must not raise.
+                await emit_user_event(
+                    WebSocketEvent.ASSET_DELETE, "user_123", "asset-id"
+                )
+
+        assert any(
+            "Failed to emit WebSocket user event" in r.message for r in caplog.records
+        )
+
 
 class TestEmitSessionEvent:
     """Unit tests for emit_session_event()."""
@@ -496,6 +518,25 @@ class TestEmitSessionEvent:
             "on_session_delete",
             None,
             room="session_123",
+        )
+
+    @pytest.mark.anyio
+    async def test_swallows_socketio_error(self, caplog):
+        """SocketIOError is logged at WARN and never propagated to callers."""
+        from socketio.exceptions import SocketIOError
+
+        with patch.object(
+            sio, "emit", new_callable=AsyncMock, side_effect=SocketIOError("boom")
+        ):
+            with caplog.at_level("WARNING", logger="services.websockets"):
+                # Must not raise.
+                await emit_session_event(
+                    WebSocketEvent.SESSION_DELETE, "session_123", None
+                )
+
+        assert any(
+            "Failed to emit WebSocket session event" in r.message
+            for r in caplog.records
         )
 
 

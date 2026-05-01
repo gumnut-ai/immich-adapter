@@ -5,6 +5,7 @@ from typing import Any, TypeAlias
 
 import socketio
 from pydantic import BaseModel
+from socketio.exceptions import SocketIOError
 
 from config.settings import get_settings
 from routers.immich_models import SyncAssetExifV1, SyncAssetV1
@@ -35,7 +36,12 @@ class WebSocketEvent(Enum):
     # Phase 1: Can implement now
     UPLOAD_SUCCESS = "on_upload_success"
     ASSET_UPLOAD_READY_V1 = "AssetUploadReadyV1"
+    # ASSET_DELETE carries a single id per event; ASSET_TRASH/ASSET_RESTORE
+    # carry an array of ids per event — matches Immich's wire contract:
+    # on_asset_delete: [string], on_asset_trash/on_asset_restore: [string[]].
     ASSET_DELETE = "on_asset_delete"
+    ASSET_TRASH = "on_asset_trash"
+    ASSET_RESTORE = "on_asset_restore"
     SESSION_DELETE = "on_session_delete"
     SERVER_VERSION = "on_server_version"
 
@@ -214,7 +220,13 @@ async def emit_user_event(
     Emit a WebSocket event to all of a user's connected clients.
 
     Use this for events that should reach all sessions for a user:
-    UPLOAD_SUCCESS, ASSET_UPLOAD_READY_V1, ASSET_DELETE, etc.
+    UPLOAD_SUCCESS, ASSET_UPLOAD_READY_V1, ASSET_DELETE, ASSET_TRASH,
+    ASSET_RESTORE, etc.
+
+    Fire-and-forget: ``SocketIOError`` from the underlying transport is
+    caught and logged at WARN. Callers must not wrap this in try/except for
+    ``SocketIOError`` — emission failures should never break the request
+    they are paired with.
 
     Args:
         event: The event type (from WebSocketEvent enum)
@@ -223,9 +235,19 @@ async def emit_user_event(
 
     Raises:
         pydantic.ValidationError: If payload is a Pydantic model that fails serialization
-        socketio.exceptions.SocketIOError: If the socket emission fails
     """
-    await _emit_event(event, user_id, payload)
+    try:
+        await _emit_event(event, user_id, payload)
+    except SocketIOError as ws_error:
+        logger.warning(
+            "Failed to emit WebSocket user event",
+            extra={
+                "event": event.value,
+                "user_id": user_id,
+                "error": str(ws_error),
+            },
+            exc_info=True,
+        )
 
 
 async def emit_session_event(
@@ -239,6 +261,11 @@ async def emit_session_event(
     Use this for events that should reach only one session:
     SESSION_DELETE, etc.
 
+    Fire-and-forget: ``SocketIOError`` from the underlying transport is
+    caught and logged at WARN. Callers must not wrap this in try/except for
+    ``SocketIOError`` — emission failures should never break the request
+    they are paired with.
+
     Args:
         event: The event type (from WebSocketEvent enum)
         session_id: The session ID (session token)
@@ -246,6 +273,16 @@ async def emit_session_event(
 
     Raises:
         pydantic.ValidationError: If payload is a Pydantic model that fails serialization
-        socketio.exceptions.SocketIOError: If the socket emission fails
     """
-    await _emit_event(event, session_id, payload)
+    try:
+        await _emit_event(event, session_id, payload)
+    except SocketIOError as ws_error:
+        logger.warning(
+            "Failed to emit WebSocket session event",
+            extra={
+                "event": event.value,
+                "session_id": session_id,
+                "error": str(ws_error),
+            },
+            exc_info=True,
+        )

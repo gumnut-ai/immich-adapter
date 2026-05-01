@@ -135,6 +135,36 @@ for asset_uuid in request.ids:
 
 Use `map_gumnut_error(e, context, extra=..., exc_info=True)` only when the call site needs to enrich the upstream log record with context the global handler can't see — most commonly the upload paths logging filename / device ids / tracebacks.
 
+### Bulk-ID Endpoints
+
+For backend endpoints that accept `{"ids": [...]}` (e.g., `POST /api/assets/trash`, `POST /api/assets/restore`, bulk `DELETE /api/assets`), chunk the request to stay under the backend's `MAX_BULK_GET_IDS=100` cap. Use the shared `BULK_CHUNK_SIZE` constant from `routers/utils/gumnut_client.py` and `itertools.batched`:
+
+```python
+from itertools import batched
+from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+
+for chunk in batched(asset_uuids, BULK_CHUNK_SIZE):
+    gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
+    await client.post("/api/assets/trash", body={"ids": gumnut_ids}, cast_to=type(None))
+```
+
+Backend bulk endpoints are idempotent on already-transitioned rows (e.g., `trash_assets` skips already-trashed ids; `restore_assets` skips already-live ids). **Don't add per-id 404 / NotFoundError swallowing for these flows** — let bulk failures (validation, transport, 5xx) propagate to the global `GumnutError` handler. The per-id-loop-with-NotFoundError pattern shown above under *Gumnut SDK Errors* applies to single-asset endpoints (e.g., `client.assets.delete(asset_id)`), not to the bulk variants.
+
+Pin the no-swallow contract with a `test_*_propagates_sdk_error` test per bulk flow — mock the bulk call to raise via `make_sdk_status_error(500, ...)` and assert `pytest.raises(APIStatusError)`. Without this test, a future refactor that wraps the bulk call in `try/except` would silently regress the contract. See `tests/unit/api/test_assets.py::TestDeleteAssets::test_delete_assets_force_false_propagates_sdk_error` for the canonical shape.
+
+When the SDK doesn't yet expose a typed method for a backend endpoint (Stainless regenerates on a delay after each backend release), call the raw HTTP layer directly via `AsyncGumnut.post()` / `.delete()` with `cast_to=type(None)` for 204-returning endpoints:
+
+```python
+await client.post("/api/assets/trash", body={"ids": gumnut_ids}, cast_to=type(None))
+await client.delete("/api/assets", body={"ids": gumnut_ids}, cast_to=type(None))
+```
+
+`AsyncGumnut` extends `AsyncAPIClient`, whose `.post()` / `.delete()` methods are public, route through the same JWT auth, retry, and response-hook plumbing as the typed methods, and surface the same `GumnutError` hierarchy. Don't import from `gumnut._types` — `cast_to=type(None)` works without it.
+
+### WebSocket Emission
+
+`emit_user_event` and `emit_session_event` (in `services/websockets.py`) are **fire-and-forget**: they catch `SocketIOError` from the underlying transport, log at WARN with `exc_info=True`, and return normally. **Do not wrap call sites in `try/except SocketIOError`** — the central swallow is the contract, and per-site catches are duplication. If the surrounding block needs to handle other exception types (e.g., DTO conversion before the emit, like `_emit_upload_events` in `routers/api/assets.py`), the broader try/except can stay; just don't add a separate `except SocketIOError` branch.
+
 ### Immich Client Error Handling
 
 - **Observed behavior:** Immich mobile and web clients have no HTTP 429 (rate limit) handling. A 429 causes sync failures, broken thumbnails, and upload errors with no automatic recovery.

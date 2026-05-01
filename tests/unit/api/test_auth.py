@@ -193,8 +193,10 @@ class TestPostLogout:
         mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
+        # Patch the underlying emit so the SocketIOError originates *inside*
+        # emit_session_event (which now swallows it centrally).
         with patch(
-            "routers.api.auth.emit_session_event",
+            "services.websockets._emit_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("WebSocket error"),
         ):

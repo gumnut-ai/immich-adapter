@@ -998,67 +998,20 @@ class TestUpdateAssets:
 
 
 class TestDeleteAssets:
-    """Test the delete_assets endpoint."""
+    """Test the delete_assets endpoint.
+
+    The handler branches on ``force``: ``True`` → bulk hard-delete via
+    ``client.delete("/api/assets", body=...)`` with one ``on_asset_delete``
+    per id. ``False``/absent → bulk soft-delete via
+    ``client.post("/api/assets/trash", body=...)`` with one batched
+    ``on_asset_trash`` per chunk.
+    """
 
     @pytest.mark.anyio
-    async def test_delete_assets_success(self):
-        """Test successful assets deletion."""
-        # Setup - create mock client
+    async def test_delete_assets_force_false_calls_trash_endpoint(self):
+        """force=False routes to POST /api/assets/trash with the full id list."""
         mock_client = Mock()
-        mock_client.assets.delete = AsyncMock(return_value=None)
-
-        asset_ids = [uuid4(), uuid4()]
-        request = AssetBulkDeleteDto(ids=asset_ids, force=False)
-        current_user_id = uuid4()
-
-        # Execute
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            result = await delete_assets(
-                request, client=mock_client, current_user_id=current_user_id
-            )
-
-        # Assert
-        assert result.status_code == 204
-        assert mock_client.assets.delete.call_count == 2
-
-    @pytest.mark.anyio
-    async def test_delete_assets_partial_failure(self):
-        """Test deletion with some assets not found."""
-        from gumnut import NotFoundError
-        from tests.conftest import make_sdk_status_error
-
-        mock_client = Mock()
-
-        # First delete succeeds, second fails with NotFoundError (already gone).
-        mock_client.assets.delete = AsyncMock(
-            side_effect=[
-                None,
-                make_sdk_status_error(404, "Not found", cls=NotFoundError),
-            ]
-        )
-
-        asset_ids = [uuid4(), uuid4()]
-        request = AssetBulkDeleteDto(ids=asset_ids, force=False)
-        current_user_id = uuid4()
-
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            result = await delete_assets(
-                request, client=mock_client, current_user_id=current_user_id
-            )
-
-        # Per-item errors are logged and skipped; bulk endpoint still returns 204.
-        assert result.status_code == 204
-        assert mock_client.assets.delete.call_count == 2
-
-    @pytest.mark.anyio
-    async def test_delete_assets_non_404_does_not_abort_batch(self):
-        """A 5xx upstream error on one item must not abort the batch."""
-        from tests.conftest import make_sdk_status_error
-
-        mock_client = Mock()
-        mock_client.assets.delete = AsyncMock(
-            side_effect=[None, make_sdk_status_error(500, "boom")]
-        )
+        mock_client.post = AsyncMock(return_value=None)
 
         asset_ids = [uuid4(), uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
@@ -1070,20 +1023,21 @@ class TestDeleteAssets:
             )
 
         assert result.status_code == 204
-        assert mock_client.assets.delete.call_count == 2
+        mock_client.post.assert_awaited_once()
+        call = mock_client.post.await_args
+        assert call.args[0] == "/api/assets/trash"
+        body = call.kwargs["body"]
+        assert set(body["ids"]) == {uuid_to_gumnut_asset_id(uid) for uid in asset_ids}
 
     @pytest.mark.anyio
-    async def test_delete_assets_connection_error_does_not_abort_batch(self):
-        """A transport error on one item must not abort the batch."""
-        from tests.conftest import make_sdk_connection_error
-
+    async def test_delete_assets_force_absent_treated_as_soft_delete(self):
+        """force omitted (Immich's native default) routes to trash, not hard-delete."""
         mock_client = Mock()
-        mock_client.assets.delete = AsyncMock(
-            side_effect=[None, make_sdk_connection_error("DELETE")]
-        )
+        mock_client.post = AsyncMock(return_value=None)
+        mock_client.delete = AsyncMock(return_value=None)
 
-        asset_ids = [uuid4(), uuid4()]
-        request = AssetBulkDeleteDto(ids=asset_ids, force=False)
+        asset_ids = [uuid4()]
+        request = AssetBulkDeleteDto(ids=asset_ids)
         current_user_id = uuid4()
 
         with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
@@ -1092,20 +1046,41 @@ class TestDeleteAssets:
             )
 
         assert result.status_code == 204
-        assert mock_client.assets.delete.call_count == 2
+        mock_client.post.assert_awaited_once()
+        mock_client.delete.assert_not_awaited()
 
     @pytest.mark.anyio
-    async def test_delete_assets_emits_websocket_events(self):
-        """Test that delete_assets emits on_asset_delete for each deleted asset."""
-        # Setup - create mock client
+    async def test_delete_assets_force_true_calls_bulk_delete_endpoint(self):
+        """force=True routes to bulk DELETE /api/assets."""
         mock_client = Mock()
-        mock_client.assets.delete = AsyncMock(return_value=None)
+        mock_client.delete = AsyncMock(return_value=None)
+
+        asset_ids = [uuid4(), uuid4()]
+        request = AssetBulkDeleteDto(ids=asset_ids, force=True)
+        current_user_id = uuid4()
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            result = await delete_assets(
+                request, client=mock_client, current_user_id=current_user_id
+            )
+
+        assert result.status_code == 204
+        mock_client.delete.assert_awaited_once()
+        call = mock_client.delete.await_args
+        assert call.args[0] == "/api/assets"
+        body = call.kwargs["body"]
+        assert set(body["ids"]) == {uuid_to_gumnut_asset_id(uid) for uid in asset_ids}
+
+    @pytest.mark.anyio
+    async def test_delete_assets_force_false_emits_single_batched_trash_event(self):
+        """A single bulk soft-delete fires one on_asset_trash with the full id array."""
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
 
         asset_ids = [uuid4(), uuid4(), uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
         current_user_id = uuid4()
 
-        # Execute
         with patch(
             "routers.api.assets.emit_user_event", new_callable=AsyncMock
         ) as mock_emit:
@@ -1113,29 +1088,103 @@ class TestDeleteAssets:
                 request, client=mock_client, current_user_id=current_user_id
             )
 
-            # Assert - emit_event should be called for each deleted asset
-            assert mock_emit.call_count == 3
-
-            # Verify each call has correct event type and user ID
-            for i, call in enumerate(mock_emit.call_args_list):
-                assert call[0][0] == WebSocketEvent.ASSET_DELETE
-                assert call[0][1] == str(current_user_id)
-                assert call[0][2] == str(asset_ids[i])
+        assert mock_emit.await_count == 1
+        event, user_id, payload = mock_emit.await_args_list[0].args
+        assert event == WebSocketEvent.ASSET_TRASH
+        assert user_id == str(current_user_id)
+        assert payload == [str(uid) for uid in asset_ids]
 
     @pytest.mark.anyio
-    async def test_delete_assets_websocket_error_does_not_fail_deletion(self):
-        """Test that WebSocket emission errors don't fail the deletion."""
-        # Setup - create mock client
+    async def test_delete_assets_force_true_emits_one_delete_event_per_id(self):
+        """A bulk hard-delete fires one on_asset_delete per id (single-id wire shape)."""
         mock_client = Mock()
-        mock_client.assets.delete = AsyncMock(return_value=None)
+        mock_client.delete = AsyncMock(return_value=None)
 
-        asset_ids = [uuid4()]
+        asset_ids = [uuid4(), uuid4(), uuid4()]
+        request = AssetBulkDeleteDto(ids=asset_ids, force=True)
+        current_user_id = uuid4()
+
+        with patch(
+            "routers.api.assets.emit_user_event", new_callable=AsyncMock
+        ) as mock_emit:
+            await delete_assets(
+                request, client=mock_client, current_user_id=current_user_id
+            )
+
+        assert mock_emit.await_count == 3
+        for i, call in enumerate(mock_emit.await_args_list):
+            event, user_id, payload = call.args
+            assert event == WebSocketEvent.ASSET_DELETE
+            assert user_id == str(current_user_id)
+            assert payload == str(asset_ids[i])
+
+    @pytest.mark.anyio
+    async def test_delete_assets_chunks_when_over_cap(self):
+        """Request larger than the per-call cap is split into chunks."""
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+
+        # 250 ids → 100 + 100 + 50 across three trash calls.
+        asset_ids = [uuid4() for _ in range(250)]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
         current_user_id = uuid4()
 
-        # Execute with emit_event that raises a SocketIOError
         with patch(
-            "routers.api.assets.emit_user_event",
+            "routers.api.assets.emit_user_event", new_callable=AsyncMock
+        ) as mock_emit:
+            result = await delete_assets(
+                request, client=mock_client, current_user_id=current_user_id
+            )
+
+        assert result.status_code == 204
+        assert mock_client.post.await_count == 3
+        chunk_sizes = [
+            len(call.kwargs["body"]["ids"]) for call in mock_client.post.await_args_list
+        ]
+        assert chunk_sizes == [100, 100, 50]
+        # One batched on_asset_trash per chunk.
+        assert mock_emit.await_count == 3
+
+    @pytest.mark.anyio
+    async def test_delete_assets_force_true_chunks_and_emits_per_id(self):
+        """force=True over the cap chunks bulk DELETE and emits one event per id."""
+        mock_client = Mock()
+        mock_client.delete = AsyncMock(return_value=None)
+
+        asset_ids = [uuid4() for _ in range(250)]
+        request = AssetBulkDeleteDto(ids=asset_ids, force=True)
+        current_user_id = uuid4()
+
+        with patch(
+            "routers.api.assets.emit_user_event", new_callable=AsyncMock
+        ) as mock_emit:
+            result = await delete_assets(
+                request, client=mock_client, current_user_id=current_user_id
+            )
+
+        assert result.status_code == 204
+        assert mock_client.delete.await_count == 3
+        chunk_sizes = [
+            len(call.kwargs["body"]["ids"])
+            for call in mock_client.delete.await_args_list
+        ]
+        assert chunk_sizes == [100, 100, 50]
+        # 250 per-id on_asset_delete events across all chunks.
+        assert mock_emit.await_count == 250
+
+    @pytest.mark.anyio
+    async def test_delete_assets_websocket_error_does_not_fail_deletion(self):
+        """WebSocket emission errors must not fail the deletion."""
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+
+        request = AssetBulkDeleteDto(ids=[uuid4()], force=False)
+        current_user_id = uuid4()
+
+        # Patch the underlying emit so the SocketIOError originates *inside*
+        # emit_user_event (which now swallows it centrally).
+        with patch(
+            "services.websockets._emit_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("WebSocket error"),
         ):
@@ -1143,8 +1192,64 @@ class TestDeleteAssets:
                 request, client=mock_client, current_user_id=current_user_id
             )
 
-            # Deletion should still succeed despite WebSocket error
-            assert result.status_code == 204
+        assert result.status_code == 204
+
+    @pytest.mark.anyio
+    async def test_delete_assets_empty_id_list_is_noop(self):
+        """An empty ids list returns 204 without calling the backend."""
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        mock_client.delete = AsyncMock(return_value=None)
+
+        request = AssetBulkDeleteDto(ids=[], force=False)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            result = await delete_assets(
+                request, client=mock_client, current_user_id=uuid4()
+            )
+
+        assert result.status_code == 204
+        mock_client.post.assert_not_awaited()
+        mock_client.delete.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_delete_assets_force_false_propagates_sdk_error(self):
+        """SDK errors on bulk-trash bubble to the global GumnutError handler.
+
+        Pins the no-swallow contract: a future refactor that wraps client.post
+        in try/except (e.g. to ignore per-id 404s the way the legacy per-id
+        loop did) must break this test.
+        """
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.post = AsyncMock(side_effect=make_sdk_status_error(500, "boom"))
+
+        request = AssetBulkDeleteDto(ids=[uuid4()], force=False)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            with pytest.raises(APIStatusError):
+                await delete_assets(
+                    request, client=mock_client, current_user_id=uuid4()
+                )
+
+    @pytest.mark.anyio
+    async def test_delete_assets_force_true_propagates_sdk_error(self):
+        """SDK errors on bulk hard-delete bubble to the global GumnutError handler."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.delete = AsyncMock(side_effect=make_sdk_status_error(500, "boom"))
+
+        request = AssetBulkDeleteDto(ids=[uuid4()], force=True)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            with pytest.raises(APIStatusError):
+                await delete_assets(
+                    request, client=mock_client, current_user_id=uuid4()
+                )
 
 
 class TestGetAllUserAssetsByDeviceId:

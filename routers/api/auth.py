@@ -20,7 +20,6 @@ from routers.utils.cookies import AuthType, ImmichCookie
 from routers.utils.gumnut_client import (
     get_authenticated_gumnut_client_optional,
 )
-from socketio.exceptions import SocketIOError
 
 from services.websockets import emit_session_event, WebSocketEvent
 from services.session_store import SessionStore, get_session_store
@@ -82,15 +81,6 @@ async def post_logout(
     if session_token:
         try:
             await session_store.delete(session_token)
-            # Emit WebSocket event to notify the session's client
-            await emit_session_event(
-                WebSocketEvent.SESSION_DELETE, session_token, session_token
-            )
-        except SocketIOError as ws_error:
-            logger.warning(
-                "Failed to emit WebSocket event after logout",
-                extra={"session_id": session_token, "error": str(ws_error)},
-            )
         except Exception as e:
             # Log but don't fail the logout - cookie clearing is more important
             logger.warning(
@@ -98,6 +88,9 @@ async def post_logout(
                 extra={"error": str(e)},
                 exc_info=True,
             )
+        await emit_session_event(
+            WebSocketEvent.SESSION_DELETE, session_token, session_token
+        )
 
     response.delete_cookie(ImmichCookie.ACCESS_TOKEN.value)
     response.delete_cookie(ImmichCookie.AUTH_TYPE.value)
