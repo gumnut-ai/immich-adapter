@@ -444,8 +444,8 @@ class TestGetTimeBucket:
     async def test_get_time_bucket_ratio_uses_display_orientation(
         self, multiple_gumnut_assets, mock_sync_cursor_page
     ):
-        """Regression: GUM-688 — the timeline's per-asset ``ratio`` must be
-        computed from display-orientation dimensions, not raw sensor dims.
+        """Regression: the timeline's per-asset ``ratio`` must be computed
+        from display-orientation dimensions, not raw sensor dims.
 
         For an asset with raw landscape buffer (4032x2268) tagged orientation=6,
         the ratio must be height/width (2268/4032) — otherwise immich web sizes

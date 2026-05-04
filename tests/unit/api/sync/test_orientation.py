@@ -44,8 +44,8 @@ def test_sync_asset_v1_passes_through_unflipped_orientations(orientation):
 
 @pytest.mark.parametrize("orientation", [5, 6, 7, 8])
 def test_sync_asset_v1_swaps_for_flipped_orientations(orientation):
-    """Regression: GUM-688 — Pixel-shot landscape buffers tagged orientation=6
-    were emitted unswapped, causing immich web to render portrait pixels into a
+    """Regression: Pixel-shot landscape buffers tagged orientation=6 were
+    emitted unswapped, causing immich web to render portrait pixels into a
     landscape layout box."""
     asset = create_mock_asset_data(UPDATED_AT)
     asset.width = 4032
@@ -72,8 +72,8 @@ def test_sync_exif_v1_swaps_for_flipped_orientation():
 
     assert result.exifImageWidth == 2268
     assert result.exifImageHeight == 4032
-    # Orientation must be nulled when dims are swapped — see GUM-688
-    # (otherwise immich web's getDimensions re-applies the rotation).
+    # Orientation must be nulled when dims are swapped, otherwise immich
+    # web's getDimensions re-applies the rotation on top of swapped dims.
     assert result.orientation is None
 
 

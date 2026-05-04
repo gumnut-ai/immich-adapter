@@ -17,7 +17,7 @@ Style, patterns, and conventions for the immich-adapter codebase.
 
 ## Project Conventions
 
-- **Comments**: Never reference internal issue tracker IDs (e.g., `GUM-123`) in code comments. This is a public repository and not everyone has access to our bug tracker. Comments on fixes should include all relevant context inline so that the reasoning is self-contained.
+- **Comments and docstrings**: Never reference internal issue tracker IDs (e.g., `GUM-123`) in code comments, docstrings, or test docstrings. This is a public repository and not everyone has access to our bug tracker. Comments and docstrings on fixes should include all relevant context inline so that the reasoning is self-contained.
 - **Module organization**: `services/` is for stateful classes with methods (stores, pipelines, WebSocket handlers). `utils/` is for stateless utility functions and helpers. Don't put classes with state in `utils/`.
 - **Constructor parameters**: Accept specific parameters rather than the full `Settings` object in constructors. This keeps classes decoupled from the config layer and easier to test.
 - **Branching**: Always create a new branch from `main` before making changes. Don't modify files on an existing feature branch for unrelated work.
