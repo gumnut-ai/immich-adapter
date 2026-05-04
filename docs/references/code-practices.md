@@ -101,6 +101,15 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
 6. **Test endpoints**: Verify responses match Immich API expectations
 
+### Asset dimensions and orientation
+
+Immich's wire contract expects asset width/height to already reflect display orientation (post-rotation), and `orientation` to be `null` whenever a rotation has been baked in. Gumnut stores raw sensor dimensions plus the EXIF orientation tag separately, so every adapter site that emits asset dims to a wire model must normalize:
+
+- Width/height: pass through `display_dimensions(width, height, orientation)` from `routers/utils/asset_conversion.py` (swaps for orientations 5–8).
+- Orientation: pass through `wire_orientation(orientation, width, height)` from the same module (returns `None` whenever `display_dimensions` swapped, so clients don't double-rotate).
+
+Skipping this leaves the adapter inconsistent with upstream — immich web has both a `getAssetRatio` (uses raw `width/height`) and a `getDimensions` (re-applies orientation) helper, and one or the other will render incorrectly depending on which mismatch is present.
+
 ### Stub endpoints — fail closed on auth/authz checks
 
 The adapter has many stub endpoints (PIN code, session lock/unlock, change-password, etc.) that intentionally return success without doing real work, because Immich clients call them and expect a 2xx but the adapter doesn't model the underlying feature. That pattern is fine for purely informational stubs, but **don't apply it to endpoints whose contract is "tell the caller whether the request is authenticated/authorized"**. The Immich client trusts those answers — `auth_guard.dart` calls `/api/auth/validateToken` on app launch and lets the user past the login gate when the response is `authStatus=true`. A stub that always returns `True` lets unauthenticated clients past the gate, and the missing-auth failure only surfaces on the next API call (presenting as a sudden mid-session expiry rather than a missing-credential problem).
