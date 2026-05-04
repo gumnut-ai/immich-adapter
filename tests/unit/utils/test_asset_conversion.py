@@ -20,6 +20,7 @@ from routers.utils.asset_conversion import (
     display_dimensions,
     extract_exif_info,
     extract_sync_exif,
+    wire_orientation,
 )
 
 
@@ -118,6 +119,32 @@ class TestDisplayDimensions:
         assert display_dimensions(1920, None, 6) == (1920, None)
 
 
+class TestWireOrientation:
+    """wire_orientation pairs with display_dimensions: emit None when swapped."""
+
+    @pytest.mark.parametrize("orientation", [5, 6, 7, 8])
+    def test_swapped_orientations_emit_null(self, orientation):
+        # When dims are present and orientation triggers a swap, the wire
+        # value must be null so clients don't double-rotate.
+        assert wire_orientation(orientation, 4032, 2268) is None
+
+    @pytest.mark.parametrize(
+        "orientation,expected", [(1, "1"), (2, "2"), (3, "3"), (4, "4")]
+    )
+    def test_unflipped_orientations_pass_through(self, orientation, expected):
+        assert wire_orientation(orientation, 4032, 2268) == expected
+
+    def test_none_orientation_returns_none(self):
+        assert wire_orientation(None, 4032, 2268) is None
+
+    def test_missing_dims_emits_orientation_unchanged(self):
+        # Without dims, there's nothing to be inconsistent with — preserve
+        # the orientation tag verbatim.
+        assert wire_orientation(6, None, None) == "6"
+        assert wire_orientation(6, None, 2268) == "6"
+        assert wire_orientation(6, 4032, None) == "6"
+
+
 class TestOrientationNormalization:
     """All asset-conversion sites must emit width/height in display orientation.
 
@@ -136,6 +163,9 @@ class TestOrientationNormalization:
 
         assert result.exifImageWidth == 2268
         assert result.exifImageHeight == 4032
+        # When dims are swapped, orientation must be nulled out so that
+        # immich web's getDimensions doesn't re-apply the rotation.
+        assert result.orientation is None
 
     def test_extract_exif_info_passes_through_for_orientation_1(
         self, sample_gumnut_asset
@@ -148,6 +178,8 @@ class TestOrientationNormalization:
 
         assert result.exifImageWidth == 4032
         assert result.exifImageHeight == 2268
+        # Unflipped orientations are passed through unchanged.
+        assert result.orientation == "1"
 
     def test_extract_sync_exif_swaps_for_orientation_6(self, sample_gumnut_asset):
         sample_gumnut_asset.width = 4032
@@ -158,6 +190,7 @@ class TestOrientationNormalization:
 
         assert result.exifImageWidth == 2268
         assert result.exifImageHeight == 4032
+        assert result.orientation is None
 
     def test_convert_gumnut_asset_to_immich_swaps_top_level_dims(
         self, sample_gumnut_asset, mock_current_user

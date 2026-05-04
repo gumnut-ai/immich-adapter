@@ -72,6 +72,9 @@ def test_sync_exif_v1_swaps_for_flipped_orientation():
 
     assert result.exifImageWidth == 2268
     assert result.exifImageHeight == 4032
+    # Orientation must be nulled when dims are swapped — see GUM-688
+    # (otherwise immich web's getDimensions re-applies the rotation).
+    assert result.orientation is None
 
 
 def test_sync_exif_v1_passes_through_unflipped_orientation():
@@ -86,3 +89,4 @@ def test_sync_exif_v1_passes_through_unflipped_orientation():
 
     assert result.exifImageWidth == 4032
     assert result.exifImageHeight == 2268
+    assert result.orientation == "1"

@@ -30,6 +30,7 @@ from routers.utils.asset_conversion import (
     display_dimensions,
     mime_type_to_asset_type,
     normalize_rating,
+    wire_orientation,
 )
 from routers.utils.datetime_utils import (
     format_timezone_immich,
@@ -224,9 +225,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         make=metadata.make,
         model=metadata.model,
         modifyDate=modified_datetime,
-        orientation=str(metadata.orientation)
-        if metadata.orientation is not None
-        else None,
+        orientation=wire_orientation(metadata.orientation, width, height),
         # profile_description is intentionally not surfaced on the Metadata
         # type (per the photos-api design); always emit None.
         profileDescription=None,

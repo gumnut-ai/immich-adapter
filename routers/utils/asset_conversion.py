@@ -60,6 +60,26 @@ def display_dimensions(
     return width, height
 
 
+def wire_orientation(
+    orientation: int | None,
+    width: int | None,
+    height: int | None,
+) -> str | None:
+    """Return the EXIF orientation value to emit on the wire.
+
+    Paired with ``display_dimensions``: when the dimensions have been swapped
+    (orientation 5–8 with both dims present), the orientation tag must be
+    nulled out — otherwise immich web's ``getDimensions`` helper would re-apply
+    the rotation on already-rotated dims, producing wrong dimensions for any
+    consumer that calls it. Matches upstream Immich's documented wire output.
+    """
+    if orientation is None:
+        return None
+    if width and height and orientation in _FLIPPED_ORIENTATIONS:
+        return None
+    return str(orientation)
+
+
 def mime_type_to_asset_type(mime_type: str) -> AssetTypeEnum:
     """
     Convert a MIME type string to an Immich AssetTypeEnum.
@@ -162,7 +182,7 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
         description=str(description) if description else "",
         dateTimeOriginal=date_time_original,
         modifyDate=modify_date,
-        orientation=str(orientation) if orientation else None,
+        orientation=wire_orientation(orientation, width, height),
         timeZone=time_zone,
         rating=normalize_rating(rating),
         projectionType=str(projection_type) if projection_type else None,
@@ -246,7 +266,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
         make=str(make) if make else None,
         model=str(model) if model else None,
         modifyDate=modify_date,
-        orientation=str(orientation) if orientation else None,
+        orientation=wire_orientation(orientation, width, height),
         profileDescription=None,  # Not available from Gumnut metadata
         projectionType=str(projection_type) if projection_type else None,
         rating=normalize_rating(rating),
