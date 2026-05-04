@@ -26,7 +26,11 @@ from routers.immich_models import (
     SyncPersonV1,
     SyncUserV1,
 )
-from routers.utils.asset_conversion import normalize_rating, mime_type_to_asset_type
+from routers.utils.asset_conversion import (
+    display_dimensions,
+    mime_type_to_asset_type,
+    normalize_rating,
+)
 from routers.utils.datetime_utils import (
     format_timezone_immich,
     to_actual_utc,
@@ -146,6 +150,9 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
             extra={"asset_id": asset.id, "checksum": asset.checksum},
         )
 
+    orientation = asset.metadata.orientation if asset.metadata else None
+    width, height = display_dimensions(asset.width, asset.height, orientation)
+
     return SyncAssetV1(
         id=str(safe_uuid_from_asset_id(asset.id)),
         checksum=asset.checksum_sha1 or asset.checksum,
@@ -161,12 +168,12 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         # Optional fields - use None when not available
         deletedAt=asset.trashed_at,
         duration=None,
-        height=asset.height,
+        height=height,
         libraryId=None,
         livePhotoVideoId=None,
         stackId=None,
         thumbhash=None,
-        width=asset.width,
+        width=width,
     )
 
 
@@ -195,14 +202,16 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
     original_datetime = to_actual_utc(metadata.original_datetime)
     modified_datetime = to_actual_utc(metadata.modified_datetime)
 
+    width, height = display_dimensions(asset.width, asset.height, metadata.orientation)
+
     return SyncAssetExifV1(
         assetId=str(safe_uuid_from_asset_id(metadata.asset_id)),
         city=metadata.city,
         country=metadata.country,
         dateTimeOriginal=original_datetime,
         description=metadata.description or "",
-        exifImageHeight=asset.height,
-        exifImageWidth=asset.width,
+        exifImageHeight=height,
+        exifImageWidth=width,
         exposureTime=_format_exposure_time(metadata.exposure_time),
         fNumber=metadata.f_number,
         fileSizeInByte=asset.file_size_bytes,

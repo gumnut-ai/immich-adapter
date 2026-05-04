@@ -441,6 +441,42 @@ class TestGetTimeBucket:
             )
 
     @pytest.mark.anyio
+    async def test_get_time_bucket_ratio_uses_display_orientation(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
+        """Regression: GUM-688 — the timeline's per-asset ``ratio`` must be
+        computed from display-orientation dimensions, not raw sensor dims.
+
+        For an asset with raw landscape buffer (4032x2268) tagged orientation=6,
+        the ratio must be height/width (2268/4032) — otherwise immich web sizes
+        the layout box landscape and renders the portrait pixels stretched.
+        """
+        mock_client = Mock()
+
+        assets = multiple_gumnut_assets
+        assets[0].id = uuid_to_gumnut_asset_id(uuid4())
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].created_at = assets[0].local_datetime
+        assets[0].mime_type = "image/jpeg"
+        assets[0].width = 4032
+        assets[0].height = 2268
+        metadata = Mock()
+        metadata.orientation = 6
+        assets[0].metadata = metadata
+
+        mock_client.assets.list.return_value = mock_sync_cursor_page([assets[0]])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
+
+            assert len(result["ratio"]) == 1
+            assert result["ratio"][0] == 2268 / 4032
+
+    @pytest.mark.anyio
     async def test_get_time_bucket_with_album_id(
         self, multiple_gumnut_assets, mock_sync_cursor_page, sample_uuid
     ):

@@ -35,6 +35,31 @@ def normalize_rating(rating: float | int | None) -> int | None:
     return None if value == -1 else value
 
 
+# EXIF orientation tags 5–8 swap the image's width and height when applied
+# (90° / 270° rotations, with or without mirroring).
+_FLIPPED_ORIENTATIONS = frozenset({5, 6, 7, 8})
+
+
+def display_dimensions(
+    width: int | None,
+    height: int | None,
+    orientation: int | None,
+) -> tuple[int | None, int | None]:
+    """Return (width, height) in display orientation.
+
+    Gumnut stores raw sensor dimensions plus an EXIF orientation tag. Immich's
+    wire contract expects ``asset.width`` / ``asset.height`` to already reflect
+    the post-rotation (display) dimensions — clients (e.g. immich web's
+    ``getAssetRatio``) don't consult orientation when sizing layout boxes.
+
+    For orientations 5–8 (90°/270° rotations), swap the dimensions; otherwise
+    return them unchanged.
+    """
+    if width and height and orientation in _FLIPPED_ORIENTATIONS:
+        return height, width
+    return width, height
+
+
 def mime_type_to_asset_type(mime_type: str) -> AssetTypeEnum:
     """
     Convert a MIME type string to an Immich AssetTypeEnum.
@@ -107,8 +132,9 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     date_time_original = to_actual_utc(metadata.original_datetime)
     modify_date = to_actual_utc(metadata.modified_datetime)
 
-    width = gumnut_asset.width
-    height = gumnut_asset.height
+    width, height = display_dimensions(
+        gumnut_asset.width, gumnut_asset.height, orientation
+    )
     file_size = gumnut_asset.file_size_bytes
 
     return ExifResponseDto(
@@ -194,14 +220,18 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
     date_time_original = to_actual_utc(date_time_original)
     modify_date = to_actual_utc(modify_date)
 
+    width, height = display_dimensions(
+        gumnut_asset.width, gumnut_asset.height, orientation
+    )
+
     return SyncAssetExifV1(
         assetId=asset_uuid,
         city=str(city) if city else None,
         country=str(country) if country else None,
         dateTimeOriginal=date_time_original,
         description=str(description) if description else None,
-        exifImageHeight=int(gumnut_asset.height) if gumnut_asset.height else None,
-        exifImageWidth=int(gumnut_asset.width) if gumnut_asset.width else None,
+        exifImageHeight=int(height) if height else None,
+        exifImageWidth=int(width) if width else None,
         exposureTime=exposure_time_str,
         fNumber=float(f_number) if f_number else None,
         fileSizeInByte=int(gumnut_asset.file_size_bytes)
@@ -257,6 +287,11 @@ def build_asset_upload_ready_payload(
         to_immich_local_datetime(metadata_original_dt) or gumnut_asset.created_at
     )
 
+    orientation = gumnut_asset.metadata.orientation if gumnut_asset.metadata else None
+    width, height = display_dimensions(
+        gumnut_asset.width, gumnut_asset.height, orientation
+    )
+
     sync_asset = SyncAssetV1(
         id=asset_uuid,
         ownerId=owner_id,
@@ -266,7 +301,7 @@ def build_asset_upload_ready_payload(
         duration=None,
         fileCreatedAt=file_created_at,
         fileModifiedAt=file_modified_at,
-        height=int(gumnut_asset.height) if gumnut_asset.height else None,
+        height=int(height) if height else None,
         isEdited=False,
         isFavorite=False,
         libraryId=None,
@@ -276,7 +311,7 @@ def build_asset_upload_ready_payload(
         stackId=None,
         type=mime_type_to_asset_type(gumnut_asset.mime_type),
         visibility=AssetVisibility.timeline,
-        width=int(gumnut_asset.width) if gumnut_asset.width else None,
+        width=int(width) if width else None,
     )
 
     sync_exif = extract_sync_exif(gumnut_asset, asset_uuid)
@@ -334,6 +369,11 @@ def convert_gumnut_asset_to_immich(
     # Extract EXIF object directly from AssetResponse
     exif_info = extract_exif_info(gumnut_asset)
 
+    orientation = gumnut_asset.metadata.orientation if gumnut_asset.metadata else None
+    width, height = display_dimensions(
+        gumnut_asset.width, gumnut_asset.height, orientation
+    )
+
     return AssetResponseDto(
         id=str(safe_uuid_from_asset_id(asset_id)),
         deviceAssetId=str(asset_id),  # Keep original Gumnut asset ID
@@ -350,7 +390,7 @@ def convert_gumnut_asset_to_immich(
         createdAt=created_at_fallback,
         duration="00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else "",
         hasMetadata=True,
-        height=float(gumnut_asset.height) if gumnut_asset.height else None,
+        height=float(height) if height else None,
         isArchived=False,
         isEdited=False,
         isFavorite=False,
@@ -361,6 +401,6 @@ def convert_gumnut_asset_to_immich(
         owner=current_user,
         thumbhash="",
         visibility=AssetVisibility.timeline,
-        width=float(gumnut_asset.width) if gumnut_asset.width else None,
+        width=float(width) if width else None,
         people=people,
     )
