@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from gumnut import AsyncGumnut, GumnutError
 
 from routers.immich_models import (
@@ -175,9 +175,20 @@ async def get_auth_status() -> AuthStatusResponseDto:
 
 
 @router.post("/validateToken")
-async def validate_access_token() -> ValidateAccessTokenResponseDto:
+async def validate_access_token(request: Request) -> ValidateAccessTokenResponseDto:
     """
-    Validate access token.
-    This is a stub implementation that always returns valid auth status.
+    Validate the caller's auth token.
+
+    The Immich auth guard calls this on app launch and trusts the result. If we
+    return authStatus=True without actually checking, an unauthenticated client
+    is let into the home screen and only discovers the missing auth on the next
+    API call (e.g., backup), which presents as a sudden mid-session expiry.
+    Reject explicitly when no JWT is present in request state so the client
+    bounces the user back to login.
     """
+    if not getattr(request.state, "jwt_token", None):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
     return ValidateAccessTokenResponseDto(authStatus=True)

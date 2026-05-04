@@ -1,6 +1,13 @@
 from fastapi import Response
 from enum import Enum
 
+# 400-day Max-Age on auth cookies. Without an explicit Max-Age these become
+# session cookies, which iOS HTTPCookieStorage holds in memory only and drops
+# on app process death — the upstream Immich server and iOS client both encode
+# a 400-day cookie lifetime, so the adapter must match to avoid forcing
+# re-login every time iOS reaps the backgrounded app.
+COOKIE_MAX_AGE_SECONDS = 400 * 24 * 60 * 60
+
 
 class ImmichCookie(str, Enum):
     ACCESS_TOKEN = "immich_access_token"
@@ -34,14 +41,17 @@ def set_auth_cookies(
                  If not provided, secure flag defaults to True.
 
     Security flags:
-        - HttpOnly: True (prevents JavaScript access, XSS protection)
+        - HttpOnly: True for ACCESS_TOKEN and AUTH_TYPE; IS_AUTHENTICATED is
+          intentionally JS-readable so the frontend can branch on it
         - Secure: True by default, or based on secure parameter
         - SameSite: "lax" (CSRF protection while allowing some cross-site navigation)
+        - Max-Age: COOKIE_MAX_AGE_SECONDS (persists across iOS app process death)
     """
     # Set access token cookie (most sensitive, always HttpOnly)
     response.set_cookie(
         key=ImmichCookie.ACCESS_TOKEN.value,
         value=access_token,
+        max_age=COOKIE_MAX_AGE_SECONDS,
         httponly=True,
         secure=secure,
         samesite="lax",
@@ -51,6 +61,7 @@ def set_auth_cookies(
     response.set_cookie(
         key=ImmichCookie.AUTH_TYPE.value,
         value=auth_type.value,
+        max_age=COOKIE_MAX_AGE_SECONDS,
         httponly=True,
         secure=secure,
         samesite="lax",
@@ -60,6 +71,7 @@ def set_auth_cookies(
     response.set_cookie(
         key=ImmichCookie.IS_AUTHENTICATED.value,
         value="true",
+        max_age=COOKIE_MAX_AGE_SECONDS,
         secure=secure,
         samesite="lax",
     )
@@ -85,6 +97,7 @@ def update_access_token_cookie(
     response.set_cookie(
         key=ImmichCookie.ACCESS_TOKEN.value,
         value=access_token,
+        max_age=COOKIE_MAX_AGE_SECONDS,
         httponly=True,
         secure=secure,
         samesite="lax",
