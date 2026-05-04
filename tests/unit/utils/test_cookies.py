@@ -99,10 +99,15 @@ class TestSetAuthCookies:
         set_cookie_header = response.headers.get("set-cookie", "")
         assert "Secure" not in set_cookie_header
 
-    def test_all_cookies_have_max_age(self, client):
+    @pytest.mark.parametrize(
+        "endpoint",
+        ["/test/set-auth-cookies", "/test/set-auth-cookies-with-secure"],
+    )
+    def test_all_cookies_have_max_age(self, client, endpoint):
         """All three auth cookies must include Max-Age so iOS persists them
-        across app process death."""
-        response = client.get("/test/set-auth-cookies")
+        across app process death — on both the secure=True and secure=False
+        paths, so a future conditional on `secure` can't drop Max-Age."""
+        response = client.get(endpoint)
 
         cookie_headers = response.headers.get_list("set-cookie")
         expected = f"Max-Age={COOKIE_MAX_AGE_SECONDS}"
@@ -160,10 +165,15 @@ class TestUpdateAccessTokenCookie:
         set_cookie_header = response.headers.get("set-cookie", "")
         assert "Secure" not in set_cookie_header
 
-    def test_refreshed_token_has_max_age(self, client):
+    @pytest.mark.parametrize(
+        "endpoint",
+        ["/test/update-token", "/test/update-token-with-secure"],
+    )
+    def test_refreshed_token_has_max_age(self, client, endpoint):
         """Refreshed access token must include Max-Age so iOS persists it
-        across app process death."""
-        response = client.get("/test/update-token")
+        across app process death — on both the secure=True and secure=False
+        paths, so a future conditional on `secure` can't drop Max-Age."""
+        response = client.get(endpoint)
 
         cookie_headers = response.headers.get_list("set-cookie")
         expected = f"Max-Age={COOKIE_MAX_AGE_SECONDS}"
