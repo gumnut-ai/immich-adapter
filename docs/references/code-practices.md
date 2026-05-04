@@ -17,7 +17,7 @@ Style, patterns, and conventions for the immich-adapter codebase.
 
 ## Project Conventions
 
-- **Comments**: Never reference internal issue tracker IDs (e.g., `GUM-123`) in code comments. This is a public repository and not everyone has access to our bug tracker. Comments on fixes should include all relevant context inline so that the reasoning is self-contained.
+- **Comments and docstrings**: Never reference internal issue tracker IDs (e.g., `GUM-123`) in code comments, docstrings, or test docstrings. This is a public repository and not everyone has access to our bug tracker. Comments and docstrings on fixes should include all relevant context inline so that the reasoning is self-contained.
 - **Module organization**: `services/` is for stateful classes with methods (stores, pipelines, WebSocket handlers). `utils/` is for stateless utility functions and helpers. Don't put classes with state in `utils/`.
 - **Constructor parameters**: Accept specific parameters rather than the full `Settings` object in constructors. This keeps classes decoupled from the config layer and easier to test.
 - **Branching**: Always create a new branch from `main` before making changes. Don't modify files on an existing feature branch for unrelated work.
@@ -100,6 +100,15 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
    - When fixing a path/body or ID-decoding bug in one handler, audit sibling handlers in the same router (and adjacent routers) for the same trap before closing the fix. A one-line search (`grep -rn` for the pattern) is cheap insurance against the same class-of-bug recurring.
 5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
 6. **Test endpoints**: Verify responses match Immich API expectations
+
+### Asset dimensions and orientation
+
+Immich's wire contract expects asset width/height to already reflect display orientation (post-rotation), and `orientation` to be `null` whenever a rotation has been baked in. Gumnut stores raw sensor dimensions plus the EXIF orientation tag separately, so every adapter site that emits asset dims to a wire model must normalize:
+
+- Width/height: pass through `display_dimensions(width, height, orientation)` from `routers/utils/asset_conversion.py` (swaps for orientations 5–8).
+- Orientation: pass through `wire_orientation(orientation, width, height)` from the same module (returns `None` whenever `display_dimensions` swapped, so clients don't double-rotate).
+
+Skipping this leaves the adapter inconsistent with upstream — immich web has both a `getAssetRatio` (uses raw `width/height`) and a `getDimensions` (re-applies orientation) helper, and one or the other will render incorrectly depending on which mismatch is present.
 
 ### Stub endpoints — fail closed on auth/authz checks
 
