@@ -184,15 +184,17 @@ Immich activities allow users to add comments and reactions to shared albums.
 
 Immich's "memories" feature auto-generates "On This Day" collections and similar nostalgia-based groupings.
 
-**Current behavior**: All 8 endpoints return empty lists. The memories section in the Immich UI is empty.
+**Current behavior**: Read endpoints (`GET /memories`, `GET /memories/{id}`, `GET /memories/statistics`) synthesize OnThisDay memories at request time by querying the photos-api for assets captured on today's local month/day across the previous 30 years (one parallel call per year). Memory IDs encode `(user, year, month, day)` so they round-trip without persistence. The Immich web "On This Day" carousel renders correctly.
 
-**User impact**: **Medium** — "On This Day" is a popular engagement feature in photo apps. Users opening the app expect to see memories if they have photos from previous years.
+Write endpoints (`POST /memories`, `PUT /memories/{id}`, `DELETE /memories/{id}`, `POST/DELETE /memories/{id}/assets`) remain no-op stubs. The memory viewer's save/hide/remove actions appear to succeed but don't persist; this is acceptable for the carousel-only goal and is flagged in `routers/api/memories.py`.
 
-**Dependency**: **Both** — Gumnut Photos API would need a memory generation system (likely a background job that queries assets by date). Adapter translation is straightforward.
+**User impact**: **Resolved for the read path** — the engagement feature is now visible. Persistence for save/hide is a follow-up.
 
-**Effort**: **L** — Backend needs date-based query logic, memory entity CRUD, and a generation mechanism (could be a Celery task). Adapter adds S overhead.
+**Dependency**: **Adapter only** for read; write would need a backend persistence layer (or an adapter-side store).
 
-**Recommendation**: **Revisit later** — Nice engagement feature but requires non-trivial backend work.
+**Effort**: **S remaining** — Adding write persistence is the only piece left, and only if save/hide UX matters before another consumer needs durable memories.
+
+**Recommendation**: **Revisit if/when save/hide UX is requested** — the read path covers the carousel.
 
 ---
 
@@ -652,7 +654,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 |-----|--------|------------|-----------|
 | #3a Map markers | S–M | Both | Good value if EXIF GPS data exists in backend |
 | #34 Performance (pagination) | L | Both | Scaling requirement |
-| #8 Memories | L | Both | Engagement feature |
+| #8 Memories (write path) | S | Adapter or backend | Read path shipped; only save/hide persistence remains |
 | #2 Tags | L | Both | Power-user organization |
 
 ### Tier 3: Revisit Later (high effort or blocked)
