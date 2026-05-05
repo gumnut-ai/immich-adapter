@@ -23,6 +23,7 @@ Style, patterns, and conventions for the immich-adapter codebase.
 - **Branching**: Always create a new branch from `main` before making changes. Don't modify files on an existing feature branch for unrelated work.
 - **File editing**: Always read a file before editing it. Never edit historical database migration files.
 - **Datetime handling**: When working with datetimes as strings, ensure the proper format is used, as Immich has different formats for different use cases. If you cannot determine the proper format to use, ask for clarification.
+- **Immich web "today" wire format**: Endpoints that take a "today" or "now" query param (e.g., `GET /memories?for=...`) receive a string produced by the web client's `asLocalTimeISO`, which does `setZone('utc', { keepLocalTime: true })`. The wire value's date and time components are the user's **local wall-clock**, with `Z` appended so it transports as a string — the offset is fictitious. Pull `.year/.month/.day/.hour/.minute` off the parsed datetime as-is; do **not** apply timezone math, or you'll shift the user's local "today" by their UTC offset. The same hack may appear on any future endpoint where the client wants the server to interpret a value in the user's local time without exposing the offset.
 
 ## Immich API Integration
 
@@ -100,6 +101,7 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
    - When fixing a path/body or ID-decoding bug in one handler, audit sibling handlers in the same router (and adjacent routers) for the same trap before closing the fix. A one-line search (`grep -rn` for the pattern) is cheap insurance against the same class-of-bug recurring.
 5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
 6. **Test endpoints**: Verify responses match Immich API expectations
+7. **Audit `/me/preferences` for a gating boolean**: Many client UI features (memories, tags, ratings, folders, people, shared links, email notifications, cast) are gated client-side on a flag in `UserPreferencesResponseDto`. The default in `routers/api/users.py::userPreferencesResponse` ships most of these as `enabled=False`, which silently hides the corresponding UI even after the backing endpoints are wired up. When implementing an endpoint that backs a client UI feature, grep `routers/api/users.py` for the matching preference field and flip its `enabled` to `True`. The Immich web client checks these via `$preferences?.<area>?.enabled`; missing the flip means the new endpoints become dead code on the client.
 
 ### Asset dimensions and orientation
 
@@ -156,6 +158,41 @@ When a response only needs a count over a person's / album's assets, read the pr
 
 Note that an `async for` paginator is always truthy: `if not client.assets.list(...)` is dead code, not an empty-list guard. The page contents are only known after iteration runs, so use the precomputed count rather than trying to short-circuit.
 
+The SDK's `limit` kwarg on paginated methods (e.g., `client.assets.list(..., limit=20)`) is the **per-page** size, not a result cap. `async for` walks every page until `has_more` is false, so the loop will yield far more than `limit` items if the result set is larger. When you genuinely only want N items (e.g., a thumbnail preview, or a "non-empty" probe), break out explicitly:
+
+```python
+assets: list[AssetResponse] = []
+async for asset in client.assets.list(local_datetime_after=..., limit=N):
+    assets.append(asset)
+    if len(assets) >= N:
+        break
+```
+
+Without the break, a `limit=1` "is this non-empty?" probe on a busy day burns one round-trip per matching asset.
+
+### Parallel Fan-Out with `asyncio.gather`
+
+For endpoints that fan out N parallel backend calls where partial results are friendlier than a 500 (e.g., the OnThisDay memories carousel — N-1 years still produces a useful response), pass `return_exceptions=True` so a single transient failure doesn't cancel the others. Filter on `Exception`, not `BaseException`, so `asyncio.CancelledError` (which inherits from `BaseException`) propagates instead of being swallowed as a backend error:
+
+```python
+results = await asyncio.gather(
+    *(_per_year(client, y) for y in years),
+    return_exceptions=True,
+)
+for year, result in zip(years, results):
+    if isinstance(result, Exception):
+        logger.warning(f"...failed for {year}", exc_info=result)
+        # substitute a degraded value
+    elif isinstance(result, BaseException):
+        # Re-raise CancelledError and other control-flow signals so request
+        # cancellation isn't silently swallowed.
+        raise result
+    else:
+        ...
+```
+
+`gather(return_exceptions=True)` captures `CancelledError` like any other exception, so a naive `isinstance(result, BaseException)` check disguises cancellation as a transient failure. See `routers/api/memories.py::_gather_year_assets` for the canonical shape.
+
 ### Bulk-ID Endpoints
 
 For backend endpoints that accept `{"ids": [...]}` (e.g., `POST /api/assets/trash`, `POST /api/assets/restore`, bulk `DELETE /api/assets`), chunk the request to stay under the backend's `MAX_BULK_GET_IDS=100` cap. Use the shared `BULK_CHUNK_SIZE` constant from `routers/utils/gumnut_client.py` and `itertools.batched`:
@@ -201,6 +238,7 @@ await client.delete("/api/assets", body={"ids": gumnut_ids}, cast_to=type(None))
 - Use model factories for test data creation
 - Avoid asserting on logging in tests by default — logging is usually non-functional behavior. Exception: when log level itself is an explicit contract (for example, upstream status severity policy), assertions may verify level/metadata while avoiding brittle full-message matching.
 - When mocking SDK paginator calls used with `async for` (e.g., `client.faces.list`), use `Mock(return_value=MockSyncCursorPage([...]))` — not `AsyncMock`. `AsyncMock` wraps the return in a coroutine, which breaks `async for` iteration. Use `AsyncMock` only for calls consumed with `await`.
+- The shared `MockSyncCursorPage` (`tests/conftest.py`) yields a flat list — it can't distinguish "limit is per-page" from "limit is a result cap" semantics. When testing code that explicitly `break`s out of `async for` after N items (e.g., `_fetch_assets_for_day`), build a small paginating mock that tracks page boundaries so a regression that drops the break visibly walks extra pages. See `tests/unit/api/test_memories.py::_PaginatedListing` for the canonical shape.
 - When mocking SDK response objects whose attributes are checked for truthiness (e.g., `if asset.metadata:`), explicitly set the attribute to its expected falsy value (`mock.metadata = None`). Unset Mock attributes return a truthy `Mock` object, silently flipping the branch and producing confusing downstream errors instead of clean `None`-path coverage. Audit `Mock`-based fixtures whenever an SDK field is renamed or added — grep across `tests/` for every `Mock()` construction of the relevant entity, including shared fixtures in `tests/conftest.py` and `tests/unit/api/sync/conftest.py` AND per-file inline mocks. Missing one is enough to silently flip a downstream Pydantic validation result.
 - Do not add `__init__.py` to test directories — the project uses pytest's rootdir-based import resolution. Adding `__init__.py` switches pytest to package-based imports, breaking test discovery.
 

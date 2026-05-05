@@ -342,6 +342,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | Sync | Full sync, delta sync, stream, ack | Two-phase ordering, checkpoint management |
 | Auth | OAuth login/callback, logout, session management | Clerk OAuth via Photos API |
 | WebSockets | Real-time upload/delete notifications | Socket.IO with room-based messaging |
+| Memories (read) | Search, get-by-id, statistics for OnThisDay memories | Synthesized from per-day asset queries; mutations still stubbed |
 
 ### Stub implementations
 
@@ -351,7 +352,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | Libraries | Gumnut has a different library model |
 | Tags | Not yet implemented in Gumnut |
 | Map | Location data not yet surfaced |
-| Memories | Auto-generated memories not supported |
+| Memories (write) | Synthetic memories have no persistence layer; create/update/delete and asset add/remove are no-ops |
 | Asset metadata (custom) | Gumnut doesn't support arbitrary key-value metadata |
 | Notifications | Push notifications not implemented |
 | Partners | User sharing not implemented |
