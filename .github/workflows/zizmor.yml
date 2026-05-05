@@ -1,7 +1,7 @@
 name: zizmor
 
-# Lints `.github/workflows/*.yml` for supply-chain and template-injection
-# anti-patterns. See gumnut-dev-setup/docs/references/github-actions-best-practices.md.
+# Lints .github/workflows/*.yml for supply-chain and template-injection
+# anti-patterns.
 
 on:
   push:

@@ -2,6 +2,8 @@
 
 Before starting work, read `README.md` for project setup and consult the Documentation Map below for relevant docs.
 
+**This repo is public.** Do not reference private sibling repos (e.g., `gumnut-ai/gumnut-dev-setup`) from committed files or PR bodies — links resolve to dead ends for external readers and surface the existence of internal docs. Inline the relevant rationale or context instead. Same principle as the existing clarity rule about absolute author-machine paths in committed files.
+
 # Pre-Commit Commands
 
 Run from the `immich-adapter/` directory:

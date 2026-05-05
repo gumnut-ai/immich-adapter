@@ -49,9 +49,9 @@ jobs:
           echo "OpenAPI specification generated successfully"
 
       - name: Run API compatibility check
-        # Pass workflow_dispatch input via env: rather than ${{ }} interpolation
-        # into the run body (template-injection anti-pattern — see
-        # gumnut-dev-setup/docs/references/github-actions-best-practices.md).
+        # Pass workflow_dispatch inputs via env: rather than ${{ }} interpolation
+        # into run bodies — direct interpolation expands before the shell parses,
+        # allowing template injection.
         env:
           ENDPOINTS: ${{ github.event.inputs.endpoints || 'server' }}
         run: |
