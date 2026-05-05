@@ -27,6 +27,7 @@ from routers.immich_models import (
     AlbumsAddAssetsDto,
     Error1,
 )
+from routers.utils.gumnut_client import BULK_CHUNK_SIZE
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
@@ -567,8 +568,6 @@ class TestAddAssetsToAlbum:
         Each chunk's `added` set is merged into the final response, results
         come back in input order, and each chunk receives only its own ids.
         """
-        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
-
         total = BULK_CHUNK_SIZE * 2 + 5
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
@@ -612,8 +611,6 @@ class TestAddAssetsToAlbum:
     @pytest.mark.anyio
     async def test_add_assets_chunk_failure_isolated_to_chunk(self, sample_uuid):
         """A failed chunk only fails its own ids; other chunks still succeed."""
-        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
-
         total = BULK_CHUNK_SIZE * 2
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
@@ -641,8 +638,6 @@ class TestAddAssetsToAlbum:
     @pytest.mark.anyio
     async def test_add_assets_chunk_transport_error_isolated(self, sample_uuid):
         """A transport error on one chunk only fails its own ids."""
-        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
-
         total = BULK_CHUNK_SIZE * 2
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
@@ -848,8 +843,6 @@ class TestRemoveAssetFromAlbum:
     @pytest.mark.anyio
     async def test_remove_assets_chunks_large_request(self, sample_uuid):
         """A request larger than BULK_CHUNK_SIZE is split across multiple SDK calls."""
-        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
-
         total = BULK_CHUNK_SIZE * 2 + 5
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
@@ -888,8 +881,6 @@ class TestRemoveAssetFromAlbum:
     @pytest.mark.anyio
     async def test_remove_assets_chunk_failure_isolated_to_chunk(self, sample_uuid):
         """A failed chunk only fails its own ids; other chunks still succeed."""
-        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
-
         total = BULK_CHUNK_SIZE * 2
         asset_uuids = [uuid4() for _ in range(total)]
 
@@ -914,8 +905,6 @@ class TestRemoveAssetFromAlbum:
     @pytest.mark.anyio
     async def test_remove_assets_chunk_transport_error_isolated(self, sample_uuid):
         """A transport error on one chunk only fails its own ids."""
-        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
-
         total = BULK_CHUNK_SIZE * 2
         asset_uuids = [uuid4() for _ in range(total)]
 

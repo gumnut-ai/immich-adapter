@@ -203,7 +203,11 @@ async def add_assets_to_album(
                 logger,
                 context="add_assets_to_album",
                 exc=bulk_error,
-                extra={"album_id": str(id), "asset_count": len(chunk_uuids)},
+                extra={
+                    "album_id": str(id),
+                    "chunk_size": len(chunk_uuids),
+                    "request_size": len(request.ids),
+                },
             )
             for asset_uuid in chunk_uuids:
                 errors_by_uuid[str(asset_uuid)] = Error1.unknown
@@ -309,7 +313,11 @@ async def remove_asset_from_album(
                 logger,
                 context="remove_asset_from_album",
                 exc=bulk_error,
-                extra={"album_id": str(id), "asset_count": len(chunk_uuids)},
+                extra={
+                    "album_id": str(id),
+                    "chunk_size": len(chunk_uuids),
+                    "request_size": len(request.ids),
+                },
             )
             for asset_uuid in chunk_uuids:
                 errors_by_uuid[str(asset_uuid)] = Error1.unknown
