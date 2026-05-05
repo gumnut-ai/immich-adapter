@@ -170,6 +170,29 @@ async for asset in client.assets.list(local_datetime_after=..., limit=N):
 
 Without the break, a `limit=1` "is this non-empty?" probe on a busy day burns one round-trip per matching asset.
 
+### Parallel Fan-Out with `asyncio.gather`
+
+For endpoints that fan out N parallel backend calls where partial results are friendlier than a 500 (e.g., the OnThisDay memories carousel — N-1 years still produces a useful response), pass `return_exceptions=True` so a single transient failure doesn't cancel the others. Filter on `Exception`, not `BaseException`, so `asyncio.CancelledError` (which inherits from `BaseException`) propagates instead of being swallowed as a backend error:
+
+```python
+results = await asyncio.gather(
+    *(_per_year(client, y) for y in years),
+    return_exceptions=True,
+)
+for year, result in zip(years, results):
+    if isinstance(result, Exception):
+        logger.warning(f"...failed for {year}", exc_info=result)
+        # substitute a degraded value
+    elif isinstance(result, BaseException):
+        # Re-raise CancelledError and other control-flow signals so request
+        # cancellation isn't silently swallowed.
+        raise result
+    else:
+        ...
+```
+
+`gather(return_exceptions=True)` captures `CancelledError` like any other exception, so a naive `isinstance(result, BaseException)` check disguises cancellation as a transient failure. See `routers/api/memories.py::_gather_year_assets` for the canonical shape.
+
 ### Bulk-ID Endpoints
 
 For backend endpoints that accept `{"ids": [...]}` (e.g., `POST /api/assets/trash`, `POST /api/assets/restore`, bulk `DELETE /api/assets`), chunk the request to stay under the backend's `MAX_BULK_GET_IDS=100` cap. Use the shared `BULK_CHUNK_SIZE` constant from `routers/utils/gumnut_client.py` and `itertools.batched`:
@@ -215,6 +238,7 @@ await client.delete("/api/assets", body={"ids": gumnut_ids}, cast_to=type(None))
 - Use model factories for test data creation
 - Avoid asserting on logging in tests by default — logging is usually non-functional behavior. Exception: when log level itself is an explicit contract (for example, upstream status severity policy), assertions may verify level/metadata while avoiding brittle full-message matching.
 - When mocking SDK paginator calls used with `async for` (e.g., `client.faces.list`), use `Mock(return_value=MockSyncCursorPage([...]))` — not `AsyncMock`. `AsyncMock` wraps the return in a coroutine, which breaks `async for` iteration. Use `AsyncMock` only for calls consumed with `await`.
+- The shared `MockSyncCursorPage` (`tests/conftest.py`) yields a flat list — it can't distinguish "limit is per-page" from "limit is a result cap" semantics. When testing code that explicitly `break`s out of `async for` after N items (e.g., `_fetch_assets_for_day`), build a small paginating mock that tracks page boundaries so a regression that drops the break visibly walks extra pages. See `tests/unit/api/test_memories.py::_PaginatedListing` for the canonical shape.
 - When mocking SDK response objects whose attributes are checked for truthiness (e.g., `if asset.metadata:`), explicitly set the attribute to its expected falsy value (`mock.metadata = None`). Unset Mock attributes return a truthy `Mock` object, silently flipping the branch and producing confusing downstream errors instead of clean `None`-path coverage. Audit `Mock`-based fixtures whenever an SDK field is renamed or added — grep across `tests/` for every `Mock()` construction of the relevant entity, including shared fixtures in `tests/conftest.py` and `tests/unit/api/sync/conftest.py` AND per-file inline mocks. Missing one is enough to silently flip a downstream Pydantic validation result.
 - Do not add `__init__.py` to test directories — the project uses pytest's rootdir-based import resolution. Adding `__init__.py` switches pytest to package-based imports, breaking test discovery.
 

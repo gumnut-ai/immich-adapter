@@ -265,6 +265,110 @@ class TestSearchMemories:
         assert result[0].data.year == 2026
 
     @pytest.mark.anyio
+    @pytest.mark.parametrize("isSaved", [False, None])
+    async def test_is_saved_false_or_none_does_not_short_circuit(
+        self, mock_current_user, isSaved
+    ):
+        """The carousel sends `isSaved=false` regularly, so the False/None
+        passthrough must keep fanning out — guards against a predicate
+        inversion that flipped to `is not None`."""
+        client = Mock()
+        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
+        _stub_assets_per_year(client, {2024: [_make_asset(uuid4(), captured)]})
+
+        result = await _call_search(
+            client=client,
+            current_user_id=UUID(mock_current_user.id),
+            current_user=mock_current_user,
+            for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
+            isSaved=isSaved,
+        )
+
+        assert client.assets.list.call_count == _YEAR_WINDOW
+        assert len(result) == 1
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("isTrashed", [False, None])
+    async def test_is_trashed_false_or_none_does_not_short_circuit(
+        self, mock_current_user, isTrashed
+    ):
+        client = Mock()
+        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
+        _stub_assets_per_year(client, {2024: [_make_asset(uuid4(), captured)]})
+
+        result = await _call_search(
+            client=client,
+            current_user_id=UUID(mock_current_user.id),
+            current_user=mock_current_user,
+            for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
+            isTrashed=isTrashed,
+        )
+
+        assert client.assets.list.call_count == _YEAR_WINDOW
+        assert len(result) == 1
+
+    @pytest.mark.anyio
+    async def test_feb_29_does_not_crash_window(self, mock_current_user):
+        """`for=2024-02-29` fans out across non-leap years where
+        `datetime(year, 2, 29)` raises. Without the guard in
+        `_fetch_assets_for_day`, asyncio.gather fail-fast tanks the call
+        with a 500."""
+        client = Mock()
+        captured = datetime(2020, 2, 29, 12, 0, tzinfo=timezone.utc)
+        # Only leap years 2020 and 2016 have assets.
+        _stub_assets_per_year(
+            client,
+            {
+                2020: [_make_asset(uuid4(), captured)],
+                2016: [_make_asset(uuid4(), captured.replace(year=2016))],
+            },
+        )
+
+        result = await _call_search(
+            client=client,
+            current_user_id=UUID(mock_current_user.id),
+            current_user=mock_current_user,
+            for_param=datetime(2024, 2, 29, tzinfo=timezone.utc),
+        )
+
+        years = [m.data.year for m in result]
+        assert years == [2020, 2016]
+
+    @pytest.mark.anyio
+    async def test_one_year_raising_yields_degraded_result(self, mock_current_user):
+        """A transient backend error on one year must not tank the other 29.
+        Pins `asyncio.gather(return_exceptions=True)` behavior."""
+        client = Mock()
+        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
+        good_asset = _make_asset(uuid4(), captured)
+        other_asset = _make_asset(uuid4(), captured.replace(year=2022))
+
+        def _list(**kwargs):
+            year = int(kwargs["local_datetime_after"][:4])
+            if year == 2024:
+                raise RuntimeError("simulated transient backend error")
+            if year == 2022:
+                return MockSyncCursorPage([other_asset])
+            if year == 2025:
+                return MockSyncCursorPage([good_asset])
+            return MockSyncCursorPage([])
+
+        client.assets.list = Mock(side_effect=_list)
+
+        result = await _call_search(
+            client=client,
+            current_user_id=UUID(mock_current_user.id),
+            current_user=mock_current_user,
+            for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
+        )
+
+        # 2024 raised → dropped; 2025 and 2022 survive.
+        years = [m.data.year for m in result]
+        assert 2024 not in years
+        assert 2025 in years
+        assert 2022 in years
+
+    @pytest.mark.anyio
     async def test_for_param_omitted_falls_back_to_utc_today(self, mock_current_user):
         """Direct API consumers (not the carousel) may omit `for`; the fallback
         uses today UTC. Pin a fake `now()` so the test is deterministic."""
@@ -287,22 +391,54 @@ class TestSearchMemories:
             assert call.kwargs["local_datetime_before"].endswith("-07-16T00:00:00")
 
 
+class _PaginatedListing:
+    """Async iterator that fakes the SDK's auto-pagination contract.
+
+    The real `SyncCursorPage` yields page-sized batches and transparently
+    fetches the next page until `has_more` is false. A flat in-memory list
+    can't distinguish "the SDK's `limit` is a result cap" from "the SDK's
+    `limit` is per-page" — both behaviors return the same thing. This mock
+    yields one item at a time across `total_pages` pages so a regression
+    that drops `_fetch_assets_for_day`'s explicit break would visibly walk
+    past `limit`.
+    """
+
+    def __init__(self, items, page_size: int):
+        self._items = items
+        self._page_size = page_size
+        self.pages_fetched = 0
+
+    def __aiter__(self):
+        return self._iter()
+
+    async def _iter(self):
+        for i, item in enumerate(self._items):
+            if i % self._page_size == 0:
+                self.pages_fetched += 1
+            yield item
+
+
 class TestFetchAssetsForDay:
     @pytest.mark.anyio
     async def test_caps_at_limit_across_pages(self):
         """The SDK's `limit` is per-page, and `async for` would otherwise walk
         every page. `_fetch_assets_for_day` must stop iterating after `limit`
-        items so `/statistics` (limit=1) doesn't burn a round-trip per asset."""
+        items so `/statistics` (limit=1) doesn't burn a round-trip per asset.
+
+        Uses a paginating mock so removing the `break` in the implementation
+        would cause the iterator to walk every page and fail this test."""
         captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
         many_assets = [_make_asset(uuid4(), captured) for _ in range(5)]
+        listing = _PaginatedListing(many_assets, page_size=2)
 
-        # `MockSyncCursorPage.__aiter__` yields every item — a real
-        # `SyncCursorPage` would page through them with `has_more=True`.
         client = Mock()
-        client.assets.list = Mock(return_value=MockSyncCursorPage(many_assets))
+        client.assets.list = Mock(return_value=listing)
 
         result = await _fetch_assets_for_day(client, 2024, 5, 4, limit=2)
         assert len(result) == 2
+        # Without the explicit break, `async for` would fetch page 2/3 to
+        # keep iterating past index 1; we should stop on page 1 (item index 1).
+        assert listing.pages_fetched == 1
 
     @pytest.mark.anyio
     async def test_passes_state_live_explicitly(self):

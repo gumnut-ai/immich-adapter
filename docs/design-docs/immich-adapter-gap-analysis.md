@@ -196,7 +196,7 @@ Write endpoints (`POST /memories`, `PUT /memories/{id}`, `DELETE /memories/{id}`
 
 **Effort**: **S remaining** — Adding write persistence is the only piece left, and only if save/hide UX matters before another consumer needs durable memories.
 
-**Recommendation**: **Revisit if/when save/hide UX is requested** — the read path covers the carousel.
+**Recommendation**: **Revisit later** — the read path covers the carousel; revisit if/when save/hide UX is requested.
 
 ---
 
@@ -656,7 +656,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 |-----|--------|------------|-----------|
 | #3a Map markers | S–M | Both | Good value if EXIF GPS data exists in backend |
 | #34 Performance (pagination) | L | Both | Scaling requirement |
-| #8 Memories (write path) | S | Adapter or backend | Read path shipped; only save/hide persistence remains |
+| #8 Memories (write path) | S | Both | Read path shipped; only save/hide persistence remains |
 | #2 Tags | L | Both | Power-user organization |
 
 ### Tier 3: Revisit Later (high effort or blocked)

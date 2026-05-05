@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, List
 from uuid import UUID
@@ -24,6 +25,8 @@ from routers.utils.current_user import get_current_user, get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(
     prefix="/api/memories",
     tags=["memories"],
@@ -31,11 +34,7 @@ router = APIRouter(
 )
 
 
-# Memory IDs are synthesized rather than persisted. The first 4 bytes of the
-# UUID act as a marker so we can recognize and decode our own IDs; the next 4
-# bytes encode the (year, month, day) the memory points at; the last 8 bytes
-# bind the ID to the user that generated it (low half of the user UUID), so a
-# memory ID minted for user A returns 404 when fetched by user B.
+# Synthesized (not persisted) memory IDs — see `encode_memory_id` for layout.
 _MEMORY_ID_MARKER = b"OTD\x00"
 # Read window: synthesize memories for "this day" across the previous 30 years.
 # Upstream Immich uses the earliest asset year as the floor, but determining
@@ -83,17 +82,9 @@ def decode_memory_id(memory_id: UUID, user_id: UUID) -> tuple[int, int, int] | N
 def _local_today(for_param: datetime | None) -> tuple[int, int, int]:
     """Return today's (year, month, day) in the user's local timezone.
 
-    The Immich web client encodes "today" by taking its local wall-clock time
-    and pretending it's UTC (`setZone('utc', { keepLocalTime: true })`). The
-    wire value's date components are therefore the user's local date, and
-    pulling them off the parsed datetime as-is gives us today in their tz —
-    no offset arithmetic needed.
-
-    The year matters for the search window: a Sydney user just past midnight
-    on Jan 1 sees `for` carrying the new year while the server's UTC clock
-    still reads Dec 31 of the prior year. Threading the local year through
-    keeps the window aligned with what the user would call "the past 30
-    years" instead of slicing off the year just ended.
+    `for_param` carries the user's local wall-clock as a fictitious UTC value
+    (Immich web's `keepLocalTime` hack — see `docs/references/code-practices.md`
+    "Immich web 'today' wire format"); pull the components off as-is.
 
     When the client omits `for`, fall back to today UTC; the carousel always
     sends `for`, so this branch is only hit by direct API consumers.
@@ -120,21 +111,22 @@ async def _fetch_assets_for_day(
     """Fetch up to `limit` non-trashed assets captured on (year, month, day).
 
     Uses naive `local_datetime` bounds so the photos-api compares against each
-    asset's wall-clock capture time directly (matching what the user would
-    intuitively call "the photos from May 4, 2024"), regardless of the device
-    timezone the photo was originally captured in.
+    asset's wall-clock capture time directly. `local_datetime_after` is
+    exclusive (matching `timeline.py`), so the microsecond on the midnight
+    boundary is skipped — accepted edge case.
 
-    Note: SDK `local_datetime_after` is exclusive, so passing the exact
-    midnight boundary skips assets captured at exactly 00:00:00.000000 — we
-    accept that microsecond edge case for symmetry with `timeline.py`.
+    Returns `[]` if the (year, month, day) tuple isn't a real date — e.g.
+    Feb 29 in a non-leap year, which the year-window fan-out hits every leap
+    day. Without this, `datetime(...)` raises ValueError and `asyncio.gather`
+    fail-fast tanks the whole `/memories` call.
 
-    The SDK's `limit` parameter is the per-page size, not a result cap —
-    `async for` walks every page until `has_more` is false. We break out
-    explicitly so callers actually receive at most `limit` assets; without
-    this, `/statistics` (which only needs to know each year is non-empty)
-    would burn a round-trip per asset on busy days.
+    `limit` is per-page; the explicit break caps total iteration (see
+    `docs/references/code-practices.md` "Counts and Aggregates").
     """
-    day_start = datetime(year, month, day)
+    try:
+        day_start = datetime(year, month, day)
+    except ValueError:
+        return []
     day_end = day_start + timedelta(days=1)
     assets: list[AssetResponse] = []
     async for asset in client.assets.list(
@@ -201,11 +193,33 @@ async def _gather_year_assets(
     day: int,
     limit: int,
 ) -> list[tuple[int, list[AssetResponse]]]:
-    """Fan out per-year `assets.list` calls and pair each result with its year."""
-    asset_lists = await asyncio.gather(
-        *(_fetch_assets_for_day(client, y, month, day, limit) for y in years)
+    """Fan out per-year `assets.list` calls and pair each result with its year.
+
+    `return_exceptions=True` so a transient backend failure on one year (29
+    others in flight) yields a degraded result instead of a 500 — memories are
+    a soft surface; the carousel renders fine with N-1 years.
+    """
+    results = await asyncio.gather(
+        *(_fetch_assets_for_day(client, y, month, day, limit) for y in years),
+        return_exceptions=True,
     )
-    return list(zip(years, asset_lists))
+    paired: list[tuple[int, list[AssetResponse]]] = []
+    for year, result in zip(years, results):
+        if isinstance(result, Exception):
+            logger.warning(
+                f"OnThisDay memories fetch failed for {year}-{month:02d}-{day:02d}",
+                extra={"year": year, "month": month, "day": day},
+                exc_info=result,
+            )
+            paired.append((year, []))
+        elif isinstance(result, BaseException):
+            # `asyncio.CancelledError` and other non-Exception BaseExceptions
+            # are control-flow signals, not transient backend errors — let them
+            # propagate instead of swallowing them as a degraded result.
+            raise result
+        else:
+            paired.append((year, result))
+    return paired
 
 
 @router.get("")
