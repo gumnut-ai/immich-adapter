@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-04-24
+last-updated: 2026-05-05
 ---
 
 # Code Practices
@@ -209,6 +209,8 @@ for chunk in batched(asset_uuids, BULK_CHUNK_SIZE):
 Backend bulk endpoints are idempotent on already-transitioned rows (e.g., `trash_assets` skips already-trashed ids; `restore_assets` skips already-live ids). **Don't add per-id 404 / NotFoundError swallowing for these flows** — let bulk failures (validation, transport, 5xx) propagate to the global `GumnutError` handler. The per-id-loop-with-NotFoundError pattern shown above under *Gumnut SDK Errors* applies to single-asset endpoints (e.g., `client.assets.delete(asset_id)`), not to the bulk variants.
 
 Pin the no-swallow contract with a `test_*_propagates_sdk_error` test per bulk flow — mock the bulk call to raise via `make_sdk_status_error(500, ...)` and assert `pytest.raises(APIStatusError)`. Without this test, a future refactor that wraps the bulk call in `try/except` would silently regress the contract. See `tests/unit/api/test_assets.py::TestDeleteAssets::test_delete_assets_force_false_propagates_sdk_error` for the canonical shape.
+
+**Per-item response contract variant.** Some Immich bulk endpoints (e.g. `PUT`/`DELETE /api/albums/{id}/assets`) must return `List[BulkIdResponseDto]` with per-id `success` / `error` mapping, so the no-swallow contract above does not apply — the handler has to catch upstream errors locally and translate them into per-id `Error1` values. When chunking these endpoints, isolate failures **per chunk**: a chunk-level `APIStatusError` / `GumnutError` only fails its own ids while other chunks continue and merge their `added` / `duplicate` sets. See `routers/api/albums.py::add_assets_to_album` and `remove_asset_from_album` for the canonical shape — note the `errors_by_uuid` dict keyed only by the failing chunk's ids, plus the final pass that walks the original input order to preserve response ordering. When chunking like this replaces a single bulk call, also preserve the original request size in log extras (e.g. `chunk_size=len(chunk_uuids), request_size=len(request.ids)`) so triage keeps full-request visibility.
 
 When the SDK doesn't yet expose a typed method for a backend endpoint (Stainless regenerates on a delay after each backend release), call the raw HTTP layer directly via `AsyncGumnut.post()` / `.delete()` with `cast_to=type(None)` for 204-returning endpoints:
 
