@@ -14,7 +14,6 @@ from routers.api.memories import (
     decode_memory_id,
     encode_memory_id,
     get_memory,
-    memories_statistics,
     search_memories,
 )
 from routers.immich_models import MemoryType
@@ -40,23 +39,6 @@ def _call_search(
         client=client,
         current_user_id=current_user_id,
         current_user=current_user,
-    )
-
-
-def _call_statistics(
-    *,
-    client,
-    for_param=None,
-    isSaved=None,
-    isTrashed=None,
-    type=None,
-):
-    return memories_statistics(  # type: ignore[call-arg]
-        for_param=for_param,
-        isSaved=isSaved,
-        isTrashed=isTrashed,
-        type=type,
-        client=client,
     )
 
 
@@ -333,42 +315,6 @@ class TestFetchAssetsForDay:
         await _fetch_assets_for_day(client, 2024, 5, 4, limit=20)
 
         assert client.assets.list.call_args.kwargs["state"] == "live"
-
-
-class TestMemoriesStatistics:
-    @pytest.mark.anyio
-    async def test_counts_non_empty_years(self):
-        client = Mock()
-        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
-        _stub_assets_per_year(
-            client,
-            {
-                2024: [_make_asset(uuid4(), captured)],
-                2020: [_make_asset(uuid4(), captured.replace(year=2020))],
-                2015: [_make_asset(uuid4(), captured.replace(year=2015))],
-            },
-        )
-
-        result = await _call_statistics(
-            client=client,
-            for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
-        )
-
-        assert result.total == 3
-        # Statistics should request only `limit=1` per year — we only need to
-        # know whether the year is non-empty, not fetch full thumbnails.
-        for call in client.assets.list.call_args_list:
-            assert call.kwargs["limit"] == 1
-
-    @pytest.mark.anyio
-    async def test_filters_short_circuit_to_zero(self):
-        client = Mock()
-        client.assets.list = Mock()
-
-        result = await _call_statistics(client=client, isSaved=True)
-
-        assert result.total == 0
-        client.assets.list.assert_not_called()
 
 
 class TestGetMemory:

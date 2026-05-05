@@ -184,7 +184,9 @@ Immich activities allow users to add comments and reactions to shared albums.
 
 Immich's "memories" feature auto-generates "On This Day" collections and similar nostalgia-based groupings.
 
-**Current behavior**: Read endpoints (`GET /memories`, `GET /memories/{id}`, `GET /memories/statistics`) synthesize OnThisDay memories at request time by querying the photos-api for assets captured on today's local month/day across the previous 30 years (one parallel call per year). Memory IDs encode `(user, year, month, day)` so they round-trip without persistence. The Immich web "On This Day" carousel renders correctly.
+**Current behavior**: Read endpoints `GET /memories` and `GET /memories/{id}` synthesize OnThisDay memories at request time by querying the photos-api for assets captured on today's local month/day across the previous 30 years (one parallel call per year). Memory IDs encode `(user, year, month, day)` so they round-trip without persistence. The Immich web "On This Day" carousel renders correctly.
+
+`GET /memories/statistics` remains a `total=0` stub. No upstream Immich client (web or mobile) calls it, so synthesizing a real count would burn round-trips for a value nobody reads.
 
 Write endpoints (`POST /memories`, `PUT /memories/{id}`, `DELETE /memories/{id}`, `POST/DELETE /memories/{id}/assets`) remain no-op stubs. The memory viewer's save/hide/remove actions appear to succeed but don't persist; this is acceptable for the carousel-only goal and is flagged in `routers/api/memories.py`.
 

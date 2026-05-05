@@ -260,25 +260,18 @@ async def create_memory(
 
 @router.get("/statistics")
 async def memories_statistics(
-    for_param: Annotated[datetime | SkipJsonSchema[None], Query(alias="for")] = None,
-    isSaved: Annotated[bool | SkipJsonSchema[None], Query()] = None,
-    isTrashed: Annotated[bool | SkipJsonSchema[None], Query()] = None,
-    type: Annotated[MemoryType | SkipJsonSchema[None], Query()] = None,
-    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    for_param: datetime = Query(default=None, alias="for"),
+    isSaved: bool = Query(default=None),
+    isTrashed: bool = Query(default=None),
+    type: MemoryType = Query(default=None),
 ) -> MemoryStatisticsResponseDto:
-    """Count years with at least one matching asset for today's local date."""
-    if _filters_exclude_synthetic(
-        is_saved=isSaved, is_trashed=isTrashed, memory_type=type
-    ):
-        return MemoryStatisticsResponseDto(total=0)
-
-    reference_year, month, day = _local_today(for_param)
-    years = _year_window(reference_year)
-    # Cap at 1 per year — we only need to know whether each year is non-empty.
-    year_assets = await _gather_year_assets(client, years, month, day, limit=1)
-    return MemoryStatisticsResponseDto(
-        total=sum(1 for _, assets in year_assets if assets)
-    )
+    """
+    Get memory statistics.
+    This is a stub implementation that returns zero total — no upstream
+    Immich client (web or mobile) calls this endpoint, so synthesizing a
+    real count would burn round-trips for a value nobody reads.
+    """
+    return MemoryStatisticsResponseDto(total=0)
 
 
 @router.get("/{id}")
