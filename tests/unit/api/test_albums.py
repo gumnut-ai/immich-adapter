@@ -561,6 +561,110 @@ class TestAddAssetsToAlbum:
         assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
+    async def test_add_assets_chunks_large_request(self, sample_uuid):
+        """A request larger than BULK_CHUNK_SIZE is split across multiple SDK calls.
+
+        Each chunk's `added` set is merged into the final response, results
+        come back in input order, and each chunk receives only its own ids.
+        """
+        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+
+        total = BULK_CHUNK_SIZE * 2 + 5
+        asset_uuids = [uuid4() for _ in range(total)]
+        gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
+
+        # Each chunk's response echoes the chunk's gumnut_ids back as `added`.
+        responses = [
+            _add_response(added=gumnut_ids[i : i + BULK_CHUNK_SIZE])
+            for i in range(0, total, BULK_CHUNK_SIZE)
+        ]
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(side_effect=responses)
+
+        request = BulkIdsDto(ids=asset_uuids)
+        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        assert [item.id for item in result] == [str(u) for u in asset_uuids]
+        assert all(item.success is True for item in result)
+
+        assert mock_client.albums.assets_associations.add.call_count == 3
+        for idx, call in enumerate(
+            mock_client.albums.assets_associations.add.call_args_list
+        ):
+            expected_chunk = gumnut_ids[
+                idx * BULK_CHUNK_SIZE : (idx + 1) * BULK_CHUNK_SIZE
+            ]
+            assert call.kwargs["asset_ids"] == expected_chunk
+
+    @pytest.mark.anyio
+    async def test_add_assets_empty_request(self, sample_uuid):
+        """An empty `ids` list issues no SDK calls and returns an empty result."""
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock()
+
+        result = await add_assets_to_album(
+            sample_uuid, BulkIdsDto(ids=[]), client=mock_client
+        )
+
+        assert result == []
+        mock_client.albums.assets_associations.add.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_add_assets_chunk_failure_isolated_to_chunk(self, sample_uuid):
+        """A failed chunk only fails its own ids; other chunks still succeed."""
+        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+
+        total = BULK_CHUNK_SIZE * 2
+        asset_uuids = [uuid4() for _ in range(total)]
+        gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
+
+        # Chunk 1 fails with 500; chunk 2 succeeds with all ids added.
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                make_sdk_status_error(500, "boom"),
+                _add_response(added=gumnut_ids[BULK_CHUNK_SIZE:]),
+            ]
+        )
+
+        request = BulkIdsDto(ids=asset_uuids)
+        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        # Chunk 1 ids are unknown; chunk 2 ids succeed.
+        for item in result[:BULK_CHUNK_SIZE]:
+            assert item.success is False
+            assert item.error == Error1.unknown
+        for item in result[BULK_CHUNK_SIZE:]:
+            assert item.success is True
+        assert mock_client.albums.assets_associations.add.call_count == 2
+
+    @pytest.mark.anyio
+    async def test_add_assets_chunk_transport_error_isolated(self, sample_uuid):
+        """A transport error on one chunk only fails its own ids."""
+        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+
+        total = BULK_CHUNK_SIZE * 2
+        asset_uuids = [uuid4() for _ in range(total)]
+        gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
+
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                _add_response(added=gumnut_ids[:BULK_CHUNK_SIZE]),
+                make_sdk_connection_error(),
+            ]
+        )
+
+        request = BulkIdsDto(ids=asset_uuids)
+        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        for item in result[:BULK_CHUNK_SIZE]:
+            assert item.success is True
+        for item in result[BULK_CHUNK_SIZE:]:
+            assert item.success is False
+            assert item.error == Error1.unknown
+
+    @pytest.mark.anyio
     async def test_add_assets_missing_from_response_marked_unknown(
         self, sample_uuid, caplog
     ):
@@ -740,6 +844,97 @@ class TestRemoveAssetFromAlbum:
         assert all(item.success is False for item in result)
         assert all(item.error == Error1.unknown for item in result)
         assert mock_client.albums.assets_associations.remove.call_count == 1
+
+    @pytest.mark.anyio
+    async def test_remove_assets_chunks_large_request(self, sample_uuid):
+        """A request larger than BULK_CHUNK_SIZE is split across multiple SDK calls."""
+        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+
+        total = BULK_CHUNK_SIZE * 2 + 5
+        asset_uuids = [uuid4() for _ in range(total)]
+        gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
+
+        mock_client = Mock()
+        mock_client.albums.assets_associations.remove = AsyncMock(return_value=None)
+
+        request = BulkIdsDto(ids=asset_uuids)
+        result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
+
+        assert [item.id for item in result] == [str(u) for u in asset_uuids]
+        assert all(item.success is True for item in result)
+
+        assert mock_client.albums.assets_associations.remove.call_count == 3
+        for idx, call in enumerate(
+            mock_client.albums.assets_associations.remove.call_args_list
+        ):
+            expected_chunk = gumnut_ids[
+                idx * BULK_CHUNK_SIZE : (idx + 1) * BULK_CHUNK_SIZE
+            ]
+            assert call.kwargs["asset_ids"] == expected_chunk
+
+    @pytest.mark.anyio
+    async def test_remove_assets_empty_request(self, sample_uuid):
+        """An empty `ids` list issues no SDK calls and returns an empty result."""
+        mock_client = Mock()
+        mock_client.albums.assets_associations.remove = AsyncMock()
+
+        result = await remove_asset_from_album(
+            sample_uuid, BulkIdsDto(ids=[]), client=mock_client
+        )
+
+        assert result == []
+        mock_client.albums.assets_associations.remove.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_remove_assets_chunk_failure_isolated_to_chunk(self, sample_uuid):
+        """A failed chunk only fails its own ids; other chunks still succeed."""
+        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+
+        total = BULK_CHUNK_SIZE * 2
+        asset_uuids = [uuid4() for _ in range(total)]
+
+        mock_client = Mock()
+        mock_client.albums.assets_associations.remove = AsyncMock(
+            side_effect=[
+                make_sdk_status_error(500, "boom"),
+                None,
+            ]
+        )
+
+        request = BulkIdsDto(ids=asset_uuids)
+        result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
+
+        for item in result[:BULK_CHUNK_SIZE]:
+            assert item.success is False
+            assert item.error == Error1.unknown
+        for item in result[BULK_CHUNK_SIZE:]:
+            assert item.success is True
+        assert mock_client.albums.assets_associations.remove.call_count == 2
+
+    @pytest.mark.anyio
+    async def test_remove_assets_chunk_transport_error_isolated(self, sample_uuid):
+        """A transport error on one chunk only fails its own ids."""
+        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+
+        total = BULK_CHUNK_SIZE * 2
+        asset_uuids = [uuid4() for _ in range(total)]
+
+        mock_client = Mock()
+        mock_client.albums.assets_associations.remove = AsyncMock(
+            side_effect=[
+                None,
+                make_sdk_connection_error(),
+            ]
+        )
+
+        request = BulkIdsDto(ids=asset_uuids)
+        result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
+
+        for item in result[:BULK_CHUNK_SIZE]:
+            assert item.success is True
+        for item in result[BULK_CHUNK_SIZE:]:
+            assert item.success is False
+            assert item.error == Error1.unknown
 
 
 class TestDeleteAlbum:
