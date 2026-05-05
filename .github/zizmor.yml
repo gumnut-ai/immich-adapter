@@ -1,0 +1,11 @@
+# zizmor configuration. See: https://docs.zizmor.sh/configuration/
+#
+# Requires SHA-pin on third-party actions; allows tag/branch refs on
+# first-party actions/* (per gumnut-dev-setup/docs/references/github-actions-best-practices.md).
+
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        actions/*: ref-pin
+        "*": hash-pin
