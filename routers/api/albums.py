@@ -1,5 +1,4 @@
 import logging
-from itertools import batched
 from typing import Annotated, List
 from uuid import UUID
 
@@ -11,14 +10,12 @@ from gumnut import (
     GumnutError,
 )
 
+from routers.utils.bulk import chunked_per_item_bulk
 from routers.utils.error_mapping import (
     classify_bulk_item_error,
     log_bulk_transport_error,
 )
-from routers.utils.gumnut_client import (
-    BULK_CHUNK_SIZE,
-    get_authenticated_gumnut_client,
-)
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.current_user import get_current_user
 from routers.immich_models import (
     AlbumResponseDto,
@@ -177,47 +174,33 @@ async def add_assets_to_album(
     """
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
-    gumnut_asset_ids = [uuid_to_gumnut_asset_id(uuid) for uuid in request.ids]
 
-    # Upstream caps each request at MAX_BULK_GET_IDS=100; chunk so a single
-    # >cap call from the Immich web client doesn't 422 the whole batch. Each
-    # chunk is independent: a chunk-level error only fails its own ids,
-    # leaving successful chunks reported as success.
+    # Chunk to stay under the upstream MAX_BULK_GET_IDS=100 cap; per-chunk
+    # errors fail only their own ids so other chunks still report success.
     added: set[str] = set()
     duplicate: set[str] = set()
     errors_by_uuid: dict[str, Error1] = {}
-    for chunk in batched(zip(gumnut_asset_ids, request.ids), BULK_CHUNK_SIZE):
-        chunk_gumnut_ids = [g for g, _ in chunk]
-        chunk_uuids = [u for _, u in chunk]
-        try:
-            bulk_response = await client.albums.assets_associations.add(
-                gumnut_album_id, asset_ids=chunk_gumnut_ids
-            )
-        except APIStatusError as bulk_error:
-            error = classify_bulk_item_error(bulk_error, Error1)
-            for asset_uuid in chunk_uuids:
-                errors_by_uuid[str(asset_uuid)] = error
+    async for outcome in chunked_per_item_bulk(
+        request.ids,
+        lambda ids: client.albums.assets_associations.add(
+            gumnut_album_id, asset_ids=ids
+        ),
+        log_context="add_assets_to_album",
+        log_extra={"album_id": str(id)},
+        logger=logger,
+    ):
+        if outcome.error is not None:
+            for asset_uuid in outcome.chunk_uuids:
+                errors_by_uuid[str(asset_uuid)] = outcome.error
             continue
-        except GumnutError as bulk_error:
-            log_bulk_transport_error(
-                logger,
-                context="add_assets_to_album",
-                exc=bulk_error,
-                extra={
-                    "album_id": str(id),
-                    "chunk_size": len(chunk_uuids),
-                    "request_size": len(request.ids),
-                },
-            )
-            for asset_uuid in chunk_uuids:
-                errors_by_uuid[str(asset_uuid)] = Error1.unknown
-            continue
-        added.update(bulk_response.added_assets)
-        duplicate.update(bulk_response.duplicate_assets)
+        assert outcome.response is not None
+        added.update(outcome.response.added_assets)
+        duplicate.update(outcome.response.duplicate_assets)
 
     results: list[BulkIdResponseDto] = []
-    for gumnut_asset_id, asset_uuid in zip(gumnut_asset_ids, request.ids):
+    for asset_uuid in request.ids:
         asset_uuid_str = str(asset_uuid)
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
         if asset_uuid_str in errors_by_uuid:
             results.append(
                 BulkIdResponseDto(
@@ -291,36 +274,22 @@ async def remove_asset_from_album(
     """
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
-    gumnut_asset_ids = [uuid_to_gumnut_asset_id(uuid) for uuid in request.ids]
 
     # Upstream silently skips missing assets and 204s on success. Chunk to
-    # stay under MAX_BULK_GET_IDS=100; a chunk-level error only fails its
-    # own ids so other chunks still report success.
+    # stay under the cap; a chunk-level error fails only its own ids.
     errors_by_uuid: dict[str, Error1] = {}
-    for chunk in batched(zip(gumnut_asset_ids, request.ids), BULK_CHUNK_SIZE):
-        chunk_gumnut_ids = [g for g, _ in chunk]
-        chunk_uuids = [u for _, u in chunk]
-        try:
-            await client.albums.assets_associations.remove(
-                gumnut_album_id, asset_ids=chunk_gumnut_ids
-            )
-        except APIStatusError as bulk_error:
-            error = classify_bulk_item_error(bulk_error, Error1)
-            for asset_uuid in chunk_uuids:
-                errors_by_uuid[str(asset_uuid)] = error
-        except GumnutError as bulk_error:
-            log_bulk_transport_error(
-                logger,
-                context="remove_asset_from_album",
-                exc=bulk_error,
-                extra={
-                    "album_id": str(id),
-                    "chunk_size": len(chunk_uuids),
-                    "request_size": len(request.ids),
-                },
-            )
-            for asset_uuid in chunk_uuids:
-                errors_by_uuid[str(asset_uuid)] = Error1.unknown
+    async for outcome in chunked_per_item_bulk(
+        request.ids,
+        lambda ids: client.albums.assets_associations.remove(
+            gumnut_album_id, asset_ids=ids
+        ),
+        log_context="remove_asset_from_album",
+        log_extra={"album_id": str(id)},
+        logger=logger,
+    ):
+        if outcome.error is not None:
+            for asset_uuid in outcome.chunk_uuids:
+                errors_by_uuid[str(asset_uuid)] = outcome.error
 
     results: list[BulkIdResponseDto] = []
     for asset_uuid in request.ids:

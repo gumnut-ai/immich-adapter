@@ -1,0 +1,187 @@
+"""Tests for routers/utils/bulk.py."""
+
+import logging
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
+import pytest
+from gumnut import NotFoundError
+
+from routers.immich_models import Error1
+from routers.utils.bulk import BulkChunkOutcome, chunked_per_item_bulk
+from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
+from tests.conftest import make_sdk_connection_error, make_sdk_status_error
+
+
+async def _collect(asyncgen) -> list[BulkChunkOutcome]:
+    return [outcome async for outcome in asyncgen]
+
+
+class TestChunkedPerItemBulk:
+    @pytest.mark.anyio
+    async def test_empty_input_yields_nothing(self):
+        sdk_call = AsyncMock()
+        outcomes = await _collect(
+            chunked_per_item_bulk(
+                [],
+                sdk_call,
+                log_context="test",
+                log_extra={},
+                logger=logging.getLogger("test"),
+            )
+        )
+        assert outcomes == []
+        sdk_call.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_single_chunk_success_passes_response_through(self):
+        asset_uuids = [uuid4(), uuid4()]
+        gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
+        sdk_call = AsyncMock(return_value="response-payload")
+
+        outcomes = await _collect(
+            chunked_per_item_bulk(
+                asset_uuids,
+                sdk_call,
+                log_context="test",
+                log_extra={"album_id": "abc"},
+                logger=logging.getLogger("test"),
+            )
+        )
+
+        assert len(outcomes) == 1
+        outcome = outcomes[0]
+        assert outcome.chunk_uuids == tuple(asset_uuids)
+        assert outcome.chunk_gumnut_ids == gumnut_ids
+        assert outcome.response == "response-payload"
+        assert outcome.error is None
+        sdk_call.assert_called_once_with(gumnut_ids)
+
+    @pytest.mark.anyio
+    async def test_splits_oversized_input_into_ordered_chunks(self):
+        total = BULK_CHUNK_SIZE * 2 + 5
+        asset_uuids = [uuid4() for _ in range(total)]
+        gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
+        sdk_call = AsyncMock(side_effect=["r0", "r1", "r2"])
+
+        outcomes = await _collect(
+            chunked_per_item_bulk(
+                asset_uuids,
+                sdk_call,
+                log_context="test",
+                log_extra={},
+                logger=logging.getLogger("test"),
+            )
+        )
+
+        assert len(outcomes) == 3
+        assert sdk_call.call_count == 3
+        for idx, outcome in enumerate(outcomes):
+            expected_slice = slice(idx * BULK_CHUNK_SIZE, (idx + 1) * BULK_CHUNK_SIZE)
+            assert outcome.chunk_uuids == tuple(asset_uuids[expected_slice])
+            assert outcome.chunk_gumnut_ids == gumnut_ids[expected_slice]
+            assert outcome.response == f"r{idx}"
+            assert outcome.error is None
+
+    @pytest.mark.anyio
+    async def test_api_status_error_classified_as_error1(self):
+        asset_uuids = [uuid4(), uuid4()]
+        sdk_call = AsyncMock(
+            side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
+        )
+
+        outcomes = await _collect(
+            chunked_per_item_bulk(
+                asset_uuids,
+                sdk_call,
+                log_context="test",
+                log_extra={},
+                logger=logging.getLogger("test"),
+            )
+        )
+
+        assert len(outcomes) == 1
+        assert outcomes[0].response is None
+        assert outcomes[0].error == Error1.not_found
+
+    @pytest.mark.anyio
+    async def test_unrecognized_status_error_falls_back_to_unknown(self):
+        asset_uuids = [uuid4()]
+        sdk_call = AsyncMock(side_effect=make_sdk_status_error(500, "boom"))
+
+        outcomes = await _collect(
+            chunked_per_item_bulk(
+                asset_uuids,
+                sdk_call,
+                log_context="test",
+                log_extra={},
+                logger=logging.getLogger("test"),
+            )
+        )
+
+        assert outcomes[0].error == Error1.unknown
+
+    @pytest.mark.anyio
+    async def test_transport_error_logs_with_chunk_and_request_size(self, caplog):
+        total = BULK_CHUNK_SIZE + 3
+        asset_uuids = [uuid4() for _ in range(total)]
+        sdk_call = AsyncMock(
+            side_effect=[
+                make_sdk_connection_error(),
+                make_sdk_connection_error(),
+            ]
+        )
+
+        with caplog.at_level(logging.WARNING):
+            outcomes = await _collect(
+                chunked_per_item_bulk(
+                    asset_uuids,
+                    sdk_call,
+                    log_context="test_ctx",
+                    log_extra={"album_id": "alb-1"},
+                    logger=logging.getLogger("test"),
+                )
+            )
+
+        assert all(o.error == Error1.unknown for o in outcomes)
+        # First chunk's log record carries chunk_size=BULK_CHUNK_SIZE and the
+        # full request_size; trailing-chunk record carries the residual size.
+        records = [
+            r for r in caplog.records if r.message == "Transport error in test_ctx"
+        ]
+        assert len(records) == 2
+        assert records[0].chunk_size == BULK_CHUNK_SIZE
+        assert records[0].request_size == total
+        assert records[0].album_id == "alb-1"
+        assert records[1].chunk_size == 3
+        assert records[1].request_size == total
+
+    @pytest.mark.anyio
+    async def test_mixed_success_and_failure_chunks_yield_in_order(self):
+        total = BULK_CHUNK_SIZE * 3
+        asset_uuids = [uuid4() for _ in range(total)]
+        sdk_call = AsyncMock(
+            side_effect=[
+                "ok-0",
+                make_sdk_status_error(500, "boom"),
+                "ok-2",
+            ]
+        )
+
+        outcomes = await _collect(
+            chunked_per_item_bulk(
+                asset_uuids,
+                sdk_call,
+                log_context="test",
+                log_extra={},
+                logger=logging.getLogger("test"),
+            )
+        )
+
+        assert outcomes[0].response == "ok-0"
+        assert outcomes[0].error is None
+        assert outcomes[1].response is None
+        assert outcomes[1].error == Error1.unknown
+        assert outcomes[2].response == "ok-2"
+        assert outcomes[2].error is None
