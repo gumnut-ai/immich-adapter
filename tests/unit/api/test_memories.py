@@ -1,7 +1,7 @@
 """Tests for memories.py endpoints."""
 
 from datetime import datetime, timezone
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from routers.api.memories import (
     _ASSETS_PER_MEMORY,
     _YEAR_WINDOW,
+    _fetch_assets_for_day,
     decode_memory_id,
     encode_memory_id,
     get_memory,
@@ -241,6 +242,97 @@ class TestSearchMemories:
         )
 
         assert len(result) == 1
+
+    @pytest.mark.anyio
+    async def test_for_param_year_drives_year_window(self, mock_current_user):
+        """The window is derived from `for_param.year`, not the server's UTC
+        year, so a Sydney user just past midnight on Jan 1 still sees the year
+        that just ended in their local time."""
+        client = Mock()
+        captured = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        _stub_assets_per_year(client, {2026: [_make_asset(uuid4(), captured)]})
+
+        # `for` says it's Jan 1, 2027 in the user's local time (the
+        # `keepLocalTime` hack again). Server clock could still be Dec 31
+        # 2026 UTC at this moment.
+        for_param = datetime(2027, 1, 1, 0, 30, tzinfo=timezone.utc)
+        # Patch the UTC clock to confirm the window does NOT depend on it.
+        fake_now = datetime(2026, 12, 31, 14, 0, tzinfo=timezone.utc)
+        with patch("routers.api.memories.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_now
+            mock_dt.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = await _call_search(
+                client=client,
+                current_user_id=UUID(mock_current_user.id),
+                current_user=mock_current_user,
+                for_param=for_param,
+            )
+
+        years_queried = sorted(
+            {
+                int(call.kwargs["local_datetime_after"][:4])
+                for call in client.assets.list.call_args_list
+            }
+        )
+        # With `for_param.year=2027`, window is [2026..1997]. The 2026 year
+        # the user just finished is included; if we'd used UTC's 2026, the
+        # window would be [2025..1996] and 2026 would be missing.
+        assert 2026 in years_queried
+        assert max(years_queried) == 2026
+        assert len(result) == 1
+        assert result[0].data.year == 2026
+
+    @pytest.mark.anyio
+    async def test_for_param_omitted_falls_back_to_utc_today(self, mock_current_user):
+        """Direct API consumers (not the carousel) may omit `for`; the fallback
+        uses today UTC. Pin a fake `now()` so the test is deterministic."""
+        client = Mock()
+        client.assets.list = Mock(return_value=MockSyncCursorPage([]))
+        fake_now = datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc)
+        with patch("routers.api.memories.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_now
+            mock_dt.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            await _call_search(
+                client=client,
+                current_user_id=UUID(mock_current_user.id),
+                current_user=mock_current_user,
+            )
+
+        # Every per-year call should target July 15.
+        assert client.assets.list.call_count == _YEAR_WINDOW
+        for call in client.assets.list.call_args_list:
+            assert call.kwargs["local_datetime_after"].endswith("-07-15T00:00:00")
+            assert call.kwargs["local_datetime_before"].endswith("-07-16T00:00:00")
+
+
+class TestFetchAssetsForDay:
+    @pytest.mark.anyio
+    async def test_caps_at_limit_across_pages(self):
+        """The SDK's `limit` is per-page, and `async for` would otherwise walk
+        every page. `_fetch_assets_for_day` must stop iterating after `limit`
+        items so `/statistics` (limit=1) doesn't burn a round-trip per asset."""
+        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
+        many_assets = [_make_asset(uuid4(), captured) for _ in range(5)]
+
+        # `MockSyncCursorPage.__aiter__` yields every item — a real
+        # `SyncCursorPage` would page through them with `has_more=True`.
+        client = Mock()
+        client.assets.list = Mock(return_value=MockSyncCursorPage(many_assets))
+
+        result = await _fetch_assets_for_day(client, 2024, 5, 4, limit=2)
+        assert len(result) == 2
+
+    @pytest.mark.anyio
+    async def test_passes_state_live_explicitly(self):
+        """Trashed assets must not appear in memories. Pin the contract by
+        asserting `state="live"` is always sent — protects against the SDK
+        ever changing its default."""
+        client = Mock()
+        client.assets.list = Mock(return_value=MockSyncCursorPage([]))
+
+        await _fetch_assets_for_day(client, 2024, 5, 4, limit=20)
+
+        assert client.assets.list.call_args.kwargs["state"] == "live"
 
 
 class TestMemoriesStatistics:

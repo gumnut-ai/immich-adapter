@@ -80,8 +80,8 @@ def decode_memory_id(memory_id: UUID, user_id: UUID) -> tuple[int, int, int] | N
     return year, month, day
 
 
-def _local_today(for_param: datetime | None) -> tuple[int, int]:
-    """Return today's (month, day) in the user's local timezone.
+def _local_today(for_param: datetime | None) -> tuple[int, int, int]:
+    """Return today's (year, month, day) in the user's local timezone.
 
     The Immich web client encodes "today" by taking its local wall-clock time
     and pretending it's UTC (`setZone('utc', { keepLocalTime: true })`). The
@@ -89,13 +89,19 @@ def _local_today(for_param: datetime | None) -> tuple[int, int]:
     pulling them off the parsed datetime as-is gives us today in their tz —
     no offset arithmetic needed.
 
+    The year matters for the search window: a Sydney user just past midnight
+    on Jan 1 sees `for` carrying the new year while the server's UTC clock
+    still reads Dec 31 of the prior year. Threading the local year through
+    keeps the window aligned with what the user would call "the past 30
+    years" instead of slicing off the year just ended.
+
     When the client omits `for`, fall back to today UTC; the carousel always
     sends `for`, so this branch is only hit by direct API consumers.
     """
     if for_param is None:
         today = datetime.now(tz=timezone.utc)
-        return today.month, today.day
-    return for_param.month, for_param.day
+        return today.year, today.month, today.day
+    return for_param.year, for_param.month, for_param.day
 
 
 def _year_window(reference_year: int) -> list[int]:
@@ -121,20 +127,26 @@ async def _fetch_assets_for_day(
     Note: SDK `local_datetime_after` is exclusive, so passing the exact
     midnight boundary skips assets captured at exactly 00:00:00.000000 — we
     accept that microsecond edge case for symmetry with `timeline.py`.
+
+    The SDK's `limit` parameter is the per-page size, not a result cap —
+    `async for` walks every page until `has_more` is false. We break out
+    explicitly so callers actually receive at most `limit` assets; without
+    this, `/statistics` (which only needs to know each year is non-empty)
+    would burn a round-trip per asset on busy days.
     """
-    try:
-        day_start = datetime(year, month, day)
-    except ValueError:
-        return []
+    day_start = datetime(year, month, day)
     day_end = day_start + timedelta(days=1)
-    return [
-        asset
-        async for asset in client.assets.list(
-            local_datetime_after=day_start.isoformat(),
-            local_datetime_before=day_end.isoformat(),
-            limit=limit,
-        )
-    ]
+    assets: list[AssetResponse] = []
+    async for asset in client.assets.list(
+        local_datetime_after=day_start.isoformat(),
+        local_datetime_before=day_end.isoformat(),
+        state="live",
+        limit=limit,
+    ):
+        assets.append(asset)
+        if len(assets) >= limit:
+            break
+    return assets
 
 
 def _build_memory(
@@ -212,8 +224,8 @@ async def search_memories(
     ):
         return []
 
-    month, day = _local_today(for_param)
-    years = _year_window(datetime.now(tz=timezone.utc).year)
+    reference_year, month, day = _local_today(for_param)
+    years = _year_window(reference_year)
     year_assets = await _gather_year_assets(
         client, years, month, day, _ASSETS_PER_MEMORY
     )
@@ -260,8 +272,8 @@ async def memories_statistics(
     ):
         return MemoryStatisticsResponseDto(total=0)
 
-    month, day = _local_today(for_param)
-    years = _year_window(datetime.now(tz=timezone.utc).year)
+    reference_year, month, day = _local_today(for_param)
+    years = _year_window(reference_year)
     # Cap at 1 per year — we only need to know whether each year is non-empty.
     year_assets = await _gather_year_assets(client, years, month, day, limit=1)
     return MemoryStatisticsResponseDto(
