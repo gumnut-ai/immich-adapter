@@ -3,19 +3,14 @@ from typing import Annotated, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from gumnut import (
-    APIStatusError,
-    AsyncGumnut,
-    ConflictError,
-    GumnutError,
-)
+from gumnut import AsyncGumnut
 
-from routers.utils.bulk import BulkChunkError, chunked_per_item_bulk
-from routers.utils.concurrency import gather_with_concurrency
-from routers.utils.error_mapping import (
-    classify_bulk_item_error,
-    log_bulk_transport_error,
+from routers.utils.bulk import (
+    BulkChunkError,
+    chunked_per_item_bulk,
+    classify_bulk_item_call,
 )
+from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.current_user import get_current_user
 from routers.immich_models import (
@@ -368,24 +363,14 @@ async def _add_assets_to_one_album(
     gumnut_asset_ids: list[str],
 ) -> BulkIdErrorReason | None:
     """Add assets to one album; return None on success or the mapped error."""
-    try:
-        await client.albums.assets_associations.add(
+    return await classify_bulk_item_call(
+        client.albums.assets_associations.add(
             uuid_to_gumnut_album_id(album_uuid), asset_ids=gumnut_asset_ids
-        )
-        return None
-    except ConflictError:
-        # Dead branch: upstream returns 200 with duplicate_assets, never 409.
-        return BulkIdErrorReason.duplicate
-    except APIStatusError as album_error:
-        return classify_bulk_item_error(album_error, BulkIdErrorReason)
-    except GumnutError as album_error:
-        log_bulk_transport_error(
-            logger,
-            context="add_assets_to_albums",
-            exc=album_error,
-            extra={"album_id": str(album_uuid)},
-        )
-        return BulkIdErrorReason.unknown
+        ),
+        error_enum=BulkIdErrorReason,
+        log_context="add_assets_to_albums",
+        log_extra={"album_id": str(album_uuid)},
+    )
 
 
 @router.delete("/{id}/user/{userId}", status_code=204)

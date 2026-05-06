@@ -456,6 +456,49 @@ class TestUpdatePeopleFeatureFace:
         assert result[0].success is False
         assert result[0].error == Error1.unknown
 
+    @pytest.mark.anyio
+    async def test_update_people_feature_face_resolve_sdk_error_isolated(self):
+        """An SDK error in `_resolve_thumbnail_face_id` is contained per-item.
+
+        Pins the contract that SDK errors raised by `client.faces.list`
+        (called from `_resolve_thumbnail_face_id`) are caught alongside
+        SDK errors from `client.people.update` — both are mapped to a
+        per-item `BulkIdResponseDto` rather than aborting sibling updates
+        via `gather_with_concurrency`.
+        """
+        from gumnut import NotFoundError
+
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        # First person has a face-resolve SDK failure; second person succeeds.
+        mock_client.faces.list = AsyncMock(
+            side_effect=make_sdk_status_error(404, "asset not found", cls=NotFoundError)
+        )
+        mock_client.people.update = AsyncMock(return_value=None)
+
+        person_a = uuid4()
+        person_b = uuid4()
+        asset_uuid = uuid4()
+        request = PeopleUpdateDto(
+            people=[
+                PeopleUpdateItem(id=str(person_a), featureFaceAssetId=asset_uuid),
+                PeopleUpdateItem(id=str(person_b), name="b"),
+            ]
+        )
+
+        result = await update_people(request, client=mock_client)
+
+        assert len(result) == 2
+        assert result[0].success is False
+        assert result[0].error == Error1.not_found
+        # Sibling untouched by the first item's failure.
+        assert result[1].success is True
+        mock_client.people.update.assert_called_once_with(
+            person_id=uuid_to_gumnut_person_id(person_b),
+            name="b",
+        )
+
 
 class TestGetAllPeople:
     """Test the get_all_people endpoint."""
