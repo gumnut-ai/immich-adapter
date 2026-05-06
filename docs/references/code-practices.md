@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-05
+last-updated: 2026-05-06
 ---
 
 # Code Practices
@@ -151,6 +151,32 @@ for asset_uuid in request.ids:
 ```
 
 Use `map_gumnut_error(e, context, extra=..., exc_info=True)` only when the call site needs to enrich the upstream log record with context the global handler can't see — most commonly the upload paths logging filename / device ids / tracebacks.
+
+### Forwarding pagination parameters
+
+When forwarding pagination params (`size`, `page`, `limit`) from an Immich request to a Gumnut SDK call, forward only what the client provided — don't substitute an adapter-side default. The SDK uses an `Omit` sentinel; just leave the kwarg out of the call so photos-api applies its own default:
+
+```python
+from routers.api.constants import PHOTOS_API_MAX_PAGE_SIZE
+
+search_kwargs: dict[str, Any] = {"query": request.description, ...}
+if request.size is not None:
+    # Clamp at the photos-api per-page ceiling.
+    search_kwargs["limit"] = min(int(request.size), PHOTOS_API_MAX_PAGE_SIZE)
+if request.page is not None:
+    search_kwargs["page"] = int(request.page)
+gumnut_results = await client.search.search(**search_kwargs)
+```
+
+Substituting an adapter-side default (e.g., `limit = int(request.size) if request.size else 50`) fragments the source of truth — photos-api's `DEFAULT_PAGE_SIZE = 20` and an adapter-hardcoded 50 silently disagree, and a future change to photos-api's default won't propagate. Same principle for any optional kwarg passed through the adapter: preserve the optionality, don't normalize.
+
+Generated Immich DTO constraints can exceed the backend's per-page cap — e.g., `MetadataSearchDto.size` allows `le=1000.0` while photos-api enforces `PHOTOS_API_MAX_PAGE_SIZE`, and the Immich mobile client uses these high values by default. Clamp at the adapter site against `PHOTOS_API_MAX_PAGE_SIZE` (defined in `routers/api/constants.py`); without it photos-api 422s and the user sees a generic "Failed to ..." surface. **Don't shortcut by tightening the generated DTO** (e.g., dropping `Field(le=1000.0)` to `le=200.0`) — `routers/immich_models.py` is overwritten on every Immich version bump, which restores upstream's constraint and silently reintroduces the bug.
+
+### Mobile-client null-aware string parsing
+
+The Immich mobile app (Dart) parses some response fields with the null-aware `?.` operator — for example, `response.assets.nextPage?.toInt()` in the search service. Dart's `?.` short-circuits **only on `null`**, not on empty string. Returning `""` instead of `None` for an `Optional[str]` field whose mobile-side parser is `?.toInt()` / `?.toDouble()` crashes the client with `FormatException` on every successful response. Use `None` as the sentinel for any optional string the mobile client may parse numerically.
+
+Concrete example: `SearchResponseDto.assets.nextPage` is typed `str | None` in the generated model; the adapter previously emitted `""`, which made every successful `/api/search/metadata` and `/api/search/smart` response crash the Android client. Audit any `Optional[str]` response field whose upstream Dart usage pattern is `?.<numeric-parse>()`.
 
 ### Counts and Aggregates
 

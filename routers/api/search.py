@@ -1,10 +1,11 @@
 import logging
-from typing import List
+from typing import Any, List
 from fastapi import APIRouter, Depends, Query
 from uuid import UUID
 from datetime import datetime
 from gumnut import AsyncGumnut
 
+from routers.api.constants import PHOTOS_API_MAX_PAGE_SIZE
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_person_id
@@ -159,17 +160,20 @@ async def search_assets(
     if request.personIds:
         person_ids = [uuid_to_gumnut_person_id(pid) for pid in request.personIds]
 
-    limit = int(request.size) if request.size else 50
-    page = int(request.page) if request.page else 1
+    search_kwargs: dict[str, Any] = {
+        "query": request.description,
+        "captured_after": request.takenAfter,
+        "captured_before": request.takenBefore,
+        "person_ids": person_ids,
+    }
+    if request.size is not None:
+        # Clamp at the photos-api per-page ceiling. The Immich client default
+        # is 1000; without this, photos-api 422s.
+        search_kwargs["limit"] = min(int(request.size), PHOTOS_API_MAX_PAGE_SIZE)
+    if request.page is not None:
+        search_kwargs["page"] = int(request.page)
 
-    gumnut_results = await client.search.search(
-        query=request.description,
-        captured_after=request.takenAfter,
-        captured_before=request.takenBefore,
-        person_ids=person_ids,
-        limit=limit,
-        page=page,
-    )
+    gumnut_results = await client.search.search(**search_kwargs)
 
     immich_assets = []
     if gumnut_results and gumnut_results.data:
@@ -184,7 +188,7 @@ async def search_assets(
             count=len(immich_assets),
             facets=[],
             items=immich_assets,
-            nextPage="",
+            nextPage=None,
             total=len(immich_assets),
         ),
     )
@@ -197,7 +201,15 @@ async def search_smart(
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> SearchResponseDto:
     """Smart search for assets."""
-    gumnut_assets = await client.search.search(query=request.query)
+    search_kwargs: dict[str, Any] = {"query": request.query}
+    if request.size is not None:
+        # Clamp at the photos-api per-page ceiling. The Immich client default
+        # is 1000; without this, photos-api 422s.
+        search_kwargs["limit"] = min(int(request.size), PHOTOS_API_MAX_PAGE_SIZE)
+    if request.page is not None:
+        search_kwargs["page"] = int(request.page)
+
+    gumnut_assets = await client.search.search(**search_kwargs)
 
     immich_assets = []
     if gumnut_assets:
@@ -212,7 +224,7 @@ async def search_smart(
             count=len(immich_assets),
             facets=[],
             items=immich_assets,
-            nextPage="",
+            nextPage=None,
             total=len(immich_assets),
         ),
     )

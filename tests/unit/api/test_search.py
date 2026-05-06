@@ -1,13 +1,19 @@
-"""Tests for search endpoints (person, metadata, statistics)."""
+"""Tests for /search/* endpoints."""
 
 import pytest
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 from datetime import datetime, timezone
 
-from routers.api.search import search_person, search_assets, search_asset_statistics
+from routers.api.search import (
+    search_person,
+    search_assets,
+    search_asset_statistics,
+    search_smart,
+)
 from routers.immich_models import (
     MetadataSearchDto,
+    SmartSearchDto,
     StatisticsSearchDto,
 )
 from routers.utils.gumnut_id_conversion import (
@@ -235,6 +241,64 @@ class TestSearchMetadata:
         assert result.assets.items == []
 
     @pytest.mark.anyio
+    async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
+        """When size/page are absent, the SDK is called without them so photos-api
+        applies its own defaults. Substituting our own defaults would fragment the
+        single source of truth."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = MetadataSearchDto(description="anything")
+
+        await search_assets(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        call_kwargs = mock_client.search.search.call_args.kwargs
+        assert "limit" not in call_kwargs
+        assert "page" not in call_kwargs
+
+    @pytest.mark.anyio
+    async def test_clamps_size_to_photos_api_ceiling(self, mock_current_user):
+        """The Immich client sends size=1000 by default; photos-api caps at 200.
+        The adapter must clamp before forwarding, otherwise photos-api 422s."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = MetadataSearchDto(description="anything", size=1000)
+
+        await search_assets(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        assert mock_client.search.search.call_args.kwargs["limit"] == 200
+
+    @pytest.mark.anyio
+    async def test_response_next_page_is_none(self, mock_current_user):
+        """The Immich mobile client does `nextPage?.toInt()` (Dart `?.` only
+        short-circuits on null, not on empty string). Returning "" crashes the
+        client with FormatException; None is the correct sentinel."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = MetadataSearchDto(description="anything")
+
+        result = await search_assets(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.assets.nextPage is None
+
+    @pytest.mark.anyio
     async def test_converts_person_ids(self, mock_current_user):
         """Test that Immich person UUIDs are converted to Gumnut IDs."""
         person_uuid = uuid4()
@@ -312,3 +376,66 @@ class TestSearchMetadata:
             await search_assets(
                 request=request, client=mock_client, current_user=mock_current_user
             )
+
+
+class TestSearchSmart:
+    """Test the search_smart endpoint."""
+
+    @pytest.mark.anyio
+    async def test_response_next_page_is_none(self, mock_current_user):
+        """Mirror of the /metadata regression test: the Immich mobile client
+        does `nextPage?.toInt()`, so an empty string crashes it. Both /metadata
+        and /smart return the same SearchResponseDto shape and the fix needs to
+        ship in both places."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = SmartSearchDto(query="anything")
+
+        result = await search_smart(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.assets.nextPage is None
+
+    @pytest.mark.anyio
+    async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
+        """When size/page are absent, the SDK is called without them so photos-api
+        applies its own defaults. Substituting our own defaults would fragment the
+        single source of truth."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = SmartSearchDto(query="anything")
+
+        await search_smart(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        call_kwargs = mock_client.search.search.call_args.kwargs
+        assert "limit" not in call_kwargs
+        assert "page" not in call_kwargs
+
+    @pytest.mark.anyio
+    async def test_clamps_size_to_photos_api_ceiling(self, mock_current_user):
+        """The Immich client sends size=1000 by default; photos-api caps at 200.
+        The adapter must clamp before forwarding, otherwise photos-api 422s."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = SmartSearchDto(query="anything", size=1000)
+
+        await search_smart(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        assert mock_client.search.search.call_args.kwargs["limit"] == 200
