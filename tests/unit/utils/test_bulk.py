@@ -8,7 +8,12 @@ import pytest
 from gumnut import NotFoundError
 
 from routers.immich_models import Error1
-from routers.utils.bulk import BulkChunkOutcome, chunked_per_item_bulk
+from routers.utils.bulk import (
+    BulkChunkError,
+    BulkChunkOutcome,
+    BulkChunkSuccess,
+    chunked_per_item_bulk,
+)
 from routers.utils.gumnut_client import BULK_CHUNK_SIZE
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 from tests.conftest import make_sdk_connection_error, make_sdk_status_error
@@ -50,9 +55,9 @@ class TestChunkedPerItemBulk:
 
         assert len(outcomes) == 1
         outcome = outcomes[0]
+        assert isinstance(outcome, BulkChunkSuccess)
         assert outcome.chunk_uuids == tuple(asset_uuids)
         assert outcome.response == "response-payload"
-        assert outcome.error is None
         sdk_call.assert_called_once_with(gumnut_ids)
 
     @pytest.mark.anyio
@@ -75,9 +80,9 @@ class TestChunkedPerItemBulk:
         assert sdk_call.call_count == 3
         for idx, outcome in enumerate(outcomes):
             expected_slice = slice(idx * BULK_CHUNK_SIZE, (idx + 1) * BULK_CHUNK_SIZE)
+            assert isinstance(outcome, BulkChunkSuccess)
             assert outcome.chunk_uuids == tuple(asset_uuids[expected_slice])
             assert outcome.response == f"r{idx}"
-            assert outcome.error is None
             # Each chunk's SDK call receives only its slice's gumnut ids.
             assert sdk_call.call_args_list[idx].args == (gumnut_ids[expected_slice],)
 
@@ -98,8 +103,9 @@ class TestChunkedPerItemBulk:
         )
 
         assert len(outcomes) == 1
-        assert outcomes[0].response is None
-        assert outcomes[0].error == Error1.not_found
+        outcome = outcomes[0]
+        assert isinstance(outcome, BulkChunkError)
+        assert outcome.error == Error1.not_found
 
     @pytest.mark.anyio
     async def test_unrecognized_status_error_falls_back_to_unknown(self):
@@ -115,7 +121,9 @@ class TestChunkedPerItemBulk:
             )
         )
 
-        assert outcomes[0].error == Error1.unknown
+        outcome = outcomes[0]
+        assert isinstance(outcome, BulkChunkError)
+        assert outcome.error == Error1.unknown
 
     @pytest.mark.anyio
     async def test_transport_error_logs_with_chunk_and_request_size(self, caplog):
@@ -138,7 +146,10 @@ class TestChunkedPerItemBulk:
                 )
             )
 
-        assert all(o.error == Error1.unknown for o in outcomes)
+        assert all(
+            isinstance(o, BulkChunkError) and o.error == Error1.unknown
+            for o in outcomes
+        )
         # First chunk's log record carries chunk_size=BULK_CHUNK_SIZE and the
         # full request_size; trailing-chunk record carries the residual size.
         records = [
@@ -172,9 +183,9 @@ class TestChunkedPerItemBulk:
             )
         )
 
+        assert isinstance(outcomes[0], BulkChunkSuccess)
         assert outcomes[0].response == "ok-0"
-        assert outcomes[0].error is None
-        assert outcomes[1].response is None
+        assert isinstance(outcomes[1], BulkChunkError)
         assert outcomes[1].error == Error1.unknown
+        assert isinstance(outcomes[2], BulkChunkSuccess)
         assert outcomes[2].response == "ok-2"
-        assert outcomes[2].error is None

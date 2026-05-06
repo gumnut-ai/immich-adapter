@@ -30,16 +30,22 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class BulkChunkOutcome[T]:
-    """Per-chunk outcome yielded by `chunked_per_item_bulk`.
-
-    Exactly one of `response` / `error` is set: success yields the SDK
-    response, failure yields the classified `Error1`.
-    """
+class BulkChunkSuccess[T]:
+    """Successful per-chunk outcome — carries the SDK response."""
 
     chunk_uuids: tuple[UUID, ...]
-    response: T | None
-    error: Error1 | None
+    response: T
+
+
+@dataclass(frozen=True, slots=True)
+class BulkChunkError:
+    """Failed per-chunk outcome — carries the classified `Error1`."""
+
+    chunk_uuids: tuple[UUID, ...]
+    error: Error1
+
+
+type BulkChunkOutcome[T] = BulkChunkSuccess[T] | BulkChunkError
 
 
 async def chunked_per_item_bulk[T](
@@ -52,9 +58,10 @@ async def chunked_per_item_bulk[T](
     """Chunk `asset_uuids` and call `sdk_call` per chunk under `BULK_CHUNK_SIZE`.
 
     For each chunk: convert uuids to gumnut asset ids, await `sdk_call` with
-    the chunked id list, and yield a `BulkChunkOutcome`. On `APIStatusError`
-    the chunk is yielded with `error = classify_bulk_item_error(...)`; on a
-    transport-level `GumnutError` the chunk is yielded with
+    the chunked id list, and yield either a `BulkChunkSuccess[T]` or a
+    `BulkChunkError`. On `APIStatusError` the chunk yields a
+    `BulkChunkError` with `error = classify_bulk_item_error(...)`; on a
+    transport-level `GumnutError` it yields a `BulkChunkError` with
     `error = Error1.unknown` after logging via `log_bulk_transport_error`
     (the helper augments `log_extra` with `chunk_size` and `request_size` so
     triage keeps full-request visibility).
@@ -73,9 +80,8 @@ async def chunked_per_item_bulk[T](
         try:
             response = await sdk_call(chunk_gumnut_ids)
         except APIStatusError as exc:
-            yield BulkChunkOutcome(
+            yield BulkChunkError(
                 chunk_uuids=chunk_uuids,
-                response=None,
                 error=classify_bulk_item_error(exc, Error1),
             )
             continue
@@ -90,14 +96,12 @@ async def chunked_per_item_bulk[T](
                     "request_size": request_size,
                 },
             )
-            yield BulkChunkOutcome(
+            yield BulkChunkError(
                 chunk_uuids=chunk_uuids,
-                response=None,
                 error=Error1.unknown,
             )
             continue
-        yield BulkChunkOutcome(
+        yield BulkChunkSuccess(
             chunk_uuids=chunk_uuids,
             response=response,
-            error=None,
         )

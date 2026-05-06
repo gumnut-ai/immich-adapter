@@ -10,7 +10,7 @@ from gumnut import (
     GumnutError,
 )
 
-from routers.utils.bulk import chunked_per_item_bulk
+from routers.utils.bulk import BulkChunkError, chunked_per_item_bulk
 from routers.utils.error_mapping import (
     classify_bulk_item_error,
     log_bulk_transport_error,
@@ -187,11 +187,10 @@ async def add_assets_to_album(
         log_context="add_assets_to_album",
         log_extra={"album_id": str(id)},
     ):
-        if outcome.error is not None:
+        if isinstance(outcome, BulkChunkError):
             for asset_uuid in outcome.chunk_uuids:
                 errors_by_uuid[str(asset_uuid)] = outcome.error
             continue
-        assert outcome.response is not None
         added.update(outcome.response.added_assets)
         duplicate.update(outcome.response.duplicate_assets)
         not_found.update(outcome.response.not_found_assets)
@@ -291,7 +290,7 @@ async def remove_asset_from_album(
         log_context="remove_asset_from_album",
         log_extra={"album_id": str(id)},
     ):
-        if outcome.error is not None:
+        if isinstance(outcome, BulkChunkError):
             for asset_uuid in outcome.chunk_uuids:
                 errors_by_uuid[str(asset_uuid)] = outcome.error
 
