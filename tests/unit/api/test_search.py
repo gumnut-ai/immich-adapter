@@ -235,6 +235,64 @@ class TestSearchMetadata:
         assert result.assets.items == []
 
     @pytest.mark.anyio
+    async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
+        """When size/page are absent, the SDK is called without them so photos-api
+        applies its own defaults. Substituting our own defaults would fragment the
+        single source of truth."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = MetadataSearchDto(description="anything")
+
+        await search_assets(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        call_kwargs = mock_client.search.search.call_args.kwargs
+        assert "limit" not in call_kwargs
+        assert "page" not in call_kwargs
+
+    @pytest.mark.anyio
+    async def test_clamps_size_to_photos_api_ceiling(self, mock_current_user):
+        """The Immich client sends size=1000 by default; photos-api caps at 200.
+        The adapter must clamp before forwarding, otherwise photos-api 422s."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = MetadataSearchDto(description="anything", size=1000)
+
+        await search_assets(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        assert mock_client.search.search.call_args.kwargs["limit"] == 200
+
+    @pytest.mark.anyio
+    async def test_response_next_page_is_none(self, mock_current_user):
+        """The Immich mobile client does `nextPage?.toInt()` (Dart `?.` only
+        short-circuits on null, not on empty string). Returning "" crashes the
+        client with FormatException; None is the correct sentinel."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = MetadataSearchDto(description="anything")
+
+        result = await search_assets(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.assets.nextPage is None
+
+    @pytest.mark.anyio
     async def test_converts_person_ids(self, mock_current_user):
         """Test that Immich person UUIDs are converted to Gumnut IDs."""
         person_uuid = uuid4()
