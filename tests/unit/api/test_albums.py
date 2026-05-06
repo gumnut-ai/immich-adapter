@@ -593,13 +593,24 @@ class TestAddAssetsToAlbum:
         assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
-    async def test_add_assets_chunks_large_request(self, sample_uuid):
+    @pytest.mark.parametrize(
+        "total, expected_call_count",
+        [
+            # Exact-boundary cases: pinning these locks the chunking math
+            # against a future hand-rolled `if len(ids) > N` style split.
+            (BULK_CHUNK_SIZE, 1),
+            (BULK_CHUNK_SIZE + 1, 2),
+            (BULK_CHUNK_SIZE * 2 + 5, 3),
+        ],
+    )
+    async def test_add_assets_chunks_large_request(
+        self, sample_uuid, total, expected_call_count
+    ):
         """A request larger than BULK_CHUNK_SIZE is split across multiple SDK calls.
 
         Each chunk's `added` set is merged into the final response, results
         come back in input order, and each chunk receives only its own ids.
         """
-        total = BULK_CHUNK_SIZE * 2 + 5
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
 
@@ -617,7 +628,9 @@ class TestAddAssetsToAlbum:
         assert [item.id for item in result] == [str(u) for u in asset_uuids]
         assert all(item.success is True for item in result)
 
-        assert mock_client.albums.assets_associations.add.call_count == 3
+        assert (
+            mock_client.albums.assets_associations.add.call_count == expected_call_count
+        )
         for idx, call in enumerate(
             mock_client.albums.assets_associations.add.call_args_list
         ):
@@ -936,9 +949,20 @@ class TestRemoveAssetFromAlbum:
         assert mock_client.albums.assets_associations.remove.call_count == 1
 
     @pytest.mark.anyio
-    async def test_remove_assets_chunks_large_request(self, sample_uuid):
+    @pytest.mark.parametrize(
+        "total, expected_call_count",
+        [
+            # Exact-boundary cases: pinning these locks the chunking math
+            # against a future hand-rolled `if len(ids) > N` style split.
+            (BULK_CHUNK_SIZE, 1),
+            (BULK_CHUNK_SIZE + 1, 2),
+            (BULK_CHUNK_SIZE * 2 + 5, 3),
+        ],
+    )
+    async def test_remove_assets_chunks_large_request(
+        self, sample_uuid, total, expected_call_count
+    ):
         """A request larger than BULK_CHUNK_SIZE is split across multiple SDK calls."""
-        total = BULK_CHUNK_SIZE * 2 + 5
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
 
@@ -951,7 +975,10 @@ class TestRemoveAssetFromAlbum:
         assert [item.id for item in result] == [str(u) for u in asset_uuids]
         assert all(item.success is True for item in result)
 
-        assert mock_client.albums.assets_associations.remove.call_count == 3
+        assert (
+            mock_client.albums.assets_associations.remove.call_count
+            == expected_call_count
+        )
         for idx, call in enumerate(
             mock_client.albums.assets_associations.remove.call_args_list
         ):

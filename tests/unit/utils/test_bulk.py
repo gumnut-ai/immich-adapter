@@ -61,11 +61,22 @@ class TestChunkedPerItemBulk:
         sdk_call.assert_called_once_with(gumnut_ids)
 
     @pytest.mark.anyio
-    async def test_splits_oversized_input_into_ordered_chunks(self):
-        total = BULK_CHUNK_SIZE * 2 + 5
+    @pytest.mark.parametrize(
+        "total, expected_chunks",
+        [
+            # Exact-boundary cases: pinning these locks the chunking math
+            # against a future hand-rolled `if len(ids) > N` style split.
+            (BULK_CHUNK_SIZE, 1),
+            (BULK_CHUNK_SIZE + 1, 2),
+            (BULK_CHUNK_SIZE * 2 + 5, 3),
+        ],
+    )
+    async def test_splits_oversized_input_into_ordered_chunks(
+        self, total, expected_chunks
+    ):
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
-        sdk_call = AsyncMock(side_effect=["r0", "r1", "r2"])
+        sdk_call = AsyncMock(side_effect=[f"r{i}" for i in range(expected_chunks)])
 
         outcomes = await _collect(
             chunked_per_item_bulk(
@@ -76,8 +87,8 @@ class TestChunkedPerItemBulk:
             )
         )
 
-        assert len(outcomes) == 3
-        assert sdk_call.call_count == 3
+        assert len(outcomes) == expected_chunks
+        assert sdk_call.call_count == expected_chunks
         for idx, outcome in enumerate(outcomes):
             expected_slice = slice(idx * BULK_CHUNK_SIZE, (idx + 1) * BULK_CHUNK_SIZE)
             assert isinstance(outcome, BulkChunkSuccess)

@@ -178,7 +178,7 @@ async def add_assets_to_album(
     added: set[str] = set()
     duplicate: set[str] = set()
     not_found: set[str] = set()
-    errors_by_uuid: dict[str, Error1] = {}
+    errors_by_uuid: dict[UUID, Error1] = {}
     async for outcome in chunked_per_item_bulk(
         request.ids,
         lambda ids: client.albums.assets_associations.add(
@@ -189,22 +189,26 @@ async def add_assets_to_album(
     ):
         if isinstance(outcome, BulkChunkError):
             for asset_uuid in outcome.chunk_uuids:
-                errors_by_uuid[str(asset_uuid)] = outcome.error
+                errors_by_uuid[asset_uuid] = outcome.error
             continue
         added.update(outcome.response.added_assets)
         duplicate.update(outcome.response.duplicate_assets)
         not_found.update(outcome.response.not_found_assets)
 
+    # The helper converts uuids internally but doesn't surface the mapping;
+    # build it once here so the response-assembly loop is pure dict lookups.
+    gumnut_id_by_uuid = {u: uuid_to_gumnut_asset_id(u) for u in request.ids}
+
     results: list[BulkIdResponseDto] = []
     for asset_uuid in request.ids:
         asset_uuid_str = str(asset_uuid)
-        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
-        if asset_uuid_str in errors_by_uuid:
+        gumnut_asset_id = gumnut_id_by_uuid[asset_uuid]
+        if asset_uuid in errors_by_uuid:
             results.append(
                 BulkIdResponseDto(
                     id=asset_uuid_str,
                     success=False,
-                    error=errors_by_uuid[asset_uuid_str],
+                    error=errors_by_uuid[asset_uuid],
                 )
             )
         elif gumnut_asset_id in added:
@@ -281,7 +285,7 @@ async def remove_asset_from_album(
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
     # Upstream silently skips missing assets and 204s on success.
-    errors_by_uuid: dict[str, Error1] = {}
+    errors_by_uuid: dict[UUID, Error1] = {}
     async for outcome in chunked_per_item_bulk(
         request.ids,
         lambda ids: client.albums.assets_associations.remove(
@@ -292,17 +296,17 @@ async def remove_asset_from_album(
     ):
         if isinstance(outcome, BulkChunkError):
             for asset_uuid in outcome.chunk_uuids:
-                errors_by_uuid[str(asset_uuid)] = outcome.error
+                errors_by_uuid[asset_uuid] = outcome.error
 
     results: list[BulkIdResponseDto] = []
     for asset_uuid in request.ids:
         asset_uuid_str = str(asset_uuid)
-        if asset_uuid_str in errors_by_uuid:
+        if asset_uuid in errors_by_uuid:
             results.append(
                 BulkIdResponseDto(
                     id=asset_uuid_str,
                     success=False,
-                    error=errors_by_uuid[asset_uuid_str],
+                    error=errors_by_uuid[asset_uuid],
                 )
             )
         else:
