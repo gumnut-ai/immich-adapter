@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-05
+last-updated: 2026-05-06
 ---
 
 # Code Practices
@@ -192,6 +192,22 @@ for year, result in zip(years, results):
 ```
 
 `gather(return_exceptions=True)` captures `CancelledError` like any other exception, so a naive `isinstance(result, BaseException)` check disguises cancellation as a transient failure. See `routers/api/memories.py::_gather_year_assets` for the canonical shape.
+
+#### Bounded fan-out for per-item SDK calls
+
+For bulk endpoints that have to call a single-item SDK method per input (no bulk SDK variant exists — e.g., `client.people.update`, `client.people.delete`, `client.faces.update`, or per-album SDK calls inside a multi-album fan-out), use `gather_with_concurrency` from `routers/utils/concurrency.py` instead of a sequential `for` loop. It runs coroutines in parallel under a `BULK_FANOUT_CONCURRENCY_LIMIT` semaphore, preserves input order in the result list, and propagates the first exception (cancelling siblings).
+
+```python
+from routers.utils.concurrency import gather_with_concurrency
+
+results = await gather_with_concurrency(
+    [_update_one_person(client, item) for item in people_data.people]
+)
+```
+
+When the endpoint returns `List[BulkIdResponseDto]`, catch per-item errors **inside** the per-item coroutine and return a typed result — don't rely on the helper to surface them, since `asyncio.gather` (default) cancels pending siblings on the first exception. When the endpoint contract is "abort the batch on first error" (e.g. `delete_people` returning 204), the default propagation is exactly right; let the global `GumnutError` handler take over.
+
+Pin the contract with a concurrency-counter test: an `asyncio.Lock`-guarded `active` / `peak` counter inside the per-item side_effect, asserting `peak > 1` (parallel) and `peak <= BULK_FANOUT_CONCURRENCY_LIMIT` (bounded). See `tests/unit/utils/test_concurrency.py::test_caps_concurrent_in_flight_calls` and the per-endpoint variants in `tests/unit/api/test_people.py` / `test_albums.py`.
 
 ### Bulk-ID Endpoints
 

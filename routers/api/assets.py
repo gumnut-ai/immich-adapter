@@ -1,3 +1,4 @@
+import asyncio
 from itertools import batched
 from typing import List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
@@ -631,12 +632,18 @@ async def _bulk_permanent_delete(
             body={"ids": gumnut_ids},
             cast_to=type(None),
         )
-        for asset_uuid in chunk:
-            await emit_user_event(
-                WebSocketEvent.ASSET_DELETE,
-                user_id,
-                str(asset_uuid),
+        # `emit_user_event` is fire-and-forget — gather the per-id emits so a
+        # 100-item chunk does one publish wave instead of 100 sequential awaits.
+        await asyncio.gather(
+            *(
+                emit_user_event(
+                    WebSocketEvent.ASSET_DELETE,
+                    user_id,
+                    str(asset_uuid),
+                )
+                for asset_uuid in chunk
             )
+        )
 
 
 async def _bulk_trash(
