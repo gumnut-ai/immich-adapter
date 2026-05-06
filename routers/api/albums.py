@@ -175,8 +175,6 @@ async def add_assets_to_album(
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
-    # Chunk to stay under the upstream MAX_BULK_GET_IDS=100 cap; per-chunk
-    # errors fail only their own ids so other chunks still report success.
     added: set[str] = set()
     duplicate: set[str] = set()
     errors_by_uuid: dict[str, Error1] = {}
@@ -275,8 +273,7 @@ async def remove_asset_from_album(
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
-    # Upstream silently skips missing assets and 204s on success. Chunk to
-    # stay under the cap; a chunk-level error fails only its own ids.
+    # Upstream silently skips missing assets and 204s on success.
     errors_by_uuid: dict[str, Error1] = {}
     async for outcome in chunked_per_item_bulk(
         request.ids,

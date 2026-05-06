@@ -36,7 +36,6 @@ class BulkChunkOutcome[T]:
     """
 
     chunk_uuids: tuple[UUID, ...]
-    chunk_gumnut_ids: list[str]
     response: T | None
     error: Error1 | None
 
@@ -74,7 +73,6 @@ async def chunked_per_item_bulk[T](
         except APIStatusError as exc:
             yield BulkChunkOutcome(
                 chunk_uuids=chunk_uuids,
-                chunk_gumnut_ids=chunk_gumnut_ids,
                 response=None,
                 error=classify_bulk_item_error(exc, Error1),
             )
@@ -92,14 +90,12 @@ async def chunked_per_item_bulk[T](
             )
             yield BulkChunkOutcome(
                 chunk_uuids=chunk_uuids,
-                chunk_gumnut_ids=chunk_gumnut_ids,
                 response=None,
                 error=Error1.unknown,
             )
             continue
         yield BulkChunkOutcome(
             chunk_uuids=chunk_uuids,
-            chunk_gumnut_ids=chunk_gumnut_ids,
             response=response,
             error=None,
         )

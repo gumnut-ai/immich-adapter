@@ -53,7 +53,6 @@ class TestChunkedPerItemBulk:
         assert len(outcomes) == 1
         outcome = outcomes[0]
         assert outcome.chunk_uuids == tuple(asset_uuids)
-        assert outcome.chunk_gumnut_ids == gumnut_ids
         assert outcome.response == "response-payload"
         assert outcome.error is None
         sdk_call.assert_called_once_with(gumnut_ids)
@@ -80,9 +79,10 @@ class TestChunkedPerItemBulk:
         for idx, outcome in enumerate(outcomes):
             expected_slice = slice(idx * BULK_CHUNK_SIZE, (idx + 1) * BULK_CHUNK_SIZE)
             assert outcome.chunk_uuids == tuple(asset_uuids[expected_slice])
-            assert outcome.chunk_gumnut_ids == gumnut_ids[expected_slice]
             assert outcome.response == f"r{idx}"
             assert outcome.error is None
+            # Each chunk's SDK call receives only its slice's gumnut ids.
+            assert sdk_call.call_args_list[idx].args == (gumnut_ids[expected_slice],)
 
     @pytest.mark.anyio
     async def test_api_status_error_classified_as_error1(self):

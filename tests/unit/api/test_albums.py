@@ -596,6 +596,39 @@ class TestAddAssetsToAlbum:
             assert call.kwargs["asset_ids"] == expected_chunk
 
     @pytest.mark.anyio
+    async def test_add_assets_duplicate_in_later_chunk_surfaces_in_response(
+        self, sample_uuid
+    ):
+        """`duplicate_assets` returned by a non-first chunk surfaces correctly
+        in the per-asset response. Locks down the cross-chunk merge contract
+        for `duplicate.update(...)` (the `added` merge has the symmetric
+        coverage in `test_add_assets_chunks_large_request`)."""
+        total = BULK_CHUNK_SIZE * 2
+        asset_uuids = [uuid4() for _ in range(total)]
+        gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
+        # Chunk 1 → all added. Chunk 2 → all added except the last id, which
+        # the upstream reports as duplicate.
+        chunk2_dup_index = total - 1
+        chunk1_added = gumnut_ids[:BULK_CHUNK_SIZE]
+        chunk2_added = gumnut_ids[BULK_CHUNK_SIZE:chunk2_dup_index]
+        chunk2_dup = [gumnut_ids[chunk2_dup_index]]
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                _add_response(added=chunk1_added),
+                _add_response(added=chunk2_added, duplicate=chunk2_dup),
+            ]
+        )
+
+        request = BulkIdsDto(ids=asset_uuids)
+        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        for item in result[:chunk2_dup_index]:
+            assert item.success is True
+        assert result[chunk2_dup_index].success is False
+        assert result[chunk2_dup_index].error == Error1.duplicate
+
+    @pytest.mark.anyio
     async def test_add_assets_empty_request(self, sample_uuid):
         """An empty `ids` list issues no SDK calls and returns an empty result."""
         mock_client = Mock()
