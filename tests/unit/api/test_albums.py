@@ -36,11 +36,14 @@ from routers.utils.gumnut_id_conversion import (
 
 
 def _add_response(
-    added: list[str] | None = None, duplicate: list[str] | None = None
+    added: list[str] | None = None,
+    duplicate: list[str] | None = None,
+    not_found: list[str] | None = None,
 ) -> AssetsAssociationAddResponse:
     return AssetsAssociationAddResponse(
         added_assets=added or [],
         duplicate_assets=duplicate or [],
+        not_found_assets=not_found or [],
     )
 
 
@@ -499,6 +502,34 @@ class TestAddAssetsToAlbum:
         assert result[1].id == str(dup_asset)
         assert result[1].success is False
         assert result[1].error == Error1.duplicate
+
+    @pytest.mark.anyio
+    async def test_add_assets_not_found_assets_from_response(self, sample_uuid):
+        """`not_found_assets` returned in the body maps to per-id not_found.
+
+        Upstream returns 200 with the not_found bucket — these are ids that
+        don't exist or aren't in the album's library, but the call as a whole
+        succeeded.
+        """
+        new_asset = uuid4()
+        missing_asset = uuid4()
+        new_gid = uuid_to_gumnut_asset_id(new_asset)
+        missing_gid = uuid_to_gumnut_asset_id(missing_asset)
+
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            return_value=_add_response(added=[new_gid], not_found=[missing_gid])
+        )
+
+        request = BulkIdsDto(ids=[new_asset, missing_asset])
+        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        assert len(result) == 2
+        assert result[0].id == str(new_asset)
+        assert result[0].success is True
+        assert result[1].id == str(missing_asset)
+        assert result[1].success is False
+        assert result[1].error == Error1.not_found
 
     @pytest.mark.anyio
     async def test_add_assets_not_found_marks_all(self, sample_uuid):

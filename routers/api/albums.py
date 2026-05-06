@@ -177,6 +177,7 @@ async def add_assets_to_album(
 
     added: set[str] = set()
     duplicate: set[str] = set()
+    not_found: set[str] = set()
     errors_by_uuid: dict[str, Error1] = {}
     async for outcome in chunked_per_item_bulk(
         request.ids,
@@ -193,6 +194,7 @@ async def add_assets_to_album(
         assert outcome.response is not None
         added.update(outcome.response.added_assets)
         duplicate.update(outcome.response.duplicate_assets)
+        not_found.update(outcome.response.not_found_assets)
 
     results: list[BulkIdResponseDto] = []
     for asset_uuid in request.ids:
@@ -214,9 +216,16 @@ async def add_assets_to_album(
                     id=asset_uuid_str, success=False, error=Error1.duplicate
                 )
             )
+        elif gumnut_asset_id in not_found:
+            results.append(
+                BulkIdResponseDto(
+                    id=asset_uuid_str, success=False, error=Error1.not_found
+                )
+            )
         else:
-            # Shouldn't happen with the current photos-api contract — surface
-            # drift via a warning + unknown rather than silently succeeding.
+            # Contract drift: every requested id should land in exactly one of
+            # added / duplicate / not_found. Surface as `unknown` + warning
+            # rather than silently succeeding.
             logger.warning(
                 "Asset missing from add_assets bulk response",
                 extra={"album_id": str(id), "asset_id": asset_uuid_str},
