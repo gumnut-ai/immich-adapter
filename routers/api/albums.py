@@ -10,6 +10,7 @@ from gumnut import (
     GumnutError,
 )
 
+from routers.utils.bulk import BulkChunkError, chunked_per_item_bulk
 from routers.utils.error_mapping import (
     classify_bulk_item_error,
     log_bulk_transport_error,
@@ -173,38 +174,44 @@ async def add_assets_to_album(
     """
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
-    gumnut_asset_ids = [uuid_to_gumnut_asset_id(uuid) for uuid in request.ids]
 
-    # Upstream validates membership before any DB write — a bulk error means no
-    # partial commit, so mark every requested asset failed.
-    try:
-        bulk_response = await client.albums.assets_associations.add(
-            gumnut_album_id, asset_ids=gumnut_asset_ids
-        )
-    except APIStatusError as bulk_error:
-        error = classify_bulk_item_error(bulk_error, Error1)
-        return [
-            BulkIdResponseDto(id=str(uuid), success=False, error=error)
-            for uuid in request.ids
-        ]
-    except GumnutError as bulk_error:
-        log_bulk_transport_error(
-            logger,
-            context="add_assets_to_album",
-            exc=bulk_error,
-            extra={"album_id": str(id), "asset_count": len(request.ids)},
-        )
-        return [
-            BulkIdResponseDto(id=str(uuid), success=False, error=Error1.unknown)
-            for uuid in request.ids
-        ]
+    added: set[str] = set()
+    duplicate: set[str] = set()
+    not_found: set[str] = set()
+    errors_by_uuid: dict[UUID, Error1] = {}
+    async for outcome in chunked_per_item_bulk(
+        request.ids,
+        lambda ids: client.albums.assets_associations.add(
+            gumnut_album_id, asset_ids=ids
+        ),
+        log_context="add_assets_to_album",
+        log_extra={"album_id": str(id)},
+    ):
+        if isinstance(outcome, BulkChunkError):
+            for asset_uuid in outcome.chunk_uuids:
+                errors_by_uuid[asset_uuid] = outcome.error
+            continue
+        added.update(outcome.response.added_assets)
+        duplicate.update(outcome.response.duplicate_assets)
+        not_found.update(outcome.response.not_found_assets)
 
-    added = set(bulk_response.added_assets)
-    duplicate = set(bulk_response.duplicate_assets)
+    # The helper converts uuids internally but doesn't surface the mapping;
+    # build it once here so the response-assembly loop is pure dict lookups.
+    gumnut_id_by_uuid = {u: uuid_to_gumnut_asset_id(u) for u in request.ids}
+
     results: list[BulkIdResponseDto] = []
-    for gumnut_asset_id, asset_uuid in zip(gumnut_asset_ids, request.ids):
+    for asset_uuid in request.ids:
         asset_uuid_str = str(asset_uuid)
-        if gumnut_asset_id in added:
+        gumnut_asset_id = gumnut_id_by_uuid[asset_uuid]
+        if asset_uuid in errors_by_uuid:
+            results.append(
+                BulkIdResponseDto(
+                    id=asset_uuid_str,
+                    success=False,
+                    error=errors_by_uuid[asset_uuid],
+                )
+            )
+        elif gumnut_asset_id in added:
             results.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
         elif gumnut_asset_id in duplicate:
             results.append(
@@ -212,9 +219,16 @@ async def add_assets_to_album(
                     id=asset_uuid_str, success=False, error=Error1.duplicate
                 )
             )
+        elif gumnut_asset_id in not_found:
+            results.append(
+                BulkIdResponseDto(
+                    id=asset_uuid_str, success=False, error=Error1.not_found
+                )
+            )
         else:
-            # Shouldn't happen with the current photos-api contract — surface
-            # drift via a warning + unknown rather than silently succeeding.
+            # Contract drift: every requested id should land in exactly one of
+            # added / duplicate / not_found. Surface as `unknown` + warning
+            # rather than silently succeeding.
             logger.warning(
                 "Asset missing from add_assets bulk response",
                 extra={"album_id": str(id), "asset_id": asset_uuid_str},
@@ -269,34 +283,35 @@ async def remove_asset_from_album(
     """
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
-    gumnut_asset_ids = [uuid_to_gumnut_asset_id(uuid) for uuid in request.ids]
 
-    # Upstream silently skips missing assets and 204s on success — only
-    # batch-level errors (e.g. album missing) reach the except branches, and
-    # they map the same error onto every entry.
-    try:
-        await client.albums.assets_associations.remove(
-            gumnut_album_id, asset_ids=gumnut_asset_ids
-        )
-    except APIStatusError as bulk_error:
-        error = classify_bulk_item_error(bulk_error, Error1)
-        return [
-            BulkIdResponseDto(id=str(uuid), success=False, error=error)
-            for uuid in request.ids
-        ]
-    except GumnutError as bulk_error:
-        log_bulk_transport_error(
-            logger,
-            context="remove_asset_from_album",
-            exc=bulk_error,
-            extra={"album_id": str(id), "asset_count": len(request.ids)},
-        )
-        return [
-            BulkIdResponseDto(id=str(uuid), success=False, error=Error1.unknown)
-            for uuid in request.ids
-        ]
+    # Upstream silently skips missing assets and 204s on success.
+    errors_by_uuid: dict[UUID, Error1] = {}
+    async for outcome in chunked_per_item_bulk(
+        request.ids,
+        lambda ids: client.albums.assets_associations.remove(
+            gumnut_album_id, asset_ids=ids
+        ),
+        log_context="remove_asset_from_album",
+        log_extra={"album_id": str(id)},
+    ):
+        if isinstance(outcome, BulkChunkError):
+            for asset_uuid in outcome.chunk_uuids:
+                errors_by_uuid[asset_uuid] = outcome.error
 
-    return [BulkIdResponseDto(id=str(uuid), success=True) for uuid in request.ids]
+    results: list[BulkIdResponseDto] = []
+    for asset_uuid in request.ids:
+        asset_uuid_str = str(asset_uuid)
+        if asset_uuid in errors_by_uuid:
+            results.append(
+                BulkIdResponseDto(
+                    id=asset_uuid_str,
+                    success=False,
+                    error=errors_by_uuid[asset_uuid],
+                )
+            )
+        else:
+            results.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
+    return results
 
 
 @router.delete("/{id}", status_code=204)
