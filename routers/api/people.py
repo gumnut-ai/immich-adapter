@@ -160,9 +160,10 @@ async def _update_one_person(
             log_extra=log_extra,
         )
     except HTTPException as he:
-        # `_resolve_thumbnail_face_id` raises 400 on missing face — the only
-        # HTTPException source on this path. SDK errors from inside that
-        # helper are caught above by `classify_bulk_item_call`.
+        # Single source: `_resolve_thumbnail_face_id` raises HTTPException(400)
+        # for "no face found" — maps to `unknown` (no enum bucket fits a
+        # missing-face signal). SDK errors from `client.faces.list` /
+        # `client.people.update` are caught above by `classify_bulk_item_call`.
         log_upstream_response(
             logger,
             context="update_people",
@@ -173,13 +174,7 @@ async def _update_one_person(
             ),
             extra=log_extra,
         )
-        if he.status_code == 404:
-            error = Error1.not_found
-        elif he.status_code in (401, 403):
-            error = Error1.no_permission
-        else:
-            error = Error1.unknown
-        return BulkIdResponseDto(id=person_item.id, success=False, error=error)
+        return BulkIdResponseDto(id=person_item.id, success=False, error=Error1.unknown)
 
     if sdk_error is not None:
         return BulkIdResponseDto(id=person_item.id, success=False, error=sdk_error)

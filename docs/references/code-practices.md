@@ -259,6 +259,8 @@ await client.delete("/api/assets", body={"ids": gumnut_ids}, cast_to=type(None))
 
 `emit_user_event` and `emit_session_event` (in `services/websockets.py`) are **fire-and-forget**: they catch `SocketIOError` from the underlying transport, log at WARN with `exc_info=True`, and return normally. **Do not wrap call sites in `try/except SocketIOError`** — the central swallow is the contract, and per-site catches are duplication. If the surrounding block needs to handle other exception types (e.g., DTO conversion before the emit, like `_emit_upload_events` in `routers/api/assets.py`), the broader try/except can stay; just don't add a separate `except SocketIOError` branch.
 
+For chunks that fire one event per id (e.g. `ASSET_DELETE`'s single-id wire shape), use `emit_user_event_per_id(event, user_id, payload_ids)` instead of rolling an inline `asyncio.gather(*(emit_user_event(...) for ... in chunk))` — the helper centralizes the per-id gather wave so callers don't duplicate it. Pass a generator or list of pre-stringified ids; the helper consumes the iterable once.
+
 ### Immich Client Error Handling
 
 - **Observed behavior:** Immich mobile and web clients have no HTTP 429 (rate limit) handling. A 429 causes sync failures, broken thumbnails, and upload errors with no automatic recovery.

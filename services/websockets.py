@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from collections.abc import Iterable
 from enum import Enum
 from http.cookies import SimpleCookie
 from typing import Any, TypeAlias
@@ -248,6 +250,24 @@ async def emit_user_event(
             },
             exc_info=True,
         )
+
+
+async def emit_user_event_per_id(
+    event: WebSocketEvent,
+    user_id: str,
+    payload_ids: Iterable[str],
+) -> None:
+    """Fan out one user event per id under a single ``asyncio.gather`` wave.
+
+    For events whose wire shape is one-id-per-event (e.g. ``ASSET_DELETE``,
+    where Immich expects ``on_asset_delete`` to carry a single id string per
+    event rather than a batched array). Each id triggers its own emit, and
+    gathering them publishes the chunk's events concurrently instead of
+    sequentially.
+    """
+    await asyncio.gather(
+        *(emit_user_event(event, user_id, payload_id) for payload_id in payload_ids)
+    )
 
 
 async def emit_session_event(

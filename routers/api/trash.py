@@ -12,7 +12,6 @@ through ``AsyncGumnut.post`` / ``.delete`` directly. Errors propagate to the
 global ``GumnutError`` handler.
 """
 
-import asyncio
 from itertools import batched
 from uuid import UUID
 
@@ -32,7 +31,11 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     uuid_to_gumnut_asset_id,
 )
-from services.websockets import emit_user_event, WebSocketEvent
+from services.websockets import (
+    emit_user_event,
+    emit_user_event_per_id,
+    WebSocketEvent,
+)
 
 
 router = APIRouter(
@@ -65,17 +68,10 @@ async def empty_trash(
             body={"ids": list(chunk)},
             cast_to=type(None),
         )
-        # `emit_user_event` is fire-and-forget — gather the per-id emits so a
-        # 100-item chunk does one publish wave instead of 100 sequential awaits.
-        await asyncio.gather(
-            *(
-                emit_user_event(
-                    WebSocketEvent.ASSET_DELETE,
-                    user_id,
-                    str(safe_uuid_from_asset_id(gumnut_id)),
-                )
-                for gumnut_id in chunk
-            )
+        await emit_user_event_per_id(
+            WebSocketEvent.ASSET_DELETE,
+            user_id,
+            (str(safe_uuid_from_asset_id(gumnut_id)) for gumnut_id in chunk),
         )
     return TrashResponseDto(count=len(trashed_gumnut_ids))
 

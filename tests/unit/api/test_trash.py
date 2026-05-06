@@ -285,8 +285,11 @@ class TestEmptyTrash:
         mock_client.assets.list = Mock(return_value=MockSyncCursorPage(trashed_assets))
 
         current_user_id = uuid4()
+        # `empty_trash` calls `emit_user_event_per_id`, which in turn fans out
+        # `emit_user_event` once per id. Patch at the websockets module so the
+        # per-id call count is observable.
         with patch(
-            "routers.api.trash.emit_user_event", new_callable=AsyncMock
+            "services.websockets.emit_user_event", new_callable=AsyncMock
         ) as mock_emit:
             result = await empty_trash(
                 client=mock_client, current_user_id=current_user_id
