@@ -185,7 +185,6 @@ async def add_assets_to_album(
         ),
         log_context="add_assets_to_album",
         log_extra={"album_id": str(id)},
-        logger=logger,
     ):
         if outcome.error is not None:
             for asset_uuid in outcome.chunk_uuids:
@@ -282,7 +281,6 @@ async def remove_asset_from_album(
         ),
         log_context="remove_asset_from_album",
         log_extra={"album_id": str(id)},
-        logger=logger,
     ):
         if outcome.error is not None:
             for asset_uuid in outcome.chunk_uuids:

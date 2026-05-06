@@ -28,7 +28,6 @@ class TestChunkedPerItemBulk:
                 sdk_call,
                 log_context="test",
                 log_extra={},
-                logger=logging.getLogger("test"),
             )
         )
         assert outcomes == []
@@ -46,7 +45,6 @@ class TestChunkedPerItemBulk:
                 sdk_call,
                 log_context="test",
                 log_extra={"album_id": "abc"},
-                logger=logging.getLogger("test"),
             )
         )
 
@@ -70,7 +68,6 @@ class TestChunkedPerItemBulk:
                 sdk_call,
                 log_context="test",
                 log_extra={},
-                logger=logging.getLogger("test"),
             )
         )
 
@@ -97,7 +94,6 @@ class TestChunkedPerItemBulk:
                 sdk_call,
                 log_context="test",
                 log_extra={},
-                logger=logging.getLogger("test"),
             )
         )
 
@@ -116,7 +112,6 @@ class TestChunkedPerItemBulk:
                 sdk_call,
                 log_context="test",
                 log_extra={},
-                logger=logging.getLogger("test"),
             )
         )
 
@@ -140,7 +135,6 @@ class TestChunkedPerItemBulk:
                     sdk_call,
                     log_context="test_ctx",
                     log_extra={"album_id": "alb-1"},
-                    logger=logging.getLogger("test"),
                 )
             )
 
@@ -175,7 +169,6 @@ class TestChunkedPerItemBulk:
                 sdk_call,
                 log_context="test",
                 log_extra={},
-                logger=logging.getLogger("test"),
             )
         )
 

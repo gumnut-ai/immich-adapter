@@ -26,6 +26,8 @@ from routers.utils.error_mapping import (
 from routers.utils.gumnut_client import BULK_CHUNK_SIZE
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class BulkChunkOutcome[T]:
@@ -46,7 +48,6 @@ async def chunked_per_item_bulk[T](
     *,
     log_context: str,
     log_extra: dict[str, Any],
-    logger: logging.Logger,
 ) -> AsyncIterator[BulkChunkOutcome[T]]:
     """Chunk `asset_uuids` and call `sdk_call` per chunk under `BULK_CHUNK_SIZE`.
 
