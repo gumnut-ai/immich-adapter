@@ -86,3 +86,37 @@ class TestGatherWithConcurrency:
 
         with pytest.raises(RuntimeError, match="boom"):
             await gather_with_concurrency([slow(), boom(), slow()])
+
+    @pytest.mark.anyio
+    async def test_cancellation_does_not_warn_unawaited_coroutines(
+        self, recwarn: pytest.WarningsRecorder
+    ):
+        """Cancelled tasks waiting on the semaphore must close their coros.
+
+        With more inputs than the limit, the over-limit coroutines are
+        constructed eagerly but their `_run` tasks block on
+        `semaphore.acquire()` until a slot frees. If a running task raises
+        first, `asyncio.gather` cancels the waiters mid-acquire — the inner
+        coroutines were never awaited and would otherwise trigger
+        `RuntimeWarning: coroutine was never awaited` when GC'd.
+        """
+
+        async def boom() -> int:
+            raise RuntimeError("boom")
+
+        async def never_runs() -> int:  # pragma: no cover — cancelled before entry
+            return 1
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await gather_with_concurrency(
+                [boom()] + [never_runs() for _ in range(5)],
+                limit=1,
+            )
+
+        unawaited = [
+            w
+            for w in recwarn.list
+            if issubclass(w.category, RuntimeWarning)
+            and "was never awaited" in str(w.message)
+        ]
+        assert unawaited == [], f"unexpected unawaited-coroutine warnings: {unawaited}"

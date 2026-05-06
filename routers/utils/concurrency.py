@@ -39,7 +39,18 @@ async def gather_with_concurrency[T](
     semaphore = asyncio.Semaphore(limit)
 
     async def _run(coro: Coroutine[Any, Any, T]) -> T:
-        async with semaphore:
+        # Inputs are already-constructed coroutines, so any coro whose `_run`
+        # task is cancelled while waiting on the semaphore would otherwise be
+        # GC'd unawaited and trigger `RuntimeWarning: coroutine was never
+        # awaited`. Close it explicitly in that window.
+        try:
+            await semaphore.acquire()
+        except BaseException:
+            coro.close()
+            raise
+        try:
             return await coro
+        finally:
+            semaphore.release()
 
     return await asyncio.gather(*(_run(coro) for coro in coros))

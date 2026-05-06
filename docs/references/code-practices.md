@@ -195,7 +195,7 @@ for year, result in zip(years, results):
 
 #### Bounded fan-out for per-item SDK calls
 
-For bulk endpoints that have to call a single-item SDK method per input (no bulk SDK variant exists — e.g., `client.people.update`, `client.people.delete`, `client.faces.update`, or per-album SDK calls inside a multi-album fan-out), use `gather_with_concurrency` from `routers/utils/concurrency.py` instead of a sequential `for` loop. It runs coroutines in parallel under a `BULK_FANOUT_CONCURRENCY_LIMIT` semaphore, preserves input order in the result list, and propagates the first exception (cancelling siblings).
+For bulk endpoints that have to call a single-item SDK method per input (no bulk SDK variant exists — e.g., `client.people.update`, `client.people.delete`, or per-album SDK calls inside a multi-album fan-out), use `gather_with_concurrency` from `routers/utils/concurrency.py` instead of a sequential `for` loop. It runs coroutines in parallel under a `BULK_FANOUT_CONCURRENCY_LIMIT` semaphore, preserves input order in the result list, and propagates the first exception (cancelling siblings). The same helper applies when the parallelizable unit is a multi-step coroutine rather than a single SDK call (e.g. `reassign_faces` parallelizes per-`(asset, sourcePerson)` pairs whose dominant cost is a `client.faces.list` call; the inner per-face `client.faces.update` loop stays sequential because pairs almost always yield 0–1 faces).
 
 ```python
 from routers.utils.concurrency import gather_with_concurrency
