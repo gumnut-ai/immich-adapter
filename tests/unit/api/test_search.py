@@ -1,13 +1,19 @@
-"""Tests for search endpoints (person, metadata, statistics)."""
+"""Tests for /search/* endpoints."""
 
 import pytest
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 from datetime import datetime, timezone
 
-from routers.api.search import search_person, search_assets, search_asset_statistics
+from routers.api.search import (
+    search_person,
+    search_assets,
+    search_asset_statistics,
+    search_smart,
+)
 from routers.immich_models import (
     MetadataSearchDto,
+    SmartSearchDto,
     StatisticsSearchDto,
 )
 from routers.utils.gumnut_id_conversion import (
@@ -370,3 +376,27 @@ class TestSearchMetadata:
             await search_assets(
                 request=request, client=mock_client, current_user=mock_current_user
             )
+
+
+class TestSearchSmart:
+    """Test the search_smart endpoint."""
+
+    @pytest.mark.anyio
+    async def test_response_next_page_is_none(self, mock_current_user):
+        """Mirror of the /metadata regression test: the Immich mobile client
+        does `nextPage?.toInt()`, so an empty string crashes it. Both /metadata
+        and /smart return the same SearchResponseDto shape and the fix needs to
+        ship in both places."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = SmartSearchDto(query="anything")
+
+        result = await search_smart(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.assets.nextPage is None
