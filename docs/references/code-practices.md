@@ -92,7 +92,7 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 
 ### Implementing New Endpoints
 
-1. **Generate models**: Use `generate_immich_models.py` to create up-to-date Pydantic models (see [development tools](development-tools.md)). The generated `routers/immich_models.py` is overwritten on every Immich version bump, so **don't tighten field constraints in that file** (e.g., dropping `Field(le=1000.0)` to `le=200.0` because the backend caps lower). The next regen restores upstream's constraint and silently reintroduces the bug. Constrain in endpoint code instead, with a comment pointing at the backend cap — e.g., `min(int(request.size), 200)` for the photos-api `MAX_PAGE_SIZE` ceiling.
+1. **Generate models**: Use `generate_immich_models.py` to create up-to-date Pydantic models (see [development tools](development-tools.md))
 2. **Import models**: Use generated models from `routers.immich_models` for type safety
 3. **Define parameters**: Follow the parameter conventions above
 4. **Verify parameter semantics**: Check the Immich OpenAPI spec (`https://api.immich.app/endpoints/`) or source code (`immich/server/src/controllers/*.controller.ts` and the matching service) to confirm what each URL path and body parameter represents. URL `{id}` parameters don't always refer to the entity in the URL collection — face/person reassign endpoints in particular swap the natural reading. Both of these accept the **target person** as `{id}` in the path:
@@ -157,10 +157,12 @@ Use `map_gumnut_error(e, context, extra=..., exc_info=True)` only when the call 
 When forwarding pagination params (`size`, `page`, `limit`) from an Immich request to a Gumnut SDK call, forward only what the client provided — don't substitute an adapter-side default. The SDK uses an `Omit` sentinel; just leave the kwarg out of the call so photos-api applies its own default:
 
 ```python
+from routers.api.constants import PHOTOS_API_MAX_PAGE_SIZE
+
 search_kwargs: dict[str, Any] = {"query": request.description, ...}
 if request.size is not None:
-    # Clamp at the photos-api per-page ceiling (MAX_PAGE_SIZE = 200).
-    search_kwargs["limit"] = min(int(request.size), 200)
+    # Clamp at the photos-api per-page ceiling.
+    search_kwargs["limit"] = min(int(request.size), PHOTOS_API_MAX_PAGE_SIZE)
 if request.page is not None:
     search_kwargs["page"] = int(request.page)
 gumnut_results = await client.search.search(**search_kwargs)
@@ -168,7 +170,7 @@ gumnut_results = await client.search.search(**search_kwargs)
 
 Substituting an adapter-side default (e.g., `limit = int(request.size) if request.size else 50`) fragments the source of truth — photos-api's `DEFAULT_PAGE_SIZE = 20` and an adapter-hardcoded 50 silently disagree, and a future change to photos-api's default won't propagate. Same principle for any optional kwarg passed through the adapter: preserve the optionality, don't normalize.
 
-Generated Immich DTO constraints can exceed the backend's per-page cap (e.g., `MetadataSearchDto.size` allows `le=1000.0` while photos-api enforces 200). The Immich mobile client uses these high values by default — clamp at the adapter, otherwise photos-api 422s and the user sees a generic "Failed to ..." surface.
+Generated Immich DTO constraints can exceed the backend's per-page cap — e.g., `MetadataSearchDto.size` allows `le=1000.0` while photos-api enforces `PHOTOS_API_MAX_PAGE_SIZE`, and the Immich mobile client uses these high values by default. Clamp at the adapter site against `PHOTOS_API_MAX_PAGE_SIZE` (defined in `routers/api/constants.py`); without it photos-api 422s and the user sees a generic "Failed to ..." surface. **Don't shortcut by tightening the generated DTO** (e.g., dropping `Field(le=1000.0)` to `le=200.0`) — `routers/immich_models.py` is overwritten on every Immich version bump, which restores upstream's constraint and silently reintroduces the bug.
 
 ### Mobile-client null-aware string parsing
 

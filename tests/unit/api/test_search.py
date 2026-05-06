@@ -400,3 +400,42 @@ class TestSearchSmart:
         )
 
         assert result.assets.nextPage is None
+
+    @pytest.mark.anyio
+    async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
+        """When size/page are absent, the SDK is called without them so photos-api
+        applies its own defaults. Substituting our own defaults would fragment the
+        single source of truth."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = SmartSearchDto(query="anything")
+
+        await search_smart(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        call_kwargs = mock_client.search.search.call_args.kwargs
+        assert "limit" not in call_kwargs
+        assert "page" not in call_kwargs
+
+    @pytest.mark.anyio
+    async def test_clamps_size_to_photos_api_ceiling(self, mock_current_user):
+        """The Immich client sends size=1000 by default; photos-api caps at 200.
+        The adapter must clamp before forwarding, otherwise photos-api 422s."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        request = SmartSearchDto(query="anything", size=1000)
+
+        await search_smart(
+            request=request, client=mock_client, current_user=mock_current_user
+        )
+
+        assert mock_client.search.search.call_args.kwargs["limit"] == 200

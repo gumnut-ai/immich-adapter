@@ -5,6 +5,7 @@ from uuid import UUID
 from datetime import datetime
 from gumnut import AsyncGumnut
 
+from routers.api.constants import PHOTOS_API_MAX_PAGE_SIZE
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_person_id
@@ -166,9 +167,9 @@ async def search_assets(
         "person_ids": person_ids,
     }
     if request.size is not None:
-        # Clamp at the photos-api per-page ceiling (MAX_PAGE_SIZE = 200). The
-        # Immich client default is 1000; without this, photos-api 422s.
-        search_kwargs["limit"] = min(int(request.size), 200)
+        # Clamp at the photos-api per-page ceiling. The Immich client default
+        # is 1000; without this, photos-api 422s.
+        search_kwargs["limit"] = min(int(request.size), PHOTOS_API_MAX_PAGE_SIZE)
     if request.page is not None:
         search_kwargs["page"] = int(request.page)
 
@@ -200,7 +201,15 @@ async def search_smart(
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> SearchResponseDto:
     """Smart search for assets."""
-    gumnut_assets = await client.search.search(query=request.query)
+    search_kwargs: dict[str, Any] = {"query": request.query}
+    if request.size is not None:
+        # Clamp at the photos-api per-page ceiling. The Immich client default
+        # is 1000; without this, photos-api 422s.
+        search_kwargs["limit"] = min(int(request.size), PHOTOS_API_MAX_PAGE_SIZE)
+    if request.page is not None:
+        search_kwargs["page"] = int(request.page)
+
+    gumnut_assets = await client.search.search(**search_kwargs)
 
     immich_assets = []
     if gumnut_assets:
