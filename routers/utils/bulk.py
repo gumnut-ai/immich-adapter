@@ -62,7 +62,8 @@ async def chunked_per_item_bulk[T](
     The caller is responsible for composing the final
     `List[BulkIdResponseDto]` from the yielded outcomes — that's where
     response-shape variation between endpoints lives (e.g. `add` accumulates
-    `added`/`duplicate` sets, `remove` only needs error vs success).
+    `added`/`duplicate`/`not_found` sets, `remove` only needs error vs
+    success).
     """
     request_size = len(asset_uuids)
     gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]

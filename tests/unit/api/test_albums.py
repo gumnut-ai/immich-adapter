@@ -660,6 +660,36 @@ class TestAddAssetsToAlbum:
         assert result[chunk2_dup_index].error == Error1.duplicate
 
     @pytest.mark.anyio
+    async def test_add_assets_not_found_in_later_chunk_surfaces_in_response(
+        self, sample_uuid
+    ):
+        """`not_found_assets` returned by a non-first chunk surfaces correctly
+        in the per-asset response. Locks down the cross-chunk merge contract
+        for `not_found.update(...)` — symmetric to the duplicate test above."""
+        total = BULK_CHUNK_SIZE * 2
+        asset_uuids = [uuid4() for _ in range(total)]
+        gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
+        chunk2_missing_index = total - 1
+        chunk1_added = gumnut_ids[:BULK_CHUNK_SIZE]
+        chunk2_added = gumnut_ids[BULK_CHUNK_SIZE:chunk2_missing_index]
+        chunk2_missing = [gumnut_ids[chunk2_missing_index]]
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                _add_response(added=chunk1_added),
+                _add_response(added=chunk2_added, not_found=chunk2_missing),
+            ]
+        )
+
+        request = BulkIdsDto(ids=asset_uuids)
+        result = await add_assets_to_album(sample_uuid, request, client=mock_client)
+
+        for item in result[:chunk2_missing_index]:
+            assert item.success is True
+        assert result[chunk2_missing_index].success is False
+        assert result[chunk2_missing_index].error == Error1.not_found
+
+    @pytest.mark.anyio
     async def test_add_assets_empty_request(self, sample_uuid):
         """An empty `ids` list issues no SDK calls and returns an empty result."""
         mock_client = Mock()
@@ -727,11 +757,12 @@ class TestAddAssetsToAlbum:
     async def test_add_assets_missing_from_response_marked_unknown(
         self, sample_uuid, caplog
     ):
-        """An asset_id absent from both added and duplicate sets is marked unknown.
+        """An asset_id absent from added/duplicate/not_found sets is marked unknown.
 
         Defensive against drift in the upstream response shape — if photos-api
-        ever introduces a third bucket (e.g. `not_found_assets`), assets falling
-        into it surface as unknown + warning instead of silently succeeding.
+        ever introduces a new bucket the adapter doesn't yet handle, assets
+        falling into it surface as unknown + warning instead of silently
+        succeeding.
         """
         present = uuid4()
         missing = uuid4()
