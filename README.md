@@ -76,13 +76,14 @@ docker build --build-arg IMMICH_VERSION=v2.2.3 -t immich-adapter .
 For production deployments or when testing with mobile clients (iOS/Android), use these optimized settings:
 
 ```bash
-uv run fastapi run --port 3001 \
+uv run uvicorn main:app --port 3001 \
+  --ws websockets-sansio \
   --timeout-keep-alive 75 \
   --limit-concurrency 200 \
   --backlog 2048
 ```
 
-See [docs/references/uvicorn-settings.md](docs/references/uvicorn-settings.md) for details on these settings and why they matter for mobile clients.
+This invokes `uvicorn` directly because the `fastapi` CLI doesn't expose `--ws`, and the default `--ws auto` routes Socket.IO through a deprecated WebSocket transport. See [docs/references/uvicorn-settings.md](docs/references/uvicorn-settings.md) for details on each flag.
 
 ## Access the Application
 

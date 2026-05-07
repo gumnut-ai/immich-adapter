@@ -36,13 +36,13 @@ These settings control how uvicorn (the ASGI server running our FastAPI applicat
 
 `--ws` selects which WebSocket implementation uvicorn uses for the WebSocket transport that the ASGI app (Socket.IO via `python-engineio`, in our case) sits on top of.
 
-### Setting we use
+### Setting We Use
 
 ```text
 --ws websockets-sansio
 ```
 
-### Why not the default `--ws auto`
+### Why Not the Default `--ws auto`
 
 `auto` picks an implementation based on what's installed: if the `websockets` package is present (it is — it's pulled in transitively), uvicorn selects `uvicorn.protocols.websockets.websockets_impl:WebSocketProtocol`. That module imports `WebSocketServerProtocol` from `websockets.server`, which since `websockets` 14.0 is a deprecated lazy-import alias for `websockets.legacy.server.WebSocketServerProtocol` — the legacy class.
 
@@ -50,20 +50,24 @@ The legacy class implements its receive loop with `asyncio.shield(self.transfer_
 
 In production this surfaced as ~70 Sentry events/day (close codes 1000 / 1005 / 1011) attributed to `logger=asyncio` with `mechanism=logging`.
 
-### What `websockets-sansio` does differently
+### What `websockets-sansio` Does Differently
 
-`websockets-sansio` (added in uvicorn 0.30, available in our pinned 0.40.0) uses the modern sans-I/O `websockets.server.ServerProtocol`. Its receive loop has no `asyncio.shield`; close frames flow out naturally and there are no shielded-future leaks.
+`websockets-sansio` uses the modern sans-I/O `websockets.server.ServerProtocol`. Its receive loop has no `asyncio.shield`; close frames flow out naturally and there are no shielded-future leaks.
 
 The ASGI WebSocket scope/receive/send contract is identical between the two impls, so consumers (`python-engineio`, `python-socketio`, our Socket.IO handlers) don't need any code changes.
 
-### Why we don't use `--ws wsproto`
+### Why We Require uvicorn ≥ 0.44.0
+
+The sansio impl shipped in uvicorn 0.35.0, but it didn't gain WebSocket keepalive pings until **0.44.0**. Without keepalive pings the server would stop probing dead peers, which would silently regress the close-code 1011 ("keepalive ping timeout") detection that the legacy impl was doing for us. The pyproject.toml constraint `uvicorn[standard]>=0.44.0` exists for this reason — do **not** loosen it without first confirming the sansio impl in the target version still emits pings. uvicorn 0.42.0 also fixed several sansio bugs we want to be on the safe side of.
+
+### Why We Don't Use `--ws wsproto`
 
 `wsproto` is a different sans-I/O library entirely. We have no operational reason to switch libraries; staying on `websockets` (modern API) keeps the dependency graph simple and the failure modes well-known.
 
-### Verifying the change
+### Verifying the Change
 
-- Static: `tests/unit/test_uvicorn_ws_config.py` asserts the setting resolves to the modern protocol class.
-- Runtime: post-deploy, watch Sentry issues `IMMICH-ADAPTER-14`, `IMMICH-ADAPTER-15`, and `IMMICH-ADAPTER-1E` over a 48h window — they should stop receiving new events.
+- Static: `tests/unit/config/test_uvicorn_ws_config.py` asserts the setting resolves to the modern protocol class.
+- Runtime: post-deploy, watch Sentry for asyncio `"exception in shielded future"` ERROR records (close codes 1000 / 1005 / 1011) over a 48h window — they should stop appearing.
 
 ---
 

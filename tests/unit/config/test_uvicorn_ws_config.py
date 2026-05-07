@@ -31,7 +31,7 @@ def test_websockets_sansio_does_not_import_legacy():
     """The sansio impl must not pull in the deprecated `websockets.legacy` tree.
 
     The legacy module is what produces the shielded-future leak. If a future
-    refactor causes `websockets_sansio_impl` to import from `.legacy`, this
+    refactor of the sansio impl reaches into `websockets.legacy.*`, this
     test catches it before deploy.
     """
     import inspect
@@ -40,4 +40,3 @@ def test_websockets_sansio_does_not_import_legacy():
 
     source = inspect.getsource(websockets_sansio_impl)
     assert "websockets.legacy" not in source
-    assert "from .legacy" not in source
