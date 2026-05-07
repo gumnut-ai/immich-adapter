@@ -106,7 +106,11 @@ ENV LOG_LEVEL=info
 # Run the application with optimized uvicorn settings
 # Render sets PORT environment variable automatically (typically 10000)
 # Using exec form with shell for proper signal handling and variable substitution
+# `--ws websockets-sansio` selects the modern websockets impl; default `auto`
+# routes through the deprecated legacy module which leaks shielded-future
+# exceptions on peer close. See docs/references/uvicorn-settings.md.
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level ${LOG_LEVEL} \
+  --ws websockets-sansio \
   --timeout-graceful-shutdown 60 \
   --timeout-keep-alive ${TIMEOUT_KEEP_ALIVE:-75} \
   --limit-concurrency ${LIMIT_CONCURRENCY:-200} \

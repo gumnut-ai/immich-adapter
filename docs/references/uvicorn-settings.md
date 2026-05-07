@@ -1,28 +1,69 @@
 ---
 title: "Uvicorn Server Settings"
-last-updated: 2025-11-12
+last-updated: 2026-05-07
 ---
 
 # Uvicorn Server Settings Explained
 
 ## Overview
 
-This document provides a deep dive into the three uvicorn server settings recommended for iOS/Flutter client compatibility: `timeout-keep-alive`, `limit-concurrency`, and `backlog`.
+This document covers the uvicorn server settings used by `immich-adapter`:
 
-These settings control how uvicorn (the ASGI server running your FastAPI application) handles HTTP connections, which is critical for mobile clients that make rapid successive requests.
+- HTTP-tier settings tuned for iOS/Flutter client compatibility — `timeout-keep-alive`, `limit-concurrency`, `backlog`.
+- The WebSocket protocol implementation choice — `--ws websockets-sansio`.
+
+These settings control how uvicorn (the ASGI server running our FastAPI application) handles HTTP and WebSocket connections, which is critical for mobile clients that make rapid successive requests and for the Socket.IO sync stream that backs the live Immich web/mobile UIs.
 
 ---
 
 ## Table of Contents
 
-1. [timeout-keep-alive](#timeout-keep-alive)
-2. [limit-concurrency](#limit-concurrency)
-3. [backlog](#backlog)
-4. [Where These Settings Come From](#where-these-settings-come-from)
-5. [Default Values and Why They Matter](#default-values-and-why-they-matter)
-6. [How These Settings Work Together](#how-these-settings-work-together)
-7. [Platform-Specific Behavior](#platform-specific-behavior)
-8. [Monitoring and Tuning](#monitoring-and-tuning)
+1. [ws (WebSocket protocol implementation)](#ws-websocket-protocol-implementation)
+2. [timeout-keep-alive](#timeout-keep-alive)
+3. [limit-concurrency](#limit-concurrency)
+4. [backlog](#backlog)
+5. [Where These Settings Come From](#where-these-settings-come-from)
+6. [Default Values and Why They Matter](#default-values-and-why-they-matter)
+7. [How These Settings Work Together](#how-these-settings-work-together)
+8. [Platform-Specific Behavior](#platform-specific-behavior)
+9. [Monitoring and Tuning](#monitoring-and-tuning)
+
+---
+
+## ws (WebSocket protocol implementation)
+
+### What It Is
+
+`--ws` selects which WebSocket implementation uvicorn uses for the WebSocket transport that the ASGI app (Socket.IO via `python-engineio`, in our case) sits on top of.
+
+### Setting we use
+
+```text
+--ws websockets-sansio
+```
+
+### Why not the default `--ws auto`
+
+`auto` picks an implementation based on what's installed: if the `websockets` package is present (it is — it's pulled in transitively), uvicorn selects `uvicorn.protocols.websockets.websockets_impl:WebSocketProtocol`. That module imports `WebSocketServerProtocol` from `websockets.server`, which since `websockets` 14.0 is a deprecated lazy-import alias for `websockets.legacy.server.WebSocketServerProtocol` — the legacy class.
+
+The legacy class implements its receive loop with `asyncio.shield(self.transfer_data_task)` so explicit close frames aren't cancelled by user-side timeouts. When a peer closes (gracefully or via keepalive timeout), the shielded task raises `ConnectionClosedError` / `ConnectionClosedOK`. The library's surrounding lifecycle doesn't always observe that exception before the task is GC'd, and asyncio logs `"exception in shielded future"` at ERROR.
+
+In production this surfaced as ~70 Sentry events/day (close codes 1000 / 1005 / 1011) attributed to `logger=asyncio` with `mechanism=logging`.
+
+### What `websockets-sansio` does differently
+
+`websockets-sansio` (added in uvicorn 0.30, available in our pinned 0.40.0) uses the modern sans-I/O `websockets.server.ServerProtocol`. Its receive loop has no `asyncio.shield`; close frames flow out naturally and there are no shielded-future leaks.
+
+The ASGI WebSocket scope/receive/send contract is identical between the two impls, so consumers (`python-engineio`, `python-socketio`, our Socket.IO handlers) don't need any code changes.
+
+### Why we don't use `--ws wsproto`
+
+`wsproto` is a different sans-I/O library entirely. We have no operational reason to switch libraries; staying on `websockets` (modern API) keeps the dependency graph simple and the failure modes well-known.
+
+### Verifying the change
+
+- Static: `tests/unit/test_uvicorn_ws_config.py` asserts the setting resolves to the modern protocol class.
+- Runtime: post-deploy, watch Sentry issues `IMMICH-ADAPTER-14`, `IMMICH-ADAPTER-15`, and `IMMICH-ADAPTER-1E` over a 48h window — they should stop receiving new events.
 
 ---
 
