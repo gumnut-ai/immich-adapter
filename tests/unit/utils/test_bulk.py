@@ -7,12 +7,13 @@ from uuid import uuid4
 import pytest
 from gumnut import NotFoundError
 
-from routers.immich_models import Error1
+from routers.immich_models import BulkIdErrorReason, Error1
 from routers.utils.bulk import (
     BulkChunkError,
     BulkChunkOutcome,
     BulkChunkSuccess,
     chunked_per_item_bulk,
+    classify_bulk_item_call,
 )
 from routers.utils.gumnut_client import BULK_CHUNK_SIZE
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
@@ -200,3 +201,78 @@ class TestChunkedPerItemBulk:
         assert outcomes[1].error == Error1.unknown
         assert isinstance(outcomes[2], BulkChunkSuccess)
         assert outcomes[2].response == "ok-2"
+
+
+class TestClassifyBulkItemCall:
+    @pytest.mark.anyio
+    async def test_success_returns_none_and_awaits_coroutine(self):
+        sdk_call = AsyncMock(return_value="resp")
+        result = await classify_bulk_item_call(
+            sdk_call(),
+            error_enum=Error1,
+            log_context="test",
+            log_extra={},
+        )
+        assert result is None
+        sdk_call.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_api_status_error_classified(self):
+        async def raises_not_found():
+            raise make_sdk_status_error(404, "Not found", cls=NotFoundError)
+
+        result = await classify_bulk_item_call(
+            raises_not_found(),
+            error_enum=Error1,
+            log_context="test",
+            log_extra={},
+        )
+        assert result == Error1.not_found
+
+    @pytest.mark.anyio
+    async def test_unrecognized_status_falls_back_to_unknown(self):
+        async def raises_500():
+            raise make_sdk_status_error(500, "boom")
+
+        result = await classify_bulk_item_call(
+            raises_500(),
+            error_enum=Error1,
+            log_context="test",
+            log_extra={},
+        )
+        assert result == Error1.unknown
+
+    @pytest.mark.anyio
+    async def test_transport_error_logs_and_returns_unknown(self, caplog):
+        async def raises_transport():
+            raise make_sdk_connection_error()
+
+        with caplog.at_level(logging.WARNING):
+            result = await classify_bulk_item_call(
+                raises_transport(),
+                error_enum=Error1,
+                log_context="test_ctx",
+                log_extra={"person_id": "p-1"},
+            )
+
+        assert result == Error1.unknown
+        records = [
+            r for r in caplog.records if r.message == "Transport error in test_ctx"
+        ]
+        assert len(records) == 1
+        assert records[0].person_id == "p-1"
+
+    @pytest.mark.anyio
+    async def test_works_with_alternate_error_enum(self):
+        """Helper is generic over the per-item error enum (Error1 vs BulkIdErrorReason)."""
+
+        async def raises_not_found():
+            raise make_sdk_status_error(404, "Not found", cls=NotFoundError)
+
+        result = await classify_bulk_item_call(
+            raises_not_found(),
+            error_enum=BulkIdErrorReason,
+            log_context="test",
+            log_extra={},
+        )
+        assert result == BulkIdErrorReason.not_found

@@ -1,4 +1,4 @@
-"""Helpers for chunked bulk-id endpoints with per-item response contracts.
+"""Helpers for bulk-id endpoints with per-item response contracts.
 
 For Immich endpoints that accept `BulkIdsDto` and must return
 `List[BulkIdResponseDto]` with per-id `success` / `error` mapping (e.g. the
@@ -7,11 +7,23 @@ global `GumnutError` handler unmapped — uses the simpler `for chunk in
 batched(...)` pattern in-place; see `routers/api/trash.py` and the
 "Bulk-ID Endpoints" section of `docs/references/code-practices.md` for the
 distinction.
+
+Two helpers live here:
+
+- `chunked_per_item_bulk` — for endpoints whose SDK call accepts a list of
+  ids per chunk (`client.albums.assets_associations.add` etc.). Owns the
+  chunking loop and per-chunk error mapping.
+- `classify_bulk_item_call` — for parallel-fan-out endpoints that call a
+  single-item SDK method per input (`client.people.update`,
+  `client.albums.assets_associations.add` per album, etc.) under
+  `gather_with_concurrency`. Owns the per-item error mapping so call sites
+  don't re-roll the `APIStatusError` / `GumnutError` try/except shape.
 """
 
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from dataclasses import dataclass
+from enum import Enum
 from itertools import batched
 from typing import Any
 from uuid import UUID
@@ -105,3 +117,38 @@ async def chunked_per_item_bulk[T](
             chunk_uuids=chunk_uuids,
             response=response,
         )
+
+
+async def classify_bulk_item_call[E: Enum](
+    coro: Coroutine[Any, Any, Any],
+    *,
+    error_enum: type[E],
+    log_context: str,
+    log_extra: dict[str, Any],
+) -> E | None:
+    """Run one per-item bulk SDK coroutine; return None on success or a classified error.
+
+    Mirrors the per-chunk policy in `chunked_per_item_bulk` for endpoints
+    that fan out one SDK call per input id under `gather_with_concurrency`
+    (e.g. per-person updates, per-album asset adds). On `APIStatusError` the
+    caller gets back `classify_bulk_item_error(exc, error_enum)`; on a
+    transport-level `GumnutError` the helper logs via
+    `log_bulk_transport_error` and returns `error_enum["unknown"]`.
+
+    The result discards the success value — every current call site only
+    cares about success-or-error. If a future endpoint needs the response
+    payload, switch to a tagged-outcome shape like `BulkChunkOutcome`.
+    """
+    try:
+        await coro
+    except APIStatusError as exc:
+        return classify_bulk_item_error(exc, error_enum)
+    except GumnutError as exc:
+        log_bulk_transport_error(
+            logger,
+            context=log_context,
+            exc=exc,
+            extra=log_extra,
+        )
+        return error_enum["unknown"]
+    return None

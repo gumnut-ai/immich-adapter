@@ -31,7 +31,11 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     uuid_to_gumnut_asset_id,
 )
-from services.websockets import emit_user_event, WebSocketEvent
+from services.websockets import (
+    emit_user_event,
+    emit_user_event_per_id,
+    WebSocketEvent,
+)
 
 
 router = APIRouter(
@@ -64,13 +68,11 @@ async def empty_trash(
             body={"ids": list(chunk)},
             cast_to=type(None),
         )
-        for gumnut_id in chunk:
-            asset_uuid = safe_uuid_from_asset_id(gumnut_id)
-            await emit_user_event(
-                WebSocketEvent.ASSET_DELETE,
-                user_id,
-                str(asset_uuid),
-            )
+        await emit_user_event_per_id(
+            WebSocketEvent.ASSET_DELETE,
+            user_id,
+            (str(safe_uuid_from_asset_id(gumnut_id)) for gumnut_id in chunk),
+        )
     return TrashResponseDto(count=len(trashed_gumnut_ids))
 
 

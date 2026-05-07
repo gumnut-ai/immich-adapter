@@ -3,18 +3,14 @@ from typing import Annotated, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from gumnut import (
-    APIStatusError,
-    AsyncGumnut,
-    ConflictError,
-    GumnutError,
-)
+from gumnut import AsyncGumnut
 
-from routers.utils.bulk import BulkChunkError, chunked_per_item_bulk
-from routers.utils.error_mapping import (
-    classify_bulk_item_error,
-    log_bulk_transport_error,
+from routers.utils.bulk import (
+    BulkChunkError,
+    chunked_per_item_bulk,
+    classify_bulk_item_call,
 )
+from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.current_user import get_current_user
 from routers.immich_models import (
@@ -344,37 +340,36 @@ async def add_assets_to_albums(
         uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in request.assetIds
     ]
 
-    successful_operations = 0
-    total_operations = len(request.albumIds)
-    first_error: BulkIdErrorReason | None = None
+    per_album_errors: list[BulkIdErrorReason | None] = await gather_with_concurrency(
+        [
+            _add_assets_to_one_album(client, album_uuid, gumnut_asset_ids)
+            for album_uuid in request.albumIds
+        ]
+    )
 
-    for album_uuid in request.albumIds:
-        try:
-            await client.albums.assets_associations.add(
-                uuid_to_gumnut_album_id(album_uuid), asset_ids=gumnut_asset_ids
-            )
-            successful_operations += 1
-        except ConflictError:
-            # Dead branch: upstream returns 200 with duplicate_assets, never 409.
-            if first_error is None:
-                first_error = BulkIdErrorReason.duplicate
-        except APIStatusError as album_error:
-            if first_error is None:
-                first_error = classify_bulk_item_error(album_error, BulkIdErrorReason)
-        except GumnutError as album_error:
-            if first_error is None:
-                first_error = BulkIdErrorReason.unknown
-            log_bulk_transport_error(
-                logger,
-                context="add_assets_to_albums",
-                exc=album_error,
-                extra={"album_id": str(album_uuid)},
-            )
-
-    if successful_operations == total_operations:
+    # Walk in input order so the surfaced error is sticky-first-by-input-order,
+    # not first-to-complete (which would vary with scheduler timing).
+    first_error: BulkIdErrorReason | None = next(
+        (err for err in per_album_errors if err is not None), None
+    )
+    if first_error is None:
         return AlbumsAddAssetsResponseDto(success=True)
-    return AlbumsAddAssetsResponseDto(
-        success=False, error=first_error or BulkIdErrorReason.unknown
+    return AlbumsAddAssetsResponseDto(success=False, error=first_error)
+
+
+async def _add_assets_to_one_album(
+    client: AsyncGumnut,
+    album_uuid: UUID,
+    gumnut_asset_ids: list[str],
+) -> BulkIdErrorReason | None:
+    """Add assets to one album; return None on success or the mapped error."""
+    return await classify_bulk_item_call(
+        client.albums.assets_associations.add(
+            uuid_to_gumnut_album_id(album_uuid), asset_ids=gumnut_asset_ids
+        ),
+        error_enum=BulkIdErrorReason,
+        log_context="add_assets_to_albums",
+        log_extra={"album_id": str(album_uuid)},
     )
 
 

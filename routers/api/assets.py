@@ -33,7 +33,11 @@ from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
 
 from services.streaming_upload import StreamingUploadPipeline
-from services.websockets import emit_user_event, WebSocketEvent
+from services.websockets import (
+    emit_user_event,
+    emit_user_event_per_id,
+    WebSocketEvent,
+)
 from routers.immich_models import (
     AssetBulkDeleteDto,
     AssetBulkUpdateDto,
@@ -631,12 +635,11 @@ async def _bulk_permanent_delete(
             body={"ids": gumnut_ids},
             cast_to=type(None),
         )
-        for asset_uuid in chunk:
-            await emit_user_event(
-                WebSocketEvent.ASSET_DELETE,
-                user_id,
-                str(asset_uuid),
-            )
+        await emit_user_event_per_id(
+            WebSocketEvent.ASSET_DELETE,
+            user_id,
+            (str(asset_uuid) for asset_uuid in chunk),
+        )
 
 
 async def _bulk_trash(

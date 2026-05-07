@@ -1,28 +1,28 @@
 import logging
-from typing import List
+from typing import Any, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 
-from gumnut import APIStatusError, AsyncGumnut, GumnutError
+from gumnut import AsyncGumnut
 from gumnut.types import PersonResponse
 
+from routers.utils.bulk import classify_bulk_item_call
 from routers.utils.cdn_client import stream_from_cdn
-from routers.utils.error_mapping import (
-    classify_bulk_item_error,
-    log_bulk_transport_error,
-    log_upstream_response,
-)
+from routers.utils.concurrency import gather_with_concurrency
+from routers.utils.error_mapping import log_upstream_response
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.immich_models import (
     AssetFaceUpdateDto,
+    AssetFaceUpdateItem,
     BulkIdResponseDto,
     BulkIdsDto,
     Error1,
     MergePersonDto,
     PeopleResponseDto,
     PeopleUpdateDto,
+    PeopleUpdateItem,
     PersonCreateDto,
     PersonResponseDto,
     PersonStatisticsResponseDto,
@@ -117,103 +117,97 @@ async def update_people(
     """
     Update multiple people by their ids.
     """
-    results = []
+    return await gather_with_concurrency(
+        [_update_one_person(client, person_item) for person_item in people_data.people]
+    )
 
-    for person_item in people_data.people:
-        try:
-            # Update the person using Gumnut SDK - only pass parameters that are not None
-            update_kwargs = {}
-            gumnut_person_id = uuid_to_gumnut_person_id(
-                UUID(person_item.id)
-            )  # immich openapi specs switch between str and UUID for people id
-            if person_item.name is not None:
-                update_kwargs["name"] = person_item.name
-            if person_item.birthDate is not None:
-                update_kwargs["birth_date"] = person_item.birthDate
-            if person_item.isFavorite is not None:
-                update_kwargs["is_favorite"] = person_item.isFavorite
-            if person_item.isHidden is not None:
-                update_kwargs["is_hidden"] = person_item.isHidden
-            if person_item.featureFaceAssetId is not None:
-                update_kwargs["thumbnail_face_id"] = await _resolve_thumbnail_face_id(
-                    client, gumnut_person_id, person_item.featureFaceAssetId
-                )
 
-            await client.people.update(
-                person_id=gumnut_person_id,
-                **update_kwargs,
-            )
+async def _update_one_person(
+    client: AsyncGumnut,
+    person_item: PeopleUpdateItem,
+) -> BulkIdResponseDto:
+    """Update a single person; map any error to a per-item BulkIdResponseDto.
 
-            results.append(
-                BulkIdResponseDto(id=person_item.id, success=True, error=None)
-            )
+    Errors are caught here (not surfaced via the gather helper) so a single
+    bad item can't abort the rest of the batch — Immich clients expect a
+    complete results list. The SDK-error tail (`APIStatusError` /
+    `GumnutError`, raised from either `_resolve_thumbnail_face_id`'s inner
+    `client.faces.list` or the final `client.people.update`) is delegated to
+    `classify_bulk_item_call`, mirroring the per-chunk policy used by
+    `chunked_per_item_bulk` for chunked bulk endpoints. The pre-call
+    exceptions specific to this endpoint (`ValueError` from UUID parsing,
+    `HTTPException` from `_resolve_thumbnail_face_id`'s "missing face"
+    branch) stay here.
+    """
+    log_extra = {"person_id": person_item.id}
 
-        except HTTPException as he:
-            # Map adapter-raised HTTPExceptions to per-item failures so the
-            # bulk endpoint never aborts mid-batch (Immich clients expect a
-            # complete results list).
-            if he.status_code == 404:
-                error = Error1.not_found
-            elif he.status_code in (401, 403):
-                error = Error1.no_permission
-            else:
-                error = Error1.unknown
-            results.append(
-                BulkIdResponseDto(id=person_item.id, success=False, error=error)
-            )
-            log_upstream_response(
-                logger,
-                context="update_people",
-                status_code=he.status_code,
-                message=(
-                    f"HTTPException in bulk person update for {person_item.id}: "
-                    f"{he.status_code} {he.detail}"
-                ),
-                extra={"person_id": person_item.id},
-            )
-        except APIStatusError as person_error:
-            results.append(
-                BulkIdResponseDto(
-                    id=person_item.id,
-                    success=False,
-                    error=classify_bulk_item_error(person_error, Error1),
-                )
-            )
-            log_upstream_response(
-                logger,
-                context="update_people",
-                status_code=person_error.status_code,
-                message=f"Failed bulk person update for {person_item.id}: {person_error}",
-                extra={"person_id": person_item.id},
-            )
-        except ValueError as ve:
-            # Immich's PeopleUpdateItem.id is typed as `str` (the OpenAPI spec
-            # switches between str and UUID for people ids), so UUID(...) can
-            # raise here on malformed input. A single bad id must not abort
-            # the batch.
-            results.append(
-                BulkIdResponseDto(
-                    id=person_item.id, success=False, error=Error1.unknown
-                )
-            )
-            logger.warning(
-                "Invalid person id in bulk update",
-                extra={"person_id": person_item.id, "error": str(ve)},
-            )
-        except GumnutError as person_error:
-            results.append(
-                BulkIdResponseDto(
-                    id=person_item.id, success=False, error=Error1.unknown
-                )
-            )
-            log_bulk_transport_error(
-                logger,
-                context="update_people",
-                exc=person_error,
-                extra={"person_id": person_item.id},
-            )
+    try:
+        # immich openapi specs switch between str and UUID for people id, so
+        # UUID(...) can raise on malformed input.
+        gumnut_person_id = uuid_to_gumnut_person_id(UUID(person_item.id))
+    except ValueError as ve:
+        logger.warning(
+            "Invalid person id in bulk update",
+            extra={**log_extra, "error": str(ve)},
+        )
+        return BulkIdResponseDto(id=person_item.id, success=False, error=Error1.unknown)
 
-    return results
+    try:
+        sdk_error = await classify_bulk_item_call(
+            _do_person_update(client, gumnut_person_id, person_item),
+            error_enum=Error1,
+            log_context="update_people",
+            log_extra=log_extra,
+        )
+    except HTTPException as he:
+        # Single source: `_resolve_thumbnail_face_id` raises HTTPException(400)
+        # for "no face found" — maps to `unknown` (no enum bucket fits a
+        # missing-face signal). SDK errors from `client.faces.list` /
+        # `client.people.update` are caught above by `classify_bulk_item_call`.
+        log_upstream_response(
+            logger,
+            context="update_people",
+            status_code=he.status_code,
+            message=(
+                f"HTTPException in bulk person update for {person_item.id}: "
+                f"{he.status_code} {he.detail}"
+            ),
+            extra=log_extra,
+        )
+        return BulkIdResponseDto(id=person_item.id, success=False, error=Error1.unknown)
+
+    if sdk_error is not None:
+        return BulkIdResponseDto(id=person_item.id, success=False, error=sdk_error)
+    return BulkIdResponseDto(id=person_item.id, success=True, error=None)
+
+
+async def _do_person_update(
+    client: AsyncGumnut,
+    gumnut_person_id: str,
+    person_item: PeopleUpdateItem,
+) -> None:
+    """Build update kwargs from the Immich patch and apply via the SDK.
+
+    Wrapped by `classify_bulk_item_call` so SDK errors from either
+    `_resolve_thumbnail_face_id` (which calls `client.faces.list`) or the
+    final `client.people.update` are caught and classified uniformly.
+    `HTTPException` from the missing-face branch propagates to the caller
+    for endpoint-specific mapping.
+    """
+    update_kwargs: dict[str, Any] = {}
+    if person_item.name is not None:
+        update_kwargs["name"] = person_item.name
+    if person_item.birthDate is not None:
+        update_kwargs["birth_date"] = person_item.birthDate
+    if person_item.isFavorite is not None:
+        update_kwargs["is_favorite"] = person_item.isFavorite
+    if person_item.isHidden is not None:
+        update_kwargs["is_hidden"] = person_item.isHidden
+    if person_item.featureFaceAssetId is not None:
+        update_kwargs["thumbnail_face_id"] = await _resolve_thumbnail_face_id(
+            client, gumnut_person_id, person_item.featureFaceAssetId
+        )
+    await client.people.update(person_id=gumnut_person_id, **update_kwargs)
 
 
 @router.put("/{id}")
@@ -291,9 +285,17 @@ async def delete_people(
 ) -> Response:
     """
     Delete multiple people by their ids.
+
+    Per-item errors propagate to the global ``GumnutError`` handler — the
+    endpoint contract is 204-on-all-success, with the first failure aborting
+    the batch (gather cancels pending siblings).
     """
-    for person_id in request.ids:
-        await client.people.delete(uuid_to_gumnut_person_id(person_id))
+    await gather_with_concurrency(
+        [
+            client.people.delete(uuid_to_gumnut_person_id(person_id))
+            for person_id in request.ids
+        ]
+    )
     return Response(status_code=204)
 
 
@@ -417,31 +419,47 @@ async def reassign_faces(
     gumnut_person = await client.people.retrieve(gumnut_target_person_id)
     target_person = convert_gumnut_person_to_immich(gumnut_person)
 
-    any_reassigned = False
-    for item in request.data:
-        gumnut_asset_id = uuid_to_gumnut_asset_id(item.assetId)
-        gumnut_source_person_id = uuid_to_gumnut_person_id(item.personId)
-
-        faces = [
-            f
-            async for f in client.faces.list(
-                person_id=gumnut_source_person_id,
-                asset_id=gumnut_asset_id,
-            )
+    reassign_results = await gather_with_concurrency(
+        [
+            _reassign_one_pair(client, item, gumnut_target_person_id)
+            for item in request.data
         ]
-        if not faces:
-            logger.warning(
-                "No face found for source person on asset, skipping",
-                extra={
-                    "source_person_id": gumnut_source_person_id,
-                    "target_person_id": gumnut_target_person_id,
-                    "asset_id": gumnut_asset_id,
-                },
-            )
-            continue
+    )
 
-        for face in faces:
-            await client.faces.update(face.id, person_id=gumnut_target_person_id)
-        any_reassigned = True
+    return [target_person] if any(reassign_results) else []
 
-    return [target_person] if any_reassigned else []
+
+async def _reassign_one_pair(
+    client: AsyncGumnut,
+    item: AssetFaceUpdateItem,
+    gumnut_target_person_id: str,
+) -> bool:
+    """Reassign one (asset, sourcePerson) pair's face(s); return True if any moved.
+
+    The inner per-face loop stays sequential — request.data items typically
+    yield 0 or 1 face, so the outer fan-out captures the win.
+    """
+    gumnut_asset_id = uuid_to_gumnut_asset_id(item.assetId)
+    gumnut_source_person_id = uuid_to_gumnut_person_id(item.personId)
+
+    faces = [
+        f
+        async for f in client.faces.list(
+            person_id=gumnut_source_person_id,
+            asset_id=gumnut_asset_id,
+        )
+    ]
+    if not faces:
+        logger.warning(
+            "No face found for source person on asset, skipping",
+            extra={
+                "source_person_id": gumnut_source_person_id,
+                "target_person_id": gumnut_target_person_id,
+                "asset_id": gumnut_asset_id,
+            },
+        )
+        return False
+
+    for face in faces:
+        await client.faces.update(face.id, person_id=gumnut_target_person_id)
+    return True

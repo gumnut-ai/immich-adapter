@@ -1104,8 +1104,11 @@ class TestDeleteAssets:
         request = AssetBulkDeleteDto(ids=asset_ids, force=True)
         current_user_id = uuid4()
 
+        # `_bulk_permanent_delete` calls `emit_user_event_per_id`, which fans
+        # out `emit_user_event` once per id. Patch at the websockets module
+        # so the per-id call count is observable.
         with patch(
-            "routers.api.assets.emit_user_event", new_callable=AsyncMock
+            "services.websockets.emit_user_event", new_callable=AsyncMock
         ) as mock_emit:
             await delete_assets(
                 request, client=mock_client, current_user_id=current_user_id
@@ -1155,8 +1158,11 @@ class TestDeleteAssets:
         request = AssetBulkDeleteDto(ids=asset_ids, force=True)
         current_user_id = uuid4()
 
+        # `_bulk_permanent_delete` calls `emit_user_event_per_id`, which fans
+        # out `emit_user_event` once per id. Patch at the websockets module
+        # so the per-id call count is observable.
         with patch(
-            "routers.api.assets.emit_user_event", new_callable=AsyncMock
+            "services.websockets.emit_user_event", new_callable=AsyncMock
         ) as mock_emit:
             result = await delete_assets(
                 request, client=mock_client, current_user_id=current_user_id

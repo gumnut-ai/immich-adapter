@@ -1,5 +1,6 @@
 """Tests for albums.py endpoints."""
 
+import asyncio
 import logging
 
 import pytest
@@ -27,6 +28,7 @@ from routers.immich_models import (
     AlbumsAddAssetsDto,
     Error1,
 )
+from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.utils.gumnut_client import BULK_CHUNK_SIZE
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
@@ -1093,8 +1095,15 @@ class TestAddAssetsToAlbums:
         assert mock_client.albums.assets_associations.add.call_count == 2
 
     @pytest.mark.anyio
-    async def test_add_assets_to_albums_conflict_records_duplicate(self):
-        """A ConflictError on an album add records first_error = duplicate."""
+    async def test_add_assets_to_albums_unexpected_conflict_records_unknown(self):
+        """A surprise ConflictError falls back to `unknown` via the shared mapping.
+
+        Upstream returns 200 with `duplicate_assets` rather than 409, so a
+        ConflictError on this path is unexpected. `classify_bulk_item_error`
+        recognizes only `NotFoundError` / `AuthenticationError` /
+        `PermissionDeniedError`; anything else maps to `unknown` rather than
+        guessing a more specific code at the call site.
+        """
         from gumnut import ConflictError
 
         mock_client = Mock()
@@ -1108,7 +1117,7 @@ class TestAddAssetsToAlbums:
         assert result.success is False
         from routers.immich_models import BulkIdErrorReason
 
-        assert result.error == BulkIdErrorReason.duplicate
+        assert result.error == BulkIdErrorReason.unknown
 
     @pytest.mark.anyio
     async def test_add_assets_to_albums_not_found_records_not_found(self):
@@ -1130,12 +1139,12 @@ class TestAddAssetsToAlbums:
     async def test_add_assets_to_albums_first_error_is_sticky(self):
         """`first_error` records the first failure across albums; later
         failures with a different classification do not overwrite it."""
-        from gumnut import ConflictError
+        from gumnut import PermissionDeniedError
 
         mock_client = Mock()
         mock_client.albums.assets_associations.add = AsyncMock(
             side_effect=[
-                make_sdk_status_error(409, "duplicate", cls=ConflictError),
+                make_sdk_status_error(403, "Forbidden", cls=PermissionDeniedError),
                 make_sdk_status_error(404, "Not found", cls=NotFoundError),
             ]
         )
@@ -1146,7 +1155,7 @@ class TestAddAssetsToAlbums:
         assert result.success is False
         from routers.immich_models import BulkIdErrorReason
 
-        assert result.error == BulkIdErrorReason.duplicate
+        assert result.error == BulkIdErrorReason.no_permission
 
     @pytest.mark.anyio
     async def test_add_assets_to_albums_partial_failure(self):
@@ -1166,3 +1175,34 @@ class TestAddAssetsToAlbums:
         from routers.immich_models import BulkIdErrorReason
 
         assert result.error == BulkIdErrorReason.not_found
+
+    @pytest.mark.anyio
+    async def test_add_assets_to_albums_uses_bounded_concurrency(self):
+        """Album fan-out runs in parallel but never exceeds the concurrency limit."""
+        mock_client = Mock()
+
+        active = 0
+        peak = 0
+        lock = asyncio.Lock()
+
+        async def add_side_effect(*args, **kwargs):
+            nonlocal active, peak
+            async with lock:
+                active += 1
+                peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            async with lock:
+                active -= 1
+
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=add_side_effect
+        )
+
+        album_ids = [uuid4() for _ in range(BULK_FANOUT_CONCURRENCY_LIMIT + 5)]
+        request = AlbumsAddAssetsDto(albumIds=album_ids, assetIds=[uuid4()])
+
+        result = await add_assets_to_albums(request, client=mock_client)
+
+        assert result.success is True
+        assert peak > 1, "expected concurrent execution"
+        assert peak <= BULK_FANOUT_CONCURRENCY_LIMIT

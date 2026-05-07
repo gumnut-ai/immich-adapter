@@ -1,11 +1,14 @@
 """Tests for people.py endpoints."""
 
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 from uuid import uuid4
 from datetime import datetime, timezone, timedelta
 
+from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.api.people import (
     create_person,
     update_people,
@@ -266,6 +269,38 @@ class TestUpdatePeople:
         assert result[1].success is True
         assert result[1].id == valid_id
 
+    @pytest.mark.anyio
+    async def test_update_people_uses_bounded_concurrency(self):
+        """Per-person updates run in parallel but never exceed the concurrency limit."""
+        active = 0
+        peak = 0
+        lock = asyncio.Lock()
+
+        async def update_side_effect(*args, **kwargs):
+            nonlocal active, peak
+            async with lock:
+                active += 1
+                peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            async with lock:
+                active -= 1
+
+        mock_client = Mock()
+        mock_client.people.update = AsyncMock(side_effect=update_side_effect)
+
+        person_updates = [
+            PeopleUpdateItem(id=str(uuid4()), name=f"Person {i}")
+            for i in range(BULK_FANOUT_CONCURRENCY_LIMIT + 5)
+        ]
+        request = PeopleUpdateDto(people=person_updates)
+
+        result = await update_people(request, client=mock_client)
+
+        assert len(result) == len(person_updates)
+        assert all(r.success for r in result)
+        assert peak > 1, "expected concurrent execution"
+        assert peak <= BULK_FANOUT_CONCURRENCY_LIMIT
+
 
 class TestUpdatePerson:
     """Test the update_person endpoint."""
@@ -420,6 +455,49 @@ class TestUpdatePeopleFeatureFace:
         assert len(result) == 1
         assert result[0].success is False
         assert result[0].error == Error1.unknown
+
+    @pytest.mark.anyio
+    async def test_update_people_feature_face_resolve_sdk_error_isolated(self):
+        """An SDK error in `_resolve_thumbnail_face_id` is contained per-item.
+
+        Pins the contract that SDK errors raised by `client.faces.list`
+        (called from `_resolve_thumbnail_face_id`) are caught alongside
+        SDK errors from `client.people.update` — both are mapped to a
+        per-item `BulkIdResponseDto` rather than aborting sibling updates
+        via `gather_with_concurrency`.
+        """
+        from gumnut import NotFoundError
+
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        # First person has a face-resolve SDK failure; second person succeeds.
+        mock_client.faces.list = AsyncMock(
+            side_effect=make_sdk_status_error(404, "asset not found", cls=NotFoundError)
+        )
+        mock_client.people.update = AsyncMock(return_value=None)
+
+        person_a = uuid4()
+        person_b = uuid4()
+        asset_uuid = uuid4()
+        request = PeopleUpdateDto(
+            people=[
+                PeopleUpdateItem(id=str(person_a), featureFaceAssetId=asset_uuid),
+                PeopleUpdateItem(id=str(person_b), name="b"),
+            ]
+        )
+
+        result = await update_people(request, client=mock_client)
+
+        assert len(result) == 2
+        assert result[0].success is False
+        assert result[0].error == Error1.not_found
+        # Sibling untouched by the first item's failure.
+        assert result[1].success is True
+        mock_client.people.update.assert_called_once_with(
+            person_id=uuid_to_gumnut_person_id(person_b),
+            name="b",
+        )
 
 
 class TestGetAllPeople:
@@ -778,6 +856,35 @@ class TestDeletePeople:
         request = BulkIdsDto(ids=[uuid4()])
         with pytest.raises(AuthenticationError):
             await delete_people(request, client=mock_client)
+
+    @pytest.mark.anyio
+    async def test_delete_people_uses_bounded_concurrency(self):
+        """Per-person deletes run in parallel but never exceed the concurrency limit."""
+        active = 0
+        peak = 0
+        lock = asyncio.Lock()
+
+        async def delete_side_effect(*args, **kwargs):
+            nonlocal active, peak
+            async with lock:
+                active += 1
+                peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            async with lock:
+                active -= 1
+
+        mock_client = Mock()
+        mock_client.people.delete = AsyncMock(side_effect=delete_side_effect)
+
+        person_ids = [uuid4() for _ in range(BULK_FANOUT_CONCURRENCY_LIMIT + 5)]
+        request = BulkIdsDto(ids=person_ids)
+
+        result = await delete_people(request, client=mock_client)
+
+        assert result.status_code == 204
+        assert mock_client.people.delete.call_count == len(person_ids)
+        assert peak > 1, "expected concurrent execution"
+        assert peak <= BULK_FANOUT_CONCURRENCY_LIMIT
 
 
 class TestGetThumbnail:
@@ -1315,3 +1422,48 @@ class TestReassignFaces:
 
         # Target person fetched once upfront
         assert mock_client.people.retrieve.call_count == 1
+
+    @pytest.mark.anyio
+    async def test_reassign_faces_uses_bounded_concurrency(
+        self, sample_uuid, sample_gumnut_person
+    ):
+        """Outer-loop fan-out runs in parallel but never exceeds the concurrency limit."""
+        target_uuid = sample_uuid
+
+        active = 0
+        peak = 0
+        lock = asyncio.Lock()
+
+        class _TimedEmptyPage:
+            """Paginator-shaped stub that sleeps during async iteration so the
+            per-pair coroutine holds its semaphore slot long enough to observe
+            peak concurrency."""
+
+            async def __aiter__(self):
+                nonlocal active, peak
+                async with lock:
+                    active += 1
+                    peak = max(peak, active)
+                await asyncio.sleep(0.01)
+                async with lock:
+                    active -= 1
+                if False:
+                    yield None  # pragma: no cover — empty async generator
+
+        mock_client = Mock()
+        mock_client.people.retrieve = AsyncMock(return_value=sample_gumnut_person)
+        mock_client.faces.list = Mock(side_effect=lambda **_: _TimedEmptyPage())
+        mock_client.faces.update = AsyncMock()
+
+        items = [
+            AssetFaceUpdateItem(assetId=uuid4(), personId=uuid4())
+            for _ in range(BULK_FANOUT_CONCURRENCY_LIMIT + 5)
+        ]
+        request = AssetFaceUpdateDto(data=items)
+
+        result = await reassign_faces(target_uuid, request, client=mock_client)
+
+        assert result == []  # No faces matched, so target person not returned
+        assert mock_client.faces.list.call_count == len(items)
+        assert peak > 1, "expected concurrent execution"
+        assert peak <= BULK_FANOUT_CONCURRENCY_LIMIT
