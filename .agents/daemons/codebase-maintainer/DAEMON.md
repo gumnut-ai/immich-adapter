@@ -12,9 +12,10 @@ routines:
 deny:
   - modify application logic or business rules
   - change Immich-compatibility endpoint shapes (path, method, request body, response body) without escalation
-  - delete test files
+  - delete, skip, xfail, or weaken tests to make a build pass
+  - 'add type-suppression comments (`# type: ignore`, `# pyright: ignore`, `# noqa`) or relax lint / type-check configuration to make a build pass'
   - relax or remove the `exclude-newer` supply-chain guard in pyproject.toml
-  - bump `gumnut-sdk` outside the exemption already declared in pyproject.toml (it tracks the photos-api surface — pin moves require human review)
+  - bump `gumnut-sdk` outside the exemption already declared in pyproject.toml (it tracks the upstream API surface — pin moves require human review)
   - push commits directly to main
   - approve or merge pull requests
 schedule: "0 */6 * * *"

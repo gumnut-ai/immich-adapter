@@ -20,22 +20,22 @@ schedule: "0 9 * * *"
 ## Policy
 - Act by default. When a doc is clearly stale, fix it instead of only flagging it.
 - Preserve author voice — match the tone and style of existing docs in the same directory.
-- When the right edit lives in another repo (see Scope), note it in the PR description rather than attempting the change.
+- When the right edit belongs elsewhere (see Scope), describe the topic in the PR description rather than attempting the change. Do not name sibling repositories — this repo is public (see `AGENTS.md`).
 - When a merged PR deletes or renames a referenced file, class, or function, update doc references to it in this repo in the librarian PR.
 
 ## Scope
 This repo's docs live under (in scope):
 - `/README.md`
-- `/AGENTS.md`
+- All `AGENTS.md` and `CLAUDE.md` files in this repo
 - `/docs/architecture/` — adapter, sync stream, WebSocket, session/checkpoint
 - `/docs/design-docs/` — auth, trash, sync ordering, gap analysis, etc.
 - `/docs/guides/` — running with Immich web/mobile
 - `/docs/references/`
 
-Out of scope (these live in other repos — do not edit; mention in the PR description when an edit would be needed):
-- Photos API surface, SDK behavior, mcp-app — `gumnut-ai/photos`
-- Public developer / API documentation — `gumnut-ai/docs` (Mintlify)
-- Cross-repo architecture, design docs, agent workflows — `gumnut-ai/gumnut-dev-setup`
+Out of scope (these live elsewhere — do not edit; if a cross-repo doc update is implied, describe the topic in the PR description without naming any sibling repository):
+- Gumnut API surface, SDK behavior, and the MCP app UI — owned upstream by the Gumnut team
+- Public developer / API documentation — published on the Gumnut docs site
+- Cross-repo architecture, design docs, and agent workflows — maintained outside this repo
 - Upstream Immich behavior — refer to the public Immich docs; do not author them here
 
 ## Limits
