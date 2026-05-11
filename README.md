@@ -103,10 +103,12 @@ This invokes `uvicorn` directly because the `fastapi` CLI doesn't expose `--ws`,
 
 - [Running with Immich Web](docs/guides/running-with-immich-web.md) — static files or dev server
 - [Running with Immich Mobile](docs/guides/running-with-immich-mobile.md) — HTTPS setup with mkcert
+- [Deploying to Render](docs/guides/deploying-to-render.md) - Docker deployment, Render settings, local smoke tests
 
 ## References
 
 - [Architecture](docs/architecture/adapter-architecture.md) — how the adapter works: auth, data translation, pagination, sync, error handling
 - [Code Practices](docs/references/code-practices.md) — Python style, endpoint patterns, testing, logging
 - [Development Tools](docs/references/development-tools.md) — model generator, API compatibility, OpenAPI spec
+- [Uvicorn Server Settings](docs/references/uvicorn-settings.md) - production runtime flags for HTTP and WebSocket handling
 - See [docs/](docs/) for design docs and more

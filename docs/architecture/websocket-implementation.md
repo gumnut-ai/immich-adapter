@@ -9,7 +9,7 @@ last-updated: 2026-05-07
 
 This document describes how to implement WebSocket support in immich-adapter, with a focus on authentication and the extensible event system needed to support `on_upload_success` and future events.
 
-**Transport note:** the WebSocket transport that Socket.IO sits on top of is provided by uvicorn, configured via `--ws websockets-sansio` in the Dockerfile and `.vscode/launch.json`. The default `--ws auto` would route through the deprecated legacy `websockets` API and leak `"exception in shielded future"` errors on peer close. Application code in this file does not interact with that layer directly. See `../references/uvicorn-settings.md` § "ws (WebSocket protocol implementation)" for the full rationale.
+**Transport note:** the WebSocket transport that Socket.IO sits on top of is provided by uvicorn, configured via `--ws websockets-sansio` in the Dockerfile and `.vscode/launch.json`. The default `--ws auto` would route through the deprecated legacy `websockets` API and leak `"exception in shielded future"` errors on peer close. Application code in this file does not interact with that layer directly. See `../references/uvicorn-settings.md` section "WebSocket Protocol" for the full rationale.
 
 **Related Documentation:**
 

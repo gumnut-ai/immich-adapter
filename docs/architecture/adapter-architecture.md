@@ -89,8 +89,55 @@ Session storage is ~3KB per device, enabling horizontal scaling of the adapter.
 - **JWT refresh failure**: If the backend cannot refresh an expired JWT, the next request using that session returns 401. The client must re-authenticate via OAuth.
 
 **Related docs:**
-- `docs/design-docs/auth-design.md` — Full auth architecture and OAuth flow design
-- `docs/architecture/session-checkpoint-implementation.md` — Session and checkpoint storage details
+- `docs/design-docs/auth-design.md` - Full auth architecture and OAuth flow design
+- `docs/architecture/session-checkpoint-implementation.md` - Session and checkpoint storage details
+
+## Runtime and Deployment
+
+The adapter runs as a Docker web service on Render. The production image bundles
+the FastAPI adapter and the pinned Immich web UI assets so the served web client
+and adapter API models target the same Immich version.
+
+### Docker image shape
+
+The Dockerfile:
+
+1. Pulls the pinned `ghcr.io/immich-app/immich-server:${IMMICH_VERSION}` image
+   and copies `/build/www` into `static/`
+2. Installs Python dependencies with `uv`
+3. Copies the adapter source and static files into a non-root runtime image
+4. Verifies `static/index.html` and `static/_app` exist before the build
+   succeeds
+
+The Immich version is pinned in both `.immich-container-tag` and the Dockerfile
+`ARG IMMICH_VERSION`; CI enforces that they match.
+
+### Render runtime contract
+
+Render terminates TLS and provides the container `PORT`. The adapter must bind to
+`0.0.0.0:$PORT` in production. Do not hard-code development ports such as `3001`
+in Docker or Render start commands.
+
+The production command uses uvicorn directly rather than the `fastapi` CLI so it
+can set the WebSocket implementation and HTTP connection tuning flags:
+
+```bash
+uvicorn main:app \
+  --host 0.0.0.0 \
+  --port ${PORT:-8080} \
+  --ws websockets-sansio \
+  --timeout-graceful-shutdown 60 \
+  --timeout-keep-alive ${TIMEOUT_KEEP_ALIVE:-75} \
+  --limit-concurrency ${LIMIT_CONCURRENCY:-200} \
+  --backlog ${BACKLOG:-2048}
+```
+
+The health check endpoint is `/api/server/ping`.
+
+**Related docs:**
+- `docs/guides/deploying-to-render.md` - Render service setup, environment variables, local Docker smoke tests
+- `docs/references/uvicorn-settings.md` - Runtime flag rationale and tuning guidance
+- `docs/references/code-practices.md` - Immich version bumping workflow
 
 ## Data Translation Layer
 

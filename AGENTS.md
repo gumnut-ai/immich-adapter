@@ -35,7 +35,7 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 | Immich auth architecture | `docs/design-docs/immich-auth-architecture.md` | Legacy auth design (deprecated, see auth-design.md) |
 | Authentication design | `docs/design-docs/auth-design.md` | Current auth architecture, OAuth, token handling |
 | Static file sharing | `docs/design-docs/static-file-sharing.md` | File sharing proposals, static asset serving |
-| Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Docker deployment, Render configuration |
+| Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Historical Docker/Render deployment decision record |
 | Checksum support | `docs/design-docs/checksum-support.md` | File integrity, checksum validation, deduplication |
 | Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Sync FK integrity, event ordering, face/person deletion issues |
 | Large upload timeout | `docs/design-docs/large-upload-timeout.md` | Streaming upload pipeline, large file upload failures, Immich client timeout limits |
@@ -48,6 +48,7 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 |-------|----------|-----------------|
 | Running with Immich Web | `docs/guides/running-with-immich-web.md` | Setting up the full local stack (Immich web + adapter + photos-api + Clerk OAuth) |
 | Running with Immich Mobile | `docs/guides/running-with-immich-mobile.md` | Self-signed certs, HTTPS setup, connecting the Immich mobile app |
+| Deploying to Render | `docs/guides/deploying-to-render.md` | Render Docker service setup, required environment variables, local Docker smoke tests |
 
 ## References
 
@@ -57,5 +58,5 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 | WebSocket events reference | `docs/references/websocket-events-reference.md` | WebSocket event types, payload formats |
 | Session & checkpoint reference | `docs/references/session-checkpoint-reference.md` | Session/checkpoint object shapes, field definitions |
 | Immich sync communication | `docs/references/immich-sync-communication.md` | Immich client-server sync protocol, message formats |
-| Uvicorn settings | `docs/references/uvicorn-settings.md` | Server configuration, worker settings, timeouts |
+| Uvicorn settings | `docs/references/uvicorn-settings.md` | Server configuration, WebSocket transport, worker settings, timeouts |
 | Development tools | `docs/references/development-tools.md` | Model generation, API compatibility, OpenAPI spec |
