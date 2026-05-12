@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Annotated, Any, List
 
@@ -10,6 +11,8 @@ from routers.immich_models import MapMarkerResponseDto, MapReverseGeocodeRespons
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
 
+logger = logging.getLogger(__name__)
+
 
 router = APIRouter(
     prefix="/api/map",
@@ -20,9 +23,12 @@ router = APIRouter(
 
 # Hard cap on returned markers. The per-page payload is the full asset object
 # (faces, people, urls, exif) read just for three GPS fields, so each page is
-# ~280 ms on prod. 2000 markers ≈ 15 pages ≈ 4 s; 5000 ≈ 11 s — too slow for a
-# map-view load. Revisit (slim-projection asset list, or a dedicated backend
-# `/map/markers` endpoint) if real usage shows 2000 is insufficient.
+# ~280 ms on prod. Benchmarked against a real library at ~70% GPS-tagged
+# density: 2000 markers ≈ 15 pages ≈ 4 s; 5000 ≈ 31 pages ≈ 11 s — too slow
+# for a map-view load. Revisit (slim-projection asset list, or a dedicated
+# backend `/map/markers` endpoint) if real usage shows 2000 is insufficient.
+# The SDK orders by capture time descending, so when the cap fires the
+# oldest GPS-tagged assets are the ones dropped.
 MAP_MARKERS_CAP = 2000
 
 
@@ -66,6 +72,21 @@ async def get_map_markers(
             )
         )
         if len(markers) >= MAP_MARKERS_CAP:
+            # Log so the team has signal when real usage hits the cap — the
+            # response itself has no truncation marker, so this is the only
+            # observable. If this fires regularly, revisit the cap.
+            logger.warning(
+                "Map markers response truncated at cap",
+                extra={
+                    "cap": MAP_MARKERS_CAP,
+                    "file_created_after": fileCreatedAfter.isoformat()
+                    if fileCreatedAfter is not None
+                    else None,
+                    "file_created_before": fileCreatedBefore.isoformat()
+                    if fileCreatedBefore is not None
+                    else None,
+                },
+            )
             break
     return markers
 
