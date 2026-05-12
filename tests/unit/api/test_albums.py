@@ -831,27 +831,31 @@ class TestUpdateAlbum:
     async def test_update_album_with_album_cover_asset_id(
         self, sample_gumnut_album, sample_uuid, mock_current_user
     ):
-        """Test that album_cover_asset_id is converted to albumThumbnailAssetId in update_album."""
-        cover_asset_id = uuid_to_gumnut_asset_id(uuid4())
-        sample_gumnut_album.album_cover_asset_id = cover_asset_id
+        """albumThumbnailAssetId is forwarded to the SDK as album_cover_asset_id and echoed back."""
+        cover_uuid = uuid4()
+        cover_gumnut_id = uuid_to_gumnut_asset_id(cover_uuid)
+        sample_gumnut_album.album_cover_asset_id = cover_gumnut_id
 
         mock_client = Mock()
         sample_gumnut_album.name = "Updated Album"
-        sample_gumnut_album.description = "Updated Description"
         mock_client.albums.update = AsyncMock(return_value=sample_gumnut_album)
 
         request = UpdateAlbumDto(
-            albumName="Updated Album", description="Updated Description"
+            albumName="Updated Album", albumThumbnailAssetId=cover_uuid
         )
 
-        # Execute
         result = await update_album(
             sample_uuid, request, client=mock_client, current_user=mock_current_user
         )
 
-        # Assert - verify albumThumbnailAssetId is set correctly
-        expected_uuid = str(safe_uuid_from_asset_id(cover_asset_id))
-        assert result.albumThumbnailAssetId == expected_uuid
+        mock_client.albums.update.assert_called_once_with(
+            uuid_to_gumnut_album_id(sample_uuid),
+            name="Updated Album",
+            album_cover_asset_id=cover_gumnut_id,
+        )
+        assert result.albumThumbnailAssetId == str(
+            safe_uuid_from_asset_id(cover_gumnut_id)
+        )
 
     @pytest.mark.anyio
     async def test_update_album_not_found_propagates(
