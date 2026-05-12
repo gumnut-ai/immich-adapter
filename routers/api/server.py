@@ -36,8 +36,10 @@ server_features = {
     "facialRecognition": True,
     # Duplicate detection endpoints are stubs; no dedup is performed.
     "duplicateDetection": False,
-    # Map + reverse geocoding endpoints are stubs; no location data is served.
-    "map": False,
+    "map": True,
+    # Reverse-geocode endpoint is a stub; this flag also gates the
+    # change-location UI which expects the server to re-geocode on asset
+    # update — that backend flow isn't implemented yet.
     "reverseGeocoding": False,
     "importFaces": False,
     # Sidecar (.xmp) files are not processed.

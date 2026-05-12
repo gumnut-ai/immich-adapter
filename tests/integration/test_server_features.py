@@ -21,7 +21,6 @@ class TestServerFeaturesEndpoint:
         data = response.json()
         for flag in (
             "duplicateDetection",
-            "map",
             "reverseGeocoding",
             "sidecar",
         ):
@@ -40,6 +39,7 @@ class TestServerFeaturesEndpoint:
             "oauth",
             "oauthAutoLaunch",
             "trash",
+            "map",
         ):
             assert data[flag] is True, f"{flag} should be True"
 
