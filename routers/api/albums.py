@@ -246,7 +246,7 @@ async def update_album(
 ) -> AlbumResponseDto:
     """
     Update an album using the Gumnut SDK.
-    Only name and description are supported by the Gumnut SDK.
+    Supports name, description, and cover (albumThumbnailAssetId).
     """
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
@@ -256,6 +256,10 @@ async def update_album(
         update_params["name"] = request.albumName
     if request.description is not None:
         update_params["description"] = request.description
+    if request.albumThumbnailAssetId is not None:
+        update_params["album_cover_asset_id"] = uuid_to_gumnut_asset_id(
+            request.albumThumbnailAssetId
+        )
 
     if update_params:
         # SDK raises NotFoundError on missing album → handled by global handler.
