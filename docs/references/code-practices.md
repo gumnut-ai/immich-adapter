@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-06
+last-updated: 2026-05-12
 ---
 
 # Code Practices
@@ -102,6 +102,12 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
 6. **Test endpoints**: Verify responses match Immich API expectations
 7. **Audit `/me/preferences` for a gating boolean**: Many client UI features (memories, tags, ratings, folders, people, shared links, email notifications, cast) are gated client-side on a flag in `UserPreferencesResponseDto`. The default in `routers/api/users.py::userPreferencesResponse` ships most of these as `enabled=False`, which silently hides the corresponding UI even after the backing endpoints are wired up. When implementing an endpoint that backs a client UI feature, grep `routers/api/users.py` for the matching preference field and flip its `enabled` to `True`. The Immich web client checks these via `$preferences?.<area>?.enabled`; missing the flip means the new endpoints become dead code on the client.
+8. **Audit `routers/api/server.py::server_features`**: Many client UI features are also gated by a server-feature flag advertised via `GET /server/features`. When promoting an area from stub to a real implementation, flip the matching key from `False` to `True` and update the explanatory comment so it scopes only to the remaining stubbed sub-features. Leaving the flag at `False` after implementing the endpoint silently hides the UI; flipping it to `True` while parts of the area are still stubbed surfaces non-functional UI.
+9. **Update the implementation-status docs**: Promoting an endpoint from stub to real changes two evergreen docs that the docs-as-system-of-record convention requires keeping current:
+   - `docs/architecture/adapter-architecture.md` — move the row from the "Stub implementations" table to "Fully implemented" (or split into a partial-implementation row, mirroring "Memories (read)" / "Memories (write)"); bump `last-updated` in the frontmatter.
+   - `docs/design-docs/immich-adapter-gap-analysis.md` — flip the gap section to **Closed**, update the summary stub count, and strike the entry from the Tier-1/2/3 plan table; bump `last-updated`.
+
+   Skipping either leaves future readers (and gap-prioritization passes) reasoning from stale data — the gap-analysis doc explicitly carries `status: active`, so consistency with the implementation is part of its contract.
 
 ### Asset dimensions and orientation
 
