@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-04-28
+last-updated: 2026-05-13
 ---
 
 # Immich Adapter Gap Analysis
@@ -18,7 +18,7 @@ Today, the core photo workflow works: upload, browse timeline, organize into alb
 | Category | Endpoint count | Status |
 |----------|---------------|--------|
 | Fully implemented (real SDK calls) | ~75 | Assets, albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
-| Stubs (empty/fake responses) | ~117 | Tags, shared links, memories, map, stacks, activities, admin, server info, etc. |
+| Stubs (empty/fake responses) | ~116 | Tags, shared links, stacks, activities, admin, server info, etc. |
 | Total in adapter | ~192 | |
 | Not routed (no adapter endpoint) | ~52 | Immich endpoints with no adapter route at all (e.g., asset edits, database backups, workflows, plugins, some auth/admin endpoints) |
 | Total in Immich v2.7.5 spec | 244 | |
@@ -88,15 +88,9 @@ Immich tags allow hierarchical labeling of assets (e.g., `vacation/2024/beach`).
 
 Immich has a map view showing photo locations on a world map based on GPS coordinates from EXIF data.
 
-**Current behavior**: `GET /map/markers` returns an empty list. The map view in the Immich web UI shows a blank map with no markers.
+**Current behavior**: Implemented. `GET /map/markers` paginates `client.assets.list()`, filters in-process for assets with `metadata.latitude`/`longitude`, and returns up to 2000 markers (newest first). The `map` server-feature flag is on, so Immich web and mobile render the map view.
 
-**User impact**: **Medium** — Users with geotagged photos expect to browse by location. The map tab is visible in the UI but empty.
-
-**Dependency**: **Both** — Gumnut Photos API needs to surface GPS coordinates from EXIF data (it may already store them but not expose them via the API). Adapter needs to translate location data to Immich's `MapMarkerResponseDto`.
-
-**Effort**: **S–M** — If GPS data is already stored in the backend, exposing it is straightforward. Adapter translation is S.
-
-**Recommendation**: **Close** — Good user value for geotagged photo libraries.
+**Status**: **Closed** — adapter-side wire-up; no backend changes. Reverse-geocoding (3b) remains the outstanding map-related gap.
 
 ---
 
@@ -310,7 +304,7 @@ Most server info endpoints return hardcoded fake data (storage, statistics, feat
 
 **Effort**: **S** — Most of these are about returning accurate data rather than implementing new functionality. The features endpoint is the most important: it should reflect what Gumnut actually supports so Immich clients hide unsupported UI elements.
 
-> **Design decision —** The `GET /server/features` endpoint is the highest-value fix in this group. Previously the adapter set `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, `trash: true`, and `sidecar: true` for features that aren't implemented. GUM-552 flipped those flags to `false` so Immich clients hide the corresponding UI. `smartSearch`, `facialRecognition`, `search`, `oauth`, and `oauthAutoLaunch` remain `true` because they are backed by real implementations.
+> **Design decision —** The `GET /server/features` endpoint is the highest-value fix in this group. Previously the adapter set `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, `trash: true`, and `sidecar: true` for features that aren't implemented. Those flags were later flipped to `false` so Immich clients hide the corresponding UI. `smartSearch`, `facialRecognition`, `search`, `oauth`, and `oauthAutoLaunch` remain `true` because they are backed by real implementations. `map` was subsequently re-enabled once `GET /map/markers` shipped (see section 3a); `reverseGeocoding` remains `false` because `GET /map/reverse-geocode` is still a stub.
 
 **Recommendation**: **Closed** for features (GUM-552). Revisit storage/statistics if admin features are needed.
 
@@ -654,7 +648,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 
 | Gap | Effort | Dependency | Rationale |
 |-----|--------|------------|-----------|
-| #3a Map markers | S–M | Both | Good value if EXIF GPS data exists in backend |
+| ~~#3a Map markers~~ | — | — | Closed — adapter wire-up over `client.assets.list()`; 2000-marker cap |
 | #34 Performance (pagination) | L | Both | Scaling requirement |
 | #8 Memories (write path) | S | Both | Read path shipped; only save/hide persistence remains |
 | #2 Tags | L | Both | Power-user organization |

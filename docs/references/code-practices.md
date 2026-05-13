@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-06
+last-updated: 2026-05-13
 ---
 
 # Code Practices
@@ -102,6 +102,14 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
 6. **Test endpoints**: Verify responses match Immich API expectations
 7. **Audit `/me/preferences` for a gating boolean**: Many client UI features (memories, tags, ratings, folders, people, shared links, email notifications, cast) are gated client-side on a flag in `UserPreferencesResponseDto`. The default in `routers/api/users.py::userPreferencesResponse` ships most of these as `enabled=False`, which silently hides the corresponding UI even after the backing endpoints are wired up. When implementing an endpoint that backs a client UI feature, grep `routers/api/users.py` for the matching preference field and flip its `enabled` to `True`. The Immich web client checks these via `$preferences?.<area>?.enabled`; missing the flip means the new endpoints become dead code on the client.
+8. **Audit `routers/api/server.py::server_features`**: Many client UI features are also gated by a server-feature flag advertised via `GET /server/features`. When promoting an area from stub to a real implementation, flip the matching key from `False` to `True` and update the explanatory comment so it scopes only to the remaining stubbed sub-features. Leaving the flag at `False` after implementing the endpoint silently hides the UI; flipping it to `True` while parts of the area are still stubbed surfaces non-functional UI.
+9. **Update the implementation-status docs**: Promoting an endpoint from stub to real changes two evergreen docs that the docs-as-system-of-record convention requires keeping current:
+   - `docs/architecture/adapter-architecture.md` — move the row from the "Stub implementations" table to "Fully implemented" (or split into a partial-implementation row, mirroring "Memories (read)" / "Memories (write)"); bump `last-updated` in the frontmatter.
+   - `docs/design-docs/immich-adapter-gap-analysis.md` — flip the gap section to **Closed**, update the summary stub count, and strike the entry from the Tier-1/2/3 plan table; bump `last-updated`.
+
+   Skipping either leaves future readers (and gap-prioritization passes) reasoning from stale data — the gap-analysis doc explicitly carries `status: active`, so consistency with the implementation is part of its contract.
+
+   After updating the dedicated sections and tables, also grep each touched doc for **other paragraphs that summarize the prior state** — design-decision notes, recommendations, server-feature flag rollups, etc. The gap-analysis doc in particular has a `GET /server/features` design-decision paragraph that enumerates which client UI flags are on/off; flipping a server-feature flag in the code without updating that paragraph leaves it contradicting both the code and the gap section you just updated. Search for the feature name (e.g., `map`, `trash`, `duplicateDetection`) across the doc before considering the update done.
 
 ### Asset dimensions and orientation
 
@@ -117,6 +125,19 @@ Skipping this leaves the adapter inconsistent with upstream — immich web has b
 The adapter has many stub endpoints (PIN code, session lock/unlock, change-password, etc.) that intentionally return success without doing real work, because Immich clients call them and expect a 2xx but the adapter doesn't model the underlying feature. That pattern is fine for purely informational stubs, but **don't apply it to endpoints whose contract is "tell the caller whether the request is authenticated/authorized"**. The Immich client trusts those answers — `auth_guard.dart` calls `/api/auth/validateToken` on app launch and lets the user past the login gate when the response is `authStatus=true`. A stub that always returns `True` lets unauthenticated clients past the gate, and the missing-auth failure only surfaces on the next API call (presenting as a sudden mid-session expiry rather than a missing-credential problem).
 
 Rule of thumb: a stub may safely return success when it represents a feature the adapter doesn't implement. A stub that gates on auth must consult `request.state.jwt_token` (or the equivalent middleware-populated state) and return 401 when it's absent. Use `Depends(get_authenticated_gumnut_client)` if you also need an SDK client; do an inline `getattr(request.state, "jwt_token", None)` + `HTTPException(status.HTTP_401_UNAUTHORIZED, ...)` if you don't (mirroring `routers/api/auth.py::validate_access_token`).
+
+### Restrictive filters the backend can't honor — short-circuit, don't drop
+
+When an Immich endpoint accepts query filters that Gumnut doesn't model (e.g., `isFavorite`, `isArchived`, partner-shared assets), silently dropping the filter and returning unfiltered results is a wrong answer — the client asked to *restrict* results and got everything instead. For filters with that semantic, short-circuit to `[]` when the restrictive value is set:
+
+```python
+if isFavorite is True or isArchived is True:
+    return []
+```
+
+Use `is True` rather than truthiness so `False` / `None` (which mean "no restriction") still return normal results — only the explicit `True` value asked for filtering. See `routers/api/timeline.py::get_time_buckets` and `routers/api/map.py::get_map_markers` for the established pattern.
+
+This applies only to *restrictive* filters. Filters that ask for a broader result set (e.g., `withPartners=True` saying "also include partner-shared assets") can safely be dropped — the unfiltered result is a superset, not a wrong answer. Document in the docstring which filters are dropped and which short-circuit.
 
 ### Exception Handling
 
