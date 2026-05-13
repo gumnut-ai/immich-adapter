@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime
 from typing import Annotated, Any, List
 
@@ -10,8 +9,6 @@ from routers.api.constants import PHOTOS_API_MAX_PAGE_SIZE
 from routers.immich_models import MapMarkerResponseDto, MapReverseGeocodeResponseDto
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
-
-logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
@@ -30,6 +27,12 @@ router = APIRouter(
 # The SDK orders by capture time descending, so when the cap fires the
 # oldest GPS-tagged assets are the ones dropped.
 MAP_MARKERS_CAP = 2000
+
+# Ceiling on assets scanned, independent of how many fill the marker cap.
+# Bounds the worst case where a low-GPS-density library would otherwise walk
+# tens of pages chasing a cap it'll never fill (e.g., 5% density × 50K assets
+# = 200 pages ≈ ~56 s without this bound). 30 pages ≈ ~8 s.
+MAX_ASSETS_SCANNED = 30 * PHOTOS_API_MAX_PAGE_SIZE
 
 
 @router.get("/markers")
@@ -57,36 +60,28 @@ async def get_map_markers(
         list_kwargs["local_datetime_before"] = fileCreatedBefore.isoformat()
 
     markers: list[MapMarkerResponseDto] = []
+    assets_scanned = 0
     async for asset in client.assets.list(**list_kwargs):
+        assets_scanned += 1
         metadata = asset.metadata
-        if metadata is None or metadata.latitude is None or metadata.longitude is None:
-            continue
-        markers.append(
-            MapMarkerResponseDto(
-                id=str(safe_uuid_from_asset_id(asset.id)),
-                lat=metadata.latitude,
-                lon=metadata.longitude,
-                city=metadata.city,
-                state=metadata.state,
-                country=metadata.country,
+        if (
+            metadata is not None
+            and metadata.latitude is not None
+            and metadata.longitude is not None
+        ):
+            markers.append(
+                MapMarkerResponseDto(
+                    id=str(safe_uuid_from_asset_id(asset.id)),
+                    lat=metadata.latitude,
+                    lon=metadata.longitude,
+                    city=metadata.city,
+                    state=metadata.state,
+                    country=metadata.country,
+                )
             )
-        )
-        if len(markers) >= MAP_MARKERS_CAP:
-            # Log so the team has signal when real usage hits the cap — the
-            # response itself has no truncation marker, so this is the only
-            # observable. If this fires regularly, revisit the cap.
-            logger.warning(
-                "Map markers response truncated at cap",
-                extra={
-                    "cap": MAP_MARKERS_CAP,
-                    "file_created_after": fileCreatedAfter.isoformat()
-                    if fileCreatedAfter is not None
-                    else None,
-                    "file_created_before": fileCreatedBefore.isoformat()
-                    if fileCreatedBefore is not None
-                    else None,
-                },
-            )
+            if len(markers) >= MAP_MARKERS_CAP:
+                break
+        if assets_scanned >= MAX_ASSETS_SCANNED:
             break
     return markers
 
