@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Annotated, Any, List
 
@@ -9,6 +10,8 @@ from routers.api.constants import PHOTOS_API_MAX_PAGE_SIZE
 from routers.immich_models import MapMarkerResponseDto, MapReverseGeocodeResponseDto
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
@@ -47,11 +50,22 @@ async def get_map_markers(
 ) -> List[MapMarkerResponseDto]:
     """Return up to `MAP_MARKERS_CAP` markers for the caller's GPS-tagged assets.
 
-    `isArchived` / `isFavorite` / `withPartners` / `withSharedAlbums` are
-    accepted for client-compatibility (Immich clients send them) but have no
-    Gumnut analog, so they're dropped at the adapter.
+    `withPartners` / `withSharedAlbums` are accepted for client-compatibility
+    (Immich clients send them) but have no Gumnut analog, so they're dropped
+    at the adapter. `isFavorite=True` / `isArchived=True` short-circuit to
+    `[]` because Gumnut doesn't track favorites or archived state — returning
+    unfiltered markers would be a wrong answer to a restrictive filter. The
+    timeline endpoints handle `isFavorite` the same way; they don't accept
+    an `isArchived` filter at all (archived state is folded into `visibility`
+    there), so `isArchived` short-circuiting here is map-specific.
     """
-    _ = isArchived, isFavorite, withPartners, withSharedAlbums  # accepted, dropped
+    _ = withPartners, withSharedAlbums  # accepted, dropped
+
+    # Gumnut doesn't track favorites or archived state, so a filter on
+    # either can never match. Short-circuit instead of silently ignoring
+    # the filter and returning unfiltered markers.
+    if isFavorite is True or isArchived is True:
+        return []
 
     list_kwargs: dict[str, Any] = {"limit": PHOTOS_API_MAX_PAGE_SIZE}
     if fileCreatedAfter is not None:
@@ -61,6 +75,7 @@ async def get_map_markers(
 
     markers: list[MapMarkerResponseDto] = []
     assets_scanned = 0
+    marker_cap_hit = False
     async for asset in client.assets.list(**list_kwargs):
         assets_scanned += 1
         metadata = asset.metadata
@@ -80,9 +95,25 @@ async def get_map_markers(
                 )
             )
             if len(markers) >= MAP_MARKERS_CAP:
+                marker_cap_hit = True
                 break
         if assets_scanned >= MAX_ASSETS_SCANNED:
             break
+
+    scan_cap_hit = assets_scanned >= MAX_ASSETS_SCANNED and not marker_cap_hit
+    logger.info(
+        "map markers: scanned %d assets, returned %d markers (marker_cap_hit=%s, scan_cap_hit=%s)",
+        assets_scanned,
+        len(markers),
+        marker_cap_hit,
+        scan_cap_hit,
+        extra={
+            "assets_scanned": assets_scanned,
+            "markers_returned": len(markers),
+            "marker_cap_hit": marker_cap_hit,
+            "scan_cap_hit": scan_cap_hit,
+        },
+    )
     return markers
 
 

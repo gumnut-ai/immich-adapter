@@ -197,15 +197,13 @@ class TestGetMapMarkers:
         assert "local_datetime_before" not in kwargs
 
     @pytest.mark.anyio
-    async def test_unsupported_filters_are_dropped(self):
-        """The four non-GPS Immich filters must not leak into the SDK call."""
+    async def test_partner_and_shared_album_filters_are_dropped(self):
+        """`withPartners` / `withSharedAlbums` must not leak into the SDK call."""
         client = Mock()
         client.assets.list = Mock(return_value=MockSyncCursorPage([]))
 
         await _call_markers(
             client=client,
-            isArchived=True,
-            isFavorite=True,
             withPartners=True,
             withSharedAlbums=True,
         )
@@ -213,6 +211,56 @@ class TestGetMapMarkers:
         kwargs = client.assets.list.call_args.kwargs
         # Adapter forwards only `limit` (and date range when set).
         assert set(kwargs.keys()) == {"limit"}
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "isFavorite,isArchived",
+        [(True, None), (None, True), (True, True)],
+    )
+    async def test_short_circuits_when_filter_unsupported(self, isFavorite, isArchived):
+        """`isFavorite=True` / `isArchived=True` return [] without hitting the SDK.
+
+        Gumnut doesn't track favorites or archived state, so a request that
+        filters on either would never match. Silently ignoring the filter
+        and returning unfiltered markers would be a wrong answer.
+        """
+        client = Mock()
+        client.assets.list = Mock(
+            return_value=MockSyncCursorPage([_make_asset(lat=10.0, lon=20.0)])
+        )
+
+        result = await _call_markers(
+            client=client, isFavorite=isFavorite, isArchived=isArchived
+        )
+
+        assert result == []
+        client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "isFavorite,isArchived",
+        [(False, None), (None, False), (False, False)],
+    )
+    async def test_does_not_short_circuit_on_false_or_none(
+        self, isFavorite, isArchived
+    ):
+        """`isFavorite=False` / `isArchived=False` should not short-circuit.
+
+        Only `True` indicates the client wants to *restrict* to favorites or
+        archived; `False` and `None` mean "no restriction" and should return
+        normal results.
+        """
+        client = Mock()
+        client.assets.list = Mock(
+            return_value=MockSyncCursorPage([_make_asset(lat=10.0, lon=20.0)])
+        )
+
+        result = await _call_markers(
+            client=client, isFavorite=isFavorite, isArchived=isArchived
+        )
+
+        assert len(result) == 1
+        client.assets.list.assert_called_once()
 
     @pytest.mark.anyio
     async def test_caps_at_marker_limit_and_stops_paging(self):

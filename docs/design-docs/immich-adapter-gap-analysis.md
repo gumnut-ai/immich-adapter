@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-05-12
+last-updated: 2026-05-13
 ---
 
 # Immich Adapter Gap Analysis
@@ -304,7 +304,7 @@ Most server info endpoints return hardcoded fake data (storage, statistics, feat
 
 **Effort**: **S** — Most of these are about returning accurate data rather than implementing new functionality. The features endpoint is the most important: it should reflect what Gumnut actually supports so Immich clients hide unsupported UI elements.
 
-> **Design decision —** The `GET /server/features` endpoint is the highest-value fix in this group. Previously the adapter set `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, `trash: true`, and `sidecar: true` for features that aren't implemented. GUM-552 flipped those flags to `false` so Immich clients hide the corresponding UI. `smartSearch`, `facialRecognition`, `search`, `oauth`, and `oauthAutoLaunch` remain `true` because they are backed by real implementations.
+> **Design decision —** The `GET /server/features` endpoint is the highest-value fix in this group. Previously the adapter set `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, `trash: true`, and `sidecar: true` for features that aren't implemented. Those flags were later flipped to `false` so Immich clients hide the corresponding UI. `smartSearch`, `facialRecognition`, `search`, `oauth`, and `oauthAutoLaunch` remain `true` because they are backed by real implementations. `map` was subsequently re-enabled once `GET /map/markers` shipped (see section 3a); `reverseGeocoding` remains `false` because `GET /map/reverse-geocode` is still a stub.
 
 **Recommendation**: **Closed** for features (GUM-552). Revisit storage/statistics if admin features are needed.
 
