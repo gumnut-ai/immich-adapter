@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "2026-04-28T15:36:26.092129Z"
+exclude-newer = "2026-04-30T17:56:03.350994Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
@@ -302,7 +302,7 @@ wheels = [
 
 [[package]]
 name = "gumnut-sdk"
-version = "0.89.0"
+version = "0.91.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -312,9 +312,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/52/f2/49f15d99402bcc2e3894a486b99ca1529d3eb9666f794cda0f64f1651724/gumnut_sdk-0.89.0.tar.gz", hash = "sha256:85e4cf70209152eb14c5cd4941daade60c5558ce7f94d89d235fba2aafe3eaa3", size = 287798, upload-time = "2026-05-12T05:25:53.64Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/f9/5e263c9a79fc19f58b059c18fcadb84d86068578bee8ed52e53c883e7b7d/gumnut_sdk-0.91.0.tar.gz", hash = "sha256:a2bea97a736ef4bbce024872ebc7ab8ddd4b219d89691ee20881424c3542cd6d", size = 288238, upload-time = "2026-05-13T17:33:36.574Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/db/a39dd0b5aaa976ab913b2376f02f9c8086423a8c487bfac6ee91ffa0941e/gumnut_sdk-0.89.0-py3-none-any.whl", hash = "sha256:a9062e1c4a1c6ff17f3c604e8ad1ba8fea30deb79100e99068af50fd2159efe0", size = 159488, upload-time = "2026-05-12T05:25:52.481Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/d3/cfccc60881ccc39235664cb6b8b30d9b89c616b8725e9efd617985f48e2b/gumnut_sdk-0.91.0-py3-none-any.whl", hash = "sha256:24b2895126efccd0cc4c809f9253ef8823d48c4415e14c6f381b8f090c220c47", size = 160223, upload-time = "2026-05-13T17:33:35.245Z" },
 ]
 
 [[package]]
@@ -407,7 +407,7 @@ dev = [
 requires-dist = [
     { name = "cryptography", specifier = ">=46.0.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.135.2" },
-    { name = "gumnut-sdk", specifier = ">=0.89.0" },
+    { name = "gumnut-sdk", specifier = ">=0.90.0" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "python-socketio", specifier = ">=5.13.0" },

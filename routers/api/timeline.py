@@ -13,7 +13,7 @@ from routers.immich_models import (
     AssetVisibility,
     TimeBucketsResponseDto,
 )
-from routers.utils.asset_conversion import display_dimensions, mime_type_to_asset_type
+from routers.utils.asset_conversion import mime_type_to_asset_type
 from routers.utils.current_user import get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
@@ -185,9 +185,9 @@ async def get_time_bucket(
     for asset in filtered_assets:
         asset_id = asset.id
         created_at = asset.local_datetime
-        orientation = asset.metadata.orientation if asset.metadata else None
-        width, height = display_dimensions(asset.width, asset.height, orientation)
-        aspect_ratio = width / height if width and height else 1.0
+        aspect_ratio = (
+            asset.width / asset.height if asset.width and asset.height else 1.0
+        )
         utc_offset = asset.local_datetime.utcoffset()
         if asset.local_datetime.tzinfo and utc_offset is not None:
             local_datetime_offset = int(utc_offset.total_seconds() / 3600)

@@ -1,9 +1,10 @@
-"""Tests for orientation-aware width/height normalization in sync converters.
+"""Tests for dimension/orientation emission in sync converters.
 
-The sync stream's ``SyncAssetV1.width``/``height`` and
-``SyncAssetExifV1.exifImageWidth``/``exifImageHeight`` must reflect display
-orientation (post-rotation), matching upstream Immich's wire contract — clients
-read these directly without consulting the orientation tag.
+The adapter no longer compensates for orientation locally. photos-api emits
+``asset.width/height`` in display space (post-rotation) and exposes raw
+(pre-rotation) sensor dims on ``metadata.raw_width/raw_height``, which the
+adapter surfaces on ``exifInfo.exifImageWidth/Height`` for mobile clients
+that re-derive display dims locally.
 """
 
 from datetime import datetime, timezone
@@ -24,11 +25,18 @@ OWNER_UUID = "22222222-2222-2222-2222-222222222222"
 UPDATED_AT = datetime(2026, 5, 1, tzinfo=timezone.utc)
 
 
-@pytest.mark.parametrize("orientation", [None, 1, 2, 3, 4])
-def test_sync_asset_v1_passes_through_unflipped_orientations(orientation):
+@pytest.mark.parametrize("orientation", [None, 1, 2, 3, 4, 5, 6, 7, 8])
+def test_sync_asset_v1_emits_asset_dims_as_is(orientation):
+    """SyncAssetV1.width/height pass through asset.width/height verbatim.
+
+    photos-api stores display-space dims at ingest, so the adapter must not
+    re-swap. A portrait shot tagged orientation=6 has asset.width=2268,
+    asset.height=4032 from the API and must emit those.
+    """
     asset = create_mock_asset_data(UPDATED_AT)
-    asset.width = 4032
-    asset.height = 2268
+    # Portrait dims as photos-api would return them after the display-dim cutover.
+    asset.width = 2268
+    asset.height = 4032
     if orientation is None:
         asset.metadata = None
     else:
@@ -38,55 +46,73 @@ def test_sync_asset_v1_passes_through_unflipped_orientations(orientation):
 
     result = gumnut_asset_to_sync_asset_v1(asset, owner_id=OWNER_UUID)
 
-    assert result.width == 4032
-    assert result.height == 2268
-
-
-@pytest.mark.parametrize("orientation", [5, 6, 7, 8])
-def test_sync_asset_v1_swaps_for_flipped_orientations(orientation):
-    """Regression: Pixel-shot landscape buffers tagged orientation=6 were
-    emitted unswapped, causing immich web to render portrait pixels into a
-    landscape layout box."""
-    asset = create_mock_asset_data(UPDATED_AT)
-    asset.width = 4032
-    asset.height = 2268
-    metadata = create_mock_metadata_data(UPDATED_AT)
-    metadata.orientation = orientation
-    asset.metadata = metadata
-
-    result = gumnut_asset_to_sync_asset_v1(asset, owner_id=OWNER_UUID)
-
     assert result.width == 2268
     assert result.height == 4032
 
 
-def test_sync_exif_v1_swaps_for_flipped_orientation():
+def test_sync_exif_v1_emits_raw_dims_and_unchanged_orientation():
+    """exifInfo.exifImageWidth/Height carry raw (pre-rotation) sensor dims.
+
+    Portrait shot with orientation=6: asset.width/height are display-space
+    (2268×4032); raw_width/raw_height carry the pre-rotation values
+    (4032×2268). Mobile clients re-derive display dims from raw + orientation.
+    """
     asset = create_mock_asset_data(UPDATED_AT)
-    asset.width = 4032
-    asset.height = 2268
+    asset.width = 2268
+    asset.height = 4032
     metadata = create_mock_metadata_data(UPDATED_AT)
     metadata.orientation = 6
-    asset.metadata = metadata
-
-    result = gumnut_metadata_to_sync_exif_v1(asset)
-
-    assert result.exifImageWidth == 2268
-    assert result.exifImageHeight == 4032
-    # Orientation must be nulled when dims are swapped, otherwise immich
-    # web's getDimensions re-applies the rotation on top of swapped dims.
-    assert result.orientation is None
-
-
-def test_sync_exif_v1_passes_through_unflipped_orientation():
-    asset = create_mock_asset_data(UPDATED_AT)
-    asset.width = 4032
-    asset.height = 2268
-    metadata = create_mock_metadata_data(UPDATED_AT)
-    metadata.orientation = 1
+    metadata.raw_width = 4032
+    metadata.raw_height = 2268
     asset.metadata = metadata
 
     result = gumnut_metadata_to_sync_exif_v1(asset)
 
     assert result.exifImageWidth == 4032
     assert result.exifImageHeight == 2268
-    assert result.orientation == "1"
+    # Orientation is emitted as-is — mobile re-applies it locally.
+    assert result.orientation == "6"
+
+
+@pytest.mark.parametrize(
+    "orientation,expected", [(1, "1"), (2, "2"), (3, "3"), (4, "4"), (8, "8")]
+)
+def test_sync_exif_v1_orientation_pass_through(orientation, expected):
+    asset = create_mock_asset_data(UPDATED_AT)
+    asset.width = 4032
+    asset.height = 2268
+    metadata = create_mock_metadata_data(UPDATED_AT)
+    metadata.orientation = orientation
+    metadata.raw_width = 4032
+    metadata.raw_height = 2268
+    asset.metadata = metadata
+
+    result = gumnut_metadata_to_sync_exif_v1(asset)
+
+    assert result.orientation == expected
+
+
+def test_sync_exif_v1_falls_back_to_asset_dims_when_raw_dims_null():
+    """Drift-cohort rows have NULL raw_width/raw_height — their asset.width/
+    height is already display-space, so fall back to those values.
+
+    Orientation must be nulled on the wire in this case: feeding mobile
+    display-space dims plus a non-null portrait orientation would make it
+    re-apply the 5–8 swap and derive mismatched dims (same class of bug the
+    deleted ``wire_orientation`` was guarding against). The fallback path
+    intentionally degrades to the old wire contract for drift rows.
+    """
+    asset = create_mock_asset_data(UPDATED_AT)
+    asset.width = 2268
+    asset.height = 4032
+    metadata = create_mock_metadata_data(UPDATED_AT)
+    metadata.orientation = 6
+    metadata.raw_width = None
+    metadata.raw_height = None
+    asset.metadata = metadata
+
+    result = gumnut_metadata_to_sync_exif_v1(asset)
+
+    assert result.exifImageWidth == 2268
+    assert result.exifImageHeight == 4032
+    assert result.orientation is None
