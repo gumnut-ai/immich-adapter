@@ -36,7 +36,7 @@ def normalize_rating(rating: float | int | None) -> int | None:
 
 
 def exif_dims_and_orientation(
-    asset: AssetResponse,
+    gumnut_asset: AssetResponse,
 ) -> tuple[int | None, int | None, str | None]:
     """Return (exifImageWidth, exifImageHeight, wire_orientation) for the EXIF wire fields.
 
@@ -47,7 +47,7 @@ def exif_dims_and_orientation(
 
     Drift-cohort rows (ingested before that extraction was added, or files
     without ``ExifImageWidth/Height`` tags) have those columns NULL; in
-    that case fall back to ``asset.width/height``, which is already
+    that case fall back to ``gumnut_asset.width/height``, which is already
     display-space for that cohort, and null the orientation tag on the
     wire. Feeding mobile display-space dims plus a non-null portrait
     orientation makes it re-apply the 5–8 swap and derive landscape dims
@@ -55,9 +55,9 @@ def exif_dims_and_orientation(
     helper was guarding against. This is the only safe way to surface
     drift-cohort assets to mobile.
     """
-    metadata = asset.metadata
+    metadata = gumnut_asset.metadata
     if metadata is None:
-        return asset.width, asset.height, None
+        return gumnut_asset.width, gumnut_asset.height, None
     raw_w = metadata.raw_width
     raw_h = metadata.raw_height
     orientation = metadata.orientation
@@ -67,7 +67,7 @@ def exif_dims_and_orientation(
             raw_h,
             str(orientation) if orientation is not None else None,
         )
-    return asset.width, asset.height, None
+    return gumnut_asset.width, gumnut_asset.height, None
 
 
 def mime_type_to_asset_type(mime_type: str) -> AssetTypeEnum:
