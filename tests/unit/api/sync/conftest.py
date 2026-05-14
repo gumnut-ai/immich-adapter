@@ -201,6 +201,8 @@ def create_mock_metadata_data(updated_at: datetime) -> Mock:
     metadata.projection_type = None
     metadata.rating = None
     metadata.fps = None
+    metadata.raw_width = None
+    metadata.raw_height = None
     metadata.updated_at = updated_at
     return metadata
 

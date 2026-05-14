@@ -35,51 +35,6 @@ def normalize_rating(rating: float | int | None) -> int | None:
     return None if value == -1 else value
 
 
-# EXIF orientation tags 5–8 swap the image's width and height when applied
-# (90° / 270° rotations, with or without mirroring).
-_FLIPPED_ORIENTATIONS = frozenset({5, 6, 7, 8})
-
-
-def display_dimensions(
-    width: int | None,
-    height: int | None,
-    orientation: int | None,
-) -> tuple[int | None, int | None]:
-    """Return (width, height) in display orientation.
-
-    Gumnut stores raw sensor dimensions plus an EXIF orientation tag. Immich's
-    wire contract expects ``asset.width`` / ``asset.height`` to already reflect
-    the post-rotation (display) dimensions — clients (e.g. immich web's
-    ``getAssetRatio``) don't consult orientation when sizing layout boxes.
-
-    For orientations 5–8 (90°/270° rotations), swap the dimensions; otherwise
-    return them unchanged.
-    """
-    if width and height and orientation in _FLIPPED_ORIENTATIONS:
-        return height, width
-    return width, height
-
-
-def wire_orientation(
-    orientation: int | None,
-    width: int | None,
-    height: int | None,
-) -> str | None:
-    """Return the EXIF orientation value to emit on the wire.
-
-    Paired with ``display_dimensions``: when the dimensions have been swapped
-    (orientation 5–8 with both dims present), the orientation tag must be
-    nulled out — otherwise immich web's ``getDimensions`` helper would re-apply
-    the rotation on already-rotated dims, producing wrong dimensions for any
-    consumer that calls it. Matches upstream Immich's documented wire output.
-    """
-    if orientation is None:
-        return None
-    if width and height and orientation in _FLIPPED_ORIENTATIONS:
-        return None
-    return str(orientation)
-
-
 def mime_type_to_asset_type(mime_type: str) -> AssetTypeEnum:
     """
     Convert a MIME type string to an Immich AssetTypeEnum.
@@ -152,15 +107,23 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     date_time_original = to_actual_utc(metadata.original_datetime)
     modify_date = to_actual_utc(metadata.modified_datetime)
 
-    width, height = display_dimensions(
-        gumnut_asset.width, gumnut_asset.height, orientation
+    # exifInfo.exifImageWidth/Height carries the *raw* (pre-rotation) sensor
+    # dims that mobile clients use to re-derive display dims locally. Fall back
+    # to display-space asset.width/height when raw dims are NULL — drift-cohort
+    # rows that pre-date the raw-dims backfill won't have raw_width/raw_height
+    # populated, and their asset.width/height is already display-space.
+    raw_width = (
+        metadata.raw_width if metadata.raw_width is not None else gumnut_asset.width
+    )
+    raw_height = (
+        metadata.raw_height if metadata.raw_height is not None else gumnut_asset.height
     )
     file_size = gumnut_asset.file_size_bytes
 
     return ExifResponseDto(
         # Image dimensions
-        exifImageWidth=int(float(width)) if width else None,
-        exifImageHeight=int(float(height)) if height else None,
+        exifImageWidth=int(float(raw_width)) if raw_width else None,
+        exifImageHeight=int(float(raw_height)) if raw_height else None,
         # File info
         fileSizeInByte=int(file_size) if file_size else None,
         # Camera info
@@ -182,7 +145,7 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
         description=str(description) if description else "",
         dateTimeOriginal=date_time_original,
         modifyDate=modify_date,
-        orientation=wire_orientation(orientation, width, height),
+        orientation=str(orientation) if orientation is not None else None,
         timeZone=time_zone,
         rating=normalize_rating(rating),
         projectionType=str(projection_type) if projection_type else None,
@@ -240,9 +203,15 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
     date_time_original = to_actual_utc(date_time_original)
     modify_date = to_actual_utc(modify_date)
 
-    width, height = display_dimensions(
-        gumnut_asset.width, gumnut_asset.height, orientation
-    )
+    # exifInfo.exifImageWidth/Height: raw (pre-rotation) dims, falling back to
+    # display-space asset.width/height for drift-cohort rows that pre-date the
+    # raw-dims backfill (their asset.width/height is already display-space).
+    raw_width = getattr(metadata, "raw_width", None) if metadata else None
+    if raw_width is None:
+        raw_width = gumnut_asset.width
+    raw_height = getattr(metadata, "raw_height", None) if metadata else None
+    if raw_height is None:
+        raw_height = gumnut_asset.height
 
     return SyncAssetExifV1(
         assetId=asset_uuid,
@@ -250,8 +219,8 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
         country=str(country) if country else None,
         dateTimeOriginal=date_time_original,
         description=str(description) if description else None,
-        exifImageHeight=int(height) if height else None,
-        exifImageWidth=int(width) if width else None,
+        exifImageHeight=int(raw_height) if raw_height else None,
+        exifImageWidth=int(raw_width) if raw_width else None,
         exposureTime=exposure_time_str,
         fNumber=float(f_number) if f_number else None,
         fileSizeInByte=int(gumnut_asset.file_size_bytes)
@@ -266,7 +235,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
         make=str(make) if make else None,
         model=str(model) if model else None,
         modifyDate=modify_date,
-        orientation=wire_orientation(orientation, width, height),
+        orientation=str(orientation) if orientation is not None else None,
         profileDescription=None,  # Not available from Gumnut metadata
         projectionType=str(projection_type) if projection_type else None,
         rating=normalize_rating(rating),
@@ -307,10 +276,8 @@ def build_asset_upload_ready_payload(
         to_immich_local_datetime(metadata_original_dt) or gumnut_asset.created_at
     )
 
-    orientation = gumnut_asset.metadata.orientation if gumnut_asset.metadata else None
-    width, height = display_dimensions(
-        gumnut_asset.width, gumnut_asset.height, orientation
-    )
+    width = gumnut_asset.width
+    height = gumnut_asset.height
 
     sync_asset = SyncAssetV1(
         id=asset_uuid,
@@ -389,10 +356,8 @@ def convert_gumnut_asset_to_immich(
     # Extract EXIF object directly from AssetResponse
     exif_info = extract_exif_info(gumnut_asset)
 
-    orientation = gumnut_asset.metadata.orientation if gumnut_asset.metadata else None
-    width, height = display_dimensions(
-        gumnut_asset.width, gumnut_asset.height, orientation
-    )
+    width = gumnut_asset.width
+    height = gumnut_asset.height
 
     return AssetResponseDto(
         id=str(safe_uuid_from_asset_id(asset_id)),

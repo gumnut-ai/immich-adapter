@@ -441,15 +441,14 @@ class TestGetTimeBucket:
             )
 
     @pytest.mark.anyio
-    async def test_get_time_bucket_ratio_uses_display_orientation(
+    async def test_get_time_bucket_ratio_passes_through_asset_dims(
         self, multiple_gumnut_assets, mock_sync_cursor_page
     ):
-        """Regression: the timeline's per-asset ``ratio`` must be computed
-        from display-orientation dimensions, not raw sensor dims.
+        """The timeline's per-asset ``ratio`` is ``asset.width / asset.height``.
 
-        For an asset with raw landscape buffer (4032x2268) tagged orientation=6,
-        the ratio must be height/width (2268/4032) — otherwise immich web sizes
-        the layout box landscape and renders the portrait pixels stretched.
+        Post-GUM-767, photos-api owns display-space dims at ingest; the adapter
+        passes them through without consulting orientation. For a portrait,
+        photos-api emits width=2268, height=4032 and ratio is width/height.
         """
         mock_client = Mock()
 
@@ -458,8 +457,9 @@ class TestGetTimeBucket:
         assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         assets[0].created_at = assets[0].local_datetime
         assets[0].mime_type = "image/jpeg"
-        assets[0].width = 4032
-        assets[0].height = 2268
+        # Portrait dims as photos-api would return post-GUM-766.
+        assets[0].width = 2268
+        assets[0].height = 4032
         metadata = Mock()
         metadata.orientation = 6
         assets[0].metadata = metadata

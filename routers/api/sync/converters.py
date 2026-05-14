@@ -27,10 +27,8 @@ from routers.immich_models import (
     SyncUserV1,
 )
 from routers.utils.asset_conversion import (
-    display_dimensions,
     mime_type_to_asset_type,
     normalize_rating,
-    wire_orientation,
 )
 from routers.utils.datetime_utils import (
     format_timezone_immich,
@@ -151,9 +149,6 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
             extra={"asset_id": asset.id, "checksum": asset.checksum},
         )
 
-    orientation = asset.metadata.orientation if asset.metadata else None
-    width, height = display_dimensions(asset.width, asset.height, orientation)
-
     return SyncAssetV1(
         id=str(safe_uuid_from_asset_id(asset.id)),
         checksum=asset.checksum_sha1 or asset.checksum,
@@ -169,12 +164,12 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         # Optional fields - use None when not available
         deletedAt=asset.trashed_at,
         duration=None,
-        height=height,
+        height=asset.height,
         libraryId=None,
         livePhotoVideoId=None,
         stackId=None,
         thumbhash=None,
-        width=width,
+        width=asset.width,
     )
 
 
@@ -203,7 +198,13 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
     original_datetime = to_actual_utc(metadata.original_datetime)
     modified_datetime = to_actual_utc(metadata.modified_datetime)
 
-    width, height = display_dimensions(asset.width, asset.height, metadata.orientation)
+    # exifInfo.exifImageWidth/Height: raw (pre-rotation) dims, falling back to
+    # display-space asset.width/height for drift-cohort rows that pre-date the
+    # raw-dims backfill (their asset.width/height is already display-space).
+    raw_width = metadata.raw_width if metadata.raw_width is not None else asset.width
+    raw_height = (
+        metadata.raw_height if metadata.raw_height is not None else asset.height
+    )
 
     return SyncAssetExifV1(
         assetId=str(safe_uuid_from_asset_id(metadata.asset_id)),
@@ -211,8 +212,8 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         country=metadata.country,
         dateTimeOriginal=original_datetime,
         description=metadata.description or "",
-        exifImageHeight=height,
-        exifImageWidth=width,
+        exifImageHeight=raw_height,
+        exifImageWidth=raw_width,
         exposureTime=_format_exposure_time(metadata.exposure_time),
         fNumber=metadata.f_number,
         fileSizeInByte=asset.file_size_bytes,
@@ -225,7 +226,9 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         make=metadata.make,
         model=metadata.model,
         modifyDate=modified_datetime,
-        orientation=wire_orientation(metadata.orientation, width, height),
+        orientation=str(metadata.orientation)
+        if metadata.orientation is not None
+        else None,
         # profile_description is intentionally not surfaced on the Metadata
         # type (per the photos-api design); always emit None.
         profileDescription=None,
