@@ -446,9 +446,9 @@ class TestGetTimeBucket:
     ):
         """The timeline's per-asset ``ratio`` is ``asset.width / asset.height``.
 
-        Post-GUM-767, photos-api owns display-space dims at ingest; the adapter
-        passes them through without consulting orientation. For a portrait,
-        photos-api emits width=2268, height=4032 and ratio is width/height.
+        photos-api owns display-space dims at ingest; the adapter passes them
+        through without consulting orientation. For a portrait, photos-api
+        emits width=2268, height=4032 and ratio is width/height.
         """
         mock_client = Mock()
 
@@ -457,7 +457,7 @@ class TestGetTimeBucket:
         assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         assets[0].created_at = assets[0].local_datetime
         assets[0].mime_type = "image/jpeg"
-        # Portrait dims as photos-api would return post-GUM-766.
+        # Portrait dims as photos-api returns them in display space.
         assets[0].width = 2268
         assets[0].height = 4032
         metadata = Mock()

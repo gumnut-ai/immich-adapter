@@ -27,9 +27,9 @@ from routers.immich_models import (
     SyncUserV1,
 )
 from routers.utils.asset_conversion import (
+    exif_dims_and_orientation,
     mime_type_to_asset_type,
     normalize_rating,
-    raw_dimensions_with_fallback,
 )
 from routers.utils.datetime_utils import (
     format_timezone_immich,
@@ -199,7 +199,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
     original_datetime = to_actual_utc(metadata.original_datetime)
     modified_datetime = to_actual_utc(metadata.modified_datetime)
 
-    raw_width, raw_height = raw_dimensions_with_fallback(asset)
+    raw_width, raw_height, wire_orientation = exif_dims_and_orientation(asset)
 
     return SyncAssetExifV1(
         assetId=str(safe_uuid_from_asset_id(metadata.asset_id)),
@@ -221,9 +221,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         make=metadata.make,
         model=metadata.model,
         modifyDate=modified_datetime,
-        orientation=str(metadata.orientation)
-        if metadata.orientation is not None
-        else None,
+        orientation=wire_orientation,
         # profile_description is intentionally not surfaced on the Metadata
         # type (per the photos-api design); always emit None.
         profileDescription=None,

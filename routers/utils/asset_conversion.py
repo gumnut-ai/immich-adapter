@@ -35,25 +35,39 @@ def normalize_rating(rating: float | int | None) -> int | None:
     return None if value == -1 else value
 
 
-def raw_dimensions_with_fallback(
+def exif_dims_and_orientation(
     asset: AssetResponse,
-) -> tuple[int | None, int | None]:
-    """Return (raw_width, raw_height) for the EXIF wire fields.
+) -> tuple[int | None, int | None, str | None]:
+    """Return (exifImageWidth, exifImageHeight, wire_orientation) for the EXIF wire fields.
 
     photos-api stores pre-rotation sensor dims on ``metadata.raw_width`` /
-    ``raw_height``. Drift-cohort rows (ingested before that extraction was
-    added, or files without ``ExifImageWidth/Height`` tags) have those
-    columns NULL — in that case fall back to ``asset.width/height``, which
-    is already display-space for that cohort and is the same value mobile
-    would compute from raw dims + orientation anyway.
+    ``raw_height``. When both are present, the EXIF orientation tag is
+    emitted as-is — Immich mobile pairs the raw dims with the orientation
+    and computes display dims locally via the 5–8 swap.
+
+    Drift-cohort rows (ingested before that extraction was added, or files
+    without ``ExifImageWidth/Height`` tags) have those columns NULL; in
+    that case fall back to ``asset.width/height``, which is already
+    display-space for that cohort, and null the orientation tag on the
+    wire. Feeding mobile display-space dims plus a non-null portrait
+    orientation makes it re-apply the 5–8 swap and derive landscape dims
+    — the same double-rotation class of bug the deleted ``wire_orientation``
+    helper was guarding against. This is the only safe way to surface
+    drift-cohort assets to mobile.
     """
     metadata = asset.metadata
-    raw_w = getattr(metadata, "raw_width", None) if metadata else None
-    raw_h = getattr(metadata, "raw_height", None) if metadata else None
-    return (
-        raw_w if raw_w is not None else asset.width,
-        raw_h if raw_h is not None else asset.height,
-    )
+    if metadata is None:
+        return asset.width, asset.height, None
+    raw_w = metadata.raw_width
+    raw_h = metadata.raw_height
+    orientation = metadata.orientation
+    if raw_w is not None and raw_h is not None:
+        return (
+            raw_w,
+            raw_h,
+            str(orientation) if orientation is not None else None,
+        )
+    return asset.width, asset.height, None
 
 
 def mime_type_to_asset_type(mime_type: str) -> AssetTypeEnum:
@@ -108,7 +122,6 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     state = metadata.state
     country = metadata.country
     description = metadata.description
-    orientation = metadata.orientation
     rating = metadata.rating
     projection_type = metadata.projection_type
 
@@ -128,7 +141,7 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     date_time_original = to_actual_utc(metadata.original_datetime)
     modify_date = to_actual_utc(metadata.modified_datetime)
 
-    raw_width, raw_height = raw_dimensions_with_fallback(gumnut_asset)
+    raw_width, raw_height, wire_orientation = exif_dims_and_orientation(gumnut_asset)
     file_size = gumnut_asset.file_size_bytes
 
     return ExifResponseDto(
@@ -156,7 +169,7 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
         description=str(description) if description else "",
         dateTimeOriginal=date_time_original,
         modifyDate=modify_date,
-        orientation=str(orientation) if orientation is not None else None,
+        orientation=wire_orientation,
         timeZone=time_zone,
         rating=normalize_rating(rating),
         projectionType=str(projection_type) if projection_type else None,
@@ -190,7 +203,6 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
     state = getattr(metadata, "state", None) if metadata else None
     country = getattr(metadata, "country", None) if metadata else None
     description = getattr(metadata, "description", None) if metadata else None
-    orientation = getattr(metadata, "orientation", None) if metadata else None
     rating = getattr(metadata, "rating", None) if metadata else None
     projection_type = getattr(metadata, "projection_type", None) if metadata else None
     date_time_original = (
@@ -214,7 +226,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
     date_time_original = to_actual_utc(date_time_original)
     modify_date = to_actual_utc(modify_date)
 
-    raw_width, raw_height = raw_dimensions_with_fallback(gumnut_asset)
+    raw_width, raw_height, wire_orientation = exif_dims_and_orientation(gumnut_asset)
 
     return SyncAssetExifV1(
         assetId=asset_uuid,
@@ -238,7 +250,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
         make=str(make) if make else None,
         model=str(model) if model else None,
         modifyDate=modify_date,
-        orientation=str(orientation) if orientation is not None else None,
+        orientation=wire_orientation,
         profileDescription=None,  # Not available from Gumnut metadata
         projectionType=str(projection_type) if projection_type else None,
         rating=normalize_rating(rating),

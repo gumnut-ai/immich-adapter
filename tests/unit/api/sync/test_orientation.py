@@ -1,10 +1,10 @@
 """Tests for dimension/orientation emission in sync converters.
 
-After GUM-767, the adapter no longer compensates for orientation locally.
-photos-api emits ``asset.width/height`` in display space (post-rotation) and
-exposes raw (pre-rotation) sensor dims on ``metadata.raw_width/raw_height``,
-which the adapter surfaces on ``exifInfo.exifImageWidth/Height`` for mobile
-clients that re-derive display dims locally.
+The adapter no longer compensates for orientation locally. photos-api emits
+``asset.width/height`` in display space (post-rotation) and exposes raw
+(pre-rotation) sensor dims on ``metadata.raw_width/raw_height``, which the
+adapter surfaces on ``exifInfo.exifImageWidth/Height`` for mobile clients
+that re-derive display dims locally.
 """
 
 from datetime import datetime, timezone
@@ -29,12 +29,12 @@ UPDATED_AT = datetime(2026, 5, 1, tzinfo=timezone.utc)
 def test_sync_asset_v1_emits_asset_dims_as_is(orientation):
     """SyncAssetV1.width/height pass through asset.width/height verbatim.
 
-    photos-api now stores display-space dims at ingest (GUM-766), so the
-    adapter must not re-swap. A portrait shot tagged orientation=6 has
-    asset.width=2268, asset.height=4032 from the API and must emit those.
+    photos-api stores display-space dims at ingest, so the adapter must not
+    re-swap. A portrait shot tagged orientation=6 has asset.width=2268,
+    asset.height=4032 from the API and must emit those.
     """
     asset = create_mock_asset_data(UPDATED_AT)
-    # Portrait dims as photos-api would return them post-GUM-766.
+    # Portrait dims as photos-api would return them after the display-dim cutover.
     asset.width = 2268
     asset.height = 4032
     if orientation is None:
@@ -94,7 +94,14 @@ def test_sync_exif_v1_orientation_pass_through(orientation, expected):
 
 def test_sync_exif_v1_falls_back_to_asset_dims_when_raw_dims_null():
     """Drift-cohort rows have NULL raw_width/raw_height — their asset.width/
-    height is already display-space, so fall back to those values."""
+    height is already display-space, so fall back to those values.
+
+    Orientation must be nulled on the wire in this case: feeding mobile
+    display-space dims plus a non-null portrait orientation would make it
+    re-apply the 5–8 swap and derive mismatched dims (same class of bug the
+    deleted ``wire_orientation`` was guarding against). The fallback path
+    intentionally degrades to the old wire contract for drift rows.
+    """
     asset = create_mock_asset_data(UPDATED_AT)
     asset.width = 2268
     asset.height = 4032
@@ -108,4 +115,4 @@ def test_sync_exif_v1_falls_back_to_asset_dims_when_raw_dims_null():
 
     assert result.exifImageWidth == 2268
     assert result.exifImageHeight == 4032
-    assert result.orientation == "6"
+    assert result.orientation is None

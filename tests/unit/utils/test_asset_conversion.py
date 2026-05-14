@@ -111,9 +111,9 @@ def _attach_metadata(
 class TestDimensionEmission:
     """Adapter passes through display-space dims from photos-api as-is.
 
-    Post-GUM-767, photos-api stores ``asset.width/height`` in display space
-    and exposes pre-rotation raw dims on ``metadata.raw_width/raw_height``.
-    The adapter no longer compensates for orientation locally — it surfaces
+    photos-api stores ``asset.width/height`` in display space at ingest and
+    exposes pre-rotation raw dims on ``metadata.raw_width/raw_height``. The
+    adapter no longer compensates for orientation locally — it surfaces
     display dims on ``asset.width/height`` and raw dims on
     ``exifInfo.exifImageWidth/Height``, with NULL fallback for drift-cohort
     rows whose ``raw_width/raw_height`` were never captured.
@@ -125,7 +125,7 @@ class TestDimensionEmission:
         """Portrait shot (orientation=6): asset.width/height are display dims,
         exifInfo carries raw (pre-rotation) sensor dims, and the orientation
         tag is emitted unchanged."""
-        # As photos-api returns post-GUM-766: dims already display-space.
+        # As photos-api returns the asset: dims already in display space.
         sample_gumnut_asset.width = 2268
         sample_gumnut_asset.height = 4032
         _attach_metadata(
@@ -167,7 +167,8 @@ class TestDimensionEmission:
         self, sample_gumnut_asset
     ):
         """Drift-cohort rows (raw_width/height NULL) fall back to
-        asset.width/height, which is already display-space for that cohort."""
+        asset.width/height — display-space for that cohort. Orientation must
+        be nulled on the wire so mobile doesn't double-rotate display dims."""
         sample_gumnut_asset.width = 2268
         sample_gumnut_asset.height = 4032
         _attach_metadata(
@@ -178,7 +179,10 @@ class TestDimensionEmission:
 
         assert result.exifImageWidth == 2268
         assert result.exifImageHeight == 4032
-        assert result.orientation == "6"
+        # Fallback path nulls orientation: dims are display-space; emitting
+        # orientation=6 here would make mobile re-apply the 5–8 swap and
+        # derive landscape dims for a portrait shot.
+        assert result.orientation is None
 
     def test_extract_sync_exif_uses_raw_dims(self, sample_gumnut_asset):
         sample_gumnut_asset.width = 2268
@@ -204,6 +208,8 @@ class TestDimensionEmission:
 
         assert result.exifImageWidth == 2268
         assert result.exifImageHeight == 4032
+        # Fallback path nulls orientation to prevent mobile double-rotation.
+        assert result.orientation is None
 
     def test_build_asset_upload_ready_payload_emits_raw_and_display_dims(
         self, sample_gumnut_asset
