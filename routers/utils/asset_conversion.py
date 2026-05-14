@@ -35,6 +35,27 @@ def normalize_rating(rating: float | int | None) -> int | None:
     return None if value == -1 else value
 
 
+def raw_dimensions_with_fallback(
+    asset: AssetResponse,
+) -> tuple[int | None, int | None]:
+    """Return (raw_width, raw_height) for the EXIF wire fields.
+
+    photos-api stores pre-rotation sensor dims on ``metadata.raw_width`` /
+    ``raw_height``. Drift-cohort rows (ingested before that extraction was
+    added, or files without ``ExifImageWidth/Height`` tags) have those
+    columns NULL — in that case fall back to ``asset.width/height``, which
+    is already display-space for that cohort and is the same value mobile
+    would compute from raw dims + orientation anyway.
+    """
+    metadata = asset.metadata
+    raw_w = getattr(metadata, "raw_width", None) if metadata else None
+    raw_h = getattr(metadata, "raw_height", None) if metadata else None
+    return (
+        raw_w if raw_w is not None else asset.width,
+        raw_h if raw_h is not None else asset.height,
+    )
+
+
 def mime_type_to_asset_type(mime_type: str) -> AssetTypeEnum:
     """
     Convert a MIME type string to an Immich AssetTypeEnum.
@@ -107,17 +128,7 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     date_time_original = to_actual_utc(metadata.original_datetime)
     modify_date = to_actual_utc(metadata.modified_datetime)
 
-    # exifInfo.exifImageWidth/Height carries the *raw* (pre-rotation) sensor
-    # dims that mobile clients use to re-derive display dims locally. Fall back
-    # to display-space asset.width/height when raw dims are NULL — drift-cohort
-    # rows that pre-date the raw-dims backfill won't have raw_width/raw_height
-    # populated, and their asset.width/height is already display-space.
-    raw_width = (
-        metadata.raw_width if metadata.raw_width is not None else gumnut_asset.width
-    )
-    raw_height = (
-        metadata.raw_height if metadata.raw_height is not None else gumnut_asset.height
-    )
+    raw_width, raw_height = raw_dimensions_with_fallback(gumnut_asset)
     file_size = gumnut_asset.file_size_bytes
 
     return ExifResponseDto(
@@ -203,15 +214,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
     date_time_original = to_actual_utc(date_time_original)
     modify_date = to_actual_utc(modify_date)
 
-    # exifInfo.exifImageWidth/Height: raw (pre-rotation) dims, falling back to
-    # display-space asset.width/height for drift-cohort rows that pre-date the
-    # raw-dims backfill (their asset.width/height is already display-space).
-    raw_width = getattr(metadata, "raw_width", None) if metadata else None
-    if raw_width is None:
-        raw_width = gumnut_asset.width
-    raw_height = getattr(metadata, "raw_height", None) if metadata else None
-    if raw_height is None:
-        raw_height = gumnut_asset.height
+    raw_width, raw_height = raw_dimensions_with_fallback(gumnut_asset)
 
     return SyncAssetExifV1(
         assetId=asset_uuid,

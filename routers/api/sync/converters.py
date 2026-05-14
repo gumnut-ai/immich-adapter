@@ -29,6 +29,7 @@ from routers.immich_models import (
 from routers.utils.asset_conversion import (
     mime_type_to_asset_type,
     normalize_rating,
+    raw_dimensions_with_fallback,
 )
 from routers.utils.datetime_utils import (
     format_timezone_immich,
@@ -198,13 +199,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
     original_datetime = to_actual_utc(metadata.original_datetime)
     modified_datetime = to_actual_utc(metadata.modified_datetime)
 
-    # exifInfo.exifImageWidth/Height: raw (pre-rotation) dims, falling back to
-    # display-space asset.width/height for drift-cohort rows that pre-date the
-    # raw-dims backfill (their asset.width/height is already display-space).
-    raw_width = metadata.raw_width if metadata.raw_width is not None else asset.width
-    raw_height = (
-        metadata.raw_height if metadata.raw_height is not None else asset.height
-    )
+    raw_width, raw_height = raw_dimensions_with_fallback(asset)
 
     return SyncAssetExifV1(
         assetId=str(safe_uuid_from_asset_id(metadata.asset_id)),

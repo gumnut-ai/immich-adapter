@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-13
+last-updated: 2026-05-14
 ---
 
 # Code Practices
@@ -113,12 +113,11 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 
 ### Asset dimensions and orientation
 
-Immich's wire contract expects asset width/height to already reflect display orientation (post-rotation), and `orientation` to be `null` whenever a rotation has been baked in. Gumnut stores raw sensor dimensions plus the EXIF orientation tag separately, so every adapter site that emits asset dims to a wire model must normalize:
+photos-api owns display-space dims at ingest — `asset.width` / `asset.height` already reflect post-rotation dimensions and must be emitted **verbatim** on the wire (immich web reads them via `getAssetRatio`). Pre-rotation raw dims live on `metadata.raw_width` / `metadata.raw_height`; surface them on `exifInfo.exifImageWidth` / `exifImageHeight` so Immich mobile can re-derive display dims locally. The EXIF `orientation` tag is emitted unchanged — mobile pairs it with the raw dims; immich web ignores it (it reads `asset.width/height` directly).
 
-- Width/height: pass through `display_dimensions(width, height, orientation)` from `routers/utils/asset_conversion.py` (swaps for orientations 5–8).
-- Orientation: pass through `wire_orientation(orientation, width, height)` from the same module (returns `None` whenever `display_dimensions` swapped, so clients don't double-rotate).
+Use `raw_dimensions_with_fallback(asset)` from `routers/utils/asset_conversion.py` at every emit site that populates `exifImageWidth/Height`. The helper falls back to `asset.width/height` for drift-cohort rows whose `raw_width/raw_height` are NULL — those rows already store display-space dims, so the substitution is correct enough (mobile would compute the same display dims anyway).
 
-Skipping this leaves the adapter inconsistent with upstream — immich web has both a `getAssetRatio` (uses raw `width/height`) and a `getDimensions` (re-applies orientation) helper, and one or the other will render incorrectly depending on which mismatch is present.
+Do **not** swap dims or null the orientation tag in the adapter. Both were workarounds for the old contract where photos-api stored raw dims on `asset.width/height` and were removed when photos-api switched to storing display-space dims at ingest. Reintroducing them would double-correct against the new ingest semantics and stretch every portrait shot.
 
 ### Stub endpoints — fail closed on auth/authz checks
 
