@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-05-12
+last-updated: 2026-05-14
 ---
 
 # Immich Adapter Architecture
@@ -225,6 +225,32 @@ Timeline bucket contents are returned in reverse chronological order by default 
 
 Albums and assets use Gumnut's default ordering and are not re-sorted by the adapter.
 
+## Trash and Deletion Semantics
+
+Immich's trash flow is implemented end to end. The adapter preserves Immich's public wire contract and translates it into the backend's soft-delete primitives.
+
+### Delete and restore flows
+
+- `DELETE /api/assets` soft-deletes by default. `force=true` permanently deletes; `force=false` or an omitted `force` value routes through the trash path.
+- `POST /api/trash/restore/assets`, `POST /api/trash/restore`, and `POST /api/trash/empty` are real implementations backed by the backend trash endpoints.
+- `GET /api/server/config` surfaces `trashDays` from `TRASH_RETENTION_DAYS`, so the web trash page shows the deployed retention period.
+
+### Trash-aware read paths
+
+- `GET /api/timeline/buckets` and `GET /api/timeline/bucket` pass `state="trashed"` when `isTrashed=true`.
+- `GET /api/assets/statistics` does the same for trash-only counts.
+- `AssetResponseDto.isTrashed` is sourced from each asset's `trashed_at` field rather than a hardcoded placeholder.
+
+### Sync and realtime propagation
+
+Trash state travels through both client update channels:
+
+- The sync stream emits `SyncAssetV1.deletedAt` from `trashed_at`, and asset hydration uses `state="all"` so `asset_trashed` events do not disappear during fetch.
+- Socket.IO emits `on_asset_trash` / `on_asset_restore` with batched id arrays and reserves `on_asset_delete` for permanent deletes.
+
+**Related docs:**
+- `docs/design-docs/trash-soft-delete-adapter.md` — detailed trash implementation record
+
 ## Sync Protocol
 
 The adapter implements Immich's incremental sync protocol, allowing mobile clients to stay in sync with the backend without re-downloading everything on each app open.
@@ -269,7 +295,9 @@ Each authenticated user joins a room named with their Gumnut user ID. All of a u
 |-------|---------|---------|
 | `on_server_version` | Client connects | Server version info |
 | `on_upload_success` | Asset uploaded via adapter | Asset ID and metadata |
-| `on_asset_delete` | Asset deleted via adapter | Deleted asset IDs |
+| `on_asset_trash` | Assets soft-deleted via adapter | Array of trashed asset IDs |
+| `on_asset_restore` | Assets restored via adapter | Array of restored asset IDs |
+| `on_asset_delete` | Asset permanently deleted via adapter | Single deleted asset ID |
 | `on_session_delete` | Session invalidated | Session ID |
 
 **Related docs:**
@@ -333,15 +361,16 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 
 | Area | Endpoints | Notes |
 |------|-----------|-------|
-| Assets | Upload, download (original + thumbnail), delete, bulk delete, existence check, statistics | Streaming downloads via `StreamingResponse` |
+| Assets | Upload, download (original + thumbnail), delete, bulk delete, existence check, statistics | Streaming downloads via `StreamingResponse`; `DELETE /api/assets` soft-deletes by default and permanently deletes when `force=true` |
+| Trash | Restore-by-ids, restore-all, empty-trash | `trashDays` comes from `TRASH_RETENTION_DAYS`; web and mobile clients see real trash state |
 | Albums | CRUD, add/remove assets, statistics | User sharing not supported (returns 501) |
 | People | CRUD, list with pagination/sort/filter, thumbnails, statistics, merge | |
 | Faces | List, delete, reassign | Create is a stub |
-| Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling |
+| Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling, including `isTrashed=true` |
 | Search | Smart search, metadata search, person search, statistics | Places, suggestions, explore are stubs |
 | Sync | Full sync, delta sync, stream, ack | Two-phase ordering, checkpoint management |
 | Auth | OAuth login/callback, logout, session management | Clerk OAuth via Photos API |
-| WebSockets | Real-time upload/delete notifications | Socket.IO with room-based messaging |
+| WebSockets | Real-time upload/trash/restore/delete notifications | Socket.IO with room-based messaging |
 | Memories (read) | Search, get-by-id, statistics for OnThisDay memories | Synthesized from per-day asset queries; mutations still stubbed |
 | Map (markers) | `GET /map/markers` returns GPS-tagged assets | In-process filter over `client.assets.list()`; capped at 2000 markers; reverse-geocode still stubbed |
 

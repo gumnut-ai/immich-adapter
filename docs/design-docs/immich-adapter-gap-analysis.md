@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-05-13
+last-updated: 2026-05-14
 ---
 
 # Immich Adapter Gap Analysis
@@ -114,15 +114,15 @@ Immich's reverse geocoding translates GPS coordinates into human-readable place 
 
 Immich supports soft-delete with a configurable retention period. Trashed items can be restored or permanently emptied.
 
-**Current behavior**: All 3 endpoints return `TrashResponseDto(count=0)`. Assets deleted through the adapter are hard-deleted immediately.
+**Current behavior**: **Closed** — `DELETE /api/assets` honors `force`, `/api/trash/restore*` and `/api/trash/empty` are wired to real backend trash operations, timeline/statistics respect `isTrashed`, sync surfaces `deletedAt`, and WebSocket events distinguish trash, restore, and permanent delete. `GET /api/server/config` also surfaces `trashDays` from `TRASH_RETENTION_DAYS`.
 
-**User impact**: **High** — Users who accidentally delete photos have no recovery path. The Immich UI shows a "Trash" section that's always empty, and the "Restore" option does nothing. This is a data safety issue.
+**User impact**: **None** — users can move assets to trash, restore them, empty trash, and see the configured retention window in the web UI.
 
-**Dependency**: **Both** — Gumnut Photos API does not currently support soft-delete (no `deleted_at` or trash model exists). The backend needs a soft-delete model with configurable retention, and the adapter needs to route delete calls through the soft-delete path and expose the trash listing.
+**Dependency**: **Both** — the adapter implementation depends on backend soft-delete support and translates it into Immich's wire contract.
 
-**Effort**: **M** — Backend needs a soft-delete column, retention policy, and purge mechanism. Adapter needs to translate Immich's `force` parameter on delete (force=true → permanent, force=false → soft-delete) and implement trash listing/restore/empty endpoints.
+**Effort**: **M** — now shipped across delete flow, trash router, timeline/statistics, sync, WebSocket, and server config.
 
-**Recommendation**: **Close** — Data safety feature with high user value.
+**Recommendation**: **Closed** — detailed implementation notes now live in `docs/design-docs/trash-soft-delete-adapter.md`.
 
 ---
 
@@ -287,12 +287,12 @@ Immich libraries represent import sources (e.g., local folders, external storage
 
 Most server info endpoints return hardcoded fake data (storage, statistics, features, config, theme).
 
-**Current behavior**: Version endpoints return dynamic data from settings. Everything else is hardcoded: storage shows fake disk usage, statistics show zeros, features list doesn't reflect actual Gumnut capabilities, config has hardcoded values.
+**Current behavior**: Version endpoints return dynamic data from settings. `GET /server/features` is static but accurate. `GET /server/config` is still mostly hardcoded, but `trashDays` now reflects `TRASH_RETENTION_DAYS` at request time. Storage still shows fake disk usage, statistics still return zeros, and the about/theme/license responses remain placeholders.
 
 | Endpoint | Current behavior | Impact |
 |----------|-----------------|--------|
 | `GET /server/features` | Static flags, accurate (GUM-552) | **None** — Flags now reflect actual adapter capabilities. |
-| `GET /server/config` | Hardcoded config | **Medium** — OAuth config and trash settings are hardcoded. |
+| `GET /server/config` | Mostly hardcoded; `trashDays` is dynamic | **Low** — Trash retention is accurate now; remaining fields are mostly cosmetic. |
 | `GET /server/storage` | Fake disk usage | **Low** — Cosmetic in admin panel |
 | `GET /server/statistics` | All zeros | **Low** — Admin panel stats |
 | `GET /server/about` | Fake tool versions | **Low** — About page |
@@ -300,13 +300,13 @@ Most server info endpoints return hardcoded fake data (storage, statistics, feat
 | `GET /server/license` | Fake license | **None** — Gumnut isn't licensed this way |
 | Other (6) | Version info, ping | **None** — Already functional or cosmetic |
 
-**Dependency**: `GET /server/features` is **Adapter-only** — the adapter can set accurate static flags now based on what it actually implements. `GET /server/config` is **Both** if config values need to reflect backend-managed settings (e.g., actual trash retention days). Storage/statistics are **Adapter-only** (could query backend and translate).
+**Dependency**: `GET /server/features` is **Adapter-only** — already closed. `GET /server/config` is now largely **Adapter-only** for the values we currently surface; `trashDays` already tracks `TRASH_RETENTION_DAYS`, but any future backend-owned settings would still need coordination. Storage/statistics are **Adapter-only** (could query backend and translate).
 
-**Effort**: **S** — Most of these are about returning accurate data rather than implementing new functionality. The features endpoint is the most important: it should reflect what Gumnut actually supports so Immich clients hide unsupported UI elements.
+**Effort**: **S** — Most of these are about returning accurate data rather than implementing new functionality. The features endpoint was the highest-value fix in this group, and `trashDays` is now accurate as well.
 
-> **Design decision —** The `GET /server/features` endpoint is the highest-value fix in this group. Previously the adapter set `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, `trash: true`, and `sidecar: true` for features that aren't implemented. Those flags were later flipped to `false` so Immich clients hide the corresponding UI. `smartSearch`, `facialRecognition`, `search`, `oauth`, and `oauthAutoLaunch` remain `true` because they are backed by real implementations. `map` was subsequently re-enabled once `GET /map/markers` shipped (see section 3a); `reverseGeocoding` remains `false` because `GET /map/reverse-geocode` is still a stub.
+> **Design decision —** The `GET /server/features` endpoint was the highest-value fix in this group. Previously the adapter set `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, `trash: true`, and `sidecar: true` for features that were not implemented. GUM-552 flipped those flags to `false` so Immich clients hide unsupported UI. As the adapter gained real implementations, `map` and `trash` were re-enabled; `reverseGeocoding`, `duplicateDetection`, and `sidecar` remain `false` because those capabilities are still stubbed or intentionally unsupported. `smartSearch`, `facialRecognition`, `search`, `oauth`, and `oauthAutoLaunch` remain `true` because they are backed by real implementations. Separately, `GET /server/config` now reads `trashDays` from settings instead of returning a hardcoded 30-day placeholder.
 
-**Recommendation**: **Closed** for features (GUM-552). Revisit storage/statistics if admin features are needed.
+**Recommendation**: **Closed** for features and trash retention. Revisit storage/statistics and any remaining config fields only if the admin surface becomes important.
 
 ---
 
@@ -636,11 +636,8 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 
 | Gap | Effort | Dependency | Rationale |
 |-----|--------|------------|-----------|
-| #14 Server features endpoint | S | Adapter-only | Quick win — hides unsupported UI elements |
-| #22 People merge | S | Adapter-only | Completes people management UX |
 | #21 Face create | S | Both | Completes faces module |
 | #12 Search random/explore | S | Adapter-only | Easy adapter-only work |
-| #4 Trash / soft-delete | M | Both | Data safety feature |
 | #5 Download / archive | M | Adapter-only | Pure adapter work, clear user value |
 | #33 Video playback (mobile) | M | Adapter-only | Core media feature broken on iOS |
 
