@@ -928,17 +928,22 @@ async def get_asset_metadata_by_key(
 @router.get("/{id}/video/playback")
 async def play_asset_video(
     id: UUID,
+    request: Request,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-):
+) -> StreamingResponse:
     """
     Play the video for a specific asset.
-    This is a stub implementation — CDN streaming worked for Immich web but
-    crashes the iOS mobile client. Full video streaming support is planned.
-    Returns HTTP 200 (OK) as specified by the Immich API.
+
+    Streams the original video variant from CDN. Forwards the client's Range
+    header for seeking; `stream_from_cdn` advertises `Accept-Ranges: bytes` on
+    the initial 200 response so iOS AVPlayer treats the source as seekable.
     """
-    return Response(status_code=status.HTTP_200_OK)
+    range_header = request.headers.get("range")
+    return await _retrieve_and_stream_variant(
+        id, client, "original", range_header=range_header
+    )
 
 
 @router.get("/{id}/ocr")
