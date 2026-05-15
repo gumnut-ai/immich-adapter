@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    "helpers:pinGitHubActionDigestsToSemver"
+  ],
+  "enabledManagers": ["github-actions", "dockerfile"],
+  "minimumReleaseAge": "14 days",
+  "schedule": ["before 6am on monday"],
+  "dependencyDashboard": true,
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["actions/*"],
+      "pinDigests": false
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions",
+      "commitMessageTopic": "GitHub Actions"
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "groupName": "container base images",
+      "commitMessageTopic": "container base images"
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "matchPackageNames": ["ghcr.io/immich-app/immich-server"],
+      "enabled": false
+    }
+  ]
+}
