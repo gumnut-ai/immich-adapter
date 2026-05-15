@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-05-14
+last-updated: 2026-05-15
 ---
 
 # Immich Adapter Architecture
@@ -361,7 +361,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 
 | Area | Endpoints | Notes |
 |------|-----------|-------|
-| Assets | Upload, download (original + thumbnail), delete, bulk delete, existence check, statistics | Streaming downloads via `StreamingResponse`; `DELETE /api/assets` soft-deletes by default and permanently deletes when `force=true` |
+| Assets | Upload, download (original + thumbnail), video playback, delete, bulk delete, existence check, statistics | Streaming downloads via `StreamingResponse`; video playback streams the `original` variant from CDN with Range/seek support; `DELETE /api/assets` soft-deletes by default and permanently deletes when `force=true` |
 | Trash | Restore-by-ids, restore-all, empty-trash | `trashDays` comes from `TRASH_RETENTION_DAYS`; web and mobile clients see real trash state |
 | Albums | CRUD, add/remove assets, statistics | User sharing not supported (returns 501) |
 | People | CRUD, list with pagination/sort/filter, thumbnails, statistics, merge | |

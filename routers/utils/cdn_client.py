@@ -145,11 +145,17 @@ async def stream_from_cdn(
         if v:
             response_headers[h if h == "etag" else h.title()] = v
 
+    # iOS AVPlayer probes Accept-Ranges on the initial non-Range 200 response to
+    # decide whether the source is seekable. Without it, MP4s whose moov atom
+    # isn't at the front are not playable and the player can fail abruptly.
+    # R2 via the Cloudflare Worker supports byte ranges unconditionally, so it
+    # is safe to advertise this on every successful CDN response.
+    response_headers["Accept-Ranges"] = "bytes"
+
     if cdn_response.status_code == 206:
         content_range = cdn_response.headers.get("content-range")
         if content_range:
             response_headers["Content-Range"] = content_range
-        response_headers["Accept-Ranges"] = "bytes"
 
     async def _stream_and_close():
         try:

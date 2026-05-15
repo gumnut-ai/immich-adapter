@@ -50,6 +50,31 @@ class TestStreamFromCdn:
         assert result.media_type == "image/jpeg"
 
     @pytest.mark.anyio
+    async def test_accept_ranges_on_200(self, mock_cdn_response):
+        """Accept-Ranges: bytes is advertised on non-Range 200 responses.
+
+        iOS AVPlayer probes Accept-Ranges on the initial 200 response to decide
+        whether the source is seekable. Without it, MP4s whose moov atom isn't
+        at the front are not playable.
+        """
+        cdn_response = mock_cdn_response(200)
+        mock_client = AsyncMock()
+        mock_client.build_request.return_value = Mock()
+        mock_client.send = AsyncMock(return_value=cdn_response)
+
+        with patch(
+            "routers.utils.cdn_client.get_cdn_http_client",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            result = await stream_from_cdn(
+                "https://cdn.example.com/video.mp4", "video/mp4"
+            )
+
+        assert result.status_code == 200
+        assert result.headers["Accept-Ranges"] == "bytes"
+
+    @pytest.mark.anyio
     async def test_range_request_206(self, mock_cdn_response):
         """Test range request forwarding returns 206."""
         cdn_response = mock_cdn_response(

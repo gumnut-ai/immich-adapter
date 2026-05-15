@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-05-14
+last-updated: 2026-05-15
 ---
 
 # Immich Adapter Gap Analysis
@@ -17,8 +17,8 @@ Today, the core photo workflow works: upload, browse timeline, organize into alb
 
 | Category | Endpoint count | Status |
 |----------|---------------|--------|
-| Fully implemented (real SDK calls) | ~75 | Assets, albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
-| Stubs (empty/fake responses) | ~116 | Tags, shared links, stacks, activities, admin, server info, etc. |
+| Fully implemented (real SDK calls) | ~76 | Assets (including video playback), albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
+| Stubs (empty/fake responses) | ~115 | Tags, shared links, stacks, activities, admin, server info, etc. |
 | Total in adapter | ~192 | |
 | Not routed (no adapter endpoint) | ~52 | Immich endpoints with no adapter route at all (e.g., asset edits, database backups, workflows, plugins, some auth/admin endpoints) |
 | Total in Immich v2.7.5 spec | 244 | |
@@ -602,15 +602,9 @@ Immich folder view shows assets organized by file system path.
 
 The video playback endpoint (`GET /assets/{id}/video/playback`) is used by Immich clients to stream video files.
 
-**Current behavior**: Returns an empty HTTP 200 response. The code comment notes that CDN streaming worked for the Immich web client but crashes the iOS mobile client, so it was disabled.
+**Current behavior**: Implemented. Streams the asset's `original` variant from CDN via `_retrieve_and_stream_variant`, forwarding the client's `Range` header for seeking. `stream_from_cdn` advertises `Accept-Ranges: bytes` on the initial 200 response so iOS AVPlayer treats the source as seekable, which addresses the prior iOS crash where MP4s whose `moov` atom isn't at the front were unplayable.
 
-**User impact**: **High** — Videos cannot be played on iOS mobile. Users see videos in their library but playback fails silently. This is a core media feature.
-
-**Dependency**: **Adapter-only** — The backend serves video files; the issue is in the adapter's streaming/proxying logic for mobile clients.
-
-**Effort**: **M** — Requires debugging the iOS crash (likely a streaming format or range-request issue) and implementing mobile-compatible video streaming.
-
-**Recommendation**: **Close** — Core media feature with high impact on mobile users.
+**Status**: **Closed** — adapter-only re-implementation on top of the recently shipped end-to-end Range path (the Cloudflare Worker now forwards `Range` to R2 and returns `206 Partial Content`). If iOS regressions surface in the field, the next things to test are upstream `Content-Type` precision and AVPlayer's behavior across redirects.
 
 ---
 
@@ -639,7 +633,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 | #21 Face create | S | Both | Completes faces module |
 | #12 Search random/explore | S | Adapter-only | Easy adapter-only work |
 | #5 Download / archive | M | Adapter-only | Pure adapter work, clear user value |
-| #33 Video playback (mobile) | M | Adapter-only | Core media feature broken on iOS |
+| ~~#33 Video playback (mobile)~~ | — | — | Closed — CDN streaming with Range support; advertises `Accept-Ranges: bytes` on 200 for iOS AVPlayer |
 
 ### Tier 2: Close Next (moderate value or effort)
 
