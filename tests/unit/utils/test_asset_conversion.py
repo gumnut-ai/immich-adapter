@@ -132,30 +132,6 @@ class TestDateResolution:
         assert payload.asset.fileModifiedAt == self.FILE_MODIFIED_DT
         assert payload.asset.localDateTime == expected_local_date_time
 
-    def test_required_rest_fields_fall_back_to_upload_dates_when_resolved_dates_missing(
-        self, sample_gumnut_asset, mock_current_user
-    ):
-        self._set_dates(
-            sample_gumnut_asset,
-            local_datetime=None,
-            metadata_original=None,
-            metadata_modified=None,
-            file_created=None,
-            file_modified=None,
-        )
-
-        rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
-        assert rest.fileCreatedAt == self.CREATED_DT
-        assert rest.fileModifiedAt == self.UPDATED_DT
-        assert rest.localDateTime == self.CREATED_DT
-
-        payload = build_asset_upload_ready_payload(
-            sample_gumnut_asset, owner_id="22222222-2222-2222-2222-222222222222"
-        )
-        assert payload.asset.fileCreatedAt == self.CREATED_DT
-        assert payload.asset.fileModifiedAt == self.UPDATED_DT
-        assert payload.asset.localDateTime == self.CREATED_DT
-
 
 class TestConvertGumnutAssetToImmichTrashState:
     def test_live_asset_has_is_trashed_false(

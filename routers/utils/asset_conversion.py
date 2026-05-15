@@ -5,8 +5,7 @@ This module provides shared functionality for converting asset data from the Gum
 to the Immich API format, including metadata (camera/EXIF/GPS/location) processing.
 """
 
-from datetime import datetime, timezone
-from typing import overload
+from datetime import datetime
 
 from gumnut.types.asset_response import AssetResponse
 from routers.utils.datetime_utils import (
@@ -36,82 +35,30 @@ def normalize_rating(rating: float | int | None) -> int | None:
     return None if value == -1 else value
 
 
-@overload
-def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime | None: ...
-
-
-@overload
-def resolve_capture_datetime(
-    gumnut_asset: AssetResponse, fallback: datetime
-) -> datetime: ...
-
-
-def resolve_capture_datetime(
-    gumnut_asset: AssetResponse, fallback: datetime | None = None
-) -> datetime | None:
+def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime:
     """Return the Photos API-resolved capture datetime for Immich timeline fields."""
-    local_datetime = getattr(gumnut_asset, "local_datetime", None)
-    return local_datetime if isinstance(local_datetime, datetime) else fallback
+    return gumnut_asset.local_datetime
 
 
-@overload
-def resolve_file_created_at(
-    gumnut_asset: AssetResponse,
-) -> datetime | None: ...
-
-
-@overload
-def resolve_file_created_at(
-    gumnut_asset: AssetResponse, fallback: datetime
-) -> datetime: ...
-
-
-def resolve_file_created_at(
-    gumnut_asset: AssetResponse, fallback: datetime | None = None
-) -> datetime | None:
+def resolve_file_created_at(gumnut_asset: AssetResponse) -> datetime:
     """Return capture time formatted for Immich ``fileCreatedAt`` fields."""
-    return to_actual_utc(resolve_capture_datetime(gumnut_asset)) or fallback
+    file_created_at = to_actual_utc(resolve_capture_datetime(gumnut_asset))
+    assert file_created_at is not None
+    return file_created_at
 
 
-@overload
-def resolve_local_date_time(
-    gumnut_asset: AssetResponse,
-) -> datetime | None: ...
-
-
-@overload
-def resolve_local_date_time(
-    gumnut_asset: AssetResponse, fallback: datetime
-) -> datetime: ...
-
-
-def resolve_local_date_time(
-    gumnut_asset: AssetResponse, fallback: datetime | None = None
-) -> datetime | None:
+def resolve_local_date_time(gumnut_asset: AssetResponse) -> datetime:
     """Return capture time formatted for Immich ``localDateTime`` fields."""
-    return to_immich_local_datetime(resolve_capture_datetime(gumnut_asset)) or fallback
+    local_date_time = to_immich_local_datetime(resolve_capture_datetime(gumnut_asset))
+    assert local_date_time is not None
+    return local_date_time
 
 
-@overload
-def resolve_file_modified_at(
-    gumnut_asset: AssetResponse,
-) -> datetime | None: ...
-
-
-@overload
-def resolve_file_modified_at(
-    gumnut_asset: AssetResponse, fallback: datetime
-) -> datetime: ...
-
-
-def resolve_file_modified_at(
-    gumnut_asset: AssetResponse, fallback: datetime | None = None
-) -> datetime | None:
+def resolve_file_modified_at(gumnut_asset: AssetResponse) -> datetime:
     """Return file modified time formatted for Immich ``fileModifiedAt`` fields."""
-    file_modified_at = getattr(gumnut_asset, "file_modified_at", None)
-    if not isinstance(file_modified_at, datetime):
-        return fallback
-    return to_actual_utc(file_modified_at) or fallback
+    file_modified_at = to_actual_utc(gumnut_asset.file_modified_at)
+    assert file_modified_at is not None
+    return file_modified_at
 
 
 def exif_dims_and_orientation(
@@ -353,9 +300,9 @@ def build_asset_upload_ready_payload(
     """
     asset_uuid = str(safe_uuid_from_asset_id(gumnut_asset.id))
 
-    file_created_at = resolve_file_created_at(gumnut_asset, gumnut_asset.created_at)
-    file_modified_at = resolve_file_modified_at(gumnut_asset, gumnut_asset.updated_at)
-    local_date_time = resolve_local_date_time(gumnut_asset, gumnut_asset.created_at)
+    file_created_at = resolve_file_created_at(gumnut_asset)
+    file_modified_at = resolve_file_modified_at(gumnut_asset)
+    local_date_time = resolve_local_date_time(gumnut_asset)
 
     width = gumnut_asset.width
     height = gumnut_asset.height
@@ -405,13 +352,9 @@ def convert_gumnut_asset_to_immich(
     mime_type = gumnut_asset.mime_type or "application/octet-stream"
     checksum = gumnut_asset.checksum or ""
 
-    # Get fallback timestamps from upload times
-    created_at_fallback = gumnut_asset.created_at or datetime.now(timezone.utc)
-    updated_at_fallback = gumnut_asset.updated_at or datetime.now(timezone.utc)
-
-    file_created_at = resolve_file_created_at(gumnut_asset, created_at_fallback)
-    file_modified_at = resolve_file_modified_at(gumnut_asset, updated_at_fallback)
-    local_date_time = resolve_local_date_time(gumnut_asset, created_at_fallback)
+    file_created_at = resolve_file_created_at(gumnut_asset)
+    file_modified_at = resolve_file_modified_at(gumnut_asset)
+    local_date_time = resolve_local_date_time(gumnut_asset)
 
     # Determine asset type based on MIME type
     asset_type = mime_type_to_asset_type(mime_type)
@@ -437,10 +380,10 @@ def convert_gumnut_asset_to_immich(
         fileCreatedAt=file_created_at,
         fileModifiedAt=file_modified_at,
         localDateTime=local_date_time,
-        updatedAt=updated_at_fallback,
+        updatedAt=gumnut_asset.updated_at,
         checksum=checksum or "placeholder-checksum",
         exifInfo=exif_info,  # Now includes processed EXIF data
-        createdAt=created_at_fallback,
+        createdAt=gumnut_asset.created_at,
         duration="00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else "",
         hasMetadata=True,
         height=float(height) if height else None,

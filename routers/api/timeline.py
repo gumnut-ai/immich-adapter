@@ -187,7 +187,7 @@ async def get_time_bucket(
 
     for asset in filtered_assets:
         asset_id = asset.id
-        created_at = resolve_capture_datetime(asset, asset.created_at)
+        created_at = resolve_capture_datetime(asset)
         aspect_ratio = (
             asset.width / asset.height if asset.width and asset.height else 1.0
         )

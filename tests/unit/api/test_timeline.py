@@ -623,34 +623,6 @@ class TestGetTimeBucket:
             assert result["isImage"][0] is False
 
     @pytest.mark.anyio
-    async def test_get_time_bucket_falls_back_to_created_at_when_capture_missing(
-        self, mock_sync_cursor_page
-    ):
-        """Required timeline wire fields stay populated if capture time is absent."""
-        mock_client = Mock()
-
-        mock_asset = Mock()
-        mock_asset.id = uuid_to_gumnut_asset_id(uuid4())
-        mock_asset.local_datetime = None
-        mock_asset.created_at = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        mock_asset.mime_type = "image/jpeg"
-        mock_asset.width = 1920
-        mock_asset.height = 1280
-        mock_asset.trashed_at = None
-
-        mock_client.assets.list.return_value = mock_sync_cursor_page([mock_asset])
-
-        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
-            mock_user_id.return_value = uuid4()
-
-            result = await call_get_time_bucket(
-                timeBucket="2024-01-01T00:00:00", client=mock_client
-            )
-
-            assert result["fileCreatedAt"] == ["2024-01-15T10:00:00.000"]
-            assert result["localOffsetHours"] == [0]
-
-    @pytest.mark.anyio
     async def test_get_time_bucket_invalid_date_format(self):
         """Test handling of invalid timeBucket format."""
         mock_client = Mock()

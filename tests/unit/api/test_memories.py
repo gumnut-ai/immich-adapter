@@ -54,8 +54,8 @@ def _make_asset(asset_id_uuid: UUID, captured_at: datetime) -> Mock:
     asset.created_at = captured_at
     asset.updated_at = captured_at
     asset.local_datetime = captured_at
-    asset.file_created_at = None
-    asset.file_modified_at = None
+    asset.file_created_at = captured_at
+    asset.file_modified_at = captured_at
     asset.metadata = None
     asset.people = []
     asset.trashed_at = None
