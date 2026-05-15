@@ -48,16 +48,12 @@ def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime:
 
 def resolve_file_created_at(gumnut_asset: AssetResponse) -> datetime:
     """Return capture time formatted for Immich ``fileCreatedAt`` fields."""
-    file_created_at = to_actual_utc(resolve_capture_datetime(gumnut_asset))
-    assert file_created_at is not None
-    return file_created_at
+    return to_actual_utc(resolve_capture_datetime(gumnut_asset))
 
 
 def resolve_local_date_time(gumnut_asset: AssetResponse) -> datetime:
     """Return capture time formatted for Immich ``localDateTime`` fields."""
-    local_date_time = to_immich_local_datetime(resolve_capture_datetime(gumnut_asset))
-    assert local_date_time is not None
-    return local_date_time
+    return to_immich_local_datetime(resolve_capture_datetime(gumnut_asset))
 
 
 def resolve_file_modified_at(gumnut_asset: AssetResponse) -> datetime:
@@ -71,11 +67,9 @@ def resolve_file_modified_at(gumnut_asset: AssetResponse) -> datetime:
     metadata_modified = (
         gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
     )
-    file_modified_at = to_actual_utc(metadata_modified) or to_actual_utc(
+    return to_actual_utc(metadata_modified) or to_actual_utc(
         gumnut_asset.file_modified_at
     )
-    assert file_modified_at is not None
-    return file_modified_at
 
 
 def exif_dims_and_orientation(

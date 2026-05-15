@@ -10,6 +10,7 @@ Style, patterns, and conventions for the immich-adapter codebase.
 ## Python Style Guide
 
 - **Type Hints**: Use modern Python 3.12+ syntax (`int | None` instead of `Optional[int]`). Add type annotations to all function parameters and return types.
+- **Type narrowing — overloads, not asserts**: When a helper returns `T | None` but a specific call site is guaranteed to receive non-None input, narrow with `@overload` decorators on the helper (`@overload def f(x: T) -> T; @overload def f(x: None) -> None; @overload def f(x: T | None) -> T | None`) rather than `assert x is not None` at the call site. Asserts are stripped under `python -O`, obscure whether the None branch is actually reachable, and only narrow at one site instead of helping every caller. See `to_actual_utc` / `to_immich_local_datetime` in `routers/utils/datetime_utils.py` for the pattern. For genuine runtime defense (input that *can* be invalid), use exceptions, not `assert`.
 - **Naming**: Use `snake_case` for all variables, functions, and SQLAlchemy model attributes
 - **Imports**: Always place imports at the top of files (inline imports only to prevent circular dependencies)
 - **Dependencies**: Use `uv` for dependency management, not pip or poetry. Version dependencies appropriately in `pyproject.toml`.
