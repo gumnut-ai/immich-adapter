@@ -22,6 +22,138 @@ from routers.utils.asset_conversion import (
 )
 
 
+class TestDateCascade:
+    """The Immich date fields cascade through Gumnut metadata, then file
+    timestamps, then DB row timestamps — mirroring REST ``Asset.local_datetime``
+    so assets without EXIF capture-date don't surface as upload time in the
+    Immich timeline.
+    """
+
+    METADATA_DT = datetime(2018, 7, 4, 10, 30, 0, tzinfo=timezone.utc)
+    FILE_CREATED_DT = datetime(2019, 8, 5, 12, 0, 0, tzinfo=timezone.utc)
+    FILE_MODIFIED_DT = datetime(2019, 8, 6, 13, 0, 0, tzinfo=timezone.utc)
+    CREATED_DT = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    UPDATED_DT = datetime(2026, 1, 2, 0, 0, 0, tzinfo=timezone.utc)
+
+    def _set_dates(
+        self,
+        asset: Mock,
+        *,
+        metadata_original: datetime | None,
+        metadata_modified: datetime | None,
+        file_created: datetime | None,
+        file_modified: datetime | None,
+    ) -> None:
+        asset.created_at = self.CREATED_DT
+        asset.updated_at = self.UPDATED_DT
+        asset.file_created_at = file_created
+        asset.file_modified_at = file_modified
+        if metadata_original is None and metadata_modified is None:
+            asset.metadata = None
+            return
+        metadata = Mock()
+        metadata.original_datetime = metadata_original
+        metadata.modified_datetime = metadata_modified
+        # Avoid AttributeError on the dims/orientation path.
+        metadata.raw_width = None
+        metadata.raw_height = None
+        metadata.orientation = None
+        for attr in (
+            "make",
+            "model",
+            "lens_model",
+            "f_number",
+            "focal_length",
+            "iso",
+            "exposure_time",
+            "latitude",
+            "longitude",
+            "city",
+            "state",
+            "country",
+            "description",
+            "rating",
+            "projection_type",
+        ):
+            setattr(metadata, attr, None)
+        asset.metadata = metadata
+
+    def test_metadata_original_datetime_wins_when_present(
+        self, sample_gumnut_asset, mock_current_user
+    ):
+        """When metadata.original_datetime is set, both converters use it."""
+        self._set_dates(
+            sample_gumnut_asset,
+            metadata_original=self.METADATA_DT,
+            metadata_modified=self.METADATA_DT,
+            file_created=self.FILE_CREATED_DT,
+            file_modified=self.FILE_MODIFIED_DT,
+        )
+
+        rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+        assert rest.fileCreatedAt == self.METADATA_DT
+        assert rest.fileModifiedAt == self.METADATA_DT
+        assert rest.localDateTime == self.METADATA_DT
+
+        payload = build_asset_upload_ready_payload(
+            sample_gumnut_asset, owner_id="22222222-2222-2222-2222-222222222222"
+        )
+        assert payload.asset.fileCreatedAt == self.METADATA_DT
+        assert payload.asset.fileModifiedAt == self.METADATA_DT
+        assert payload.asset.localDateTime == self.METADATA_DT
+
+    def test_falls_back_to_file_created_at_when_metadata_null(
+        self, sample_gumnut_asset, mock_current_user
+    ):
+        """When metadata.original_datetime is null but file_created_at differs
+        from created_at, the timeline uses file_created_at — not the upload
+        time."""
+        self._set_dates(
+            sample_gumnut_asset,
+            metadata_original=None,
+            metadata_modified=None,
+            file_created=self.FILE_CREATED_DT,
+            file_modified=self.FILE_MODIFIED_DT,
+        )
+
+        rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+        assert rest.fileCreatedAt == self.FILE_CREATED_DT
+        assert rest.fileModifiedAt == self.FILE_MODIFIED_DT
+        assert rest.localDateTime == self.FILE_CREATED_DT
+
+        payload = build_asset_upload_ready_payload(
+            sample_gumnut_asset, owner_id="22222222-2222-2222-2222-222222222222"
+        )
+        assert payload.asset.fileCreatedAt == self.FILE_CREATED_DT
+        assert payload.asset.fileModifiedAt == self.FILE_MODIFIED_DT
+        assert payload.asset.localDateTime == self.FILE_CREATED_DT
+
+    def test_falls_back_to_created_at_when_metadata_and_file_dates_null(
+        self, sample_gumnut_asset, mock_current_user
+    ):
+        """Final fallback to created_at/updated_at remains intact when nothing
+        higher in the cascade is available."""
+        self._set_dates(
+            sample_gumnut_asset,
+            metadata_original=None,
+            metadata_modified=None,
+            file_created=None,
+            file_modified=None,
+        )
+
+        rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+        assert rest.fileCreatedAt == self.CREATED_DT
+        assert rest.fileModifiedAt == self.UPDATED_DT
+        assert rest.localDateTime == self.CREATED_DT
+
+        payload = build_asset_upload_ready_payload(
+            sample_gumnut_asset, owner_id="22222222-2222-2222-2222-222222222222"
+        )
+        assert payload.asset.fileCreatedAt == self.CREATED_DT
+        assert payload.asset.fileModifiedAt == self.UPDATED_DT
+        assert payload.asset.localDateTime == self.CREATED_DT
+
+
 class TestConvertGumnutAssetToImmichTrashState:
     def test_live_asset_has_is_trashed_false(
         self, sample_gumnut_asset, mock_current_user
