@@ -604,7 +604,7 @@ The video playback endpoint (`GET /assets/{id}/video/playback`) is used by Immic
 
 **Current behavior**: Implemented. Streams the asset's `original` variant from CDN via `_retrieve_and_stream_variant`, forwarding the client's `Range` header for seeking. `stream_from_cdn` advertises `Accept-Ranges: bytes` on the initial 200 response so iOS AVPlayer treats the source as seekable, which addresses the prior iOS crash where MP4s whose `moov` atom isn't at the front were unplayable.
 
-**Status**: **Closed** — adapter-only re-implementation on top of the shipped CDN Range path (GUM-713). If iOS regressions surface in the field, the next things to test are upstream `Content-Type` precision and AVPlayer's behavior across redirects.
+**Status**: **Closed** — adapter-only re-implementation on top of the recently shipped end-to-end Range path (the Cloudflare Worker now forwards `Range` to R2 and returns `206 Partial Content`). If iOS regressions surface in the field, the next things to test are upstream `Content-Type` precision and AVPlayer's behavior across redirects.
 
 ---
 
