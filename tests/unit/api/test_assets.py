@@ -508,6 +508,8 @@ class TestUploadAsset:
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.file_created_at = None
+        mock_gumnut_asset.file_modified_at = None
         mock_gumnut_asset.mime_type = "image/jpeg"
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080

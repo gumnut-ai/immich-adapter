@@ -282,13 +282,29 @@ def build_asset_upload_ready_payload(
         gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
     )
 
-    # fileCreatedAt: capture time in actual UTC, fallback to upload time
-    file_created_at = to_actual_utc(metadata_original_dt) or gumnut_asset.created_at
-    # fileModifiedAt: modify time in actual UTC, fallback to upload time
-    file_modified_at = to_actual_utc(metadata_modified_dt) or gumnut_asset.updated_at
-    # localDateTime: capture time in keepLocalTime format, fallback to upload time
+    # fileCreatedAt: capture time in actual UTC.
+    # Cascade mirrors Gumnut's REST Asset.local_datetime resolution:
+    # metadata.original_datetime → asset.file_created_at → asset.created_at.
+    # Falling all the way to created_at (upload time) makes assets without
+    # EXIF capture-date show "today" in the Immich timeline.
+    file_created_at = (
+        to_actual_utc(metadata_original_dt)
+        or to_actual_utc(gumnut_asset.file_created_at)
+        or gumnut_asset.created_at
+    )
+    # fileModifiedAt: modify time in actual UTC; same cascade against the
+    # file-modified chain.
+    file_modified_at = (
+        to_actual_utc(metadata_modified_dt)
+        or to_actual_utc(gumnut_asset.file_modified_at)
+        or gumnut_asset.updated_at
+    )
+    # localDateTime: capture time in keepLocalTime format; cascades through
+    # the same capture-time fields as fileCreatedAt.
     local_date_time = (
-        to_immich_local_datetime(metadata_original_dt) or gumnut_asset.created_at
+        to_immich_local_datetime(metadata_original_dt)
+        or to_immich_local_datetime(gumnut_asset.file_created_at)
+        or gumnut_asset.created_at
     )
 
     width = gumnut_asset.width
@@ -351,13 +367,29 @@ def convert_gumnut_asset_to_immich(
     created_at_fallback = gumnut_asset.created_at or datetime.now(timezone.utc)
     updated_at_fallback = gumnut_asset.updated_at or datetime.now(timezone.utc)
 
-    # fileCreatedAt: capture time in actual UTC, fallback to upload time
-    file_created_at = to_actual_utc(metadata_original_dt) or created_at_fallback
-    # fileModifiedAt: modify time in actual UTC, fallback to upload time
-    file_modified_at = to_actual_utc(metadata_modified_dt) or updated_at_fallback
-    # localDateTime: capture time in keepLocalTime format, fallback to upload time
+    # fileCreatedAt: capture time in actual UTC.
+    # Cascade mirrors Gumnut's REST Asset.local_datetime resolution:
+    # metadata.original_datetime → asset.file_created_at → asset.created_at.
+    # Falling all the way to created_at (upload time) makes assets without
+    # EXIF capture-date show "today" in the Immich timeline.
+    file_created_at = (
+        to_actual_utc(metadata_original_dt)
+        or to_actual_utc(gumnut_asset.file_created_at)
+        or created_at_fallback
+    )
+    # fileModifiedAt: modify time in actual UTC; same cascade against the
+    # file-modified chain.
+    file_modified_at = (
+        to_actual_utc(metadata_modified_dt)
+        or to_actual_utc(gumnut_asset.file_modified_at)
+        or updated_at_fallback
+    )
+    # localDateTime: capture time in keepLocalTime format; cascades through
+    # the same capture-time fields as fileCreatedAt.
     local_date_time = (
-        to_immich_local_datetime(metadata_original_dt) or created_at_fallback
+        to_immich_local_datetime(metadata_original_dt)
+        or to_immich_local_datetime(gumnut_asset.file_created_at)
+        or created_at_fallback
     )
 
     # Determine asset type based on MIME type
