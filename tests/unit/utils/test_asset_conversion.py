@@ -24,7 +24,9 @@ from routers.utils.asset_conversion import (
 
 
 class TestDateResolution:
-    """Immich capture-date fields use Photos API's resolved ``local_datetime``."""
+    """Immich capture-date fields use Photos API's resolved ``local_datetime``;
+    ``fileModifiedAt`` prefers EXIF ``metadata.modified_datetime`` because
+    photos-api does not resolve a separate modify-time field."""
 
     LOCAL_DT = datetime(2017, 6, 3, 9, 15, 0, tzinfo=timezone.utc)
     METADATA_DT = datetime(2018, 7, 4, 10, 30, 0, tzinfo=timezone.utc)
@@ -78,9 +80,12 @@ class TestDateResolution:
             setattr(metadata, attr, None)
         asset.metadata = metadata
 
-    def test_capture_fields_use_local_datetime_not_metadata_or_file_dates(
+    def test_capture_fields_use_local_datetime_and_modify_field_uses_metadata(
         self, sample_gumnut_asset, mock_current_user
     ):
+        """When all date sources are populated, capture-time fields collapse to
+        ``local_datetime`` and ``fileModifiedAt`` collapses to the EXIF
+        ``metadata.modified_datetime`` (not the raw ``file_modified_at``)."""
         self._set_dates(
             sample_gumnut_asset,
             local_datetime=self.LOCAL_DT,
@@ -94,14 +99,14 @@ class TestDateResolution:
 
         rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
         assert rest.fileCreatedAt == self.LOCAL_DT
-        assert rest.fileModifiedAt == self.FILE_MODIFIED_DT
+        assert rest.fileModifiedAt == self.METADATA_DT
         assert rest.localDateTime == self.LOCAL_DT
 
         payload = build_asset_upload_ready_payload(
             sample_gumnut_asset, owner_id="22222222-2222-2222-2222-222222222222"
         )
         assert payload.asset.fileCreatedAt == self.LOCAL_DT
-        assert payload.asset.fileModifiedAt == self.FILE_MODIFIED_DT
+        assert payload.asset.fileModifiedAt == self.METADATA_DT
         assert payload.asset.localDateTime == self.LOCAL_DT
 
     def test_capture_fields_keep_local_datetime_timezone_semantics(

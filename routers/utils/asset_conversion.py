@@ -36,7 +36,13 @@ def normalize_rating(rating: float | int | None) -> int | None:
 
 
 def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime:
-    """Return the Photos API-resolved capture datetime for Immich timeline fields."""
+    """Return the Photos API-resolved capture datetime for Immich timeline fields.
+
+    Photos API resolves ``local_datetime`` from
+    ``metadata.original_datetime → file_created_at → created_at`` internally,
+    so adapter callers treat it as the single source of truth and must not
+    re-add a fallback chain here.
+    """
     return gumnut_asset.local_datetime
 
 
@@ -55,8 +61,19 @@ def resolve_local_date_time(gumnut_asset: AssetResponse) -> datetime:
 
 
 def resolve_file_modified_at(gumnut_asset: AssetResponse) -> datetime:
-    """Return file modified time formatted for Immich ``fileModifiedAt`` fields."""
-    file_modified_at = to_actual_utc(gumnut_asset.file_modified_at)
+    """Return file modified time formatted for Immich ``fileModifiedAt`` fields.
+
+    Unlike capture time, photos-api does not resolve a single modify-time
+    field for us — ``file_modified_at`` is the raw file mtime. The adapter
+    applies the ``metadata.modified_datetime → file_modified_at`` cascade
+    here so the EXIF modify time isn't lost on the wire.
+    """
+    metadata_modified = (
+        gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
+    )
+    file_modified_at = to_actual_utc(metadata_modified) or to_actual_utc(
+        gumnut_asset.file_modified_at
+    )
     assert file_modified_at is not None
     return file_modified_at
 

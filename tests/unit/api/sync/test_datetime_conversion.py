@@ -280,6 +280,10 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset.width = 1600
         asset.height = 2400
         asset.trashed_at = None
+        # resolve_file_modified_at reads metadata.modified_datetime; without
+        # an explicit None the unset Mock attribute would silently produce a
+        # truthy Mock and walk the wrong branch.
+        asset.metadata = None
         return asset
 
     def test_file_created_at_uses_local_datetime_not_file_created_at(self):
