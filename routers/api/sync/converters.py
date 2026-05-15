@@ -165,12 +165,12 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         # Optional fields - use None when not available
         deletedAt=asset.trashed_at,
         duration=None,
-        height=asset.height,
+        height=asset.height if asset.height else None,
         libraryId=None,
         livePhotoVideoId=None,
         stackId=None,
         thumbhash=None,
-        width=asset.width,
+        width=asset.width if asset.width else None,
     )
 
 
