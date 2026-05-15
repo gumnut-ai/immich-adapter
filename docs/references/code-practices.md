@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-14
+last-updated: 2026-05-15
 ---
 
 # Code Practices
@@ -10,6 +10,7 @@ Style, patterns, and conventions for the immich-adapter codebase.
 ## Python Style Guide
 
 - **Type Hints**: Use modern Python 3.12+ syntax (`int | None` instead of `Optional[int]`). Add type annotations to all function parameters and return types.
+- **Type narrowing — overloads, not asserts**: When a helper returns `T | None` but a specific call site is guaranteed to receive non-None input, narrow with `@overload` decorators on the helper (`@overload def f(x: T) -> T; @overload def f(x: None) -> None; @overload def f(x: T | None) -> T | None`) rather than `assert x is not None` at the call site. Asserts are stripped under `python -O`, obscure whether the None branch is actually reachable, and only narrow at one site instead of helping every caller. See `to_actual_utc` / `to_immich_local_datetime` in `routers/utils/datetime_utils.py` for the pattern. For genuine runtime defense (input that *can* be invalid), use exceptions, not `assert`.
 - **Naming**: Use `snake_case` for all variables, functions, and SQLAlchemy model attributes
 - **Imports**: Always place imports at the top of files (inline imports only to prevent circular dependencies)
 - **Dependencies**: Use `uv` for dependency management, not pip or poetry. Version dependencies appropriately in `pyproject.toml`.
@@ -23,6 +24,9 @@ Style, patterns, and conventions for the immich-adapter codebase.
 - **Branching**: Always create a new branch from `main` before making changes. Don't modify files on an existing feature branch for unrelated work.
 - **File editing**: Always read a file before editing it. Never edit historical database migration files.
 - **Datetime handling**: When working with datetimes as strings, ensure the proper format is used, as Immich has different formats for different use cases. If you cannot determine the proper format to use, ask for clarification.
+- **Asset date fields**: Any endpoint or converter that emits Immich asset date fields must use the shared helpers in `routers/utils/asset_conversion.py`:
+  - `resolve_capture_datetime`, `resolve_file_created_at`, `resolve_local_date_time` — for capture-time fields. Photos API resolves `asset.local_datetime` from `metadata.original_datetime → file_created_at → created_at` internally, so the helpers trust it as the single source of truth and the adapter must not re-add a fallback chain. The helpers then handle Immich's actual-UTC `fileCreatedAt` and keep-local-time `localDateTime` formats.
+  - `resolve_file_modified_at` — for the `fileModifiedAt` field. Unlike capture time, Photos API does not resolve a single modify-time field — `asset.file_modified_at` is the raw file mtime — so the helper applies a `metadata.modified_datetime → asset.file_modified_at` cascade here. Do not "align" this with the capture-time helpers; the asymmetry is deliberate.
 - **Immich web "today" wire format**: Endpoints that take a "today" or "now" query param (e.g., `GET /memories?for=...`) receive a string produced by the web client's `asLocalTimeISO`, which does `setZone('utc', { keepLocalTime: true })`. The wire value's date and time components are the user's **local wall-clock**, with `Z` appended so it transports as a string — the offset is fictitious. Pull `.year/.month/.day/.hour/.minute` off the parsed datetime as-is; do **not** apply timezone math, or you'll shift the user's local "today" by their UTC offset. The same hack may appear on any future endpoint where the client wants the server to interpret a value in the user's local time without exposing the offset.
 
 ## Immich API Integration

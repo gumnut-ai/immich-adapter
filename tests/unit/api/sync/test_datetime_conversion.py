@@ -280,6 +280,10 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset.width = 1600
         asset.height = 2400
         asset.trashed_at = None
+        # resolve_file_modified_at reads metadata.modified_datetime; without
+        # an explicit None the unset Mock attribute would silently produce a
+        # truthy Mock and walk the wrong branch.
+        asset.metadata = None
         return asset
 
     def test_file_created_at_uses_local_datetime_not_file_created_at(self):
@@ -397,23 +401,3 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
 
         # fileModifiedAt should be the same as input
         assert result.fileModifiedAt == file_modified_at
-
-    def test_handles_none_local_datetime(self):
-        """Should handle None local_datetime gracefully."""
-        asset = Mock()
-        asset.id = uuid_to_gumnut_asset_id(TEST_UUID)
-        asset.mime_type = "image/jpeg"
-        asset.original_file_name = "test.jpg"
-        asset.local_datetime = None
-        asset.file_created_at = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-        asset.file_modified_at = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-        asset.checksum = "abc123"
-        asset.checksum_sha1 = "sha1checksum"
-        asset.width = 1600
-        asset.height = 2400
-        asset.trashed_at = None
-
-        result = gumnut_asset_to_sync_asset_v1(asset, "owner-uuid")
-
-        assert result.fileCreatedAt is None
-        assert result.localDateTime is None

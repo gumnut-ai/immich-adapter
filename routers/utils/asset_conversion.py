@@ -5,7 +5,7 @@ This module provides shared functionality for converting asset data from the Gum
 to the Immich API format, including metadata (camera/EXIF/GPS/location) processing.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from gumnut.types.asset_response import AssetResponse
 from routers.utils.datetime_utils import (
@@ -33,6 +33,43 @@ def normalize_rating(rating: float | int | None) -> int | None:
         return None
     value = int(float(rating))
     return None if value == -1 else value
+
+
+def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime:
+    """Return the Photos API-resolved capture datetime for Immich timeline fields.
+
+    Photos API resolves ``local_datetime`` from
+    ``metadata.original_datetime → file_created_at → created_at`` internally,
+    so adapter callers treat it as the single source of truth and must not
+    re-add a fallback chain here.
+    """
+    return gumnut_asset.local_datetime
+
+
+def resolve_file_created_at(gumnut_asset: AssetResponse) -> datetime:
+    """Return capture time formatted for Immich ``fileCreatedAt`` fields."""
+    return to_actual_utc(resolve_capture_datetime(gumnut_asset))
+
+
+def resolve_local_date_time(gumnut_asset: AssetResponse) -> datetime:
+    """Return capture time formatted for Immich ``localDateTime`` fields."""
+    return to_immich_local_datetime(resolve_capture_datetime(gumnut_asset))
+
+
+def resolve_file_modified_at(gumnut_asset: AssetResponse) -> datetime:
+    """Return file modified time formatted for Immich ``fileModifiedAt`` fields.
+
+    Unlike capture time, photos-api does not resolve a single modify-time
+    field for us — ``file_modified_at`` is the raw file mtime. The adapter
+    applies the ``metadata.modified_datetime → file_modified_at`` cascade
+    here so the EXIF modify time isn't lost on the wire.
+    """
+    metadata_modified = (
+        gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
+    )
+    return to_actual_utc(metadata_modified) or to_actual_utc(
+        gumnut_asset.file_modified_at
+    )
 
 
 def exif_dims_and_orientation(
@@ -281,38 +318,9 @@ def build_asset_upload_ready_payload(
     """
     asset_uuid = str(safe_uuid_from_asset_id(gumnut_asset.id))
 
-    # Extract metadata datetimes for proper Immich compatibility
-    metadata_original_dt = (
-        gumnut_asset.metadata.original_datetime if gumnut_asset.metadata else None
-    )
-    metadata_modified_dt = (
-        gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
-    )
-
-    # fileCreatedAt: capture time in actual UTC.
-    # Cascade mirrors Gumnut's REST Asset.local_datetime resolution:
-    # metadata.original_datetime → asset.file_created_at → asset.created_at.
-    # Falling all the way to created_at (upload time) makes assets without
-    # EXIF capture-date show "today" in the Immich timeline.
-    file_created_at = (
-        to_actual_utc(metadata_original_dt)
-        or to_actual_utc(gumnut_asset.file_created_at)
-        or gumnut_asset.created_at
-    )
-    # fileModifiedAt: modify time in actual UTC; same cascade against the
-    # file-modified chain.
-    file_modified_at = (
-        to_actual_utc(metadata_modified_dt)
-        or to_actual_utc(gumnut_asset.file_modified_at)
-        or gumnut_asset.updated_at
-    )
-    # localDateTime: capture time in keepLocalTime format; cascades through
-    # the same capture-time fields as fileCreatedAt.
-    local_date_time = (
-        to_immich_local_datetime(metadata_original_dt)
-        or to_immich_local_datetime(gumnut_asset.file_created_at)
-        or gumnut_asset.created_at
-    )
+    file_created_at = resolve_file_created_at(gumnut_asset)
+    file_modified_at = resolve_file_modified_at(gumnut_asset)
+    local_date_time = resolve_local_date_time(gumnut_asset)
 
     width = gumnut_asset.width
     height = gumnut_asset.height
@@ -362,35 +370,9 @@ def convert_gumnut_asset_to_immich(
     mime_type = gumnut_asset.mime_type or "application/octet-stream"
     checksum = gumnut_asset.checksum or ""
 
-    # Extract metadata datetimes for proper Immich compatibility
-    metadata_original_dt = (
-        gumnut_asset.metadata.original_datetime if gumnut_asset.metadata else None
-    )
-    metadata_modified_dt = (
-        gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
-    )
-
-    # Get fallback timestamps from upload times
-    created_at_fallback = gumnut_asset.created_at or datetime.now(timezone.utc)
-    updated_at_fallback = gumnut_asset.updated_at or datetime.now(timezone.utc)
-
-    # Same date cascade as build_asset_upload_ready_payload above; see that
-    # function for the rationale.
-    file_created_at = (
-        to_actual_utc(metadata_original_dt)
-        or to_actual_utc(gumnut_asset.file_created_at)
-        or created_at_fallback
-    )
-    file_modified_at = (
-        to_actual_utc(metadata_modified_dt)
-        or to_actual_utc(gumnut_asset.file_modified_at)
-        or updated_at_fallback
-    )
-    local_date_time = (
-        to_immich_local_datetime(metadata_original_dt)
-        or to_immich_local_datetime(gumnut_asset.file_created_at)
-        or created_at_fallback
-    )
+    file_created_at = resolve_file_created_at(gumnut_asset)
+    file_modified_at = resolve_file_modified_at(gumnut_asset)
+    local_date_time = resolve_local_date_time(gumnut_asset)
 
     # Determine asset type based on MIME type
     asset_type = mime_type_to_asset_type(mime_type)
@@ -416,10 +398,10 @@ def convert_gumnut_asset_to_immich(
         fileCreatedAt=file_created_at,
         fileModifiedAt=file_modified_at,
         localDateTime=local_date_time,
-        updatedAt=updated_at_fallback,
+        updatedAt=gumnut_asset.updated_at,
         checksum=checksum or "placeholder-checksum",
         exifInfo=exif_info,  # Now includes processed EXIF data
-        createdAt=created_at_fallback,
+        createdAt=gumnut_asset.created_at,
         duration="00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else "",
         hasMetadata=True,
         height=float(height) if height else None,

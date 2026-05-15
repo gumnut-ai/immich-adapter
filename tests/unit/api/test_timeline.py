@@ -431,6 +431,8 @@ class TestGetTimeBucket:
 
             assert result["localOffsetHours"][0] == -5
             assert result["localOffsetHours"][1] == 2
+            assert result["fileCreatedAt"][0] == "2024-01-15T10:00:00.000"
+            assert result["fileCreatedAt"][1] == "2024-01-25T16:00:00.000"
 
             assert all(fav is False for fav in result["isFavorite"])
             assert all(trash is False for trash in result["isTrashed"])

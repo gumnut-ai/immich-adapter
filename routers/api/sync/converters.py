@@ -30,11 +30,13 @@ from routers.utils.asset_conversion import (
     exif_dims_and_orientation,
     mime_type_to_asset_type,
     normalize_rating,
+    resolve_file_created_at,
+    resolve_file_modified_at,
+    resolve_local_date_time,
 )
 from routers.utils.datetime_utils import (
     format_timezone_immich,
     to_actual_utc,
-    to_immich_local_datetime,
 )
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_album_id,
@@ -135,14 +137,9 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     # Determine asset type from MIME type
     asset_type = mime_type_to_asset_type(asset.mime_type)
 
-    # fileCreatedAt: Use local_datetime (EXIF capture time) converted to actual UTC.
-    # The mobile client applies SQLite's 'localtime' modifier to display in local time.
-    # For a photo taken at 10:30 AM PST: fileCreatedAt = 18:30:00Z, mobile shows 10:30 AM.
-    fileCreatedAt = to_actual_utc(asset.local_datetime)
-    fileModifiedAt = asset.file_modified_at
-    # localDateTime: Use Immich's "keepLocalTime" format (local time values as UTC).
-    # For a photo taken at 10:30 AM PST: localDateTime = 10:30:00Z (preserves local time).
-    localDateTime = to_immich_local_datetime(asset.local_datetime)
+    fileCreatedAt = resolve_file_created_at(asset)
+    fileModifiedAt = resolve_file_modified_at(asset)
+    localDateTime = resolve_local_date_time(asset)
 
     if asset.checksum_sha1 is None:
         logger.warning(
