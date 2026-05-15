@@ -92,12 +92,14 @@ class TestDateCascade:
 
         rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
         assert rest.fileCreatedAt == self.METADATA_DT
+        assert rest.fileModifiedAt == self.METADATA_DT
         assert rest.localDateTime == self.METADATA_DT
 
         payload = build_asset_upload_ready_payload(
             sample_gumnut_asset, owner_id="22222222-2222-2222-2222-222222222222"
         )
         assert payload.asset.fileCreatedAt == self.METADATA_DT
+        assert payload.asset.fileModifiedAt == self.METADATA_DT
         assert payload.asset.localDateTime == self.METADATA_DT
 
     def test_falls_back_to_file_created_at_when_metadata_null(
