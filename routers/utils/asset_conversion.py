@@ -6,6 +6,7 @@ to the Immich API format, including metadata (camera/EXIF/GPS/location) processi
 """
 
 from datetime import datetime, timezone
+from typing import overload
 
 from gumnut.types.asset_response import AssetResponse
 from routers.utils.datetime_utils import (
@@ -35,10 +36,34 @@ def normalize_rating(rating: float | int | None) -> int | None:
     return None if value == -1 else value
 
 
-def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime | None:
+@overload
+def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime | None: ...
+
+
+@overload
+def resolve_capture_datetime(
+    gumnut_asset: AssetResponse, fallback: datetime
+) -> datetime: ...
+
+
+def resolve_capture_datetime(
+    gumnut_asset: AssetResponse, fallback: datetime | None = None
+) -> datetime | None:
     """Return the Photos API-resolved capture datetime for Immich timeline fields."""
     local_datetime = getattr(gumnut_asset, "local_datetime", None)
-    return local_datetime if isinstance(local_datetime, datetime) else None
+    return local_datetime if isinstance(local_datetime, datetime) else fallback
+
+
+@overload
+def resolve_file_created_at(
+    gumnut_asset: AssetResponse,
+) -> datetime | None: ...
+
+
+@overload
+def resolve_file_created_at(
+    gumnut_asset: AssetResponse, fallback: datetime
+) -> datetime: ...
 
 
 def resolve_file_created_at(
@@ -48,11 +73,35 @@ def resolve_file_created_at(
     return to_actual_utc(resolve_capture_datetime(gumnut_asset)) or fallback
 
 
+@overload
+def resolve_local_date_time(
+    gumnut_asset: AssetResponse,
+) -> datetime | None: ...
+
+
+@overload
+def resolve_local_date_time(
+    gumnut_asset: AssetResponse, fallback: datetime
+) -> datetime: ...
+
+
 def resolve_local_date_time(
     gumnut_asset: AssetResponse, fallback: datetime | None = None
 ) -> datetime | None:
     """Return capture time formatted for Immich ``localDateTime`` fields."""
     return to_immich_local_datetime(resolve_capture_datetime(gumnut_asset)) or fallback
+
+
+@overload
+def resolve_file_modified_at(
+    gumnut_asset: AssetResponse,
+) -> datetime | None: ...
+
+
+@overload
+def resolve_file_modified_at(
+    gumnut_asset: AssetResponse, fallback: datetime
+) -> datetime: ...
 
 
 def resolve_file_modified_at(
@@ -360,15 +409,9 @@ def convert_gumnut_asset_to_immich(
     created_at_fallback = gumnut_asset.created_at or datetime.now(timezone.utc)
     updated_at_fallback = gumnut_asset.updated_at or datetime.now(timezone.utc)
 
-    file_created_at = resolve_file_created_at(gumnut_asset)
-    if file_created_at is None:
-        file_created_at = created_at_fallback
-    file_modified_at = resolve_file_modified_at(gumnut_asset)
-    if file_modified_at is None:
-        file_modified_at = updated_at_fallback
-    local_date_time = resolve_local_date_time(gumnut_asset)
-    if local_date_time is None:
-        local_date_time = created_at_fallback
+    file_created_at = resolve_file_created_at(gumnut_asset, created_at_fallback)
+    file_modified_at = resolve_file_modified_at(gumnut_asset, updated_at_fallback)
+    local_date_time = resolve_local_date_time(gumnut_asset, created_at_fallback)
 
     # Determine asset type based on MIME type
     asset_type = mime_type_to_asset_type(mime_type)
