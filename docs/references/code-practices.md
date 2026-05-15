@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-14
+last-updated: 2026-05-15
 ---
 
 # Code Practices
@@ -23,6 +23,7 @@ Style, patterns, and conventions for the immich-adapter codebase.
 - **Branching**: Always create a new branch from `main` before making changes. Don't modify files on an existing feature branch for unrelated work.
 - **File editing**: Always read a file before editing it. Never edit historical database migration files.
 - **Datetime handling**: When working with datetimes as strings, ensure the proper format is used, as Immich has different formats for different use cases. If you cannot determine the proper format to use, ask for clarification.
+- **Asset capture dates**: Any endpoint or converter that emits Immich asset capture-time fields must use the shared helpers in `routers/utils/asset_conversion.py` (`resolve_capture_datetime`, `resolve_file_created_at`, and `resolve_local_date_time`). Do not recreate the metadata/file/upload-date cascade at call sites; Photos API's `asset.local_datetime` is the source of truth, while the helpers handle Immich's actual-UTC `fileCreatedAt` and keep-local-time `localDateTime` formats.
 - **Immich web "today" wire format**: Endpoints that take a "today" or "now" query param (e.g., `GET /memories?for=...`) receive a string produced by the web client's `asLocalTimeISO`, which does `setZone('utc', { keepLocalTime: true })`. The wire value's date and time components are the user's **local wall-clock**, with `Z` appended so it transports as a string — the offset is fictitious. Pull `.year/.month/.day/.hour/.minute` off the parsed datetime as-is; do **not** apply timezone math, or you'll shift the user's local "today" by their UTC offset. The same hack may appear on any future endpoint where the client wants the server to interpret a value in the user's local time without exposing the offset.
 
 ## Immich API Integration
