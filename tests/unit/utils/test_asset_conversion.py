@@ -9,7 +9,7 @@ The DTO conversion sites in ``routers/utils/asset_conversion.py`` must surface
   sync stream ships to mobile clients.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 import pytest
@@ -19,16 +19,14 @@ from routers.utils.asset_conversion import (
     convert_gumnut_asset_to_immich,
     extract_exif_info,
     extract_sync_exif,
+    resolve_capture_datetime,
 )
 
 
-class TestDateCascade:
-    """The Immich date fields cascade through Gumnut metadata, then file
-    timestamps, then DB row timestamps — mirroring REST ``Asset.local_datetime``
-    so assets without EXIF capture-date don't surface as upload time in the
-    Immich timeline.
-    """
+class TestDateResolution:
+    """Immich capture-date fields use Photos API's resolved ``local_datetime``."""
 
+    LOCAL_DT = datetime(2017, 6, 3, 9, 15, 0, tzinfo=timezone.utc)
     METADATA_DT = datetime(2018, 7, 4, 10, 30, 0, tzinfo=timezone.utc)
     FILE_CREATED_DT = datetime(2019, 8, 5, 12, 0, 0, tzinfo=timezone.utc)
     FILE_MODIFIED_DT = datetime(2019, 8, 6, 13, 0, 0, tzinfo=timezone.utc)
@@ -39,6 +37,7 @@ class TestDateCascade:
         self,
         asset: Mock,
         *,
+        local_datetime: datetime | None,
         metadata_original: datetime | None,
         metadata_modified: datetime | None,
         file_created: datetime | None,
@@ -46,6 +45,7 @@ class TestDateCascade:
     ) -> None:
         asset.created_at = self.CREATED_DT
         asset.updated_at = self.UPDATED_DT
+        asset.local_datetime = local_datetime
         asset.file_created_at = file_created
         asset.file_modified_at = file_modified
         if metadata_original is None and metadata_modified is None:
@@ -78,38 +78,42 @@ class TestDateCascade:
             setattr(metadata, attr, None)
         asset.metadata = metadata
 
-    def test_metadata_original_datetime_wins_when_present(
+    def test_capture_fields_use_local_datetime_not_metadata_or_file_dates(
         self, sample_gumnut_asset, mock_current_user
     ):
-        """When metadata.original_datetime is set, both converters use it."""
         self._set_dates(
             sample_gumnut_asset,
+            local_datetime=self.LOCAL_DT,
             metadata_original=self.METADATA_DT,
             metadata_modified=self.METADATA_DT,
             file_created=self.FILE_CREATED_DT,
             file_modified=self.FILE_MODIFIED_DT,
         )
 
+        assert resolve_capture_datetime(sample_gumnut_asset) == self.LOCAL_DT
+
         rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
-        assert rest.fileCreatedAt == self.METADATA_DT
-        assert rest.fileModifiedAt == self.METADATA_DT
-        assert rest.localDateTime == self.METADATA_DT
+        assert rest.fileCreatedAt == self.LOCAL_DT
+        assert rest.fileModifiedAt == self.FILE_MODIFIED_DT
+        assert rest.localDateTime == self.LOCAL_DT
 
         payload = build_asset_upload_ready_payload(
             sample_gumnut_asset, owner_id="22222222-2222-2222-2222-222222222222"
         )
-        assert payload.asset.fileCreatedAt == self.METADATA_DT
-        assert payload.asset.fileModifiedAt == self.METADATA_DT
-        assert payload.asset.localDateTime == self.METADATA_DT
+        assert payload.asset.fileCreatedAt == self.LOCAL_DT
+        assert payload.asset.fileModifiedAt == self.FILE_MODIFIED_DT
+        assert payload.asset.localDateTime == self.LOCAL_DT
 
-    def test_falls_back_to_file_created_at_when_metadata_null(
+    def test_capture_fields_keep_local_datetime_timezone_semantics(
         self, sample_gumnut_asset, mock_current_user
     ):
-        """When metadata.original_datetime is null but file_created_at differs
-        from created_at, the timeline uses file_created_at — not the upload
-        time."""
+        tokyo = timezone(timedelta(hours=9))
+        local_datetime = datetime(2024, 6, 20, 15, 0, 0, tzinfo=tokyo)
+        expected_file_created_at = datetime(2024, 6, 20, 6, 0, 0, tzinfo=timezone.utc)
+        expected_local_date_time = datetime(2024, 6, 20, 15, 0, 0, tzinfo=timezone.utc)
         self._set_dates(
             sample_gumnut_asset,
+            local_datetime=local_datetime,
             metadata_original=None,
             metadata_modified=None,
             file_created=self.FILE_CREATED_DT,
@@ -117,24 +121,23 @@ class TestDateCascade:
         )
 
         rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
-        assert rest.fileCreatedAt == self.FILE_CREATED_DT
+        assert rest.fileCreatedAt == expected_file_created_at
         assert rest.fileModifiedAt == self.FILE_MODIFIED_DT
-        assert rest.localDateTime == self.FILE_CREATED_DT
+        assert rest.localDateTime == expected_local_date_time
 
         payload = build_asset_upload_ready_payload(
             sample_gumnut_asset, owner_id="22222222-2222-2222-2222-222222222222"
         )
-        assert payload.asset.fileCreatedAt == self.FILE_CREATED_DT
+        assert payload.asset.fileCreatedAt == expected_file_created_at
         assert payload.asset.fileModifiedAt == self.FILE_MODIFIED_DT
-        assert payload.asset.localDateTime == self.FILE_CREATED_DT
+        assert payload.asset.localDateTime == expected_local_date_time
 
-    def test_falls_back_to_created_at_when_metadata_and_file_dates_null(
+    def test_required_rest_fields_fall_back_to_upload_dates_when_resolved_dates_missing(
         self, sample_gumnut_asset, mock_current_user
     ):
-        """Final fallback to created_at/updated_at remains intact when nothing
-        higher in the cascade is available."""
         self._set_dates(
             sample_gumnut_asset,
+            local_datetime=None,
             metadata_original=None,
             metadata_modified=None,
             file_created=None,

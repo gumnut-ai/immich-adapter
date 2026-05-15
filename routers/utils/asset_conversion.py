@@ -35,6 +35,36 @@ def normalize_rating(rating: float | int | None) -> int | None:
     return None if value == -1 else value
 
 
+def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime | None:
+    """Return the Photos API-resolved capture datetime for Immich timeline fields."""
+    local_datetime = getattr(gumnut_asset, "local_datetime", None)
+    return local_datetime if isinstance(local_datetime, datetime) else None
+
+
+def resolve_file_created_at(
+    gumnut_asset: AssetResponse, fallback: datetime | None = None
+) -> datetime | None:
+    """Return capture time formatted for Immich ``fileCreatedAt`` fields."""
+    return to_actual_utc(resolve_capture_datetime(gumnut_asset)) or fallback
+
+
+def resolve_local_date_time(
+    gumnut_asset: AssetResponse, fallback: datetime | None = None
+) -> datetime | None:
+    """Return capture time formatted for Immich ``localDateTime`` fields."""
+    return to_immich_local_datetime(resolve_capture_datetime(gumnut_asset)) or fallback
+
+
+def resolve_file_modified_at(
+    gumnut_asset: AssetResponse, fallback: datetime | None = None
+) -> datetime | None:
+    """Return file modified time formatted for Immich ``fileModifiedAt`` fields."""
+    file_modified_at = getattr(gumnut_asset, "file_modified_at", None)
+    if not isinstance(file_modified_at, datetime):
+        return fallback
+    return to_actual_utc(file_modified_at) or fallback
+
+
 def exif_dims_and_orientation(
     gumnut_asset: AssetResponse,
 ) -> tuple[int | None, int | None, str | None]:
@@ -274,38 +304,9 @@ def build_asset_upload_ready_payload(
     """
     asset_uuid = str(safe_uuid_from_asset_id(gumnut_asset.id))
 
-    # Extract metadata datetimes for proper Immich compatibility
-    metadata_original_dt = (
-        gumnut_asset.metadata.original_datetime if gumnut_asset.metadata else None
-    )
-    metadata_modified_dt = (
-        gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
-    )
-
-    # fileCreatedAt: capture time in actual UTC.
-    # Cascade mirrors Gumnut's REST Asset.local_datetime resolution:
-    # metadata.original_datetime → asset.file_created_at → asset.created_at.
-    # Falling all the way to created_at (upload time) makes assets without
-    # EXIF capture-date show "today" in the Immich timeline.
-    file_created_at = (
-        to_actual_utc(metadata_original_dt)
-        or to_actual_utc(gumnut_asset.file_created_at)
-        or gumnut_asset.created_at
-    )
-    # fileModifiedAt: modify time in actual UTC; same cascade against the
-    # file-modified chain.
-    file_modified_at = (
-        to_actual_utc(metadata_modified_dt)
-        or to_actual_utc(gumnut_asset.file_modified_at)
-        or gumnut_asset.updated_at
-    )
-    # localDateTime: capture time in keepLocalTime format; cascades through
-    # the same capture-time fields as fileCreatedAt.
-    local_date_time = (
-        to_immich_local_datetime(metadata_original_dt)
-        or to_immich_local_datetime(gumnut_asset.file_created_at)
-        or gumnut_asset.created_at
-    )
+    file_created_at = resolve_file_created_at(gumnut_asset, gumnut_asset.created_at)
+    file_modified_at = resolve_file_modified_at(gumnut_asset, gumnut_asset.updated_at)
+    local_date_time = resolve_local_date_time(gumnut_asset, gumnut_asset.created_at)
 
     width = gumnut_asset.width
     height = gumnut_asset.height
@@ -355,35 +356,19 @@ def convert_gumnut_asset_to_immich(
     mime_type = gumnut_asset.mime_type or "application/octet-stream"
     checksum = gumnut_asset.checksum or ""
 
-    # Extract metadata datetimes for proper Immich compatibility
-    metadata_original_dt = (
-        gumnut_asset.metadata.original_datetime if gumnut_asset.metadata else None
-    )
-    metadata_modified_dt = (
-        gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
-    )
-
     # Get fallback timestamps from upload times
     created_at_fallback = gumnut_asset.created_at or datetime.now(timezone.utc)
     updated_at_fallback = gumnut_asset.updated_at or datetime.now(timezone.utc)
 
-    # Same date cascade as build_asset_upload_ready_payload above; see that
-    # function for the rationale.
-    file_created_at = (
-        to_actual_utc(metadata_original_dt)
-        or to_actual_utc(gumnut_asset.file_created_at)
-        or created_at_fallback
-    )
-    file_modified_at = (
-        to_actual_utc(metadata_modified_dt)
-        or to_actual_utc(gumnut_asset.file_modified_at)
-        or updated_at_fallback
-    )
-    local_date_time = (
-        to_immich_local_datetime(metadata_original_dt)
-        or to_immich_local_datetime(gumnut_asset.file_created_at)
-        or created_at_fallback
-    )
+    file_created_at = resolve_file_created_at(gumnut_asset)
+    if file_created_at is None:
+        file_created_at = created_at_fallback
+    file_modified_at = resolve_file_modified_at(gumnut_asset)
+    if file_modified_at is None:
+        file_modified_at = updated_at_fallback
+    local_date_time = resolve_local_date_time(gumnut_asset)
+    if local_date_time is None:
+        local_date_time = created_at_fallback
 
     # Determine asset type based on MIME type
     asset_type = mime_type_to_asset_type(mime_type)

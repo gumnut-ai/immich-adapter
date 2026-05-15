@@ -332,6 +332,7 @@ class TestSearchMetadata:
         gumnut_asset.checksum = "abc123"
         gumnut_asset.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
         gumnut_asset.updated_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        gumnut_asset.local_datetime = datetime(2024, 6, 1, tzinfo=timezone.utc)
         gumnut_asset.file_created_at = None
         gumnut_asset.file_modified_at = None
         gumnut_asset.width = 1920
