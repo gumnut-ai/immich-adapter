@@ -92,6 +92,27 @@ def test_sync_exif_v1_orientation_pass_through(orientation, expected):
     assert result.orientation == expected
 
 
+def test_sync_asset_v1_emits_none_when_dims_zero():
+    """SyncAssetV1.width/height must emit None — not 0 — when photos-api stores
+    0 for unknown dims (the videos-without-EXIF cohort).
+
+    The Immich mobile asset viewer divides RemoteAssetEntity.width/height
+    (sourced from this SyncAssetV1 row) to size its viewport and only guards
+    against null. A 0/0 ratio yields NaN BoxConstraints and crashes the
+    viewer on tap. The exifInfo subobject is not the load-bearing field for
+    that math — the top-level asset row is.
+    """
+    asset = create_mock_asset_data(UPDATED_AT)
+    asset.width = 0
+    asset.height = 0
+    asset.metadata = None
+
+    result = gumnut_asset_to_sync_asset_v1(asset, owner_id=OWNER_UUID)
+
+    assert result.width is None
+    assert result.height is None
+
+
 def test_sync_exif_v1_falls_back_to_asset_dims_when_raw_dims_null():
     """Drift-cohort rows have NULL raw_width/raw_height — their asset.width/
     height is already display-space, so fall back to those values.

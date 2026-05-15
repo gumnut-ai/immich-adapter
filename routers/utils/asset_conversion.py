@@ -54,20 +54,27 @@ def exif_dims_and_orientation(
     — the same double-rotation class of bug the deleted ``wire_orientation``
     helper was guarding against. This is the only safe way to surface
     drift-cohort assets to mobile.
+
+    Treats ``0`` as "unknown," the same as ``None``: assets where photos-api
+    stores ``0`` for unknown dims (notably videos without EXIF width/height
+    tags) must not surface ``0`` on the wire. The Immich mobile asset viewer
+    computes ``width / height`` to size the viewport and only guards against
+    ``null`` — a ``0/0`` ratio yields ``NaN`` and crashes the viewer.
     """
     metadata = gumnut_asset.metadata
-    if metadata is None:
+    if metadata is not None:
+        raw_w = metadata.raw_width
+        raw_h = metadata.raw_height
+        if raw_w and raw_h:
+            orientation = metadata.orientation
+            return (
+                raw_w,
+                raw_h,
+                str(orientation) if orientation is not None else None,
+            )
+    if gumnut_asset.width and gumnut_asset.height:
         return gumnut_asset.width, gumnut_asset.height, None
-    raw_w = metadata.raw_width
-    raw_h = metadata.raw_height
-    orientation = metadata.orientation
-    if raw_w is not None and raw_h is not None:
-        return (
-            raw_w,
-            raw_h,
-            str(orientation) if orientation is not None else None,
-        )
-    return gumnut_asset.width, gumnut_asset.height, None
+    return None, None, None
 
 
 def mime_type_to_asset_type(mime_type: str) -> AssetTypeEnum:

@@ -361,3 +361,46 @@ class TestDimensionEmission:
         assert payload.exif.exifImageWidth == 4032
         assert payload.exif.exifImageHeight == 2268
         assert payload.exif.orientation == "6"
+
+    def test_zero_raw_dims_fall_back_to_asset_dims(self, sample_gumnut_asset):
+        """Zero from photos-api on raw dims is treated as unknown: fall back
+        to asset.width/height and null orientation, mirroring the NULL case.
+
+        The Immich mobile asset viewer computes ``width / height`` to size
+        its viewport and only guards against ``null``; a ``0/0`` ratio yields
+        ``NaN`` and crashes the viewer on tap.
+        """
+        sample_gumnut_asset.width = 1920
+        sample_gumnut_asset.height = 1080
+        _attach_metadata(sample_gumnut_asset, orientation=6, raw_width=0, raw_height=0)
+
+        sync_result = extract_sync_exif(sample_gumnut_asset, asset_uuid="x")
+        assert sync_result.exifImageWidth == 1920
+        assert sync_result.exifImageHeight == 1080
+        assert sync_result.orientation is None
+
+        rest_result = extract_exif_info(sample_gumnut_asset)
+        assert rest_result.exifImageWidth == 1920
+        assert rest_result.exifImageHeight == 1080
+        assert rest_result.orientation is None
+
+    def test_zero_dims_everywhere_emit_none(self, sample_gumnut_asset):
+        """When both raw and asset dims are 0, both wires must emit None —
+        not 0. This is the videos-without-EXIF cohort that was crashing the
+        mobile asset viewer.
+        """
+        sample_gumnut_asset.width = 0
+        sample_gumnut_asset.height = 0
+        _attach_metadata(
+            sample_gumnut_asset, orientation=None, raw_width=0, raw_height=0
+        )
+
+        sync_result = extract_sync_exif(sample_gumnut_asset, asset_uuid="x")
+        assert sync_result.exifImageWidth is None
+        assert sync_result.exifImageHeight is None
+        assert sync_result.orientation is None
+
+        rest_result = extract_exif_info(sample_gumnut_asset)
+        assert rest_result.exifImageWidth is None
+        assert rest_result.exifImageHeight is None
+        assert rest_result.orientation is None
