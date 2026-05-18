@@ -1,5 +1,5 @@
 from itertools import batched
-from typing import List, Literal, NamedTuple, cast
+from typing import Any, List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 import base64
 import logging
@@ -752,6 +752,68 @@ async def copy_asset(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+def _parse_update_original_datetime(value: str | None) -> datetime | None:
+    """Parse the `dateTimeOriginal` field on an `UpdateAssetDto`.
+
+    Distinct from `_parse_datetime` (which substitutes a fallback on parse
+    failure for upload paths) — here an invalid input must surface as 422.
+    A `None` value means "clear" and is passed through.
+    """
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid dateTimeOriginal: {value!r}",
+        ) from exc
+
+
+def _build_metadata_patch(request: UpdateAssetDto) -> dict[str, Any] | None:
+    """Build the SDK `update_asset` kwargs from an `UpdateAssetDto`.
+
+    Uses `model_fields_set` to distinguish "field omitted" from "field
+    explicitly null" — both look like `None` on the model because the DTO
+    defaults every field to `None`. Out-of-scope DTO fields
+    (`isFavorite`, `rating`, `visibility`, `livePhotoVideoId`) are silently
+    ignored; the request still succeeds, we just don't act on parts the
+    Photos API doesn't model. Returns `None` when no in-scope fields were
+    set, signalling the caller to skip the PATCH entirely.
+
+    Validates paired lat/lon adapter-side so the request 422s before the
+    network call when the client sends half-set or half-cleared coords.
+    """
+    provided = request.model_fields_set
+    patch: dict[str, Any] = {}
+
+    if "description" in provided:
+        patch["description"] = request.description
+
+    lat_set = "latitude" in provided
+    lon_set = "longitude" in provided
+    if lat_set != lon_set:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="latitude and longitude must be provided together",
+        )
+    if lat_set and lon_set:
+        if (request.latitude is None) != (request.longitude is None):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="latitude and longitude must be cleared together",
+            )
+        patch["latitude"] = request.latitude
+        patch["longitude"] = request.longitude
+
+    if "dateTimeOriginal" in provided:
+        patch["original_datetime"] = _parse_update_original_datetime(
+            request.dateTimeOriginal
+        )
+
+    return patch or None
+
+
 @router.put("/{id}")
 async def update_asset(
     id: UUID,
@@ -759,12 +821,27 @@ async def update_asset(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetResponseDto:
+    """Update single-asset metadata.
+
+    Wires Immich's `PUT /api/assets/{id}` to the Photos API
+    `update_asset` PATCH. In-scope DTO fields: `description`,
+    `latitude` + `longitude`, `dateTimeOriginal`. Out-of-scope fields
+    (`isFavorite`, `rating`, `visibility`, `livePhotoVideoId`) are
+    silently ignored — the request still succeeds, but the adapter
+    doesn't act on parts the Photos API doesn't model.
     """
-    Update asset metadata.
-    This is a stub implementation as Gumnut does not support asset metadata updates.
-    Returns the asset as-is.
-    """
-    return await get_asset_info(id, client=client, current_user=current_user)
+    payload = _build_metadata_patch(request)
+    if payload is None:
+        return await get_asset_info(id, client=client, current_user=current_user)
+
+    gumnut_asset = await client.assets.update_asset(
+        uuid_to_gumnut_asset_id(id), **payload
+    )
+    immich_asset = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
+    await emit_user_event(
+        WebSocketEvent.ASSET_UPDATE, str(current_user.id), immich_asset
+    )
+    return immich_asset
 
 
 @router.get("/{id}")
