@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation Documentation for immich-adapter"
-last-updated: 2026-05-07
+last-updated: 2026-05-18
 ---
 
 # WebSocket Implementation Documentation for immich-adapter
@@ -165,6 +165,7 @@ Starting with `on_upload_success`, but designed for future extension:
 | `on_asset_delete` | `string` (assetId) | Yes | Yes | One per id; force=true permanent delete |
 | `on_asset_trash` | `string[]` (assetIds) | Yes | Yes | Batched per chunk; force=false soft delete |
 | `on_asset_restore` | `string[]` (assetIds) | Yes | Yes | Batched per chunk; restore from trash |
+| `on_asset_update` | `AssetResponseDto` | Yes | Yes | Emitted from `PUT /api/assets/{id}` after a successful metadata edit |
 | `on_session_delete` | `string` (sessionId) | Yes | No | Sessions managed by immich-adapter |
 | `on_server_version` | `ServerVersionResponseDto` | Yes | No | Sent on connect (existing) |
 
@@ -180,7 +181,6 @@ These events require features that don't exist in photos-api:
 
 | Event | Reason |
 |---|---|
-| `on_asset_update` | Assets are immutable after creation |
 | `on_asset_stack_update` | Stacks not implemented |
 | `on_asset_hidden` | Asset visibility not supported |
 | `on_notification` | Album sharing & job failures not implemented |

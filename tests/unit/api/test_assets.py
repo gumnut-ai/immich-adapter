@@ -1173,13 +1173,22 @@ class TestUpdateAsset:
         mock_client.assets.update_asset.assert_not_awaited()
 
     @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"latitude": None, "longitude": 1.0},
+            {"latitude": 1.0, "longitude": None},
+        ],
+    )
     async def test_update_asset_half_cleared_coords_is_422(
-        self, sample_uuid, mock_current_user
+        self, sample_uuid, mock_current_user, payload
     ):
+        # XOR-style check is symmetric in latitude/longitude — cover both
+        # directions so a typo that broke one side wouldn't pass.
         mock_client = Mock()
         mock_client.assets.update_asset = AsyncMock()
 
-        request = UpdateAssetDto.model_validate({"latitude": None, "longitude": 1.0})
+        request = UpdateAssetDto.model_validate(payload)
 
         with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
             with pytest.raises(HTTPException) as exc_info:
