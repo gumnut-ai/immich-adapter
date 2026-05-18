@@ -1431,7 +1431,7 @@ class TestUpdateAsset:
         # Payload is the converted AssetResponseDto, not a bare ID string —
         # matches upstream Immich + the web client signature.
         mock_emit.assert_awaited_once_with(
-            WebSocketEvent.ASSET_UPDATE, str(mock_current_user.id), result
+            WebSocketEvent.ASSET_UPDATE, mock_current_user.id, result
         )
 
 

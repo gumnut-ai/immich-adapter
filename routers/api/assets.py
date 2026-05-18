@@ -838,9 +838,7 @@ async def update_asset(
         uuid_to_gumnut_asset_id(id), **payload
     )
     immich_asset = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
-    await emit_user_event(
-        WebSocketEvent.ASSET_UPDATE, str(current_user.id), immich_asset
-    )
+    await emit_user_event(WebSocketEvent.ASSET_UPDATE, current_user.id, immich_asset)
     return immich_asset
 
 
