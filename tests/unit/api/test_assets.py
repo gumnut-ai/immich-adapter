@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from unittest.mock import Mock, AsyncMock, patch
 from fastapi import HTTPException
@@ -48,6 +48,7 @@ from routers.immich_models import (
     AssetBulkUploadCheckItem,
     AssetCopyDto,
     AssetMediaResponseDto,
+    AssetVisibility,
     CheckExistingAssetsDto,
     AssetBulkUpdateDto,
     AssetBulkDeleteDto,
@@ -1001,6 +1002,439 @@ class TestUpdateAssets:
         assert result.status_code == 204
 
 
+class TestUpdateAsset:
+    """Test the single-asset metadata edit endpoint.
+
+    `PUT /api/assets/{id}` forwards a subset of `UpdateAssetDto` to the Photos
+    API `update_asset` PATCH: `description`, paired `latitude` + `longitude`,
+    and `dateTimeOriginal`. Out-of-scope fields (`isFavorite`, `rating`,
+    `visibility`, `livePhotoVideoId`) are silently ignored — the request
+    succeeds, the adapter just doesn't act on parts the Photos API doesn't
+    model. An empty payload returns the asset unchanged without an SDK call.
+    """
+
+    @pytest.mark.anyio
+    async def test_update_asset_description_round_trips(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto(description="hello")
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            result = await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid), description="hello"
+        )
+        assert result.id == str(sample_uuid)
+
+    @pytest.mark.anyio
+    async def test_update_asset_description_null_clears(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto.model_validate({"description": None})
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid), description=None
+        )
+
+    @pytest.mark.anyio
+    async def test_update_asset_empty_description_lets_backend_reject(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        # Empty string is forwarded; the backend rejects it with 422 via the
+        # global GumnutError handler. The adapter doesn't pre-validate length.
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto(description="")
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid), description=""
+        )
+
+    @pytest.mark.anyio
+    async def test_update_asset_lat_lon_round_trips(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto(latitude=37.7749, longitude=-122.4194)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid),
+            latitude=37.7749,
+            longitude=-122.4194,
+        )
+
+    @pytest.mark.anyio
+    async def test_update_asset_lat_lon_both_null_clears(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto.model_validate({"latitude": None, "longitude": None})
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid),
+            latitude=None,
+            longitude=None,
+        )
+
+    @pytest.mark.anyio
+    async def test_update_asset_only_latitude_is_422(
+        self, sample_uuid, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock()
+
+        request = UpdateAssetDto(latitude=37.7749)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            with pytest.raises(HTTPException) as exc_info:
+                await update_asset(
+                    sample_uuid,
+                    request,
+                    client=mock_client,
+                    current_user=mock_current_user,
+                )
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.update_asset.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_asset_only_longitude_is_422(
+        self, sample_uuid, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock()
+
+        request = UpdateAssetDto(longitude=-122.4194)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            with pytest.raises(HTTPException) as exc_info:
+                await update_asset(
+                    sample_uuid,
+                    request,
+                    client=mock_client,
+                    current_user=mock_current_user,
+                )
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.update_asset.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"latitude": None, "longitude": 1.0},
+            {"latitude": 1.0, "longitude": None},
+        ],
+    )
+    async def test_update_asset_half_cleared_coords_is_422(
+        self, sample_uuid, mock_current_user, payload
+    ):
+        # XOR-style check is symmetric in latitude/longitude — cover both
+        # directions so a typo that broke one side wouldn't pass.
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock()
+
+        request = UpdateAssetDto.model_validate(payload)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            with pytest.raises(HTTPException) as exc_info:
+                await update_asset(
+                    sample_uuid,
+                    request,
+                    client=mock_client,
+                    current_user=mock_current_user,
+                )
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.update_asset.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_asset_datetime_with_offset_round_trips(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto(dateTimeOriginal="2024-06-15T14:30:00-07:00")
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid),
+            original_datetime=datetime(
+                2024, 6, 15, 14, 30, 0, tzinfo=timezone(-timedelta(hours=7))
+            ),
+        )
+
+    @pytest.mark.anyio
+    async def test_update_asset_datetime_naive_round_trips(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        # Naive datetime (no offset, no Z). The backend accepts naive; the
+        # adapter does not synthesise an offset.
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto(dateTimeOriginal="2024-06-15T14:30:00")
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid),
+            original_datetime=datetime(2024, 6, 15, 14, 30, 0),
+        )
+
+    @pytest.mark.anyio
+    async def test_update_asset_datetime_z_suffix_round_trips(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto(dateTimeOriginal="2024-06-15T14:30:00Z")
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid),
+            original_datetime=datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc),
+        )
+
+    @pytest.mark.anyio
+    async def test_update_asset_datetime_null_clears(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto.model_validate({"dateTimeOriginal": None})
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid), original_datetime=None
+        )
+
+    @pytest.mark.anyio
+    async def test_update_asset_invalid_datetime_is_422(
+        self, sample_uuid, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock()
+
+        request = UpdateAssetDto(dateTimeOriginal="not-a-datetime")
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            with pytest.raises(HTTPException) as exc_info:
+                await update_asset(
+                    sample_uuid,
+                    request,
+                    client=mock_client,
+                    current_user=mock_current_user,
+                )
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.update_asset.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_asset_empty_payload_no_sdk_call(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        # Empty DTO + retrieve path: asset is fetched via get_asset_info, no
+        # PATCH is sent, no websocket fires.
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock()
+        mock_client.assets.retrieve = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto()
+
+        with patch(
+            "routers.api.assets.emit_user_event", new_callable=AsyncMock
+        ) as mock_emit:
+            result = await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_not_awaited()
+        mock_client.assets.retrieve.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid)
+        )
+        mock_emit.assert_not_awaited()
+        assert result.id == str(sample_uuid)
+
+    @pytest.mark.anyio
+    async def test_update_asset_out_of_scope_fields_no_sdk_call(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        # Out-of-scope fields (favorite/rating/visibility/livePhotoVideoId)
+        # by themselves don't trigger a PATCH — the request still succeeds
+        # via the retrieve path so client UIs don't show errors.
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock()
+        mock_client.assets.retrieve = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto(
+            isFavorite=True,
+            rating=5.0,
+            visibility=AssetVisibility.archive,
+            livePhotoVideoId=uuid4(),
+        )
+
+        with patch(
+            "routers.api.assets.emit_user_event", new_callable=AsyncMock
+        ) as mock_emit:
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_not_awaited()
+        mock_emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_asset_out_of_scope_fields_ignored_when_mixed(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        # When a mix of in-scope and out-of-scope fields is sent, only the
+        # in-scope kwargs reach the SDK.
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto(
+            description="caption",
+            isFavorite=True,
+            rating=4.0,
+        )
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid), description="caption"
+        )
+
+    @pytest.mark.anyio
+    async def test_update_asset_emits_websocket_event(
+        self, sample_uuid, sample_gumnut_asset, mock_current_user
+    ):
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+
+        request = UpdateAssetDto(description="new caption")
+
+        with patch(
+            "routers.api.assets.emit_user_event", new_callable=AsyncMock
+        ) as mock_emit:
+            result = await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        # Payload is the converted AssetResponseDto, not a bare ID string —
+        # matches upstream Immich + the web client signature.
+        mock_emit.assert_awaited_once_with(
+            WebSocketEvent.ASSET_UPDATE, mock_current_user.id, result
+        )
+
+
 class TestDeleteAssets:
     """Test the delete_assets endpoint.
 
@@ -1395,32 +1829,6 @@ class TestRunAssetJobs:
 
         # Assert
         assert result.status_code == 204
-
-
-class TestUpdateAsset:
-    """Test the update_asset endpoint."""
-
-    @pytest.mark.anyio
-    async def test_update_asset_success(
-        self, sample_gumnut_asset, sample_uuid, mock_current_user
-    ):
-        """Test successful asset update (calls get_asset_info)."""
-        # Setup - create mock client
-        mock_client = Mock()
-        mock_client.assets.retrieve = AsyncMock(return_value=sample_gumnut_asset)
-
-        request = UpdateAssetDto(isFavorite=True)
-
-        # Execute
-        result = await update_asset(
-            sample_uuid, request, client=mock_client, current_user=mock_current_user
-        )
-
-        # Assert
-        # Should return a converted AssetResponseDto from get_asset_info
-        assert hasattr(result, "id")
-        assert hasattr(result, "deviceAssetId")
-        mock_client.assets.retrieve.assert_called_once()
 
 
 class TestGetAssetInfo:

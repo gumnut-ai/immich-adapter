@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-15
+last-updated: 2026-05-18
 ---
 
 # Code Practices
@@ -115,6 +115,10 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 
    After updating the dedicated sections and tables, also grep each touched doc for **other paragraphs that summarize the prior state** — design-decision notes, recommendations, server-feature flag rollups, etc. The gap-analysis doc in particular has a `GET /server/features` design-decision paragraph that enumerates which client UI flags are on/off; flipping a server-feature flag in the code without updating that paragraph leaves it contradicting both the code and the gap section you just updated. Search for the feature name (e.g., `map`, `trash`, `duplicateDetection`) across the doc before considering the update done.
 
+   If the new endpoint also emits a WebSocket event (existing one or new), also update **both** websocket docs and bump their `last-updated`:
+   - `docs/architecture/websocket-implementation.md` — move the event out of the "Not Applicable" table into the Phase 1 supported table (or add a new row), with the payload, Web/Mobile columns, and a Notes value that names the emit site.
+   - `docs/references/websocket-events-reference.md` — update the Summary Table row and the per-event section. Upstream-Immich and adapter triggers may diverge (e.g., upstream emits `on_asset_update` only from sidecar processing; the adapter emits it from `PUT /api/assets/{id}`); make both paths explicit so future readers don't assume the upstream-only note still applies.
+
 ### Asset dimensions and orientation
 
 photos-api owns display-space dims at ingest — `asset.width` / `asset.height` already reflect post-rotation dimensions and must be emitted **verbatim** on the wire (immich web reads them via `getAssetRatio`). Pre-rotation raw dims live on `metadata.raw_width` / `metadata.raw_height`; surface them on `exifInfo.exifImageWidth` / `exifImageHeight` so Immich mobile can re-derive display dims locally. When raw dims are present, the EXIF `orientation` tag is emitted unchanged — mobile pairs it with the raw dims to compute display dims; immich web ignores it (it reads `asset.width/height` directly).
@@ -179,6 +183,28 @@ for asset_uuid in request.ids:
 ```
 
 Use `map_gumnut_error(e, context, extra=..., exc_info=True)` only when the call site needs to enrich the upstream log record with context the global handler can't see — most commonly the upload paths logging filename / device ids / tracebacks.
+
+### Omit vs explicit-null in update-style DTOs — use `model_fields_set`
+
+Many generated Immich update DTOs declare each field as `T | None = None` (e.g., `UpdateAssetDto`'s `description`, `latitude`, `longitude`, `dateTimeOriginal`). On the wire, Immich clients distinguish two different intents:
+
+- **Omitted** (`{}` or no key for the field) — "leave this field unchanged."
+- **Explicit null** (`{"description": null}`) — "clear this field."
+
+Both arrive at the model as `None` because the default is `None`. To disambiguate, read **`request.model_fields_set`** (Pydantic v2). It records the set of field names that were present in the input JSON, independent of their value:
+
+```python
+provided = request.model_fields_set
+patch: dict[str, Any] = {}
+if "description" in provided:
+    patch["description"] = request.description  # may be None — that's "clear"
+# Fields not in `provided` are omitted from the patch entirely so the SDK's
+# `Omit` sentinel default applies.
+```
+
+When the SDK method accepts `Omit | None | T`, leaving the kwarg out of the `**patch` unpack maps cleanly to "leave unchanged"; including it with `None` maps to "clear." Without `model_fields_set`, the adapter can only see `None` and conflates the two intents.
+
+This pattern is needed wherever the upstream Immich DTO uses `T | None = None` defaults AND the backend (or wire contract) distinguishes "unset" from "cleared." Bulk-update DTOs, single-asset edit, person/album edits — audit each new update endpoint for this trap before forwarding the DTO to the SDK.
 
 ### Forwarding pagination parameters
 

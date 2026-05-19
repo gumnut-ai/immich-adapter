@@ -34,7 +34,7 @@ class TestStreamFromCdn:
         """Test successful CDN streaming."""
         cdn_response = mock_cdn_response(200)
         mock_client = AsyncMock()
-        mock_client.build_request.return_value = Mock()
+        mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
         with patch(
@@ -59,7 +59,7 @@ class TestStreamFromCdn:
         """
         cdn_response = mock_cdn_response(200)
         mock_client = AsyncMock()
-        mock_client.build_request.return_value = Mock()
+        mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
         with patch(
@@ -85,7 +85,7 @@ class TestStreamFromCdn:
             },
         )
         mock_client = AsyncMock()
-        mock_client.build_request.return_value = Mock()
+        mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
         with patch(
@@ -114,7 +114,7 @@ class TestStreamFromCdn:
         """Test CDN 403 is mapped to adapter 404."""
         cdn_response = mock_cdn_response(403)
         mock_client = AsyncMock()
-        mock_client.build_request.return_value = Mock()
+        mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
         with patch(
@@ -133,7 +133,7 @@ class TestStreamFromCdn:
         """Test CDN 404 is mapped to adapter 404."""
         cdn_response = mock_cdn_response(404)
         mock_client = AsyncMock()
-        mock_client.build_request.return_value = Mock()
+        mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
         with patch(
@@ -152,7 +152,7 @@ class TestStreamFromCdn:
         """Test CDN 416 Range Not Satisfiable is passed through as 416."""
         cdn_response = mock_cdn_response(416)
         mock_client = AsyncMock()
-        mock_client.build_request.return_value = Mock()
+        mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
         with patch(
@@ -184,7 +184,7 @@ class TestStreamFromCdn:
             },
         )
         mock_client = AsyncMock()
-        mock_client.build_request.return_value = Mock()
+        mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
         with patch(
@@ -214,7 +214,7 @@ class TestStreamFromCdn:
             },
         )
         mock_client = AsyncMock()
-        mock_client.build_request.return_value = Mock()
+        mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
         with patch(
@@ -237,7 +237,7 @@ class TestStreamFromCdn:
         """Test CDN 5xx is mapped to adapter 502."""
         cdn_response = mock_cdn_response(502)
         mock_client = AsyncMock()
-        mock_client.build_request.return_value = Mock()
+        mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
         with patch(
@@ -256,7 +256,7 @@ class TestStreamFromCdn:
         """Test CDN 429 is mapped to adapter 502 (never expose 429 to Immich clients)."""
         cdn_response = mock_cdn_response(429)
         mock_client = AsyncMock()
-        mock_client.build_request.return_value = Mock()
+        mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
         with patch(
@@ -276,7 +276,7 @@ class TestStreamFromCdn:
         import httpx
 
         mock_client = AsyncMock()
-        mock_client.build_request.return_value = Mock()
+        mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(
             side_effect=httpx.ConnectError("Connection refused")
         )

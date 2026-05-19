@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-01-09
+last-updated: 2026-05-18
 ---
 
 # Immich WebSocket Events Reference
@@ -16,7 +16,7 @@ This document describes the WebSocket events emitted by the Immich server and ho
 | `on_asset_delete` | Asset permanently deleted | `assetId: string` | Global listener | Listener |
 | `on_asset_trash` | Asset moved to trash | `assetIds: string[]` | Global listener | Listener |
 | `on_asset_restore` | Asset restored from trash | `assetIds: string[]` | Global listener | Listener |
-| `on_asset_update` | Sidecar metadata extracted | `AssetResponseDto` | Global listener | Listener |
+| `on_asset_update` | Sidecar metadata extracted (upstream) / asset metadata edited (adapter) | `AssetResponseDto` | Global listener | Listener |
 | `on_asset_stack_update` | Stack created/updated/deleted | None | Global listener | Listener |
 | `on_asset_hidden` | Asset visibility changed | `assetId: string` | Global listener | Listener |
 | `on_person_thumbnail` | Person thumbnail generated | `personId: string` | Page-specific | Not used |
@@ -146,7 +146,10 @@ AssetResponseDto {
 
 ### `on_asset_update`
 
-**Trigger**: Emitted when metadata extracted from sidecar files (`notification.service.ts:157-171`). Only triggered by sidecar processing, NOT by direct user edits.
+**Trigger**:
+- **Upstream Immich**: Emitted when metadata extracted from sidecar files (`notification.service.ts:157-171`). Only triggered by sidecar processing, NOT by direct user edits.
+- **immich-adapter**: Emitted after a successful single-asset metadata edit via `PUT /api/assets/{id}` (description / paired latitude+longitude / dateTimeOriginal). The adapter has no sidecar processing, so this is the only emission path here.
+
 **Sent to**: Asset owner (by userId)
 **Payload**: Full `AssetResponseDto`
 

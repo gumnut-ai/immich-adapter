@@ -44,6 +44,10 @@ class WebSocketEvent(Enum):
     ASSET_DELETE = "on_asset_delete"
     ASSET_TRASH = "on_asset_trash"
     ASSET_RESTORE = "on_asset_restore"
+    # Payload is the full AssetResponseDto (matches upstream Immich + web client
+    # type `(asset: AssetResponseDto) => void`). Web upserts the asset into the
+    # timeline manager on receipt; mobile triggers a generic sync refresh.
+    ASSET_UPDATE = "on_asset_update"
     SESSION_DELETE = "on_session_delete"
     SERVER_VERSION = "on_server_version"
 
