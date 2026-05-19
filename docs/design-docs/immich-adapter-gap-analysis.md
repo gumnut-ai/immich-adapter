@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-05-15
+last-updated: 2026-05-19
 ---
 
 # Immich Adapter Gap Analysis
@@ -11,16 +11,16 @@ last-updated: 2026-05-15
 
 The immich-adapter translates Immich API calls into Gumnut SDK calls, allowing unmodified Immich clients (web v2.7.5 and mobile) to work with Gumnut's Photos API. The adapter implements 192 HTTP endpoints across 30 modules, but many of these are stubs that return empty lists, hardcoded fake data, or 204 responses.
 
-Today, the core photo workflow works: upload, browse timeline, organize into albums, manage people/faces, search, and sync to mobile. Beyond this core, most Immich features are stubbed. This document inventories every gap, assesses user impact, estimates the effort to close each one, and identifies whether the work is adapter-only or requires Gumnut Photos API changes.
+Today, the core photo workflow works: upload, browse timeline, organize into albums, manage people/faces, search, sync to mobile, and edit selected single-asset metadata. Beyond this core, most Immich features are stubbed. This document inventories every gap, assesses user impact, estimates the effort to close each one, and identifies whether the work is adapter-only or requires Gumnut Photos API changes.
 
 ### Current implementation summary
 
 | Category | Endpoint count | Status |
 |----------|---------------|--------|
-| Fully implemented (real SDK calls) | ~76 | Assets (including video playback), albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
+| Fully implemented (real SDK calls) | ~77 | Assets (including video playback and single-asset metadata edit), albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
 | Stubs (empty/fake responses) | ~115 | Tags, shared links, stacks, activities, admin, server info, etc. |
 | Total in adapter | ~192 | |
-| Not routed (no adapter endpoint) | ~52 | Immich endpoints with no adapter route at all (e.g., asset edits, database backups, workflows, plugins, some auth/admin endpoints) |
+| Not routed (no adapter endpoint) | ~51 | Immich endpoints with no adapter route at all (e.g., non-destructive asset edits, database backups, workflows, plugins, some auth/admin endpoints) |
 | Total in Immich v2.7.5 spec | 244 | |
 
 ## Goals
@@ -471,9 +471,25 @@ Immich supports custom key-value metadata on assets (`GET/PUT/DELETE /assets/{id
 
 ---
 
+### 24a. Asset Metadata — Single-Asset Edit (1 endpoint)
+
+Immich lets users edit selected per-asset metadata from the asset details UI.
+
+**Current behavior**: Implemented for the backend-modeled subset. `PUT /api/assets/{id}` now forwards `description`, paired `latitude`/`longitude`, and `dateTimeOriginal` to the Photos API and emits `on_asset_update`. Unsupported fields (`isFavorite`, `rating`, `visibility`, `livePhotoVideoId`) are ignored so the request still succeeds without inventing adapter-side state. Bulk `PUT /api/assets` remains a stub.
+
+**User impact**: **Partially resolved** — common single-asset metadata edits now persist, but bulk edits and unsupported fields still leave parts of the Immich edit surface unavailable.
+
+**Dependency**: **Both** — the shipped subset depends on backend support for the modeled fields; the remaining fields and bulk edit path need additional backend contract work.
+
+**Effort**: **S shipped / M remaining** — the adapter wire-up is done for the single-asset route; the remaining work is extending field coverage and/or adding bulk support.
+
+**Recommendation**: **Closed for `PUT /api/assets/{id}`; revisit later for bulk edit and unsupported fields.**
+
+---
+
 ### 25. Asset Edits (3 endpoints)
 
-Immich supports saving and retrieving photo edits (non-destructive editing).
+Immich supports saving and retrieving photo edits (non-destructive editing, distinct from the single-asset metadata route above).
 
 **Current behavior**: These endpoints (`GET/PUT/DELETE /assets/{id}/edits`) are not implemented in the adapter — no routes exist.
 
