@@ -89,8 +89,7 @@ _IMMICH_SIZE_TO_VARIANT: dict[AssetMediaSize, AssetVariant] = {
     AssetMediaSize.thumbnail: "thumbnail",
 }
 
-# Variants that get an `_image` suffix for video assets. The un-suffixed
-# names are reserved for potential future animated previews (e.g. ABR HLS).
+# Variants that get an `_image` suffix for video assets.
 _VIDEO_IMAGE_VARIANTS: frozenset[AssetVariant] = frozenset(
     {"thumbnail", "preview", "fullsize"}
 )

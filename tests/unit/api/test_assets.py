@@ -2261,7 +2261,8 @@ class TestPlayAssetVideo:
                         "url": "https://cdn.example.com/video.mp4",
                         "mimetype": "video/mp4",
                     }
-                }
+                },
+                mime_type="video/mp4",
             )
         )
         mock_streaming_response = Mock()
@@ -2300,7 +2301,8 @@ class TestPlayAssetVideo:
                         "url": "https://cdn.example.com/video.mp4",
                         "mimetype": "video/mp4",
                     }
-                }
+                },
+                mime_type="video/mp4",
             )
         )
         mock_request = Mock()
