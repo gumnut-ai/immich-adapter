@@ -639,8 +639,8 @@ def _build_bulk_metadata_change(
         )
 
     has_datetime = "dateTimeOriginal" in provided
-    has_tz = "timeZone" in provided and request.timeZone is not None
-    if has_tz and not has_datetime:
+    tz_name = request.timeZone if "timeZone" in provided else None
+    if tz_name is not None and not has_datetime:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="timeZone requires dateTimeOriginal in the same request",
@@ -669,10 +669,8 @@ def _build_bulk_metadata_change(
 
     if has_datetime:
         parsed = _parse_update_original_datetime(request.dateTimeOriginal)
-        if parsed is not None and has_tz:
-            parsed = _combine_datetime_with_timezone(
-                parsed, cast(str, request.timeZone)
-            )
+        if parsed is not None and tz_name is not None:
+            parsed = _combine_datetime_with_timezone(parsed, tz_name)
         change["original_datetime"] = parsed
 
     return change or None

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Any
 from unittest.mock import Mock, AsyncMock, patch
+from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from uuid import UUID, uuid4
@@ -1184,8 +1185,6 @@ class TestUpdateAssets:
     async def test_update_assets_datetime_with_timezone_combines(self):
         # Web modal sends naive `dateTimeOriginal` + IANA `timeZone`; we
         # localize wall-clock to that zone before forwarding.
-        from zoneinfo import ZoneInfo
-
         mock_client = Mock()
         mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
         ids = [uuid4()]
@@ -1349,8 +1348,6 @@ class TestUpdateAssets:
         # wall-clock digits preserved, tz replaced. Without this, a future
         # switch to astimezone would silently convert the moment in time
         # instead.
-        from zoneinfo import ZoneInfo
-
         mock_client = Mock()
         mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
         ids = [uuid4()]
@@ -1377,8 +1374,6 @@ class TestUpdateAssets:
         # All in-scope fields in one request — guards against a future
         # refactor of `_build_bulk_metadata_change` that handles each field
         # in isolation but breaks when they're composed.
-        from zoneinfo import ZoneInfo
-
         mock_client = Mock()
         mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
         ids = [uuid4()]
