@@ -715,7 +715,7 @@ async def update_assets(
         await client.post(
             "/api/assets/bulk-update",
             body={"updates": updates},
-            cast_to=object,
+            cast_to=type(None),
         )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

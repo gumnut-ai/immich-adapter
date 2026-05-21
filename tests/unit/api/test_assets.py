@@ -1297,30 +1297,96 @@ class TestUpdateAssets:
         )
 
     @pytest.mark.anyio
-    async def test_update_assets_chunks_when_over_cap(self):
+    @pytest.mark.parametrize(
+        "total, expected_chunks",
+        [
+            # Exact-boundary cases per docs/references/code-practices.md to
+            # catch off-by-one regressions a hand-rolled `if len > N` split
+            # would introduce. BULK_CHUNK_SIZE=100; the third case verifies
+            # the "second chunk is a single element" edge.
+            (100, [100]),
+            (101, [100, 1]),
+            (205, [100, 100, 5]),
+        ],
+    )
+    async def test_update_assets_chunks_when_over_cap(
+        self, total: int, expected_chunks: list[int]
+    ):
         """Request larger than the per-call cap is split into chunks."""
         mock_client = Mock()
         mock_client.post = AsyncMock(return_value=None)
 
-        # 250 ids → 100 + 100 + 50 across three bulk-update calls.
-        ids = [uuid4() for _ in range(250)]
+        ids = [uuid4() for _ in range(total)]
         request = AssetBulkUpdateDto(ids=ids, description="caption")
 
         result = await update_assets(request, client=mock_client)
 
         assert result.status_code == 204
-        assert mock_client.post.await_count == 3
         chunk_sizes = [
             len(call.kwargs["body"]["updates"])
             for call in mock_client.post.await_args_list
         ]
-        assert chunk_sizes == [100, 100, 50]
-        # Spot-check that each chunk targets the bulk-update path and carries
-        # the same homogeneous change.
+        assert chunk_sizes == expected_chunks
+        # Ids land in the chunks in input order, each chunk targets the
+        # bulk-update path, and the homogeneous change is replicated per item.
+        flat_ids = [
+            item["id"]
+            for call in mock_client.post.await_args_list
+            for item in call.kwargs["body"]["updates"]
+        ]
+        assert flat_ids == [uuid_to_gumnut_asset_id(uid) for uid in ids]
         for call in mock_client.post.await_args_list:
             assert call.args[0] == "/api/assets/bulk-update"
             for item in call.kwargs["body"]["updates"]:
                 assert item["change"] == {"description": "caption"}
+
+    @pytest.mark.anyio
+    async def test_update_assets_aware_datetime_with_timezone_re_anchors(self):
+        # Pins the docstring claim that aware inputs are re-anchored:
+        # wall-clock digits preserved, tz replaced. Without this, a future
+        # switch to astimezone would silently convert the moment in time
+        # instead.
+        from zoneinfo import ZoneInfo
+
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(
+            ids=ids,
+            dateTimeOriginal="2024-06-15T14:30:00-07:00",
+            timeZone="America/New_York",
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_posts_homogeneous_change(
+            mock_client.post,
+            ids,
+            {
+                "original_datetime": datetime(
+                    2024, 6, 15, 14, 30, 0, tzinfo=ZoneInfo("America/New_York")
+                )
+            },
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_propagates_sdk_error(self):
+        """SDK errors on bulk-update bubble to the global GumnutError handler.
+
+        Pins the no-swallow contract: a future refactor that wraps client.post
+        in try/except (e.g. to skip a failing chunk mid-batch) must break
+        this test.
+        """
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.post = AsyncMock(side_effect=make_sdk_status_error(500, "boom"))
+
+        request = AssetBulkUpdateDto(ids=[uuid4()], description="caption")
+
+        with pytest.raises(APIStatusError):
+            await update_assets(request, client=mock_client)
 
 
 class TestUpdateAsset:
