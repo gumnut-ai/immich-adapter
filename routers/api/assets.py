@@ -89,6 +89,23 @@ _IMMICH_SIZE_TO_VARIANT: dict[AssetMediaSize, AssetVariant] = {
     AssetMediaSize.thumbnail: "thumbnail",
 }
 
+# Variants that get an `_image` suffix for video assets.
+_VIDEO_IMAGE_VARIANTS: frozenset[AssetVariant] = frozenset(
+    {"thumbnail", "preview", "fullsize"}
+)
+
+
+def _resolve_variant_key(mime_type: str, variant: AssetVariant) -> str:
+    """Return the asset_urls key for the requested variant.
+
+    Video assets expose still-image variants under `_image`-suffixed keys
+    (`thumbnail_image`, `preview_image`, `fullsize_image`); images and the
+    `original` variant keep the un-suffixed names.
+    """
+    if mime_type.startswith("video/") and variant in _VIDEO_IMAGE_VARIANTS:
+        return f"{variant}_image"
+    return variant
+
 
 async def _retrieve_and_stream_variant(
     asset_uuid: UUID,
@@ -102,7 +119,9 @@ async def _retrieve_and_stream_variant(
     Args:
         asset_uuid: Immich-format asset UUID.
         client: Authenticated Gumnut client.
-        variant: asset_urls key (thumbnail, preview, fullsize, original).
+        variant: Logical variant name (thumbnail, preview, fullsize, original).
+            For video assets the still-image variants resolve to the
+            `_image`-suffixed asset_urls keys.
         range_header: Optional Range header for video seeking.
         forwarded_headers: Upstream headers to forward from CDN response.
 
@@ -112,17 +131,19 @@ async def _retrieve_and_stream_variant(
     gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
     asset = await client.assets.retrieve(gumnut_asset_id)
 
-    if not asset.asset_urls or variant not in asset.asset_urls:
+    variant_key = _resolve_variant_key(asset.mime_type, variant)
+
+    if not asset.asset_urls or variant_key not in asset.asset_urls:
         logger.warning(
             "Asset variant not available",
-            extra={"variant": variant, "asset_id": gumnut_asset_id},
+            extra={"variant": variant_key, "asset_id": gumnut_asset_id},
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Asset variant '{variant}' not available",
+            detail=f"Asset variant '{variant_key}' not available",
         )
 
-    variant_info = asset.asset_urls[variant]
+    variant_info = asset.asset_urls[variant_key]
     return await stream_from_cdn(
         variant_info.url,
         variant_info.mimetype,

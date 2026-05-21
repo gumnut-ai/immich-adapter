@@ -1873,9 +1873,13 @@ class TestGetAssetInfo:
             )
 
 
-def _make_mock_asset_with_urls(variant_map: dict[str, dict[str, str]]):
+def _make_mock_asset_with_urls(
+    variant_map: dict[str, dict[str, str]],
+    mime_type: str = "image/jpeg",
+):
     """Create a mock asset with asset_urls (Mock objects with .url/.mimetype attrs)."""
     asset = Mock()
+    asset.mime_type = mime_type
     mock_urls = {}
     for key, val in variant_map.items():
         variant = Mock()
@@ -1997,6 +2001,76 @@ class TestViewAsset:
             )
 
         assert exc_info.value.status_code == 404
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("requested_size", "expected_key"),
+        [
+            (AssetMediaSize.thumbnail, "thumbnail_image"),
+            (AssetMediaSize.preview, "preview_image"),
+            (AssetMediaSize.fullsize, "fullsize_image"),
+        ],
+    )
+    async def test_view_asset_video_resolves_image_suffixed_variant(
+        self, sample_uuid, requested_size, expected_key
+    ):
+        """Video assets resolve still-image variants to `_image`-suffixed keys."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    expected_key: {
+                        "url": f"https://cdn.example.com/{expected_key}.webp",
+                        "mimetype": "image/webp",
+                    }
+                },
+                mime_type="video/mp4",
+            )
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(sample_uuid, size=requested_size, client=mock_client)
+
+        mock_cdn.assert_called_once_with(
+            f"https://cdn.example.com/{expected_key}.webp",
+            "image/webp",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
+        )
+
+    @pytest.mark.anyio
+    async def test_view_asset_video_thumbnail_image_missing_returns_404(
+        self, sample_uuid
+    ):
+        """Pre-extraction videos (no `_image` variants) return 404."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "original": {
+                        "url": "https://cdn.example.com/clip.mp4",
+                        "mimetype": "video/mp4",
+                    }
+                },
+                mime_type="video/mp4",
+            )
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        assert exc_info.value.status_code == 404
+        assert "thumbnail_image" in exc_info.value.detail
 
 
 class TestDownloadAsset:
@@ -2187,7 +2261,8 @@ class TestPlayAssetVideo:
                         "url": "https://cdn.example.com/video.mp4",
                         "mimetype": "video/mp4",
                     }
-                }
+                },
+                mime_type="video/mp4",
             )
         )
         mock_streaming_response = Mock()
@@ -2226,7 +2301,8 @@ class TestPlayAssetVideo:
                         "url": "https://cdn.example.com/video.mp4",
                         "mimetype": "video/mp4",
                     }
-                }
+                },
+                mime_type="video/mp4",
             )
         )
         mock_request = Mock()
