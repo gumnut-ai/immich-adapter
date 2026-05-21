@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 import base64
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 import sentry_sdk
@@ -577,16 +578,146 @@ async def _upload_streaming(
         ) from e
 
 
+def _combine_datetime_with_timezone(dt: datetime, tz_name: str) -> datetime:
+    """Apply an IANA timezone to a parsed `dateTimeOriginal`.
+
+    The Immich bulk DTO carries `timeZone` as an IANA name (e.g.
+    `America/Los_Angeles`). The Photos API encodes the offset directly into
+    `original_datetime`, so we localize wall-clock here. Aware inputs are
+    re-anchored: the wall-clock components are preserved and re-tagged with
+    the new tz, matching Immich's "interpret these clock digits in this zone"
+    UX (the modal sends a naive `dateTimeOriginal` when `timeZone` is set,
+    but we handle aware too for safety).
+    """
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid timeZone: {tz_name!r}",
+        ) from exc
+    return dt.replace(tzinfo=tz)
+
+
+def _build_bulk_metadata_change(
+    request: AssetBulkUpdateDto,
+) -> dict[str, Any] | None:
+    """Build the homogeneous `change` dict applied to every id in the batch.
+
+    Mirrors `_build_metadata_patch` for the single-asset path: uses
+    `model_fields_set` to distinguish "field omitted" from "field explicitly
+    null", validates paired lat/lon adapter-side, and returns `None` when no
+    in-scope fields are present.
+
+    Out-of-scope DTO fields (`isFavorite`, `rating`, `visibility`,
+    `duplicateId`) are silently ignored — the request still succeeds, the
+    adapter just doesn't act on parts the Photos API doesn't model.
+
+    Two Immich fields are rejected with 422 rather than silently dropped:
+
+    - `dateTimeRelative` — a per-asset second-shift that the Photos API
+      bulk-update contract does not support. Translating adapter-side would
+      require a GET per asset followed by N absolute writes, defeating the
+      bulk endpoint's purpose. Rejecting surfaces the limitation clearly to
+      the client.
+    - `timeZone` without a paired `dateTimeOriginal` — would mean
+      "reinterpret each asset's existing datetime in this zone", which again
+      requires per-asset fetches. The common Immich web flow always sends
+      `dateTimeOriginal` + `timeZone` together; standalone `timeZone` is
+      rare and intentionally unsupported here.
+    """
+    provided = request.model_fields_set
+
+    if "dateTimeRelative" in provided and request.dateTimeRelative is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="dateTimeRelative is not supported; send dateTimeOriginal instead",
+        )
+
+    has_datetime = "dateTimeOriginal" in provided
+    has_tz = "timeZone" in provided and request.timeZone is not None
+    if has_tz and not has_datetime:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="timeZone requires dateTimeOriginal in the same request",
+        )
+
+    change: dict[str, Any] = {}
+
+    if "description" in provided:
+        change["description"] = request.description
+
+    lat_set = "latitude" in provided
+    lon_set = "longitude" in provided
+    if lat_set != lon_set:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="latitude and longitude must be provided together",
+        )
+    if lat_set and lon_set:
+        if (request.latitude is None) != (request.longitude is None):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="latitude and longitude must be cleared together",
+            )
+        change["latitude"] = request.latitude
+        change["longitude"] = request.longitude
+
+    if has_datetime:
+        parsed = _parse_update_original_datetime(request.dateTimeOriginal)
+        if parsed is not None and has_tz:
+            parsed = _combine_datetime_with_timezone(
+                parsed, cast(str, request.timeZone)
+            )
+        change["original_datetime"] = parsed
+
+    return change or None
+
+
 @router.put("", status_code=204)
 async def update_assets(
     request: AssetBulkUpdateDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-):
+) -> Response:
+    """Bulk-update asset metadata.
+
+    Wires Immich's `PUT /api/assets` to the Photos API
+    `POST /api/assets/bulk-update`. The Immich DTO applies one homogeneous
+    set of changes to every id in `ids`, so the adapter builds a single
+    `change` dict and replicates it per item — the backend endpoint accepts
+    heterogeneous per-item changes, but we don't need that here.
+
+    In-scope fields: `description`, paired `latitude` + `longitude`,
+    `dateTimeOriginal` (with optional `timeZone` combination). Out-of-scope
+    DTO fields (`isFavorite`, `rating`, `visibility`, `duplicateId`) are
+    silently ignored. `dateTimeRelative` and standalone `timeZone` are
+    rejected with 422 — see `_build_bulk_metadata_change`.
+
+    No WebSocket events are emitted on success: the backend returns an empty
+    body, so we don't have post-update assets to mirror the single-asset
+    path's `ASSET_UPDATE` payload cheaply. Clients fall back to refresh on
+    next sync.
+
+    The backend caps each call at `BULK_CHUNK_SIZE` (100) items, so requests
+    over that are split into chunks.
     """
-    Update asset metadata.
-    This is a stub implementation as Gumnut does not support asset metadata updates.
-    Returns HTTP 204 (No Content) as specified by the Immich API.
-    """
+    if not request.ids:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    change = _build_bulk_metadata_change(request)
+    if change is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    for chunk in batched(request.ids, BULK_CHUNK_SIZE):
+        updates = [
+            {"id": uuid_to_gumnut_asset_id(uid), "change": change} for uid in chunk
+        ]
+        await client.post(
+            "/api/assets/bulk-update",
+            body={"updates": updates},
+            cast_to=object,
+        )
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -5,6 +5,7 @@ import json
 import pytest
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from typing import Any
 from unittest.mock import Mock, AsyncMock, patch
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -985,21 +986,341 @@ class TestUploadAsset:
 
 
 class TestUpdateAssets:
-    """Test the update_assets endpoint."""
+    """Test the bulk asset-metadata edit endpoint.
+
+    `PUT /api/assets` forwards a subset of `AssetBulkUpdateDto` to the
+    Photos API `POST /api/assets/bulk-update`. In-scope fields: `description`,
+    paired `latitude` + `longitude`, `dateTimeOriginal` (with optional
+    `timeZone` combination). Out-of-scope fields (`isFavorite`, `rating`,
+    `visibility`, `duplicateId`) are silently ignored. `dateTimeRelative`
+    and standalone `timeZone` are rejected with 422 — translating them
+    would require a per-asset GET and defeat the bulk endpoint.
+    """
+
+    @staticmethod
+    def _assert_posts_homogeneous_change(
+        mock_post: AsyncMock,
+        expected_ids: list[UUID],
+        expected_change: dict[str, Any],
+    ) -> None:
+        """Assert client.post was called once with the bulk-update body."""
+        mock_post.assert_awaited_once()
+        call = mock_post.await_args
+        assert call is not None
+        assert call.args[0] == "/api/assets/bulk-update"
+        body = call.kwargs["body"]
+        assert [item["id"] for item in body["updates"]] == [
+            uuid_to_gumnut_asset_id(uid) for uid in expected_ids
+        ]
+        for item in body["updates"]:
+            assert item["change"] == expected_change
 
     @pytest.mark.anyio
-    async def test_update_assets_success(self):
-        """Test successful assets update (stub implementation)."""
-        # Setup
-        request = AssetBulkUpdateDto(
-            ids=[uuid4()], dateTimeOriginal="2023-01-01T12:00:00Z"
+    async def test_update_assets_description_round_trips(self):
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        ids = [uuid4(), uuid4()]
+        request = AssetBulkUpdateDto(ids=ids, description="hello")
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        self._assert_posts_homogeneous_change(
+            mock_client.post, ids, {"description": "hello"}
         )
 
-        # Execute
-        result = await update_assets(request)
+    @pytest.mark.anyio
+    async def test_update_assets_description_null_clears(self):
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {"ids": [str(uid) for uid in ids], "description": None}
+        )
 
-        # Assert
+        await update_assets(request, client=mock_client)
+
+        self._assert_posts_homogeneous_change(
+            mock_client.post, ids, {"description": None}
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_lat_lon_round_trips(self):
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(ids=ids, latitude=37.7749, longitude=-122.4194)
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_posts_homogeneous_change(
+            mock_client.post, ids, {"latitude": 37.7749, "longitude": -122.4194}
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_lat_lon_both_null_clears(self):
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {
+                "ids": [str(uid) for uid in ids],
+                "latitude": None,
+                "longitude": None,
+            }
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_posts_homogeneous_change(
+            mock_client.post, ids, {"latitude": None, "longitude": None}
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_only_latitude_is_422(self):
+        mock_client = Mock()
+        mock_client.post = AsyncMock()
+        request = AssetBulkUpdateDto(ids=[uuid4()], latitude=37.7749)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "payload_extras",
+        [
+            {"latitude": None, "longitude": 1.0},
+            {"latitude": 1.0, "longitude": None},
+        ],
+    )
+    async def test_update_assets_half_cleared_coords_is_422(self, payload_extras):
+        mock_client = Mock()
+        mock_client.post = AsyncMock()
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {"ids": [str(uid) for uid in ids], **payload_extras}
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_datetime_with_offset_round_trips(self):
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(
+            ids=ids, dateTimeOriginal="2024-06-15T14:30:00-07:00"
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_posts_homogeneous_change(
+            mock_client.post,
+            ids,
+            {
+                "original_datetime": datetime(
+                    2024, 6, 15, 14, 30, 0, tzinfo=timezone(-timedelta(hours=7))
+                )
+            },
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_datetime_naive_round_trips(self):
+        # Naive datetime (no offset, no Z). The backend accepts naive; the
+        # adapter does not synthesise an offset.
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(ids=ids, dateTimeOriginal="2024-06-15T14:30:00")
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_posts_homogeneous_change(
+            mock_client.post,
+            ids,
+            {"original_datetime": datetime(2024, 6, 15, 14, 30, 0)},
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_datetime_null_clears(self):
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {"ids": [str(uid) for uid in ids], "dateTimeOriginal": None}
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_posts_homogeneous_change(
+            mock_client.post, ids, {"original_datetime": None}
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_invalid_datetime_is_422(self):
+        mock_client = Mock()
+        mock_client.post = AsyncMock()
+        request = AssetBulkUpdateDto(ids=[uuid4()], dateTimeOriginal="not-a-datetime")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_datetime_with_timezone_combines(self):
+        # Web modal sends naive `dateTimeOriginal` + IANA `timeZone`; we
+        # localize wall-clock to that zone before forwarding.
+        from zoneinfo import ZoneInfo
+
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(
+            ids=ids,
+            dateTimeOriginal="2024-06-15T14:30:00",
+            timeZone="America/Los_Angeles",
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_posts_homogeneous_change(
+            mock_client.post,
+            ids,
+            {
+                "original_datetime": datetime(
+                    2024, 6, 15, 14, 30, 0, tzinfo=ZoneInfo("America/Los_Angeles")
+                )
+            },
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_invalid_timezone_is_422(self):
+        mock_client = Mock()
+        mock_client.post = AsyncMock()
+        request = AssetBulkUpdateDto(
+            ids=[uuid4()],
+            dateTimeOriginal="2024-06-15T14:30:00",
+            timeZone="Mars/Olympus_Mons",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_timezone_alone_is_422(self):
+        # Standalone `timeZone` would require per-asset GETs to reinterpret
+        # each existing datetime — explicitly unsupported.
+        mock_client = Mock()
+        mock_client.post = AsyncMock()
+        request = AssetBulkUpdateDto(ids=[uuid4()], timeZone="America/Los_Angeles")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_relative_datetime_is_422(self):
+        # The backend bulk-update contract dropped relative shifts; adapter
+        # rejects rather than fanning out per-asset GETs.
+        mock_client = Mock()
+        mock_client.post = AsyncMock()
+        request = AssetBulkUpdateDto(ids=[uuid4()], dateTimeRelative=3600.0)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_empty_ids_no_post(self):
+        mock_client = Mock()
+        mock_client.post = AsyncMock()
+        request = AssetBulkUpdateDto(ids=[], description="hello")
+
+        result = await update_assets(request, client=mock_client)
+
         assert result.status_code == 204
+        mock_client.post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_no_in_scope_fields_no_post(self):
+        # Only out-of-scope fields → adapter returns 204 without calling the
+        # backend; client UIs don't show errors for unsupported edits.
+        mock_client = Mock()
+        mock_client.post = AsyncMock()
+        request = AssetBulkUpdateDto(
+            ids=[uuid4()],
+            isFavorite=True,
+            rating=4.0,
+            visibility=AssetVisibility.archive,
+            duplicateId=str(uuid4()),
+        )
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        mock_client.post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_out_of_scope_fields_dropped_when_mixed(self):
+        # When in-scope and out-of-scope fields are mixed, only in-scope
+        # values appear in the bulk-update body.
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(
+            ids=ids,
+            description="caption",
+            isFavorite=True,
+            rating=4.0,
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_posts_homogeneous_change(
+            mock_client.post, ids, {"description": "caption"}
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_chunks_when_over_cap(self):
+        """Request larger than the per-call cap is split into chunks."""
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+
+        # 250 ids → 100 + 100 + 50 across three bulk-update calls.
+        ids = [uuid4() for _ in range(250)]
+        request = AssetBulkUpdateDto(ids=ids, description="caption")
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        assert mock_client.post.await_count == 3
+        chunk_sizes = [
+            len(call.kwargs["body"]["updates"])
+            for call in mock_client.post.await_args_list
+        ]
+        assert chunk_sizes == [100, 100, 50]
+        # Spot-check that each chunk targets the bulk-update path and carries
+        # the same homogeneous change.
+        for call in mock_client.post.await_args_list:
+            assert call.args[0] == "/api/assets/bulk-update"
+            for item in call.kwargs["body"]["updates"]:
+                assert item["change"] == {"description": "caption"}
 
 
 class TestUpdateAsset:
