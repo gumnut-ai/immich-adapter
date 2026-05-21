@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-18
+last-updated: 2026-05-21
 ---
 
 # Code Practices
@@ -340,6 +340,8 @@ await client.delete("/api/assets", body={"ids": gumnut_ids}, cast_to=type(None))
 `emit_user_event` and `emit_session_event` (in `services/websockets.py`) are **fire-and-forget**: they catch `SocketIOError` from the underlying transport, log at WARN with `exc_info=True`, and return normally. **Do not wrap call sites in `try/except SocketIOError`** — the central swallow is the contract, and per-site catches are duplication. If the surrounding block needs to handle other exception types (e.g., DTO conversion before the emit, like `_emit_upload_events` in `routers/api/assets.py`), the broader try/except can stay; just don't add a separate `except SocketIOError` branch.
 
 For chunks that fire one event per id (e.g. `ASSET_DELETE`'s single-id wire shape), use `emit_user_event_per_id(event, user_id, payload_ids)` instead of rolling an inline `asyncio.gather(*(emit_user_event(...) for ... in chunk))` — the helper centralizes the per-id gather wave so callers don't duplicate it. Pass a generator or list of pre-stringified ids; the helper consumes the iterable once.
+
+**Bulk write endpoints whose SDK call returns no per-asset payload.** Some bulk writes (e.g., `bulk_update_assets`) return an empty body, so the adapter doesn't have the updated asset DTO needed to mirror the single-asset path's `on_asset_update` payload. The default is to **skip WebSocket emission** from the bulk path rather than re-fetch via `list_assets(ids=[...])` — the extra round-trip per chunk isn't justified when mobile triggers a generic sync refresh on its own and web has optimistic UI for these flows. Document the trade-off explicitly in the handler docstring so future readers don't reintroduce the round-trip on a hunch. Re-fetching is the right call only when a concrete client surface stays visibly stale until next sync; gate that decision on observed behavior, not theory.
 
 ### Immich Client Error Handling
 
