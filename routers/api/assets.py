@@ -613,7 +613,10 @@ def _build_bulk_metadata_change(
     `duplicateId`) are silently ignored — the request still succeeds, the
     adapter just doesn't act on parts the Photos API doesn't model.
 
-    Two Immich fields are rejected with 422 rather than silently dropped:
+    Two Immich fields are rejected with 422 when set to a non-null value
+    rather than silently dropped (explicit `null` is treated as "field not
+    set", mirroring how `timeZone: null` is handled — clients sometimes
+    send null for fields they don't intend to change):
 
     - `dateTimeRelative` — a per-asset second-shift that the Photos API
       bulk-update contract does not support. Translating adapter-side would

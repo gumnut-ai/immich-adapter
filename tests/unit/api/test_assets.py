@@ -1370,6 +1370,40 @@ class TestUpdateAssets:
         )
 
     @pytest.mark.anyio
+    async def test_update_assets_combined_in_scope_fields(self):
+        # All in-scope fields in one request — guards against a future
+        # refactor of `_build_bulk_metadata_change` that handles each field
+        # in isolation but breaks when they're composed.
+        from zoneinfo import ZoneInfo
+
+        mock_client = Mock()
+        mock_client.post = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(
+            ids=ids,
+            description="caption",
+            latitude=37.7749,
+            longitude=-122.4194,
+            dateTimeOriginal="2024-06-15T14:30:00",
+            timeZone="America/Los_Angeles",
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_posts_homogeneous_change(
+            mock_client.post,
+            ids,
+            {
+                "description": "caption",
+                "latitude": 37.7749,
+                "longitude": -122.4194,
+                "original_datetime": datetime(
+                    2024, 6, 15, 14, 30, 0, tzinfo=ZoneInfo("America/Los_Angeles")
+                ),
+            },
+        )
+
+    @pytest.mark.anyio
     async def test_update_assets_propagates_sdk_error(self):
         """SDK errors on bulk-update bubble to the global GumnutError handler.
 
