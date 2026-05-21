@@ -613,7 +613,10 @@ def _combine_datetime_with_timezone(dt: datetime, tz_name: str) -> datetime:
     """
     try:
         tz = ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError as exc:
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        # ZoneInfo() raises ValueError for malformed keys (empty string,
+        # absolute paths, non-normalized paths like "../..") and
+        # ZoneInfoNotFoundError for well-formed-but-unknown zones.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid timeZone: {tz_name!r}",
@@ -722,7 +725,12 @@ async def update_assets(
     next sync.
 
     The SDK caps each call at `BULK_CHUNK_SIZE` (100) items, so requests
-    over that are split into chunks.
+    over that are split into chunks. The SDK guarantees per-call atomicity
+    (a single chunk either fully commits or writes nothing), but that
+    guarantee does not extend across chunks: a failure on chunk N (N ≥ 2)
+    leaves chunks 1..N-1 already committed, with no compensating rollback
+    and no per-chunk error report — the exception propagates as one 5xx.
+    Consistent with `_bulk_permanent_delete` / `_bulk_trash`.
     """
     if not request.ids:
         return Response(status_code=status.HTTP_204_NO_CONTENT)

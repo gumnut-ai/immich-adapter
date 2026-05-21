@@ -1207,13 +1207,22 @@ class TestUpdateAssets:
         )
 
     @pytest.mark.anyio
-    async def test_update_assets_invalid_timezone_is_422(self):
+    @pytest.mark.parametrize(
+        "tz_name",
+        [
+            "Mars/Olympus_Mons",  # ZoneInfoNotFoundError: valid-format but unknown
+            "",  # ValueError: empty
+            "/Etc/UTC",  # ValueError: absolute path
+            "../etc/passwd",  # ValueError: non-normalized path
+        ],
+    )
+    async def test_update_assets_invalid_timezone_is_422(self, tz_name: str):
         mock_client = Mock()
         mock_client.assets.bulk_update_assets = AsyncMock()
         request = AssetBulkUpdateDto(
             ids=[uuid4()],
             dateTimeOriginal="2024-06-15T14:30:00",
-            timeZone="Mars/Olympus_Mons",
+            timeZone=tz_name,
         )
 
         with pytest.raises(HTTPException) as exc_info:
@@ -1249,6 +1258,52 @@ class TestUpdateAssets:
 
         assert exc_info.value.status_code == 422
         mock_client.assets.bulk_update_assets.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_relative_datetime_null_is_ignored(self):
+        # Explicit null for dateTimeRelative is "field not set", not a 422 —
+        # some Immich client SDKs emit null for fields they don't intend to
+        # change, and the rejection only triggers when non-null.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {
+                "ids": [str(uid) for uid in ids],
+                "dateTimeRelative": None,
+                "description": "x",
+            }
+        )
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets, ids, {"description": "x"}
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_timezone_null_is_ignored(self):
+        # Explicit null for timeZone (without dateTimeOriginal) is "field not
+        # set", not the standalone-timeZone 422 — clients send null for
+        # untouched fields and the adapter must not surface that as an error.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {
+                "ids": [str(uid) for uid in ids],
+                "timeZone": None,
+                "description": "x",
+            }
+        )
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets, ids, {"description": "x"}
+        )
 
     @pytest.mark.anyio
     async def test_update_assets_empty_ids_no_call(self):
@@ -1421,6 +1476,40 @@ class TestUpdateAssets:
 
         with pytest.raises(APIStatusError):
             await update_assets(request, client=mock_client)
+
+    @pytest.mark.anyio
+    async def test_update_assets_multi_chunk_failure_leaves_prior_chunks_committed(
+        self,
+    ):
+        """Pin the no-rollback contract for cross-chunk failures.
+
+        The handler docstring (and `docs/references/code-practices.md`) call
+        out that SDK atomicity holds per call but not across chunks: chunk N
+        (N≥2) raising leaves chunks 1..N-1 already committed and the error
+        propagates as one 5xx. A future refactor that wraps the per-chunk
+        await in try/except (skip-on-failure) or switches to `asyncio.gather`
+        with `return_exceptions` would change failure semantics and must break
+        this test.
+        """
+        from gumnut import APIStatusError
+        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        # Chunk 1 succeeds, chunk 2 raises — exercises the partial-commit shape.
+        mock_client.assets.bulk_update_assets = AsyncMock(
+            side_effect=[None, make_sdk_status_error(500, "boom")]
+        )
+
+        ids = [uuid4() for _ in range(BULK_CHUNK_SIZE + 1)]
+        request = AssetBulkUpdateDto(ids=ids, description="caption")
+
+        with pytest.raises(APIStatusError):
+            await update_assets(request, client=mock_client)
+
+        # Awaited exactly twice: chunk 1 (committed) + chunk 2 (raised).
+        # No rollback attempt — the handler does not re-call chunk 1 to undo.
+        assert mock_client.assets.bulk_update_assets.await_count == 2
 
 
 class TestUpdateAsset:
