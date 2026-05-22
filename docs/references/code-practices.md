@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-18
+last-updated: 2026-05-22
 ---
 
 # Code Practices
@@ -341,6 +341,8 @@ await client.delete("/api/assets", body={"ids": gumnut_ids}, cast_to=type(None))
 
 For chunks that fire one event per id (e.g. `ASSET_DELETE`'s single-id wire shape), use `emit_user_event_per_id(event, user_id, payload_ids)` instead of rolling an inline `asyncio.gather(*(emit_user_event(...) for ... in chunk))` — the helper centralizes the per-id gather wave so callers don't duplicate it. Pass a generator or list of pre-stringified ids; the helper consumes the iterable once.
 
+When a change modifies **when** an existing WebSocket event fires (deferral, debounce, batching, conditional skip) — not just when adding a brand-new event — the trigger described in `docs/references/websocket-events-reference.md` and the Notes column in `docs/architecture/websocket-implementation.md`'s Phase 1 table go stale. Update both docs and bump their `last-updated` whenever the emit-timing contract changes, even if the event itself already existed. The "Implementing New Endpoints" checklist step 9 covers new emit sites; this rule covers timing changes to existing ones. The image-vs-video `on_upload_success` deferral is the canonical example — the docs had previously claimed "photos-api thumbnails are synchronous", which became false the moment videos started waiting.
+
 ### Immich Client Error Handling
 
 - **Observed behavior:** Immich mobile and web clients have no HTTP 429 (rate limit) handling. A 429 causes sync failures, broken thumbnails, and upload errors with no automatic recovery.
@@ -360,6 +362,7 @@ For chunks that fire one event per id (e.g. `ASSET_DELETE`'s single-id wire shap
 - When mocking SDK response objects whose attributes are checked for truthiness (e.g., `if asset.metadata:`), explicitly set the attribute to its expected falsy value (`mock.metadata = None`). Unset Mock attributes return a truthy `Mock` object, silently flipping the branch and producing confusing downstream errors instead of clean `None`-path coverage. Audit `Mock`-based fixtures whenever an SDK field is renamed or added — grep across `tests/` for every `Mock()` construction of the relevant entity, including shared fixtures in `tests/conftest.py` and `tests/unit/api/sync/conftest.py` AND per-file inline mocks. Missing one is enough to silently flip a downstream Pydantic validation result.
 - The same audit applies to any code change that introduces a **new branching predicate** on an SDK attribute that previously didn't matter (e.g., adding `if asset.mime_type.startswith("video/"):` to a helper). Unset Mock attributes will satisfy `.startswith(...)` (returns a truthy `Mock`), `==` (matches another `Mock`), and most other predicates — silently making every existing fixture take the new branch. Helper-based fixtures (e.g., `_make_mock_asset_with_urls`) should grow an explicit kwarg for the newly-branched attribute (with a realistic default that matches the fixture's stated shape), and existing call sites whose `asset_urls` describe video MIME should pass `mime_type="video/mp4"` to pin the realistic call path. Without this, a future refactor that flips a constant (e.g., adding `"original"` to a "video-only variants" set) can silently break video playback without any test failing.
 - Do not add `__init__.py` to test directories — the project uses pytest's rootdir-based import resolution. Adding `__init__.py` switches pytest to package-based imports, breaking test discovery.
+- When code under test sleeps on a module-level delay/timeout constant (e.g., `_VIDEO_EMIT_DELAY_SECONDS` in `routers/api/assets.py`), **every** test that exercises the delayed path must patch the constant to a near-zero value (typically `0.0`) — not just the test that explicitly asserts on the deferral. Tests that only touch the delayed path incidentally (drains, end-of-test cleanup, error-path coverage) silently wait the real delay otherwise, ballooning suite runtime. Use `patch("module.path._CONSTANT_NAME", 0.0)` inside the same `with` block as the other mocks so the patch covers the spawned task's lifetime. When adding a new delay constant, grep tests for every call site that reaches it and audit each test for an explicit patch — `tests/unit/api/test_assets.py::test_upload_regular_video_proceeds` and `test_video_upload_defers_websocket_events` are the canonical pattern.
 
 ## Logging
 
