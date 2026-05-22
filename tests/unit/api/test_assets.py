@@ -644,9 +644,12 @@ class TestUploadAsset:
         request = _make_mock_request(mock_file=mock_file)
         settings = _make_mock_settings()
 
+        from routers.api.assets import _pending_emit_tasks
+
         with (
             patch("routers.api.assets.is_live_photo_video", return_value=False),
             patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+            patch("routers.api.assets._VIDEO_EMIT_DELAY_SECONDS", 0.0),
         ):
             result = await upload_asset(
                 request=request,
@@ -655,17 +658,15 @@ class TestUploadAsset:
                 settings=settings,
             )
 
-        assert isinstance(result, AssetMediaResponseDto)
-        assert result.id == str(sample_uuid)
-        assert result.status == AssetMediaStatus.created
-        mock_client.assets.with_raw_response.create.assert_called_once()
+            assert isinstance(result, AssetMediaResponseDto)
+            assert result.id == str(sample_uuid)
+            assert result.status == AssetMediaStatus.created
+            mock_client.assets.with_raw_response.create.assert_called_once()
 
-        # Drain the deferred-emit task spawned for the video upload so it
-        # doesn't outlive the test with patched mocks still in effect.
-        from routers.api.assets import _pending_emit_tasks
-
-        if _pending_emit_tasks:
-            await asyncio.gather(*list(_pending_emit_tasks))
+            # Drain the deferred-emit task spawned for the video upload so it
+            # completes inside the patched-mocks scope.
+            if _pending_emit_tasks:
+                await asyncio.gather(*list(_pending_emit_tasks))
 
     @pytest.mark.anyio
     async def test_video_upload_defers_websocket_events(
