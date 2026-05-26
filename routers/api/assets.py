@@ -1,3 +1,4 @@
+import asyncio
 from itertools import batched
 from typing import Any, List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
@@ -296,11 +297,24 @@ def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
     return UploadFields(device_asset_id, device_id, file_created_at, file_modified_at)
 
 
-async def _emit_upload_events(
+# Delay applied before emitting upload-success events for video uploads, to give
+# photos-api time to extract the still-image variants (`thumbnail_image`,
+# `preview_image`, `fullsize_image`) before the Immich web client tries to render
+# the thumbnail. Image uploads emit immediately — their CDN-resized variants are
+# available the moment the file is written. Tune this constant if telemetry shows
+# the typical extraction time has drifted.
+_VIDEO_EMIT_DELAY_SECONDS = 3.0
+
+# Strong refs for in-flight delayed-emit tasks. asyncio only holds weak refs to
+# `create_task` results; without this set the GC can collect a sleeping task.
+_pending_emit_tasks: set[asyncio.Task[None]] = set()
+
+
+async def _do_emit_upload_events(
     gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
 ) -> None:
-    """Emit WebSocket events after a successful upload."""
+    """Emit the UPLOAD_SUCCESS + ASSET_UPLOAD_READY_V1 WebSocket events."""
     try:
         asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
         await emit_user_event(
@@ -319,6 +333,40 @@ async def _emit_upload_events(
                 "error": str(ws_error),
             },
         )
+
+
+async def _delayed_emit_upload_events(
+    gumnut_asset: AssetResponse,
+    current_user: UserResponseDto,
+    delay_seconds: float,
+) -> None:
+    """Sleep, then emit upload events. Used for videos to wait out thumbnail extraction."""
+    await asyncio.sleep(delay_seconds)
+    await _do_emit_upload_events(gumnut_asset, current_user)
+
+
+async def _emit_upload_events(
+    gumnut_asset: AssetResponse,
+    current_user: UserResponseDto,
+) -> None:
+    """Emit WebSocket events after a successful upload.
+
+    Images emit synchronously. Videos defer emission by `_VIDEO_EMIT_DELAY_SECONDS`
+    via a detached background task — the HTTP response is not blocked, but the
+    Immich web client's timeline insertion (triggered by `on_upload_success`) waits
+    until video thumbnail extraction has had a chance to complete.
+    """
+    if gumnut_asset.mime_type.startswith("video/"):
+        task = asyncio.create_task(
+            _delayed_emit_upload_events(
+                gumnut_asset, current_user, _VIDEO_EMIT_DELAY_SECONDS
+            )
+        )
+        _pending_emit_tasks.add(task)
+        task.add_done_callback(_pending_emit_tasks.discard)
+        return
+
+    await _do_emit_upload_events(gumnut_asset, current_user)
 
 
 @router.post(
