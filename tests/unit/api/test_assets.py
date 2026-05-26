@@ -394,6 +394,7 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -536,6 +537,7 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -643,6 +645,7 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "video.mp4"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -778,6 +781,7 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
