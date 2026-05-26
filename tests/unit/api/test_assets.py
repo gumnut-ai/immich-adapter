@@ -500,6 +500,34 @@ class TestUploadAsset:
         assert exc_info.value.status_code == 401
 
     @pytest.mark.anyio
+    async def test_upload_asset_buffered_client_disconnect(self, mock_current_user):
+        """A mid-upload client disconnect on the buffered path returns 499 instead
+        of escaping as an unhandled 500."""
+        from starlette.requests import ClientDisconnect
+
+        mock_client = Mock()
+        mock_client.assets.with_raw_response.create = AsyncMock()
+
+        request = _make_mock_request()
+        # Starlette raises ClientDisconnect from request.form() when the client
+        # hangs up while the multipart body is still being parsed.
+        form_ctx = AsyncMock()
+        form_ctx.__aenter__ = AsyncMock(side_effect=ClientDisconnect())
+        request.form = Mock(return_value=form_ctx)
+        settings = _make_mock_settings()
+
+        result = await upload_asset(
+            request=request,
+            client=mock_client,
+            current_user=mock_current_user,
+            settings=settings,
+        )
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 499
+        mock_client.assets.with_raw_response.create.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_upload_asset_emits_websocket_events(
         self, sample_uuid, mock_current_user
     ):
@@ -982,6 +1010,42 @@ class TestUploadAsset:
                 )
 
         assert exc_info.value.status_code == 502
+
+    @pytest.mark.anyio
+    async def test_streaming_upload_client_disconnect(self, mock_current_user):
+        """A client disconnect on the streaming path returns 499 rather than being
+        mapped to a 500/502 by the pipeline's broad error handler."""
+        from starlette.requests import ClientDisconnect
+
+        request = Mock()
+        request.headers = {
+            "content-length": str(300 * 1024 * 1024),
+            "content-type": "multipart/form-data; boundary=---abc123",
+        }
+
+        class _State:
+            jwt_token = "test-jwt-token"
+
+        request.state = _State()
+
+        settings = _make_mock_settings(threshold=100 * 1024 * 1024)
+
+        mock_pipeline_instance = Mock()
+        mock_pipeline_instance.execute = AsyncMock(side_effect=ClientDisconnect())
+
+        with patch(
+            "routers.api.assets.StreamingUploadPipeline",
+            return_value=mock_pipeline_instance,
+        ):
+            result = await upload_asset(
+                request=request,
+                client=Mock(),
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 499
 
 
 class TestUpdateAssets:

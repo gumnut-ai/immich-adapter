@@ -19,6 +19,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.requests import ClientDisconnect
 from gumnut import AsyncGumnut
 from gumnut.types.asset_response import AssetResponse
 
@@ -73,6 +74,12 @@ from utils.livephoto import is_live_photo_video
 from routers.immich_models import AssetTypeEnum
 
 logger = logging.getLogger(__name__)
+
+# Non-standard status used when the client hangs up mid-upload. The response is
+# never delivered (the socket is already closed) — it exists only to give the
+# handler a well-defined return instead of letting ClientDisconnect escape as an
+# unhandled 500.
+HTTP_499_CLIENT_CLOSED_REQUEST = 499
 
 router = APIRouter(
     prefix="/api/assets",
@@ -376,12 +383,27 @@ async def upload_asset(
         },
     )
 
-    if use_streaming:
-        return await _upload_streaming(
-            request, client, current_user, settings.gumnut_api_base_url
+    try:
+        if use_streaming:
+            return await _upload_streaming(
+                request, client, current_user, settings.gumnut_api_base_url
+            )
+        else:
+            return await _upload_buffered(request, client, current_user)
+    except ClientDisconnect:
+        # The client hung up before finishing the upload (mobile backgrounding,
+        # cancel, network blip). The connection is gone, so there's no one to
+        # receive a response — treat it as a normal aborted upload rather than
+        # letting it surface as an unhandled 500.
+        logger.info(
+            "Client disconnected during %s upload before it completed",
+            strategy,
+            extra={"strategy": strategy},
         )
-    else:
-        return await _upload_buffered(request, client, current_user)
+        return JSONResponse(
+            content={"detail": "Client disconnected before upload completed"},
+            status_code=HTTP_499_CLIENT_CLOSED_REQUEST,
+        )
 
 
 async def _upload_buffered(
@@ -559,6 +581,10 @@ async def _upload_streaming(
         )
 
     except HTTPException:
+        raise
+    except ClientDisconnect:
+        # Let the disconnect propagate to upload_asset's handler instead of
+        # mapping it to a 500/502 — the client is already gone.
         raise
     except (ValueError, ValidationError) as e:
         raise HTTPException(
