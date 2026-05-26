@@ -393,14 +393,10 @@ class TestDimensionEmission:
 
 
 class TestChecksumEmission:
-    """All outbound converters must emit the Immich-facing base64 SHA-1
-    (``checksum_sha1``), never Gumnut's base64 SHA-256 (``checksum``) or the
-    legacy ``"placeholder-checksum"`` literal.
+    """Every outbound converter emits the Immich-facing ``checksum_sha1``, never
+    Gumnut's SHA-256 ``checksum`` or the legacy ``"placeholder-checksum"``.
 
-    Immich clients compare this value against a locally computed SHA-1 for
-    dedup and local↔remote linking; a SHA-256 (44 chars) can never match the
-    SHA-1 (28 chars) a client computes, so emitting it silently breaks dedup
-    and duplicates backed-up photos in the timeline.
+    See ``resolve_immich_checksum`` for why the format distinction matters.
     """
 
     # 28-char base64 SHA-1 (the correct Immich wire value) vs. the SHA-256
@@ -474,3 +470,18 @@ class TestChecksumEmission:
         assert any(
             getattr(r, "asset_id", None) == sample_gumnut_asset.id for r in warnings
         )
+
+    def test_non_null_sha1_emits_no_warning(
+        self, sample_gumnut_asset, mock_current_user, caplog
+    ):
+        """The common path (a populated ``checksum_sha1``) must stay silent.
+
+        Locks in "no log spam on the happy path": a refactor that moved the
+        WARNING out of the ``is None`` branch would fire here and fail.
+        """
+        sample_gumnut_asset.checksum_sha1 = self.SHA1_B64
+
+        with caplog.at_level(logging.WARNING, logger="routers.utils.asset_conversion"):
+            convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+
+        assert not [r for r in caplog.records if r.levelno == logging.WARNING]
