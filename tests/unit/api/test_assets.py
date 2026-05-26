@@ -1019,6 +1019,14 @@ class TestUpdateAssets:
             assert item["change"] == expected_change
 
     @staticmethod
+    def _change_by_id(mock_call: AsyncMock) -> dict[str, Any]:
+        """Map gumnut id → change from a single bulk_update_assets call."""
+        mock_call.assert_awaited_once()
+        call = mock_call.await_args
+        assert call is not None
+        return {item["id"]: item["change"] for item in call.kwargs["updates"]}
+
+    @staticmethod
     def _mock_read(assets_by_uuid: dict[UUID, datetime | None]) -> Mock:
         """Build a `client.assets.list` mock returning the given current
         `original_datetime` per asset.
@@ -1274,8 +1282,7 @@ class TestUpdateAssets:
 
         assert result.status_code == 204
         la = ZoneInfo("America/Los_Angeles")
-        updates = mock_client.assets.bulk_update_assets.await_args.kwargs["updates"]
-        by_id = {item["id"]: item["change"] for item in updates}
+        by_id = self._change_by_id(mock_client.assets.bulk_update_assets)
         assert by_id[uuid_to_gumnut_asset_id(a)] == {
             "original_datetime": datetime(2024, 6, 15, 14, 30, 0, tzinfo=la)
         }
@@ -1298,8 +1305,7 @@ class TestUpdateAssets:
         result = await update_assets(request, client=mock_client)
 
         assert result.status_code == 204
-        updates = mock_client.assets.bulk_update_assets.await_args.kwargs["updates"]
-        by_id = {item["id"]: item["change"] for item in updates}
+        by_id = self._change_by_id(mock_client.assets.bulk_update_assets)
         assert by_id[uuid_to_gumnut_asset_id(a)] == {
             "original_datetime": base_a + timedelta(seconds=3600)
         }
@@ -1351,8 +1357,7 @@ class TestUpdateAssets:
         result = await update_assets(request, client=mock_client)
 
         assert result.status_code == 204
-        updates = mock_client.assets.bulk_update_assets.await_args.kwargs["updates"]
-        by_id = {item["id"]: item["change"] for item in updates}
+        by_id = self._change_by_id(mock_client.assets.bulk_update_assets)
         assert by_id[uuid_to_gumnut_asset_id(has_dt)] == {
             "description": "caption",
             "original_datetime": base + timedelta(seconds=60),
