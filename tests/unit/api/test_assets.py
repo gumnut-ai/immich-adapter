@@ -991,11 +991,14 @@ class TestUpdateAssets:
 
     `PUT /api/assets` forwards a subset of `AssetBulkUpdateDto` to the
     Photos API `bulk_update_assets` call. In-scope fields: `description`,
-    paired `latitude` + `longitude`, `dateTimeOriginal` (with optional
-    `timeZone` combination). Out-of-scope fields (`isFavorite`, `rating`,
-    `visibility`, `duplicateId`) are silently ignored. `dateTimeRelative`
-    and standalone `timeZone` are rejected with 422 — translating them
-    would require a per-asset GET and defeat the bulk endpoint.
+    paired `latitude` + `longitude`, and the capture time via one of three
+    mutually exclusive datetime modes — absolute `dateTimeOriginal` (with
+    optional `timeZone`), per-asset `dateTimeRelative` shift, or standalone
+    `timeZone` reinterpret. The two per-asset modes read each asset's current
+    `original_datetime` first (`client.assets.list(ids=...)`), then write a
+    heterogeneous per-item change. Out-of-scope fields (`isFavorite`,
+    `rating`, `visibility`, `duplicateId`) are silently ignored. Conflicting
+    datetime modes are rejected with 422.
     """
 
     @staticmethod
@@ -1014,6 +1017,26 @@ class TestUpdateAssets:
         ]
         for item in updates:
             assert item["change"] == expected_change
+
+    @staticmethod
+    def _mock_read(assets_by_uuid: dict[UUID, datetime | None]) -> Mock:
+        """Build a `client.assets.list` mock returning the given current
+        `original_datetime` per asset.
+
+        A `None` value models an asset whose metadata carries no capture time
+        (skipped for the per-asset datetime rewrite). Returns a `Mock` whose
+        `return_value` is a `MockSyncCursorPage` so a single call is replayed;
+        callers wanting per-chunk pages set `side_effect` themselves.
+        """
+        from tests.conftest import MockSyncCursorPage
+
+        page_assets = []
+        for uid, dt in assets_by_uuid.items():
+            asset = Mock()
+            asset.id = uuid_to_gumnut_asset_id(uid)
+            asset.metadata = Mock(original_datetime=dt)
+            page_assets.append(asset)
+        return Mock(return_value=MockSyncCursorPage(page_assets))
 
     @pytest.mark.anyio
     async def test_update_assets_description_round_trips(self):
@@ -1232,31 +1255,160 @@ class TestUpdateAssets:
         mock_client.assets.bulk_update_assets.assert_not_awaited()
 
     @pytest.mark.anyio
-    async def test_update_assets_timezone_alone_is_422(self):
-        # Standalone `timeZone` would require per-asset GETs to reinterpret
-        # each existing datetime — explicitly unsupported.
+    async def test_update_assets_timezone_alone_reinterprets_per_asset(self):
+        # Standalone `timeZone` re-anchors each asset's existing wall-clock in
+        # the given zone: read current `original_datetime`, swap the tzinfo
+        # (preserve the clock digits), write per-asset.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        a, b = uuid4(), uuid4()
+        mock_client.assets.list = self._mock_read(
+            {
+                a: datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc),
+                b: datetime(2020, 1, 2, 9, 0, 0, tzinfo=timezone.utc),
+            }
+        )
+        request = AssetBulkUpdateDto(ids=[a, b], timeZone="America/Los_Angeles")
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        la = ZoneInfo("America/Los_Angeles")
+        updates = mock_client.assets.bulk_update_assets.await_args.kwargs["updates"]
+        by_id = {item["id"]: item["change"] for item in updates}
+        assert by_id[uuid_to_gumnut_asset_id(a)] == {
+            "original_datetime": datetime(2024, 6, 15, 14, 30, 0, tzinfo=la)
+        }
+        assert by_id[uuid_to_gumnut_asset_id(b)] == {
+            "original_datetime": datetime(2020, 1, 2, 9, 0, 0, tzinfo=la)
+        }
+
+    @pytest.mark.anyio
+    async def test_update_assets_relative_datetime_shifts_per_asset(self):
+        # `dateTimeRelative` shifts each asset's existing datetime by N
+        # seconds: read current values, add the delta, write per-asset.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        a, b = uuid4(), uuid4()
+        base_a = datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc)
+        base_b = datetime(2020, 1, 2, 9, 0, 0)
+        mock_client.assets.list = self._mock_read({a: base_a, b: base_b})
+        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=3600.0)
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        updates = mock_client.assets.bulk_update_assets.await_args.kwargs["updates"]
+        by_id = {item["id"]: item["change"] for item in updates}
+        assert by_id[uuid_to_gumnut_asset_id(a)] == {
+            "original_datetime": base_a + timedelta(seconds=3600)
+        }
+        assert by_id[uuid_to_gumnut_asset_id(b)] == {
+            "original_datetime": base_b + timedelta(seconds=3600)
+        }
+
+    @pytest.mark.anyio
+    async def test_update_assets_per_asset_skips_null_datetime(self):
+        # An asset with no existing `original_datetime` (and one absent from
+        # the read entirely) is skipped for the datetime rewrite; with no
+        # other in-scope field it drops out of the write. The asset with a
+        # base datetime is still updated.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        has_dt, no_dt, missing = uuid4(), uuid4(), uuid4()
+        base = datetime(2024, 6, 15, 14, 30, 0)
+        # `missing` is omitted from the read entirely; `no_dt` has null metadata dt.
+        mock_client.assets.list = self._mock_read({has_dt: base, no_dt: None})
+        request = AssetBulkUpdateDto(
+            ids=[has_dt, no_dt, missing], dateTimeRelative=60.0
+        )
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            [has_dt],
+            {"original_datetime": base + timedelta(seconds=60)},
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_per_asset_keeps_homogeneous_fields_when_skipping(
+        self,
+    ):
+        # When a per-asset datetime mode is mixed with a homogeneous field,
+        # an asset skipped for the datetime rewrite still receives the
+        # homogeneous field rather than dropping out.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        has_dt, no_dt = uuid4(), uuid4()
+        base = datetime(2024, 6, 15, 14, 30, 0)
+        mock_client.assets.list = self._mock_read({has_dt: base, no_dt: None})
+        request = AssetBulkUpdateDto(
+            ids=[has_dt, no_dt], dateTimeRelative=60.0, description="caption"
+        )
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        updates = mock_client.assets.bulk_update_assets.await_args.kwargs["updates"]
+        by_id = {item["id"]: item["change"] for item in updates}
+        assert by_id[uuid_to_gumnut_asset_id(has_dt)] == {
+            "description": "caption",
+            "original_datetime": base + timedelta(seconds=60),
+        }
+        assert by_id[uuid_to_gumnut_asset_id(no_dt)] == {"description": "caption"}
+
+    @pytest.mark.anyio
+    async def test_update_assets_relative_with_absolute_is_422(self):
+        # The three datetime modes are mutually exclusive — relative + absolute
+        # is ambiguous and rejected before any network call.
         mock_client = Mock()
         mock_client.assets.bulk_update_assets = AsyncMock()
-        request = AssetBulkUpdateDto(ids=[uuid4()], timeZone="America/Los_Angeles")
+        mock_client.assets.list = AsyncMock()
+        request = AssetBulkUpdateDto(
+            ids=[uuid4()],
+            dateTimeRelative=3600.0,
+            dateTimeOriginal="2024-06-15T14:30:00",
+        )
 
         with pytest.raises(HTTPException) as exc_info:
             await update_assets(request, client=mock_client)
 
         assert exc_info.value.status_code == 422
         mock_client.assets.bulk_update_assets.assert_not_awaited()
+        mock_client.assets.list.assert_not_awaited()
 
     @pytest.mark.anyio
-    async def test_update_assets_relative_datetime_is_422(self):
-        # The backend bulk-update contract dropped relative shifts; adapter
-        # rejects rather than fanning out per-asset GETs.
+    async def test_update_assets_relative_with_timezone_is_422(self):
+        # relative + standalone timeZone is ambiguous and rejected.
         mock_client = Mock()
         mock_client.assets.bulk_update_assets = AsyncMock()
-        request = AssetBulkUpdateDto(ids=[uuid4()], dateTimeRelative=3600.0)
+        mock_client.assets.list = AsyncMock()
+        request = AssetBulkUpdateDto(
+            ids=[uuid4()], dateTimeRelative=3600.0, timeZone="America/Los_Angeles"
+        )
 
         with pytest.raises(HTTPException) as exc_info:
             await update_assets(request, client=mock_client)
 
         assert exc_info.value.status_code == 422
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+        mock_client.assets.list.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_standalone_invalid_timezone_is_422(self):
+        # A bad standalone-timeZone name 422s before any read, not after.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock()
+        mock_client.assets.list = AsyncMock()
+        request = AssetBulkUpdateDto(ids=[uuid4()], timeZone="Mars/Olympus_Mons")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.list.assert_not_awaited()
         mock_client.assets.bulk_update_assets.assert_not_awaited()
 
     @pytest.mark.anyio
@@ -1396,6 +1548,59 @@ class TestUpdateAssets:
         for call in mock_client.assets.bulk_update_assets.await_args_list:
             for item in call.kwargs["updates"]:
                 assert item["change"] == {"description": "caption"}
+
+    @pytest.mark.anyio
+    async def test_update_assets_per_asset_chunks_read_and_write(self):
+        """Per-asset datetime mode reads and writes once per chunk.
+
+        The bulk GET (`assets.list`) is chunked alongside the bulk PATCH, so a
+        101-id relative shift is two reads + two writes — not a per-asset GET
+        fan-out — with ids preserved in input order across chunks.
+        """
+        from tests.conftest import MockSyncCursorPage
+        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+
+        ids = [uuid4() for _ in range(BULK_CHUNK_SIZE + 1)]
+        base = datetime(2024, 6, 15, 14, 30, 0)
+
+        def _page_for(*_args, **kwargs):
+            assets = []
+            for gid in kwargs["ids"]:
+                asset = Mock()
+                asset.id = gid
+                asset.metadata = Mock(original_datetime=base)
+                assets.append(asset)
+            return MockSyncCursorPage(assets)
+
+        mock_client.assets.list = Mock(side_effect=_page_for)
+        request = AssetBulkUpdateDto(ids=ids, dateTimeRelative=60.0)
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        read_sizes = [
+            len(call.kwargs["ids"]) for call in mock_client.assets.list.call_args_list
+        ]
+        assert read_sizes == [100, 1]
+        write_sizes = [
+            len(call.kwargs["updates"])
+            for call in mock_client.assets.bulk_update_assets.await_args_list
+        ]
+        assert write_sizes == [100, 1]
+        flat_ids = [
+            item["id"]
+            for call in mock_client.assets.bulk_update_assets.await_args_list
+            for item in call.kwargs["updates"]
+        ]
+        assert flat_ids == [uuid_to_gumnut_asset_id(uid) for uid in ids]
+        for call in mock_client.assets.bulk_update_assets.await_args_list:
+            for item in call.kwargs["updates"]:
+                assert item["change"] == {
+                    "original_datetime": base + timedelta(seconds=60)
+                }
 
     @pytest.mark.anyio
     async def test_update_assets_aware_datetime_with_timezone_re_anchors(self):

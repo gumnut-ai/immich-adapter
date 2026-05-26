@@ -3,7 +3,7 @@ from typing import Any, List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 import base64
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -600,6 +600,24 @@ async def _upload_streaming(
         ) from e
 
 
+def _resolve_timezone(tz_name: str) -> ZoneInfo:
+    """Resolve an IANA timezone name, mapping bad input to 422.
+
+    `ZoneInfo()` raises `ValueError` for malformed keys (empty string,
+    absolute paths, non-normalized paths like "../..") and
+    `ZoneInfoNotFoundError` for well-formed-but-unknown zones; both must
+    surface as the 422 the rest of this module uses rather than an uncaught
+    500.
+    """
+    try:
+        return ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid timeZone: {tz_name!r}",
+        ) from exc
+
+
 def _combine_datetime_with_timezone(dt: datetime, tz_name: str) -> datetime:
     """Apply an IANA timezone to a parsed `dateTimeOriginal`.
 
@@ -611,69 +629,104 @@ def _combine_datetime_with_timezone(dt: datetime, tz_name: str) -> datetime:
     UX (the modal sends a naive `dateTimeOriginal` when `timeZone` is set,
     but we handle aware too for safety).
     """
-    try:
-        tz = ZoneInfo(tz_name)
-    except (ZoneInfoNotFoundError, ValueError) as exc:
-        # ZoneInfo() raises ValueError for malformed keys (empty string,
-        # absolute paths, non-normalized paths like "../..") and
-        # ZoneInfoNotFoundError for well-formed-but-unknown zones.
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid timeZone: {tz_name!r}",
-        ) from exc
-    return dt.replace(tzinfo=tz)
+    return dt.replace(tzinfo=_resolve_timezone(tz_name))
+
+
+class _PerAssetDatetime(NamedTuple):
+    """A per-asset `original_datetime` rewrite that depends on each asset's
+    current value, so the handler must read the batch before writing.
+
+    Exactly one field is set:
+
+    - `relative_seconds` (`dateTimeRelative`) — shift each asset's existing
+      `original_datetime` by this many seconds.
+    - `reinterpret_tz` (standalone `timeZone`) — re-anchor each asset's
+      existing wall-clock to this zone: preserve the clock digits, swap the
+      tzinfo, exactly as `_combine_datetime_with_timezone` does for the
+      absolute path.
+    """
+
+    relative_seconds: float | None
+    reinterpret_tz: ZoneInfo | None
+
+    def apply(self, current: datetime) -> datetime:
+        if self.relative_seconds is not None:
+            return current + timedelta(seconds=self.relative_seconds)
+        assert self.reinterpret_tz is not None
+        return current.replace(tzinfo=self.reinterpret_tz)
 
 
 def _build_bulk_metadata_change(
     request: AssetBulkUpdateDto,
-) -> dict[str, Any] | None:
-    """Build the homogeneous `change` dict applied to every id in the batch.
+) -> tuple[dict[str, Any], _PerAssetDatetime | None]:
+    """Split an `AssetBulkUpdateDto` into the two bulk-update inputs.
+
+    Returns `(base_change, transform)`:
+
+    - `base_change` — fields identical across every id (homogeneous):
+      `description`, paired `latitude` + `longitude`, and an absolute
+      `original_datetime` (from `dateTimeOriginal`, optionally localized by a
+      paired `timeZone`). May be empty.
+    - `transform` — a per-asset `original_datetime` rewrite that needs each
+      asset's current value read first (`dateTimeRelative`, or standalone
+      `timeZone` without `dateTimeOriginal`), or `None`. See
+      `_PerAssetDatetime`.
 
     Mirrors `_build_metadata_patch` for the single-asset path: uses
     `model_fields_set` to distinguish "field omitted" from "field explicitly
-    null", validates paired lat/lon adapter-side, and returns `None` when no
-    in-scope fields are present.
+    null" and validates paired lat/lon adapter-side. Explicit `null` for
+    `dateTimeRelative` / `timeZone` is treated as "field not set" — clients
+    send null for fields they don't intend to change — so the per-asset
+    rewrites only trigger on non-null values.
 
     Out-of-scope DTO fields (`isFavorite`, `rating`, `visibility`,
     `duplicateId`) are silently ignored — the request still succeeds, the
     adapter just doesn't act on parts the Photos API doesn't model.
 
-    Two Immich fields are rejected with 422 when set to a non-null value
-    rather than silently dropped (explicit `null` is treated as "field not
-    set", mirroring how `timeZone: null` is handled — clients sometimes
-    send null for fields they don't intend to change):
-
-    - `dateTimeRelative` — a per-asset second-shift that the Photos API
-      bulk-update contract does not support. Translating adapter-side would
-      require a GET per asset followed by N absolute writes, defeating the
-      bulk endpoint's purpose. Rejecting surfaces the limitation clearly to
-      the client.
-    - `timeZone` without a paired `dateTimeOriginal` — would mean
-      "reinterpret each asset's existing datetime in this zone", which again
-      requires per-asset fetches. The common Immich web flow always sends
-      `dateTimeOriginal` + `timeZone` together; standalone `timeZone` is
-      rare and intentionally unsupported here.
+    The three datetime modes (absolute `dateTimeOriginal`, relative
+    `dateTimeRelative`, standalone `timeZone` reinterpret) are mutually
+    exclusive; combining them is rejected with 422 since the intended result
+    would be ambiguous.
     """
     provided = request.model_fields_set
 
-    if "dateTimeRelative" in provided and request.dateTimeRelative is not None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="dateTimeRelative is not supported; send dateTimeOriginal instead",
-        )
-
-    has_datetime = "dateTimeOriginal" in provided
+    has_absolute_dt = "dateTimeOriginal" in provided
+    relative = request.dateTimeRelative if "dateTimeRelative" in provided else None
     tz_name = request.timeZone if "timeZone" in provided else None
-    if tz_name is not None and not has_datetime:
+
+    transform: _PerAssetDatetime | None = None
+    base: dict[str, Any] = {}
+
+    # The three datetime modes are mutually exclusive.
+    if relative is not None and has_absolute_dt:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="timeZone requires dateTimeOriginal in the same request",
+            detail="dateTimeRelative and dateTimeOriginal cannot be combined",
+        )
+    if relative is not None and tz_name is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="dateTimeRelative and timeZone cannot be combined",
         )
 
-    change: dict[str, Any] = {}
+    if relative is not None:
+        # Per-asset second-shift; needs each asset's current datetime.
+        transform = _PerAssetDatetime(relative_seconds=relative, reinterpret_tz=None)
+    elif tz_name is not None and not has_absolute_dt:
+        # Standalone timeZone reinterprets each asset's existing wall-clock;
+        # resolve the zone eagerly so a bad name 422s before any read.
+        transform = _PerAssetDatetime(
+            relative_seconds=None, reinterpret_tz=_resolve_timezone(tz_name)
+        )
+    elif has_absolute_dt:
+        # Absolute datetime (optionally localized) is the same for every id.
+        parsed = _parse_update_original_datetime(request.dateTimeOriginal)
+        if parsed is not None and tz_name is not None:
+            parsed = _combine_datetime_with_timezone(parsed, tz_name)
+        base["original_datetime"] = parsed
 
     if "description" in provided:
-        change["description"] = request.description
+        base["description"] = request.description
 
     lat_set = "latitude" in provided
     lon_set = "longitude" in provided
@@ -688,16 +741,10 @@ def _build_bulk_metadata_change(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="latitude and longitude must be cleared together",
             )
-        change["latitude"] = request.latitude
-        change["longitude"] = request.longitude
+        base["latitude"] = request.latitude
+        base["longitude"] = request.longitude
 
-    if has_datetime:
-        parsed = _parse_update_original_datetime(request.dateTimeOriginal)
-        if parsed is not None and tz_name is not None:
-            parsed = _combine_datetime_with_timezone(parsed, tz_name)
-        change["original_datetime"] = parsed
-
-    return change or None
+    return base, transform
 
 
 @router.put("", status_code=204)
@@ -707,43 +754,79 @@ async def update_assets(
 ) -> Response:
     """Bulk-update asset metadata.
 
-    Wires Immich's `PUT /api/assets` to the Photos API
-    `bulk_update_assets` call. The Immich DTO applies one homogeneous set of
-    changes to every id in `ids`, so the adapter builds a single `change`
-    dict and replicates it per item — the SDK endpoint accepts heterogeneous
-    per-item changes, but we don't need that here.
+    Wires Immich's `PUT /api/assets` to the Photos API `bulk_update_assets`
+    call, which accepts heterogeneous per-item `change` dicts.
 
-    In-scope fields: `description`, paired `latitude` + `longitude`,
-    `dateTimeOriginal` (with optional `timeZone` combination). Out-of-scope
-    DTO fields (`isFavorite`, `rating`, `visibility`, `duplicateId`) are
-    silently ignored. `dateTimeRelative` and standalone `timeZone` are
+    In-scope fields: `description`, paired `latitude` + `longitude`, and the
+    capture time via one of three mutually exclusive datetime modes:
+
+    - absolute `dateTimeOriginal` (optionally localized by a paired
+      `timeZone`) — identical for every id, so it's replicated as a single
+      homogeneous `change`;
+    - `dateTimeRelative` — a per-asset second-shift; and
+    - standalone `timeZone` — reinterpret each asset's existing wall-clock in
+      the given zone.
+
+    The two per-asset modes need each asset's *current* `original_datetime`,
+    so the handler reads the chunk first (`client.assets.list(ids=...)`) and
+    builds a per-item `change`. This is the "bulk GET + bulk PATCH" shape: one
+    read and one write per chunk, not a fan-out of per-asset GETs. Assets with
+    no existing `original_datetime` (and ids not returned by the read) are
+    skipped for the datetime rewrite — if they carry no other in-scope field
+    they drop out of the write entirely. There is a small read-then-write
+    window in which an asset's datetime could change between the two calls.
+
+    Out-of-scope DTO fields (`isFavorite`, `rating`, `visibility`,
+    `duplicateId`) are silently ignored. Conflicting datetime modes are
     rejected with 422 — see `_build_bulk_metadata_change`.
 
-    No WebSocket events are emitted on success: the SDK returns no per-asset
-    payload, so we don't have post-update assets to mirror the single-asset
-    path's `ASSET_UPDATE` payload cheaply. Clients fall back to refresh on
-    next sync.
+    No WebSocket events are emitted on success: `bulk_update_assets` returns
+    no per-asset payload, so we don't have post-update assets to mirror the
+    single-asset path's `ASSET_UPDATE` payload cheaply (the per-asset read
+    above is pre-update state for the datetime modes only). Clients fall back
+    to refresh on next sync.
 
-    The SDK caps each call at `BULK_CHUNK_SIZE` (100) items, so requests
-    over that are split into chunks. The SDK guarantees per-call atomicity
-    (a single chunk either fully commits or writes nothing), but that
-    guarantee does not extend across chunks: a failure on chunk N (N ≥ 2)
-    leaves chunks 1..N-1 already committed, with no compensating rollback
-    and no per-chunk error report — the exception propagates as one 5xx.
-    Consistent with `_bulk_permanent_delete` / `_bulk_trash`.
+    The SDK caps each call at `BULK_CHUNK_SIZE` (100) items, so requests over
+    that are split into chunks. The SDK guarantees per-call atomicity (a
+    single chunk either fully commits or writes nothing), but that guarantee
+    does not extend across chunks: a failure on chunk N (N ≥ 2) leaves chunks
+    1..N-1 already committed, with no compensating rollback and no per-chunk
+    error report — the exception propagates as one 5xx. Consistent with
+    `_bulk_permanent_delete` / `_bulk_trash`.
     """
     if not request.ids:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    change = _build_bulk_metadata_change(request)
-    if change is None:
+    base_change, transform = _build_bulk_metadata_change(request)
+    if not base_change and transform is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    sdk_change = cast(UpdateChange, change)
     for chunk in batched(request.ids, BULK_CHUNK_SIZE):
-        updates: list[Update] = [
-            {"id": uuid_to_gumnut_asset_id(uid), "change": sdk_change} for uid in chunk
-        ]
+        gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
+        updates: list[Update]
+
+        if transform is None:
+            sdk_change = cast(UpdateChange, base_change)
+            updates = [{"id": gid, "change": sdk_change} for gid in gumnut_ids]
+        else:
+            # Per-asset datetime rewrite: read current values, then write.
+            page = await client.assets.list(ids=gumnut_ids, limit=len(gumnut_ids))
+            current_by_id = {
+                asset.id: asset.metadata.original_datetime
+                for asset in page.data
+                if asset.metadata is not None
+            }
+            updates = []
+            for gid in gumnut_ids:
+                change = dict(base_change)
+                current = current_by_id.get(gid)
+                if current is not None:
+                    change["original_datetime"] = transform.apply(current)
+                if change:
+                    updates.append({"id": gid, "change": cast(UpdateChange, change)})
+            if not updates:
+                continue
+
         await client.assets.bulk_update_assets(updates=updates)
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
