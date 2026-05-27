@@ -2792,10 +2792,19 @@ class TestGetAssetInfo:
 def _make_mock_asset_with_urls(
     variant_map: dict[str, dict[str, str]],
     mime_type: str = "image/jpeg",
+    width: int | None = None,
+    height: int | None = None,
 ):
-    """Create a mock asset with asset_urls (Mock objects with .url/.mimetype attrs)."""
+    """Create a mock asset with asset_urls (Mock objects with .url/.mimetype attrs).
+
+    `width`/`height` default to None so the aspect-ratio variant upgrade
+    (`_upgrade_variant_for_aspect`) falls back to the requested variant — set
+    them explicitly to exercise the wide-landscape upgrade path.
+    """
     asset = Mock()
     asset.mime_type = mime_type
+    asset.width = width
+    asset.height = height
     mock_urls = {}
     for key, val in variant_map.items():
         variant = Mock()
@@ -2987,6 +2996,189 @@ class TestViewAsset:
 
         assert exc_info.value.status_code == 404
         assert "thumbnail_image" in exc_info.value.detail
+
+    @pytest.mark.anyio
+    async def test_view_asset_wide_landscape_thumbnail_upgrades_to_preview(
+        self, sample_uuid
+    ):
+        """A wide-landscape (16:9) image thumbnail request streams the preview."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "thumbnail": {
+                        "url": "https://cdn.example.com/thumb.webp",
+                        "mimetype": "image/webp",
+                    },
+                    "preview": {
+                        "url": "https://cdn.example.com/preview.jpg",
+                        "mimetype": "image/jpeg",
+                    },
+                },
+                width=1920,
+                height=1080,
+            )
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        # The 1440px preview (JPEG) is streamed in place of the 250px thumbnail.
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/preview.jpg",
+            "image/jpeg",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
+        )
+
+    @pytest.mark.anyio
+    async def test_view_asset_wide_landscape_video_upgrades_to_preview_image(
+        self, sample_uuid
+    ):
+        """A wide-landscape video thumbnail request streams the preview_image."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "thumbnail_image": {
+                        "url": "https://cdn.example.com/thumb_image.webp",
+                        "mimetype": "image/webp",
+                    },
+                    "preview_image": {
+                        "url": "https://cdn.example.com/preview_image.jpg",
+                        "mimetype": "image/jpeg",
+                    },
+                },
+                mime_type="video/mp4",
+                width=1920,
+                height=1080,
+            )
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/preview_image.jpg",
+            "image/jpeg",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("width", "height"),
+        [
+            (1080, 1920),  # portrait 9:16 — same ratio as 16:9 but tall
+            (1000, 1000),  # square
+            (1200, 1000),  # landscape 6:5, ratio 1.2 (<= 1.5)
+            (1500, 1000),  # landscape 3:2, ratio 1.5 (boundary, not > 1.5)
+            (None, None),  # dimensions unknown
+            (0, 0),  # photos-api "unknown" sentinel
+        ],
+    )
+    async def test_view_asset_non_wide_landscape_thumbnail_stays_thumbnail(
+        self, sample_uuid, width, height
+    ):
+        """Portrait, square, near-square, boundary, and unknown-dim assets keep
+        the cheap 250px thumbnail."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "thumbnail": {
+                        "url": "https://cdn.example.com/thumb.webp",
+                        "mimetype": "image/webp",
+                    },
+                    "preview": {
+                        "url": "https://cdn.example.com/preview.jpg",
+                        "mimetype": "image/jpeg",
+                    },
+                },
+                width=width,
+                height=height,
+            )
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/thumb.webp",
+            "image/webp",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
+        )
+
+    @pytest.mark.anyio
+    async def test_view_asset_wide_landscape_preview_request_unaffected(
+        self, sample_uuid
+    ):
+        """A `preview`-size request on a wide-landscape asset is not re-upgraded
+        (only `thumbnail` requests get the aspect-based upgrade)."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "preview": {
+                        "url": "https://cdn.example.com/preview.jpg",
+                        "mimetype": "image/jpeg",
+                    },
+                },
+                width=1920,
+                height=1080,
+            )
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.preview, client=mock_client
+            )
+
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/preview.jpg",
+            "image/jpeg",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
+        )
 
 
 class TestDownloadAsset:
