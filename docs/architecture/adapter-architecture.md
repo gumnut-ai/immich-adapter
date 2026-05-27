@@ -294,7 +294,8 @@ Each authenticated user joins a room named with their Gumnut user ID. All of a u
 | Event | Trigger | Payload |
 |-------|---------|---------|
 | `on_server_version` | Client connects | Server version info |
-| `on_upload_success` | Asset uploaded via adapter | Asset ID and metadata |
+| `on_upload_success` | Asset uploaded via adapter (images immediately; videos after the shared 3s WebSocket delay) | Asset ID and metadata |
+| `AssetUploadReadyV1` | Asset uploaded via adapter on the same schedule as `on_upload_success` | Compact sync payload (`SyncAssetV1` + `SyncAssetExifV1`) |
 | `on_asset_trash` | Assets soft-deleted via adapter | Array of trashed asset IDs |
 | `on_asset_restore` | Assets restored via adapter | Array of restored asset IDs |
 | `on_asset_delete` | Asset permanently deleted via adapter | Single deleted asset ID |
@@ -333,7 +334,7 @@ Dispatch is by `isinstance` against the typed SDK hierarchy:
 | `APIConnectionError` / `APITimeoutError` | 502 | "Upstream unreachable" |
 | generic `GumnutError` | 500 | "Internal error" |
 
-`map_gumnut_error` in `routers/utils/error_mapping.py` is reserved for the upload paths (`_upload_buffered`, `_upload_streaming`), which need to enrich the upstream log record with call-site context (filename, device IDs, `exc_info=True`) that the global handler can't see.
+`map_gumnut_error` in `routers/utils/error_mapping.py` is reserved for the upload paths (`_upload_buffered`, `_upload_streaming`), which need to enrich the upstream log record with call-site context (filename, device IDs, `exc_info=True`) that the global handler can't see. `ClientDisconnect` is handled separately: `upload_asset` catches it from both buffered and streaming uploads and returns HTTP 499 Client Closed Request instead of routing that client-aborted request through `map_gumnut_error`.
 
 ### Rate limit protection
 

@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-05-22
+last-updated: 2026-05-27
 ---
 
 # Immich WebSocket Events Reference
@@ -11,8 +11,8 @@ This document describes the WebSocket events emitted by the Immich server and ho
 
 | Event | Trigger | Payload | Web Client | Mobile Client |
 |-------|---------|---------|------------|---------------|
-| `on_upload_success` | Thumbnail generation completes | `AssetResponseDto` | Global listener | Legacy listener |
-| `AssetUploadReadyV1` | Thumbnail generation completes | `SyncAssetV1` + `SyncAssetExifV1` | Not used | v2 sync protocol |
+| `on_upload_success` | Images: upload write completes; videos: 3s deferred emit to wait for still-image variants | `AssetResponseDto` | Global listener | Legacy listener |
+| `AssetUploadReadyV1` | Emitted alongside `on_upload_success` with the same image/video timing split | `SyncAssetV1` + `SyncAssetExifV1` | Not used | v2 sync protocol |
 | `on_asset_delete` | Asset permanently deleted | `assetId: string` | Global listener | Listener |
 | `on_asset_trash` | Asset moved to trash | `assetIds: string[]` | Global listener | Listener |
 | `on_asset_restore` | Asset restored from trash | `assetIds: string[]` | Global listener | Listener |
@@ -66,7 +66,13 @@ AssetResponseDto {
 
 ### `AssetUploadReadyV1`
 
-**Trigger**: Emitted alongside `on_upload_success` when thumbnail generation completes (`job.service.ts:369`).
+**Upstream trigger**: Emitted alongside `on_upload_success` when thumbnail generation completes (`job.service.ts:369`).
+
+**Adapter trigger**:
+- Emitted from the same helper as `on_upload_success`, so the timing stays aligned across both upload-success events.
+- **Images**: emitted synchronously from the upload handler.
+- **Videos**: emitted after the same `_VIDEO_EMIT_DELAY_SECONDS` (3.0s) deferral used for `on_upload_success`, so mobile clients do not hear about a new upload before the video's still-image variants usually exist.
+
 **Sent to**: Asset owner (by userId)
 **Payload**: Compact sync format
 
