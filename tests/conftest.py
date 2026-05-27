@@ -104,7 +104,7 @@ def sample_gumnut_asset():
     asset.updated_at = datetime.now(timezone.utc)
     asset.mime_type = "image/jpeg"
     asset.original_file_name = "test.jpg"
-    asset.duration_in_seconds = None
+    asset.duration = None
     asset.library_id = "library-789"
     asset.checksum = "abc123"
     # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
@@ -154,7 +154,7 @@ def multiple_gumnut_assets():
         asset.local_datetime = now
         asset.mime_type = "image/jpeg"
         asset.original_file_name = f"test{i}.jpg"
-        asset.duration_in_seconds = None
+        asset.duration = None
         asset.library_id = "library-789"
         asset.width = 1920
         asset.height = 1080

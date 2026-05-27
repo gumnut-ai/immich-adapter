@@ -338,6 +338,7 @@ class TestSearchMetadata:
         gumnut_asset.file_modified_at = gumnut_asset.updated_at
         gumnut_asset.width = 1920
         gumnut_asset.height = 1080
+        gumnut_asset.duration = None
         gumnut_asset.file_size_bytes = 1024000
         gumnut_asset.metadata = None
         gumnut_asset.people = []
