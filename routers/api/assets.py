@@ -632,38 +632,54 @@ def _combine_datetime_with_timezone(dt: datetime, tz_name: str) -> datetime:
     return dt.replace(tzinfo=_resolve_timezone(tz_name))
 
 
-class _PerAssetDatetime(NamedTuple):
-    """A per-asset `original_datetime` rewrite that depends on each asset's
-    current value, so the handler must read the batch before writing.
+class _RelativeShift(NamedTuple):
+    """Shift each asset's existing `original_datetime` by a fixed number of
+    seconds (`dateTimeRelative`)."""
 
-    Exactly one field is set:
-
-    - `relative_seconds` (`dateTimeRelative`) — shift each asset's existing
-      `original_datetime` by this many seconds.
-    - `reinterpret_tz` (standalone `timeZone`) — re-anchor each asset's
-      existing wall-clock to this zone: preserve the clock digits, swap the
-      tzinfo, exactly as `_combine_datetime_with_timezone` does for the
-      absolute path.
-    """
-
-    relative_seconds: float | None
-    reinterpret_tz: ZoneInfo | None
+    relative_seconds: float
 
     def apply(self, current: datetime) -> datetime:
-        if self.relative_seconds is not None:
-            return current + timedelta(seconds=self.relative_seconds)
-        assert self.reinterpret_tz is not None
-        return current.replace(tzinfo=self.reinterpret_tz)
+        return current + timedelta(seconds=self.relative_seconds)
+
+
+class _ReinterpretTimezone(NamedTuple):
+    """Re-anchor each asset's existing wall-clock to a zone (standalone
+    `timeZone`): preserve the clock digits, swap the tzinfo, exactly as
+    `_combine_datetime_with_timezone` does for the absolute path."""
+
+    tz: ZoneInfo
+
+    def apply(self, current: datetime) -> datetime:
+        return current.replace(tzinfo=self.tz)
+
+
+# A per-asset `original_datetime` rewrite that depends on each asset's current
+# value, so the handler must read the batch before writing. A tagged union so
+# each mode's field is non-optional — the "exactly one mode" invariant lives in
+# the type rather than a runtime assert.
+_PerAssetDatetime = _RelativeShift | _ReinterpretTimezone
+
+
+class _BulkMetadataChange(NamedTuple):
+    """The two inputs a bulk update is split into.
+
+    - `base` — fields identical across every id (homogeneous); may be empty.
+    - `transform` — an optional per-asset `original_datetime` rewrite that needs
+      each asset's current value read first, or `None`.
+    """
+
+    base: dict[str, Any]
+    transform: _PerAssetDatetime | None
 
 
 def _build_bulk_metadata_change(
     request: AssetBulkUpdateDto,
-) -> tuple[dict[str, Any], _PerAssetDatetime | None]:
+) -> _BulkMetadataChange:
     """Split an `AssetBulkUpdateDto` into the two bulk-update inputs.
 
-    Returns `(base_change, transform)`:
+    Returns a `_BulkMetadataChange(base, transform)`:
 
-    - `base_change` — fields identical across every id (homogeneous):
+    - `base` — fields identical across every id (homogeneous):
       `description`, paired `latitude` + `longitude`, and an absolute
       `original_datetime` (from `dateTimeOriginal`, optionally localized by a
       paired `timeZone`). May be empty.
@@ -711,13 +727,11 @@ def _build_bulk_metadata_change(
 
     if relative is not None:
         # Per-asset second-shift; needs each asset's current datetime.
-        transform = _PerAssetDatetime(relative_seconds=relative, reinterpret_tz=None)
+        transform = _RelativeShift(relative_seconds=relative)
     elif tz_name is not None and not has_absolute_dt:
         # Standalone timeZone reinterprets each asset's existing wall-clock;
         # resolve the zone eagerly so a bad name 422s before any read.
-        transform = _PerAssetDatetime(
-            relative_seconds=None, reinterpret_tz=_resolve_timezone(tz_name)
-        )
+        transform = _ReinterpretTimezone(tz=_resolve_timezone(tz_name))
     elif has_absolute_dt:
         # Absolute datetime (optionally localized) is the same for every id.
         parsed = _parse_update_original_datetime(request.dateTimeOriginal)
@@ -744,7 +758,7 @@ def _build_bulk_metadata_change(
         base["latitude"] = request.latitude
         base["longitude"] = request.longitude
 
-    return base, transform
+    return _BulkMetadataChange(base, transform)
 
 
 @router.put("", status_code=204)
@@ -768,9 +782,13 @@ async def update_assets(
       the given zone.
 
     The two per-asset modes need each asset's *current* `original_datetime`,
-    so the handler reads the chunk first (`client.assets.list(ids=...)`) and
-    builds a per-item `change`. This is the "bulk GET + bulk PATCH" shape: one
-    read and one write per chunk, not a fan-out of per-asset GETs. Assets with
+    so the handler reads the chunk first (`client.assets.list(state="all",
+    ids=...)`) and builds a per-item `change`. This is the "bulk GET + bulk
+    PATCH" shape: one read and one write per chunk, not a fan-out of per-asset
+    GETs. `state="all"` so trashed assets are read too: the homogeneous path
+    forwards every id to `bulk_update_assets` regardless of trash state, and the
+    default live-only filter would otherwise silently drop trashed ids from the
+    read — leaving the per-asset modes asymmetrically skipping them. Assets with
     no existing `original_datetime` (and ids not returned by the read) are
     skipped for the datetime rewrite — if they carry no other in-scope field
     they drop out of the write entirely. There is a small read-then-write
@@ -810,7 +828,12 @@ async def update_assets(
             updates = [{"id": gid, "change": sdk_change} for gid in gumnut_ids]
         else:
             # Per-asset datetime rewrite: read current values, then write.
-            page = await client.assets.list(ids=gumnut_ids, limit=len(gumnut_ids))
+            # state="all" so trashed assets aren't silently dropped from the
+            # read (and thus the rewrite) — the homogeneous path above forwards
+            # them regardless, so the per-asset path must too.
+            page = await client.assets.list(
+                state="all", ids=gumnut_ids, limit=len(gumnut_ids)
+            )
             current_by_id = {
                 asset.id: asset.metadata.original_datetime
                 for asset in page.data

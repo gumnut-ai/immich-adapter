@@ -1365,6 +1365,50 @@ class TestUpdateAssets:
         assert by_id[uuid_to_gumnut_asset_id(no_dt)] == {"description": "caption"}
 
     @pytest.mark.anyio
+    async def test_update_assets_per_asset_reads_all_states_incl_trashed(self):
+        # The per-asset read must use state="all" so a trashed (non-live) asset
+        # is still rewritten, matching the homogeneous path which forwards every
+        # id regardless of trash state. The default live-only filter would drop
+        # trashed ids from the read and silently skip them.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        trashed = uuid4()
+        base = datetime(2024, 6, 15, 14, 30, 0)
+        mock_client.assets.list = self._mock_read({trashed: base})
+        request = AssetBulkUpdateDto(ids=[trashed], dateTimeRelative=3600.0)
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        mock_client.assets.list.assert_called_once_with(
+            state="all",
+            ids=[uuid_to_gumnut_asset_id(trashed)],
+            limit=1,
+        )
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            [trashed],
+            {"original_datetime": base + timedelta(seconds=3600)},
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_per_asset_zero_writable_chunk_skips_write(self):
+        # A chunk where every asset is non-writable in a per-asset datetime mode
+        # (no current `original_datetime`) and no homogeneous field is present
+        # produces zero updates, so `bulk_update_assets` is never awaited — pins
+        # the `if not updates: continue` branch.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        a, b = uuid4(), uuid4()
+        mock_client.assets.list = self._mock_read({a: None, b: None})
+        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=60.0)
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+
+    @pytest.mark.anyio
     async def test_update_assets_relative_with_absolute_is_422(self):
         # The three datetime modes are mutually exclusive — relative + absolute
         # is ambiguous and rejected before any network call.

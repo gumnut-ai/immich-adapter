@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-21
+last-updated: 2026-05-27
 ---
 
 # Code Practices
@@ -323,6 +323,8 @@ Backend bulk endpoints are idempotent on already-transitioned rows (e.g., `trash
 **Cross-chunk atomicity is not guaranteed.** Backend bulk endpoints (and the SDK methods that wrap them) commit each call atomically — a single chunk either fully commits or writes nothing — but that guarantee does not extend across the chunked loop above. A failure on chunk N (N ≥ 2) leaves chunks 1..N-1 already committed, with no compensating rollback and no per-chunk error report. The exception propagates as one 5xx to the client. Document this in the handler docstring when the SDK markets the underlying endpoint as atomic (e.g., `bulk_update_assets`), so future readers don't assume the guarantee transitively holds through the adapter's chunking layer.
 
 Pin the no-swallow contract with a `test_*_propagates_sdk_error` test per bulk flow — mock the bulk call to raise via `make_sdk_status_error(500, ...)` and assert `pytest.raises(APIStatusError)`. Without this test, a future refactor that wraps the bulk call in `try/except` would silently regress the contract. See `tests/unit/api/test_assets.py::TestDeleteAssets::test_delete_assets_force_false_propagates_sdk_error` for the canonical shape.
+
+**Reads that feed a bulk write must use `state="all"`.** `client.assets.list(ids=...)` defaults to the live-only filter, so trashed (soft-deleted) ids are silently absent from `page.data`. When a "bulk GET + bulk PATCH" flow reads current values to compute a per-asset write-back (e.g. `update_assets`' `dateTimeRelative` / standalone-`timeZone` modes), pass `state="all"` — otherwise the read-driven path silently skips assets that an unconditional bulk write (one that forwards every id regardless of trash state) would have updated, an asymmetry the same request can expose across different fields. Mirrors sync hydration's read (see `routers/api/sync/entity_fetch.py`). Pin it with a test asserting the read kwargs include `state="all"`.
 
 **Per-item response contract variant.** Some Immich bulk endpoints (e.g. `PUT`/`DELETE /api/albums/{id}/assets`) must return `List[BulkIdResponseDto]` with per-id `success` / `error` mapping, so the no-swallow contract above does not apply — the handler has to catch upstream errors locally and translate them into per-id `Error1` values. Use `chunked_per_item_bulk` from `routers/utils/bulk.py`: it owns the chunking loop and the `APIStatusError`/`GumnutError` mapping (errors are classified via `classify_bulk_item_error` and transport failures are logged with `chunk_size` + `request_size` extras), and yields per-chunk outcomes as `BulkChunkOutcome[T]` with either a `response` or an `error`. Callers compose the final per-asset list — that's where response-shape variation lives (e.g. `add` accumulates `added`/`duplicate`/`not_found` sets and walks input order to look up each id; `remove` only needs an error vs success branch). See `routers/api/albums.py::add_assets_to_album` / `remove_asset_from_album` for canonical call sites and `tests/unit/utils/test_bulk.py` for the helper's contract.
 
