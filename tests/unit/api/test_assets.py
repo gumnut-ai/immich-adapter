@@ -1,5 +1,6 @@
 """Tests for assets.py endpoints."""
 
+import asyncio
 import json
 
 import pytest
@@ -395,6 +396,7 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -502,6 +504,34 @@ class TestUploadAsset:
         assert exc_info.value.status_code == 401
 
     @pytest.mark.anyio
+    async def test_upload_asset_buffered_client_disconnect(self, mock_current_user):
+        """A mid-upload client disconnect on the buffered path returns 499 instead
+        of escaping as an unhandled 500."""
+        from starlette.requests import ClientDisconnect
+
+        mock_client = Mock()
+        mock_client.assets.with_raw_response.create = AsyncMock()
+
+        request = _make_mock_request()
+        # Starlette raises ClientDisconnect from request.form() when the client
+        # hangs up while the multipart body is still being parsed.
+        form_ctx = AsyncMock()
+        form_ctx.__aenter__ = AsyncMock(side_effect=ClientDisconnect())
+        request.form = Mock(return_value=form_ctx)
+        settings = _make_mock_settings()
+
+        result = await upload_asset(
+            request=request,
+            client=mock_client,
+            current_user=mock_current_user,
+            settings=settings,
+        )
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 499
+        mock_client.assets.with_raw_response.create.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_upload_asset_emits_websocket_events(
         self, sample_uuid, mock_current_user
     ):
@@ -509,6 +539,7 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -616,6 +647,7 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "video.mp4"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -645,9 +677,12 @@ class TestUploadAsset:
         request = _make_mock_request(mock_file=mock_file)
         settings = _make_mock_settings()
 
+        from routers.api.assets import _pending_emit_tasks
+
         with (
             patch("routers.api.assets.is_live_photo_video", return_value=False),
             patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+            patch("routers.api.assets._VIDEO_EMIT_DELAY_SECONDS", 0.0),
         ):
             result = await upload_asset(
                 request=request,
@@ -656,10 +691,90 @@ class TestUploadAsset:
                 settings=settings,
             )
 
-        assert isinstance(result, AssetMediaResponseDto)
-        assert result.id == str(sample_uuid)
-        assert result.status == AssetMediaStatus.created
-        mock_client.assets.with_raw_response.create.assert_called_once()
+            assert isinstance(result, AssetMediaResponseDto)
+            assert result.id == str(sample_uuid)
+            assert result.status == AssetMediaStatus.created
+            mock_client.assets.with_raw_response.create.assert_called_once()
+
+            # Drain the deferred-emit task spawned for the video upload so it
+            # completes inside the patched-mocks scope.
+            if _pending_emit_tasks:
+                await asyncio.gather(*list(_pending_emit_tasks))
+
+    @pytest.mark.anyio
+    async def test_video_upload_defers_websocket_events(
+        self, sample_uuid, mock_current_user
+    ):
+        """Video uploads defer WebSocket emission until after the configured delay."""
+        mock_gumnut_asset = Mock()
+        mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.original_file_name = "video.mp4"
+        mock_gumnut_asset.created_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.local_datetime = mock_gumnut_asset.created_at
+        mock_gumnut_asset.file_created_at = mock_gumnut_asset.created_at
+        mock_gumnut_asset.file_modified_at = mock_gumnut_asset.updated_at
+        mock_gumnut_asset.mime_type = "video/mp4"
+        mock_gumnut_asset.width = 1920
+        mock_gumnut_asset.height = 1080
+        mock_gumnut_asset.file_size_bytes = 10240
+        mock_gumnut_asset.metadata = None
+        mock_gumnut_asset.people = []
+        mock_gumnut_asset.trashed_at = None
+
+        mock_raw_response = Mock()
+        mock_raw_response.status_code = 201
+        mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
+
+        mock_client = Mock()
+        mock_client.assets.with_raw_response.create = AsyncMock(
+            return_value=mock_raw_response
+        )
+
+        mock_file = Mock()
+        mock_file.filename = "video.mp4"
+        mock_file.content_type = "video/mp4"
+        mock_file.file = BytesIO(b"fake video data")
+        mock_file.seek = AsyncMock()
+
+        request = _make_mock_request(mock_file=mock_file)
+        settings = _make_mock_settings()
+
+        from routers.api.assets import _pending_emit_tasks
+
+        with (
+            patch("routers.api.assets.is_live_photo_video", return_value=False),
+            patch(
+                "routers.api.assets.emit_user_event", new_callable=AsyncMock
+            ) as mock_emit,
+            patch("routers.api.assets._VIDEO_EMIT_DELAY_SECONDS", 0.0),
+        ):
+            await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+            # Emission is deferred — nothing fired before we yield to the loop.
+            assert mock_emit.call_count == 0
+            assert len(_pending_emit_tasks) == 1
+
+            await asyncio.gather(*list(_pending_emit_tasks))
+
+            assert mock_emit.call_count == 2
+            first_call = mock_emit.call_args_list[0]
+            assert first_call[0][0] == WebSocketEvent.UPLOAD_SUCCESS
+            assert first_call[0][1] == mock_current_user.id
+
+            second_call = mock_emit.call_args_list[1]
+            assert second_call[0][0] == WebSocketEvent.ASSET_UPLOAD_READY_V1
+            assert second_call[0][1] == mock_current_user.id
+
+            # done_callback drops the completed task from the strong-ref set.
+            assert len(_pending_emit_tasks) == 0
 
     @pytest.mark.anyio
     async def test_upload_asset_websocket_error_does_not_fail_upload(
@@ -669,6 +784,7 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -984,6 +1100,42 @@ class TestUploadAsset:
                 )
 
         assert exc_info.value.status_code == 502
+
+    @pytest.mark.anyio
+    async def test_streaming_upload_client_disconnect(self, mock_current_user):
+        """A client disconnect on the streaming path returns 499 rather than being
+        mapped to a 500/502 by the pipeline's broad error handler."""
+        from starlette.requests import ClientDisconnect
+
+        request = Mock()
+        request.headers = {
+            "content-length": str(300 * 1024 * 1024),
+            "content-type": "multipart/form-data; boundary=---abc123",
+        }
+
+        class _State:
+            jwt_token = "test-jwt-token"
+
+        request.state = _State()
+
+        settings = _make_mock_settings(threshold=100 * 1024 * 1024)
+
+        mock_pipeline_instance = Mock()
+        mock_pipeline_instance.execute = AsyncMock(side_effect=ClientDisconnect())
+
+        with patch(
+            "routers.api.assets.StreamingUploadPipeline",
+            return_value=mock_pipeline_instance,
+        ):
+            result = await upload_asset(
+                request=request,
+                client=Mock(),
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 499
 
 
 class TestUpdateAssets:

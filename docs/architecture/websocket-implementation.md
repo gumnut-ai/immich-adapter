@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation Documentation for immich-adapter"
-last-updated: 2026-05-18
+last-updated: 2026-05-22
 ---
 
 # WebSocket Implementation Documentation for immich-adapter
@@ -160,8 +160,8 @@ Starting with `on_upload_success`, but designed for future extension:
 
 | Event | Payload | Web | Mobile | Notes |
 |---|---|---|---|---|
-| `on_upload_success` | `AssetResponseDto` | Yes | Legacy | photos-api thumbnails are synchronous |
-| `AssetUploadReadyV1` | `SyncAssetV1` + `SyncAssetExifV1` | No | v2 sync | Emit alongside `on_upload_success` |
+| `on_upload_success` | `AssetResponseDto` | Yes | Legacy | Images: emitted synchronously (CDN resizes the original — variants ready at upload time). Videos: emission deferred by `_VIDEO_EMIT_DELAY_SECONDS` (3s) in `routers/api/assets.py` so the still-image `derived_path` has time to materialize before the web client tries to render `/api/assets/{id}/thumbnail` — otherwise the timeline card shows "Error loading image" until refresh. |
+| `AssetUploadReadyV1` | `SyncAssetV1` + `SyncAssetExifV1` | No | v2 sync | Emit alongside `on_upload_success` (shares the video deferral above) |
 | `on_asset_delete` | `string` (assetId) | Yes | Yes | One per id; force=true permanent delete |
 | `on_asset_trash` | `string[]` (assetIds) | Yes | Yes | Batched per chunk; force=false soft delete |
 | `on_asset_restore` | `string[]` (assetIds) | Yes | Yes | Batched per chunk; restore from trash |

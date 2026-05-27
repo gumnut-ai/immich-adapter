@@ -1,3 +1,4 @@
+import asyncio
 from itertools import batched
 from typing import Any, List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
@@ -20,6 +21,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.requests import ClientDisconnect
 from gumnut import AsyncGumnut
 from gumnut.types.asset_bulk_update_assets_params import Update, UpdateChange
 from gumnut.types.asset_response import AssetResponse
@@ -75,6 +77,12 @@ from utils.livephoto import is_live_photo_video
 from routers.immich_models import AssetTypeEnum
 
 logger = logging.getLogger(__name__)
+
+# Non-standard status used when the client hangs up mid-upload. The response is
+# never delivered (the socket is already closed) — it exists only to give the
+# handler a well-defined return instead of letting ClientDisconnect escape as an
+# unhandled 500.
+HTTP_499_CLIENT_CLOSED_REQUEST = 499
 
 router = APIRouter(
     prefix="/api/assets",
@@ -291,11 +299,24 @@ def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
     return UploadFields(device_asset_id, device_id, file_created_at, file_modified_at)
 
 
-async def _emit_upload_events(
+# Delay applied before emitting upload-success events for video uploads, to give
+# photos-api time to extract the still-image variants (`thumbnail_image`,
+# `preview_image`, `fullsize_image`) before the Immich web client tries to render
+# the thumbnail. Image uploads emit immediately — their CDN-resized variants are
+# available the moment the file is written. Tune this constant if telemetry shows
+# the typical extraction time has drifted.
+_VIDEO_EMIT_DELAY_SECONDS = 3.0
+
+# Strong refs for in-flight delayed-emit tasks. asyncio only holds weak refs to
+# `create_task` results; without this set the GC can collect a sleeping task.
+_pending_emit_tasks: set[asyncio.Task[None]] = set()
+
+
+async def _do_emit_upload_events(
     gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
 ) -> None:
-    """Emit WebSocket events after a successful upload."""
+    """Emit the UPLOAD_SUCCESS + ASSET_UPLOAD_READY_V1 WebSocket events."""
     try:
         asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
         await emit_user_event(
@@ -314,6 +335,40 @@ async def _emit_upload_events(
                 "error": str(ws_error),
             },
         )
+
+
+async def _delayed_emit_upload_events(
+    gumnut_asset: AssetResponse,
+    current_user: UserResponseDto,
+    delay_seconds: float,
+) -> None:
+    """Sleep, then emit upload events. Used for videos to wait out thumbnail extraction."""
+    await asyncio.sleep(delay_seconds)
+    await _do_emit_upload_events(gumnut_asset, current_user)
+
+
+async def _emit_upload_events(
+    gumnut_asset: AssetResponse,
+    current_user: UserResponseDto,
+) -> None:
+    """Emit WebSocket events after a successful upload.
+
+    Images emit synchronously. Videos defer emission by `_VIDEO_EMIT_DELAY_SECONDS`
+    via a detached background task — the HTTP response is not blocked, but the
+    Immich web client's timeline insertion (triggered by `on_upload_success`) waits
+    until video thumbnail extraction has had a chance to complete.
+    """
+    if gumnut_asset.mime_type.startswith("video/"):
+        task = asyncio.create_task(
+            _delayed_emit_upload_events(
+                gumnut_asset, current_user, _VIDEO_EMIT_DELAY_SECONDS
+            )
+        )
+        _pending_emit_tasks.add(task)
+        task.add_done_callback(_pending_emit_tasks.discard)
+        return
+
+    await _do_emit_upload_events(gumnut_asset, current_user)
 
 
 @router.post(
@@ -378,12 +433,27 @@ async def upload_asset(
         },
     )
 
-    if use_streaming:
-        return await _upload_streaming(
-            request, client, current_user, settings.gumnut_api_base_url
+    try:
+        if use_streaming:
+            return await _upload_streaming(
+                request, client, current_user, settings.gumnut_api_base_url
+            )
+        else:
+            return await _upload_buffered(request, client, current_user)
+    except ClientDisconnect:
+        # The client hung up before finishing the upload (mobile backgrounding,
+        # cancel, network blip). The connection is gone, so there's no one to
+        # receive a response — treat it as a normal aborted upload rather than
+        # letting it surface as an unhandled 500.
+        logger.info(
+            "Client disconnected during %s upload before it completed",
+            strategy,
+            extra={"strategy": strategy},
         )
-    else:
-        return await _upload_buffered(request, client, current_user)
+        return JSONResponse(
+            content={"detail": "Client disconnected before upload completed"},
+            status_code=HTTP_499_CLIENT_CLOSED_REQUEST,
+        )
 
 
 async def _upload_buffered(
@@ -561,6 +631,10 @@ async def _upload_streaming(
         )
 
     except HTTPException:
+        raise
+    except ClientDisconnect:
+        # Let the disconnect propagate to upload_asset's handler instead of
+        # mapping it to a 500/502 — the client is already gone.
         raise
     except (ValueError, ValidationError) as e:
         raise HTTPException(
