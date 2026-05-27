@@ -104,9 +104,11 @@ def sample_gumnut_asset():
     asset.updated_at = datetime.now(timezone.utc)
     asset.mime_type = "image/jpeg"
     asset.original_file_name = "test.jpg"
-    asset.duration_in_seconds = None
+    asset.duration = None
     asset.library_id = "library-789"
     asset.checksum = "abc123"
+    # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
+    asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
     asset.width = 1920
     asset.height = 1080
     asset.file_size_bytes = 1059218
@@ -152,11 +154,13 @@ def multiple_gumnut_assets():
         asset.local_datetime = now
         asset.mime_type = "image/jpeg"
         asset.original_file_name = f"test{i}.jpg"
-        asset.duration_in_seconds = None
+        asset.duration = None
         asset.library_id = "library-789"
         asset.width = 1920
         asset.height = 1080
         asset.checksum = f"checksum-{i}"
+        # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
+        asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         asset.metadata = None
         asset.people = []
         asset.trashed_at = None

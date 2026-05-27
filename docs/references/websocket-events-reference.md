@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-05-18
+last-updated: 2026-05-22
 ---
 
 # Immich WebSocket Events Reference
@@ -33,7 +33,12 @@ This document describes the WebSocket events emitted by the Immich server and ho
 
 ### `on_upload_success`
 
-**Trigger**: Emitted when `AssetGenerateThumbnails` job completes (`job.service.ts:343-366`).
+**Upstream trigger**: Emitted when `AssetGenerateThumbnails` job completes (`job.service.ts:343-366`).
+
+**Adapter trigger**:
+- **Images**: emitted synchronously from the upload handler. Image variants (`thumbnail`, `preview`, `fullsize`) are CDN-resized URLs to the same uploaded file, so they're available the moment the upload write completes.
+- **Videos**: emission is **deferred** by `_VIDEO_EMIT_DELAY_SECONDS` (3.0s, defined in `routers/api/assets.py`) via a detached `asyncio.create_task`. Video still-image variants (`thumbnail_image`, `preview_image`, `fullsize_image`) live at a separate `derived_path` that only exists after photos-api's ffmpeg extraction finishes — without the delay, the Immich web client receives `on_upload_success`, inserts the asset into the timeline grid, then renders "Error loading image" because the thumbnail URL still 404s. The HTTP `POST /api/assets` 201 response is **not** delayed; only the WebSocket emission waits.
+
 **Sent to**: Asset owner (by userId)
 **Payload**: Full `AssetResponseDto`
 

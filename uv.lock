@@ -3,7 +3,6 @@ revision = 3
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
@@ -302,7 +301,7 @@ wheels = [
 
 [[package]]
 name = "gumnut-sdk"
-version = "0.95.0"
+version = "0.101.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -312,9 +311,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8e/5a/eff08dee3a1b18790e783b29e17c45fdbfe62b27ae329a1a755fb6e152a7/gumnut_sdk-0.95.0.tar.gz", hash = "sha256:6155a8e933079fb782d2a509943475f3866e19341769caa0bac5eb986a33e890", size = 291383, upload-time = "2026-05-18T19:26:50.169Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1f/c5/a1a98416c7b259ecf6cdd3bfb9a8da55d26fe061000605992de19524bf1c/gumnut_sdk-0.101.0.tar.gz", hash = "sha256:64ac4931aea50275301d09e6e73ba90a9c69fddb4f727ce9725c063a69a17770", size = 297251, upload-time = "2026-05-27T17:26:09.804Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/68/5d/36a12de0f40ac42a91ea9b1d8917b2f3271dcdf5b5ab08977f7fe1cb18cf/gumnut_sdk-0.95.0-py3-none-any.whl", hash = "sha256:4d4b323e91d8e344c4b7e4528ee568f9c1c6e2c83bd4e12bc3a6909f3728c576", size = 163091, upload-time = "2026-05-18T19:26:48.803Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/b9/6fda206ee7e975e102392103789fd963092cdf979d6628c490a208629210/gumnut_sdk-0.101.0-py3-none-any.whl", hash = "sha256:32068fae858a5967cb49cb0e4af1f2046f48a6fa11295201a222fc6a18f03011", size = 169409, upload-time = "2026-05-27T17:26:11.198Z" },
 ]
 
 [[package]]
@@ -407,7 +406,7 @@ dev = [
 requires-dist = [
     { name = "cryptography", specifier = ">=46.0.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.135.2" },
-    { name = "gumnut-sdk", specifier = ">=0.92.0" },
+    { name = "gumnut-sdk", specifier = ">=0.101.0" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "python-socketio", specifier = ">=5.13.0" },

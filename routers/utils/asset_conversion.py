@@ -5,6 +5,7 @@ This module provides shared functionality for converting asset data from the Gum
 to the Immich API format, including metadata (camera/EXIF/GPS/location) processing.
 """
 
+import logging
 from datetime import datetime
 
 from gumnut.types.asset_response import AssetResponse
@@ -26,6 +27,37 @@ from services.websockets import AssetUploadReadyV1Payload
 from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
 from routers.utils.person_conversion import convert_gumnut_person_to_immich_with_faces
 
+logger = logging.getLogger(__name__)
+
+
+def resolve_immich_checksum(gumnut_asset: AssetResponse) -> str:
+    """Return the Immich-facing asset checksum (base64-encoded SHA-1).
+
+    Immich's API contract for ``checksum`` is a base64-encoded **SHA-1** (28
+    chars): clients compute the SHA-1 of a local file and compare it to this
+    value for pre-upload dedup and for local↔remote asset linking ("merged"
+    state) in the mobile client. Gumnut exposes that value as
+    ``AssetResponse.checksum_sha1``.
+
+    Gumnut's other ``checksum`` field is a base64-encoded SHA-256 (44 chars).
+    It must never be sent on this field: a wrong-format value can never equal
+    the client-computed SHA-1, so it silently breaks dedup and makes a
+    backed-up photo appear as two separate timeline entries.
+
+    When ``checksum_sha1`` is null (rare legacy rows), return ``""`` rather
+    than substituting the SHA-256 or a placeholder. An empty checksum yields a
+    clean "no match" (a dedup false-negative — the documented Immich behavior)
+    instead of a value that looks valid but never matches.
+    """
+    if gumnut_asset.checksum_sha1 is None:
+        logger.warning(
+            "Asset %s has no checksum_sha1; emitting empty Immich checksum",
+            gumnut_asset.id,
+            extra={"asset_id": gumnut_asset.id},
+        )
+        return ""
+    return gumnut_asset.checksum_sha1
+
 
 def normalize_rating(rating: float | int | None) -> int | None:
     """Normalize a rating value: convert -1 (deprecated 'unrated') to None."""
@@ -33,6 +65,42 @@ def normalize_rating(rating: float | int | None) -> int | None:
         return None
     value = int(float(rating))
     return None if value == -1 else value
+
+
+def format_duration(seconds: float | None) -> str | None:
+    """Format an upstream video duration (float seconds) as Immich's interval string.
+
+    Immich expresses video duration as an ``HH:MM:SS.ffffff`` string. The Gumnut
+    asset carries ``duration`` as float seconds, or ``None`` when the asset is an
+    image or its duration has not been extracted yet. Returns ``None`` for ``None``
+    so callers can preserve each emit site's existing absent-duration behavior
+    rather than fabricating a value.
+    """
+    if seconds is None:
+        return None
+    # Round to whole microseconds first, then decompose, so a value just under a
+    # minute/hour boundary (e.g. 59.9999999) carries up to 00:01:00.000000 rather
+    # than rendering an out-of-range 00:00:60.000000.
+    micros = round(float(seconds) * 1_000_000)
+    secs_total, micros = divmod(micros, 1_000_000)
+    hours, remainder = divmod(secs_total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{micros:06d}"
+
+
+def _resolve_single_asset_duration(
+    gumnut_asset: AssetResponse, asset_type: AssetTypeEnum
+) -> str:
+    """Duration string for the single-asset ``AssetResponseDto`` (non-nullable).
+
+    Uses the upstream value when present; when absent, preserves the prior
+    placeholder — zero duration for videos, empty string for images — rather
+    than fabricating a length.
+    """
+    formatted = format_duration(gumnut_asset.duration)
+    if formatted is not None:
+        return formatted
+    return "00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else ""
 
 
 def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime:
@@ -329,9 +397,9 @@ def build_asset_upload_ready_payload(
         id=asset_uuid,
         ownerId=owner_id,
         thumbhash=None,
-        checksum=gumnut_asset.checksum or "",
+        checksum=resolve_immich_checksum(gumnut_asset),
         deletedAt=gumnut_asset.trashed_at,
-        duration=None,
+        duration=format_duration(gumnut_asset.duration),
         fileCreatedAt=file_created_at,
         fileModifiedAt=file_modified_at,
         height=int(height) if height else None,
@@ -368,7 +436,6 @@ def convert_gumnut_asset_to_immich(
     asset_id = gumnut_asset.id
     original_filename = gumnut_asset.original_file_name or "unknown"
     mime_type = gumnut_asset.mime_type or "application/octet-stream"
-    checksum = gumnut_asset.checksum or ""
 
     file_created_at = resolve_file_created_at(gumnut_asset)
     file_modified_at = resolve_file_modified_at(gumnut_asset)
@@ -399,10 +466,10 @@ def convert_gumnut_asset_to_immich(
         fileModifiedAt=file_modified_at,
         localDateTime=local_date_time,
         updatedAt=gumnut_asset.updated_at,
-        checksum=checksum or "placeholder-checksum",
+        checksum=resolve_immich_checksum(gumnut_asset),
         exifInfo=exif_info,  # Now includes processed EXIF data
         createdAt=gumnut_asset.created_at,
-        duration="00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else "",
+        duration=_resolve_single_asset_duration(gumnut_asset, asset_type),
         hasMetadata=True,
         height=float(height) if height else None,
         isArchived=False,

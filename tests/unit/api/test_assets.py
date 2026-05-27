@@ -1,11 +1,14 @@
 """Tests for assets.py endpoints."""
 
+import asyncio
 import json
 
 import pytest
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from typing import Any
 from unittest.mock import Mock, AsyncMock, patch
+from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from uuid import UUID, uuid4
@@ -393,12 +396,14 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
         mock_gumnut_asset.mime_type = "image/jpeg"
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
+        mock_gumnut_asset.duration = None
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
@@ -500,6 +505,34 @@ class TestUploadAsset:
         assert exc_info.value.status_code == 401
 
     @pytest.mark.anyio
+    async def test_upload_asset_buffered_client_disconnect(self, mock_current_user):
+        """A mid-upload client disconnect on the buffered path returns 499 instead
+        of escaping as an unhandled 500."""
+        from starlette.requests import ClientDisconnect
+
+        mock_client = Mock()
+        mock_client.assets.with_raw_response.create = AsyncMock()
+
+        request = _make_mock_request()
+        # Starlette raises ClientDisconnect from request.form() when the client
+        # hangs up while the multipart body is still being parsed.
+        form_ctx = AsyncMock()
+        form_ctx.__aenter__ = AsyncMock(side_effect=ClientDisconnect())
+        request.form = Mock(return_value=form_ctx)
+        settings = _make_mock_settings()
+
+        result = await upload_asset(
+            request=request,
+            client=mock_client,
+            current_user=mock_current_user,
+            settings=settings,
+        )
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 499
+        mock_client.assets.with_raw_response.create.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_upload_asset_emits_websocket_events(
         self, sample_uuid, mock_current_user
     ):
@@ -507,6 +540,7 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -516,6 +550,7 @@ class TestUploadAsset:
         mock_gumnut_asset.mime_type = "image/jpeg"
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
+        mock_gumnut_asset.duration = None
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
@@ -614,12 +649,14 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "video.mp4"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
         mock_gumnut_asset.mime_type = "video/mp4"
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
+        mock_gumnut_asset.duration = None
         mock_gumnut_asset.file_size_bytes = 10240
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
@@ -643,9 +680,12 @@ class TestUploadAsset:
         request = _make_mock_request(mock_file=mock_file)
         settings = _make_mock_settings()
 
+        from routers.api.assets import _pending_emit_tasks
+
         with (
             patch("routers.api.assets.is_live_photo_video", return_value=False),
             patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+            patch("routers.api.assets._VIDEO_EMIT_DELAY_SECONDS", 0.0),
         ):
             result = await upload_asset(
                 request=request,
@@ -654,10 +694,91 @@ class TestUploadAsset:
                 settings=settings,
             )
 
-        assert isinstance(result, AssetMediaResponseDto)
-        assert result.id == str(sample_uuid)
-        assert result.status == AssetMediaStatus.created
-        mock_client.assets.with_raw_response.create.assert_called_once()
+            assert isinstance(result, AssetMediaResponseDto)
+            assert result.id == str(sample_uuid)
+            assert result.status == AssetMediaStatus.created
+            mock_client.assets.with_raw_response.create.assert_called_once()
+
+            # Drain the deferred-emit task spawned for the video upload so it
+            # completes inside the patched-mocks scope.
+            if _pending_emit_tasks:
+                await asyncio.gather(*list(_pending_emit_tasks))
+
+    @pytest.mark.anyio
+    async def test_video_upload_defers_websocket_events(
+        self, sample_uuid, mock_current_user
+    ):
+        """Video uploads defer WebSocket emission until after the configured delay."""
+        mock_gumnut_asset = Mock()
+        mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.original_file_name = "video.mp4"
+        mock_gumnut_asset.created_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.local_datetime = mock_gumnut_asset.created_at
+        mock_gumnut_asset.file_created_at = mock_gumnut_asset.created_at
+        mock_gumnut_asset.file_modified_at = mock_gumnut_asset.updated_at
+        mock_gumnut_asset.mime_type = "video/mp4"
+        mock_gumnut_asset.width = 1920
+        mock_gumnut_asset.height = 1080
+        mock_gumnut_asset.duration = None
+        mock_gumnut_asset.file_size_bytes = 10240
+        mock_gumnut_asset.metadata = None
+        mock_gumnut_asset.people = []
+        mock_gumnut_asset.trashed_at = None
+
+        mock_raw_response = Mock()
+        mock_raw_response.status_code = 201
+        mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
+
+        mock_client = Mock()
+        mock_client.assets.with_raw_response.create = AsyncMock(
+            return_value=mock_raw_response
+        )
+
+        mock_file = Mock()
+        mock_file.filename = "video.mp4"
+        mock_file.content_type = "video/mp4"
+        mock_file.file = BytesIO(b"fake video data")
+        mock_file.seek = AsyncMock()
+
+        request = _make_mock_request(mock_file=mock_file)
+        settings = _make_mock_settings()
+
+        from routers.api.assets import _pending_emit_tasks
+
+        with (
+            patch("routers.api.assets.is_live_photo_video", return_value=False),
+            patch(
+                "routers.api.assets.emit_user_event", new_callable=AsyncMock
+            ) as mock_emit,
+            patch("routers.api.assets._VIDEO_EMIT_DELAY_SECONDS", 0.0),
+        ):
+            await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+            # Emission is deferred — nothing fired before we yield to the loop.
+            assert mock_emit.call_count == 0
+            assert len(_pending_emit_tasks) == 1
+
+            await asyncio.gather(*list(_pending_emit_tasks))
+
+            assert mock_emit.call_count == 2
+            first_call = mock_emit.call_args_list[0]
+            assert first_call[0][0] == WebSocketEvent.UPLOAD_SUCCESS
+            assert first_call[0][1] == mock_current_user.id
+
+            second_call = mock_emit.call_args_list[1]
+            assert second_call[0][0] == WebSocketEvent.ASSET_UPLOAD_READY_V1
+            assert second_call[0][1] == mock_current_user.id
+
+            # done_callback drops the completed task from the strong-ref set.
+            assert len(_pending_emit_tasks) == 0
 
     @pytest.mark.anyio
     async def test_upload_asset_websocket_error_does_not_fail_upload(
@@ -667,12 +788,14 @@ class TestUploadAsset:
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
+        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
         mock_gumnut_asset.mime_type = "image/jpeg"
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
+        mock_gumnut_asset.duration = None
         mock_gumnut_asset.file_size_bytes = 1024
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
@@ -983,23 +1106,821 @@ class TestUploadAsset:
 
         assert exc_info.value.status_code == 502
 
+    @pytest.mark.anyio
+    async def test_streaming_upload_client_disconnect(self, mock_current_user):
+        """A client disconnect on the streaming path returns 499 rather than being
+        mapped to a 500/502 by the pipeline's broad error handler."""
+        from starlette.requests import ClientDisconnect
+
+        request = Mock()
+        request.headers = {
+            "content-length": str(300 * 1024 * 1024),
+            "content-type": "multipart/form-data; boundary=---abc123",
+        }
+
+        class _State:
+            jwt_token = "test-jwt-token"
+
+        request.state = _State()
+
+        settings = _make_mock_settings(threshold=100 * 1024 * 1024)
+
+        mock_pipeline_instance = Mock()
+        mock_pipeline_instance.execute = AsyncMock(side_effect=ClientDisconnect())
+
+        with patch(
+            "routers.api.assets.StreamingUploadPipeline",
+            return_value=mock_pipeline_instance,
+        ):
+            result = await upload_asset(
+                request=request,
+                client=Mock(),
+                current_user=mock_current_user,
+                settings=settings,
+            )
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 499
+
 
 class TestUpdateAssets:
-    """Test the update_assets endpoint."""
+    """Test the bulk asset-metadata edit endpoint.
+
+    `PUT /api/assets` forwards a subset of `AssetBulkUpdateDto` to the
+    Photos API `bulk_update_assets` call. In-scope fields: `description`,
+    paired `latitude` + `longitude`, and the capture time via one of three
+    mutually exclusive datetime modes — absolute `dateTimeOriginal` (with
+    optional `timeZone`), per-asset `dateTimeRelative` shift, or standalone
+    `timeZone` reinterpret. The two per-asset modes read each asset's current
+    `original_datetime` first (`client.assets.list(ids=...)`), then write a
+    heterogeneous per-item change. Out-of-scope fields (`isFavorite`,
+    `rating`, `visibility`, `duplicateId`) are silently ignored. Conflicting
+    datetime modes are rejected with 422.
+    """
+
+    @staticmethod
+    def _assert_calls_homogeneous_change(
+        mock_call: AsyncMock,
+        expected_ids: list[UUID],
+        expected_change: dict[str, Any],
+    ) -> None:
+        """Assert bulk_update_assets was called once with the expected updates."""
+        mock_call.assert_awaited_once()
+        call = mock_call.await_args
+        assert call is not None
+        updates = call.kwargs["updates"]
+        assert [item["id"] for item in updates] == [
+            uuid_to_gumnut_asset_id(uid) for uid in expected_ids
+        ]
+        for item in updates:
+            assert item["change"] == expected_change
+
+    @staticmethod
+    def _change_by_id(mock_call: AsyncMock) -> dict[str, Any]:
+        """Map gumnut id → change from a single bulk_update_assets call."""
+        mock_call.assert_awaited_once()
+        call = mock_call.await_args
+        assert call is not None
+        return {item["id"]: item["change"] for item in call.kwargs["updates"]}
+
+    @staticmethod
+    def _mock_read(assets_by_uuid: dict[UUID, datetime | None]) -> Mock:
+        """Build a `client.assets.list` mock returning the given current
+        `original_datetime` per asset.
+
+        A `None` value models an asset whose metadata carries no capture time
+        (skipped for the per-asset datetime rewrite). Returns a `Mock` whose
+        `return_value` is a `MockSyncCursorPage` so a single call is replayed;
+        callers wanting per-chunk pages set `side_effect` themselves.
+        """
+        from tests.conftest import MockSyncCursorPage
+
+        page_assets = []
+        for uid, dt in assets_by_uuid.items():
+            asset = Mock()
+            asset.id = uuid_to_gumnut_asset_id(uid)
+            asset.metadata = Mock(original_datetime=dt)
+            page_assets.append(asset)
+        return Mock(return_value=MockSyncCursorPage(page_assets))
 
     @pytest.mark.anyio
-    async def test_update_assets_success(self):
-        """Test successful assets update (stub implementation)."""
-        # Setup
-        request = AssetBulkUpdateDto(
-            ids=[uuid4()], dateTimeOriginal="2023-01-01T12:00:00Z"
+    async def test_update_assets_description_round_trips(self):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4(), uuid4()]
+        request = AssetBulkUpdateDto(ids=ids, description="hello")
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets, ids, {"description": "hello"}
         )
 
-        # Execute
-        result = await update_assets(request)
+    @pytest.mark.anyio
+    async def test_update_assets_description_null_clears(self):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {"ids": [str(uid) for uid in ids], "description": None}
+        )
 
-        # Assert
+        await update_assets(request, client=mock_client)
+
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets, ids, {"description": None}
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_lat_lon_round_trips(self):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(ids=ids, latitude=37.7749, longitude=-122.4194)
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            ids,
+            {"latitude": 37.7749, "longitude": -122.4194},
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_lat_lon_both_null_clears(self):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {
+                "ids": [str(uid) for uid in ids],
+                "latitude": None,
+                "longitude": None,
+            }
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            ids,
+            {"latitude": None, "longitude": None},
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_only_latitude_is_422(self):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock()
+        request = AssetBulkUpdateDto(ids=[uuid4()], latitude=37.7749)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "payload_extras",
+        [
+            {"latitude": None, "longitude": 1.0},
+            {"latitude": 1.0, "longitude": None},
+        ],
+    )
+    async def test_update_assets_half_cleared_coords_is_422(self, payload_extras):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock()
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {"ids": [str(uid) for uid in ids], **payload_extras}
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_datetime_with_offset_round_trips(self):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(
+            ids=ids, dateTimeOriginal="2024-06-15T14:30:00-07:00"
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            ids,
+            {
+                "original_datetime": datetime(
+                    2024, 6, 15, 14, 30, 0, tzinfo=timezone(-timedelta(hours=7))
+                )
+            },
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_datetime_naive_round_trips(self):
+        # Naive datetime (no offset, no Z). The backend accepts naive; the
+        # adapter does not synthesise an offset.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(ids=ids, dateTimeOriginal="2024-06-15T14:30:00")
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            ids,
+            {"original_datetime": datetime(2024, 6, 15, 14, 30, 0)},
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_datetime_null_clears(self):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {"ids": [str(uid) for uid in ids], "dateTimeOriginal": None}
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            ids,
+            {"original_datetime": None},
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_invalid_datetime_is_422(self):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock()
+        request = AssetBulkUpdateDto(ids=[uuid4()], dateTimeOriginal="not-a-datetime")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_datetime_with_timezone_combines(self):
+        # Web modal sends naive `dateTimeOriginal` + IANA `timeZone`; we
+        # localize wall-clock to that zone before forwarding.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(
+            ids=ids,
+            dateTimeOriginal="2024-06-15T14:30:00",
+            timeZone="America/Los_Angeles",
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            ids,
+            {
+                "original_datetime": datetime(
+                    2024, 6, 15, 14, 30, 0, tzinfo=ZoneInfo("America/Los_Angeles")
+                )
+            },
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "tz_name",
+        [
+            "Mars/Olympus_Mons",  # ZoneInfoNotFoundError: valid-format but unknown
+            "",  # ValueError: empty
+            "/Etc/UTC",  # ValueError: absolute path
+            "../etc/passwd",  # ValueError: non-normalized path
+        ],
+    )
+    async def test_update_assets_invalid_timezone_is_422(self, tz_name: str):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock()
+        request = AssetBulkUpdateDto(
+            ids=[uuid4()],
+            dateTimeOriginal="2024-06-15T14:30:00",
+            timeZone=tz_name,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_timezone_alone_reinterprets_per_asset(self):
+        # Standalone `timeZone` re-anchors each asset's existing wall-clock in
+        # the given zone: read current `original_datetime`, swap the tzinfo
+        # (preserve the clock digits), write per-asset.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        a, b = uuid4(), uuid4()
+        mock_client.assets.list = self._mock_read(
+            {
+                a: datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc),
+                b: datetime(2020, 1, 2, 9, 0, 0, tzinfo=timezone.utc),
+            }
+        )
+        request = AssetBulkUpdateDto(ids=[a, b], timeZone="America/Los_Angeles")
+
+        result = await update_assets(request, client=mock_client)
+
         assert result.status_code == 204
+        la = ZoneInfo("America/Los_Angeles")
+        by_id = self._change_by_id(mock_client.assets.bulk_update_assets)
+        assert by_id[uuid_to_gumnut_asset_id(a)] == {
+            "original_datetime": datetime(2024, 6, 15, 14, 30, 0, tzinfo=la)
+        }
+        assert by_id[uuid_to_gumnut_asset_id(b)] == {
+            "original_datetime": datetime(2020, 1, 2, 9, 0, 0, tzinfo=la)
+        }
+
+    @pytest.mark.anyio
+    async def test_update_assets_relative_datetime_shifts_per_asset(self):
+        # `dateTimeRelative` shifts each asset's existing datetime by N
+        # seconds: read current values, add the delta, write per-asset.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        a, b = uuid4(), uuid4()
+        base_a = datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc)
+        base_b = datetime(2020, 1, 2, 9, 0, 0)
+        mock_client.assets.list = self._mock_read({a: base_a, b: base_b})
+        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=3600.0)
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        by_id = self._change_by_id(mock_client.assets.bulk_update_assets)
+        assert by_id[uuid_to_gumnut_asset_id(a)] == {
+            "original_datetime": base_a + timedelta(seconds=3600)
+        }
+        assert by_id[uuid_to_gumnut_asset_id(b)] == {
+            "original_datetime": base_b + timedelta(seconds=3600)
+        }
+
+    @pytest.mark.anyio
+    async def test_update_assets_per_asset_skips_null_datetime(self):
+        # An asset with no existing `original_datetime` (and one absent from
+        # the read entirely) is skipped for the datetime rewrite; with no
+        # other in-scope field it drops out of the write. The asset with a
+        # base datetime is still updated.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        has_dt, no_dt, missing = uuid4(), uuid4(), uuid4()
+        base = datetime(2024, 6, 15, 14, 30, 0)
+        # `missing` is omitted from the read entirely; `no_dt` has null metadata dt.
+        mock_client.assets.list = self._mock_read({has_dt: base, no_dt: None})
+        request = AssetBulkUpdateDto(
+            ids=[has_dt, no_dt, missing], dateTimeRelative=60.0
+        )
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            [has_dt],
+            {"original_datetime": base + timedelta(seconds=60)},
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_per_asset_keeps_homogeneous_fields_when_skipping(
+        self,
+    ):
+        # When a per-asset datetime mode is mixed with a homogeneous field,
+        # an asset skipped for the datetime rewrite still receives the
+        # homogeneous field rather than dropping out.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        has_dt, no_dt = uuid4(), uuid4()
+        base = datetime(2024, 6, 15, 14, 30, 0)
+        mock_client.assets.list = self._mock_read({has_dt: base, no_dt: None})
+        request = AssetBulkUpdateDto(
+            ids=[has_dt, no_dt], dateTimeRelative=60.0, description="caption"
+        )
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        by_id = self._change_by_id(mock_client.assets.bulk_update_assets)
+        assert by_id[uuid_to_gumnut_asset_id(has_dt)] == {
+            "description": "caption",
+            "original_datetime": base + timedelta(seconds=60),
+        }
+        assert by_id[uuid_to_gumnut_asset_id(no_dt)] == {"description": "caption"}
+
+    @pytest.mark.anyio
+    async def test_update_assets_per_asset_reads_all_states_incl_trashed(self):
+        # The per-asset read must use state="all" so a trashed (non-live) asset
+        # is still rewritten, matching the homogeneous path which forwards every
+        # id regardless of trash state. The default live-only filter would drop
+        # trashed ids from the read and silently skip them.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        trashed = uuid4()
+        base = datetime(2024, 6, 15, 14, 30, 0)
+        mock_client.assets.list = self._mock_read({trashed: base})
+        request = AssetBulkUpdateDto(ids=[trashed], dateTimeRelative=3600.0)
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        mock_client.assets.list.assert_called_once_with(
+            state="all",
+            ids=[uuid_to_gumnut_asset_id(trashed)],
+            limit=1,
+        )
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            [trashed],
+            {"original_datetime": base + timedelta(seconds=3600)},
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_per_asset_zero_writable_chunk_skips_write(self):
+        # A chunk where every asset is non-writable in a per-asset datetime mode
+        # (no current `original_datetime`) and no homogeneous field is present
+        # produces zero updates, so `bulk_update_assets` is never awaited — pins
+        # the `if not updates: continue` branch.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        a, b = uuid4(), uuid4()
+        mock_client.assets.list = self._mock_read({a: None, b: None})
+        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=60.0)
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_relative_with_absolute_is_422(self):
+        # The three datetime modes are mutually exclusive — relative + absolute
+        # is ambiguous and rejected before any network call.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock()
+        mock_client.assets.list = AsyncMock()
+        request = AssetBulkUpdateDto(
+            ids=[uuid4()],
+            dateTimeRelative=3600.0,
+            dateTimeOriginal="2024-06-15T14:30:00",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+        mock_client.assets.list.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_relative_with_timezone_is_422(self):
+        # relative + standalone timeZone is ambiguous and rejected.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock()
+        mock_client.assets.list = AsyncMock()
+        request = AssetBulkUpdateDto(
+            ids=[uuid4()], dateTimeRelative=3600.0, timeZone="America/Los_Angeles"
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+        mock_client.assets.list.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_standalone_invalid_timezone_is_422(self):
+        # A bad standalone-timeZone name 422s before any read, not after.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock()
+        mock_client.assets.list = AsyncMock()
+        request = AssetBulkUpdateDto(ids=[uuid4()], timeZone="Mars/Olympus_Mons")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        mock_client.assets.list.assert_not_awaited()
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_relative_datetime_null_is_ignored(self):
+        # Explicit null for dateTimeRelative is "field not set", not a 422 —
+        # some Immich client SDKs emit null for fields they don't intend to
+        # change, and the rejection only triggers when non-null.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {
+                "ids": [str(uid) for uid in ids],
+                "dateTimeRelative": None,
+                "description": "x",
+            }
+        )
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets, ids, {"description": "x"}
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_timezone_null_is_ignored(self):
+        # Explicit null for timeZone (without dateTimeOriginal) is "field not
+        # set", not the standalone-timeZone 422 — clients send null for
+        # untouched fields and the adapter must not surface that as an error.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate(
+            {
+                "ids": [str(uid) for uid in ids],
+                "timeZone": None,
+                "description": "x",
+            }
+        )
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets, ids, {"description": "x"}
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_empty_ids_no_call(self):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock()
+        request = AssetBulkUpdateDto(ids=[], description="hello")
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_no_in_scope_fields_no_call(self):
+        # Only out-of-scope fields → adapter returns 204 without calling the
+        # backend; client UIs don't show errors for unsupported edits.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock()
+        request = AssetBulkUpdateDto(
+            ids=[uuid4()],
+            isFavorite=True,
+            rating=4.0,
+            visibility=AssetVisibility.archive,
+            duplicateId=str(uuid4()),
+        )
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_assets_out_of_scope_fields_dropped_when_mixed(self):
+        # When in-scope and out-of-scope fields are mixed, only in-scope
+        # values appear in the bulk-update body.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(
+            ids=ids,
+            description="caption",
+            isFavorite=True,
+            rating=4.0,
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets, ids, {"description": "caption"}
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "total, expected_chunks",
+        [
+            # Exact-boundary cases per docs/references/code-practices.md to
+            # catch off-by-one regressions a hand-rolled `if len > N` split
+            # would introduce. BULK_CHUNK_SIZE=100; the third case verifies
+            # the "second chunk is a single element" edge.
+            (100, [100]),
+            (101, [100, 1]),
+            (205, [100, 100, 5]),
+        ],
+    )
+    async def test_update_assets_chunks_when_over_cap(
+        self, total: int, expected_chunks: list[int]
+    ):
+        """Request larger than the per-call cap is split into chunks."""
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+
+        ids = [uuid4() for _ in range(total)]
+        request = AssetBulkUpdateDto(ids=ids, description="caption")
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        chunk_sizes = [
+            len(call.kwargs["updates"])
+            for call in mock_client.assets.bulk_update_assets.await_args_list
+        ]
+        assert chunk_sizes == expected_chunks
+        # Ids land in the chunks in input order; homogeneous change replicates per item.
+        flat_ids = [
+            item["id"]
+            for call in mock_client.assets.bulk_update_assets.await_args_list
+            for item in call.kwargs["updates"]
+        ]
+        assert flat_ids == [uuid_to_gumnut_asset_id(uid) for uid in ids]
+        for call in mock_client.assets.bulk_update_assets.await_args_list:
+            for item in call.kwargs["updates"]:
+                assert item["change"] == {"description": "caption"}
+
+    @pytest.mark.anyio
+    async def test_update_assets_per_asset_chunks_read_and_write(self):
+        """Per-asset datetime mode reads and writes once per chunk.
+
+        The bulk GET (`assets.list`) is chunked alongside the bulk PATCH, so a
+        101-id relative shift is two reads + two writes — not a per-asset GET
+        fan-out — with ids preserved in input order across chunks.
+        """
+        from tests.conftest import MockSyncCursorPage
+        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+
+        ids = [uuid4() for _ in range(BULK_CHUNK_SIZE + 1)]
+        base = datetime(2024, 6, 15, 14, 30, 0)
+
+        def _page_for(*_args, **kwargs):
+            assets = []
+            for gid in kwargs["ids"]:
+                asset = Mock()
+                asset.id = gid
+                asset.metadata = Mock(original_datetime=base)
+                assets.append(asset)
+            return MockSyncCursorPage(assets)
+
+        mock_client.assets.list = Mock(side_effect=_page_for)
+        request = AssetBulkUpdateDto(ids=ids, dateTimeRelative=60.0)
+
+        result = await update_assets(request, client=mock_client)
+
+        assert result.status_code == 204
+        read_sizes = [
+            len(call.kwargs["ids"]) for call in mock_client.assets.list.call_args_list
+        ]
+        assert read_sizes == [100, 1]
+        write_sizes = [
+            len(call.kwargs["updates"])
+            for call in mock_client.assets.bulk_update_assets.await_args_list
+        ]
+        assert write_sizes == [100, 1]
+        flat_ids = [
+            item["id"]
+            for call in mock_client.assets.bulk_update_assets.await_args_list
+            for item in call.kwargs["updates"]
+        ]
+        assert flat_ids == [uuid_to_gumnut_asset_id(uid) for uid in ids]
+        for call in mock_client.assets.bulk_update_assets.await_args_list:
+            for item in call.kwargs["updates"]:
+                assert item["change"] == {
+                    "original_datetime": base + timedelta(seconds=60)
+                }
+
+    @pytest.mark.anyio
+    async def test_update_assets_aware_datetime_with_timezone_re_anchors(self):
+        # Pins the docstring claim that aware inputs are re-anchored:
+        # wall-clock digits preserved, tz replaced. Without this, a future
+        # switch to astimezone would silently convert the moment in time
+        # instead.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(
+            ids=ids,
+            dateTimeOriginal="2024-06-15T14:30:00-07:00",
+            timeZone="America/New_York",
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            ids,
+            {
+                "original_datetime": datetime(
+                    2024, 6, 15, 14, 30, 0, tzinfo=ZoneInfo("America/New_York")
+                )
+            },
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_combined_in_scope_fields(self):
+        # All in-scope fields in one request — guards against a future
+        # refactor of `_build_bulk_metadata_change` that handles each field
+        # in isolation but breaks when they're composed.
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto(
+            ids=ids,
+            description="caption",
+            latitude=37.7749,
+            longitude=-122.4194,
+            dateTimeOriginal="2024-06-15T14:30:00",
+            timeZone="America/Los_Angeles",
+        )
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets,
+            ids,
+            {
+                "description": "caption",
+                "latitude": 37.7749,
+                "longitude": -122.4194,
+                "original_datetime": datetime(
+                    2024, 6, 15, 14, 30, 0, tzinfo=ZoneInfo("America/Los_Angeles")
+                ),
+            },
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_propagates_sdk_error(self):
+        """SDK errors on bulk-update bubble to the global GumnutError handler.
+
+        Pins the no-swallow contract: a future refactor that wraps the SDK
+        call in try/except (e.g. to skip a failing chunk mid-batch) must
+        break this test.
+        """
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(
+            side_effect=make_sdk_status_error(500, "boom")
+        )
+
+        request = AssetBulkUpdateDto(ids=[uuid4()], description="caption")
+
+        with pytest.raises(APIStatusError):
+            await update_assets(request, client=mock_client)
+
+    @pytest.mark.anyio
+    async def test_update_assets_multi_chunk_failure_leaves_prior_chunks_committed(
+        self,
+    ):
+        """Pin the no-rollback contract for cross-chunk failures.
+
+        The handler docstring (and `docs/references/code-practices.md`) call
+        out that SDK atomicity holds per call but not across chunks: chunk N
+        (N≥2) raising leaves chunks 1..N-1 already committed and the error
+        propagates as one 5xx. A future refactor that wraps the per-chunk
+        await in try/except (skip-on-failure) or switches to `asyncio.gather`
+        with `return_exceptions` would change failure semantics and must break
+        this test.
+        """
+        from gumnut import APIStatusError
+        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        # Chunk 1 succeeds, chunk 2 raises — exercises the partial-commit shape.
+        mock_client.assets.bulk_update_assets = AsyncMock(
+            side_effect=[None, make_sdk_status_error(500, "boom")]
+        )
+
+        ids = [uuid4() for _ in range(BULK_CHUNK_SIZE + 1)]
+        request = AssetBulkUpdateDto(ids=ids, description="caption")
+
+        with pytest.raises(APIStatusError):
+            await update_assets(request, client=mock_client)
+
+        # Awaited exactly twice: chunk 1 (committed) + chunk 2 (raised).
+        # No rollback attempt — the handler does not re-call chunk 1 to undo.
+        assert mock_client.assets.bulk_update_assets.await_count == 2
 
 
 class TestUpdateAsset:
@@ -1873,9 +2794,22 @@ class TestGetAssetInfo:
             )
 
 
-def _make_mock_asset_with_urls(variant_map: dict[str, dict[str, str]]):
-    """Create a mock asset with asset_urls (Mock objects with .url/.mimetype attrs)."""
+def _make_mock_asset_with_urls(
+    variant_map: dict[str, dict[str, str]],
+    mime_type: str = "image/jpeg",
+    width: int | None = None,
+    height: int | None = None,
+):
+    """Create a mock asset with asset_urls (Mock objects with .url/.mimetype attrs).
+
+    `width`/`height` default to None so the aspect-ratio variant upgrade
+    (`_upgrade_variant_for_aspect`) falls back to the requested variant — set
+    them explicitly to exercise the wide-landscape upgrade path.
+    """
     asset = Mock()
+    asset.mime_type = mime_type
+    asset.width = width
+    asset.height = height
     mock_urls = {}
     for key, val in variant_map.items():
         variant = Mock()
@@ -1997,6 +2931,259 @@ class TestViewAsset:
             )
 
         assert exc_info.value.status_code == 404
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("requested_size", "expected_key"),
+        [
+            (AssetMediaSize.thumbnail, "thumbnail_image"),
+            (AssetMediaSize.preview, "preview_image"),
+            (AssetMediaSize.fullsize, "fullsize_image"),
+        ],
+    )
+    async def test_view_asset_video_resolves_image_suffixed_variant(
+        self, sample_uuid, requested_size, expected_key
+    ):
+        """Video assets resolve still-image variants to `_image`-suffixed keys."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    expected_key: {
+                        "url": f"https://cdn.example.com/{expected_key}.webp",
+                        "mimetype": "image/webp",
+                    }
+                },
+                mime_type="video/mp4",
+            )
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(sample_uuid, size=requested_size, client=mock_client)
+
+        mock_cdn.assert_called_once_with(
+            f"https://cdn.example.com/{expected_key}.webp",
+            "image/webp",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
+        )
+
+    @pytest.mark.anyio
+    async def test_view_asset_video_thumbnail_image_missing_returns_404(
+        self, sample_uuid
+    ):
+        """Pre-extraction videos (no `_image` variants) return 404."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "original": {
+                        "url": "https://cdn.example.com/clip.mp4",
+                        "mimetype": "video/mp4",
+                    }
+                },
+                mime_type="video/mp4",
+            )
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        assert exc_info.value.status_code == 404
+        assert "thumbnail_image" in exc_info.value.detail
+
+    @pytest.mark.anyio
+    async def test_view_asset_wide_landscape_thumbnail_upgrades_to_preview(
+        self, sample_uuid
+    ):
+        """A wide-landscape (16:9) image thumbnail request streams the preview."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "thumbnail": {
+                        "url": "https://cdn.example.com/thumb.webp",
+                        "mimetype": "image/webp",
+                    },
+                    "preview": {
+                        "url": "https://cdn.example.com/preview.jpg",
+                        "mimetype": "image/jpeg",
+                    },
+                },
+                width=1920,
+                height=1080,
+            )
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        # The 1440px preview (JPEG) is streamed in place of the 250px thumbnail.
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/preview.jpg",
+            "image/jpeg",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
+        )
+
+    @pytest.mark.anyio
+    async def test_view_asset_wide_landscape_video_upgrades_to_preview_image(
+        self, sample_uuid
+    ):
+        """A wide-landscape video thumbnail request streams the preview_image."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "thumbnail_image": {
+                        "url": "https://cdn.example.com/thumb_image.webp",
+                        "mimetype": "image/webp",
+                    },
+                    "preview_image": {
+                        "url": "https://cdn.example.com/preview_image.jpg",
+                        "mimetype": "image/jpeg",
+                    },
+                },
+                mime_type="video/mp4",
+                width=1920,
+                height=1080,
+            )
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/preview_image.jpg",
+            "image/jpeg",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("width", "height"),
+        [
+            (1080, 1920),  # portrait 9:16 — same ratio as 16:9 but tall
+            (1000, 1000),  # square
+            (1200, 1000),  # landscape 6:5, ratio 1.2 (<= 1.5)
+            (1500, 1000),  # landscape 3:2, ratio 1.5 (boundary, not > 1.5)
+            (None, None),  # dimensions unknown
+            (0, 0),  # photos-api "unknown" sentinel
+        ],
+    )
+    async def test_view_asset_non_wide_landscape_thumbnail_stays_thumbnail(
+        self, sample_uuid, width, height
+    ):
+        """Portrait, square, near-square, boundary, and unknown-dim assets keep
+        the cheap 250px thumbnail."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "thumbnail": {
+                        "url": "https://cdn.example.com/thumb.webp",
+                        "mimetype": "image/webp",
+                    },
+                    "preview": {
+                        "url": "https://cdn.example.com/preview.jpg",
+                        "mimetype": "image/jpeg",
+                    },
+                },
+                width=width,
+                height=height,
+            )
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/thumb.webp",
+            "image/webp",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
+        )
+
+    @pytest.mark.anyio
+    async def test_view_asset_wide_landscape_preview_request_unaffected(
+        self, sample_uuid
+    ):
+        """A `preview`-size request on a wide-landscape asset is not re-upgraded
+        (only `thumbnail` requests get the aspect-based upgrade)."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "preview": {
+                        "url": "https://cdn.example.com/preview.jpg",
+                        "mimetype": "image/jpeg",
+                    },
+                },
+                width=1920,
+                height=1080,
+            )
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.preview, client=mock_client
+            )
+
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/preview.jpg",
+            "image/jpeg",
+            range_header=None,
+            forwarded_headers=(
+                "content-length",
+                "etag",
+                "last-modified",
+                "cache-control",
+            ),
+        )
 
 
 class TestDownloadAsset:
@@ -2187,7 +3374,8 @@ class TestPlayAssetVideo:
                         "url": "https://cdn.example.com/video.mp4",
                         "mimetype": "video/mp4",
                     }
-                }
+                },
+                mime_type="video/mp4",
             )
         )
         mock_streaming_response = Mock()
@@ -2226,7 +3414,8 @@ class TestPlayAssetVideo:
                         "url": "https://cdn.example.com/video.mp4",
                         "mimetype": "video/mp4",
                     }
-                }
+                },
+                mime_type="video/mp4",
             )
         )
         mock_request = Mock()

@@ -330,6 +330,7 @@ class TestSearchMetadata:
         gumnut_asset.original_file_name = "sunset.jpg"
         gumnut_asset.mime_type = "image/jpeg"
         gumnut_asset.checksum = "abc123"
+        gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         gumnut_asset.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
         gumnut_asset.updated_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
         gumnut_asset.local_datetime = datetime(2024, 6, 1, tzinfo=timezone.utc)
@@ -337,6 +338,7 @@ class TestSearchMetadata:
         gumnut_asset.file_modified_at = gumnut_asset.updated_at
         gumnut_asset.width = 1920
         gumnut_asset.height = 1080
+        gumnut_asset.duration = None
         gumnut_asset.file_size_bytes = 1024000
         gumnut_asset.metadata = None
         gumnut_asset.people = []
