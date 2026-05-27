@@ -506,6 +506,10 @@ class TestFormatDuration:
             (7200, "02:00:00.000000"),
             # Long clip past 24h still renders hours without wrapping.
             (90061.0, "25:01:01.000000"),
+            # Just under a minute/hour boundary must carry up, never render
+            # an out-of-range :60 seconds field.
+            (59.9999999, "00:01:00.000000"),
+            (3599.9999999, "01:00:00.000000"),
         ],
     )
     def test_formats_seconds_as_interval(self, seconds, expected):

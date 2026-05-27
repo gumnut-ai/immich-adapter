@@ -78,10 +78,14 @@ def format_duration(seconds: float | None) -> str | None:
     """
     if seconds is None:
         return None
-    total = float(seconds)
-    hours, remainder = divmod(total, 3600)
+    # Round to whole microseconds first, then decompose, so a value just under a
+    # minute/hour boundary (e.g. 59.9999999) carries up to 00:01:00.000000 rather
+    # than rendering an out-of-range 00:00:60.000000.
+    micros = round(float(seconds) * 1_000_000)
+    secs_total, micros = divmod(micros, 1_000_000)
+    hours, remainder = divmod(secs_total, 3600)
     minutes, secs = divmod(remainder, 60)
-    return f"{int(hours):02d}:{int(minutes):02d}:{secs:09.6f}"
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{micros:06d}"
 
 
 def _resolve_single_asset_duration(

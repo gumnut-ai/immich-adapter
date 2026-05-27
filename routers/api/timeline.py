@@ -217,8 +217,8 @@ async def get_time_bucket(
 
         is_trashed_list.append(bool(asset.trashed_at))
 
-        # Upstream NULL (image, or video not yet extracted) stays None, matching
-        # the prior all-None behavior; a real float renders HH:MM:SS.ffffff.
+        # None preserves this bucket's prior all-None duration behavior;
+        # format_duration owns the NULL handling and string formatting.
         duration_list.append(format_duration(asset.duration))
 
     # Return as dict to bypass Pydantic validation issues with None in List[str]
