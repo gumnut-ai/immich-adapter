@@ -4,8 +4,6 @@ Converter functions mapping Gumnut SDK types to Immich sync models.
 Pure functions with no internal dependencies.
 """
 
-import logging
-
 from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
@@ -28,10 +26,12 @@ from routers.immich_models import (
 )
 from routers.utils.asset_conversion import (
     exif_dims_and_orientation,
+    format_duration,
     mime_type_to_asset_type,
     normalize_rating,
     resolve_file_created_at,
     resolve_file_modified_at,
+    resolve_immich_checksum,
     resolve_local_date_time,
 )
 from routers.utils.datetime_utils import (
@@ -45,8 +45,6 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_person_id,
     safe_uuid_from_user_id,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def _format_exposure_time(exposure_time: float | None) -> str | None:
@@ -141,15 +139,9 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     fileModifiedAt = resolve_file_modified_at(asset)
     localDateTime = resolve_local_date_time(asset)
 
-    if asset.checksum_sha1 is None:
-        logger.warning(
-            f"Asset {asset.id} has no checksum_sha1, using checksum instead",
-            extra={"asset_id": asset.id, "checksum": asset.checksum},
-        )
-
     return SyncAssetV1(
         id=str(safe_uuid_from_asset_id(asset.id)),
-        checksum=asset.checksum_sha1 or asset.checksum,
+        checksum=resolve_immich_checksum(asset),
         isFavorite=False,  # Gumnut doesn't track favorites
         isEdited=False,
         originalFileName=asset.original_file_name,
@@ -161,7 +153,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         localDateTime=localDateTime,
         # Optional fields - use None when not available
         deletedAt=asset.trashed_at,
-        duration=None,
+        duration=format_duration(asset.duration),
         height=asset.height if asset.height else None,
         libraryId=None,
         livePhotoVideoId=None,

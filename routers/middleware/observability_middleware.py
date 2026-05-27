@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sentry_sdk
 from fastapi import Request
+from sentry_sdk.traces import StreamedSpan
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
@@ -33,7 +34,9 @@ class ObservabilityTagsMiddleware(BaseHTTPMiddleware):
 
         if user_agent:
             span = sentry_sdk.get_current_span()
-            if span is not None:
+            if isinstance(span, StreamedSpan):
+                span.set_attribute(USER_AGENT_ATTRIBUTE, user_agent)
+            elif span is not None:
                 span.set_data(USER_AGENT_ATTRIBUTE, user_agent)
 
         return await call_next(request)

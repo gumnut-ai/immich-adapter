@@ -60,4 +60,4 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 | Session & checkpoint reference | `docs/references/session-checkpoint-reference.md` | Session/checkpoint object shapes, field definitions |
 | Immich sync communication | `docs/references/immich-sync-communication.md` | Immich client-server sync protocol, message formats |
 | Uvicorn settings | `docs/references/uvicorn-settings.md` | Server configuration, worker settings, timeouts |
-| Development tools | `docs/references/development-tools.md` | Model generation, API compatibility, OpenAPI spec |
+| Development tools | `docs/references/development-tools.md` | Model generation, API compatibility, OpenAPI spec, Renovate automation |

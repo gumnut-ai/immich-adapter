@@ -279,6 +279,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset.checksum_sha1 = "sha1checksum"
         asset.width = 1600
         asset.height = 2400
+        asset.duration = None
         asset.trashed_at = None
         # resolve_file_modified_at reads metadata.modified_datetime; without
         # an explicit None the unset Mock attribute would silently produce a

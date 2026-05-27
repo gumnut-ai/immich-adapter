@@ -1,9 +1,11 @@
+import asyncio
 from itertools import batched
 from typing import Any, List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 import base64
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 import sentry_sdk
@@ -19,7 +21,9 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.requests import ClientDisconnect
 from gumnut import AsyncGumnut
+from gumnut.types.asset_bulk_update_assets_params import Update, UpdateChange
 from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
@@ -74,6 +78,12 @@ from routers.immich_models import AssetTypeEnum
 
 logger = logging.getLogger(__name__)
 
+# Non-standard status used when the client hangs up mid-upload. The response is
+# never delivered (the socket is already closed) — it exists only to give the
+# handler a well-defined return instead of letting ClientDisconnect escape as an
+# unhandled 500.
+HTTP_499_CLIENT_CLOSED_REQUEST = 499
+
 router = APIRouter(
     prefix="/api/assets",
     tags=["assets"],
@@ -93,6 +103,47 @@ _IMMICH_SIZE_TO_VARIANT: dict[AssetMediaSize, AssetVariant] = {
 _VIDEO_IMAGE_VARIANTS: frozenset[AssetVariant] = frozenset(
     {"thumbnail", "preview", "fullsize"}
 )
+
+# Aspect ratio (width / height) above which a landscape asset's `thumbnail`
+# request is upgraded to the larger `preview` variant. The Immich web timeline
+# is a justified-rows grid where every row renders at a fixed target height
+# (~235px). A thumbnail is generated at 250px on its longest edge, so for a
+# landscape asset that 250px is the *width* and the height is only 250/aspect
+# (~140px at 16:9). The grid then upscales it to fill the row, which looks
+# blurry. Serving the 1440px `preview` keeps wide-landscape cells crisp.
+# 1.5 catches 16:9 and wider while leaving 4:3/3:2 on the cheap thumbnail.
+# Portrait assets are unaffected: 250px lands on their height, which already
+# meets the row height, so they stay sharp without the bandwidth cost. Tunable.
+_LANDSCAPE_PREVIEW_ASPECT_THRESHOLD = 1.5
+
+
+def _upgrade_variant_for_aspect(
+    variant: AssetVariant, width: int | None, height: int | None
+) -> AssetVariant:
+    """Upgrade a wide-landscape `thumbnail` request to the `preview` variant.
+
+    Only `thumbnail` requests are affected; `preview`/`fullsize`/`original`
+    pass through unchanged. The upgrade applies when the asset is landscape
+    (`width > height`) and its aspect ratio exceeds
+    `_LANDSCAPE_PREVIEW_ASPECT_THRESHOLD` (see that constant for the rationale).
+    Missing or zero dimensions (photos-api stores `0` for unknown dims) fall
+    back to the requested `thumbnail` — a safe default when shape is unknown.
+
+    `width`/`height` are display-space dims (post-rotation), so `width > height`
+    means visually landscape. The returned variant still flows through
+    `_resolve_variant_key`, so a video upgrade resolves to `preview_image`. This
+    relies on the backend generating `preview`/`preview_image` whenever
+    `thumbnail`/`thumbnail_image` exists (image variants are resized URLs of the
+    same file; a video's still-image variants materialize together); otherwise
+    the upgraded request would 404 instead of serving the thumbnail.
+    """
+    if variant != "thumbnail":
+        return variant
+    if not width or not height or width <= height:
+        return variant
+    if width / height > _LANDSCAPE_PREVIEW_ASPECT_THRESHOLD:
+        return "preview"
+    return variant
 
 
 def _resolve_variant_key(mime_type: str, variant: AssetVariant) -> str:
@@ -121,7 +172,9 @@ async def _retrieve_and_stream_variant(
         client: Authenticated Gumnut client.
         variant: Logical variant name (thumbnail, preview, fullsize, original).
             For video assets the still-image variants resolve to the
-            `_image`-suffixed asset_urls keys.
+            `_image`-suffixed asset_urls keys. A `thumbnail` request for a
+            wide-landscape asset is upgraded to `preview` (see
+            `_upgrade_variant_for_aspect`).
         range_header: Optional Range header for video seeking.
         forwarded_headers: Upstream headers to forward from CDN response.
 
@@ -131,6 +184,7 @@ async def _retrieve_and_stream_variant(
     gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
     asset = await client.assets.retrieve(gumnut_asset_id)
 
+    variant = _upgrade_variant_for_aspect(variant, asset.width, asset.height)
     variant_key = _resolve_variant_key(asset.mime_type, variant)
 
     if not asset.asset_urls or variant_key not in asset.asset_urls:
@@ -289,11 +343,24 @@ def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
     return UploadFields(device_asset_id, device_id, file_created_at, file_modified_at)
 
 
-async def _emit_upload_events(
+# Delay applied before emitting upload-success events for video uploads, to give
+# photos-api time to extract the still-image variants (`thumbnail_image`,
+# `preview_image`, `fullsize_image`) before the Immich web client tries to render
+# the thumbnail. Image uploads emit immediately — their CDN-resized variants are
+# available the moment the file is written. Tune this constant if telemetry shows
+# the typical extraction time has drifted.
+_VIDEO_EMIT_DELAY_SECONDS = 3.0
+
+# Strong refs for in-flight delayed-emit tasks. asyncio only holds weak refs to
+# `create_task` results; without this set the GC can collect a sleeping task.
+_pending_emit_tasks: set[asyncio.Task[None]] = set()
+
+
+async def _do_emit_upload_events(
     gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
 ) -> None:
-    """Emit WebSocket events after a successful upload."""
+    """Emit the UPLOAD_SUCCESS + ASSET_UPLOAD_READY_V1 WebSocket events."""
     try:
         asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
         await emit_user_event(
@@ -312,6 +379,40 @@ async def _emit_upload_events(
                 "error": str(ws_error),
             },
         )
+
+
+async def _delayed_emit_upload_events(
+    gumnut_asset: AssetResponse,
+    current_user: UserResponseDto,
+    delay_seconds: float,
+) -> None:
+    """Sleep, then emit upload events. Used for videos to wait out thumbnail extraction."""
+    await asyncio.sleep(delay_seconds)
+    await _do_emit_upload_events(gumnut_asset, current_user)
+
+
+async def _emit_upload_events(
+    gumnut_asset: AssetResponse,
+    current_user: UserResponseDto,
+) -> None:
+    """Emit WebSocket events after a successful upload.
+
+    Images emit synchronously. Videos defer emission by `_VIDEO_EMIT_DELAY_SECONDS`
+    via a detached background task — the HTTP response is not blocked, but the
+    Immich web client's timeline insertion (triggered by `on_upload_success`) waits
+    until video thumbnail extraction has had a chance to complete.
+    """
+    if gumnut_asset.mime_type.startswith("video/"):
+        task = asyncio.create_task(
+            _delayed_emit_upload_events(
+                gumnut_asset, current_user, _VIDEO_EMIT_DELAY_SECONDS
+            )
+        )
+        _pending_emit_tasks.add(task)
+        task.add_done_callback(_pending_emit_tasks.discard)
+        return
+
+    await _do_emit_upload_events(gumnut_asset, current_user)
 
 
 @router.post(
@@ -376,12 +477,27 @@ async def upload_asset(
         },
     )
 
-    if use_streaming:
-        return await _upload_streaming(
-            request, client, current_user, settings.gumnut_api_base_url
+    try:
+        if use_streaming:
+            return await _upload_streaming(
+                request, client, current_user, settings.gumnut_api_base_url
+            )
+        else:
+            return await _upload_buffered(request, client, current_user)
+    except ClientDisconnect:
+        # The client hung up before finishing the upload (mobile backgrounding,
+        # cancel, network blip). The connection is gone, so there's no one to
+        # receive a response — treat it as a normal aborted upload rather than
+        # letting it surface as an unhandled 500.
+        logger.info(
+            "Client disconnected during %s upload before it completed",
+            strategy,
+            extra={"strategy": strategy},
         )
-    else:
-        return await _upload_buffered(request, client, current_user)
+        return JSONResponse(
+            content={"detail": "Client disconnected before upload completed"},
+            status_code=HTTP_499_CLIENT_CLOSED_REQUEST,
+        )
 
 
 async def _upload_buffered(
@@ -560,6 +676,10 @@ async def _upload_streaming(
 
     except HTTPException:
         raise
+    except ClientDisconnect:
+        # Let the disconnect propagate to upload_asset's handler instead of
+        # mapping it to a 500/502 — the client is already gone.
+        raise
     except (ValueError, ValidationError) as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
@@ -598,16 +718,258 @@ async def _upload_streaming(
         ) from e
 
 
+def _resolve_timezone(tz_name: str) -> ZoneInfo:
+    """Resolve an IANA timezone name, mapping bad input to 422.
+
+    `ZoneInfo()` raises `ValueError` for malformed keys (empty string,
+    absolute paths, non-normalized paths like "../..") and
+    `ZoneInfoNotFoundError` for well-formed-but-unknown zones; both must
+    surface as the 422 the rest of this module uses rather than an uncaught
+    500.
+    """
+    try:
+        return ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid timeZone: {tz_name!r}",
+        ) from exc
+
+
+def _combine_datetime_with_timezone(dt: datetime, tz_name: str) -> datetime:
+    """Apply an IANA timezone to a parsed `dateTimeOriginal`.
+
+    The Immich bulk DTO carries `timeZone` as an IANA name (e.g.
+    `America/Los_Angeles`). The Photos API encodes the offset directly into
+    `original_datetime`, so we localize wall-clock here. Aware inputs are
+    re-anchored: the wall-clock components are preserved and re-tagged with
+    the new tz, matching Immich's "interpret these clock digits in this zone"
+    UX (the modal sends a naive `dateTimeOriginal` when `timeZone` is set,
+    but we handle aware too for safety).
+    """
+    return dt.replace(tzinfo=_resolve_timezone(tz_name))
+
+
+class _RelativeShift(NamedTuple):
+    """Shift each asset's existing `original_datetime` by a fixed number of
+    seconds (`dateTimeRelative`)."""
+
+    relative_seconds: float
+
+    def apply(self, current: datetime) -> datetime:
+        return current + timedelta(seconds=self.relative_seconds)
+
+
+class _ReinterpretTimezone(NamedTuple):
+    """Re-anchor each asset's existing wall-clock to a zone (standalone
+    `timeZone`): preserve the clock digits, swap the tzinfo, exactly as
+    `_combine_datetime_with_timezone` does for the absolute path."""
+
+    tz: ZoneInfo
+
+    def apply(self, current: datetime) -> datetime:
+        return current.replace(tzinfo=self.tz)
+
+
+# A per-asset `original_datetime` rewrite that depends on each asset's current
+# value, so the handler must read the batch before writing. A tagged union so
+# each mode's field is non-optional — the "exactly one mode" invariant lives in
+# the type rather than a runtime assert.
+_PerAssetDatetime = _RelativeShift | _ReinterpretTimezone
+
+
+class _BulkMetadataChange(NamedTuple):
+    """The two inputs a bulk update is split into.
+
+    - `base` — fields identical across every id (homogeneous); may be empty.
+    - `transform` — an optional per-asset `original_datetime` rewrite that needs
+      each asset's current value read first, or `None`.
+    """
+
+    base: dict[str, Any]
+    transform: _PerAssetDatetime | None
+
+
+def _build_bulk_metadata_change(
+    request: AssetBulkUpdateDto,
+) -> _BulkMetadataChange:
+    """Split an `AssetBulkUpdateDto` into the two bulk-update inputs.
+
+    Returns a `_BulkMetadataChange(base, transform)`:
+
+    - `base` — fields identical across every id (homogeneous):
+      `description`, paired `latitude` + `longitude`, and an absolute
+      `original_datetime` (from `dateTimeOriginal`, optionally localized by a
+      paired `timeZone`). May be empty.
+    - `transform` — a per-asset `original_datetime` rewrite that needs each
+      asset's current value read first (`dateTimeRelative`, or standalone
+      `timeZone` without `dateTimeOriginal`), or `None`. See
+      `_PerAssetDatetime`.
+
+    Mirrors `_build_metadata_patch` for the single-asset path: uses
+    `model_fields_set` to distinguish "field omitted" from "field explicitly
+    null" and validates paired lat/lon adapter-side. Explicit `null` for
+    `dateTimeRelative` / `timeZone` is treated as "field not set" — clients
+    send null for fields they don't intend to change — so the per-asset
+    rewrites only trigger on non-null values.
+
+    Out-of-scope DTO fields (`isFavorite`, `rating`, `visibility`,
+    `duplicateId`) are silently ignored — the request still succeeds, the
+    adapter just doesn't act on parts the Photos API doesn't model.
+
+    The three datetime modes (absolute `dateTimeOriginal`, relative
+    `dateTimeRelative`, standalone `timeZone` reinterpret) are mutually
+    exclusive; combining them is rejected with 422 since the intended result
+    would be ambiguous.
+    """
+    provided = request.model_fields_set
+
+    has_absolute_dt = "dateTimeOriginal" in provided
+    relative = request.dateTimeRelative if "dateTimeRelative" in provided else None
+    tz_name = request.timeZone if "timeZone" in provided else None
+
+    transform: _PerAssetDatetime | None = None
+    base: dict[str, Any] = {}
+
+    # The three datetime modes are mutually exclusive.
+    if relative is not None and has_absolute_dt:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="dateTimeRelative and dateTimeOriginal cannot be combined",
+        )
+    if relative is not None and tz_name is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="dateTimeRelative and timeZone cannot be combined",
+        )
+
+    if relative is not None:
+        # Per-asset second-shift; needs each asset's current datetime.
+        transform = _RelativeShift(relative_seconds=relative)
+    elif tz_name is not None and not has_absolute_dt:
+        # Standalone timeZone reinterprets each asset's existing wall-clock;
+        # resolve the zone eagerly so a bad name 422s before any read.
+        transform = _ReinterpretTimezone(tz=_resolve_timezone(tz_name))
+    elif has_absolute_dt:
+        # Absolute datetime (optionally localized) is the same for every id.
+        parsed = _parse_update_original_datetime(request.dateTimeOriginal)
+        if parsed is not None and tz_name is not None:
+            parsed = _combine_datetime_with_timezone(parsed, tz_name)
+        base["original_datetime"] = parsed
+
+    if "description" in provided:
+        base["description"] = request.description
+
+    lat_set = "latitude" in provided
+    lon_set = "longitude" in provided
+    if lat_set != lon_set:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="latitude and longitude must be provided together",
+        )
+    if lat_set and lon_set:
+        if (request.latitude is None) != (request.longitude is None):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="latitude and longitude must be cleared together",
+            )
+        base["latitude"] = request.latitude
+        base["longitude"] = request.longitude
+
+    return _BulkMetadataChange(base, transform)
+
+
 @router.put("", status_code=204)
 async def update_assets(
     request: AssetBulkUpdateDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-):
+) -> Response:
+    """Bulk-update asset metadata.
+
+    Wires Immich's `PUT /api/assets` to the Photos API `bulk_update_assets`
+    call, which accepts heterogeneous per-item `change` dicts.
+
+    In-scope fields: `description`, paired `latitude` + `longitude`, and the
+    capture time via one of three mutually exclusive datetime modes:
+
+    - absolute `dateTimeOriginal` (optionally localized by a paired
+      `timeZone`) — identical for every id, so it's replicated as a single
+      homogeneous `change`;
+    - `dateTimeRelative` — a per-asset second-shift; and
+    - standalone `timeZone` — reinterpret each asset's existing wall-clock in
+      the given zone.
+
+    The two per-asset modes need each asset's *current* `original_datetime`,
+    so the handler reads the chunk first (`client.assets.list(state="all",
+    ids=...)`) and builds a per-item `change`. This is the "bulk GET + bulk
+    PATCH" shape: one read and one write per chunk, not a fan-out of per-asset
+    GETs. `state="all"` so trashed assets are read too: the homogeneous path
+    forwards every id to `bulk_update_assets` regardless of trash state, and the
+    default live-only filter would otherwise silently drop trashed ids from the
+    read — leaving the per-asset modes asymmetrically skipping them. Assets with
+    no existing `original_datetime` (and ids not returned by the read) are
+    skipped for the datetime rewrite — if they carry no other in-scope field
+    they drop out of the write entirely. There is a small read-then-write
+    window in which an asset's datetime could change between the two calls.
+
+    Out-of-scope DTO fields (`isFavorite`, `rating`, `visibility`,
+    `duplicateId`) are silently ignored. Conflicting datetime modes are
+    rejected with 422 — see `_build_bulk_metadata_change`.
+
+    No WebSocket events are emitted on success: `bulk_update_assets` returns
+    no per-asset payload, so we don't have post-update assets to mirror the
+    single-asset path's `ASSET_UPDATE` payload cheaply (the per-asset read
+    above is pre-update state for the datetime modes only). Clients fall back
+    to refresh on next sync.
+
+    The SDK caps each call at `BULK_CHUNK_SIZE` (100) items, so requests over
+    that are split into chunks. The SDK guarantees per-call atomicity (a
+    single chunk either fully commits or writes nothing), but that guarantee
+    does not extend across chunks: a failure on chunk N (N ≥ 2) leaves chunks
+    1..N-1 already committed, with no compensating rollback and no per-chunk
+    error report — the exception propagates as one 5xx. Consistent with
+    `_bulk_permanent_delete` / `_bulk_trash`.
     """
-    Update asset metadata.
-    This is a stub implementation as Gumnut does not support asset metadata updates.
-    Returns HTTP 204 (No Content) as specified by the Immich API.
-    """
+    if not request.ids:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    base_change, transform = _build_bulk_metadata_change(request)
+    if not base_change and transform is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    for chunk in batched(request.ids, BULK_CHUNK_SIZE):
+        gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
+        updates: list[Update]
+
+        if transform is None:
+            sdk_change = cast(UpdateChange, base_change)
+            updates = [{"id": gid, "change": sdk_change} for gid in gumnut_ids]
+        else:
+            # Per-asset datetime rewrite: read current values, then write.
+            # state="all" so trashed assets aren't silently dropped from the
+            # read (and thus the rewrite) — the homogeneous path above forwards
+            # them regardless, so the per-asset path must too.
+            page = await client.assets.list(
+                state="all", ids=gumnut_ids, limit=len(gumnut_ids)
+            )
+            current_by_id = {
+                asset.id: asset.metadata.original_datetime
+                for asset in page.data
+                if asset.metadata is not None
+            }
+            updates = []
+            for gid in gumnut_ids:
+                change = dict(base_change)
+                current = current_by_id.get(gid)
+                if current is not None:
+                    change["original_datetime"] = transform.apply(current)
+                if change:
+                    updates.append({"id": gid, "change": cast(UpdateChange, change)})
+            if not updates:
+                continue
+
+        await client.assets.bulk_update_assets(updates=updates)
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -49,6 +49,7 @@ def _make_asset(asset_id_uuid: UUID, captured_at: datetime) -> Mock:
     asset.original_file_name = "memory.jpg"
     asset.mime_type = "image/jpeg"
     asset.checksum = "checksum"
+    asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
     asset.width = 1920
     asset.height = 1080
     asset.created_at = captured_at
@@ -60,7 +61,7 @@ def _make_asset(asset_id_uuid: UUID, captured_at: datetime) -> Mock:
     asset.people = []
     asset.trashed_at = None
     asset.file_size_bytes = 1000
-    asset.duration_in_seconds = None
+    asset.duration = None
     asset.library_id = "library-1"
     return asset
 
