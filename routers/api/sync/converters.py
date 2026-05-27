@@ -26,6 +26,7 @@ from routers.immich_models import (
 )
 from routers.utils.asset_conversion import (
     exif_dims_and_orientation,
+    format_duration,
     mime_type_to_asset_type,
     normalize_rating,
     resolve_file_created_at,
@@ -152,7 +153,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         localDateTime=localDateTime,
         # Optional fields - use None when not available
         deletedAt=asset.trashed_at,
-        duration=None,
+        duration=format_duration(asset.duration),
         height=asset.height if asset.height else None,
         libraryId=None,
         livePhotoVideoId=None,

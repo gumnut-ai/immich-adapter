@@ -479,6 +479,40 @@ class TestGetTimeBucket:
             assert result["ratio"][0] == 2268 / 4032
 
     @pytest.mark.anyio
+    async def test_get_time_bucket_emits_per_asset_duration(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
+        """The bucket's ``duration`` array carries a real ``HH:MM:SS.ffffff``
+        string for a video whose upstream duration is populated, and stays
+        ``None`` for an asset whose upstream duration is NULL (image, or video
+        not yet extracted) — matching the prior all-None behavior."""
+        mock_client = Mock()
+
+        assets = multiple_gumnut_assets
+        assets[0].id = uuid_to_gumnut_asset_id(uuid4())
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].created_at = assets[0].local_datetime
+        assets[0].mime_type = "video/mp4"
+        assets[0].duration = 65.25
+
+        assets[1].id = uuid_to_gumnut_asset_id(uuid4())
+        assets[1].local_datetime = datetime(2024, 1, 16, 10, 0, 0, tzinfo=timezone.utc)
+        assets[1].created_at = assets[1].local_datetime
+        assets[1].mime_type = "image/jpeg"
+        assets[1].duration = None
+
+        mock_client.assets.list.return_value = mock_sync_cursor_page(assets[:2])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
+
+            assert result["duration"] == ["00:01:05.250000", None]
+
+    @pytest.mark.anyio
     async def test_get_time_bucket_with_album_id(
         self, multiple_gumnut_assets, mock_sync_cursor_page, sample_uuid
     ):
@@ -577,6 +611,7 @@ class TestGetTimeBucket:
         mock_asset.mime_type = "image/jpeg"
         mock_asset.width = 1920
         mock_asset.height = 1280
+        mock_asset.duration = None
 
         mock_client.assets.list.return_value = mock_sync_cursor_page([mock_asset])
 
@@ -607,6 +642,7 @@ class TestGetTimeBucket:
         mock_asset.mime_type = ""
         mock_asset.width = None
         mock_asset.height = None
+        mock_asset.duration = None
 
         mock_client.assets.list.return_value = mock_sync_cursor_page([mock_asset])
 
@@ -679,6 +715,7 @@ class TestGetTimeBucket:
         asset1.mime_type = "image/jpeg"
         asset1.width = 1920
         asset1.height = 1080
+        asset1.duration = None
         assets.append(asset1)
 
         asset2 = Mock()
@@ -690,6 +727,7 @@ class TestGetTimeBucket:
         asset2.mime_type = "image/png"
         asset2.width = 1024
         asset2.height = 768
+        asset2.duration = None
         assets.append(asset2)
 
         asset3 = Mock()
@@ -699,6 +737,7 @@ class TestGetTimeBucket:
         asset3.mime_type = "video/mp4"
         asset3.width = 3840
         asset3.height = 2160
+        asset3.duration = None
         assets.append(asset3)
 
         asset4 = Mock()
@@ -716,6 +755,7 @@ class TestGetTimeBucket:
         asset4.mime_type = "image/jpeg"
         asset4.width = 1600
         asset4.height = 1200
+        asset4.duration = None
         assets.append(asset4)
 
         mock_client.assets.list.return_value = mock_sync_cursor_page(assets)
@@ -747,6 +787,7 @@ class TestGetTimeBucket:
         asset1.mime_type = "image/jpeg"
         asset1.width = 1920
         asset1.height = 1080
+        asset1.duration = None
         assets.append(asset1)
 
         asset2 = Mock()
@@ -756,6 +797,7 @@ class TestGetTimeBucket:
         asset2.mime_type = "image/png"
         asset2.width = 1024
         asset2.height = 768
+        asset2.duration = None
         assets.append(asset2)
 
         mock_client.assets.list.return_value = mock_sync_cursor_page(assets)
@@ -787,6 +829,7 @@ class TestGetTimeBucket:
         asset1.mime_type = "image/jpeg"
         asset1.width = 1920
         asset1.height = 1080
+        asset1.duration = None
         assets.append(asset1)
 
         asset2 = Mock()
@@ -796,6 +839,7 @@ class TestGetTimeBucket:
         asset2.mime_type = "image/png"
         asset2.width = 1024
         asset2.height = 768
+        asset2.duration = None
         assets.append(asset2)
 
         asset3 = Mock()
@@ -807,6 +851,7 @@ class TestGetTimeBucket:
         asset3.mime_type = "video/mp4"
         asset3.width = 3840
         asset3.height = 2160
+        asset3.duration = None
         assets.append(asset3)
 
         asset4 = Mock()
@@ -816,6 +861,7 @@ class TestGetTimeBucket:
         asset4.mime_type = "image/jpeg"
         asset4.width = 1600
         asset4.height = 1200
+        asset4.duration = None
         assets.append(asset4)
 
         mock_client.assets.list.return_value = mock_sync_cursor_page(assets)

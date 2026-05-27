@@ -21,6 +21,7 @@ from routers.utils.asset_conversion import (
     convert_gumnut_asset_to_immich,
     extract_exif_info,
     extract_sync_exif,
+    format_duration,
     resolve_capture_datetime,
 )
 
@@ -485,3 +486,102 @@ class TestChecksumEmission:
             convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
 
         assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+class TestFormatDuration:
+    """``format_duration`` turns upstream float seconds into Immich's
+    ``HH:MM:SS.ffffff`` interval string, and ``None`` into ``None`` so callers
+    can preserve their existing absent-duration behavior."""
+
+    def test_none_passes_through(self):
+        assert format_duration(None) is None
+
+    @pytest.mark.parametrize(
+        "seconds, expected",
+        [
+            (0.0, "00:00:00.000000"),
+            (5.5, "00:00:05.500000"),
+            (65.25, "00:01:05.250000"),
+            (3661.5, "01:01:01.500000"),
+            (7200, "02:00:00.000000"),
+            # Long clip past 24h still renders hours without wrapping.
+            (90061.0, "25:01:01.000000"),
+            # Just under a minute/hour boundary must carry up, never render
+            # an out-of-range :60 seconds field.
+            (59.9999999, "00:01:00.000000"),
+            (3599.9999999, "01:00:00.000000"),
+        ],
+    )
+    def test_formats_seconds_as_interval(self, seconds, expected):
+        assert format_duration(seconds) == expected
+
+
+class TestDurationEmission:
+    """Every outbound converter forwards the upstream ``duration`` (float
+    seconds) as an ``HH:MM:SS.ffffff`` string. When upstream is NULL each site
+    preserves the value it emitted before this field existed — never a
+    fabricated length. Mirrors the width/height staged-rollout precedent."""
+
+    OWNER_ID = "22222222-2222-2222-2222-222222222222"
+
+    def test_rest_converter_formats_populated_duration(
+        self, sample_gumnut_asset, mock_current_user
+    ):
+        sample_gumnut_asset.mime_type = "video/mp4"
+        sample_gumnut_asset.duration = 12.5
+
+        result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+
+        assert result.duration == "00:00:12.500000"
+
+    def test_websocket_payload_formats_populated_duration(self, sample_gumnut_asset):
+        sample_gumnut_asset.mime_type = "video/mp4"
+        sample_gumnut_asset.duration = 30.0
+
+        payload = build_asset_upload_ready_payload(
+            sample_gumnut_asset, owner_id=self.OWNER_ID
+        )
+
+        assert payload.asset.duration == "00:00:30.000000"
+
+    def test_sync_converter_formats_populated_duration(self, sample_gumnut_asset):
+        sample_gumnut_asset.mime_type = "video/mp4"
+        sample_gumnut_asset.duration = 30.0
+
+        result = gumnut_asset_to_sync_asset_v1(
+            sample_gumnut_asset, owner_id=self.OWNER_ID
+        )
+
+        assert result.duration == "00:00:30.000000"
+
+    def test_null_duration_preserves_prior_behavior(
+        self, sample_gumnut_asset, mock_current_user
+    ):
+        """Upstream NULL: the REST single-asset DTO keeps its zero placeholder
+        for video, while the WebSocket and sync converters keep ``None``."""
+        sample_gumnut_asset.mime_type = "video/mp4"
+        sample_gumnut_asset.duration = None
+
+        rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+        ws = build_asset_upload_ready_payload(
+            sample_gumnut_asset, owner_id=self.OWNER_ID
+        )
+        sync = gumnut_asset_to_sync_asset_v1(
+            sample_gumnut_asset, owner_id=self.OWNER_ID
+        )
+
+        assert rest.duration == "00:00:00.000000"
+        assert ws.asset.duration is None
+        assert sync.duration is None
+
+    def test_null_duration_image_emits_empty_string_in_rest_dto(
+        self, sample_gumnut_asset, mock_current_user
+    ):
+        """For images (no duration concept) the REST DTO keeps its empty-string
+        placeholder rather than the video zero or a fabricated value."""
+        sample_gumnut_asset.mime_type = "image/jpeg"
+        sample_gumnut_asset.duration = None
+
+        result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+
+        assert result.duration == ""

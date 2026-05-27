@@ -67,6 +67,42 @@ def normalize_rating(rating: float | int | None) -> int | None:
     return None if value == -1 else value
 
 
+def format_duration(seconds: float | None) -> str | None:
+    """Format an upstream video duration (float seconds) as Immich's interval string.
+
+    Immich expresses video duration as an ``HH:MM:SS.ffffff`` string. The Gumnut
+    asset carries ``duration`` as float seconds, or ``None`` when the asset is an
+    image or its duration has not been extracted yet. Returns ``None`` for ``None``
+    so callers can preserve each emit site's existing absent-duration behavior
+    rather than fabricating a value.
+    """
+    if seconds is None:
+        return None
+    # Round to whole microseconds first, then decompose, so a value just under a
+    # minute/hour boundary (e.g. 59.9999999) carries up to 00:01:00.000000 rather
+    # than rendering an out-of-range 00:00:60.000000.
+    micros = round(float(seconds) * 1_000_000)
+    secs_total, micros = divmod(micros, 1_000_000)
+    hours, remainder = divmod(secs_total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{micros:06d}"
+
+
+def _resolve_single_asset_duration(
+    gumnut_asset: AssetResponse, asset_type: AssetTypeEnum
+) -> str:
+    """Duration string for the single-asset ``AssetResponseDto`` (non-nullable).
+
+    Uses the upstream value when present; when absent, preserves the prior
+    placeholder — zero duration for videos, empty string for images — rather
+    than fabricating a length.
+    """
+    formatted = format_duration(gumnut_asset.duration)
+    if formatted is not None:
+        return formatted
+    return "00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else ""
+
+
 def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime:
     """Return the Photos API-resolved capture datetime for Immich timeline fields.
 
@@ -363,7 +399,7 @@ def build_asset_upload_ready_payload(
         thumbhash=None,
         checksum=resolve_immich_checksum(gumnut_asset),
         deletedAt=gumnut_asset.trashed_at,
-        duration=None,
+        duration=format_duration(gumnut_asset.duration),
         fileCreatedAt=file_created_at,
         fileModifiedAt=file_modified_at,
         height=int(height) if height else None,
@@ -433,7 +469,7 @@ def convert_gumnut_asset_to_immich(
         checksum=resolve_immich_checksum(gumnut_asset),
         exifInfo=exif_info,  # Now includes processed EXIF data
         createdAt=gumnut_asset.created_at,
-        duration="00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else "",
+        duration=_resolve_single_asset_duration(gumnut_asset, asset_type),
         hasMetadata=True,
         height=float(height) if height else None,
         isArchived=False,

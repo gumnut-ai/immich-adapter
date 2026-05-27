@@ -14,6 +14,7 @@ from routers.immich_models import (
     TimeBucketsResponseDto,
 )
 from routers.utils.asset_conversion import (
+    format_duration,
     mime_type_to_asset_type,
     resolve_capture_datetime,
 )
@@ -184,6 +185,7 @@ async def get_time_bucket(
     visibility_list = []
     local_offset_hours_list = []
     is_trashed_list = []
+    duration_list: list[str | None] = []
 
     for asset in filtered_assets:
         asset_id = asset.id
@@ -215,12 +217,17 @@ async def get_time_bucket(
 
         is_trashed_list.append(bool(asset.trashed_at))
 
+        # Forward each asset's duration: format_duration returns the
+        # HH:MM:SS.ffffff string, or None on NULL upstream — preserving this
+        # bucket's prior all-None output for images / not-yet-extracted videos.
+        duration_list.append(format_duration(asset.duration))
+
     # Return as dict to bypass Pydantic validation issues with None in List[str]
     # XXX revisit this issue later
     return {
         "city": [None] * asset_count,
         "country": [None] * asset_count,
-        "duration": [None] * asset_count,
+        "duration": duration_list,
         "livePhotoVideoId": [None] * asset_count,
         "projectionType": [None] * asset_count,
         "id": asset_ids,

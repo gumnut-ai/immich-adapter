@@ -61,7 +61,7 @@ def _make_asset(asset_id_uuid: UUID, captured_at: datetime) -> Mock:
     asset.people = []
     asset.trashed_at = None
     asset.file_size_bytes = 1000
-    asset.duration_in_seconds = None
+    asset.duration = None
     asset.library_id = "library-1"
     return asset
 
