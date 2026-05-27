@@ -1,11 +1,11 @@
 ---
 title: "Development Tools"
-last-updated: 2026-03-19
+last-updated: 2026-05-15
 ---
 
 # Development Tools
 
-Tools for generating models, validating API compatibility, and inspecting the OpenAPI spec.
+Tools for generating models, validating API compatibility, inspecting the OpenAPI spec, and keeping selected dependency surfaces current.
 
 For context on the adapter's data translation layer and which endpoints are implemented, see the [adapter architecture doc](../architecture/adapter-architecture.md).
 
@@ -132,3 +132,23 @@ This is useful for:
 - Debugging OpenAPI spec generation
 - Comparing specs without running a server
 - Offline analysis of the API specification
+
+## Dependency Update Automation
+
+[`renovate.json`](../../renovate.json) configures Renovate for the dependency surfaces we want to keep moving automatically without turning every version bump into a weekly manual chore.
+
+### What Renovate Manages
+
+- **GitHub Actions** in `.github/workflows/`, grouped into a single `github-actions` update stream.
+- **Dockerfile base images**, grouped into a single `container base images` update stream.
+
+### Guardrails
+
+- Renovate is limited to the `github-actions` and `dockerfile` managers.
+- Updates must be at least **14 days old** before Renovate opens a PR (`minimumReleaseAge`).
+- Renovate runs **before 6am on Monday**, which keeps dependency churn predictable.
+- The dependency dashboard is enabled so maintainers can see pending updates in one place.
+
+### Not Managed by Renovate
+
+The `ghcr.io/immich-app/immich-server` image is intentionally excluded. The adapter treats the target Immich version as a coordinated compatibility decision, not a routine dependency bump, so update it manually via the workflow in [Code Practices](./code-practices.md#bumping-the-immich-version).

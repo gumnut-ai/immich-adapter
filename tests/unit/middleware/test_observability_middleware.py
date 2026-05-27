@@ -45,6 +45,43 @@ class TestObservabilityTagsMiddleware:
         )
 
     @pytest.mark.anyio
+    async def test_user_agent_is_set_on_streamed_span(self):
+        """Streamed spans should receive an OpenTelemetry-style attribute."""
+        app = FastAPI()
+        app.add_middleware(ObservabilityTagsMiddleware)
+
+        @app.get("/echo")
+        async def _echo():
+            return {"ok": True}
+
+        class DummyStreamedSpan:
+            def __init__(self) -> None:
+                self.set_attribute = MagicMock()
+
+        mock_span = DummyStreamedSpan()
+        with (
+            patch(
+                "routers.middleware.observability_middleware.StreamedSpan",
+                DummyStreamedSpan,
+            ),
+            patch(
+                "routers.middleware.observability_middleware.sentry_sdk.get_current_span",
+                return_value=mock_span,
+            ),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://testserver"
+            ) as client:
+                response = await client.get(
+                    "/echo", headers={"user-agent": "Immich_iOS_1.94.0"}
+                )
+
+        assert response.status_code == 200
+        mock_span.set_attribute.assert_called_once_with(
+            USER_AGENT_ATTRIBUTE, "Immich_iOS_1.94.0"
+        )
+
+    @pytest.mark.anyio
     async def test_user_agent_not_set_when_header_missing(self):
         """Missing User-Agent header should not emit an empty
         `user_agent.original` attribute — skip the call entirely so Sentry
