@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation Documentation for immich-adapter"
-last-updated: 2026-05-22
+last-updated: 2026-05-27
 ---
 
 # WebSocket Implementation Documentation for immich-adapter
@@ -147,11 +147,12 @@ The `environ` dict includes:
 
 ### 3.1 Supported Events (Current Scope)
 
-Starting with `on_upload_success`, but designed for future extension:
+Starting with the current upload-success events, but designed for future extension:
 
 | Event Name | Payload | Sent To | Trigger |
 |---|---|---|---|
-| `on_upload_success` | `AssetResponseDto` | Asset owner | After upload completes |
+| `on_upload_success` | `AssetResponseDto` | Asset owner | Images: immediately after upload completes; videos: after the shared 3s WebSocket deferral |
+| `AssetUploadReadyV1` | `{ asset: SyncAssetV1, exif: SyncAssetExifV1 }` | Asset owner | Emitted alongside `on_upload_success` on the same schedule |
 | `on_server_version` | Version info | Connecting client | On connect (existing) |
 
 ### 3.2 Event Implementation Status
@@ -203,7 +204,7 @@ Mobile clients using the v2 sync protocol listen to `AssetUploadReadyV1` instead
 
 The mobile client batches these events and updates its local SQLite database immediately. Immich plans to deprecate `on_upload_success` in favor of `AssetUploadReadyV1`.
 
-**Recommendation**: Emit both events on upload completion to support all clients.
+**Recommendation**: Emit both upload-success events from the same helper so images stay immediate and videos share the same 3-second deferral across web and mobile clients.
 
 ### 3.4 Event Emission Interface
 
@@ -426,13 +427,21 @@ async def emit_event(event: WebSocketEvent, user_id: str, payload: EventPayload 
 
 from services.websockets import emit_user_event, WebSocketEvent
 
-@router.post("/assets")
-async def upload_asset(...):
-    # ... upload logic ...
+async def _do_emit_upload_events(gumnut_asset, current_user):
+    asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
+    await emit_user_event(WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response)
 
-    await emit_user_event(WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response_dto)
+    payload = build_asset_upload_ready_payload(gumnut_asset, current_user.id)
+    await emit_user_event(WebSocketEvent.ASSET_UPLOAD_READY_V1, current_user.id, payload)
 
-    return asset_response_dto
+async def _emit_upload_events(gumnut_asset, current_user):
+    if gumnut_asset.mime_type.startswith("video/"):
+        task = asyncio.create_task(_delayed_emit_upload_events(...))
+        _pending_emit_tasks.add(task)
+        task.add_done_callback(_pending_emit_tasks.discard)
+        return
+
+    await _do_emit_upload_events(gumnut_asset, current_user)
 ```
 
 ```python

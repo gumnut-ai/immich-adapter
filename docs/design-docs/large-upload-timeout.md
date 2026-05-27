@@ -2,7 +2,7 @@
 title: "Large Upload Timeout"
 status: active
 created: 2026-04-13
-last-updated: 2026-04-13
+last-updated: 2026-05-27
 ---
 
 # Large Upload Timeout
@@ -43,11 +43,11 @@ Render request logs (ingress layer) confirm the 60-second cutoff. Sizes and dura
 | Video | ~1 GB | ~25s | 201 | Success |
 | Video | ~1.5 GB | ~33s | 201 | Success |
 | Video | ~3.5 GB | ~61s (aborted) | 499 | Client disconnected |
-| Video | ~3.7 GB | ~60s (aborted) | 502 | Client disconnected |
+| Video | ~3.7 GB | ~60s (aborted) | 499 | Client disconnected |
 
 For successful uploads, the duration is the full request round-trip. For failed uploads, it is the time until the client disconnected — **not** the time a complete upload would have taken. The failed uploads transferred only 75–89% of the file before the timeout fired.
 
-HTTP 499 is an ingress-layer status code ("client closed request") confirming the client terminates the connection, not the server. The 502 on the other request is the adapter's mapped error response (via `map_gumnut_error`) after detecting the `ClientDisconnect`.
+HTTP 499 is the adapter's current representation of these aborted uploads: `upload_asset` catches `ClientDisconnect` on both buffered and streaming paths and records the request as "client closed request" rather than surfacing a server-side 500/502. Earlier revisions could still map the streaming-path disconnect to 502 via `map_gumnut_error`; that is no longer the documented behavior.
 
 ### Pipeline Throughput
 
