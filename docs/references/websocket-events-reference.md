@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-05-27
+last-updated: 2026-05-28
 ---
 
 # Immich WebSocket Events Reference
@@ -56,6 +56,8 @@ AssetResponseDto {
 }
 ```
 
+**Duration note**: `AssetResponseDto.duration` stays non-null because the DTO field is required. The adapter now forwards the upstream video duration when available, formatted as `HH:MM:SS.ffffff`; if upstream still has no duration, videos keep the historical `00:00:00.000000` placeholder and images keep `""`.
+
 **Client handling**:
 - **Web**: Global listener via `websocketEvents`
 - **Mobile**: Legacy listener; being replaced by `AssetUploadReadyV1`
@@ -87,7 +89,7 @@ AssetResponseDto {
     fileCreatedAt: string;
     fileModifiedAt: string;
     localDateTime: string;
-    duration: string;
+    duration: string | null;
     type: AssetType;
     deletedAt: string | null;
     isFavorite: boolean;
@@ -112,6 +114,8 @@ AssetResponseDto {
   };
 }
 ```
+
+**Duration note**: `SyncAssetV1.duration` is nullable. The adapter forwards the upstream video duration as `HH:MM:SS.ffffff` when present; images and videos whose duration has not been extracted yet emit `null`.
 
 **Client handling**:
 - **Web**: Not used

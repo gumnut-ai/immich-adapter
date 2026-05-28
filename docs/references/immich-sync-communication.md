@@ -1,6 +1,6 @@
 ---
 title: "Immich Client<>Server Sync Communication"
-last-updated: 2025-12-02
+last-updated: 2026-05-28
 ---
 
 # Immich Client<>Server Sync Communication
@@ -102,6 +102,8 @@ Let's look at the detail for the first AssetV1 entity:
 ```
 
 It contains just the details of the asset. EXIF comes later in a `AssetExifV1` record. Note that there is no binary image - the client retrieves the thumbnail a bit later as we'll see below.
+
+`duration` is nullable in `SyncAssetV1`: the image examples in this document show `null`, and videos also stay `null` until upstream duration extraction has populated a value. When present, the adapter forwards the duration in Immich's interval format (`HH:MM:SS.ffffff`).
 
 ## The Full Initial Conversation
 
