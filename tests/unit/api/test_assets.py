@@ -3006,7 +3006,8 @@ class TestViewAsset:
     async def test_view_asset_wide_landscape_thumbnail_upgrades_to_small(
         self, sample_uuid
     ):
-        """A wide-landscape (16:9) image thumbnail request streams the small variant."""
+        """A wide-landscape (wider than 2:1) image thumbnail request streams the
+        small variant."""
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
@@ -3024,8 +3025,8 @@ class TestViewAsset:
                         "mimetype": "image/jpeg",
                     },
                 },
-                width=1920,
-                height=1080,
+                width=2400,  # ratio 2.4 (> 2)
+                height=1000,
             )
         )
 
@@ -3074,8 +3075,8 @@ class TestViewAsset:
                     },
                 },
                 mime_type="video/mp4",
-                width=1920,
-                height=1080,
+                width=2400,  # ratio 2.4 (> 2)
+                height=1000,
             )
         )
 
@@ -3124,8 +3125,8 @@ class TestViewAsset:
                     },
                 },
                 mime_type=mime_type,
-                width=1920,
-                height=1080,
+                width=2400,  # ratio 2.4 (> 2)
+                height=1000,
             )
         )
 
@@ -3141,10 +3142,12 @@ class TestViewAsset:
     @pytest.mark.parametrize(
         ("width", "height"),
         [
-            (1080, 1920),  # portrait 9:16 — same ratio as 16:9 but tall
+            (1080, 1920),  # portrait 9:16 — tall, width <= height
             (1000, 1000),  # square
-            (1200, 1000),  # landscape 6:5, ratio 1.2 (<= 1.5)
-            (1500, 1000),  # landscape 3:2, ratio 1.5 (boundary, not > 1.5)
+            (1200, 1000),  # landscape 6:5, ratio 1.2 (<= 2)
+            (1500, 1000),  # landscape 3:2, ratio 1.5 (<= 2)
+            (1920, 1080),  # landscape 16:9, ratio ~1.78 (<= 2) — mild upscale is fine
+            (2000, 1000),  # landscape 2:1, ratio 2.0 (boundary, not > 2)
             (None, None),  # dimensions unknown
             (0, 0),  # photos-api "unknown" sentinel
         ],
@@ -3152,7 +3155,7 @@ class TestViewAsset:
     async def test_view_asset_non_wide_landscape_thumbnail_stays_thumbnail(
         self, sample_uuid, width, height
     ):
-        """Portrait, square, near-square, boundary, and unknown-dim assets keep
+        """Portrait, square, 16:9, the 2:1 boundary, and unknown-dim assets keep
         the cheap 360px thumbnail."""
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
@@ -3207,8 +3210,8 @@ class TestViewAsset:
                         "mimetype": "image/jpeg",
                     },
                 },
-                width=1920,
-                height=1080,
+                width=2400,  # ratio 2.4 (> 2) — would upgrade if this were a thumbnail request
+                height=1000,
             )
         )
 
