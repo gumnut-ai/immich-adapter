@@ -91,7 +91,7 @@ router = APIRouter(
 )
 
 
-AssetVariant = Literal["thumbnail", "preview", "fullsize", "original"]
+AssetVariant = Literal["thumbnail", "small", "preview", "fullsize", "original"]
 
 _IMMICH_SIZE_TO_VARIANT: dict[AssetMediaSize, AssetVariant] = {
     AssetMediaSize.fullsize: "fullsize",
@@ -101,38 +101,41 @@ _IMMICH_SIZE_TO_VARIANT: dict[AssetMediaSize, AssetVariant] = {
 
 # Variants that get an `_image` suffix for video assets.
 _VIDEO_IMAGE_VARIANTS: frozenset[AssetVariant] = frozenset(
-    {"thumbnail", "preview", "fullsize"}
+    {"thumbnail", "small", "preview", "fullsize"}
 )
 
 # Aspect ratio (width / height) above which a landscape asset's `thumbnail`
-# request is upgraded to the larger `preview` variant. The Immich web timeline
+# request is upgraded to the larger `small` variant. The Immich web timeline
 # is a justified-rows grid where every row renders at a fixed target height
-# (~235px). A thumbnail is generated at 250px on its longest edge, so for a
-# landscape asset that 250px is the *width* and the height is only 250/aspect
-# (~140px at 16:9). The grid then upscales it to fill the row, which looks
-# blurry. Serving the 1440px `preview` keeps wide-landscape cells crisp.
-# 1.5 catches 16:9 and wider while leaving 4:3/3:2 on the cheap thumbnail.
-# Portrait assets are unaffected: 250px lands on their height, which already
+# (~235px). The `thumbnail` variant is 360px on its longest edge, so for a
+# landscape asset that 360px is the *width* and the height is only 360/aspect
+# (~202px at 16:9). The grid then upscales it to fill the row, which looks
+# blurry. Serving the 720px `small` variant keeps wide-landscape cells crisp
+# (even on Retina) at roughly a quarter of the pixels of the 1440px `preview`,
+# which is far more resolution than a timeline tile needs.
+# 1.5 catches 16:9 and wider while leaving 4:3/3:2 on the cheap thumbnail: at
+# aspect 1.5 the thumbnail height is 360/1.5 = 240px, which already meets the row.
+# Portrait assets are unaffected: 360px lands on their height, which already
 # meets the row height, so they stay sharp without the bandwidth cost. Tunable.
-_LANDSCAPE_PREVIEW_ASPECT_THRESHOLD = 1.5
+_LANDSCAPE_SMALL_ASPECT_THRESHOLD = 1.5
 
 
 def _upgrade_variant_for_aspect(
     variant: AssetVariant, width: int | None, height: int | None
 ) -> AssetVariant:
-    """Upgrade a wide-landscape `thumbnail` request to the `preview` variant.
+    """Upgrade a wide-landscape `thumbnail` request to the `small` variant.
 
-    Only `thumbnail` requests are affected; `preview`/`fullsize`/`original`
-    pass through unchanged. The upgrade applies when the asset is landscape
-    (`width > height`) and its aspect ratio exceeds
-    `_LANDSCAPE_PREVIEW_ASPECT_THRESHOLD` (see that constant for the rationale).
+    Only `thumbnail` requests are affected; `small`/`preview`/`fullsize`/
+    `original` pass through unchanged. The upgrade applies when the asset is
+    landscape (`width > height`) and its aspect ratio exceeds
+    `_LANDSCAPE_SMALL_ASPECT_THRESHOLD` (see that constant for the rationale).
     Missing or zero dimensions (photos-api stores `0` for unknown dims) fall
     back to the requested `thumbnail` — a safe default when shape is unknown.
 
     `width`/`height` are display-space dims (post-rotation), so `width > height`
     means visually landscape. The returned variant still flows through
-    `_resolve_variant_key`, so a video upgrade resolves to `preview_image`. This
-    relies on the backend generating `preview`/`preview_image` whenever
+    `_resolve_variant_key`, so a video upgrade resolves to `small_image`. This
+    relies on the backend generating `small`/`small_image` whenever
     `thumbnail`/`thumbnail_image` exists (image variants are resized URLs of the
     same file; a video's still-image variants materialize together); otherwise
     the upgraded request would 404 instead of serving the thumbnail.
@@ -141,8 +144,8 @@ def _upgrade_variant_for_aspect(
         return variant
     if not width or not height or width <= height:
         return variant
-    if width / height > _LANDSCAPE_PREVIEW_ASPECT_THRESHOLD:
-        return "preview"
+    if width / height > _LANDSCAPE_SMALL_ASPECT_THRESHOLD:
+        return "small"
     return variant
 
 
@@ -173,7 +176,7 @@ async def _retrieve_and_stream_variant(
         variant: Logical variant name (thumbnail, preview, fullsize, original).
             For video assets the still-image variants resolve to the
             `_image`-suffixed asset_urls keys. A `thumbnail` request for a
-            wide-landscape asset is upgraded to `preview` (see
+            wide-landscape asset is upgraded to `small` (see
             `_upgrade_variant_for_aspect`).
         range_header: Optional Range header for video seeking.
         forwarded_headers: Upstream headers to forward from CDN response.
