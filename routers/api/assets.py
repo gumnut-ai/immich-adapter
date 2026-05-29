@@ -108,16 +108,20 @@ _VIDEO_IMAGE_VARIANTS: frozenset[AssetVariant] = frozenset(
 # request is upgraded to the larger `small` variant. The Immich web timeline
 # is a justified-rows grid where every row renders at a fixed target height
 # (~235px). The `thumbnail` variant is 360px on its longest edge, so for a
-# landscape asset that 360px is the *width* and the height is only 360/aspect
-# (~202px at 16:9). The grid then upscales it to fill the row, which looks
-# blurry. Serving the 720px `small` variant keeps wide-landscape cells crisp
-# (even on Retina) at roughly a quarter of the pixels of the 1440px `preview`,
-# which is far more resolution than a timeline tile needs.
-# 1.5 catches 16:9 and wider while leaving 4:3/3:2 on the cheap thumbnail: at
-# aspect 1.5 the thumbnail height is 360/1.5 = 240px, which already meets the row.
+# landscape asset that 360px is the *width* and the height is only 360/aspect.
+# Tiles shorter than the row get upscaled, but a mild upscale is barely
+# perceptible — a 16:9 tile (height 360/1.78 ~= 202px) filled to ~235px still
+# looks fine, so the 720px `small` bump isn't worth its bandwidth there. Only
+# when the asset is wider than 2:1 does the tile get short enough (aspect 2 ->
+# 360/2 = 180px) that the upscale visibly softens it; serving the 720px `small`
+# keeps those panorama/ultrawide cells crisp at roughly a quarter of the pixels
+# of the 1440px `preview`, which is far more resolution than a timeline tile
+# needs.
+# 2 leaves 16:9/3:2/4:3 on the cheap thumbnail and catches only wider-than-2:1
+# panorama/ultrawide assets.
 # Portrait assets are unaffected: 360px lands on their height, which already
 # meets the row height, so they stay sharp without the bandwidth cost. Tunable.
-_LANDSCAPE_SMALL_ASPECT_THRESHOLD = 1.5
+_LANDSCAPE_SMALL_ASPECT_THRESHOLD = 2.0
 
 
 def _upgrade_variant_for_aspect(
