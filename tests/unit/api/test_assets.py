@@ -3003,10 +3003,10 @@ class TestViewAsset:
         assert "thumbnail_image" in exc_info.value.detail
 
     @pytest.mark.anyio
-    async def test_view_asset_wide_landscape_thumbnail_upgrades_to_preview(
+    async def test_view_asset_wide_landscape_thumbnail_upgrades_to_small(
         self, sample_uuid
     ):
-        """A wide-landscape (16:9) image thumbnail request streams the preview."""
+        """A wide-landscape (16:9) image thumbnail request streams the small variant."""
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
@@ -3014,6 +3014,10 @@ class TestViewAsset:
                     "thumbnail": {
                         "url": "https://cdn.example.com/thumb.webp",
                         "mimetype": "image/webp",
+                    },
+                    "small": {
+                        "url": "https://cdn.example.com/small.jpg",
+                        "mimetype": "image/jpeg",
                     },
                     "preview": {
                         "url": "https://cdn.example.com/preview.jpg",
@@ -3033,9 +3037,10 @@ class TestViewAsset:
                 sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
             )
 
-        # The 1440px preview (JPEG) is streamed in place of the 250px thumbnail.
+        # The 720px small (JPEG) is streamed in place of the 360px thumbnail —
+        # not the heavier 1440px preview, even though it is also available.
         mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/preview.jpg",
+            "https://cdn.example.com/small.jpg",
             "image/jpeg",
             range_header=None,
             forwarded_headers=(
@@ -3047,10 +3052,10 @@ class TestViewAsset:
         )
 
     @pytest.mark.anyio
-    async def test_view_asset_wide_landscape_video_upgrades_to_preview_image(
+    async def test_view_asset_wide_landscape_video_upgrades_to_small_image(
         self, sample_uuid
     ):
-        """A wide-landscape video thumbnail request streams the preview_image."""
+        """A wide-landscape video thumbnail request streams the small_image."""
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
@@ -3058,6 +3063,10 @@ class TestViewAsset:
                     "thumbnail_image": {
                         "url": "https://cdn.example.com/thumb_image.webp",
                         "mimetype": "image/webp",
+                    },
+                    "small_image": {
+                        "url": "https://cdn.example.com/small_image.jpg",
+                        "mimetype": "image/jpeg",
                     },
                     "preview_image": {
                         "url": "https://cdn.example.com/preview_image.jpg",
@@ -3079,7 +3088,7 @@ class TestViewAsset:
             )
 
         mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/preview_image.jpg",
+            "https://cdn.example.com/small_image.jpg",
             "image/jpeg",
             range_header=None,
             forwarded_headers=(
@@ -3089,6 +3098,44 @@ class TestViewAsset:
                 "cache-control",
             ),
         )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("mime_type", "present_key", "expected_missing_key"),
+        [
+            ("image/jpeg", "thumbnail", "small"),
+            ("video/mp4", "thumbnail_image", "small_image"),
+        ],
+    )
+    async def test_view_asset_wide_landscape_missing_small_returns_404(
+        self, sample_uuid, mime_type, present_key, expected_missing_key
+    ):
+        """The aspect upgrade rewrites the variant *before* the asset_urls
+        existence check, so a wide-landscape thumbnail request 404s on the
+        upgraded key (`small` / `small_image`) — not the present `thumbnail` —
+        rather than falling back, if the backend ever stops emitting it."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    present_key: {
+                        "url": "https://cdn.example.com/thumb.webp",
+                        "mimetype": "image/webp",
+                    },
+                },
+                mime_type=mime_type,
+                width=1920,
+                height=1080,
+            )
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        assert exc_info.value.status_code == 404
+        assert expected_missing_key in exc_info.value.detail
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(
@@ -3106,7 +3153,7 @@ class TestViewAsset:
         self, sample_uuid, width, height
     ):
         """Portrait, square, near-square, boundary, and unknown-dim assets keep
-        the cheap 250px thumbnail."""
+        the cheap 360px thumbnail."""
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
@@ -3115,8 +3162,8 @@ class TestViewAsset:
                         "url": "https://cdn.example.com/thumb.webp",
                         "mimetype": "image/webp",
                     },
-                    "preview": {
-                        "url": "https://cdn.example.com/preview.jpg",
+                    "small": {
+                        "url": "https://cdn.example.com/small.jpg",
                         "mimetype": "image/jpeg",
                     },
                 },

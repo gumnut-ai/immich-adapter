@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-27
+last-updated: 2026-05-29
 ---
 
 # Code Practices
@@ -133,9 +133,9 @@ Emit all three tuple elements verbatim on the response. Do **not** re-derive ori
 
 ### Thumbnail variant selection by aspect ratio
 
-`GET /api/assets/{id}/thumbnail?size=thumbnail` normally streams the 250px `thumbnail` variant, but `_retrieve_and_stream_variant` (`routers/api/assets.py`) upgrades it to the 1440px `preview` variant for **wide-landscape** assets — `width > height` AND aspect ratio > `_LANDSCAPE_PREVIEW_ASPECT_THRESHOLD` (1.5). The Immich web timeline is a justified-rows grid that renders every row at a fixed height (~235px); a 250px-longest-edge thumbnail of a landscape asset has a height of only `250/aspect` (~140px at 16:9), so the grid upscales it and it looks blurry. Portrait assets are deliberately excluded — 250px lands on their height, which already meets the row height, so they stay crisp without paying the ~10–20× bandwidth cost of the larger variant. `preview`/`fullsize`/`original` requests and missing/zero dims pass through unchanged (the `width`/`height` `0`-means-unknown guard from *Asset dimensions and orientation* applies here too). Video upgrades resolve to `preview_image` via the existing `_image`-suffix logic. The threshold is tunable.
+`GET /api/assets/{id}/thumbnail?size=thumbnail` normally streams the 360px `thumbnail` variant, but `_retrieve_and_stream_variant` (`routers/api/assets.py`) upgrades it to the 720px `small` variant for **wide-landscape** assets — `width > height` AND aspect ratio > `_LANDSCAPE_SMALL_ASPECT_THRESHOLD` (1.5). The Immich web timeline is a justified-rows grid that renders every row at a fixed height (~235px); a 360px-longest-edge thumbnail of a landscape asset has a height of only `360/aspect` (~202px at 16:9), so the grid upscales it and it looks blurry. The 720px `small` clears the row height (even on Retina) at roughly a quarter of the pixels of the 1440px `preview`, which is far more resolution than a timeline tile needs. Portrait assets are deliberately excluded — 360px lands on their height, which already meets the row height, so they stay crisp without the extra bandwidth. `small`/`preview`/`fullsize`/`original` requests and missing/zero dims pass through unchanged (the `width`/`height` `0`-means-unknown guard from *Asset dimensions and orientation* applies here too). Video upgrades resolve to `small_image` via the existing `_image`-suffix logic — so any variant the bump can target must be a member of both the `AssetVariant` type and `_VIDEO_IMAGE_VARIANTS`, or a video upgrade resolves to a bare (non-`_image`) key that isn't in `asset_urls` and 404s. The threshold is tunable.
 
-The upgrade rewrites the variant **before** the `asset_urls` existence check, so it assumes the backend generates `preview`/`preview_image` whenever `thumbnail`/`thumbnail_image` exists — true today (image variants are CDN-resized URLs of the same uploaded file; a video's still-image variants materialize together). If that ever stops holding, a wide-landscape thumbnail request would 404 instead of degrading to the thumbnail. Gate the upgrade on the upgraded key's presence if that assumption breaks.
+The upgrade rewrites the variant **before** the `asset_urls` existence check, so it assumes the backend generates `small`/`small_image` whenever `thumbnail`/`thumbnail_image` exists — true today (image variants are CDN-resized URLs of the same uploaded file; a video's still-image variants materialize together). If that ever stops holding, a wide-landscape thumbnail request would 404 instead of degrading to the thumbnail. Gate the upgrade on the upgraded key's presence if that assumption breaks.
 
 ### Outbound asset checksums — emit base64 SHA-1, never the SHA-256
 
