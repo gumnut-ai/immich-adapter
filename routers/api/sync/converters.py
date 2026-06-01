@@ -158,7 +158,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         libraryId=None,
         livePhotoVideoId=None,
         stackId=None,
-        thumbhash=None,
+        thumbhash=asset.thumbhash,
         width=asset.width if asset.width else None,
     )
 

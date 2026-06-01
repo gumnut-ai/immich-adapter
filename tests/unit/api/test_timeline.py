@@ -513,6 +513,37 @@ class TestGetTimeBucket:
             assert result["duration"] == ["00:01:05.250000", None]
 
     @pytest.mark.anyio
+    async def test_get_time_bucket_emits_per_asset_thumbhash(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
+        """The bucket's ``thumbhash`` array carries each asset's real upstream
+        value (and ``None`` when not yet generated) — not the single shared
+        hardcoded constant the endpoint used to ship for every tile."""
+        mock_client = Mock()
+
+        assets = multiple_gumnut_assets
+        assets[0].id = uuid_to_gumnut_asset_id(uuid4())
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].created_at = assets[0].local_datetime
+        assets[0].thumbhash = "1QcSHQRnh493V4dIh4eXh1h4kJUI"
+
+        assets[1].id = uuid_to_gumnut_asset_id(uuid4())
+        assets[1].local_datetime = datetime(2024, 1, 16, 10, 0, 0, tzinfo=timezone.utc)
+        assets[1].created_at = assets[1].local_datetime
+        assets[1].thumbhash = None
+
+        mock_client.assets.list.return_value = mock_sync_cursor_page(assets[:2])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=mock_client
+            )
+
+            assert result["thumbhash"] == ["1QcSHQRnh493V4dIh4eXh1h4kJUI", None]
+
+    @pytest.mark.anyio
     async def test_get_time_bucket_with_album_id(
         self, multiple_gumnut_assets, mock_sync_cursor_page, sample_uuid
     ):

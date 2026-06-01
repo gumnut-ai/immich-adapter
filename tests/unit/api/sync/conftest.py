@@ -153,6 +153,7 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     asset.updated_at = updated_at
     asset.checksum = "abc123"
     asset.checksum_sha1 = "sha1checksum"
+    asset.thumbhash = None
     asset.width = 1920
     asset.height = 1080
     asset.duration = None
