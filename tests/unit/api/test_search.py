@@ -334,6 +334,7 @@ class TestSearchMetadata:
         gumnut_asset.mime_type = "image/jpeg"
         gumnut_asset.checksum = "abc123"
         gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        gumnut_asset.thumbhash = None
         gumnut_asset.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
         gumnut_asset.updated_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
         gumnut_asset.local_datetime = datetime(2024, 6, 1, tzinfo=timezone.utc)

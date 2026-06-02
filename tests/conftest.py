@@ -109,6 +109,9 @@ def sample_gumnut_asset():
     asset.checksum = "abc123"
     # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
     asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+    # Default to "not yet generated"; thumbhash tests set an explicit value.
+    # Without this, the Mock would yield a Mock (not None) for asset.thumbhash.
+    asset.thumbhash = None
     asset.width = 1920
     asset.height = 1080
     asset.file_size_bytes = 1059218
@@ -161,6 +164,9 @@ def multiple_gumnut_assets():
         asset.checksum = f"checksum-{i}"
         # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
         asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        # Default to "not yet generated"; thumbhash tests set an explicit value.
+        # Without this, the Mock would yield a Mock (not None) for asset.thumbhash.
+        asset.thumbhash = None
         asset.metadata = None
         asset.people = []
         asset.trashed_at = None

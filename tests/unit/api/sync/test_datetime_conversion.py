@@ -277,6 +277,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset.file_modified_at = file_modified_at
         asset.checksum = "abc123"
         asset.checksum_sha1 = "sha1checksum"
+        asset.thumbhash = None
         asset.width = 1600
         asset.height = 2400
         asset.duration = None

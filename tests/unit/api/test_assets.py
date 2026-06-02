@@ -397,6 +397,7 @@ class TestUploadAsset:
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
         mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -541,6 +542,7 @@ class TestUploadAsset:
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
         mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -650,6 +652,7 @@ class TestUploadAsset:
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
         mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "video.mp4"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -713,6 +716,7 @@ class TestUploadAsset:
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
         mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "video.mp4"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -789,6 +793,7 @@ class TestUploadAsset:
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_gumnut_asset.checksum = "abc123"
         mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
@@ -3006,10 +3011,11 @@ class TestViewAsset:
         assert "thumbnail_image" in exc_info.value.detail
 
     @pytest.mark.anyio
-    async def test_view_asset_wide_landscape_thumbnail_upgrades_to_preview(
+    async def test_view_asset_wide_landscape_thumbnail_upgrades_to_small(
         self, sample_uuid
     ):
-        """A wide-landscape (16:9) image thumbnail request streams the preview."""
+        """A wide-landscape (wider than 2:1) image thumbnail request streams the
+        small variant."""
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
@@ -3018,13 +3024,17 @@ class TestViewAsset:
                         "url": "https://cdn.example.com/thumb.webp",
                         "mimetype": "image/webp",
                     },
+                    "small": {
+                        "url": "https://cdn.example.com/small.jpg",
+                        "mimetype": "image/jpeg",
+                    },
                     "preview": {
                         "url": "https://cdn.example.com/preview.jpg",
                         "mimetype": "image/jpeg",
                     },
                 },
-                width=1920,
-                height=1080,
+                width=2400,  # ratio 2.4 (> 2)
+                height=1000,
             )
         )
 
@@ -3036,9 +3046,10 @@ class TestViewAsset:
                 sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
             )
 
-        # The 1440px preview (JPEG) is streamed in place of the 250px thumbnail.
+        # The 720px small (JPEG) is streamed in place of the 360px thumbnail —
+        # not the heavier 1440px preview, even though it is also available.
         mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/preview.jpg",
+            "https://cdn.example.com/small.jpg",
             "image/jpeg",
             range_header=None,
             forwarded_headers=(
@@ -3050,10 +3061,10 @@ class TestViewAsset:
         )
 
     @pytest.mark.anyio
-    async def test_view_asset_wide_landscape_video_upgrades_to_preview_image(
+    async def test_view_asset_wide_landscape_video_upgrades_to_small_image(
         self, sample_uuid
     ):
-        """A wide-landscape video thumbnail request streams the preview_image."""
+        """A wide-landscape video thumbnail request streams the small_image."""
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
@@ -3062,14 +3073,18 @@ class TestViewAsset:
                         "url": "https://cdn.example.com/thumb_image.webp",
                         "mimetype": "image/webp",
                     },
+                    "small_image": {
+                        "url": "https://cdn.example.com/small_image.jpg",
+                        "mimetype": "image/jpeg",
+                    },
                     "preview_image": {
                         "url": "https://cdn.example.com/preview_image.jpg",
                         "mimetype": "image/jpeg",
                     },
                 },
                 mime_type="video/mp4",
-                width=1920,
-                height=1080,
+                width=2400,  # ratio 2.4 (> 2)
+                height=1000,
             )
         )
 
@@ -3082,7 +3097,7 @@ class TestViewAsset:
             )
 
         mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/preview_image.jpg",
+            "https://cdn.example.com/small_image.jpg",
             "image/jpeg",
             range_header=None,
             forwarded_headers=(
@@ -3095,12 +3110,52 @@ class TestViewAsset:
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(
+        ("mime_type", "present_key", "expected_missing_key"),
+        [
+            ("image/jpeg", "thumbnail", "small"),
+            ("video/mp4", "thumbnail_image", "small_image"),
+        ],
+    )
+    async def test_view_asset_wide_landscape_missing_small_returns_404(
+        self, sample_uuid, mime_type, present_key, expected_missing_key
+    ):
+        """The aspect upgrade rewrites the variant *before* the asset_urls
+        existence check, so a wide-landscape thumbnail request 404s on the
+        upgraded key (`small` / `small_image`) — not the present `thumbnail` —
+        rather than falling back, if the backend ever stops emitting it."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    present_key: {
+                        "url": "https://cdn.example.com/thumb.webp",
+                        "mimetype": "image/webp",
+                    },
+                },
+                mime_type=mime_type,
+                width=2400,  # ratio 2.4 (> 2)
+                height=1000,
+            )
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        assert exc_info.value.status_code == 404
+        assert expected_missing_key in exc_info.value.detail
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
         ("width", "height"),
         [
-            (1080, 1920),  # portrait 9:16 — same ratio as 16:9 but tall
+            (1080, 1920),  # portrait 9:16 — tall, width <= height
             (1000, 1000),  # square
-            (1200, 1000),  # landscape 6:5, ratio 1.2 (<= 1.5)
-            (1500, 1000),  # landscape 3:2, ratio 1.5 (boundary, not > 1.5)
+            (1200, 1000),  # landscape 6:5, ratio 1.2 (<= 2)
+            (1500, 1000),  # landscape 3:2, ratio 1.5 (<= 2)
+            (1920, 1080),  # landscape 16:9, ratio ~1.78 (<= 2) — mild upscale is fine
+            (2000, 1000),  # landscape 2:1, ratio 2.0 (boundary, not > 2)
             (None, None),  # dimensions unknown
             (0, 0),  # photos-api "unknown" sentinel
         ],
@@ -3108,8 +3163,8 @@ class TestViewAsset:
     async def test_view_asset_non_wide_landscape_thumbnail_stays_thumbnail(
         self, sample_uuid, width, height
     ):
-        """Portrait, square, near-square, boundary, and unknown-dim assets keep
-        the cheap 250px thumbnail."""
+        """Portrait, square, 16:9, the 2:1 boundary, and unknown-dim assets keep
+        the cheap 360px thumbnail."""
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
@@ -3118,8 +3173,8 @@ class TestViewAsset:
                         "url": "https://cdn.example.com/thumb.webp",
                         "mimetype": "image/webp",
                     },
-                    "preview": {
-                        "url": "https://cdn.example.com/preview.jpg",
+                    "small": {
+                        "url": "https://cdn.example.com/small.jpg",
                         "mimetype": "image/jpeg",
                     },
                 },
@@ -3163,8 +3218,8 @@ class TestViewAsset:
                         "mimetype": "image/jpeg",
                     },
                 },
-                width=1920,
-                height=1080,
+                width=2400,  # ratio 2.4 (> 2) — would upgrade if this were a thumbnail request
+                height=1000,
             )
         )
 

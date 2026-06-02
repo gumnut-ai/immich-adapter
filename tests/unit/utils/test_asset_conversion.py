@@ -514,6 +514,68 @@ class TestChecksumEmission:
         assert not [r for r in caplog.records if r.levelno == logging.WARNING]
 
 
+class TestThumbhashEmission:
+    """Every outbound converter passes the upstream ``thumbhash`` straight
+    through to its Immich DTO, and emits ``None`` when it has not been generated
+    yet.
+
+    thumbhash is a plain 1:1 passthrough (no format remap, no null warning),
+    unlike ``resolve_immich_checksum`` — so it is emitted inline at each site
+    rather than through a resolver helper.
+    """
+
+    # A representative base64 ThumbHash value.
+    THUMBHASH = "1QcSHQRnh493V4dIh4eXh1h4kJUI"
+    OWNER_ID = "22222222-2222-2222-2222-222222222222"
+
+    def test_rest_converter_emits_thumbhash(
+        self, sample_gumnut_asset, mock_current_user
+    ):
+        sample_gumnut_asset.thumbhash = self.THUMBHASH
+
+        result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+
+        assert result.thumbhash == self.THUMBHASH
+
+    def test_websocket_payload_emits_thumbhash(self, sample_gumnut_asset):
+        sample_gumnut_asset.thumbhash = self.THUMBHASH
+
+        payload = build_asset_upload_ready_payload(
+            sample_gumnut_asset, owner_id=self.OWNER_ID
+        )
+
+        assert payload.asset.thumbhash == self.THUMBHASH
+
+    def test_sync_converter_emits_thumbhash(self, sample_gumnut_asset):
+        sample_gumnut_asset.thumbhash = self.THUMBHASH
+
+        result = gumnut_asset_to_sync_asset_v1(
+            sample_gumnut_asset, owner_id=self.OWNER_ID
+        )
+
+        assert result.thumbhash == self.THUMBHASH
+
+    def test_null_thumbhash_passes_through_as_none(
+        self, sample_gumnut_asset, mock_current_user
+    ):
+        """When upstream ``thumbhash`` is null (not yet generated), every
+        converter emits ``None`` — the nullable Immich placeholder — rather than
+        the old hardcoded ``""`` / constant-string stand-ins."""
+        sample_gumnut_asset.thumbhash = None
+
+        rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+        ws = build_asset_upload_ready_payload(
+            sample_gumnut_asset, owner_id=self.OWNER_ID
+        )
+        sync = gumnut_asset_to_sync_asset_v1(
+            sample_gumnut_asset, owner_id=self.OWNER_ID
+        )
+
+        assert rest.thumbhash is None
+        assert ws.asset.thumbhash is None
+        assert sync.thumbhash is None
+
+
 class TestFormatDuration:
     """``format_duration`` turns upstream float seconds into Immich's
     ``HH:MM:SS.ffffff`` interval string, and ``None`` into ``None`` so callers

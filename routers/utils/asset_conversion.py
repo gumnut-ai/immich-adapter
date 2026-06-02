@@ -430,7 +430,7 @@ def build_asset_upload_ready_payload(
     sync_asset = SyncAssetV1(
         id=asset_uuid,
         ownerId=owner_id,
-        thumbhash=None,
+        thumbhash=gumnut_asset.thumbhash,
         checksum=resolve_immich_checksum(gumnut_asset),
         deletedAt=gumnut_asset.trashed_at,
         duration=format_duration(gumnut_asset.duration),
@@ -514,7 +514,10 @@ def convert_gumnut_asset_to_immich(
         originalPath=f"/gumnut/assets/{asset_id}",
         ownerId=current_user.id,
         owner=current_user,
-        thumbhash="",
+        # Upstream base64 ThumbHash, or None until the encoder has run. None is
+        # the normal not-yet-generated state and a legal value for the nullable
+        # Immich field — clients simply skip the blur until it is backfilled.
+        thumbhash=gumnut_asset.thumbhash,
         visibility=AssetVisibility.timeline,
         width=float(width) if width else None,
         people=people,

@@ -186,6 +186,7 @@ async def get_time_bucket(
     local_offset_hours_list = []
     is_trashed_list = []
     duration_list: list[str | None] = []
+    thumbhash_list: list[str | None] = []
 
     for asset in filtered_assets:
         asset_id = asset.id
@@ -222,6 +223,11 @@ async def get_time_bucket(
         # bucket's prior all-None output for images / not-yet-extracted videos.
         duration_list.append(format_duration(asset.duration))
 
+        # Forward each asset's real thumbhash (base64 ThumbHash) so clients
+        # render a distinct placeholder per tile. None until upstream generates
+        # it. Previously every tile shipped one shared hardcoded constant.
+        thumbhash_list.append(asset.thumbhash)
+
     # Return as dict to bypass Pydantic validation issues with None in List[str]
     # XXX revisit this issue later
     return {
@@ -239,7 +245,7 @@ async def get_time_bucket(
         "isFavorite": [False] * asset_count,
         "isTrashed": is_trashed_list,
         "ownerId": [str(current_user_id)] * asset_count,
-        "thumbhash": ["FBgGFYRQjHbAZpiWWpeEhWPANQZr"] * asset_count,
+        "thumbhash": thumbhash_list,
         "latitude": [None] * asset_count,
         "longitude": [None] * asset_count,
         "stack": [None] * asset_count,
