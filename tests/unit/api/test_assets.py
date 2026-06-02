@@ -1541,8 +1541,8 @@ class TestUpdateAssets:
             state="all",
             ids=[uuid_to_gumnut_asset_id(trashed)],
             limit=1,
-            # The rewrite reads `metadata.original_datetime`; no `people`.
-            include=["metadata", "file_data"],
+            # The rewrite reads only `metadata.original_datetime`.
+            include=["metadata"],
         )
         self._assert_calls_homogeneous_change(
             mock_client.assets.bulk_update_assets,

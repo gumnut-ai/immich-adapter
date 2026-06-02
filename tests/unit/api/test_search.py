@@ -447,3 +447,10 @@ class TestSearchSmart:
         )
 
         assert mock_client.search.search.call_args.kwargs["limit"] == 200
+        # Smart-search results convert to full AssetResponseDto — opt into the
+        # heavy fields so the response survives the lean-default flip.
+        assert mock_client.search.search.call_args.kwargs["include"] == [
+            "metadata",
+            "people",
+            "file_data",
+        ]

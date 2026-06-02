@@ -70,7 +70,7 @@ from routers.utils.gumnut_id_conversion import (
 )
 from routers.utils.asset_conversion import (
     ASSET_INCLUDE,
-    ASSET_INCLUDE_NO_PEOPLE,
+    ASSET_INCLUDE_METADATA_ONLY,
     build_asset_upload_ready_payload,
     convert_gumnut_asset_to_immich,
     mime_type_to_asset_type,
@@ -955,7 +955,8 @@ async def update_assets(
                 state="all",
                 ids=gumnut_ids,
                 limit=len(gumnut_ids),
-                include=ASSET_INCLUDE_NO_PEOPLE,
+                # Only `metadata.original_datetime` is read below.
+                include=ASSET_INCLUDE_METADATA_ONLY,
             )
             current_by_id = {
                 asset.id: asset.metadata.original_datetime

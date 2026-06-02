@@ -49,8 +49,13 @@ ASSET_INCLUDE: list[str] = ["metadata", "people", "file_data"]
 """For reads that feed ``convert_gumnut_asset_to_immich`` (reads ``people``)."""
 
 ASSET_INCLUDE_NO_PEOPLE: list[str] = ["metadata", "file_data"]
-"""For sync-stream / map / metadata-only reads that never touch ``people`` —
-avoids triggering the server-side people aggregation on high-volume scans."""
+"""For the sync-stream converters, which read EXIF + the ``file_data`` scalars
+(``checksum_sha1`` / ``file_size_bytes`` / ``file_modified_at``) but never
+``people`` — skipping ``people`` avoids a server-side aggregation on the scan."""
+
+ASSET_INCLUDE_METADATA_ONLY: list[str] = ["metadata"]
+"""For reads that consume only ``metadata`` fields and no ``file_data`` scalar:
+map markers (GPS) and the per-asset datetime rewrite (``original_datetime``)."""
 
 
 def resolve_immich_checksum(gumnut_asset: AssetResponse) -> str:

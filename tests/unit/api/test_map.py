@@ -212,9 +212,9 @@ class TestGetMapMarkers:
         # Adapter forwards only `limit` + `include` (and date range when set);
         # `withPartners` / `withSharedAlbums` must not leak through.
         assert set(kwargs.keys()) == {"limit", "include"}
-        # Markers read only GPS off `metadata`; no `people` (it would trigger a
-        # needless people aggregation on the scan).
-        assert kwargs["include"] == ["metadata", "file_data"]
+        # Markers read only GPS off `metadata` — no people (needless aggregation
+        # on the scan) and no file_data (never read on this path).
+        assert kwargs["include"] == ["metadata"]
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(
