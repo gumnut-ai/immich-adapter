@@ -75,6 +75,9 @@ class TestFetchEntitiesMapAssetStateAll:
         kwargs = client.assets.list.call_args.kwargs
         assert kwargs.get("state") == "all"
         assert kwargs.get("ids") == ["asset_abc"]
+        # Opt into file_data so synced assets keep checksum_sha1 / file_size /
+        # file_modified_at after the photos-api lean-default flip; no people.
+        assert kwargs.get("include") == ["metadata", "file_data"]
 
     @pytest.mark.anyio
     async def test_metadata_branch_does_not_pass_state(self):
@@ -93,3 +96,5 @@ class TestFetchEntitiesMapAssetStateAll:
         client.assets.list.assert_called_once()
         kwargs = client.assets.list.call_args.kwargs
         assert "state" not in kwargs
+        # Still opts into file_data (the metadata converter reads file_size_bytes).
+        assert kwargs.get("include") == ["metadata", "file_data"]

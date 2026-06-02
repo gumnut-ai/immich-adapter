@@ -8,6 +8,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from routers.api.constants import PHOTOS_API_MAX_PAGE_SIZE
 from routers.immich_models import MapMarkerResponseDto, MapReverseGeocodeResponseDto
+from routers.utils.asset_conversion import ASSET_INCLUDE_NO_PEOPLE
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
 
@@ -21,14 +22,16 @@ router = APIRouter(
 )
 
 
-# Hard cap on returned markers. The per-page payload is the full asset object
-# (faces, people, urls, exif) read just for three GPS fields, so each page is
-# ~280 ms on prod. Benchmarked against a real library at ~70% GPS-tagged
-# density: 2000 markers ≈ 15 pages ≈ 4 s; 5000 ≈ 31 pages ≈ 11 s — too slow
-# for a map-view load. Revisit (slim-projection asset list, or a dedicated
-# backend `/map/markers` endpoint) if real usage shows 2000 is insufficient.
-# The SDK orders by capture time descending, so when the cap fires the
-# oldest GPS-tagged assets are the ones dropped.
+# Hard cap on returned markers. Each list page requests only `metadata`
+# (+ `file_data`) via `include` — not faces/people/asset_urls — since the
+# marker build reads just three GPS fields off `metadata`. `metadata` is still
+# the large EXIF block, so paging stays the cost driver. The ~280 ms/page
+# figure below predates that trim (it was measured against the full asset
+# payload) against a real library at ~70% GPS-tagged density, so it's now an
+# upper bound: 2000 markers ≈ 15 pages ≈ 4 s; 5000 ≈ 31 pages ≈ 11 s — too slow
+# for a map-view load. Revisit (a dedicated backend `/map/markers` endpoint) if
+# real usage shows 2000 is insufficient. The SDK orders by capture time
+# descending, so when the cap fires the oldest GPS-tagged assets are dropped.
 MAP_MARKERS_CAP = 2000
 
 # Ceiling on assets scanned, independent of how many fill the marker cap.
@@ -67,7 +70,10 @@ async def get_map_markers(
     if isFavorite is True or isArchived is True:
         return []
 
-    list_kwargs: dict[str, Any] = {"limit": PHOTOS_API_MAX_PAGE_SIZE}
+    list_kwargs: dict[str, Any] = {
+        "limit": PHOTOS_API_MAX_PAGE_SIZE,
+        "include": ASSET_INCLUDE_NO_PEOPLE,
+    }
     if fileCreatedAfter is not None:
         list_kwargs["local_datetime_after"] = fileCreatedAfter.isoformat()
     if fileCreatedBefore is not None:

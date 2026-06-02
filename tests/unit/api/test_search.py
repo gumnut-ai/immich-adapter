@@ -220,6 +220,9 @@ class TestSearchMetadata:
             person_ids=None,
             limit=10,
             page=1,
+            # Opt back into the heavy fields the conversion reads, so the
+            # response survives the photos-api lean-default flip.
+            include=["metadata", "people", "file_data"],
         )
 
     @pytest.mark.anyio

@@ -5,6 +5,7 @@ import logging
 from gumnut import AsyncGumnut
 
 from routers.api.sync.types import EntityType
+from routers.utils.asset_conversion import ASSET_INCLUDE_NO_PEOPLE
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,10 @@ async def fetch_entities_map(
             # pointing at a trashed asset must not be nulled out, since restore
             # should keep the cover intact.
             page = await gumnut_client.assets.list(
-                state="all", ids=chunk, limit=len(chunk)
+                state="all",
+                ids=chunk,
+                limit=len(chunk),
+                include=ASSET_INCLUDE_NO_PEOPLE,
             )
             result.update({entity.id: entity for entity in page.data})
 
@@ -85,7 +89,9 @@ async def fetch_entities_map(
             # Store the full AssetResponse (not just asset.metadata) because the
             # metadata converter needs asset-level fields (width, height,
             # file_size_bytes).
-            page = await gumnut_client.assets.list(ids=chunk, limit=len(chunk))
+            page = await gumnut_client.assets.list(
+                ids=chunk, limit=len(chunk), include=ASSET_INCLUDE_NO_PEOPLE
+            )
             for asset in page.data:
                 if asset.metadata:
                     result[asset.id] = asset
