@@ -11,6 +11,7 @@ from routers.utils.current_user import (
     get_current_user_admin,
     get_current_user,
     get_current_user_id,
+    map_user_quota,
 )
 from routers.immich_models import (
     UserAdminResponseDto,
@@ -42,6 +43,8 @@ class TestGetCurrentUserAdmin:
         mock_user.is_active = True
         mock_user.created_at = datetime.now(timezone.utc)
         mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.storage_limit_bytes = 100 * 1000**3
+        mock_user.storage_used_bytes = 5 * 1000**3
         mock_client.users.me = AsyncMock(return_value=mock_user)
 
         # Execute
@@ -54,6 +57,9 @@ class TestGetCurrentUserAdmin:
         assert result.name == "Test User"
         assert result.isAdmin is False
         assert result.status == UserStatus.active
+        # Quota fields are sourced from the Gumnut storage fields
+        assert result.quotaSizeInBytes == 100 * 1000**3
+        assert result.quotaUsageInBytes == 5 * 1000**3
         mock_client.users.me.assert_called_once()
 
     @pytest.mark.anyio
@@ -74,6 +80,8 @@ class TestGetCurrentUserAdmin:
         mock_user.is_active = True
         mock_user.created_at = datetime.now(timezone.utc)
         mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.storage_limit_bytes = 100 * 1000**3
+        mock_user.storage_used_bytes = 5 * 1000**3
         mock_client.users.me = AsyncMock(return_value=mock_user)
 
         # Execute - first call
@@ -107,6 +115,8 @@ class TestGetCurrentUserAdmin:
         mock_user.is_active = True
         mock_user.created_at = datetime.now(timezone.utc)
         mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.storage_limit_bytes = 100 * 1000**3
+        mock_user.storage_used_bytes = 5 * 1000**3
         mock_client.users.me = AsyncMock(return_value=mock_user)
 
         # Execute
@@ -132,6 +142,8 @@ class TestGetCurrentUserAdmin:
         mock_user.is_active = False
         mock_user.created_at = datetime.now(timezone.utc)
         mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.storage_limit_bytes = 100 * 1000**3
+        mock_user.storage_used_bytes = 5 * 1000**3
         mock_client.users.me = AsyncMock(return_value=mock_user)
 
         # Execute
@@ -139,6 +151,63 @@ class TestGetCurrentUserAdmin:
 
         # Assert
         assert result.status == UserStatus.deleted
+
+    @pytest.mark.anyio
+    async def test_get_current_user_admin_quota_none_is_rollout_safe(self):
+        """Quota maps to None when the upstream storage fields are None.
+
+        Mirrors a pre-storage-caps photos-api during rollout: when it omits the
+        fields, the SDK's non-validating construction materializes them as None
+        (verified against the SDK's response model). The /me path must report no
+        quota rather than a bogus value.
+        """
+        # Setup
+        mock_request = Mock()
+        mock_request.state = type("obj", (object,), {})()
+
+        test_uuid = uuid4()
+        mock_user = Mock()
+        mock_user.id = f"intuser_{shortuuid.encode(test_uuid)}"
+        mock_user.email = "test@example.com"
+        mock_user.first_name = "Test"
+        mock_user.last_name = "User"
+        mock_user.is_active = True
+        mock_user.created_at = datetime.now(timezone.utc)
+        mock_user.updated_at = datetime.now(timezone.utc)
+        # What the SDK yields when photos-api omits the storage fields
+        mock_user.storage_limit_bytes = None
+        mock_user.storage_used_bytes = None
+
+        mock_client = Mock()
+        mock_client.users.me = AsyncMock(return_value=mock_user)
+
+        # Execute
+        result = await get_current_user_admin(mock_request, mock_client)
+
+        # Assert - no quota reported, no error raised
+        assert result.quotaSizeInBytes is None
+        assert result.quotaUsageInBytes is None
+
+
+class TestMapUserQuota:
+    """Test the map_user_quota helper."""
+
+    def test_maps_storage_fields_to_quota(self):
+        """Storage fields are passed through to the (size, usage) tuple."""
+        user = Mock(spec=["storage_limit_bytes", "storage_used_bytes"])
+        user.storage_limit_bytes = 100 * 1000**3
+        user.storage_used_bytes = 5 * 1000**3
+        assert map_user_quota(user) == (100 * 1000**3, 5 * 1000**3)
+
+    def test_none_storage_fields_map_to_none(self):
+        """None storage fields map to (None, None) for rollout safety.
+
+        This is what the SDK yields when an older photos-api omits the fields.
+        """
+        user = Mock(spec=["storage_limit_bytes", "storage_used_bytes"])
+        user.storage_limit_bytes = None
+        user.storage_used_bytes = None
+        assert map_user_quota(user) == (None, None)
 
 
 class TestGetCurrentUser:

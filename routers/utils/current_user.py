@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, Request
 from gumnut import AsyncGumnut
+from gumnut.types.user_response import UserResponse
 
 from routers.immich_models import (
     UserAdminResponseDto,
@@ -20,6 +21,22 @@ from routers.immich_models import (
 )
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
+
+
+def map_user_quota(user: UserResponse) -> tuple[int | None, int | None]:
+    """Map Gumnut storage fields to Immich quota fields.
+
+    Returns ``(quotaSizeInBytes, quotaUsageInBytes)`` sourced from the user's
+    ``storage_limit_bytes`` (per-user cap) and ``storage_used_bytes`` (derived
+    per-user usage) in photos-api's storage caps.
+
+    Rollout-safe with no special handling: if an older photos-api omits these
+    fields, the SDK's non-validating response construction materializes them as
+    ``None`` (not an error), and Immich treats a ``None`` quota as unlimited /
+    unknown. The return type is widened to ``int | None`` to reflect that
+    possible-``None`` runtime value during the rollout window.
+    """
+    return (user.storage_limit_bytes, user.storage_used_bytes)
 
 
 async def get_current_user_admin(
@@ -52,6 +69,9 @@ async def get_current_user_admin(
     # Convert Gumnut user ID to UUID
     user_uuid = safe_uuid_from_user_id(user.id)
 
+    # Storage cap (max) and derived usage from photos-api, mapped to Immich quota.
+    quota_size, quota_usage = map_user_quota(user)
+
     user_admin_dto = UserAdminResponseDto(
         id=str(user_uuid),
         email=user.email or "",
@@ -65,8 +85,8 @@ async def get_current_user_admin(
         shouldChangePassword=False,
         status=UserStatus.active if user.is_active else UserStatus.deleted,
         storageLabel="admin",
-        quotaSizeInBytes=1024 * 1024 * 1024 * 100,
-        quotaUsageInBytes=1024 * 1024 * 1024,
+        quotaSizeInBytes=quota_size,
+        quotaUsageInBytes=quota_usage,
         deletedAt=None,
         oauthId="",
         profileChangedAt=user.updated_at,
