@@ -119,6 +119,22 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
    - `docs/architecture/websocket-implementation.md` — move the event out of the "Not Applicable" table into the Phase 1 supported table (or add a new row), with the payload, Web/Mobile columns, and a Notes value that names the emit site.
    - `docs/references/websocket-events-reference.md` — update the Summary Table row and the per-event section. Upstream-Immich and adapter triggers may diverge (e.g., upstream emits `on_asset_update` only from sidecar processing; the adapter emits it from `PUT /api/assets/{id}`); make both paths explicit so future readers don't assume the upstream-only note still applies.
 
+### Reading Gumnut asset fields — request them via `include`
+
+photos-api is moving the asset response to a **lean default** behind a JSON:API-style `?include=` parameter: an omitted `include` will eventually return none of the heavy fields, and several previously-required fields (`faces`, `people`, and the `file_data` scalars `device_asset_id` / `device_id` / `file_created_at` / `file_modified_at` / `checksum` / `file_size_bytes`) are already nullable. So **any** `client.assets.list` / `client.search.search` / `client.assets.retrieve` whose result feeds a conversion that reads `metadata`, `people`, or a `file_data` scalar must pass the matching `include` — otherwise, once the default flips, those fields arrive `null` and the Immich asset is silently corrupted (empty checksum, null size/EXIF, missing people). The full-default transition window hides the bug until the flip, so it won't surface in tests against today's backend.
+
+Use the constants in `routers/utils/asset_conversion.py`, chosen by what the conversion **downstream of the call** actually reads:
+
+| Constant | Tokens | Use for |
+|----------|--------|---------|
+| `ASSET_INCLUDE` | `metadata, people, file_data` | Reads feeding `convert_gumnut_asset_to_immich` (it emits `people`): `get_asset_info`, search, albums, memories, full/delta sync, the upload-success retrieve. |
+| `ASSET_INCLUDE_NO_PEOPLE` | `metadata, file_data` | The sync-stream `entity_fetch` reads, whose converters read the `file_data` scalars but never `people`. |
+| `ASSET_INCLUDE_METADATA_ONLY` | `metadata` | Reads that touch only `metadata`: map markers (GPS), the bulk per-asset datetime rewrite (`original_datetime`). |
+
+Reads that consume only **lean-core** fields (`id`, `mime_type`, `width`/`height`, `duration`, `trashed_at`, `local_datetime`) or `asset_urls` request **no** `include` — those stay populated regardless (today: timeline buckets, trash-id collection, asset-count stats, the image-serving `_retrieve_and_stream_variant`, and the `/faces` width/height read). `asset_urls` is **not** gated by `include`, so the streaming/serving paths never need one, and `faces` is never requested off the asset — the adapter reads faces from the dedicated `/faces` endpoint. The `create()` (buffered upload) and `update_asset()` (PATCH) responses keep the full shape and expose no `include` param, so they need no change.
+
+Bumping `gumnut-sdk` can itself relax a previously-non-null asset field to `| None` as part of this migration (e.g. `file_modified_at` went `datetime` → `datetime | None`), which then needs a null-guard at every read site (`resolve_file_modified_at` falls back through `metadata.modified_datetime → file_modified_at → capture time` so the required Immich `fileModifiedAt` is never null). Run `uv run pyright` after any `gumnut-sdk` bump to surface newly-required guards.
+
 ### Asset dimensions and orientation
 
 photos-api owns display-space dims at ingest — `asset.width` / `asset.height` already reflect post-rotation dimensions and must be emitted **verbatim** on the wire (immich web reads them via `getAssetRatio`). Pre-rotation raw dims live on `metadata.raw_width` / `metadata.raw_height`; surface them on `exifInfo.exifImageWidth` / `exifImageHeight` so Immich mobile can re-derive display dims locally. When raw dims are present, the EXIF `orientation` tag is emitted unchanged — mobile pairs it with the raw dims to compute display dims; immich web ignores it (it reads `asset.width/height` directly).
