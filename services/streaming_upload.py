@@ -25,7 +25,11 @@ import httpx
 import sentry_sdk
 from fastapi import HTTPException, Request, status
 
-from routers.utils.error_mapping import log_upstream_response
+from routers.utils.error_mapping import (
+    QUOTA_EXCEEDED_DETAIL,
+    QUOTA_EXCEEDED_STATUS,
+    log_upstream_response,
+)
 from routers.utils.gumnut_client import set_refreshed_token
 from services.streaming_form_parser import StreamingFormParser
 from services.streaming_pipe import StreamingPipe
@@ -280,6 +284,13 @@ class StreamingUploadPipeline:
         if response.status_code not in (200, 201):
             if detail is None:
                 detail = response.text
+            # Over-quota upload: surface Immich's native 400 instead of letting
+            # the 507 fall through to the generic 5xx -> 502 mapping below.
+            if response.status_code == status.HTTP_507_INSUFFICIENT_STORAGE:
+                raise HTTPException(
+                    status_code=QUOTA_EXCEEDED_STATUS,
+                    detail=QUOTA_EXCEEDED_DETAIL,
+                )
             # Map upstream 5xx and 401 to 502: a 401 from photos-api means
             # the adapter's internal JWT expired, not the client's session.
             # Forwarding 401 would cause Immich clients to clear their session.

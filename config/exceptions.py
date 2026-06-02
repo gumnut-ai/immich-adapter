@@ -15,6 +15,8 @@ from gumnut import (
 )
 
 from routers.utils.error_mapping import (
+    QUOTA_EXCEEDED_DETAIL,
+    QUOTA_EXCEEDED_STATUS,
     extract_detail_from_status_error,
     log_upstream_response,
     logger,
@@ -90,6 +92,9 @@ async def _gumnut_error_handler(request: Request, exc: GumnutError) -> JSONRespo
             extra=log_extra,
             exc_info=True,
         )
+        # Surface an over-quota upload as Immich's native 400, not the raw 507.
+        if exc.status_code == status.HTTP_507_INSUFFICIENT_STORAGE:
+            return _immich_response(QUOTA_EXCEEDED_STATUS, QUOTA_EXCEEDED_DETAIL)
         return _immich_response(exc.status_code, detail)
 
     if isinstance(exc, APIResponseValidationError):

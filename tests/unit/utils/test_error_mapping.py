@@ -36,6 +36,7 @@ class TestUpstreamStatusLogLevel:
             (429, logging.WARNING),
             (500, logging.ERROR),
             (503, logging.ERROR),
+            (507, logging.WARNING),
         ],
     )
     def test_upstream_status_log_level_policy(self, status_code, expected_level):
@@ -121,6 +122,19 @@ class TestMapGumnutError:
         assert result.status_code == status_code
         # No body → falls back to e.message
         assert result.detail == "upstream said no"
+
+    def test_507_insufficient_storage_remaps_to_immich_quota_400(self):
+        """An over-quota upload (upstream 507) surfaces as Immich's native 400."""
+        err = make_sdk_status_error(
+            507,
+            "User storage limit exceeded",
+            body={"detail": "User storage limit exceeded"},
+        )
+        result = map_gumnut_error(err, "Failed to upload asset")
+
+        assert isinstance(result, HTTPException)
+        assert result.status_code == 400
+        assert result.detail == "Quota has been exceeded!"
 
     def test_extracts_detail_from_body_dict(self):
         err = make_sdk_status_error(
