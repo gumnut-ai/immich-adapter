@@ -48,20 +48,23 @@ def _make_asset(asset_id_uuid: UUID, captured_at: datetime) -> Mock:
     asset.id = uuid_to_gumnut_asset_id(asset_id_uuid)
     asset.original_file_name = "memory.jpg"
     asset.mime_type = "image/jpeg"
-    asset.checksum = "checksum"
-    asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
     asset.thumbhash = None
     asset.width = 1920
     asset.height = 1080
     asset.created_at = captured_at
     asset.updated_at = captured_at
     asset.local_datetime = captured_at
-    asset.file_created_at = captured_at
-    asset.file_modified_at = captured_at
+    # File/provenance scalars live on the nested ``file_data`` group
+    # (requested via ``include=file_data``); the adapter reads them from there.
+    asset.file_data = Mock()
+    asset.file_data.checksum = "checksum"
+    asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+    asset.file_data.file_created_at = captured_at
+    asset.file_data.file_modified_at = captured_at
+    asset.file_data.file_size_bytes = 1000
     asset.metadata = None
     asset.people = []
     asset.trashed_at = None
-    asset.file_size_bytes = 1000
     asset.duration = None
     asset.library_id = "library-1"
     return asset

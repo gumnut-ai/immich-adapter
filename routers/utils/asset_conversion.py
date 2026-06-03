@@ -65,7 +65,8 @@ def resolve_immich_checksum(gumnut_asset: AssetResponse) -> str:
     chars): clients compute the SHA-1 of a local file and compare it to this
     value for pre-upload dedup and for local↔remote asset linking ("merged"
     state) in the mobile client. Gumnut exposes that value as
-    ``AssetResponse.checksum_sha1``.
+    ``AssetResponse.file_data.checksum_sha1`` (the nested file/provenance
+    group, requested via ``include=file_data``).
 
     Gumnut's other ``checksum`` field is a base64-encoded SHA-256 (44 chars).
     It must never be sent on this field: a wrong-format value can never equal
@@ -77,14 +78,16 @@ def resolve_immich_checksum(gumnut_asset: AssetResponse) -> str:
     clean "no match" (a dedup false-negative — the documented Immich behavior)
     instead of a value that looks valid but never matches.
     """
-    if gumnut_asset.checksum_sha1 is None:
+    file_data = gumnut_asset.file_data
+    checksum_sha1 = file_data.checksum_sha1 if file_data else None
+    if checksum_sha1 is None:
         logger.warning(
             "Asset %s has no checksum_sha1; emitting empty Immich checksum",
             gumnut_asset.id,
             extra={"asset_id": gumnut_asset.id},
         )
         return ""
-    return gumnut_asset.checksum_sha1
+    return checksum_sha1
 
 
 def normalize_rating(rating: float | int | None) -> int | None:
@@ -156,20 +159,22 @@ def resolve_file_modified_at(gumnut_asset: AssetResponse) -> datetime:
     """Return file modified time formatted for Immich ``fileModifiedAt`` fields.
 
     Unlike capture time, photos-api does not resolve a single modify-time
-    field for us — ``file_modified_at`` is the raw file mtime. The adapter
-    applies the ``metadata.modified_datetime → file_modified_at`` cascade
-    here so the EXIF modify time isn't lost on the wire.
+    field for us — ``file_data.file_modified_at`` is the raw file mtime. The
+    adapter applies the ``metadata.modified_datetime → file_data.file_modified_at``
+    cascade here so the EXIF modify time isn't lost on the wire.
 
-    ``file_modified_at`` is nullable (it belongs to the ``file_data`` include
-    group), so the cascade ends in a final fall back to the capture time —
-    Immich's ``fileModifiedAt`` is required, so this must never return ``None``.
+    ``file_data.file_modified_at`` is nullable (``file_data`` is the nested
+    file/provenance group, requested via ``include=file_data``), so the cascade
+    ends in a final fall back to the capture time — Immich's ``fileModifiedAt``
+    is required, so this must never return ``None``.
     """
     metadata_modified = (
         gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
     )
+    file_data = gumnut_asset.file_data
     return (
         to_actual_utc(metadata_modified)
-        or to_actual_utc(gumnut_asset.file_modified_at)
+        or to_actual_utc(file_data.file_modified_at if file_data else None)
         or resolve_file_created_at(gumnut_asset)
     )
 
@@ -288,7 +293,9 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     modify_date = to_actual_utc(metadata.modified_datetime)
 
     raw_width, raw_height, wire_orientation = exif_dims_and_orientation(gumnut_asset)
-    file_size = gumnut_asset.file_size_bytes
+    file_size = (
+        gumnut_asset.file_data.file_size_bytes if gumnut_asset.file_data else None
+    )
 
     return ExifResponseDto(
         # Image dimensions
@@ -373,6 +380,9 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
     modify_date = to_actual_utc(modify_date)
 
     raw_width, raw_height, wire_orientation = exif_dims_and_orientation(gumnut_asset)
+    file_size = (
+        gumnut_asset.file_data.file_size_bytes if gumnut_asset.file_data else None
+    )
 
     return SyncAssetExifV1(
         assetId=asset_uuid,
@@ -384,9 +394,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
         exifImageWidth=int(raw_width) if raw_width else None,
         exposureTime=exposure_time_str,
         fNumber=float(f_number) if f_number else None,
-        fileSizeInByte=int(gumnut_asset.file_size_bytes)
-        if gumnut_asset.file_size_bytes
-        else None,
+        fileSizeInByte=int(file_size) if file_size else None,
         focalLength=float(focal_length) if focal_length else None,
         fps=None,  # Not available from Gumnut metadata
         iso=int(iso) if iso else None,

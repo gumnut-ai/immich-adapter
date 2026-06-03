@@ -95,10 +95,6 @@ def sample_gumnut_asset():
     """Create a sample Gumnut asset object with proper date fields."""
     asset = Mock()
     asset.id = uuid_to_gumnut_asset_id(uuid4())
-    asset.device_asset_id = "device-123"
-    asset.device_id = "device-456"
-    asset.file_created_at = datetime.now(timezone.utc)
-    asset.file_modified_at = datetime.now(timezone.utc)
     asset.local_datetime = datetime.now(timezone.utc)
     asset.created_at = datetime.now(timezone.utc)
     asset.updated_at = datetime.now(timezone.utc)
@@ -106,15 +102,22 @@ def sample_gumnut_asset():
     asset.original_file_name = "test.jpg"
     asset.duration = None
     asset.library_id = "library-789"
-    asset.checksum = "abc123"
+    # File/provenance scalars live on the nested ``file_data`` group
+    # (requested via ``include=file_data``); the adapter reads them from there.
+    asset.file_data = Mock()
+    asset.file_data.device_asset_id = "device-123"
+    asset.file_data.device_id = "device-456"
+    asset.file_data.file_created_at = datetime.now(timezone.utc)
+    asset.file_data.file_modified_at = datetime.now(timezone.utc)
+    asset.file_data.checksum = "abc123"
     # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
-    asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+    asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+    asset.file_data.file_size_bytes = 1059218
     # Default to "not yet generated"; thumbhash tests set an explicit value.
     # Without this, the Mock would yield a Mock (not None) for asset.thumbhash.
     asset.thumbhash = None
     asset.width = 1920
     asset.height = 1080
-    asset.file_size_bytes = 1059218
     asset.people = []  # Empty list for people
     asset.metadata = None  # No metadata
     asset.trashed_at = None  # Live (not trashed); set to a datetime to simulate trashed
@@ -147,11 +150,7 @@ def multiple_gumnut_assets():
     for i in range(3):
         asset = Mock()
         asset.id = uuid_to_gumnut_asset_id(uuid4())
-        asset.device_asset_id = f"device-{i}"
-        asset.device_id = f"device-{i}"
         now = datetime.now(timezone.utc)
-        asset.file_created_at = now
-        asset.file_modified_at = now
         asset.created_at = now
         asset.updated_at = now
         asset.local_datetime = now
@@ -161,9 +160,17 @@ def multiple_gumnut_assets():
         asset.library_id = "library-789"
         asset.width = 1920
         asset.height = 1080
-        asset.checksum = f"checksum-{i}"
+        # File/provenance scalars live on the nested ``file_data`` group
+        # (requested via ``include=file_data``); the adapter reads them from there.
+        asset.file_data = Mock()
+        asset.file_data.device_asset_id = f"device-{i}"
+        asset.file_data.device_id = f"device-{i}"
+        asset.file_data.file_created_at = now
+        asset.file_data.file_modified_at = now
+        asset.file_data.checksum = f"checksum-{i}"
         # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
-        asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        asset.file_data.file_size_bytes = 1059218
         # Default to "not yet generated"; thumbhash tests set an explicit value.
         # Without this, the Mock would yield a Mock (not None) for asset.thumbhash.
         asset.thumbhash = None

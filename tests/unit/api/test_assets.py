@@ -395,8 +395,8 @@ class TestUploadAsset:
         """Test successful asset upload via buffered path."""
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
-        mock_gumnut_asset.checksum = "abc123"
-        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.file_data.checksum = "abc123"
+        mock_gumnut_asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
@@ -405,7 +405,7 @@ class TestUploadAsset:
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
         mock_gumnut_asset.duration = None
-        mock_gumnut_asset.file_size_bytes = 1024
+        mock_gumnut_asset.file_data.file_size_bytes = 1024
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
@@ -540,20 +540,20 @@ class TestUploadAsset:
         """Test that upload_asset emits on_upload_success and AssetUploadReadyV1 events."""
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
-        mock_gumnut_asset.checksum = "abc123"
-        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.file_data.checksum = "abc123"
+        mock_gumnut_asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
         mock_gumnut_asset.local_datetime = mock_gumnut_asset.created_at
-        mock_gumnut_asset.file_created_at = mock_gumnut_asset.created_at
-        mock_gumnut_asset.file_modified_at = mock_gumnut_asset.updated_at
+        mock_gumnut_asset.file_data.file_created_at = mock_gumnut_asset.created_at
+        mock_gumnut_asset.file_data.file_modified_at = mock_gumnut_asset.updated_at
         mock_gumnut_asset.mime_type = "image/jpeg"
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
         mock_gumnut_asset.duration = None
-        mock_gumnut_asset.file_size_bytes = 1024
+        mock_gumnut_asset.file_data.file_size_bytes = 1024
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
@@ -650,8 +650,8 @@ class TestUploadAsset:
         """Test that regular video uploads are not dropped."""
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
-        mock_gumnut_asset.checksum = "abc123"
-        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.file_data.checksum = "abc123"
+        mock_gumnut_asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "video.mp4"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
@@ -660,7 +660,7 @@ class TestUploadAsset:
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
         mock_gumnut_asset.duration = None
-        mock_gumnut_asset.file_size_bytes = 10240
+        mock_gumnut_asset.file_data.file_size_bytes = 10240
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
@@ -714,20 +714,20 @@ class TestUploadAsset:
         """Video uploads defer WebSocket emission until after the configured delay."""
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
-        mock_gumnut_asset.checksum = "abc123"
-        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.file_data.checksum = "abc123"
+        mock_gumnut_asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "video.mp4"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
         mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
         mock_gumnut_asset.local_datetime = mock_gumnut_asset.created_at
-        mock_gumnut_asset.file_created_at = mock_gumnut_asset.created_at
-        mock_gumnut_asset.file_modified_at = mock_gumnut_asset.updated_at
+        mock_gumnut_asset.file_data.file_created_at = mock_gumnut_asset.created_at
+        mock_gumnut_asset.file_data.file_modified_at = mock_gumnut_asset.updated_at
         mock_gumnut_asset.mime_type = "video/mp4"
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
         mock_gumnut_asset.duration = None
-        mock_gumnut_asset.file_size_bytes = 10240
+        mock_gumnut_asset.file_data.file_size_bytes = 10240
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
@@ -791,8 +791,8 @@ class TestUploadAsset:
         """Test that WebSocket emission errors don't fail the upload."""
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
-        mock_gumnut_asset.checksum = "abc123"
-        mock_gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        mock_gumnut_asset.file_data.checksum = "abc123"
+        mock_gumnut_asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "test.jpg"
         mock_gumnut_asset.created_at = datetime.now(timezone.utc)
@@ -801,7 +801,7 @@ class TestUploadAsset:
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
         mock_gumnut_asset.duration = None
-        mock_gumnut_asset.file_size_bytes = 1024
+        mock_gumnut_asset.file_data.file_size_bytes = 1024
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None

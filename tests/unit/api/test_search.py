@@ -332,18 +332,21 @@ class TestSearchMetadata:
         gumnut_asset.id = uuid_to_gumnut_asset_id(asset_uuid)
         gumnut_asset.original_file_name = "sunset.jpg"
         gumnut_asset.mime_type = "image/jpeg"
-        gumnut_asset.checksum = "abc123"
-        gumnut_asset.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         gumnut_asset.thumbhash = None
         gumnut_asset.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
         gumnut_asset.updated_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
         gumnut_asset.local_datetime = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        gumnut_asset.file_created_at = gumnut_asset.local_datetime
-        gumnut_asset.file_modified_at = gumnut_asset.updated_at
         gumnut_asset.width = 1920
         gumnut_asset.height = 1080
         gumnut_asset.duration = None
-        gumnut_asset.file_size_bytes = 1024000
+        # File/provenance scalars live on the nested ``file_data`` group
+        # (requested via ``include=file_data``); the adapter reads them from there.
+        gumnut_asset.file_data = Mock()
+        gumnut_asset.file_data.checksum = "abc123"
+        gumnut_asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+        gumnut_asset.file_data.file_created_at = gumnut_asset.local_datetime
+        gumnut_asset.file_data.file_modified_at = gumnut_asset.updated_at
+        gumnut_asset.file_data.file_size_bytes = 1024000
         gumnut_asset.metadata = None
         gumnut_asset.people = []
         gumnut_asset.trashed_at = None

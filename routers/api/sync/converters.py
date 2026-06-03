@@ -173,8 +173,8 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
     """
     Convert Gumnut AssetResponse (with metadata) to Immich SyncAssetExifV1 format.
 
-    Accepts the full AssetResponse because image dimensions and file size live on
-    the asset, not on the nested Metadata object.
+    Accepts the full AssetResponse because image dimensions live on the asset and
+    file size lives on its nested ``file_data`` group — not on the Metadata object.
 
     Args:
         asset: Gumnut asset data (must have non-None metadata)
@@ -195,6 +195,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
     modified_datetime = to_actual_utc(metadata.modified_datetime)
 
     raw_width, raw_height, wire_orientation = exif_dims_and_orientation(asset)
+    file_size = asset.file_data.file_size_bytes if asset.file_data else None
 
     return SyncAssetExifV1(
         assetId=str(safe_uuid_from_asset_id(metadata.asset_id)),
@@ -206,7 +207,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         exifImageWidth=raw_width,
         exposureTime=_format_exposure_time(metadata.exposure_time),
         fNumber=metadata.f_number,
-        fileSizeInByte=asset.file_size_bytes,
+        fileSizeInByte=file_size,
         focalLength=metadata.focal_length,
         fps=metadata.fps,
         iso=metadata.iso,
