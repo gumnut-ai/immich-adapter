@@ -90,7 +90,7 @@ async def update_my_user(
     last_name = user.last_name or ""
     full_name = f"{first_name} {last_name}".strip() or "User"
     user_uuid = safe_uuid_from_user_id(user.id)
-    quota_size, quota_usage = map_user_quota(user)
+    quota = map_user_quota(user)
 
     return UserAdminResponseDto(
         id=str(user_uuid),
@@ -104,8 +104,8 @@ async def update_my_user(
         shouldChangePassword=False,
         status=UserStatus.active if user.is_active else UserStatus.deleted,
         storageLabel="admin",
-        quotaSizeInBytes=quota_size,
-        quotaUsageInBytes=quota_usage,
+        quotaSizeInBytes=quota.size_bytes,
+        quotaUsageInBytes=quota.usage_bytes,
         deletedAt=None,
         oauthId="",
         profileChangedAt=user.updated_at,

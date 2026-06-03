@@ -12,6 +12,7 @@ from routers.utils.current_user import (
     get_current_user,
     get_current_user_id,
     map_user_quota,
+    ImmichUserQuota,
 )
 from routers.immich_models import (
     UserAdminResponseDto,
@@ -193,21 +194,28 @@ class TestMapUserQuota:
     """Test the map_user_quota helper."""
 
     def test_maps_storage_fields_to_quota(self):
-        """Storage fields are passed through to the (size, usage) tuple."""
+        """Storage fields map to the named ImmichUserQuota fields."""
         user = Mock(spec=["storage_limit_bytes", "storage_used_bytes"])
         user.storage_limit_bytes = 100 * 1000**3
         user.storage_used_bytes = 5 * 1000**3
-        assert map_user_quota(user) == (100 * 1000**3, 5 * 1000**3)
+        quota = map_user_quota(user)
+        assert quota == ImmichUserQuota(
+            size_bytes=100 * 1000**3, usage_bytes=5 * 1000**3
+        )
+        assert quota.size_bytes == 100 * 1000**3
+        assert quota.usage_bytes == 5 * 1000**3
 
     def test_none_storage_fields_map_to_none(self):
-        """None storage fields map to (None, None) for rollout safety.
+        """None storage fields map to None quota fields for rollout safety.
 
         This is what the SDK yields when an older photos-api omits the fields.
         """
         user = Mock(spec=["storage_limit_bytes", "storage_used_bytes"])
         user.storage_limit_bytes = None
         user.storage_used_bytes = None
-        assert map_user_quota(user) == (None, None)
+        quota = map_user_quota(user)
+        assert quota.size_bytes is None
+        assert quota.usage_bytes is None
 
 
 class TestGetCurrentUser:

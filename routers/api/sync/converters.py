@@ -79,7 +79,7 @@ def gumnut_user_to_sync_auth_user_v1(user: UserResponse) -> SyncAuthUserV1:
     # Same per-user storage caps as GET/PUT /api/users/me, kept consistent across
     # both quota surfaces. quotaUsageInBytes is a required int here, so a missing
     # upstream value (rollout) coerces to 0.
-    quota_size, quota_used = map_user_quota(user)
+    quota = map_user_quota(user)
 
     return SyncAuthUserV1(
         id=str(safe_uuid_from_user_id(user.id)),
@@ -89,11 +89,11 @@ def gumnut_user_to_sync_auth_user_v1(user: UserResponse) -> SyncAuthUserV1:
         profileChangedAt=user.updated_at,
         isAdmin=user.is_superuser,
         oauthId="",
-        quotaUsageInBytes=quota_used if quota_used is not None else 0,
+        quotaUsageInBytes=quota.usage_bytes if quota.usage_bytes is not None else 0,
         avatarColor=None,
         deletedAt=None,
         pinCode=None,
-        quotaSizeInBytes=quota_size,
+        quotaSizeInBytes=quota.size_bytes,
         storageLabel=None,
     )
 

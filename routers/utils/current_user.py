@@ -6,6 +6,7 @@ repeated calls to the Gumnut backend.
 """
 
 from datetime import datetime, timezone
+from typing import NamedTuple
 from uuid import UUID, uuid4
 
 from fastapi import Depends, Request
@@ -23,20 +24,33 @@ from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
 
 
-def map_user_quota(user: UserResponse) -> tuple[int | None, int | None]:
-    """Map Gumnut storage fields to Immich quota fields.
+class ImmichUserQuota(NamedTuple):
+    """Immich quota fields mapped from a Gumnut user's storage caps.
 
-    Returns ``(quotaSizeInBytes, quotaUsageInBytes)`` sourced from the user's
-    ``storage_limit_bytes`` (per-user cap) and ``storage_used_bytes`` (derived
-    per-user usage) in photos-api's storage caps.
+    ``size_bytes`` is Immich's ``quotaSizeInBytes`` (the per-user cap, from
+    Gumnut ``storage_limit_bytes``); ``usage_bytes`` is Immich's
+    ``quotaUsageInBytes`` (derived usage, from Gumnut ``storage_used_bytes``).
 
-    Rollout-safe with no special handling: if an older photos-api omits these
-    fields, the SDK's non-validating response construction materializes them as
-    ``None`` (not an error), and Immich treats a ``None`` quota as unlimited /
-    unknown. The return type is widened to ``int | None`` to reflect that
-    possible-``None`` runtime value during the rollout window.
+    Either field is ``None`` when the value is unknown/unlimited: the user has
+    no per-user cap, or an older photos-api omitted the field during the rollout
+    window. (The SDK's non-validating response construction materializes an
+    omitted field as ``None`` rather than raising, so this needs no special
+    handling.) Immich treats a ``None`` quota as unlimited.
     """
-    return (user.storage_limit_bytes, user.storage_used_bytes)
+
+    size_bytes: int | None
+    usage_bytes: int | None
+
+
+def map_user_quota(user: UserResponse) -> ImmichUserQuota:
+    """Map a Gumnut user's storage caps to Immich quota fields.
+
+    See ``ImmichUserQuota`` for the field semantics and what ``None`` means.
+    """
+    return ImmichUserQuota(
+        size_bytes=user.storage_limit_bytes,
+        usage_bytes=user.storage_used_bytes,
+    )
 
 
 async def get_current_user_admin(
@@ -70,7 +84,7 @@ async def get_current_user_admin(
     user_uuid = safe_uuid_from_user_id(user.id)
 
     # Storage cap (max) and derived usage from photos-api, mapped to Immich quota.
-    quota_size, quota_usage = map_user_quota(user)
+    quota = map_user_quota(user)
 
     user_admin_dto = UserAdminResponseDto(
         id=str(user_uuid),
@@ -85,8 +99,8 @@ async def get_current_user_admin(
         shouldChangePassword=False,
         status=UserStatus.active if user.is_active else UserStatus.deleted,
         storageLabel="admin",
-        quotaSizeInBytes=quota_size,
-        quotaUsageInBytes=quota_usage,
+        quotaSizeInBytes=quota.size_bytes,
+        quotaUsageInBytes=quota.usage_bytes,
         deletedAt=None,
         oauthId="",
         profileChangedAt=user.updated_at,
