@@ -30,6 +30,28 @@ logger = logging.getLogger(__name__)
 # Sentry / log search tractable while preserving enough context to debug.
 ERROR_DETAIL_MAX_CHARS = 500
 
+# photos-api returns 507 Insufficient Storage when a user/library storage cap is
+# reached. Immich's own server returns 400 for an over-quota upload, so the
+# adapter remaps 507 -> 400 so Immich clients handle it as the over-quota
+# condition they expect rather than a generic 5xx (the streaming path would
+# otherwise mask it as 502; the buffered path would forward a raw 507).
+#
+# The detail MUST stay byte-for-byte "Quota has been exceeded!" — Immich's native
+# server string. The Immich mobile app reads it from the response `message` field
+# and string-matches it verbatim to abort the rest of a batch upload once the cap
+# is hit (`foreground_upload.service.dart`: `if (errorMessage == "Quota has been
+# exceeded!") shouldAbortUpload = true`). A reworded message (however nicer)
+# silently defeats that abort, so every remaining file in the batch retries and
+# fails one by one. Immich web shows its own generic upload-error text and never
+# surfaces this string. The real upstream detail is kept in the `error_detail`
+# log field for debugging.
+#
+# 507 originates only from the asset-upload endpoint; the remap lives in the two
+# upload paths (this helper for buffered uploads, the streaming pipeline) and the
+# global GumnutError handler, so any upstream 507 reaches the client as 400.
+QUOTA_EXCEEDED_STATUS = status.HTTP_400_BAD_REQUEST
+QUOTA_EXCEEDED_DETAIL = "Quota has been exceeded!"
+
 E = TypeVar("E", bound=Enum)
 
 
@@ -100,11 +122,17 @@ def upstream_status_log_level(status_code: int) -> int:
     Policy:
     - 404 -> INFO
     - Other 4xx -> WARNING
-    - 5xx -> ERROR
+    - 507 (over-quota upload) -> WARNING
+    - Other 5xx -> ERROR
     - Everything else -> INFO
     """
     if status_code == status.HTTP_404_NOT_FOUND:
         return logging.INFO
+    # An over-quota upload (507) is an expected, user-attributable condition, not
+    # a server fault — log it at WARNING like the 4xx-class throttles rather than
+    # firing an ERROR/Sentry alert on every upload once a user fills their cap.
+    if status_code == status.HTTP_507_INSUFFICIENT_STORAGE:
+        return logging.WARNING
     if 400 <= status_code < 500:
         return logging.WARNING
     if status_code >= 500:
@@ -192,6 +220,11 @@ def map_gumnut_error(
             extra=log_extra,
             exc_info=exc_info,
         )
+        # Surface an over-quota upload as Immich's native 400, not the raw 507.
+        if e.status_code == status.HTTP_507_INSUFFICIENT_STORAGE:
+            return HTTPException(
+                status_code=QUOTA_EXCEEDED_STATUS, detail=QUOTA_EXCEEDED_DETAIL
+            )
         return HTTPException(status_code=e.status_code, detail=detail)
 
     # Non-SDK exception (transport error, programmer error, etc.) — map to 500.

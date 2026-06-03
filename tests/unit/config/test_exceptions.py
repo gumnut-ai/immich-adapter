@@ -62,6 +62,24 @@ class TestGumnutErrorHandler:
         assert body["message"]
         assert body["error"]
 
+    def test_507_insufficient_storage_remaps_to_immich_quota_400(self):
+        """A 507 reaching the global handler surfaces as Immich's native 400.
+
+        Upload routes catch and remap 507 themselves, but the handler keeps the
+        507 -> 400 invariant for any SDK 507 that bubbles through unhandled.
+        """
+        err = make_sdk_status_error(
+            507,
+            "User storage limit exceeded",
+            body={"detail": "User storage limit exceeded"},
+        )
+        response = _client(err).get("/boom")
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["statusCode"] == 400
+        assert body["message"] == "Quota has been exceeded!"
+
     def test_extracts_detail_from_body(self):
         err = make_sdk_status_error(
             401,

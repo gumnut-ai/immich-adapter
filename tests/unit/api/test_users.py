@@ -1,15 +1,18 @@
 """Unit tests for Users API endpoints."""
 
 from datetime import datetime, timezone
-from uuid import UUID
+from unittest.mock import AsyncMock, Mock
+from uuid import UUID, uuid4
 import pytest
+import shortuuid
 
-from routers.api.users import get_my_user
+from routers.api.users import get_my_user, update_my_user
 from routers.immich_models import (
     UserAdminResponseDto,
     UserAvatarColor,
     UserStatus,
     UserLicense,
+    UserUpdateMeDto,
 )
 
 
@@ -143,3 +146,67 @@ class TestGetMyUser:
 
         # Assert status is deleted for inactive users
         assert result.status == UserStatus.deleted
+
+
+class TestUpdateMyUser:
+    """Test the update_my_user (PUT /me) endpoint quota mapping."""
+
+    def _mock_gumnut_user(self, storage_limit_bytes=None, storage_used_bytes=None):
+        """Build a mock Gumnut user with the given storage field values.
+
+        Both default to None, mirroring what the SDK yields when an older
+        photos-api omits the storage fields during rollout.
+        """
+        user = Mock(
+            spec=[
+                "id",
+                "email",
+                "first_name",
+                "last_name",
+                "is_active",
+                "created_at",
+                "updated_at",
+                "storage_limit_bytes",
+                "storage_used_bytes",
+            ]
+        )
+        user.id = f"intuser_{shortuuid.encode(uuid4())}"
+        user.email = "test@example.com"
+        user.first_name = "Test"
+        user.last_name = "User"
+        user.is_active = True
+        user.created_at = datetime.now(timezone.utc)
+        user.updated_at = datetime.now(timezone.utc)
+        user.storage_limit_bytes = storage_limit_bytes
+        user.storage_used_bytes = storage_used_bytes
+        return user
+
+    @pytest.mark.anyio
+    async def test_update_my_user_maps_quota(self):
+        """PUT /me sources quota from the Gumnut storage fields."""
+        mock_user = self._mock_gumnut_user(
+            storage_limit_bytes=100 * 1000**3,
+            storage_used_bytes=5 * 1000**3,
+        )
+
+        mock_client = Mock()
+        mock_client.users.me = AsyncMock(return_value=mock_user)
+
+        result = await update_my_user(request=UserUpdateMeDto(), client=mock_client)
+
+        assert isinstance(result, UserAdminResponseDto)
+        assert result.quotaSizeInBytes == 100 * 1000**3
+        assert result.quotaUsageInBytes == 5 * 1000**3
+
+    @pytest.mark.anyio
+    async def test_update_my_user_quota_none_is_rollout_safe(self):
+        """PUT /me reports no quota (None) when storage fields are None."""
+        mock_user = self._mock_gumnut_user()  # storage fields default to None
+
+        mock_client = Mock()
+        mock_client.users.me = AsyncMock(return_value=mock_user)
+
+        result = await update_my_user(request=UserUpdateMeDto(), client=mock_client)
+
+        assert result.quotaSizeInBytes is None
+        assert result.quotaUsageInBytes is None

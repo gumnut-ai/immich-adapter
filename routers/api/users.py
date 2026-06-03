@@ -35,7 +35,11 @@ from routers.immich_models import (
 )
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
-from routers.utils.current_user import get_current_user_admin, get_current_user_id
+from routers.utils.current_user import (
+    get_current_user_admin,
+    get_current_user_id,
+    map_user_quota,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +90,7 @@ async def update_my_user(
     last_name = user.last_name or ""
     full_name = f"{first_name} {last_name}".strip() or "User"
     user_uuid = safe_uuid_from_user_id(user.id)
+    quota = map_user_quota(user)
 
     return UserAdminResponseDto(
         id=str(user_uuid),
@@ -99,8 +104,8 @@ async def update_my_user(
         shouldChangePassword=False,
         status=UserStatus.active if user.is_active else UserStatus.deleted,
         storageLabel="admin",
-        quotaSizeInBytes=1024 * 1024 * 1024 * 100,
-        quotaUsageInBytes=1024 * 1024 * 1024,
+        quotaSizeInBytes=quota.size_bytes,
+        quotaUsageInBytes=quota.usage_bytes,
         deletedAt=None,
         oauthId="",
         profileChangedAt=user.updated_at,

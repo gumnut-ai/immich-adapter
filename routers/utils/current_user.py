@@ -6,10 +6,12 @@ repeated calls to the Gumnut backend.
 """
 
 from datetime import datetime, timezone
+from typing import NamedTuple
 from uuid import UUID, uuid4
 
 from fastapi import Depends, Request
 from gumnut import AsyncGumnut
+from gumnut.types.user_response import UserResponse
 
 from routers.immich_models import (
     UserAdminResponseDto,
@@ -20,6 +22,35 @@ from routers.immich_models import (
 )
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
+
+
+class ImmichUserQuota(NamedTuple):
+    """Immich quota fields mapped from a Gumnut user's storage caps.
+
+    ``size_bytes`` is Immich's ``quotaSizeInBytes`` (the per-user cap, from
+    Gumnut ``storage_limit_bytes``); ``usage_bytes`` is Immich's
+    ``quotaUsageInBytes`` (derived usage, from Gumnut ``storage_used_bytes``).
+
+    Either field is ``None`` when the value is unknown/unlimited: the user has
+    no per-user cap, or an older photos-api omitted the field during the rollout
+    window. (The SDK's non-validating response construction materializes an
+    omitted field as ``None`` rather than raising, so this needs no special
+    handling.) Immich treats a ``None`` quota as unlimited.
+    """
+
+    size_bytes: int | None
+    usage_bytes: int | None
+
+
+def map_user_quota(user: UserResponse) -> ImmichUserQuota:
+    """Map a Gumnut user's storage caps to Immich quota fields.
+
+    See ``ImmichUserQuota`` for the field semantics and what ``None`` means.
+    """
+    return ImmichUserQuota(
+        size_bytes=user.storage_limit_bytes,
+        usage_bytes=user.storage_used_bytes,
+    )
 
 
 async def get_current_user_admin(
@@ -52,6 +83,9 @@ async def get_current_user_admin(
     # Convert Gumnut user ID to UUID
     user_uuid = safe_uuid_from_user_id(user.id)
 
+    # Storage cap (max) and derived usage from photos-api, mapped to Immich quota.
+    quota = map_user_quota(user)
+
     user_admin_dto = UserAdminResponseDto(
         id=str(user_uuid),
         email=user.email or "",
@@ -65,8 +99,8 @@ async def get_current_user_admin(
         shouldChangePassword=False,
         status=UserStatus.active if user.is_active else UserStatus.deleted,
         storageLabel="admin",
-        quotaSizeInBytes=1024 * 1024 * 1024 * 100,
-        quotaUsageInBytes=1024 * 1024 * 1024,
+        quotaSizeInBytes=quota.size_bytes,
+        quotaUsageInBytes=quota.usage_bytes,
         deletedAt=None,
         oauthId="",
         profileChangedAt=user.updated_at,

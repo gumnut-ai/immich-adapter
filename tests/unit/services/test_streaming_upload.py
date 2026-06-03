@@ -167,6 +167,28 @@ class TestStreamingUploadPipeline:
         assert exc_info.value.status_code == 502
 
     @pytest.mark.anyio
+    async def test_507_maps_to_400_quota_exceeded(self):
+        """Test that an over-quota upload (upstream 507) maps to Immich's 400."""
+        body, ct_header = _build_multipart_body()
+        request = _make_mock_request(body, ct_header)
+        base_url = "http://localhost:8000"
+        response = _make_httpx_response(507, {"detail": "User storage limit exceeded"})
+
+        mock_client = MagicMock()
+        mock_client.post.return_value = response
+
+        with patch(
+            "services.streaming_upload._get_streaming_http_client",
+            return_value=mock_client,
+        ):
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
+            with pytest.raises(HTTPException) as exc_info:
+                await pipeline.execute(_extract_fields)
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Quota has been exceeded!"
+
+    @pytest.mark.anyio
     async def test_refreshed_token_captured(self):
         """Test that x-new-access-token from photos-api is captured."""
         body, ct_header = _build_multipart_body()

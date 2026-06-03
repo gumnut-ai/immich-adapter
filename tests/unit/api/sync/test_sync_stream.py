@@ -181,7 +181,35 @@ class TestGenerateSyncStream:
         assert len(events) == 2
         assert events[0]["type"] == "AuthUserV1"
         assert events[0]["data"]["email"] == "test@example.com"
+        # Quota mirrors the user's storage caps (same source as /api/users/me)
+        assert events[0]["data"]["quotaSizeInBytes"] == 100 * 1000**3
+        assert events[0]["data"]["quotaUsageInBytes"] == 5 * 1000**3
         assert events[1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_streams_auth_user_quota_none_coerces_usage_to_zero(self):
+        """A user missing storage values → no cap / 0 usage on the sync auth user.
+
+        quotaUsageInBytes is a required int on SyncAuthUserV1, so a None upstream
+        usage (rollout) coerces to 0; quotaSizeInBytes stays None (unlimited).
+        """
+        user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(user_updated_at)
+        # What the SDK yields when an older photos-api omits the storage fields
+        mock_user.storage_limit_bytes = None
+        mock_user.storage_used_bytes = None
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1])
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        assert events[0]["type"] == "AuthUserV1"
+        assert events[0]["data"]["quotaSizeInBytes"] is None
+        assert events[0]["data"]["quotaUsageInBytes"] == 0
 
     @pytest.mark.anyio
     async def test_streams_user_when_requested(self):

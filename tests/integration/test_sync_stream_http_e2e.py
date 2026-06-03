@@ -328,6 +328,8 @@ def mock_gumnut_user():
         is_superuser=False,
         is_active=True,
         is_verified=True,
+        storage_limit_bytes=100 * 1000**3,
+        storage_used_bytes=5 * 1000**3,
         created_at=TEST_USER_UPDATED_AT,
         updated_at=TEST_USER_UPDATED_AT,
     )

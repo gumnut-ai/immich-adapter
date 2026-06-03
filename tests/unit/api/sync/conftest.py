@@ -47,6 +47,8 @@ def create_mock_user(updated_at: datetime) -> Mock:
     user.last_name = "User"
     user.is_superuser = False
     user.updated_at = updated_at
+    user.storage_limit_bytes = 100 * 1000**3
+    user.storage_used_bytes = 5 * 1000**3
     return user
 
 

@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-05-29
+last-updated: 2026-06-02
 ---
 
 # Code Practices
@@ -11,6 +11,7 @@ Style, patterns, and conventions for the immich-adapter codebase.
 
 - **Type Hints**: Use modern Python 3.12+ syntax (`int | None` instead of `Optional[int]`). Add type annotations to all function parameters and return types.
 - **Type narrowing — overloads, not asserts**: When a helper returns `T | None` but a specific call site is guaranteed to receive non-None input, narrow with `@overload` decorators on the helper (`@overload def f(x: T) -> T; @overload def f(x: None) -> None; @overload def f(x: T | None) -> T | None`) rather than `assert x is not None` at the call site. Asserts are stripped under `python -O`, obscure whether the None branch is actually reachable, and only narrow at one site instead of helping every caller. See `to_actual_utc` / `to_immich_local_datetime` in `routers/utils/datetime_utils.py` for the pattern. For genuine runtime defense (input that *can* be invalid), use exceptions, not `assert`.
+- **Named types over bare tuples**: When a function returns multiple values whose positional meaning is ambiguous (e.g. two `int | None` a caller could transpose), return a small `NamedTuple` (or dataclass) with named fields and a docstring rather than a bare `tuple[...]`. Named fields make call sites self-documenting and let the type carry what `None` means. See `ImmichUserQuota` / `map_user_quota` in `routers/utils/current_user.py`.
 - **Naming**: Use `snake_case` for all variables, functions, and SQLAlchemy model attributes
 - **Imports**: Always place imports at the top of files (inline imports only to prevent circular dependencies)
 - **Dependencies**: Use `uv` for dependency management, not pip or poetry. Version dependencies appropriately in `pyproject.toml`.
@@ -134,6 +135,8 @@ Use the constants in `routers/utils/asset_conversion.py`, chosen by what the con
 Reads that consume only **lean-core** fields (`id`, `mime_type`, `width`/`height`, `duration`, `trashed_at`, `local_datetime`) or `asset_urls` request **no** `include` — those stay populated regardless (today: timeline buckets, trash-id collection, asset-count stats, the image-serving `_retrieve_and_stream_variant`, and the `/faces` width/height read). `asset_urls` is **not** gated by `include`, so the streaming/serving paths never need one, and `faces` is never requested off the asset — the adapter reads faces from the dedicated `/faces` endpoint. The `create()` (buffered upload) and `update_asset()` (PATCH) responses keep the full shape and expose no `include` param, so they need no change.
 
 Bumping `gumnut-sdk` can itself relax a previously-non-null asset field to `| None` as part of this migration (e.g. `file_modified_at` went `datetime` → `datetime | None`), which then needs a null-guard at every read site (`resolve_file_modified_at` falls back through `metadata.modified_datetime → file_modified_at → capture time` so the required Immich `fileModifiedAt` is never null). Run `uv run pyright` after any `gumnut-sdk` bump to surface newly-required guards.
+
+At **runtime**, a field the server omits — an older photos-api during a rollout, or a field gated behind an `include` the call didn't request — does **not** raise `AttributeError` on access. The SDK builds responses with non-validating construction (`construct_type`, since `_strict_response_validation` is off), which materializes every field the model declares and defaults an omitted one to `None`. So read such a field with plain attribute access and treat `None` as "absent"; a `getattr(obj, "field", default)` guard written to catch an `AttributeError` fallback is dead code (the attribute is always present), and a docstring claiming the access can raise misleads the next reader. `AttributeError` is reachable only when the *pinned* SDK model doesn't declare the field at all — which the version pin precludes — so verify the installed model actually exposes a field (e.g. `grep` the installed `gumnut/types/*.py`) rather than trusting a version number, since a Stainless commit's internal `version` string can differ from the published release that first ships the field.
 
 ### Asset dimensions and orientation
 
