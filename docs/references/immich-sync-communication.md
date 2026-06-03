@@ -1,17 +1,15 @@
 ---
 title: "Immich Client<>Server Sync Communication"
-last-updated: 2025-12-02
+last-updated: 2026-06-03
 ---
 
 # Immich Client<>Server Sync Communication
 
-## Setup
-
-I am running the Immich iOS client and communicating with an Immich server running in the local network. I am using Proxyman on MacOS to proxy communication between the iOS app and the Immich server. The Immich server already has 49 assets and 7 albums defined.
+This reference documents the sync protocol between the Immich client and server, captured from an Immich iOS client communicating with a local Immich server. The examples below come from a server already holding 49 assets and 7 albums.
 
 ## Initial Client Activity
 
-This is the first time the client has connected to this server. After login, the client calls `http://192.168.1.187:2283/api/sync/stream` with a body of:
+On the first connection to a server, after login the client calls `/api/sync/stream` with a body of:
 
 ```json
 {
@@ -51,7 +49,7 @@ The response is 275 lines and 140KB. Here is a subset:
 {"type":"AssetV1","data":{"id":"bb90997e-7dc0-4398-a401-d40f791e4ef2","ownerId":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","originalFileName":"DSC_0982.jpg","fileCreatedAt":"2025-01-30T00:13:07.230Z","fileModifiedAt":"2025-01-30T04:18:36.290Z","localDateTime":"2025-01-29T16:13:07.230Z","type":"IMAGE","deletedAt":null,"isFavorite":false,"visibility":"timeline","duration":null,"livePhotoVideoId":null,"stackId":null,"libraryId":null,"checksum":"vCbD4DZ3BqQibzmnh3qO1uEpLBA=","thumbhash":"lbYFDQLUmHaHWIeIeJ90qAh4ioCn"},"ack":"AssetV1|01994f97-f1fd-7d4f-ab66-c5624fe665d7"}
 [...]
 {"type":"SyncAckV1","data":{},"ack":"AlbumAssetUpdateV1|019adb7b-eaef-7a5f-a073-a5e2331de138"}
-{"type":"AlbumAssetCreateV1","data":{"id":"ec6cadf9-dc8a-40ce-b6e7-c3f6df2827cf","ownerId":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","originalFileName":"DSC_4506.jpg","fileCreatedAt":"2025-01-31T00:02:00.430Z","fileModifiedAt":"2025-04-14T21:13:43.787Z","localDateTime":"2025-01-30T16:02:00.430Z","type":"IMAGE","deletedAt":null,"isFavorite":false,"visibility":"timeline","duration":null,"livePhotoVideoId":null,"stackId":null,"libraryId":null,"checksum":"K8yLrSN5c1rLLcNw5p5eZgTcdfY=","thumbhash":"qbYFDYCUiol2eIivVId3UElwkCMI"},"ack":"AlbumAssetCreateV1|01994f98-b16c-703e-8b61-959cb9c3ee76"}
+{"type":"AlbumAssetCreateV1", ... } (same shape as AssetV1 above)
 [...]
 {"type":"AlbumV1","data":{"id":"bc6724a1-1136-4e80-a74a-a52e788eb488","ownerId":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Red Flag 25-01","description":"","createdAt":"2025-09-15T22:57:01.054Z","updatedAt":"2025-09-15T22:57:19.506Z","thumbnailAssetId":"e526140d-48bc-4772-9107-5b7cc17f24f0","isActivityEnabled":true,"order":"desc"},"ack":"AlbumV1|01994f98-d292-73b9-b27a-154e90d4a2f3"}
 [...]
@@ -60,7 +58,7 @@ The response is 275 lines and 140KB. Here is a subset:
 {"type":"AssetExifV1","data":{"assetId":"ec6cadf9-dc8a-40ce-b6e7-c3f6df2827cf","description":"","exifImageWidth":1600,"exifImageHeight":1066,"fileSizeInByte":251102,"orientation":null,"dateTimeOriginal":"2025-01-31T00:02:00.430Z","modifyDate":"2025-04-14T21:13:43.787Z","timeZone":"UTC-7","latitude":null,"longitude":null,"projectionType":null,"city":null,"state":null,"country":null,"make":"NIKON CORPORATION","model":"NIKON Z 8","lensModel":"NIKKOR Z 180-600mm f/5.6-6.3 VR","fNumber":6.3,"focalLength":600,"iso":125,"exposureTime":"1/500","profileDescription":"sRGB IEC61966-2.1","rating":null,"fps":null},"ack":"AssetExifV1|01994f97-f030-749f-8d14-7aa4d5bbb92b"}
 [...]
 {"type":"SyncAckV1","data":{},"ack":"AlbumAssetExifUpdateV1|019adb7b-eaef-7a5f-a073-a5e2331de138"}
-{"type":"AlbumAssetExifCreateV1","data":{"assetId":"ec6cadf9-dc8a-40ce-b6e7-c3f6df2827cf","description":"","exifImageWidth":1600,"exifImageHeight":1066,"fileSizeInByte":251102,"orientation":null,"dateTimeOriginal":"2025-01-31T00:02:00.430Z","modifyDate":"2025-04-14T21:13:43.787Z","timeZone":"UTC-7","latitude":null,"longitude":null,"projectionType":null,"city":null,"state":null,"country":null,"make":"NIKON CORPORATION","model":"NIKON Z 8","lensModel":"NIKKOR Z 180-600mm f/5.6-6.3 VR","fNumber":6.3,"focalLength":600,"iso":125,"exposureTime":"1/500","profileDescription":"sRGB IEC61966-2.1","rating":null,"fps":null},"ack":"AlbumAssetExifCreateV1|01994f98-b16c-703e-8b61-959cb9c3ee76"}
+{"type":"AlbumAssetExifCreateV1", ... } (same shape as AssetExifV1 above)
 [...]
 {"type":"MemoryDeleteV1","data":{"memoryId":"f0fecdc5-a3da-466a-9757-b5e106a69f40"},"ack":"MemoryDeleteV1|019ac453-886e-7f05-adba-44ca13ad94c5"}
 {"type":"MemoryV1","data":{"id":"3d3cd24d-4cd2-47e3-9843-325a990ed43c","createdAt":"2025-11-25T08:00:00.165Z","updatedAt":"2025-11-25T08:00:00.165Z","deletedAt":null,"ownerId":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","type":"on_this_day","data":{"year":2017},"isSaved":false,"memoryAt":"2017-11-28T00:00:00.000Z","seenAt":null,"showAt":"2025-11-28T00:00:00.000Z","hideAt":"2025-11-28T23:59:59.999Z"},"ack":"MemoryV1|019aba06-d0a7-7c88-989f-38bfe4bbc5c3"}
@@ -72,9 +70,9 @@ The response is 275 lines and 140KB. Here is a subset:
 {"type":"SyncCompleteV1","data":{},"ack":"SyncCompleteV1|019adb7b-eaef-7a5f-a073-a5e2331de138"}
 ```
 
-The entities are roughly ordered by `SyncRequestType` (though it is complicated by the fact that each `SyncRequestType` has its own handler which determines the actual order of the entities) and the UUID v7 time-ordered `updateId`. (I was incorrect when I stated that entities are ordered by `updateId`.)
+The entities are roughly ordered by `SyncRequestType`, though each `SyncRequestType` has its own handler which determines the actual order of the entities it emits. Entities are not globally ordered by the UUID v7 time-ordered `updateId`.
 
-Let's look at the detail for the first AssetV1 entity:
+The detail for the first AssetV1 entity:
 
 ```json
 {
@@ -114,18 +112,7 @@ This is the complete set of requests starting with the call to `/sync/stream`:
 | /api/sync/ack | POST | UserV1 |
 | /api/sync/ack | POST | AssetV1 |
 | /api/sync/ack | POST | AlbumAssetUpdateV1 |
-| /api/assets/0c56b89c-e87a-4f95-bead-4424b8413207/thumbnail | GET | WEBP image thumbnail |
-| /api/assets/3df1f6a0-8a01-4ff8-9f02-d7c3d3de8618/thumbnail | GET | WEBP image thumbnail |
-| /api/assets/7b5d073c-1304-4082-9ed3-030a1b2bbbae/thumbnail | GET | WEBP image thumbnail |
-| /api/assets/d687118b-eed6-4a49-a0c5-1b42d3df872e/thumbnail | GET | WEBP image thumbnail |
-| /api/assets/028e983d-3353-47df-82ff-4f83de672dc7/thumbnail | GET | WEBP image thumbnail |
-| /api/assets/e526140d-48bc-4772-9107-5b7cc17f24f0/thumbnail | GET | WEBP image thumbnail |
-| /api/assets/1fe1616c-4803-490f-851c-bd7875195625/thumbnail | GET | WEBP image thumbnail |
-| /api/assets/ec6cadf9-dc8a-40ce-b6e7-c3f6df2827cf/thumbnail | GET | WEBP image thumbnail |
-| /api/assets/37cf2ca5-13cf-4aa6-91dc-e8e911b0fd56/thumbnail | GET | WEBP image thumbnail |
-| /api/assets/bb90997e-7dc0-4398-a401-d40f791e4ef2/thumbnail | GET | WEBP image thumbnail |
-| /api/assets/02b7e3e3-5d89-4564-9908-902908ea998a/thumbnail | GET | WEBP image thumbnail |
-| /api/assets/f8e63cec-6673-4e87-85fe-0ae96d9eca10/thumbnail | GET | WEBP image thumbnail |
+| /api/assets/{assetId}/thumbnail | GET | WEBP image thumbnail (one GET per asset, interleaved here — 13 in this session) |
 | /api/sync/ack | POST | AlbumAssetCreateV1 |
 | /api/sync/ack | POST | AlbumV1 |
 | /api/sync/ack | POST | AlbumToAssetV1 |
@@ -156,26 +143,11 @@ When updating with no changes, we see just two calls:
 
 ### New Image Added
 
-A new image was added via the Immich web client, and then the mobile client was updated:
+When a new image is added (e.g. via the Immich web client) and the mobile client is then updated, the `/api/sync/stream` POST (`{"reset": false, "types": [/* sync types as above */]}`) returns a stream containing one line per entity, each following the wire format shown above: `AuthUserV1`, `UserV1`, then the new `AssetV1` and its `AssetExifV1`, terminated by `SyncCompleteV1`. The client then acks each type in turn:
 
 | Path | Method | Request Summary |
 |------|--------|-----------------|
 | /api/sync/stream | POST | `{"reset": false, "types": [/* sync types as above */]}` |
-
-The response body is:
-
-```json
-{"type":"AuthUserV1","data":{"id":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Taggart","email":"taggartgorman@yahoo.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-15T22:55:19.045Z","isAdmin":true,"pinCode":null,"oauthId":"","storageLabel":"admin","quotaSizeInBytes":null,"quotaUsageInBytes":83212978,"hasProfileImage":false},"ack":"AuthUserV1|019adc6a-abb8-7191-af07-f65f5e5bd628"}
-{"type":"UserV1","data":{"id":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Taggart","email":"taggartgorman@yahoo.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-15T22:55:19.045Z","hasProfileImage":false},"ack":"UserV1|019adc6a-abb8-7191-af07-f65f5e5bd628"}
-{"type":"AssetV1","data":{"id":"1ee6d743-54fd-43de-9164-b99fb18caf36","ownerId":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","originalFileName":"DSC_8766.jpg","fileCreatedAt":"2010-10-08T22:16:30.900Z","fileModifiedAt":"2025-09-17T02:41:46.000Z","localDateTime":"2010-10-08T15:16:30.900Z","type":"IMAGE","deletedAt":null,"isFavorite":false,"visibility":"timeline","duration":null,"livePhotoVideoId":null,"stackId":null,"libraryId":null,"checksum":"1HHXeKxJMUSpQsIvJJVdZuBOm+0=","thumbhash":"XoUJHoT4t0mGl0iMdnR2uFiYCHaDgDc="},"ack":"AssetV1|019adc6a-af34-73d3-ad9d-6e7622d7f211"}
-{"type":"AssetExifV1","data":{"assetId":"1ee6d743-54fd-43de-9164-b99fb18caf36","description":"","exifImageWidth":2400,"exifImageHeight":1920,"fileSizeInByte":1058587,"orientation":null,"dateTimeOriginal":"2010-10-08T22:16:30.900Z","modifyDate":"2025-09-17T02:41:46.000Z","timeZone":"UTC-7","latitude":null,"longitude":null,"projectionType":null,"city":null,"state":null,"country":null,"make":"NIKON CORPORATION","model":"NIKON D60","lensModel":"AF-S Nikkor 300mm f/4D IF-ED","fNumber":4,"focalLength":300,"iso":110,"exposureTime":"1/1000","profileDescription":"sRGB IEC61966-2.1","rating":5,"fps":null},"ack":"AssetExifV1|019adc6a-ad2b-7813-bc0a-6e2f059fcd60"}
-{"type":"SyncCompleteV1","data":{},"ack":"SyncCompleteV1|019adc6c-3ba4-7f57-a7e0-9b67da6b27d3"}
-```
-
-And the rest of the communication chain:
-
-| Path | Method | Request Summary |
-|------|--------|-----------------|
 | /api/sync/ack | POST | AuthUserV1 |
 | /api/sync/ack | POST | UserV1 |
 | /api/sync/ack | POST | AssetV1 |
@@ -184,23 +156,23 @@ And the rest of the communication chain:
 
 ### Adding Image to Existing Album
 
-The response body for `/api/sync/stream` is:
+When an asset is added to an existing album, the `/api/sync/stream` response carries the album-asset flow. The `AlbumAssetCreateV1` and `AlbumAssetExifCreateV1` payloads share the same shapes as `AssetV1` and `AssetExifV1` above; each create is preceded by a `SyncAckV1` phase-transition marker (see [SyncAckV1](#syncackv1)). The line types, in order:
 
-```json
-{"type":"SyncAckV1","data":{},"ack":"AlbumAssetUpdateV1|019adc74-ea58-751b-9139-1054075c249a"}
-{"type":"AlbumAssetCreateV1","data":{"id":"1ee6d743-54fd-43de-9164-b99fb18caf36","ownerId":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","originalFileName":"DSC_8766.jpg","fileCreatedAt":"2010-10-08T22:16:30.900Z","fileModifiedAt":"2025-09-17T02:41:46.000Z","localDateTime":"2010-10-08T15:16:30.900Z","type":"IMAGE","deletedAt":null,"isFavorite":false,"visibility":"timeline","duration":null,"livePhotoVideoId":null,"stackId":null,"libraryId":null,"checksum":"1HHXeKxJMUSpQsIvJJVdZuBOm+0=","thumbhash":"XoUJHoT4t0mGl0iMdnR2uFiYCHaDgDc="},"ack":"AlbumAssetCreateV1|019adc74-c908-70c5-908c-e71c68e4a396"}
-{"type":"AlbumV1","data":{"id":"0142f336-3ae4-4b33-bafd-31442ae5e835","ownerId":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Fleet Week","description":"","createdAt":"2025-12-01T23:15:52.074Z","updatedAt":"2025-12-02T00:27:12.552Z","thumbnailAssetId":"4eb5665e-1cd3-4da0-82b4-e989061d2692","isActivityEnabled":true,"order":"desc"},"ack":"AlbumV1|019adc74-c928-779f-8c84-8ae4aa40943a"}
-{"type":"AlbumToAssetV1","data":{"assetId":"1ee6d743-54fd-43de-9164-b99fb18caf36","albumId":"0142f336-3ae4-4b33-bafd-31442ae5e835"},"ack":"AlbumToAssetV1|019adc74-c908-70c5-908c-e71c68e4a396"}
-{"type":"SyncAckV1","data":{},"ack":"AlbumAssetExifUpdateV1|019adc74-ea58-751b-9139-1054075c249a"}
-{"type":"AlbumAssetExifCreateV1","data":{"assetId":"1ee6d743-54fd-43de-9164-b99fb18caf36","description":"","exifImageWidth":2400,"exifImageHeight":1920,"fileSizeInByte":1058587,"orientation":null,"dateTimeOriginal":"2010-10-08T22:16:30.900Z","modifyDate":"2025-09-17T02:41:46.000Z","timeZone":"UTC-7","latitude":null,"longitude":null,"projectionType":null,"city":null,"state":null,"country":null,"make":"NIKON CORPORATION","model":"NIKON D60","lensModel":"AF-S Nikkor 300mm f/4D IF-ED","fNumber":4,"focalLength":300,"iso":110,"exposureTime":"1/1000","profileDescription":"sRGB IEC61966-2.1","rating":5,"fps":null},"ack":"AlbumAssetExifCreateV1|019adc74-c908-70c5-908c-e71c68e4a396"}
-{"type":"SyncCompleteV1","data":{},"ack":"SyncCompleteV1|019adc74-ea58-751b-9139-1054075c249a"}
+```text
+SyncAckV1               (ack: AlbumAssetUpdateV1|...)      phase transition before creates
+AlbumAssetCreateV1      (asset shape, as AssetV1)
+AlbumV1                 ({id, ownerId, name, description, createdAt, updatedAt, thumbnailAssetId, isActivityEnabled, order})
+AlbumToAssetV1          ({assetId, albumId})
+SyncAckV1               (ack: AlbumAssetExifUpdateV1|...)  phase transition before exif creates
+AlbumAssetExifCreateV1  (exif shape, as AssetExifV1)
+SyncCompleteV1
 ```
 
 ---
 
 ## How the Client Handles the Response
 
-Once the mobile client calls `/api/sync/stream`, it begins processing the response lines in batch sizes of 5,000 lines. Until 5,000 lines have been read or the response finishes, the client does not start to parse the lines. If the batch size exceeds 5,000 lines, then reading the response is paused and the batch is parsed and handled, and the response reading is resumed.
+The mobile client reads the `/api/sync/stream` response in batches of 5,000 lines: it accumulates lines without parsing until 5,000 have been read (or the response finishes), then pauses reading, parses and handles the batch, and resumes.
 
 ### Sample Timeline
 

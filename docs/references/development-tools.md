@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-05-15
+last-updated: 2026-06-03
 ---
 
 # Development Tools
@@ -29,12 +29,7 @@ uv run tools/generate_immich_models.py \
   --output src/models.py
 ```
 
-This generates 300+ Pydantic models with:
-
-- Full type safety and validation
-- Proper field constraints from OpenAPI schema
-- Support for nested model relationships
-- Modern Pydantic v2 syntax with `Annotated` fields
+This generates the 300+ typed Pydantic v2 models the adapter imports, with field constraints derived from the OpenAPI schema.
 
 Generated models are used in FastAPI endpoints for request/response validation:
 
@@ -127,11 +122,7 @@ uv run tools/validate_api_compatibility.py \
   --adapter-spec=/tmp/spec.json
 ```
 
-This is useful for:
-
-- Debugging OpenAPI spec generation
-- Comparing specs without running a server
-- Offline analysis of the API specification
+This lets you debug or compare the adapter's OpenAPI spec without running a server.
 
 ## Dependency Update Automation
 
