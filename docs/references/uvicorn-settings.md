@@ -14,6 +14,8 @@ This document covers the uvicorn server settings used by `immich-adapter`:
 
 These settings control how uvicorn (the ASGI server running our FastAPI application) handles HTTP and WebSocket connections, which is critical for mobile clients that make rapid successive requests and for the Socket.IO sync stream that backs the live Immich web/mobile UIs.
 
+For the generic definition of each flag, see the official [uvicorn settings reference](https://www.uvicorn.org/settings/). This doc is not a restatement of that page — it records the **non-default values we run and why** (mobile keep-alive matching, the legacy-`websockets` shielded-future leak, the `uvicorn[standard]>=0.44.0` pin, the macOS `somaxconn` gotcha), which the upstream reference does not cover.
+
 The adapter launches uvicorn from the `Dockerfile` CMD. Each HTTP-tier value is overridable via an environment variable, with the defaults shown below:
 
 ```text
