@@ -209,8 +209,12 @@ class TestGetMapMarkers:
         )
 
         kwargs = client.assets.list.call_args.kwargs
-        # Adapter forwards only `limit` (and date range when set).
-        assert set(kwargs.keys()) == {"limit"}
+        # Adapter forwards only `limit` + `include` (and date range when set);
+        # `withPartners` / `withSharedAlbums` must not leak through.
+        assert set(kwargs.keys()) == {"limit", "include"}
+        # Markers read only GPS off `metadata` — no people (needless aggregation
+        # on the scan) and no file_data (never read on this path).
+        assert kwargs["include"] == ["metadata"]
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(

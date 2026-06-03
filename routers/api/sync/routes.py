@@ -36,7 +36,7 @@ from routers.immich_models import (
     SyncStreamDto,
     UserResponseDto,
 )
-from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
+from routers.utils.asset_conversion import ASSET_INCLUDE, convert_gumnut_asset_to_immich
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 
@@ -327,6 +327,7 @@ async def get_delta_sync(
             assets_page = await gumnut_client.assets.list(
                 limit=page_size,
                 starting_after_id=starting_after_id,
+                include=ASSET_INCLUDE,
             )
 
             page_assets = assets_page.data
@@ -394,7 +395,7 @@ async def get_full_sync_for_user(
         assets = []
         skip_until_cursor = request.lastId is not None
 
-        async for asset in gumnut_client.assets.list():
+        async for asset in gumnut_client.assets.list(include=ASSET_INCLUDE):
             # Skip until we find the cursor asset
             if skip_until_cursor:
                 if asset.id == request.lastId:

@@ -20,7 +20,7 @@ from routers.immich_models import (
     OnThisDayDto,
     UserResponseDto,
 )
-from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
+from routers.utils.asset_conversion import ASSET_INCLUDE, convert_gumnut_asset_to_immich
 from routers.utils.current_user import get_current_user, get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 
@@ -134,6 +134,7 @@ async def _fetch_assets_for_day(
         local_datetime_before=day_end.isoformat(),
         state="live",
         limit=limit,
+        include=ASSET_INCLUDE,
     ):
         assets.append(asset)
         if len(assets) >= limit:

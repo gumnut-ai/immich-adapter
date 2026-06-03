@@ -29,6 +29,34 @@ from routers.utils.person_conversion import convert_gumnut_person_to_immich_with
 
 logger = logging.getLogger(__name__)
 
+# `include` sets the adapter must request explicitly on its Gumnut asset reads.
+#
+# Photos API returns the full asset shape today, but is moving to a lean default
+# where an omitted `include` returns none of the heavy fields. The adapter reads
+# several of those off every asset, so it must opt back into exactly what its
+# conversions consume — otherwise, once the default flips, EXIF / checksum / size
+# / people silently become null and the Immich-facing asset is corrupted.
+#
+# `metadata` feeds the EXIF block (camera/GPS/timestamps); `file_data` feeds
+# `checksum_sha1` → Immich checksum, `file_size_bytes`, and the
+# `file_modified_at` cascade; `people` feeds `AssetResponseDto.people`.
+#
+# Deliberately omitted: `faces` (the adapter reads faces from the dedicated
+# `/faces` endpoint, never off the asset), `metrics` (never read), and any
+# image-variant token — `asset_urls` is not gated and stays fully populated, so
+# the streaming/serving paths need no `include` at all.
+ASSET_INCLUDE: list[str] = ["metadata", "people", "file_data"]
+"""For reads that feed ``convert_gumnut_asset_to_immich`` (reads ``people``)."""
+
+ASSET_INCLUDE_NO_PEOPLE: list[str] = ["metadata", "file_data"]
+"""For the sync-stream converters, which read EXIF + the ``file_data`` scalars
+(``checksum_sha1`` / ``file_size_bytes`` / ``file_modified_at``) but never
+``people`` — skipping ``people`` avoids a server-side aggregation on the scan."""
+
+ASSET_INCLUDE_METADATA_ONLY: list[str] = ["metadata"]
+"""For reads that consume only ``metadata`` fields and no ``file_data`` scalar:
+map markers (GPS) and the per-asset datetime rewrite (``original_datetime``)."""
+
 
 def resolve_immich_checksum(gumnut_asset: AssetResponse) -> str:
     """Return the Immich-facing asset checksum (base64-encoded SHA-1).
@@ -131,12 +159,18 @@ def resolve_file_modified_at(gumnut_asset: AssetResponse) -> datetime:
     field for us — ``file_modified_at`` is the raw file mtime. The adapter
     applies the ``metadata.modified_datetime → file_modified_at`` cascade
     here so the EXIF modify time isn't lost on the wire.
+
+    ``file_modified_at`` is nullable (it belongs to the ``file_data`` include
+    group), so the cascade ends in a final fall back to the capture time —
+    Immich's ``fileModifiedAt`` is required, so this must never return ``None``.
     """
     metadata_modified = (
         gumnut_asset.metadata.modified_datetime if gumnut_asset.metadata else None
     )
-    return to_actual_utc(metadata_modified) or to_actual_utc(
-        gumnut_asset.file_modified_at
+    return (
+        to_actual_utc(metadata_modified)
+        or to_actual_utc(gumnut_asset.file_modified_at)
+        or resolve_file_created_at(gumnut_asset)
     )
 
 

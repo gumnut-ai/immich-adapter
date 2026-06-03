@@ -315,7 +315,8 @@ class TestGetAlbumInfo:
         assert result.albumName == "Test Album"  # From sample_gumnut_album.name
         mock_client.albums.retrieve.assert_called_once()
         mock_client.assets.list.assert_called_once_with(
-            album_id=uuid_to_gumnut_album_id(sample_uuid)
+            album_id=uuid_to_gumnut_album_id(sample_uuid),
+            include=["metadata", "people", "file_data"],
         )
 
     @pytest.mark.anyio

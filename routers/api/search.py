@@ -29,7 +29,7 @@ from routers.immich_models import (
     UserResponseDto,
 )
 from routers.api.timeline import fetch_asset_counts
-from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
+from routers.utils.asset_conversion import ASSET_INCLUDE, convert_gumnut_asset_to_immich
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +165,7 @@ async def search_assets(
         "captured_after": request.takenAfter,
         "captured_before": request.takenBefore,
         "person_ids": person_ids,
+        "include": ASSET_INCLUDE,
     }
     if request.size is not None:
         # Clamp at the photos-api per-page ceiling. The Immich client default
@@ -201,7 +202,7 @@ async def search_smart(
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> SearchResponseDto:
     """Smart search for assets."""
-    search_kwargs: dict[str, Any] = {"query": request.query}
+    search_kwargs: dict[str, Any] = {"query": request.query, "include": ASSET_INCLUDE}
     if request.size is not None:
         # Clamp at the photos-api per-page ceiling. The Immich client default
         # is 1000; without this, photos-api 422s.

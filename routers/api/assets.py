@@ -69,6 +69,8 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
 )
 from routers.utils.asset_conversion import (
+    ASSET_INCLUDE,
+    ASSET_INCLUDE_METADATA_ONLY,
     build_asset_upload_ready_payload,
     convert_gumnut_asset_to_immich,
     mime_type_to_asset_type,
@@ -667,9 +669,9 @@ async def _upload_streaming(
 
         asset_uuid = safe_uuid_from_asset_id(asset_id)
 
-        # Fetch asset metadata for WebSocket events (lightweight GET, no file data)
+        # Fetch asset metadata for WebSocket events (lightweight GET, no image bytes)
         try:
-            gumnut_asset = await client.assets.retrieve(asset_id)
+            gumnut_asset = await client.assets.retrieve(asset_id, include=ASSET_INCLUDE)
             await _emit_upload_events(gumnut_asset, current_user)
         except Exception as ws_err:
             logger.warning(
@@ -957,7 +959,11 @@ async def update_assets(
             # read (and thus the rewrite) — the homogeneous path above forwards
             # them regardless, so the per-asset path must too.
             page = await client.assets.list(
-                state="all", ids=gumnut_ids, limit=len(gumnut_ids)
+                state="all",
+                ids=gumnut_ids,
+                limit=len(gumnut_ids),
+                # Only `metadata.original_datetime` is read below.
+                include=ASSET_INCLUDE_METADATA_ONLY,
             )
             current_by_id = {
                 asset.id: asset.metadata.original_datetime
@@ -1241,7 +1247,7 @@ async def get_asset_info(
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> AssetResponseDto:
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
-    gumnut_asset = await client.assets.retrieve(gumnut_asset_id)
+    gumnut_asset = await client.assets.retrieve(gumnut_asset_id, include=ASSET_INCLUDE)
     return convert_gumnut_asset_to_immich(gumnut_asset, current_user)
 
 

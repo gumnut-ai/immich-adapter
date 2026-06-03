@@ -140,6 +140,32 @@ class TestDateResolution:
         assert payload.asset.fileModifiedAt == self.FILE_MODIFIED_DT
         assert payload.asset.localDateTime == expected_local_date_time
 
+    def test_file_modified_at_falls_back_to_capture_when_both_modify_times_absent(
+        self, sample_gumnut_asset, mock_current_user
+    ):
+        """``file_modified_at`` is nullable (part of the ``file_data`` include
+        group), so the modify-time cascade can bottom out with no source. When
+        neither ``metadata.modified_datetime`` nor ``file_modified_at`` is
+        present, ``fileModifiedAt`` falls back to the capture time rather than
+        ``None`` — Immich requires a non-null ``fileModifiedAt``."""
+        self._set_dates(
+            sample_gumnut_asset,
+            local_datetime=self.LOCAL_DT,
+            metadata_original=None,
+            metadata_modified=None,
+            file_created=None,
+            file_modified=None,
+        )
+
+        rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+        assert rest.fileModifiedAt == self.LOCAL_DT
+        assert rest.fileCreatedAt == self.LOCAL_DT
+
+        payload = build_asset_upload_ready_payload(
+            sample_gumnut_asset, owner_id="22222222-2222-2222-2222-222222222222"
+        )
+        assert payload.asset.fileModifiedAt == self.LOCAL_DT
+
 
 class TestConvertGumnutAssetToImmichTrashState:
     def test_live_asset_has_is_trashed_false(

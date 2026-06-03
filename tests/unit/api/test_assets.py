@@ -1546,6 +1546,8 @@ class TestUpdateAssets:
             state="all",
             ids=[uuid_to_gumnut_asset_id(trashed)],
             limit=1,
+            # The rewrite reads only `metadata.original_datetime`.
+            include=["metadata"],
         )
         self._assert_calls_homogeneous_change(
             mock_client.assets.bulk_update_assets,
@@ -2269,7 +2271,8 @@ class TestUpdateAsset:
 
         mock_client.assets.update_asset.assert_not_awaited()
         mock_client.assets.retrieve.assert_awaited_once_with(
-            uuid_to_gumnut_asset_id(sample_uuid)
+            uuid_to_gumnut_asset_id(sample_uuid),
+            include=["metadata", "people", "file_data"],
         )
         mock_emit.assert_not_awaited()
         assert result.id == str(sample_uuid)

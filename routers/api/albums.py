@@ -32,7 +32,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
 )
-from routers.utils.asset_conversion import convert_gumnut_asset_to_immich
+from routers.utils.asset_conversion import ASSET_INCLUDE, convert_gumnut_asset_to_immich
 from routers.utils.album_conversion import convert_gumnut_album_to_immich
 from pydantic.json_schema import SkipJsonSchema
 
@@ -118,7 +118,9 @@ async def get_album_info(
 
     immich_assets = []
     if not withoutAssets:
-        async for gumnut_asset in client.assets.list(album_id=gumnut_album_id):
+        async for gumnut_asset in client.assets.list(
+            album_id=gumnut_album_id, include=ASSET_INCLUDE
+        ):
             try:
                 immich_assets.append(
                     convert_gumnut_asset_to_immich(gumnut_asset, current_user)

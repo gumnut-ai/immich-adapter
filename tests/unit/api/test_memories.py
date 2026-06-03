@@ -455,6 +455,13 @@ class TestFetchAssetsForDay:
         await _fetch_assets_for_day(client, 2024, 5, 4, limit=20)
 
         assert client.assets.list.call_args.kwargs["state"] == "live"
+        # Memory assets convert to full AssetResponseDto (incl. people), so opt
+        # into the heavy fields the conversion reads — survives the lean flip.
+        assert client.assets.list.call_args.kwargs["include"] == [
+            "metadata",
+            "people",
+            "file_data",
+        ]
 
 
 class TestGetMemory:
