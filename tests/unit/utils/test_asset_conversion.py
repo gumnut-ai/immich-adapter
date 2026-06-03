@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 import pytest
+from gumnut.types.asset_response import AssetResponse
+from gumnut.types.file_data_response import FileDataResponse
 
 from routers.api.sync.converters import gumnut_asset_to_sync_asset_v1
 from routers.utils.asset_conversion import (
@@ -23,7 +25,10 @@ from routers.utils.asset_conversion import (
     extract_sync_exif,
     format_duration,
     resolve_capture_datetime,
+    resolve_file_modified_at,
+    resolve_immich_checksum,
 )
+from routers.utils.datetime_utils import to_actual_utc
 
 
 class TestDateResolution:
@@ -51,8 +56,10 @@ class TestDateResolution:
         asset.created_at = self.CREATED_DT
         asset.updated_at = self.UPDATED_DT
         asset.local_datetime = local_datetime
-        asset.file_created_at = file_created
-        asset.file_modified_at = file_modified
+        # ``file_created_at`` / ``file_modified_at`` live on the nested
+        # ``file_data`` group (requested via ``include=file_data``).
+        asset.file_data.file_created_at = file_created
+        asset.file_data.file_modified_at = file_modified
         if metadata_original is None and metadata_modified is None:
             asset.metadata = None
             return
@@ -432,16 +439,16 @@ class TestChecksumEmission:
     OWNER_ID = "22222222-2222-2222-2222-222222222222"
 
     def test_rest_converter_emits_sha1(self, sample_gumnut_asset, mock_current_user):
-        sample_gumnut_asset.checksum = "base64-sha256-value-not-this"
-        sample_gumnut_asset.checksum_sha1 = self.SHA1_B64
+        sample_gumnut_asset.file_data.checksum = "base64-sha256-value-not-this"
+        sample_gumnut_asset.file_data.checksum_sha1 = self.SHA1_B64
 
         result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
 
         assert result.checksum == self.SHA1_B64
 
     def test_websocket_payload_emits_sha1(self, sample_gumnut_asset):
-        sample_gumnut_asset.checksum = "base64-sha256-value-not-this"
-        sample_gumnut_asset.checksum_sha1 = self.SHA1_B64
+        sample_gumnut_asset.file_data.checksum = "base64-sha256-value-not-this"
+        sample_gumnut_asset.file_data.checksum_sha1 = self.SHA1_B64
 
         payload = build_asset_upload_ready_payload(
             sample_gumnut_asset, owner_id=self.OWNER_ID
@@ -450,8 +457,8 @@ class TestChecksumEmission:
         assert payload.asset.checksum == self.SHA1_B64
 
     def test_sync_converter_emits_sha1(self, sample_gumnut_asset):
-        sample_gumnut_asset.checksum = "base64-sha256-value-not-this"
-        sample_gumnut_asset.checksum_sha1 = self.SHA1_B64
+        sample_gumnut_asset.file_data.checksum = "base64-sha256-value-not-this"
+        sample_gumnut_asset.file_data.checksum_sha1 = self.SHA1_B64
 
         result = gumnut_asset_to_sync_asset_v1(
             sample_gumnut_asset, owner_id=self.OWNER_ID
@@ -465,8 +472,8 @@ class TestChecksumEmission:
         """When ``checksum_sha1`` is null, every converter emits ``""`` — a
         clean dedup no-match — rather than the SHA-256 or
         ``"placeholder-checksum"``, which look valid but never match."""
-        sample_gumnut_asset.checksum = "base64-sha256-value-not-this"
-        sample_gumnut_asset.checksum_sha1 = None
+        sample_gumnut_asset.file_data.checksum = "base64-sha256-value-not-this"
+        sample_gumnut_asset.file_data.checksum_sha1 = None
 
         rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
         ws = build_asset_upload_ready_payload(
@@ -478,7 +485,7 @@ class TestChecksumEmission:
 
         for emitted in (rest.checksum, ws.asset.checksum, sync.checksum):
             assert emitted == ""
-            assert emitted != sample_gumnut_asset.checksum
+            assert emitted != sample_gumnut_asset.file_data.checksum
             assert emitted != "placeholder-checksum"
 
     def test_null_sha1_logs_warning_with_asset_id(
@@ -487,7 +494,7 @@ class TestChecksumEmission:
         """The null path is an explicit operator-facing diagnostic, not a
         silent fallback: it must log a WARNING carrying the asset id so the
         rare legacy-row cohort stays observable."""
-        sample_gumnut_asset.checksum_sha1 = None
+        sample_gumnut_asset.file_data.checksum_sha1 = None
 
         with caplog.at_level(logging.WARNING, logger="routers.utils.asset_conversion"):
             convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
@@ -506,7 +513,7 @@ class TestChecksumEmission:
         Locks in "no log spam on the happy path": a refactor that moved the
         WARNING out of the ``is None`` branch would fire here and fail.
         """
-        sample_gumnut_asset.checksum_sha1 = self.SHA1_B64
+        sample_gumnut_asset.file_data.checksum_sha1 = self.SHA1_B64
 
         with caplog.at_level(logging.WARNING, logger="routers.utils.asset_conversion"):
             convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
@@ -673,3 +680,59 @@ class TestDurationEmission:
         result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
 
         assert result.duration == ""
+
+
+class TestFileDataSourcing:
+    """The file/provenance scalars (``checksum_sha1`` / ``file_modified_at`` /
+    ``file_size_bytes``) are read from the nested ``file_data`` group, never the
+    deprecated top-level scalars.
+
+    Uses real SDK models (not Mocks): the top-level scalars default to ``None`` on
+    a real ``AssetResponse``, so a regression that read them instead of
+    ``file_data`` would surface here as an empty checksum / wrong modify-time.
+    """
+
+    DT = datetime(2024, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
+    MTIME = datetime(2024, 3, 2, 8, 30, 0, tzinfo=timezone.utc)
+    SHA1_B64 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+
+    def _file_data(self) -> FileDataResponse:
+        return FileDataResponse(
+            device_asset_id="dev-asset",
+            device_id="dev",
+            file_created_at=self.DT,
+            file_modified_at=self.MTIME,
+            checksum="base64-sha256-not-this",
+            checksum_sha1=self.SHA1_B64,
+            file_size_bytes=4242,
+        )
+
+    def _asset(self, file_data: FileDataResponse | None) -> AssetResponse:
+        return AssetResponse(
+            id="asset_test",
+            mime_type="image/jpeg",
+            original_file_name="test.jpg",
+            local_datetime=self.DT,
+            created_at=self.DT,
+            updated_at=self.DT,
+            metadata=None,
+            file_data=file_data,
+        )
+
+    def test_checksum_read_from_file_data(self):
+        assert resolve_immich_checksum(self._asset(self._file_data())) == self.SHA1_B64
+
+    def test_checksum_empty_when_file_data_absent(self):
+        # No file_data (e.g. include=file_data not requested) → empty Immich
+        # checksum (the legacy null-SHA1 fallback), never the SHA-256.
+        assert resolve_immich_checksum(self._asset(None)) == ""
+
+    def test_file_modified_at_read_from_file_data(self):
+        result = resolve_file_modified_at(self._asset(self._file_data()))
+        assert result == to_actual_utc(self.MTIME)
+
+    def test_file_modified_at_falls_back_to_capture_when_file_data_absent(self):
+        # No file_data and no metadata → the modify-time cascade bottoms out at
+        # the capture time, never ``None`` (Immich requires fileModifiedAt).
+        result = resolve_file_modified_at(self._asset(None))
+        assert result == to_actual_utc(self.DT)

@@ -150,16 +150,19 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     asset.mime_type = "image/jpeg"
     asset.original_file_name = "test.jpg"
     asset.local_datetime = updated_at
-    asset.file_created_at = updated_at
-    asset.file_modified_at = updated_at
     asset.updated_at = updated_at
-    asset.checksum = "abc123"
-    asset.checksum_sha1 = "sha1checksum"
     asset.thumbhash = None
     asset.width = 1920
     asset.height = 1080
     asset.duration = None
-    asset.file_size_bytes = 1059218
+    # File/provenance scalars live on the nested ``file_data`` group
+    # (requested via ``include=file_data``); the adapter reads them from there.
+    asset.file_data = Mock()
+    asset.file_data.file_created_at = updated_at
+    asset.file_data.file_modified_at = updated_at
+    asset.file_data.checksum = "abc123"
+    asset.file_data.checksum_sha1 = "sha1checksum"
+    asset.file_data.file_size_bytes = 1059218
     asset.metadata = None
     asset.trashed_at = None
     return asset

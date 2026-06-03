@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
+from gumnut.types.file_data_response import FileDataResponse
 from gumnut.types.metadata_response import MetadataResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.person_response import PersonResponse
@@ -178,17 +179,22 @@ def create_asset_response(
     """Create an AssetResponse from test data."""
     return AssetResponse(
         id=asset_data["id"],
-        device_asset_id=asset_data["device_asset_id"],
-        device_id=asset_data["device_id"],
         mime_type=asset_data["mime_type"],
         original_file_name=asset_data["original_file_name"],
-        file_created_at=parse_datetime(asset_data["file_created_at"]),
-        file_modified_at=parse_datetime(asset_data["file_modified_at"]),
         local_datetime=parse_datetime(asset_data["local_datetime"]),
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
-        checksum=asset_data["checksum"],
-        checksum_sha1=asset_data.get("checksum_sha1"),
+        # File/provenance scalars live on the nested ``file_data`` group
+        # (requested via ``include=file_data``); the adapter reads them from there.
+        file_data=FileDataResponse(
+            device_asset_id=asset_data["device_asset_id"],
+            device_id=asset_data["device_id"],
+            file_created_at=parse_datetime(asset_data["file_created_at"]),
+            file_modified_at=parse_datetime(asset_data["file_modified_at"]),
+            checksum=asset_data["checksum"],
+            checksum_sha1=asset_data.get("checksum_sha1"),
+            file_size_bytes=asset_data.get("file_size_bytes", 12345),
+        ),
         metadata=metadata,
     )
 

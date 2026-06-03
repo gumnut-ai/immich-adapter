@@ -273,10 +273,14 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset.mime_type = "image/jpeg"
         asset.original_file_name = "test.jpg"
         asset.local_datetime = local_datetime
-        asset.file_created_at = file_created_at
-        asset.file_modified_at = file_modified_at
-        asset.checksum = "abc123"
-        asset.checksum_sha1 = "sha1checksum"
+        # File/provenance scalars live on the nested ``file_data`` group
+        # (requested via ``include=file_data``); the adapter reads them from there.
+        asset.file_data = Mock()
+        asset.file_data.file_created_at = file_created_at
+        asset.file_data.file_modified_at = file_modified_at
+        asset.file_data.checksum = "abc123"
+        asset.file_data.checksum_sha1 = "sha1checksum"
+        asset.file_data.file_size_bytes = 1059218
         asset.thumbhash = None
         asset.width = 1600
         asset.height = 2400
