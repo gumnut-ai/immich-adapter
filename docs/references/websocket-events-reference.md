@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-05-22
+last-updated: 2026-06-03
 ---
 
 # Immich WebSocket Events Reference
@@ -33,7 +33,7 @@ This document describes the WebSocket events emitted by the Immich server and ho
 
 ### `on_upload_success`
 
-**Upstream trigger**: Emitted when `AssetGenerateThumbnails` job completes (`job.service.ts:343-366`).
+**Upstream trigger**: Emitted when the `AssetGenerateThumbnails` job completes (`job.service.ts`).
 
 **Adapter trigger**:
 - **Images**: emitted synchronously from the upload handler. Image variants (`thumbnail`, `preview`, `fullsize`) are CDN-resized URLs to the same uploaded file, so they're available the moment the upload write completes.
@@ -66,7 +66,7 @@ AssetResponseDto {
 
 ### `AssetUploadReadyV1`
 
-**Trigger**: Emitted alongside `on_upload_success` when thumbnail generation completes (`job.service.ts:369`).
+**Trigger**: Emitted alongside `on_upload_success` when thumbnail generation completes (`job.service.ts`, `AssetGenerateThumbnails` handler).
 **Sent to**: Asset owner (by userId)
 **Payload**: Compact sync format
 
@@ -115,7 +115,7 @@ AssetResponseDto {
 
 ### `on_asset_delete`
 
-**Trigger**: Emitted when asset is permanently deleted (`notification.service.ts:147-150`).
+**Trigger**: Emitted when asset is permanently deleted (`notification.service.ts`).
 **Sent to**: Asset owner (by userId)
 **Payload**: `assetId: string`
 
@@ -127,7 +127,7 @@ AssetResponseDto {
 
 ### `on_asset_trash`
 
-**Trigger**: Emitted when asset(s) moved to trash (`notification.service.ts:142-145`, `152-155`).
+**Trigger**: Emitted when asset(s) moved to trash (`notification.service.ts`).
 **Sent to**: Asset owner (by userId)
 **Payload**: `assetIds: string[]`
 
@@ -139,7 +139,7 @@ AssetResponseDto {
 
 ### `on_asset_restore`
 
-**Trigger**: Emitted when asset(s) restored from trash (`notification.service.ts:173-176`).
+**Trigger**: Emitted when asset(s) restored from trash (`notification.service.ts`).
 **Sent to**: Asset owner (by userId)
 **Payload**: `assetIds: string[]`
 
@@ -152,7 +152,7 @@ AssetResponseDto {
 ### `on_asset_update`
 
 **Trigger**:
-- **Upstream Immich**: Emitted when metadata extracted from sidecar files (`notification.service.ts:157-171`). Only triggered by sidecar processing, NOT by direct user edits.
+- **Upstream Immich**: Emitted when metadata extracted from sidecar files (`notification.service.ts`). Only triggered by sidecar processing, NOT by direct user edits.
 - **immich-adapter**: Emitted after a successful single-asset metadata edit via `PUT /api/assets/{id}` (description / paired latitude+longitude / dateTimeOriginal). The adapter has no sidecar processing, so this is the only emission path here.
 
 **Sent to**: Asset owner (by userId)
@@ -168,7 +168,7 @@ AssetResponseDto {
 
 ### `on_asset_stack_update`
 
-**Trigger**: Emitted when stack is created, updated, or deleted (`notification.service.ts:178-196`).
+**Trigger**: Emitted when stack is created, updated, or deleted (`notification.service.ts`).
 **Sent to**: Stack owner (by userId)
 **Payload**: None (empty)
 
@@ -180,7 +180,7 @@ AssetResponseDto {
 
 ### `on_asset_hidden`
 
-**Trigger**: Emitted when asset visibility changes to hidden (`notification.service.ts:132-135`). Used for hiding live photo motion video components.
+**Trigger**: Emitted when asset visibility changes to hidden (`notification.service.ts`). Used for hiding live photo motion video components.
 **Sent to**: Asset owner (by userId)
 **Payload**: `assetId: string`
 
@@ -192,7 +192,7 @@ AssetResponseDto {
 
 ### `on_person_thumbnail`
 
-**Trigger**: Emitted when `PersonGenerateThumbnail` job completes (`job.service.ts:334-340`).
+**Trigger**: Emitted when the `PersonGenerateThumbnail` job completes (`job.service.ts`).
 **Sent to**: Person owner (by userId)
 **Payload**: `personId: string`
 
@@ -212,7 +212,7 @@ When received, the client updates `person.updatedAt` to force the browser to fet
 
 ### `on_session_delete`
 
-**Trigger**: Emitted when session is invalidated (`notification.service.ts:224-228`).
+**Trigger**: Emitted when session is invalidated (`notification.service.ts`).
 **Sent to**: Session room (by sessionId)
 **Payload**: `sessionId: string`
 
@@ -231,7 +231,7 @@ When received, the client updates `person.updatedAt` to force the browser to fet
 
 ### `on_notification`
 
-**Trigger**: Emitted when in-app notification is created (`notification.service.ts:101`, `467`).
+**Trigger**: Emitted when in-app notification is created (`notification.service.ts`).
 **Sent to**: Notification recipient (by userId)
 **Payload**:
 
@@ -264,7 +264,7 @@ NotificationDto {
 
 ### `on_config_update`
 
-**Trigger**: Emitted when admin updates system configuration (`notification.service.ts:111-115`).
+**Trigger**: Emitted when admin updates system configuration (`notification.service.ts`).
 **Sent to**: All connected clients (broadcast)
 **Payload**: None (empty)
 
@@ -276,7 +276,7 @@ NotificationDto {
 
 ### `on_new_release`
 
-**Trigger**: Emitted when background job detects new GitHub release (`version.service.ts:62-103`).
+**Trigger**: Emitted when background job detects new GitHub release (`version.service.ts`).
 **Sent to**: All connected clients (broadcast)
 **Payload**:
 
@@ -308,7 +308,7 @@ ReleaseNotification {
 
 ### `on_user_delete`
 
-**Trigger**: Emitted when user account is deleted (`notification.service.ts:205-208`).
+**Trigger**: Emitted when user account is deleted (`notification.service.ts`).
 **Sent to**: All connected clients (broadcast)
 **Payload**: `userId: string`
 
@@ -319,37 +319,12 @@ ReleaseNotification {
 
 ## Client Event Registration
 
+Per-event subscriptions are listed in each event's "Client handling" subsection and in the Summary Table's Web/Mobile columns. The grouping below covers only the registration distinctions not visible there.
+
 ### Web Client (`websocket.ts`)
 
-**Global listeners** (always active when connected):
-- `on_server_version`
-- `on_new_release`
-- `on_session_delete`
-- `on_notification`
-
-**Page-specific listeners** (via `websocketEvents.on()`):
-- `on_person_thumbnail` - only on people-related pages
-- Other asset events - subscribed by pages as needed
+A few events have **global listeners** that are always active when connected (`on_server_version`, `on_new_release`, `on_session_delete`, `on_notification`). The rest are **page-specific listeners** subscribed via `websocketEvents.on()` — notably `on_person_thumbnail`, which is only active on people-related pages.
 
 ### Mobile Client (`websocket.provider.dart`)
 
-**v2 sync mode**:
-- `AssetUploadReadyV1`
-
-**Legacy mode**:
-- `on_upload_success`
-- `on_asset_delete`
-- `on_asset_trash`
-- `on_asset_restore`
-- `on_asset_update`
-- `on_asset_stack_update`
-- `on_asset_hidden`
-
-**Always active**:
-- `on_config_update`
-- `on_new_release`
-
-**Not used**:
-- `on_person_thumbnail`
-- `on_session_delete`
-- `on_notification`
+The mobile client uses `AssetUploadReadyV1` in v2 sync mode and the `on_asset_*` events in legacy mode (see the Summary Table). It does not listen to `on_person_thumbnail`, `on_session_delete`, or `on_notification`.

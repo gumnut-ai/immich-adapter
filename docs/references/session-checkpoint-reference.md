@@ -1,6 +1,6 @@
 ---
 title: "Session & Checkpoint Object Reference"
-last-updated: 2025-12-05
+last-updated: 2026-06-03
 ---
 
 # Session & Checkpoint Object Reference
@@ -13,7 +13,7 @@ This document describes the Redis data model for Session and Checkpoint objects 
 
 ### Overview
 
-The adapter uses Redis (via redis-py 5.3.1) for session and checkpoint storage. This provides:
+The adapter uses Redis for session and checkpoint storage. This provides:
 
 - Fast key-value lookups for session validation
 - Atomic operations for checkpoint updates
@@ -87,40 +87,11 @@ sessions:by_updated_at
 | `updated_at` | string | ISO 8601 timestamp |
 | `is_pending_sync_reset` | string | "0" or "1" - When "1", server sends `SyncResetV1` message telling client to clear local data and full re-sync |
 
-**Session Identification:** The session ID is a UUID generated at login time. This UUID serves as both the session token (sent to clients as `accessToken`) and the Redis key. Unlike hashing the JWT, using a stable UUID ensures that:
-
-- JWT refresh does not invalidate the session
-- Checkpoints remain associated with the session across token refreshes
-- Session revocation is immediate (delete session = revoke access)
+**Session Identification:** The session ID is a UUID generated at login time. This UUID serves as both the session token (sent to clients as `accessToken`) and the Redis key. Because it is independent of the JWT, it provides the stability and revocation properties described in [Session Token Architecture](#session-token-architecture).
 
 ### Session Expiration via TTL
 
-Sessions can optionally expire using Redis TTL. When a session is created with an expiration time, set TTL on both the session and checkpoint keys:
-
-```python
-def create_session_with_expiration(redis: Redis, session_id: UUID, session_data: dict,
-                                    user_id: str, expires_at: datetime | None = None):
-    session_key = str(session_id)
-    pipe = redis.pipeline()
-    pipe.hset(f"session:{session_key}", mapping=session_data)
-    pipe.sadd(f"user:{user_id}:sessions", session_key)
-    pipe.zadd("sessions:by_updated_at", {session_key: time.time()})
-
-    if expires_at:
-        ttl_seconds = int((expires_at - datetime.now(timezone.utc)).total_seconds())
-        if ttl_seconds > 0:
-            pipe.expire(f"session:{session_key}", ttl_seconds)
-            pipe.expire(f"session:{session_key}:checkpoints", ttl_seconds)
-
-    pipe.execute()
-```
-
-To query remaining time until expiration:
-
-```python
-ttl_seconds = redis.ttl(f"session:{session_id}")
-# Returns: positive int (seconds remaining), -1 (no TTL), -2 (key doesn't exist)
-```
+Sessions can optionally expire using Redis TTL. When a session is created with an expiration time, the same TTL is applied to both the session key (`session:{uuid}`) and its checkpoint key (`session:{uuid}:checkpoints`) so they expire together.
 
 **Note:** When Redis expires a session key via TTL, the checkpoint key expires too (same TTL), but the index entries (`user:{user_id}:sessions` and `sessions:by_updated_at`) are not automatically cleaned. The stale session cleanup job handles orphaned index entries.
 
@@ -163,7 +134,7 @@ AssetV1: "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00"
 - Each device (session) tracks its own sync progress independently
 - When a session is deleted, its checkpoints are also deleted
 - Client must re-sync from scratch if session is revoked
-- JWT refresh does NOT affect checkpoints (session UUID is stable)
+- Because the session UUID is stable across JWT refresh (see [Session Token Architecture](#session-token-architecture)), checkpoints survive token refreshes
 
 ### Checkpoint Fields
 
@@ -194,17 +165,7 @@ last_synced_at, updated_at = checkpoint_value.split("|")
 - **Cleanup operations** - Delete checkpoints for sessions inactive > 90 days
 - **Monitoring** - Alert if a session stops syncing
 
-**Example use:**
-
-```python
-# Find stale sessions using sorted set
-ninety_days_ago = time.time() - (90 * 24 * 60 * 60)
-stale_sessions = redis.zrangebyscore("sessions:by_updated_at", 0, ninety_days_ago)
-
-# Delete stale sessions and their data
-for session_uuid in stale_sessions:
-    delete_session(redis, session_uuid)
-```
+**How it's used:** The cleanup job range-queries `sessions:by_updated_at` (a sorted set scored by `updated_at`) for sessions whose score is older than 90 days, then deletes each stale session and its associated data.
 
 **Difference from `last_synced_at`:**
 

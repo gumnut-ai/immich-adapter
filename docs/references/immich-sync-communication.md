@@ -1,17 +1,15 @@
 ---
 title: "Immich Client<>Server Sync Communication"
-last-updated: 2025-12-02
+last-updated: 2026-06-03
 ---
 
 # Immich Client<>Server Sync Communication
 
-## Setup
-
-I am running the Immich iOS client and communicating with an Immich server running in the local network. I am using Proxyman on MacOS to proxy communication between the iOS app and the Immich server. The Immich server already has 49 assets and 7 albums defined.
+This reference documents the sync protocol between the Immich client and server, captured from an Immich iOS client communicating with a local Immich server. The examples below come from a server already holding 49 assets and 7 albums.
 
 ## Initial Client Activity
 
-This is the first time the client has connected to this server. After login, the client calls `http://192.168.1.187:2283/api/sync/stream` with a body of:
+On the first connection to a server, after login the client calls `/api/sync/stream` with a body of:
 
 ```json
 {
@@ -45,9 +43,9 @@ The 20 possible values for `types` are defined in `SyncRequestType`. The Immich 
 The response is 275 lines and 140KB. Here is a subset:
 
 ```json
-{"type":"AuthUserV1","data":{"id":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Taggart","email":"taggartgorman@yahoo.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-15T22:55:19.045Z","isAdmin":true,"pinCode":null,"oauthId":"","storageLabel":"admin","quotaSizeInBytes":null,"quotaUsageInBytes":72837546,"hasProfileImage":false},"ack":"AuthUserV1|019ad8ec-f87b-7542-9111-45758cac8ff9"}
-{"type":"UserV1","data":{"id":"b1158ad9-b579-4b0d-a454-4edc0bc85945","name":"John","email":"jtaggartgorman@gmail.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-20T17:49:49.668Z","hasProfileImage":false},"ack":"UserV1|019ad8ec-f879-7c39-9626-50b1bd5dac6a"}
-{"type":"UserV1","data":{"id":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Taggart","email":"taggartgorman@yahoo.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-15T22:55:19.045Z","hasProfileImage":false},"ack":"UserV1|019ad8ec-f87b-7542-9111-45758cac8ff9"}
+{"type":"AuthUserV1","data":{"id":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Example User","email":"user@example.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-15T22:55:19.045Z","isAdmin":true,"pinCode":null,"oauthId":"","storageLabel":"admin","quotaSizeInBytes":null,"quotaUsageInBytes":72837546,"hasProfileImage":false},"ack":"AuthUserV1|019ad8ec-f87b-7542-9111-45758cac8ff9"}
+{"type":"UserV1","data":{"id":"b1158ad9-b579-4b0d-a454-4edc0bc85945","name":"Other User","email":"other@example.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-20T17:49:49.668Z","hasProfileImage":false},"ack":"UserV1|019ad8ec-f879-7c39-9626-50b1bd5dac6a"}
+{"type":"UserV1","data":{"id":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Example User","email":"user@example.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-15T22:55:19.045Z","hasProfileImage":false},"ack":"UserV1|019ad8ec-f87b-7542-9111-45758cac8ff9"}
 {"type":"AssetV1","data":{"id":"bb90997e-7dc0-4398-a401-d40f791e4ef2","ownerId":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","originalFileName":"DSC_0982.jpg","fileCreatedAt":"2025-01-30T00:13:07.230Z","fileModifiedAt":"2025-01-30T04:18:36.290Z","localDateTime":"2025-01-29T16:13:07.230Z","type":"IMAGE","deletedAt":null,"isFavorite":false,"visibility":"timeline","duration":null,"livePhotoVideoId":null,"stackId":null,"libraryId":null,"checksum":"vCbD4DZ3BqQibzmnh3qO1uEpLBA=","thumbhash":"lbYFDQLUmHaHWIeIeJ90qAh4ioCn"},"ack":"AssetV1|01994f97-f1fd-7d4f-ab66-c5624fe665d7"}
 [...]
 {"type":"SyncAckV1","data":{},"ack":"AlbumAssetUpdateV1|019adb7b-eaef-7a5f-a073-a5e2331de138"}
@@ -72,9 +70,9 @@ The response is 275 lines and 140KB. Here is a subset:
 {"type":"SyncCompleteV1","data":{},"ack":"SyncCompleteV1|019adb7b-eaef-7a5f-a073-a5e2331de138"}
 ```
 
-The entities are roughly ordered by `SyncRequestType` (though it is complicated by the fact that each `SyncRequestType` has its own handler which determines the actual order of the entities) and the UUID v7 time-ordered `updateId`. (I was incorrect when I stated that entities are ordered by `updateId`.)
+The entities are roughly ordered by `SyncRequestType`, though each `SyncRequestType` has its own handler which determines the actual order of the entities it emits. Entities are not globally ordered by the UUID v7 time-ordered `updateId`.
 
-Let's look at the detail for the first AssetV1 entity:
+The detail for the first AssetV1 entity:
 
 ```json
 {
@@ -156,26 +154,21 @@ When updating with no changes, we see just two calls:
 
 ### New Image Added
 
-A new image was added via the Immich web client, and then the mobile client was updated:
-
-| Path | Method | Request Summary |
-|------|--------|-----------------|
-| /api/sync/stream | POST | `{"reset": false, "types": [/* sync types as above */]}` |
-
-The response body is:
+A new image was added via the Immich web client, and then the mobile client was updated. The `/api/sync/stream` POST (`{"reset": false, "types": [/* sync types as above */]}`) response body is:
 
 ```json
-{"type":"AuthUserV1","data":{"id":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Taggart","email":"taggartgorman@yahoo.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-15T22:55:19.045Z","isAdmin":true,"pinCode":null,"oauthId":"","storageLabel":"admin","quotaSizeInBytes":null,"quotaUsageInBytes":83212978,"hasProfileImage":false},"ack":"AuthUserV1|019adc6a-abb8-7191-af07-f65f5e5bd628"}
-{"type":"UserV1","data":{"id":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Taggart","email":"taggartgorman@yahoo.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-15T22:55:19.045Z","hasProfileImage":false},"ack":"UserV1|019adc6a-abb8-7191-af07-f65f5e5bd628"}
+{"type":"AuthUserV1","data":{"id":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Example User","email":"user@example.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-15T22:55:19.045Z","isAdmin":true,"pinCode":null,"oauthId":"","storageLabel":"admin","quotaSizeInBytes":null,"quotaUsageInBytes":83212978,"hasProfileImage":false},"ack":"AuthUserV1|019adc6a-abb8-7191-af07-f65f5e5bd628"}
+{"type":"UserV1","data":{"id":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","name":"Example User","email":"user@example.com","avatarColor":null,"deletedAt":null,"profileChangedAt":"2025-09-15T22:55:19.045Z","hasProfileImage":false},"ack":"UserV1|019adc6a-abb8-7191-af07-f65f5e5bd628"}
 {"type":"AssetV1","data":{"id":"1ee6d743-54fd-43de-9164-b99fb18caf36","ownerId":"5ccc983a-db97-4f49-b29b-a832f1d3d2b5","originalFileName":"DSC_8766.jpg","fileCreatedAt":"2010-10-08T22:16:30.900Z","fileModifiedAt":"2025-09-17T02:41:46.000Z","localDateTime":"2010-10-08T15:16:30.900Z","type":"IMAGE","deletedAt":null,"isFavorite":false,"visibility":"timeline","duration":null,"livePhotoVideoId":null,"stackId":null,"libraryId":null,"checksum":"1HHXeKxJMUSpQsIvJJVdZuBOm+0=","thumbhash":"XoUJHoT4t0mGl0iMdnR2uFiYCHaDgDc="},"ack":"AssetV1|019adc6a-af34-73d3-ad9d-6e7622d7f211"}
 {"type":"AssetExifV1","data":{"assetId":"1ee6d743-54fd-43de-9164-b99fb18caf36","description":"","exifImageWidth":2400,"exifImageHeight":1920,"fileSizeInByte":1058587,"orientation":null,"dateTimeOriginal":"2010-10-08T22:16:30.900Z","modifyDate":"2025-09-17T02:41:46.000Z","timeZone":"UTC-7","latitude":null,"longitude":null,"projectionType":null,"city":null,"state":null,"country":null,"make":"NIKON CORPORATION","model":"NIKON D60","lensModel":"AF-S Nikkor 300mm f/4D IF-ED","fNumber":4,"focalLength":300,"iso":110,"exposureTime":"1/1000","profileDescription":"sRGB IEC61966-2.1","rating":5,"fps":null},"ack":"AssetExifV1|019adc6a-ad2b-7813-bc0a-6e2f059fcd60"}
 {"type":"SyncCompleteV1","data":{},"ack":"SyncCompleteV1|019adc6c-3ba4-7f57-a7e0-9b67da6b27d3"}
 ```
 
-And the rest of the communication chain:
+The client then acks each type in turn:
 
 | Path | Method | Request Summary |
 |------|--------|-----------------|
+| /api/sync/stream | POST | `{"reset": false, "types": [/* sync types as above */]}` |
 | /api/sync/ack | POST | AuthUserV1 |
 | /api/sync/ack | POST | UserV1 |
 | /api/sync/ack | POST | AssetV1 |
@@ -184,7 +177,7 @@ And the rest of the communication chain:
 
 ### Adding Image to Existing Album
 
-The response body for `/api/sync/stream` is:
+When an asset is added to an existing album, the `/api/sync/stream` response carries the album-asset flow. Each create is preceded by a `SyncAckV1` phase-transition marker (see [SyncAckV1](#syncackv1)). The response body is:
 
 ```json
 {"type":"SyncAckV1","data":{},"ack":"AlbumAssetUpdateV1|019adc74-ea58-751b-9139-1054075c249a"}
@@ -200,7 +193,7 @@ The response body for `/api/sync/stream` is:
 
 ## How the Client Handles the Response
 
-Once the mobile client calls `/api/sync/stream`, it begins processing the response lines in batch sizes of 5,000 lines. Until 5,000 lines have been read or the response finishes, the client does not start to parse the lines. If the batch size exceeds 5,000 lines, then reading the response is paused and the batch is parsed and handled, and the response reading is resumed.
+The mobile client reads the `/api/sync/stream` response in batches of 5,000 lines: it accumulates lines without parsing until 5,000 have been read (or the response finishes), then pauses reading, parses and handles the batch, and resumes.
 
 ### Sample Timeline
 
