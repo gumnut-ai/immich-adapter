@@ -3,14 +3,20 @@
 Emits two things per request:
 
 - `interface` — a low-cardinality tag classifying the Immich client behind
-  the request: `immich-mobile-ios`, `immich-mobile-android`, or `immich-web`,
-  derived from the User-Agent. Answers "which Immich client is this?" Set as
-  both a Sentry tag (so error events group by it) and a span attribute (so the
-  `spans` dataset can group `http.server` spans by it). Mirrors photos-api's
-  `interface` tag (`mcp` / `rest`) so usage analysis reads one field across
-  both services instead of UA-sampling Render logs for the web-vs-mobile
-  split. Unrecognized callers (uptime probes, scanners, server-to-server)
-  leave it unset, so the aggregation buckets only contain real client traffic.
+  the request: `immich-mobile-ios`, `immich-mobile-android`, or `immich-web`.
+  Answers "which Immich client is this?" Set as both a Sentry tag (so error
+  events group by it) and a span attribute (so the `spans` dataset can group
+  `http.server` spans by it). Mirrors photos-api's `interface` tag (`mcp` /
+  `rest`) so usage analysis reads one field across both services instead of
+  UA-sampling Render logs for the web-vs-mobile split.
+
+  The primary mobile signal is the `deviceType` header the Immich mobile app
+  attaches to every API request (`iOS` / `Android`). Native upload/download
+  transfers don't send `deviceType` but do set an `immich-ios` / `immich-android`
+  User-Agent, so the UA is a fallback for the mobile split. The Immich web SPA
+  runs in the browser, so a browser User-Agent classifies as `immich-web`.
+  Everything else (uptime probes, scanners, server-to-server) stays unset, so
+  the aggregation buckets only hold real, identified client traffic.
 
 - `user_agent.original` — the raw `User-Agent` header, following the
   OpenTelemetry semantic convention. Answers "who is the caller?" The Sentry
@@ -35,36 +41,47 @@ from starlette.responses import Response
 INTERFACE_TAG = "interface"
 USER_AGENT_ATTRIBUTE = "user_agent.original"
 
-# Immich mobile UAs are `Immich_iOS_<version>` / `Immich_Android_<version>`
-# (the format the Immich clients emit). Also accept the lower-case
-# `immich-{ios,android}/<version>` form as a safety net for future clients.
+# The Immich mobile app sets `deviceType: iOS|Android` on every API request
+# (immich `mobile/.../api.service.dart::setDeviceInfoHeader`). Other values
+# (e.g. `Unknown`) fall through to the UA / browser checks below.
+_DEVICE_TYPE_PLATFORMS = {"ios": "ios", "android": "android"}
+
+# Native upload/download transfers carry no `deviceType` but do set an
+# `immich-ios/<version>` / `immich-android/<version>` User-Agent (immich
+# `mobile/ios/.../URLSessionManager.swift`, `mobile/android/.../HttpClientManager.kt`).
+# Also match the legacy `Immich_iOS_<version>` underscore form, which older
+# clients emitted and the Immich server still treats as a legacy alias.
 _IMMICH_MOBILE_RE = re.compile(
-    r"^(?:Immich_(?P<platform1>iOS|Android)_|immich-(?P<platform2>ios|android)/)",
-    re.IGNORECASE,
+    r"^immich[-_](?P<platform>ios|android)[/_]", re.IGNORECASE
 )
 # Immich web runs in the browser, so its requests carry a standard browser UA.
 _BROWSER_RE = re.compile(r"\b(?:Chrome|Safari|Firefox)\b")
 
 
-def resolve_interface(user_agent: str) -> str | None:
-    """Classify the Immich client behind a request from its User-Agent.
+def resolve_interface(device_type: str, user_agent: str) -> str | None:
+    """Classify the Immich client behind a request.
+
+    `deviceType` (set by the mobile app on every API call) is the primary
+    mobile signal; the `immich-ios` / `immich-android` User-Agent is a fallback
+    for native transfers that omit it. A browser User-Agent classifies as web.
 
     Returns `immich-mobile-ios`, `immich-mobile-android`, or `immich-web`, or
-    `None` when the User-Agent doesn't match a known Immich client (uptime
-    probes, scanners, server-to-server) — those spans stay untagged so the
-    aggregation buckets only contain real client traffic.
+    `None` when neither signal matches a known Immich client (uptime probes,
+    scanners, server-to-server) — those spans stay untagged so the aggregation
+    buckets only contain real client traffic.
     """
-    ua = user_agent or ""
+    platform = _DEVICE_TYPE_PLATFORMS.get(device_type.strip().lower())
+    if platform is None:
+        match = _IMMICH_MOBILE_RE.match(user_agent)
+        if match:
+            platform = match.group("platform").lower()
 
-    match = _IMMICH_MOBILE_RE.match(ua)
-    if match:
-        platform = (match.group("platform1") or match.group("platform2") or "").lower()
-        if platform == "android":
-            return "immich-mobile-android"
-        if platform == "ios":
-            return "immich-mobile-ios"
+    if platform == "ios":
+        return "immich-mobile-ios"
+    if platform == "android":
+        return "immich-mobile-android"
 
-    if ua.startswith("Mozilla/") and _BROWSER_RE.search(ua):
+    if user_agent.startswith("Mozilla/") and _BROWSER_RE.search(user_agent):
         return "immich-web"
 
     return None
@@ -77,7 +94,8 @@ class ObservabilityTagsMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         user_agent = request.headers.get("user-agent", "")
-        interface = resolve_interface(user_agent)
+        device_type = request.headers.get("devicetype", "")
+        interface = resolve_interface(device_type, user_agent)
 
         # `interface` is low-cardinality — also set it as a scope tag so error
         # events (not just spans) can be grouped by it. UA is high-cardinality,
