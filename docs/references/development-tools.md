@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-06-03
+last-updated: 2026-06-05
 ---
 
 # Development Tools
@@ -45,14 +45,7 @@ Always run linting and formatting on the generated model file before committing;
 
 ### Tag Substitution
 
-When fetching the OpenAPI spec from a GitHub URL, the generator automatically substitutes the Immich version tag from the `.immich-container-tag` file. This ensures the generated models match the specific Immich version you're targeting.
-
-**How it works:**
-
-- When using a GitHub blob URL like `https://github.com/immich-app/immich/blob/main/...`, the generator reads `.immich-container-tag` (e.g., containing `v2.2.2`)
-- It converts the URL to use the raw GitHub URL with the specific tag: `https://raw.githubusercontent.com/immich-app/immich/v2.2.2/...`
-- The generated file includes a comment header showing which version was used
-- If `.immich-container-tag` is missing or empty, it falls back to using `/main/` in the URL
+When fetching the OpenAPI spec from a GitHub blob URL, the generator substitutes the Immich version tag from the `.immich-container-tag` file so the generated models match the specific Immich version you're targeting. If the file is missing or empty, it falls back to `main`. The generated file's comment header records which version was used.
 
 ## API Compatibility Tool
 
@@ -61,30 +54,14 @@ The `validate_api_compatibility.py` tool ensures that immich-adapter correctly i
 ### Usage
 
 ```bash
-# Compare specific endpoints
+# Compare specific endpoints (omit --endpoints to compare all)
 uv run tools/validate_api_compatibility.py \
   --endpoints=server,users \
   --immich-spec=https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json \
   --adapter-spec=http://localhost:3001/openapi.json
-
-# Compare all endpoints
-uv run tools/validate_api_compatibility.py \
-  --immich-spec=https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json \
-  --adapter-spec=http://localhost:3001/openapi.json
-
-# Use local specification files
-uv run tools/validate_api_compatibility.py \
-  --endpoints=server \
-  --immich-spec=./immich-openapi.json \
-  --adapter-spec=./adapter-openapi.json
-
-# Show verbose output including info-level differences
-uv run tools/validate_api_compatibility.py \
-  --endpoints=server \
-  --immich-spec=https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json \
-  --adapter-spec=http://localhost:3001/openapi.json \
-  --verbose
 ```
+
+Both `--immich-spec` and `--adapter-spec` accept local file paths as well as URLs. Run with `--help` for the full flag set (e.g., `--verbose` for info-level differences).
 
 ### Exit Codes
 
@@ -105,24 +82,13 @@ The workflow checks the `server` endpoint by default, but this can be customized
 
 ## OpenAPI Specification Dumper
 
-The `dump_openapi_json.py` tool dumps the OpenAPI specification from the FastAPI app:
+The `dump_openapi_json.py` tool prints the adapter's OpenAPI specification from the FastAPI app to stdout, without running a server:
 
 ```bash
-# Dump to stdout
-uv run tools/dump_openapi_json.py
-
-# Save to file
-uv run tools/dump_openapi_json.py > openapi_spec.json
-
-# Use with the compatibility validator
 uv run tools/dump_openapi_json.py > /tmp/spec.json
-uv run tools/validate_api_compatibility.py \
-  --endpoints=server \
-  --immich-spec=https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json \
-  --adapter-spec=/tmp/spec.json
 ```
 
-This lets you debug or compare the adapter's OpenAPI spec without running a server.
+Redirect it to a file to feed the dumped spec into the compatibility validator via `--adapter-spec=/tmp/spec.json`.
 
 ## Dependency Update Automation
 
@@ -135,10 +101,7 @@ This lets you debug or compare the adapter's OpenAPI spec without running a serv
 
 ### Guardrails
 
-- Renovate is limited to the `github-actions` and `dockerfile` managers.
-- Updates must be at least **14 days old** before Renovate opens a PR (`minimumReleaseAge`).
-- Renovate runs **before 6am on Monday**, which keeps dependency churn predictable.
-- The dependency dashboard is enabled so maintainers can see pending updates in one place.
+Renovate is limited to the `github-actions` and `dockerfile` managers, and gates PRs behind a `minimumReleaseAge` and a weekly `schedule` to keep dependency churn predictable. The exact values live in [`renovate.json`](../../renovate.json) (`minimumReleaseAge`, `schedule`, `dependencyDashboard`).
 
 ### Not Managed by Renovate
 

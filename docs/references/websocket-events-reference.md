@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-06-04
+last-updated: 2026-06-05
 ---
 
 # Immich WebSocket Events Reference
@@ -11,7 +11,7 @@ This document describes the WebSocket events emitted by the Immich server and ho
 
 | Event | Trigger | Payload | Web Client | Mobile Client |
 |-------|---------|---------|------------|---------------|
-| `on_upload_success` | Images: upload write completes; videos: 3s deferred emit to wait for still-image variants | `AssetResponseDto` | Global listener | Legacy listener |
+| `on_upload_success` | Images: upload write completes; videos: deferred emit to wait for still-image variants | `AssetResponseDto` | Global listener | Legacy listener |
 | `AssetUploadReadyV1` | Emitted alongside `on_upload_success` with the same image/video timing split | `SyncAssetV1` + `SyncAssetExifV1` | Not used | v2 sync protocol |
 | `on_asset_delete` | Asset permanently deleted | `assetId: string` | Global listener | Listener |
 | `on_asset_trash` | Asset moved to trash | `assetIds: string[]` | Global listener | Listener |
@@ -40,21 +40,7 @@ This document describes the WebSocket events emitted by the Immich server and ho
 - **Videos**: emission is **deferred** by `_VIDEO_EMIT_DELAY_SECONDS` (3.0s, defined in `routers/api/assets.py`) via a detached `asyncio.create_task`. Video still-image variants (`thumbnail_image`, `preview_image`, `fullsize_image`) live at a separate `derived_path` that only exists after photos-api's ffmpeg extraction finishes — without the delay, the Immich web client receives `on_upload_success`, inserts the asset into the timeline grid, then renders "Error loading image" because the thumbnail URL still 404s. The HTTP `POST /api/assets` 201 response is **not** delayed; only the WebSocket emission waits.
 
 **Sent to**: Asset owner (by userId)
-**Payload**: Full `AssetResponseDto`
-
-```typescript
-AssetResponseDto {
-  id: string;
-  ownerId: string;
-  originalFileName: string;
-  thumbhash: string | null;
-  fileCreatedAt: string;
-  fileModifiedAt: string;
-  localDateTime: string;
-  type: AssetType;
-  // ... full asset details
-}
-```
+**Payload**: Full `AssetResponseDto` (see `routers/immich_models.py`)
 
 **Client handling**:
 - **Web**: Global listener via `websocketEvents`
@@ -66,52 +52,15 @@ AssetResponseDto {
 
 ### `AssetUploadReadyV1`
 
-**Upstream trigger**: Emitted alongside `on_upload_success` when thumbnail generation completes (`job.service.ts:369`).
+**Upstream trigger**: Emitted alongside `on_upload_success` when thumbnail generation completes (`job.service.ts`).
 
 **Adapter trigger**:
 - Emitted from the same helper as `on_upload_success`, so the timing stays aligned across both upload-success events.
 - **Images**: emitted synchronously from the upload handler.
-- **Videos**: emitted after the same `_VIDEO_EMIT_DELAY_SECONDS` (3.0s) deferral used for `on_upload_success`, so mobile clients do not hear about a new upload before the video's still-image variants usually exist.
+- **Videos**: emitted after the same `_VIDEO_EMIT_DELAY_SECONDS` deferral used for `on_upload_success`, so mobile clients do not hear about a new upload before the video's still-image variants usually exist.
 
 **Sent to**: Asset owner (by userId)
-**Payload**: Compact sync format
-
-```typescript
-{
-  asset: SyncAssetV1 {
-    id: string;
-    ownerId: string;
-    originalFileName: string;
-    thumbhash: string | null;
-    checksum: string;
-    fileCreatedAt: string;
-    fileModifiedAt: string;
-    localDateTime: string;
-    duration: string;
-    type: AssetType;
-    deletedAt: string | null;
-    isFavorite: boolean;
-    visibility: AssetVisibility;
-    livePhotoVideoId: string | null;
-    stackId: string | null;
-    libraryId: string | null;
-  };
-  exif: SyncAssetExifV1 {
-    assetId: string;
-    description: string | null;
-    exifImageWidth: number | null;
-    exifImageHeight: number | null;
-    fileSizeInByte: number | null;
-    orientation: string | null;
-    dateTimeOriginal: string | null;
-    modifyDate: string | null;
-    timeZone: string | null;
-    latitude: number | null;
-    longitude: number | null;
-    // ... additional EXIF fields
-  };
-}
-```
+**Payload**: Compact sync format — `SyncAssetV1` asset + `SyncAssetExifV1` exif (see `routers/immich_models.py`)
 
 **Client handling**:
 - **Web**: Not used
@@ -239,20 +188,7 @@ When received, the client updates `person.updatedAt` to force the browser to fet
 
 **Trigger**: Emitted when in-app notification is created (`notification.service.ts`).
 **Sent to**: Notification recipient (by userId)
-**Payload**:
-
-```typescript
-NotificationDto {
-  id: string;
-  createdAt: Date;
-  level: 'success' | 'error' | 'warning' | 'info';
-  type: 'JobFailed' | 'BackupFailed' | 'SystemMessage' | 'AlbumInvite' | 'AlbumUpdate' | 'Custom';
-  title: string;
-  description?: string;
-  data?: any;       // e.g., { albumId: "uuid" } for album notifications
-  readAt?: Date;
-}
-```
+**Payload**: `NotificationDto` (see `routers/immich_models.py`)
 
 **Notification triggers**:
 
@@ -284,16 +220,7 @@ NotificationDto {
 
 **Trigger**: Emitted when background job detects new GitHub release (`version.service.ts`).
 **Sent to**: All connected clients (broadcast)
-**Payload**:
-
-```typescript
-ReleaseNotification {
-  isAvailable: boolean;
-  checkedAt: string;  // ISO8601
-  serverVersion: ServerVersionResponseDto;
-  releaseVersion: ServerVersionResponseDto;
-}
-```
+**Payload**: `ReleaseNotification` (see `routers/immich_models.py`)
 
 **Client handling**:
 - **Web**: Global listener. Updates `websocketStore.release`.

@@ -1,6 +1,6 @@
 ---
 title: "Uvicorn Server Settings"
-last-updated: 2026-06-03
+last-updated: 2026-06-05
 ---
 
 # Uvicorn Server Settings Explained
@@ -14,7 +14,7 @@ This document covers the uvicorn server settings used by `immich-adapter`:
 
 These settings control how uvicorn (the ASGI server running our FastAPI application) handles HTTP and WebSocket connections, which is critical for mobile clients that make rapid successive requests and for the Socket.IO sync stream that backs the live Immich web/mobile UIs.
 
-For the generic definition of each flag, see the official [uvicorn settings reference](https://www.uvicorn.org/settings/). This doc is not a restatement of that page — it records the **non-default values we run and why** (mobile keep-alive matching, the legacy-`websockets` shielded-future leak, the `uvicorn[standard]>=0.44.0` pin, the macOS `somaxconn` gotcha), which the upstream reference does not cover.
+For the generic definition of each flag, see the official [uvicorn settings reference](https://www.uvicorn.org/settings/). This doc is not a restatement of that page — it records the **non-default values we run and why** (the mobile keep-alive floor, the legacy-`websockets` shielded-future leak, the `uvicorn[standard]>=0.44.0` pin, the macOS `somaxconn` gotcha), which the upstream reference does not cover.
 
 The adapter launches uvicorn from the `Dockerfile` CMD. Each HTTP-tier value is overridable via an environment variable, with the defaults shown below:
 
@@ -33,7 +33,7 @@ uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level ${LOG_LEVEL} \
 |---------|-------|------------------|-----------|
 | `--ws` | `websockets-sansio` | — | Avoid the legacy `websockets` shielded-future leak (see below). |
 | `--timeout-graceful-shutdown` | `60` | — | Give in-flight requests time to finish on redeploy. |
-| `--timeout-keep-alive` | `75` | `TIMEOUT_KEEP_ALIVE` | Match the ~75s keep-alive that iOS/Android HTTP clients use. |
+| `--timeout-keep-alive` | `75` | `TIMEOUT_KEEP_ALIVE` | Hold idle HTTP connections well above mobile-client idle gaps (uvicorn default is 5s, far too short for mobile reuse). |
 | `--limit-concurrency` | `200` | `LIMIT_CONCURRENCY` | Cap concurrent connections; excess gets HTTP 503 (not a connection refusal). |
 | `--backlog` | `2048` | `BACKLOG` | OS accept-queue depth; overflow is a connection refusal (not a 503). |
 
@@ -82,21 +82,15 @@ The sansio impl shipped in uvicorn 0.35.0, but it didn't gain WebSocket keepaliv
 
 ## timeout-keep-alive
 
-The number of seconds uvicorn keeps an idle HTTP connection open before closing it (uvicorn default: 5). We set **75**.
+The number of seconds uvicorn keeps an idle HTTP connection open before closing it. The uvicorn default of 5s is far too short for mobile clients, which hold connections idle between bursts of requests and then try to reuse them: if the server closes the connection first, the client sees truncated-reuse errors (e.g. `"Connection closed before full header was received"`) and pays for a fresh TCP+TLS handshake on the next request — expensive on cellular.
 
-HTTP keep-alive lets a client reuse one TCP connection for multiple requests. If the server's keep-alive window is shorter than the client's, the client tries to reuse a connection the server has already closed and sees errors like `"Connection closed before full header was received"`.
-
-Mobile HTTP clients drive the value: iOS `URLSession` and Android `OkHttp` both default to roughly **75 seconds** of keep-alive. Setting `timeout-keep-alive=75` to match avoids the truncated-reuse errors and the cost of a fresh TCP (and TLS) handshake on every request — handshakes are especially expensive on cellular networks.
-
-The shorter the timeout, the fewer idle connections held open (less memory), at the cost of more handshakes and more connection-reuse errors for mobile clients.
+`75` is the Gumnut-chosen value: long enough to sit above the idle gaps a mobile client leaves between request bursts (so connections survive to be reused), without holding idle sockets open indefinitely. It's not tied to a specific iOS/Android client default — treat it as a tunable floor, raised if reuse errors reappear, lowered if idle-connection memory becomes a concern.
 
 ---
 
 ## limit-concurrency
 
-Maximum number of concurrent connections uvicorn will handle (uvicorn default: `None`, i.e. unlimited). We set **200**.
-
-When the limit is reached, uvicorn rejects new requests with `HTTP/1.1 503 Service Unavailable` and a `Retry-After` header — a hard cap with no queuing. This protects the process from resource exhaustion under load: excess traffic fails fast and explicitly (503) while accepted requests keep processing normally (graceful degradation) instead of every request slowing down.
+Caps concurrent connections (uvicorn default: unlimited); excess gets HTTP 503 rather than a connection refusal. See the Settings Summary table for the value and failure mode.
 
 Raise it (via the `LIMIT_CONCURRENCY` env var) if legitimate traffic is being rejected with 503s; lower it if the process is running out of memory or saturating CPU.
 
@@ -104,22 +98,9 @@ Raise it (via the `LIMIT_CONCURRENCY` env var) if legitimate traffic is being re
 
 ## backlog
 
-The maximum number of fully-established connections that can wait in the socket's OS-level accept queue before uvicorn calls `accept()` on them (uvicorn default and our value: **2048**). It maps to the `backlog` argument of the socket `listen()` call.
-
-When the accept queue is full, the OS rejects or drops new connections and the client sees **"Connection refused"** or a timeout — this happens *before* uvicorn ever sees the connection. The effective queue depth is `min(backlog, os_somaxconn)`, so the OS limit can cap it (see the macOS gotcha below).
+OS-level accept-queue depth; overflow is a connection refusal (not a 503), before uvicorn ever sees the connection. See the Settings Summary table for the value and failure mode. The effective depth is `min(backlog, os_somaxconn)`, so the OS limit can cap it (see the macOS gotcha below).
 
 Raise it (via the `BACKLOG` env var) if clients report "Connection refused" during connection bursts and the OS limit allows it.
-
-### Backlog vs limit-concurrency
-
-These cap two different stages and fail differently:
-
-| Setting | What It Limits | When It Applies | Failure Mode |
-|---------|---------------|-----------------|--------------|
-| `backlog` | Pending connections in the OS accept queue | Before `accept()` | Connection refused |
-| `limit-concurrency` | Active connections inside the app | After `accept()` | HTTP 503 |
-
-A connection passes through the `backlog` queue first, then counts against `limit-concurrency` once uvicorn accepts it.
 
 ---
 
