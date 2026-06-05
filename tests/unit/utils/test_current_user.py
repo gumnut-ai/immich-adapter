@@ -65,9 +65,8 @@ class TestGetCurrentUserAdmin:
 
     @pytest.mark.anyio
     async def test_get_current_user_admin_sets_sentry_user(self):
-        """The resolved intuser_* id is set on the Sentry scope (GUM-399 /
-        GUM-1015) so adapter transactions and errors group per-user — id only,
-        no email/PII."""
+        """The resolved intuser_* id is set on the Sentry scope so adapter
+        transactions and errors group per-user — id only, no email/PII."""
         # Setup
         mock_request = Mock()
         mock_request.state = type("obj", (object,), {})()

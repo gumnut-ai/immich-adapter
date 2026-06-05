@@ -76,9 +76,9 @@ async def get_current_user_admin(
 
     # Attribute this request to the Gumnut user in Sentry as early as the
     # intuser_* id is known, so the active transaction and any error events
-    # group per-user. Mirror photos-api (GUM-399): the intuser_* id only,
-    # never email/PII. This dependency is cached per request, so set_user runs
-    # once when the user is first resolved.
+    # group per-user. Set the intuser_* id only, never email/PII — matching how
+    # the Gumnut backend tags its own Sentry events. This dependency is cached
+    # per request, so set_user runs once when the user is first resolved.
     sentry_sdk.set_user({"id": user.id})
 
     # Map Gumnut UserResponse to Immich UserAdminResponseDto

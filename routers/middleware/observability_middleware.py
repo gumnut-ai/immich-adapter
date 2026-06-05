@@ -6,9 +6,9 @@ Emits two things per request:
   the request: `immich-mobile-ios`, `immich-mobile-android`, or `immich-web`.
   Answers "which Immich client is this?" Set as both a Sentry tag (so error
   events group by it) and a span attribute (so the `spans` dataset can group
-  `http.server` spans by it). Mirrors photos-api's `interface` tag (`mcp` /
-  `rest`) so usage analysis reads one field across both services instead of
-  UA-sampling Render logs for the web-vs-mobile split.
+  `http.server` spans by it). The Gumnut backend sets the same `interface` tag
+  on its own spans, so usage analysis reads one field across both services
+  instead of sampling request logs for the web-vs-mobile split.
 
   The primary mobile signal is the `deviceType` header the Immich mobile app
   attaches to every API request (`iOS` / `Android`). Native upload/download
