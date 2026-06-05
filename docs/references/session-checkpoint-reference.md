@@ -1,6 +1,6 @@
 ---
 title: "Session & Checkpoint Object Reference"
-last-updated: 2026-06-03
+last-updated: 2026-06-05
 ---
 
 # Session & Checkpoint Object Reference
@@ -13,12 +13,7 @@ This document describes the Redis data model for Session and Checkpoint objects 
 
 ### Overview
 
-The adapter uses Redis for session and checkpoint storage. This provides:
-
-- Fast key-value lookups for session validation
-- Atomic operations for checkpoint updates
-- Built-in TTL support for session expiration
-- Simple deployment (no separate database)
+The adapter uses Redis for session and checkpoint storage, leaning on its built-in TTL for session expiration.
 
 **Note:** This implementation uses only core Redis commands -- no RedisJSON, RediSearch, or other modules required.
 
@@ -123,11 +118,7 @@ Each field is an entity type, and the value is a pipe-delimited string:
 AssetV1: "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00"
 ```
 
-**Why pipe-delimited instead of JSON?**
-
-- Simpler parsing (no JSON library needed for basic ops)
-- Smaller payload
-- Both timestamps are fixed format, easy to split
+Both timestamps are fixed ISO 8601 format, so the value is split on the single `|` rather than carrying a JSON wrapper.
 
 **Why checkpoints are tied to sessions:**
 
@@ -162,10 +153,10 @@ last_synced_at, updated_at = checkpoint_value.split("|")
 **Why needed:**
 
 - **Session activity tracking** - Know when each session last acknowledged data
-- **Cleanup operations** - Delete checkpoints for sessions inactive > 90 days
+- **Cleanup operations** - Delete checkpoints for sessions that have been inactive past the cleanup threshold
 - **Monitoring** - Alert if a session stops syncing
 
-**How it's used:** The cleanup job range-queries `sessions:by_updated_at` (a sorted set scored by `updated_at`) for sessions whose score is older than 90 days, then deletes each stale session and its associated data.
+**How it's used:** `cleanup_stale_sessions` (in `services/session_store.py`) range-queries `sessions:by_updated_at` (a sorted set scored by `updated_at`) for sessions whose score is older than its `days` threshold, then deletes each stale session and its associated data.
 
 **Difference from `last_synced_at`:**
 
@@ -190,54 +181,4 @@ Enables efficient queries for:
 
 ## Session Dataclass
 
-```python
-from dataclasses import dataclass
-from datetime import datetime
-from uuid import UUID
-
-
-@dataclass
-class Session:
-    """Session data stored in Redis."""
-
-    id: UUID                      # The session token (what client sends as accessToken)
-    user_id: str                  # Gumnut user ID (UUID format)
-    library_id: str               # User's default library (or empty string)
-    stored_jwt: str               # Encrypted Gumnut JWT
-    device_type: str              # "iOS", "Android", "Chrome", etc.
-    device_os: str                # "iOS", "macOS", "Android", etc.
-    app_version: str              # "1.94.0" or empty for web
-    created_at: datetime          # When session was created
-    updated_at: datetime          # Last activity timestamp
-    is_pending_sync_reset: bool   # True = client should full re-sync
-
-    def to_dict(self) -> dict[str, str]:
-        """Convert to Redis hash format (all values as strings)."""
-        return {
-            "user_id": self.user_id,
-            "library_id": self.library_id,
-            "stored_jwt": self.stored_jwt,
-            "device_type": self.device_type,
-            "device_os": self.device_os,
-            "app_version": self.app_version,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
-            "is_pending_sync_reset": "1" if self.is_pending_sync_reset else "0",
-        }
-
-    @classmethod
-    def from_dict(cls, session_id: UUID, data: dict[str, str]) -> "Session":
-        """Create from Redis hash data."""
-        return cls(
-            id=session_id,
-            user_id=data["user_id"],
-            library_id=data["library_id"],
-            stored_jwt=data["stored_jwt"],
-            device_type=data["device_type"],
-            device_os=data["device_os"],
-            app_version=data["app_version"],
-            created_at=datetime.fromisoformat(data["created_at"]),
-            updated_at=datetime.fromisoformat(data["updated_at"]),
-            is_pending_sync_reset=data["is_pending_sync_reset"] == "1",
-        )
-```
+The `Session` dataclass (in `services/session_store.py`) carries the fields documented in the [Sessions](#sessions) table, plus the `id` (the session UUID). Its `to_dict` / `from_dict` methods round-trip the dataclass to and from the Redis hash, serializing every value as a string (timestamps as ISO 8601, `is_pending_sync_reset` as `"0"`/`"1"`).

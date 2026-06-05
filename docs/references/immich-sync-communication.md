@@ -1,6 +1,6 @@
 ---
 title: "Immich Client<>Server Sync Communication"
-last-updated: 2026-06-03
+last-updated: 2026-06-05
 ---
 
 # Immich Client<>Server Sync Communication
@@ -38,7 +38,7 @@ On the first connection to a server, after login the client calls `/api/sync/str
 }
 ```
 
-The 20 possible values for `types` are defined in `SyncRequestType`. The Immich client is asking for all entity types to be synced.
+The 22 possible values for `types` are defined in `SyncRequestType`. The Immich client is asking for all entity types to be synced.
 
 The response is 275 lines and 140KB. Here is a subset:
 
@@ -223,7 +223,7 @@ The lines in a batch are parsed into events. The events are processed in a group
 
 ### Type Mapping
 
-The 20 SyncRequestTypes generate 45 SyncEntityTypes in specific orders.
+The 22 SyncRequestTypes generate 50 SyncEntityTypes in specific orders.
 
 | SyncRequestType | SyncEntityTypes (in order) |
 |-----------------|---------------------------|
