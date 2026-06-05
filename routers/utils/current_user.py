@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
+import sentry_sdk
 from fastapi import Depends, Request
 from gumnut import AsyncGumnut
 from gumnut.types.user_response import UserResponse
@@ -72,6 +73,13 @@ async def get_current_user_admin(
 
     # Fetch from Gumnut backend (SDK errors bubble to the global GumnutError handler)
     user = await client.users.me()
+
+    # Attribute this request to the Gumnut user in Sentry as early as the
+    # intuser_* id is known, so the active transaction and any error events
+    # group per-user. Set the intuser_* id only, never email/PII — matching how
+    # the Gumnut backend tags its own Sentry events. This dependency is cached
+    # per request, so set_user runs once when the user is first resolved.
+    sentry_sdk.set_user({"id": user.id})
 
     # Map Gumnut UserResponse to Immich UserAdminResponseDto
     # Combine first_name and last_name into Immich's single "name" field

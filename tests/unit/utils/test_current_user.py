@@ -2,7 +2,7 @@
 
 import pytest
 import shortuuid
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 
@@ -62,6 +62,36 @@ class TestGetCurrentUserAdmin:
         assert result.quotaSizeInBytes == 100 * 1000**3
         assert result.quotaUsageInBytes == 5 * 1000**3
         mock_client.users.me.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_get_current_user_admin_sets_sentry_user(self):
+        """The resolved intuser_* id is set on the Sentry scope so adapter
+        transactions and errors group per-user — id only, no email/PII."""
+        # Setup
+        mock_request = Mock()
+        mock_request.state = type("obj", (object,), {})()
+
+        mock_client = Mock()
+        mock_user = Mock()
+        test_uuid = uuid4()
+        intuser_id = f"intuser_{shortuuid.encode(test_uuid)}"
+        mock_user.id = intuser_id
+        mock_user.email = "test@example.com"
+        mock_user.first_name = "Test"
+        mock_user.last_name = "User"
+        mock_user.is_active = True
+        mock_user.created_at = datetime.now(timezone.utc)
+        mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.storage_limit_bytes = 100 * 1000**3
+        mock_user.storage_used_bytes = 5 * 1000**3
+        mock_client.users.me = AsyncMock(return_value=mock_user)
+
+        # Execute
+        with patch("routers.utils.current_user.sentry_sdk.set_user") as mock_set_user:
+            await get_current_user_admin(mock_request, mock_client)
+
+        # Assert - only the intuser_* id, no email/other PII
+        mock_set_user.assert_called_once_with({"id": intuser_id})
 
     @pytest.mark.anyio
     async def test_get_current_user_admin_caching(self):
