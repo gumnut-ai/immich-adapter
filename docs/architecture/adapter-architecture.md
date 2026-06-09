@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-05-27
+last-updated: 2026-06-06
 ---
 
 # Immich Adapter Architecture
@@ -14,6 +14,7 @@ Immich Client (web/mobile)
         │
         ▼
   immich-adapter (FastAPI, port 3001)
+  ├── Observability middleware: Sentry `interface` / `user_agent.original`
   ├── Auth middleware: session token → JWT lookup
   ├── Route handlers: translate request → Gumnut SDK call
   ├── WebSocket server: real-time events via Socket.IO
@@ -32,6 +33,7 @@ Immich clients are unmodified — either the original open-source Immich apps or
 
 - **Protocol translation** — Accepts Immich OpenAPI requests, converts to Gumnut SDK calls, returns Immich-formatted responses
 - **Session management** — Generates session tokens at login, stores encrypted Gumnut JWTs in Redis
+- **Request observability** — Tags Sentry spans with client interface and raw User-Agent, and attributes authenticated requests to the internal `intuser_*` user id
 - **Incremental sync** — Manages per-session checkpoints for mobile sync, implements two-phase event ordering
 - **WebSocket events** — Distributes real-time upload/delete notifications to connected devices
 - **Static file serving** — Serves the Immich web UI
@@ -68,6 +70,14 @@ For mobile, OAuth providers that don't support custom URL schemes (e.g., `app.im
 4. Route handler uses the SDK client to make API calls
 5. On response, middleware checks for `x-new-access-token` header (backend JWT refresh)
 6. If present, updates the stored JWT in Redis — the client's session token remains unchanged
+
+### Request observability
+
+`ObservabilityTagsMiddleware` is registered last in `main.py`, so it wraps outermost and can annotate requests even when `AuthMiddleware` returns a 401 before a route handler runs.
+
+- **`interface` tag** — A low-cardinality Sentry tag/span attribute describing the Immich client behind the request: `immich-mobile-ios`, `immich-mobile-android`, or `immich-web`. Classification uses the mobile `deviceType` header first, falls back to `immich-ios` / `immich-android` transfer User-Agents, and treats standard browser User-Agents as web. Unrecognized callers stay unset.
+- **`user_agent.original` span attribute** — The raw `User-Agent` header is attached to the active span following the OpenTelemetry semantic convention. Because it is high-cardinality, it is emitted as a span attribute rather than a tag.
+- **Authenticated user attribution** — When a handler resolves the current user, the adapter sets Sentry `user.id` to the internal `intuser_*` id. No email or other PII is attached, and the dependency is cached per request so attribution happens once.
 
 ### Session storage (Redis)
 
@@ -397,6 +407,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | `routers/api/sync/` | Sync protocol implementation (stream, ack, checkpoint) |
 | `routers/api/constants.py` | Shared constants (`PHOTOS_API_MAX_PAGE_SIZE = 200`) |
 | `routers/middleware/auth_middleware.py` | Session token extraction, JWT lookup, token refresh |
+| `routers/middleware/observability_middleware.py` | Request-scoped Sentry tagging (`interface`, `user_agent.original`) |
 | `routers/utils/gumnut_id_conversion.py` | Bidirectional Gumnut ↔ Immich ID conversion |
 | `routers/utils/asset_conversion.py` | Asset model translation and EXIF extraction |
 | `routers/utils/album_conversion.py` | Album model translation |
