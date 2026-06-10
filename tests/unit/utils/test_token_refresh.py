@@ -1,5 +1,7 @@
+import asyncio
 import pytest
 import httpx
+from contextvars import copy_context
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import UUID
@@ -11,6 +13,8 @@ from routers.utils.gumnut_client import (
     _response_hook,
     get_refreshed_token,
     clear_refreshed_token,
+    init_refresh_token_holder,
+    set_refreshed_token,
     get_shared_http_client,
 )
 from services.session_store import Session
@@ -218,6 +222,91 @@ class TestTokenRefreshIntegration:
         mock_session_store.update_stored_jwt.assert_not_called()
         # No refresh header should be present
         assert "x-new-access-token" not in response.headers
+
+
+class TestPerRequestIsolation:
+    """The refreshed token must be isolated per request.
+
+    A shared store would let one user's refreshed JWT be persisted into another
+    user's session under concurrent load. Each request installs its own holder
+    via init_refresh_token_holder(), so concurrent requests cannot observe each
+    other's tokens even when running on the same event-loop thread.
+    """
+
+    def test_holders_are_isolated_across_contexts(self):
+        """Two request contexts each see only their own captured token."""
+
+        captured: dict[str, str | None] = {}
+
+        def request_a():
+            init_refresh_token_holder()
+            set_refreshed_token("jwt-for-A")
+            captured["a"] = get_refreshed_token()
+
+        def request_b():
+            init_refresh_token_holder()
+            set_refreshed_token("jwt-for-B")
+            captured["b"] = get_refreshed_token()
+
+        # Run each "request" in its own copied context, the way Starlette runs
+        # each request task.
+        copy_context().run(request_a)
+        copy_context().run(request_b)
+
+        assert captured == {"a": "jwt-for-A", "b": "jwt-for-B"}
+
+    def test_interleaved_requests_do_not_cross_contaminate(self):
+        """Even interleaved, a context that never refreshed keeps token=None.
+
+        This is the core regression: previously a request whose own backend call
+        did not refresh could still read another concurrent request's refreshed
+        token from shared state and persist it into the wrong session.
+        """
+
+        ctx_a = copy_context()
+        ctx_b = copy_context()
+
+        # Both requests start (install their own holders), interleaved.
+        ctx_a.run(init_refresh_token_holder)
+        ctx_b.run(init_refresh_token_holder)
+
+        # Only request B's backend call refreshes a token.
+        ctx_b.run(set_refreshed_token, "jwt-for-B")
+
+        # Request A, which never refreshed, must not see B's token.
+        assert ctx_a.run(get_refreshed_token) is None
+        assert ctx_b.run(get_refreshed_token) == "jwt-for-B"
+
+    @pytest.mark.anyio
+    async def test_concurrent_response_hooks_stay_isolated(self):
+        """Concurrent tasks running the real response hook don't leak tokens."""
+
+        async def handle(token: str, started: asyncio.Event, release: asyncio.Event):
+            init_refresh_token_holder()
+            response = httpx.Response(
+                status_code=200,
+                headers={"x-new-access-token": token},
+                json={},
+            )
+            await _response_hook(response)
+            started.set()
+            # Wait so both tasks are live at the same time before reading back.
+            await release.wait()
+            return get_refreshed_token()
+
+        release = asyncio.Event()
+        started_a = asyncio.Event()
+        started_b = asyncio.Event()
+
+        task_a = asyncio.create_task(handle("token-A", started_a, release))
+        task_b = asyncio.create_task(handle("token-B", started_b, release))
+        await started_a.wait()
+        await started_b.wait()
+        release.set()
+
+        result_a, result_b = await asyncio.gather(task_a, task_b)
+        assert result_a == "token-A"
+        assert result_b == "token-B"
 
 
 class TestTokenRefreshWithMockedGumnut:

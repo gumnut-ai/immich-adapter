@@ -1,8 +1,8 @@
 import asyncio
 
 import httpx
-import threading
 from contextvars import ContextVar
+from dataclasses import dataclass
 from fastapi import HTTPException, Request, status
 from gumnut import AsyncGumnut
 
@@ -10,32 +10,40 @@ from config.settings import get_settings
 
 # Token Refresh Handling
 # ----------------------
-# This module handles JWT token refreshing from the Gumnut API. When a token is refreshed,
-# the Gumnut API returns a new token in the 'x-new-access-token' response header.
+# This module handles JWT token refreshing from the Gumnut API. When a token is
+# refreshed, the Gumnut API returns a new token in the 'x-new-access-token'
+# response header. The auth middleware persists that token into the requesting
+# user's session.
 #
-# To safely propagate refreshed tokens in async/concurrent environments, we use a two-tier
-# approach:
+# The refreshed token must be isolated per request: a shared store would let one
+# user's refreshed JWT be persisted into another user's session under concurrent
+# load, granting cross-account access. We isolate it with a per-request *mutable
+# holder* installed on a ContextVar:
 #
-# 1. **ContextVar (Primary)**: Used for async request contexts. ContextVars are isolated
-#    per async task, preventing token collisions between concurrent requests on the same
-#    thread. This is the correct approach for production async environments.
+#   - The middleware calls init_refresh_token_holder() before invoking the
+#     downstream handler. ContextVar values set before the downstream call
+#     propagate *into* the handler/response-hook context.
+#   - The httpx response hook (running inside that context) mutates the same
+#     holder object via set_refreshed_token().
+#   - The middleware reads the token back via get_refreshed_token() after the
+#     handler returns. Because the value read is a mutation of a shared object —
+#     not a ContextVar.set() inside the handler — it is visible even though
+#     Starlette's BaseHTTPMiddleware does not propagate ContextVar writes back
+#     out of the downstream call.
 #
-# 2. **threading.local (Fallback)**: Used for synchronous test environments (like FastAPI's
-#    TestClient) where context propagation doesn't work. Multiple concurrent requests on
-#    the same thread can still interleave with thread-local, but this is acceptable for
-#    tests where requests are typically sequential.
-#
-# The response hook sets both storage mechanisms, and the getter checks ContextVar first,
-# then falls back to thread-local. This ensures correct behavior in both production
-# (async) and test (sync) environments.
+# Each request installs its own holder, so concurrent requests on the same event
+# loop thread can never observe each other's refreshed tokens.
 
-# Async-safe token storage (primary)
-_refreshed_token_var: ContextVar[str | None] = ContextVar(
-    "refreshed_token", default=None
+
+@dataclass
+class _RefreshTokenHolder:
+    token: str | None = None
+
+
+# Per-request token holder (see module docstring above).
+_refresh_holder_var: ContextVar[_RefreshTokenHolder | None] = ContextVar(
+    "refresh_token_holder", default=None
 )
-
-# Thread-local token storage (fallback for TestClient)
-_thread_local = threading.local()
 
 _shared_http_client: httpx.AsyncClient | None = None
 
@@ -46,48 +54,43 @@ _shared_http_client: httpx.AsyncClient | None = None
 BULK_CHUNK_SIZE = 100
 
 
+def init_refresh_token_holder() -> None:
+    """Install a fresh per-request refreshed-token holder.
+
+    Must be called by the auth middleware before invoking the downstream handler
+    so the response hook and the middleware share one per-request holder object.
+    """
+    _refresh_holder_var.set(_RefreshTokenHolder())
+
+
+def _get_or_create_holder() -> _RefreshTokenHolder:
+    holder = _refresh_holder_var.get()
+    if holder is None:
+        # No holder was installed for this context (e.g. a direct call outside
+        # the request lifecycle). Install one so the token isn't silently lost
+        # within the current context. This still cannot leak across requests:
+        # the holder lives only in this context's ContextVar.
+        holder = _RefreshTokenHolder()
+        _refresh_holder_var.set(holder)
+    return holder
+
+
 def get_refreshed_token() -> str | None:
-    """
-    Get the refreshed token from either ContextVar or thread-local storage.
-
-    Checks ContextVar first (for async contexts), then falls back to thread-local
-    (for sync test contexts like TestClient).
-
-    Returns:
-        str | None: The refreshed token if available, None otherwise
-    """
-    # Try ContextVar first (async-safe)
-    token = _refreshed_token_var.get()
-    if token is not None:
-        return token
-
-    # Fall back to thread-local (for TestClient)
-    return getattr(_thread_local, "refreshed_token", None)
+    """Return the refreshed token captured for the current request, if any."""
+    holder = _refresh_holder_var.get()
+    return holder.token if holder is not None else None
 
 
 def set_refreshed_token(token: str) -> None:
-    """
-    Store a refreshed token in both ContextVar and thread-local storage.
-
-    Sets both storage mechanisms to ensure the token is available in both
-    async (production) and sync (TestClient) environments.
-
-    Args:
-        token: The refreshed JWT token to store
-    """
-    _refreshed_token_var.set(token)
-    _thread_local.refreshed_token = token
+    """Record a refreshed token on the current request's holder."""
+    _get_or_create_holder().token = token
 
 
 def clear_refreshed_token() -> None:
-    """
-    Clear the refreshed token from both storage mechanisms.
-
-    Should be called after the token has been propagated to the response
-    to prevent token leakage between requests.
-    """
-    _refreshed_token_var.set(None)
-    _thread_local.refreshed_token = None
+    """Clear the refreshed token on the current request's holder, if present."""
+    holder = _refresh_holder_var.get()
+    if holder is not None:
+        holder.token = None
 
 
 async def _response_hook(response: httpx.Response) -> None:
