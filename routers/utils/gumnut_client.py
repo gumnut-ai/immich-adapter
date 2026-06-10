@@ -40,7 +40,7 @@ class _RefreshTokenHolder:
     token: str | None = None
 
 
-# Per-request token holder (see module docstring above).
+# Per-request token holder (see the Token Refresh Handling comment above).
 _refresh_holder_var: ContextVar[_RefreshTokenHolder | None] = ContextVar(
     "refresh_token_holder", default=None
 )
@@ -87,7 +87,11 @@ def set_refreshed_token(token: str) -> None:
 
 
 def clear_refreshed_token() -> None:
-    """Clear the refreshed token on the current request's holder, if present."""
+    """Clear the refreshed token on the current request's holder, if present.
+
+    No production code calls this — request isolation comes from each request
+    installing its own holder, not from clearing. Kept as a test reset helper.
+    """
     holder = _refresh_holder_var.get()
     if holder is not None:
         holder.token = None
@@ -99,7 +103,8 @@ async def _response_hook(response: httpx.Response) -> None:
 
     When the Gumnut API refreshes a token, it returns the new token in the
     'x-new-access-token' header. This hook records that token on the current
-    request's refreshed-token holder (see module docstring) for later retrieval
+    request's refreshed-token holder (see the Token Refresh Handling comment at
+    the top of this module) for later retrieval
     by the auth middleware.
 
     Args:

@@ -23,6 +23,25 @@ from services.session_store import Session
 TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
 
+def make_session(session_id: UUID, jwt: str = "decrypted-jwt-token") -> Session:
+    """Build a test Session whose get_jwt() returns the given decrypted JWT."""
+    now = datetime.now(timezone.utc)
+    session = Session(
+        id=session_id,
+        user_id=f"user_{session_id}",
+        library_id="lib_456",
+        stored_jwt="encrypted-jwt",
+        device_type="iOS",
+        device_os="iOS 17",
+        app_version="1.0",
+        created_at=now,
+        updated_at=now,
+        is_pending_sync_reset=False,
+    )
+    session.get_jwt = MagicMock(return_value=jwt)
+    return session
+
+
 class TestRefreshTokenHook:
     """Test the response hook that captures refresh tokens."""
 
@@ -88,21 +107,7 @@ class TestTokenRefreshIntegration:
     def mock_session_store(self):
         """Create a mock SessionStore."""
         store = AsyncMock()
-        now = datetime.now(timezone.utc)
-        mock_session = Session(
-            id=TEST_SESSION_UUID,
-            user_id="user_123",
-            library_id="lib_456",
-            stored_jwt="encrypted-jwt",
-            device_type="iOS",
-            device_os="iOS 17",
-            app_version="1.0",
-            created_at=now,
-            updated_at=now,
-            is_pending_sync_reset=False,
-        )
-        mock_session.get_jwt = MagicMock(return_value="decrypted-jwt-token")
-        store.get_by_id.return_value = mock_session
+        store.get_by_id.return_value = make_session(TEST_SESSION_UUID)
         store.update_stored_jwt.return_value = True
         return store
 
@@ -327,15 +332,102 @@ class TestPerRequestIsolation:
         started_a = asyncio.Event()
         started_b = asyncio.Event()
 
-        task_a = asyncio.create_task(handle("token-A", started_a, release))
-        task_b = asyncio.create_task(handle("token-B", started_b, release))
-        await started_a.wait()
-        await started_b.wait()
-        release.set()
+        # Bound the event coordination so a regression in task scheduling
+        # fails the test instead of deadlocking the suite (no pytest-timeout
+        # is configured for this repo).
+        async with asyncio.timeout(5):
+            task_a = asyncio.create_task(handle("token-A", started_a, release))
+            task_b = asyncio.create_task(handle("token-B", started_b, release))
+            await started_a.wait()
+            await started_b.wait()
+            release.set()
 
-        result_a, result_b = await asyncio.gather(task_a, task_b)
+            result_a, result_b = await asyncio.gather(task_a, task_b)
         assert result_a == "token-A"
         assert result_b == "token-B"
+
+    @pytest.mark.anyio
+    async def test_overlapping_requests_through_real_middleware(self):
+        """End-to-end regression: overlapping requests through the real middleware.
+
+        The original cross-contamination bug passed the test suite because
+        nothing drove *concurrent* requests through the real
+        BaseHTTPMiddleware boundary: a request whose own backend call never
+        refreshed could read another request's refreshed token from shared
+        state and persist it into its own session. Here two overlapping
+        requests carry distinct session tokens and only one triggers the
+        response hook — update_stored_jwt must be called exactly once, with
+        the refreshing session's token.
+        """
+        refreshing_uuid = UUID("11111111-1111-4111-8111-111111111111")
+        idle_uuid = UUID("22222222-2222-4222-8222-222222222222")
+
+        store = AsyncMock()
+        store.get_by_id.side_effect = lambda token: make_session(
+            UUID(token), jwt=f"jwt-{token}"
+        )
+        store.update_stored_jwt.return_value = True
+
+        idle_entered = asyncio.Event()
+        refresh_done = asyncio.Event()
+
+        app = FastAPI()
+        app.add_middleware(AuthMiddleware)
+
+        @app.get("/api/test/refresh")
+        async def refresh_endpoint(request: Request):
+            # Wait until the idle request is inside its handler so the two
+            # requests genuinely overlap, then simulate a backend refresh.
+            await idle_entered.wait()
+            response = httpx.Response(
+                status_code=200,
+                headers={"x-new-access-token": "refreshed-jwt-789"},
+                json={},
+            )
+            await _response_hook(response)
+            refresh_done.set()
+            return {"data": "refreshed"}
+
+        @app.get("/api/test/idle")
+        async def idle_endpoint(request: Request):
+            # Stay in-flight until the other request has captured its
+            # refreshed token, so this request's middleware reads its holder
+            # *after* the refresh happened in the other request's context.
+            idle_entered.set()
+            await refresh_done.wait()
+            return {"data": "idle"}
+
+        async def mock_get_session_store():
+            return store
+
+        with patch(
+            "routers.middleware.auth_middleware.get_session_store",
+            mock_get_session_store,
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                # Bound the cross-request event coordination so a regression
+                # in request overlap fails instead of deadlocking the suite.
+                async with asyncio.timeout(5):
+                    idle_response, refresh_response = await asyncio.gather(
+                        client.get(
+                            "/api/test/idle",
+                            headers={"Authorization": f"Bearer {idle_uuid}"},
+                        ),
+                        client.get(
+                            "/api/test/refresh",
+                            headers={"Authorization": f"Bearer {refreshing_uuid}"},
+                        ),
+                    )
+
+        assert idle_response.status_code == 200
+        assert refresh_response.status_code == 200
+        # Exactly one session is updated: the refreshing one, with its token.
+        store.update_stored_jwt.assert_called_once_with(
+            str(refreshing_uuid), "refreshed-jwt-789"
+        )
 
 
 class TestTokenRefreshWithMockedGumnut:

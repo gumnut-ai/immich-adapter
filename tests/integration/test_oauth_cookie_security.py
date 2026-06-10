@@ -139,70 +139,12 @@ class TestOAuthCookieSecurity:
             # Clean up dependency override
             app.dependency_overrides.clear()
 
-    @pytest.mark.anyio
-    async def test_token_refresh_cookie_has_security_flags(self):
-        """Verify refreshed token cookie has security flags."""
-        # Mock the SessionStore to return a valid session
-        mock_session_store = AsyncMock(spec=SessionStore)
-        now = datetime.now(timezone.utc)
-        mock_session = Session(
-            id=TEST_SESSION_UUID,
-            user_id=str(TEST_USER_UUID),
-            library_id="",
-            stored_jwt="encrypted-jwt",
-            device_type="Other",
-            device_os="Other",
-            app_version="",
-            created_at=now,
-            updated_at=now,
-            is_pending_sync_reset=False,
-        )
-        mock_session.get_jwt = Mock(return_value="decrypted-jwt-token")
-        mock_session_store.get_by_id.return_value = mock_session
-        mock_session_store.update_stored_jwt.return_value = True
-
-        async def mock_get_session_store():
-            return mock_session_store
-
-        # Patch the middleware's get_session_store (called directly, not via DI)
-        with patch(
-            "routers.middleware.auth_middleware.get_session_store",
-            mock_get_session_store,
-        ):
-            # Create test client with HTTPS base URL
-            client = TestClient(app, base_url="https://testserver")
-
-            # Set cookie with the session token
-            client.cookies.set(ImmichCookie.ACCESS_TOKEN.value, str(TEST_SESSION_UUID))
-
-            # Mock a request that would trigger token refresh
-            with patch(
-                "routers.utils.gumnut_client.get_refreshed_token"
-            ) as mock_get_refreshed:
-                mock_get_refreshed.return_value = "refreshed-jwt-token-789"
-
-                # Make a request with existing auth cookie
-                response = client.get("/api/server/version")
-
-                # Should be successful
-                assert response.status_code == 200
-
-                # Check if refresh cookie was set (if middleware detected refresh)
-                set_cookie_headers = response.headers.get_list("set-cookie")
-
-                # If token was refreshed, verify security flags
-                for cookie_header in set_cookie_headers:
-                    if f"{ImmichCookie.ACCESS_TOKEN.value}=" in cookie_header:
-                        assert "HttpOnly" in cookie_header, (
-                            f"refreshed token missing HttpOnly: {cookie_header}"
-                        )
-                        assert "Secure" in cookie_header or "secure" in cookie_header, (
-                            f"refreshed token missing Secure: {cookie_header}"
-                        )
-                        assert (
-                            "SameSite=lax" in cookie_header
-                            or "SameSite=Lax" in cookie_header
-                        ), f"refreshed token missing SameSite=Lax: {cookie_header}"
+    # Note: there is deliberately no "refreshed token cookie" test here. A JWT
+    # refresh never touches cookies: the session token (the only cookie value)
+    # stays the same, the refreshed JWT is stored server-side in the session,
+    # and the middleware strips the x-new-access-token header from responses.
+    # test_no_cookies_set_without_security_flags below guards the general
+    # no-unflagged-cookies property.
 
     @pytest.mark.anyio
     async def test_no_cookies_set_without_security_flags(self):

@@ -159,6 +159,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Check if Gumnut backend returned a refreshed token
         # The response hook in gumnut_client.py captures this from backend responses
+        #
+        # Note: call_next returns when the downstream response *starts*, so a
+        # token refreshed while a StreamingResponse body is still being
+        # generated (e.g. backend calls made during streaming) mutates the
+        # holder after this read and is intentionally dropped. Dropping is the
+        # safe direction — the session keeps its current (still valid) JWT and
+        # the backend's sliding refresh re-issues the token on a subsequent
+        # non-streaming request.
         refreshed_token = get_refreshed_token()
 
         if refreshed_token and session_token:
