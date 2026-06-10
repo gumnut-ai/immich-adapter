@@ -234,7 +234,13 @@ class TestPerRequestIsolation:
     """
 
     def test_holders_are_isolated_across_contexts(self):
-        """Two request contexts each see only their own captured token."""
+        """Two request contexts each see only their own captured token.
+
+        This documents the baseline isolation property. The cross-contamination
+        regression itself is guarded by test_interleaved_requests_do_not_cross_
+        contaminate and test_concurrent_response_hooks_stay_isolated below — a
+        context that never refreshes must not pick up another's token.
+        """
 
         captured: dict[str, str | None] = {}
 
@@ -276,6 +282,29 @@ class TestPerRequestIsolation:
         # Request A, which never refreshed, must not see B's token.
         assert ctx_a.run(get_refreshed_token) is None
         assert ctx_b.run(get_refreshed_token) == "jwt-for-B"
+
+    def test_set_without_init_lazily_installs_holder(self):
+        """set_refreshed_token outside the request lifecycle still works.
+
+        A direct call with no init_refresh_token_holder() (e.g. a unit test that
+        invokes the hook directly) lazily installs a holder in the current
+        context. This stays isolated — the holder lives only in this context.
+        """
+
+        def standalone():
+            set_refreshed_token("standalone-token")
+            return get_refreshed_token()
+
+        assert copy_context().run(standalone) == "standalone-token"
+
+    def test_clear_without_holder_is_noop(self):
+        """clear_refreshed_token must not raise when no holder is installed."""
+
+        def standalone():
+            clear_refreshed_token()
+            return get_refreshed_token()
+
+        assert copy_context().run(standalone) is None
 
     @pytest.mark.anyio
     async def test_concurrent_response_hooks_stay_isolated(self):
@@ -337,7 +366,13 @@ class TestTokenRefreshWithMockedGumnut:
 
     @pytest.mark.anyio
     async def test_multiple_requests_dont_interfere(self):
-        """Test that clearing tokens between requests prevents interference."""
+        """Sequential hook calls with explicit clears between them.
+
+        Note: production does not rely on manual clearing for isolation — each
+        request installs its own holder via init_refresh_token_holder(). See
+        TestPerRequestIsolation for the per-request isolation guarantee. This
+        test exercises the lower-level set/clear/get sequence within one context.
+        """
         client = await get_shared_http_client()
 
         # First request with refresh

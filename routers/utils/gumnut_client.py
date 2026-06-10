@@ -98,8 +98,9 @@ async def _response_hook(response: httpx.Response) -> None:
     HTTP response hook that captures refreshed tokens from Gumnut API responses.
 
     When the Gumnut API refreshes a token, it returns the new token in the
-    'x-new-access-token' header. This hook captures that token and stores it
-    in both ContextVar and thread-local storage for later retrieval by middleware.
+    'x-new-access-token' header. This hook records that token on the current
+    request's refreshed-token holder (see module docstring) for later retrieval
+    by the auth middleware.
 
     Args:
         response: The httpx Response object from the Gumnut API
