@@ -67,6 +67,8 @@ This format is enforced by the global exception handler in `config/exceptions.py
 
 **Note:** In middleware (e.g., `auth_middleware.py`), you must return `JSONResponse` directly with this format, as `HTTPException` raised in `BaseHTTPMiddleware.dispatch()` is not caught by FastAPI's exception handlers due to Starlette's middleware architecture.
 
+**Passing per-request state from a handler back up to the middleware:** a `ContextVar.set()` inside the downstream handler does **not** propagate back to `dispatch()` after `call_next` (same Starlette `BaseHTTPMiddleware` boundary). Never use process-global / module-level mutable state (a bare `ContextVar`, `threading.local`, etc.) to carry per-request values — under concurrent load one request can read another's value, which for credentials means cross-user contamination. Install a per-request mutable holder on a `ContextVar` in `dispatch()` *before* `call_next`, and have the handler mutate that object (see `gumnut_client.py` refreshed-token holder).
+
 For the full error handling strategy including rate limit protection and per-item error tracking, see the [adapter architecture doc](../architecture/adapter-architecture.md#error-handling).
 
 ### Defining Endpoint Parameters
