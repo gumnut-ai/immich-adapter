@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from gumnut import AsyncGumnut, omit
+from gumnut import AsyncGumnut, BadRequestError, omit
 
 from routers.immich_models import (
     LoginResponseDto,
@@ -232,6 +232,13 @@ async def finish_oauth(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="OAuth authentication failed. Please try again.",
         )
+    except BadRequestError:
+        # The backend rejected the exchange as a client error — typically a
+        # stale or replayed callback (state token already consumed or expired).
+        # Re-raise past the generic arm below so the global GumnutError handler
+        # returns the backend's 400 and message (which tells the user to restart
+        # the login flow) and logs it at warning level.
+        raise
     except Exception:
         logger.error(
             "Failed to complete OAuth authentication",
