@@ -332,7 +332,7 @@ Route handlers raise `HTTPException(status_code=..., detail="...")` and a global
 
 ### Gumnut SDK error mapping
 
-A global `GumnutError` exception handler in `config/exceptions.py` (registered in `main.py`) maps any Stainless SDK exception raised during request handling to an Immich-shaped JSON response. Routes do not need per-call `try/except` for SDK errors — they bubble to the handler.
+A global `GumnutError` exception handler in `config/exceptions.py` (registered in `main.py`) maps any Stainless SDK exception raised during request handling to an Immich-shaped JSON response. Routes do not need per-call `try/except` for SDK errors — they bubble to the handler. Watch for routes with a legacy catch-all `except Exception` arm (e.g., `finish_oauth`'s 500 fallback): the catch-all swallows SDK errors before the handler sees them, and the local pattern misleads new code into hand-rolling parallel mappings. Add a re-raise arm for the SDK exception (`except BadRequestError: raise`) above the catch-all instead.
 
 Dispatch is by `isinstance` against the typed SDK hierarchy:
 

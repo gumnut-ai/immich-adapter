@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
 from fastapi import HTTPException, Request
+from gumnut import BadRequestError
 from starlette.datastructures import URL
 import pytest
 
@@ -11,6 +12,7 @@ from routers.api.oauth import finish_oauth, rewrite_redirect_uri
 from routers.immich_models import OAuthCallbackDto
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_user_id
 from services.session_store import SessionStore
+from tests.conftest import make_sdk_status_error
 
 TEST_USER_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 TEST_GUMNUT_USER_ID = uuid_to_gumnut_user_id(TEST_USER_UUID)
@@ -273,3 +275,45 @@ class TestFinishOAuth:
 
             assert exc_info.value.status_code == 500
             assert "OAuth authentication failed" in exc_info.value.detail
+
+    @pytest.mark.anyio
+    async def test_backend_rejection_propagates_to_global_handler(
+        self, mock_request, mock_response, mock_gumnut_client, mock_session_store
+    ):
+        """A backend 400 on token exchange propagates, bypassing the 500 arm.
+
+        The backend rejects stale or replayed callbacks (state token already
+        consumed or expired) as client errors. The route must let the SDK
+        error bubble to the global GumnutError handler — which returns the
+        backend's 400 and message — instead of reporting an adapter 500.
+        """
+        mock_gumnut_client.oauth.exchange = AsyncMock(
+            side_effect=make_sdk_status_error(
+                400,
+                "Invalid or expired OAuth state token. Please restart the login flow.",
+                cls=BadRequestError,
+            )
+        )
+
+        callback_dto = OAuthCallbackDto(
+            url="http://localhost/callback?code=auth_code&state=stale_state"
+        )
+
+        with patch("routers.api.oauth.parse_callback_url") as mock_parse:
+            mock_parse.return_value = {
+                "code": "auth_code",
+                "state": "stale_state",
+                "error": None,
+            }
+
+            with pytest.raises(BadRequestError):
+                await finish_oauth(
+                    oauth_callback=callback_dto,
+                    request=mock_request,
+                    response=mock_response,
+                    client=mock_gumnut_client,
+                    session_store=mock_session_store,
+                )
+
+        # No session must be created for a rejected exchange
+        mock_session_store.create.assert_not_called()
