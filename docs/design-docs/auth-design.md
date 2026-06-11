@@ -2,7 +2,7 @@
 title: "Updated Authentication Design"
 status: completed
 created: 2025-12-06
-last-updated: 2025-12-06
+last-updated: 2026-06-11
 ---
 
 # Updated Authentication Design Document
@@ -13,13 +13,13 @@ Date: 2025-12-05
 
 This document describes the OAuth/OpenID Connect authentication architecture for the Immich Adapter system. The adapter manages **session tokens** for Immich clients while delegating OAuth validation and JWT management to the Gumnut backend.
 
-## Current Implementation
+## Historical Background
 
-The adapter passes the Gumnut JWT directly to clients, and session IDs are derived by hashing that JWT. When clients authenticate, they receive and store the raw JWT, sending it on every request. The middleware extracts the JWT and forwards it to the backend. When the backend refreshes the JWT, clients receive the new token and begin using it. However, because the session ID is a hash of the JWT, a refreshed token produces a different hash -- effectively creating a new session and orphaning the old one along with any associated sync checkpoints.
+Earlier iterations passed the Gumnut JWT directly to clients and derived session identity by hashing that JWT. That model broke session continuity when the backend rotated a token, because a refreshed JWT implied a new hash and orphaned any checkpoints keyed to the old value.
 
-## Updated Implementation
+## Implemented Architecture
 
-The adapter will generate a stable UUID session token at login and return that to clients instead of the raw JWT. The Gumnut JWT is encrypted and stored in Redis, keyed by the session token. On each request, the middleware extracts the session token, looks up the stored JWT, and forwards it to the backend. When the backend refreshes the JWT, the adapter simply updates the stored value in Redis -- the client's session token never changes. This keeps sessions and checkpoints stable across JWT refresh cycles, enables immediate session revocation, and ensures raw JWTs are never exposed to clients.
+The adapter now generates a stable UUID session token at login and returns that token to clients instead of the raw JWT. The Gumnut JWT is encrypted and stored in Redis, keyed by the session token. On each request, the middleware extracts the session token, looks up the stored JWT, and forwards it to the backend. When the backend refreshes the JWT, the adapter updates the stored value in Redis while keeping the client's session token unchanged. This keeps sessions and checkpoints stable across JWT refresh cycles, enables immediate session revocation, and ensures raw JWTs are never exposed to clients.
 
 ## Design Constraints
 
@@ -83,7 +83,7 @@ The adapter will generate a stable UUID session token at login and return that t
 - Initiates OAuth authentication flow
 - Stores session token from OAuth response body
 - Sends requests with `Authorization: Bearer` header
-- Checks for `X-New-Access-Token` response header and updates stored token
+- Keeps the stable session token returned at login; backend JWT refresh stays internal to the adapter
 
 ### 3. Immich Adapter (Session Manager with Middleware)
 
@@ -215,6 +215,7 @@ User → Web Client → Adapter → Backend → OAuth Provider → Clerk
 - Adapter generates session token and stores encrypted JWT
 - Client stores and manages session token (not the raw JWT)
 - CSRF protection handled by backend
+- Stale or replayed callback exchanges surface the backend's 400 response so the client can restart the login flow
 
 ### Flow 2: Subsequent API Requests (with Token Refresh)
 
