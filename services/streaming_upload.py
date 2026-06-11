@@ -343,8 +343,14 @@ class StreamingUploadPipeline:
                 )
                 result = await asyncio.to_thread(self._sync_upload, extract_fields_fn)
 
-                # Propagate refreshed token to event loop context (nonlocal
-                # from _sync_upload since ContextVar copies don't propagate)
+                # Publish any refreshed token captured during the threaded
+                # upload onto the request's holder. Calling set_refreshed_token
+                # inside the to_thread context would propagate only when the
+                # middleware already installed this request's holder (the
+                # copied context shares the holder object); without one, the
+                # lazily created holder stays in the copied context. The
+                # explicit re-publish here keeps the pipeline correct without
+                # depending on that precondition.
                 if self.refreshed_token:
                     set_refreshed_token(self.refreshed_token)
 

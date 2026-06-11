@@ -5,7 +5,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
 
-from routers.utils.gumnut_client import get_refreshed_token, clear_refreshed_token
+from routers.utils.gumnut_client import (
+    get_refreshed_token,
+    init_refresh_token_holder,
+)
 from services.session_store import get_session_store
 
 logger = logging.getLogger(__name__)
@@ -74,8 +77,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """
         path = request.url.path
 
-        # Clear any stale refreshed token from previous requests
-        clear_refreshed_token()
+        # Install a fresh per-request holder for any refreshed token captured by
+        # the Gumnut response hook. Must happen before call_next so the holder is
+        # visible in the downstream handler's context (see gumnut_client.py).
+        init_refresh_token_holder()
 
         # Skip auth for non-protected paths (static files, SPA routes)
         if not path.startswith(self.PROTECTED_PREFIXES):
@@ -154,6 +159,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Check if Gumnut backend returned a refreshed token
         # The response hook in gumnut_client.py captures this from backend responses
+        #
+        # Note: call_next returns when the downstream response *starts*, so a
+        # token refreshed while a StreamingResponse body is still being
+        # generated (e.g. backend calls made during streaming) mutates the
+        # holder after this read and is intentionally dropped. Dropping is the
+        # safe direction — the session keeps its current (still valid) JWT and
+        # the backend's sliding refresh re-issues the token on a subsequent
+        # non-streaming request.
         refreshed_token = get_refreshed_token()
 
         if refreshed_token and session_token:
@@ -172,8 +185,5 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # session token remains valid (the JWT refresh is internal)
             if self.REFRESH_HEADER in response.headers:
                 del response.headers[self.REFRESH_HEADER]
-
-            # Clear the stored token after handling to prevent leakage to subsequent requests
-            clear_refreshed_token()
 
         return response
