@@ -42,9 +42,12 @@ logger = logging.getLogger(__name__)
 # `file_modified_at` cascade; `people` feeds `AssetResponseDto.people`.
 #
 # Deliberately omitted: `faces` (the adapter reads faces from the dedicated
-# `/faces` endpoint, never off the asset), `metrics` (never read), and any
-# image-variant token — `asset_urls` is not gated and stays fully populated, so
-# the streaming/serving paths need no `include` at all.
+# `/faces` endpoint, never off the asset), `metrics` (never read), and the
+# `variants` token. `convert_gumnut_asset_to_immich` does not read `asset_urls`
+# at all, so these data-field reads need no variant token. The byte-serving
+# paths in `routers/api/assets.py` are the exception — they stream the
+# non-thumbnail rungs (gated behind `variants`) and so request
+# `include=variants` at their own call site.
 ASSET_INCLUDE: list[str] = ["metadata", "people", "file_data"]
 """For reads that feed ``convert_gumnut_asset_to_immich`` (reads ``people``)."""
 
