@@ -191,7 +191,11 @@ async def _retrieve_and_stream_variant(
         StreamingResponse streaming CDN bytes to the Immich client.
     """
     gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
-    asset = await client.assets.retrieve(gumnut_asset_id)
+    # `variants` opts into the non-thumbnail asset_urls rungs (small/preview/
+    # fullsize/original and their video `_image` equivalents). Once the API
+    # trims asset_urls to the thumbnail rung for callers that omit it, every
+    # non-thumbnail size served here would 404 without this.
+    asset = await client.assets.retrieve(gumnut_asset_id, include=["variants"])
 
     variant = _upgrade_variant_for_aspect(variant, asset.width, asset.height)
     variant_key = _resolve_variant_key(asset.mime_type, variant)

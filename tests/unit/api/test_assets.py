@@ -2870,6 +2870,39 @@ class TestViewAsset:
         )
 
     @pytest.mark.anyio
+    async def test_view_asset_retrieve_requests_variants(self, sample_uuid):
+        """The serving retrieve() opts into the non-thumbnail asset_urls rungs.
+
+        Without include=["variants"], an API default that trims asset_urls to
+        the thumbnail rung would leave small/preview/fullsize/original absent
+        and every non-thumbnail size served here would 404 (including some
+        thumbnail requests, via the wide-landscape aspect upgrade to 'small').
+        """
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "thumbnail": {
+                        "url": "https://cdn.example.com/thumb.webp",
+                        "mimetype": "image/webp",
+                    }
+                }
+            )
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        await_args = mock_client.assets.retrieve.await_args
+        assert await_args is not None
+        assert await_args.kwargs["include"] == ["variants"]
+
+    @pytest.mark.anyio
     async def test_view_asset_fullsize_maps_to_fullsize_variant(self, sample_uuid):
         """Test that ?size=fullsize maps to the 'fullsize' asset_urls variant."""
         mock_client = Mock()
