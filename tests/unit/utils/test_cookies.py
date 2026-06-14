@@ -1,5 +1,5 @@
 import pytest
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
 
 from routers.utils.cookies import (
@@ -7,7 +7,6 @@ from routers.utils.cookies import (
     AuthType,
     ImmichCookie,
     set_auth_cookies,
-    update_access_token_cookie,
 )
 
 
@@ -23,21 +22,9 @@ def app():
         return {"status": "ok"}
 
     @app.get("/test/set-auth-cookies-with-secure")
-    def test_set_auth_cookies_with_secure(request: Request, response: Response):
+    def test_set_auth_cookies_with_secure(response: Response):
         """Endpoint to test set_auth_cookies with secure flag."""
         set_auth_cookies(response, "test-token-456", AuthType.PASSWORD, False)
-        return {"status": "ok"}
-
-    @app.get("/test/update-token")
-    def test_update_token(response: Response):
-        """Endpoint to test update_access_token_cookie."""
-        update_access_token_cookie(response, "refreshed-token-789")
-        return {"status": "ok"}
-
-    @app.get("/test/update-token-with-secure")
-    def test_update_token_with_secure(request: Request, response: Response):
-        """Endpoint to test update_access_token_cookie with secure flag."""
-        update_access_token_cookie(response, "refreshed-token-abc", False)
         return {"status": "ok"}
 
     return app
@@ -121,68 +108,3 @@ class TestSetAuthCookies:
             assert expected in matching[0], (
                 f"{cookie_name} missing {expected}: {matching[0]}"
             )
-
-
-class TestUpdateAccessTokenCookie:
-    """Test cases for update_access_token_cookie function."""
-
-    def test_updates_only_access_token(self, client):
-        """Test that update_access_token_cookie only updates access token."""
-        response = client.get("/test/update-token")
-
-        assert response.status_code == 200
-        # Only access token should be present
-        assert ImmichCookie.ACCESS_TOKEN.value in response.cookies
-        # Auth type and is_authenticated should NOT be set
-        assert ImmichCookie.AUTH_TYPE.value not in response.cookies
-        assert ImmichCookie.IS_AUTHENTICATED.value not in response.cookies
-
-    def test_refreshed_token_value(self, client):
-        """Test that refreshed token has correct value."""
-        response = client.get("/test/update-token")
-
-        assert (
-            response.cookies[ImmichCookie.ACCESS_TOKEN.value] == "refreshed-token-789"
-        )
-
-    def test_refreshed_token_security_flags(self, client):
-        """Test that refreshed token has correct security flags."""
-        response = client.get("/test/update-token")
-
-        set_cookie_header = response.headers.get("set-cookie", "")
-        # Should have HttpOnly flag
-        assert "HttpOnly" in set_cookie_header
-        assert ImmichCookie.ACCESS_TOKEN.value in set_cookie_header
-
-    def test_with_request_object(self, client):
-        """Test that update works correctly when secure is provided."""
-        response = client.get("/test/update-token-with-secure")
-
-        assert (
-            response.cookies[ImmichCookie.ACCESS_TOKEN.value] == "refreshed-token-abc"
-        )
-        # Access token should have secure flag set to False
-        set_cookie_header = response.headers.get("set-cookie", "")
-        assert "Secure" not in set_cookie_header
-
-    @pytest.mark.parametrize(
-        "endpoint",
-        ["/test/update-token", "/test/update-token-with-secure"],
-    )
-    def test_refreshed_token_has_max_age(self, client, endpoint):
-        """Refreshed access token must include Max-Age so iOS persists it
-        across app process death — on both the secure=True and secure=False
-        paths, so a future conditional on `secure` can't drop Max-Age."""
-        response = client.get(endpoint)
-
-        cookie_headers = response.headers.get_list("set-cookie")
-        expected = f"Max-Age={COOKIE_MAX_AGE_SECONDS}"
-        matching = [
-            h
-            for h in cookie_headers
-            if h.startswith(f"{ImmichCookie.ACCESS_TOKEN.value}=")
-        ]
-        assert matching, "No Set-Cookie header for access token"
-        assert expected in matching[0], (
-            f"access token missing {expected}: {matching[0]}"
-        )
