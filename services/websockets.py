@@ -51,7 +51,7 @@ class WebSocketEvent(Enum):
     SESSION_DELETE = "on_session_delete"
     SERVER_VERSION = "on_server_version"
 
-    # Phase 2: Requires photos-api event channel
+    # Phase 2: Requires the Gumnut API event channel
     PERSON_THUMBNAIL = "on_person_thumbnail"
 
 

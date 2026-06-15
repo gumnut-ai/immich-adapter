@@ -1,6 +1,6 @@
 """Tests for the trash router (restore-by-ids, restore-all, empty-trash).
 
-The router calls the photos-api trash primitives directly through the
+The router calls the Gumnut API trash primitives directly through the
 ``AsyncGumnut`` client (``client.post``, ``client.delete``,
 ``client.assets.list(state="trashed")``). Tests mock those entry points and
 assert on the bulk call shapes, WebSocket event shapes, and returned counts.

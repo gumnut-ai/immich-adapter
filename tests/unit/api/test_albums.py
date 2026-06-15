@@ -775,7 +775,7 @@ class TestAddAssetsToAlbum:
     ):
         """An asset_id absent from added/duplicate/not_found sets is marked unknown.
 
-        Defensive against drift in the upstream response shape — if photos-api
+        Defensive against drift in the upstream response shape — if the Gumnut API
         ever introduces a new bucket the adapter doesn't yet handle, assets
         falling into it surface as unknown + warning instead of silently
         succeeding.

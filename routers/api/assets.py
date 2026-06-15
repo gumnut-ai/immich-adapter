@@ -135,7 +135,7 @@ def _upgrade_variant_for_aspect(
     `original` pass through unchanged. The upgrade applies when the asset is
     landscape (`width > height`) and its aspect ratio exceeds
     `_LANDSCAPE_SMALL_ASPECT_THRESHOLD` (see that constant for the rationale).
-    Missing or zero dimensions (photos-api stores `0` for unknown dims) fall
+    Missing or zero dimensions (the Gumnut API stores `0` for unknown dims) fall
     back to the requested `thumbnail` — a safe default when shape is unknown.
 
     `width`/`height` are display-space dims (post-rotation), so `width > height`
@@ -357,7 +357,7 @@ def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
 
 
 # Delay applied before emitting upload-success events for video uploads, to give
-# photos-api time to extract the still-image variants (`thumbnail_image`,
+# the Gumnut API time to extract the still-image variants (`thumbnail_image`,
 # `preview_image`, `fullsize_image`) before the Immich web client tries to render
 # the thumbnail. Image uploads emit immediately — their CDN-resized variants are
 # available the moment the file is written. Tune this constant if telemetry shows
@@ -461,7 +461,7 @@ async def upload_asset(
 
     Uses a dual-path strategy:
     - Small files (below threshold): buffered via Starlette's UploadFile
-    - Large files (above threshold): streamed directly to photos-api
+    - Large files (above threshold): streamed directly to the Gumnut API
     """
     threshold = settings.streaming_upload_threshold_bytes
 
@@ -575,7 +575,7 @@ async def _upload_buffered(
                 span.set_data("upload.content_type", asset_data.content_type)
                 span.set_data("upload.strategy", "buffered")
                 # Use with_raw_response to access the HTTP status code:
-                # photos-api returns 200 for duplicates, 201 for new assets,
+                # The Gumnut API returns 200 for duplicates, 201 for new assets,
                 # but the SDK parses both into the same AssetResponse type.
                 raw_response = await client.assets.with_raw_response.create(
                     asset_data=(
@@ -628,7 +628,7 @@ async def _upload_streaming(
     current_user: UserResponseDto,
     api_base_url: str,
 ) -> AssetMediaResponseDto | JSONResponse:
-    """Streaming upload path — pipes file data to photos-api without buffering.
+    """Streaming upload path — pipes file data to the Gumnut API without buffering.
 
     Note: requires multipart form fields (deviceAssetId, deviceId, fileCreatedAt)
     to precede the file part. All known Immich clients send fields first. Clients
@@ -753,7 +753,7 @@ def _combine_datetime_with_timezone(dt: datetime, tz_name: str) -> datetime:
     """Apply an IANA timezone to a parsed `dateTimeOriginal`.
 
     The Immich bulk DTO carries `timeZone` as an IANA name (e.g.
-    `America/Los_Angeles`). The Photos API encodes the offset directly into
+    `America/Los_Angeles`). The Gumnut API encodes the offset directly into
     `original_datetime`, so we localize wall-clock here. Aware inputs are
     re-anchored: the wall-clock components are preserved and re-tagged with
     the new tz, matching Immich's "interpret these clock digits in this zone"
@@ -828,7 +828,7 @@ def _build_bulk_metadata_change(
 
     Out-of-scope DTO fields (`isFavorite`, `rating`, `visibility`,
     `duplicateId`) are silently ignored — the request still succeeds, the
-    adapter just doesn't act on parts the Photos API doesn't model.
+    adapter just doesn't act on parts the Gumnut API doesn't model.
 
     The three datetime modes (absolute `dateTimeOriginal`, relative
     `dateTimeRelative`, standalone `timeZone` reinterpret) are mutually
@@ -899,7 +899,7 @@ async def update_assets(
 ) -> Response:
     """Bulk-update asset metadata.
 
-    Wires Immich's `PUT /api/assets` to the Photos API `bulk_update_assets`
+    Wires Immich's `PUT /api/assets` to the Gumnut API `bulk_update_assets`
     call, which accepts heterogeneous per-item `change` dicts.
 
     In-scope fields: `description`, paired `latitude` + `longitude`, and the
@@ -1178,7 +1178,7 @@ def _build_metadata_patch(request: UpdateAssetDto) -> dict[str, Any] | None:
     defaults every field to `None`. Out-of-scope DTO fields
     (`isFavorite`, `rating`, `visibility`, `livePhotoVideoId`) are silently
     ignored; the request still succeeds, we just don't act on parts the
-    Photos API doesn't model. Returns `None` when no in-scope fields were
+    Gumnut API doesn't model. Returns `None` when no in-scope fields were
     set, signalling the caller to skip the PATCH entirely.
 
     Validates paired lat/lon adapter-side so the request 422s before the
@@ -1223,12 +1223,12 @@ async def update_asset(
 ) -> AssetResponseDto:
     """Update single-asset metadata.
 
-    Wires Immich's `PUT /api/assets/{id}` to the Photos API
+    Wires Immich's `PUT /api/assets/{id}` to the Gumnut API
     `update_asset` PATCH. In-scope DTO fields: `description`,
     `latitude` + `longitude`, `dateTimeOriginal`. Out-of-scope fields
     (`isFavorite`, `rating`, `visibility`, `livePhotoVideoId`) are
     silently ignored — the request still succeeds, but the adapter
-    doesn't act on parts the Photos API doesn't model.
+    doesn't act on parts the Gumnut API doesn't model.
     """
     payload = _build_metadata_patch(request)
     if payload is None:

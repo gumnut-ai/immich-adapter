@@ -9,9 +9,9 @@ last-updated: 2026-05-15
 
 ## Context
 
-The immich-adapter translates Immich API calls into Gumnut SDK calls, allowing unmodified Immich clients (web v2.7.5 and mobile) to work with Gumnut's Photos API. The adapter implements 192 HTTP endpoints across 30 modules, but many of these are stubs that return empty lists, hardcoded fake data, or 204 responses.
+The immich-adapter translates Immich API calls into Gumnut SDK calls, allowing unmodified Immich clients (web v2.7.5 and mobile) to work with the Gumnut API. The adapter implements 192 HTTP endpoints across 30 modules, but many of these are stubs that return empty lists, hardcoded fake data, or 204 responses.
 
-Today, the core photo workflow works: upload, browse timeline, organize into albums, manage people/faces, search, and sync to mobile. Beyond this core, most Immich features are stubbed. This document inventories every gap, assesses user impact, estimates the effort to close each one, and identifies whether the work is adapter-only or requires Gumnut Photos API changes.
+Today, the core photo workflow works: upload, browse timeline, organize into albums, manage people/faces, search, and sync to mobile. Beyond this core, most Immich features are stubbed. This document inventories every gap, assesses user impact, estimates the effort to close each one, and identifies whether the work is adapter-only or requires the Gumnut API changes.
 
 ### Current implementation summary
 
@@ -27,7 +27,7 @@ Today, the core photo workflow works: upload, browse timeline, organize into alb
 
 1. **Complete inventory** of every gap between the adapter and Immich v2.7.5's API surface
 2. **User impact assessment** for each gap — does it break workflows or is it invisible?
-3. **Dependency classification** — adapter-only work vs. requires Photos API changes vs. both
+3. **Dependency classification** — adapter-only work vs. requires the Gumnut API changes vs. both
 4. **Effort estimates** in T-shirt sizes (S/M/L/XL) per gap
 5. **Prioritized recommendations** — what to close, what's intentionally out of scope, what to revisit later
 
@@ -60,7 +60,7 @@ Immich shared links let users create public URLs to share individual assets or a
 
 **User impact**: **High** — Sharing photos externally is a core photo management use case. Users who try the sharing UI will see it "work" but links won't resolve. This is arguably deceptive since the stub returns success rather than an error.
 
-**Dependency**: **Both** — Gumnut Photos API would need a shared/public access concept, plus the adapter needs to generate and serve shared link pages.
+**Dependency**: **Both** — the Gumnut API would need a shared/public access concept, plus the adapter needs to generate and serve shared link pages.
 
 **Effort**: **XL** — Requires designing public access controls in the backend (authentication exemption, access scoping, expiry), storage for link metadata, a serving path for unauthenticated asset access, and adapter translation.
 
@@ -76,7 +76,7 @@ Immich tags allow hierarchical labeling of assets (e.g., `vacation/2024/beach`).
 
 **User impact**: **Medium** — Power users rely on tags for organization. Most casual users rely on albums instead. The Immich web UI shows the tags sidebar, which is always empty.
 
-**Dependency**: **Both** — Gumnut Photos API needs a tagging model (tag CRUD, asset-tag associations). Adapter work is straightforward translation once the backend exists.
+**Dependency**: **Both** — the Gumnut API needs a tagging model (tag CRUD, asset-tag associations). Adapter work is straightforward translation once the backend exists.
 
 **Effort**: **L** — Backend needs a new entity type (tags), a many-to-many association with assets, CRUD endpoints, and hierarchical tag support. Adapter translation is M on its own.
 
@@ -150,7 +150,7 @@ Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pair
 
 **User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently.
 
-**Dependency**: **Both** — Gumnut Photos API would need a grouping/stacking concept. The adapter translation is straightforward.
+**Dependency**: **Both** — the Gumnut API would need a grouping/stacking concept. The adapter translation is straightforward.
 
 **Effort**: **L** — Backend needs a parent-child asset relationship model, group CRUD, and primary asset designation logic.
 
@@ -178,7 +178,7 @@ Immich activities allow users to add comments and reactions to shared albums.
 
 Immich's "memories" feature auto-generates "On This Day" collections and similar nostalgia-based groupings.
 
-**Current behavior**: Read endpoints `GET /memories` and `GET /memories/{id}` synthesize OnThisDay memories at request time by querying the photos-api for assets captured on today's local month/day across the previous 30 years (one parallel call per year). Memory IDs encode `(user, year, month, day)` so they round-trip without persistence. The Immich web "On This Day" carousel renders correctly.
+**Current behavior**: Read endpoints `GET /memories` and `GET /memories/{id}` synthesize OnThisDay memories at request time by querying the Gumnut API for assets captured on today's local month/day across the previous 30 years (one parallel call per year). Memory IDs encode `(user, year, month, day)` so they round-trip without persistence. The Immich web "On This Day" carousel renders correctly.
 
 `GET /memories/statistics` remains a `total=0` stub. No upstream Immich client (web or mobile) calls it, so synthesizing a real count would burn round-trips for a value nobody reads.
 
@@ -202,7 +202,7 @@ Immich partners allow two users to share their entire libraries with each other.
 
 **User impact**: **Medium** — Families/couples who want mutual library access can't use this feature. This is a key differentiator for self-hosted photo management.
 
-**Dependency**: **Both** — Gumnut Photos API needs a library sharing / partner access model with cross-user authorization. This is a significant permission model change.
+**Dependency**: **Both** — the Gumnut API needs a library sharing / partner access model with cross-user authorization. This is a significant permission model change.
 
 **Effort**: **XL** — Requires cross-user access control in the backend, a partner relationship model, shared asset visibility rules, and adapter translation for partner-filtered views.
 
@@ -291,7 +291,7 @@ Most server info endpoints return hardcoded fake data (storage, statistics, feat
 
 | Endpoint | Current behavior | Impact |
 |----------|-----------------|--------|
-| `GET /server/features` | Static flags, accurate (GUM-552) | **None** — Flags now reflect actual adapter capabilities. |
+| `GET /server/features` | Static flags, accurate | **None** — Flags now reflect actual adapter capabilities. |
 | `GET /server/config` | Mostly hardcoded; `trashDays` is dynamic | **Low** — Trash retention is accurate now; remaining fields are mostly cosmetic. |
 | `GET /server/storage` | Fake disk usage | **Low** — Cosmetic in admin panel |
 | `GET /server/statistics` | All zeros | **Low** — Admin panel stats |
@@ -304,7 +304,7 @@ Most server info endpoints return hardcoded fake data (storage, statistics, feat
 
 **Effort**: **S** — Most of these are about returning accurate data rather than implementing new functionality. The features endpoint was the highest-value fix in this group, and `trashDays` is now accurate as well.
 
-> **Design decision —** The `GET /server/features` endpoint was the highest-value fix in this group. Previously the adapter set `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, `trash: true`, and `sidecar: true` for features that were not implemented. GUM-552 flipped those flags to `false` so Immich clients hide unsupported UI. As the adapter gained real implementations, `map` and `trash` were re-enabled; `reverseGeocoding`, `duplicateDetection`, and `sidecar` remain `false` because those capabilities are still stubbed or intentionally unsupported. `smartSearch`, `facialRecognition`, `search`, `oauth`, and `oauthAutoLaunch` remain `true` because they are backed by real implementations. Separately, `GET /server/config` now reads `trashDays` from settings instead of returning a hardcoded 30-day placeholder.
+> **Design decision —** The `GET /server/features` endpoint was the highest-value fix in this group. Previously the adapter set `duplicateDetection: true`, `map: true`, `reverseGeocoding: true`, `trash: true`, and `sidecar: true` for features that were not implemented. Those flags were flipped to `false` so Immich clients hide unsupported UI. As the adapter gained real implementations, `map` and `trash` were re-enabled; `reverseGeocoding`, `duplicateDetection`, and `sidecar` remain `false` because those capabilities are still stubbed or intentionally unsupported. `smartSearch`, `facialRecognition`, `search`, `oauth`, and `oauthAutoLaunch` remain `true` because they are backed by real implementations. Separately, `GET /server/config` now reads `trashDays` from settings instead of returning a hardcoded 30-day placeholder.
 
 **Recommendation**: **Closed** for features and trash retention. Revisit storage/statistics and any remaining config fields only if the admin surface becomes important.
 
@@ -399,7 +399,7 @@ Immich API keys allow programmatic access without OAuth.
 
 **User impact**: **Low** — API keys are a developer/power-user feature. All current access is through OAuth.
 
-**Dependency**: **Both** — Gumnut would need an API key concept for the Photos API.
+**Dependency**: **Both** — Gumnut would need an API key concept for the Gumnut API.
 
 **Effort**: **M** — Backend needs API key generation, storage, and authentication. Adapter translation is S.
 
@@ -415,7 +415,7 @@ The faces module has 3 real implementations but the create endpoint is stubbed.
 
 **User impact**: **Low** — Face creation is typically automated (ML-driven face detection). Manual face creation is rare.
 
-**Dependency**: **Both** — The Photos API does not currently have a face creation endpoint, so the backend needs to add one. The SDK (auto-generated from the API spec) will then expose it, and the adapter can call it.
+**Dependency**: **Both** — The Gumnut API does not currently have a face creation endpoint, so the backend needs to add one. The SDK (auto-generated from the API spec) will then expose it, and the adapter can call it.
 
 **Effort**: **S** — Backend endpoint is straightforward (face creation with person assignment). SDK is auto-generated. Adapter translation is minimal.
 
@@ -435,7 +435,7 @@ Person merge is listed as a stub in the adapter architecture doc.
 
 **Effort**: **S** — Implement merge as: for each source person, list all faces (paginate fully via the SDK's async iterator) → reassign each to the target person → delete the source person only after all reassignments succeed. Partial failure handling: if a reassignment fails mid-merge, the source person should not be deleted (faces would be orphaned).
 
-**Recommendation**: **Closed** (GUM-553) — implemented in `merge_person` (`routers/api/people.py`) as a thin pass-through to `client.people.merge`, which atomically reassigns all faces, deletes the sources, and recalculates the primary's centroid embedding. Self-merge is rejected client-side with 400 to keep the Immich error shape stable; empty `ids` is a no-op.
+**Recommendation**: **Closed** — implemented in `merge_person` (`routers/api/people.py`) as a thin pass-through to `client.people.merge`, which atomically reassigns all faces, deletes the sources, and recalculates the primary's centroid embedding. Self-merge is rejected client-side with 400 to keep the Immich error shape stable; empty `ids` is a no-op.
 
 ---
 
@@ -463,7 +463,7 @@ Immich supports custom key-value metadata on assets (`GET/PUT/DELETE /assets/{id
 
 **User impact**: **Low** — Custom metadata is a power-user/integration feature. Most users don't interact with it directly.
 
-**Dependency**: **Both** — Gumnut Photos API would need an arbitrary metadata store per asset.
+**Dependency**: **Both** — the Gumnut API would need an arbitrary metadata store per asset.
 
 **Effort**: **M** — Backend needs a key-value metadata model per asset. Adapter translation is S.
 
@@ -616,7 +616,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 
 **User impact**: **Medium** — Performance degrades with library size. Not visible to small libraries but will become a problem at scale.
 
-**Dependency**: **Both** — Gumnut Photos API needs server-side sorting and filtering for people and albums (currently only cursor-based pagination without sort control). Adapter can then use true cursor pagination.
+**Dependency**: **Both** — the Gumnut API needs server-side sorting and filtering for people and albums (currently only cursor-based pagination without sort control). Adapter can then use true cursor pagination.
 
 **Effort**: **L** — Backend API design for server-side sort/filter. Adapter refactoring for cursor-based people/album listing.
 
@@ -714,4 +714,4 @@ This document's accuracy can be verified by:
      --adapter-spec=http://localhost:3001/openapi.json
    ```
 2. **Testing each stub endpoint** to confirm it returns the documented behavior
-3. **Checking Gumnut Photos API capabilities** to verify dependency classifications (which gaps need backend work vs. adapter-only)
+3. **Checking the Gumnut API capabilities** to verify dependency classifications (which gaps need backend work vs. adapter-only)

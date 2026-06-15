@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # `include` sets the adapter must request explicitly on its Gumnut asset reads.
 #
-# Photos API returns the full asset shape today, but is moving to a lean default
+# The Gumnut API returns the full asset shape today, but is moving to a lean default
 # where an omitted `include` returns none of the heavy fields. The adapter reads
 # several of those off every asset, so it must opt back into exactly what its
 # conversions consume — otherwise, once the default flips, EXIF / checksum / size
@@ -138,9 +138,9 @@ def _resolve_single_asset_duration(
 
 
 def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime:
-    """Return the Photos API-resolved capture datetime for Immich timeline fields.
+    """Return the capture datetime resolved by the Gumnut API for Immich timeline fields.
 
-    Photos API resolves ``local_datetime`` from
+    The Gumnut API resolves ``local_datetime`` from
     ``metadata.original_datetime → file_created_at → created_at`` internally,
     so adapter callers treat it as the single source of truth and must not
     re-add a fallback chain here.
@@ -161,7 +161,7 @@ def resolve_local_date_time(gumnut_asset: AssetResponse) -> datetime:
 def resolve_file_modified_at(gumnut_asset: AssetResponse) -> datetime:
     """Return file modified time formatted for Immich ``fileModifiedAt`` fields.
 
-    Unlike capture time, photos-api does not resolve a single modify-time
+    Unlike capture time, the Gumnut API does not resolve a single modify-time
     field for us — ``file_data.file_modified_at`` is the raw file mtime. The
     adapter applies the ``metadata.modified_datetime → file_data.file_modified_at``
     cascade here so the EXIF modify time isn't lost on the wire.
@@ -187,7 +187,7 @@ def exif_dims_and_orientation(
 ) -> tuple[int | None, int | None, str | None]:
     """Return (exifImageWidth, exifImageHeight, wire_orientation) for the EXIF wire fields.
 
-    photos-api stores pre-rotation sensor dims on ``metadata.raw_width`` /
+    The Gumnut API stores pre-rotation sensor dims on ``metadata.raw_width`` /
     ``raw_height``. When both are present, the EXIF orientation tag is
     emitted as-is — Immich mobile pairs the raw dims with the orientation
     and computes display dims locally via the 5–8 swap.
@@ -202,7 +202,7 @@ def exif_dims_and_orientation(
     helper was guarding against. This is the only safe way to surface
     drift-cohort assets to mobile.
 
-    Treats ``0`` as "unknown," the same as ``None``: assets where photos-api
+    Treats ``0`` as "unknown," the same as ``None``: assets where the Gumnut API
     stores ``0`` for unknown dims (notably videos without EXIF width/height
     tags) must not surface ``0`` on the wire. The Immich mobile asset viewer
     computes ``width / height`` to size the viewport and only guards against

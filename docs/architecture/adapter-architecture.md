@@ -7,7 +7,7 @@ last-updated: 2026-06-06
 
 ## Overview
 
-The immich-adapter is a Python FastAPI backend that sits between Immich clients (web and mobile apps) and Gumnut's Photos API. Its job is protocol translation: it accepts native Immich API calls and converts them into Gumnut SDK calls, returning Immich-formatted responses.
+The immich-adapter is a Python FastAPI backend that sits between Immich clients (web and mobile apps) and the Gumnut API. Its job is protocol translation: it accepts native Immich API calls and converts them into Gumnut SDK calls, returning Immich-formatted responses.
 
 ```
 Immich Client (web/mobile)
@@ -21,7 +21,7 @@ Immich Client (web/mobile)
   └── Redis: sessions, checkpoints, encrypted JWTs
         │
         ▼
-  Photos API (port 8000)
+  Gumnut API (port 8000)
   ├── JWT validation (Clerk)
   ├── Business logic (SQLAlchemy, PostgreSQL + pgvector)
   └── Celery workers (ML, image processing)
@@ -54,10 +54,10 @@ The adapter uses a **session token architecture** that decouples client authenti
 
 Both web and mobile clients authenticate via OAuth (Immich's `/api/auth/login` email/password endpoint exists as a stub but is not functional). The flow:
 
-1. Client calls `POST /api/oauth/authorize` → adapter forwards to Photos API → returns Clerk OAuth URL
+1. Client calls `POST /api/oauth/authorize` → adapter forwards to the Gumnut API → returns Clerk OAuth URL
 2. Client opens the OAuth URL in a browser → user authenticates with Clerk
 3. Clerk redirects back to the adapter's `POST /api/oauth/callback` with an authorization code
-4. Adapter exchanges the code with Photos API for a JWT, generates a UUID session token, encrypts the JWT, stores it in Redis
+4. Adapter exchanges the code with the Gumnut API for a JWT, generates a UUID session token, encrypts the JWT, stores it in Redis
 5. Client receives the session token (via `immich_access_token` cookie for web, `accessToken` in JSON body for mobile)
 
 For mobile, OAuth providers that don't support custom URL schemes (e.g., `app.immich:///`) are handled via `GET /api/oauth/mobile-redirect`, which receives the OAuth response at an HTTPS URL and redirects to the mobile app's custom scheme.
@@ -134,7 +134,7 @@ Gumnut uses `snake_case` (Python convention), Immich uses `camelCase` (TypeScrip
 
 ## Pagination and List Translation
 
-Gumnut's Photos API uses **cursor-based pagination** (`limit` + `starting_after_id`), while Immich clients expect **offset-based pagination** (`page` + `size`). The adapter bridges this gap differently depending on the endpoint.
+The Gumnut API uses **cursor-based pagination** (`limit` + `starting_after_id`), while Immich clients expect **offset-based pagination** (`page` + `size`). The adapter bridges this gap differently depending on the endpoint.
 
 ### Pattern 1: Load-all with client-side pagination
 
@@ -156,11 +156,11 @@ Used when Immich clients expect offset-based pagination or need the full result 
 | `GET /api/assets/statistics` | `client.assets.list()` | Count total/images/videos from full set |
 | `GET /api/people/{id}/statistics` | `client.assets.list(person_id=...)` | Count all assets for person |
 
-**Performance implications:** Memory usage scales with total entity count, not page size. For a library with 10,000 people, every `GET /api/people` request loads all 10,000 into memory. This is acceptable for current Gumnut library sizes but will need optimization (e.g., server-side sorting support in Photos API) as libraries grow.
+**Performance implications:** Memory usage scales with total entity count, not page size. For a library with 10,000 people, every `GET /api/people` request loads all 10,000 into memory. This is acceptable for current Gumnut library sizes but will need optimization (e.g., server-side sorting support in the Gumnut API) as libraries grow.
 
 ### Pattern 2: Server-side cursor pagination
 
-Used when the adapter can leverage Photos API's cursor-based pagination internally, even though the external interface may differ. The Photos API has two cursor mechanisms depending on the endpoint:
+Used when the adapter can leverage the Gumnut API's cursor-based pagination internally, even though the external interface may differ. The Gumnut API has two cursor mechanisms depending on the endpoint:
 
 - **Entity list endpoints** (assets, people, albums): `limit` + `starting_after_id` (cursor is an entity ID)
 - **Events endpoint**: `limit` + `after_cursor` (cursor is an opaque position token)
@@ -168,7 +168,7 @@ Used when the adapter can leverage Photos API's cursor-based pagination internal
 Both support optional time-bound filters (e.g., `local_datetime_before`, `created_at_lt`) that constrain the result set but are not themselves cursors.
 
 **How it works:**
-1. Call Photos API with a `limit` and cursor parameter
+1. Call the Gumnut API with a `limit` and cursor parameter
 2. Check `response.has_more` for next page
 3. Advance the cursor (last entity ID or returned cursor token) for subsequent pages
 
@@ -204,7 +204,7 @@ Used for detail endpoints where no pagination is needed.
 
 ### Pagination constants
 
-`PHOTOS_API_MAX_PAGE_SIZE = 200` — Used as the `limit` parameter when internally paginating Photos API responses (defined in `routers/api/constants.py`).
+`GUMNUT_API_MAX_PAGE_SIZE = 200` — Used as the `limit` parameter when internally paginating the Gumnut API responses (defined in `routers/api/constants.py`).
 
 ### Offset-based pagination limitations
 
@@ -277,11 +277,11 @@ The sync stream (`/api/sync/stream`) yields events in two phases to prevent FK c
 
 ### Checkpoint system
 
-Each session maintains per-entity-type checkpoints in Redis, stored as opaque cursor strings from the Photos API events endpoint. The ack string format is `"{entity_type}|{cursor}|"` (e.g., `"asset_v1|eyJ0eXAi...|"`). On the next sync:
+Each session maintains per-entity-type checkpoints in Redis, stored as opaque cursor strings from the Gumnut API events endpoint. The ack string format is `"{entity_type}|{cursor}|"` (e.g., `"asset_v1|eyJ0eXAi...|"`). On the next sync:
 
 1. Adapter captures `snapshot_time = NOW()` as a consistent upper bound
-2. For each entity type, queries Photos API events with `after_cursor` (from the last checkpoint) and `created_at_lt` (the snapshot time)
-3. Photos API handles ordering and tie-breaking — entities with the same timestamp are ordered by cursor position
+2. For each entity type, queries the Gumnut API events with `after_cursor` (from the last checkpoint) and `created_at_lt` (the snapshot time)
+3. The Gumnut API handles ordering and tie-breaking — entities with the same timestamp are ordered by cursor position
 4. Streams entities to the client with ack strings
 5. Client sends `POST /sync/ack` incrementally during the stream (not at the end), enabling crash recovery — if the client crashes mid-sync, it resumes from the last acknowledged cursor
 6. Adapter updates the checkpoint cursor in Redis
@@ -372,7 +372,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 
 | Area | Endpoints | Notes |
 |------|-----------|-------|
-| Assets | Upload, download (original + thumbnail), video playback, delete, bulk delete, existence check, statistics, single-asset and bulk metadata edit | Streaming downloads via `StreamingResponse`; video playback streams the `original` variant from CDN with Range/seek support; `DELETE /api/assets` soft-deletes by default and permanently deletes when `force=true`; `PUT /api/assets/{id}` forwards `description`, paired `latitude` + `longitude`, and `dateTimeOriginal` to the Photos API and emits `on_asset_update`; `PUT /api/assets` forwards the same in-scope fields via `client.assets.bulk_update_assets`, chunking over `BULK_CHUNK_SIZE`. Capture time uses one of three mutually exclusive datetime modes: absolute `dateTimeOriginal` (optionally localized by `timeZone`) replicated as one homogeneous `change`; per-asset `dateTimeRelative` second-shift; or standalone `timeZone` reinterpret. The two per-asset modes read each chunk's current `original_datetime` (`assets.list(state="all", ids=...)`, including trashed assets so they aren't silently skipped, matching the homogeneous path) before writing a heterogeneous per-item change, skipping ids with no existing capture time; conflicting datetime modes are rejected with 422. `isFavorite`/`rating`/`visibility` are silently ignored on both paths; `livePhotoVideoId` on the single-asset path and `duplicateId` on the bulk path are silently ignored; the bulk path skips WebSocket emission |
+| Assets | Upload, download (original + thumbnail), video playback, delete, bulk delete, existence check, statistics, single-asset and bulk metadata edit | Streaming downloads via `StreamingResponse`; video playback streams the `original` variant from CDN with Range/seek support; `DELETE /api/assets` soft-deletes by default and permanently deletes when `force=true`; `PUT /api/assets/{id}` forwards `description`, paired `latitude` + `longitude`, and `dateTimeOriginal` to the Gumnut API and emits `on_asset_update`; `PUT /api/assets` forwards the same in-scope fields via `client.assets.bulk_update_assets`, chunking over `BULK_CHUNK_SIZE`. Capture time uses one of three mutually exclusive datetime modes: absolute `dateTimeOriginal` (optionally localized by `timeZone`) replicated as one homogeneous `change`; per-asset `dateTimeRelative` second-shift; or standalone `timeZone` reinterpret. The two per-asset modes read each chunk's current `original_datetime` (`assets.list(state="all", ids=...)`, including trashed assets so they aren't silently skipped, matching the homogeneous path) before writing a heterogeneous per-item change, skipping ids with no existing capture time; conflicting datetime modes are rejected with 422. `isFavorite`/`rating`/`visibility` are silently ignored on both paths; `livePhotoVideoId` on the single-asset path and `duplicateId` on the bulk path are silently ignored; the bulk path skips WebSocket emission |
 | Trash | Restore-by-ids, restore-all, empty-trash | `trashDays` comes from `TRASH_RETENTION_DAYS`; web and mobile clients see real trash state |
 | Albums | CRUD, add/remove assets, statistics | User sharing not supported (returns 501) |
 | People | CRUD, list with pagination/sort/filter, thumbnails, statistics, merge | |
@@ -380,7 +380,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling, including `isTrashed=true` |
 | Search | Smart search, metadata search, person search, statistics | Places, suggestions, explore are stubs |
 | Sync | Full sync, delta sync, stream, ack | Two-phase ordering, checkpoint management |
-| Auth | OAuth login/callback, logout, session management | Clerk OAuth via Photos API |
+| Auth | OAuth login/callback, logout, session management | Clerk OAuth via the Gumnut API |
 | WebSockets | Real-time upload/trash/restore/delete notifications | Socket.IO with room-based messaging |
 | Memories (read) | Search, get-by-id, statistics for OnThisDay memories | Synthesized from per-day asset queries; mutations still stubbed |
 | Map (markers) | `GET /map/markers` returns GPS-tagged assets | In-process filter over `client.assets.list()`; capped at 2000 markers; reverse-geocode still stubbed |
@@ -405,7 +405,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 |----------------|---------|
 | `routers/api/` | All HTTP route handlers, organized by Immich API domain |
 | `routers/api/sync/` | Sync protocol implementation (stream, ack, checkpoint) |
-| `routers/api/constants.py` | Shared constants (`PHOTOS_API_MAX_PAGE_SIZE = 200`) |
+| `routers/api/constants.py` | Shared constants (`GUMNUT_API_MAX_PAGE_SIZE = 200`) |
 | `routers/middleware/auth_middleware.py` | Session token extraction, JWT lookup, token refresh |
 | `routers/middleware/observability_middleware.py` | Request-scoped Sentry tagging (`interface`, `user_agent.original`) |
 | `routers/utils/gumnut_id_conversion.py` | Bidirectional Gumnut ↔ Immich ID conversion |

@@ -1,6 +1,6 @@
 """Tests for dimension/orientation emission in sync converters.
 
-The adapter no longer compensates for orientation locally. photos-api emits
+The adapter no longer compensates for orientation locally. The Gumnut API emits
 ``asset.width/height`` in display space (post-rotation) and exposes raw
 (pre-rotation) sensor dims on ``metadata.raw_width/raw_height``, which the
 adapter surfaces on ``exifInfo.exifImageWidth/Height`` for mobile clients
@@ -29,12 +29,12 @@ UPDATED_AT = datetime(2026, 5, 1, tzinfo=timezone.utc)
 def test_sync_asset_v1_emits_asset_dims_as_is(orientation):
     """SyncAssetV1.width/height pass through asset.width/height verbatim.
 
-    photos-api stores display-space dims at ingest, so the adapter must not
+    The Gumnut API stores display-space dims at ingest, so the adapter must not
     re-swap. A portrait shot tagged orientation=6 has asset.width=2268,
     asset.height=4032 from the API and must emit those.
     """
     asset = create_mock_asset_data(UPDATED_AT)
-    # Portrait dims as photos-api would return them after the display-dim cutover.
+    # Portrait dims as the Gumnut API would return them after the display-dim cutover.
     asset.width = 2268
     asset.height = 4032
     if orientation is None:
@@ -93,7 +93,7 @@ def test_sync_exif_v1_orientation_pass_through(orientation, expected):
 
 
 def test_sync_asset_v1_emits_none_when_dims_zero():
-    """SyncAssetV1.width/height must emit None — not 0 — when photos-api stores
+    """SyncAssetV1.width/height must emit None — not 0 — when the Gumnut API stores
     0 for unknown dims (the videos-without-EXIF cohort).
 
     The Immich mobile asset viewer divides RemoteAssetEntity.width/height

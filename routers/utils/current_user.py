@@ -33,7 +33,7 @@ class ImmichUserQuota(NamedTuple):
     ``quotaUsageInBytes`` (derived usage, from Gumnut ``storage_used_bytes``).
 
     Either field is ``None`` when the value is unknown/unlimited: the user has
-    no per-user cap, or an older photos-api omitted the field during the rollout
+    no per-user cap, or an older Gumnut API omitted the field during the rollout
     window. (The SDK's non-validating response construction materializes an
     omitted field as ``None`` rather than raising, so this needs no special
     handling.) Immich treats a ``None`` quota as unlimited.
@@ -91,7 +91,7 @@ async def get_current_user_admin(
     # Convert Gumnut user ID to UUID
     user_uuid = safe_uuid_from_user_id(user.id)
 
-    # Storage cap (max) and derived usage from photos-api, mapped to Immich quota.
+    # Storage cap (max) and derived usage from the Gumnut API, mapped to Immich quota.
     quota = map_user_quota(user)
 
     user_admin_dto = UserAdminResponseDto(

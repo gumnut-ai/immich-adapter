@@ -76,7 +76,7 @@ class TestFetchEntitiesMapAssetStateAll:
         assert kwargs.get("state") == "all"
         assert kwargs.get("ids") == ["asset_abc"]
         # Opt into file_data so synced assets keep checksum_sha1 / file_size /
-        # file_modified_at after the photos-api lean-default flip; no people.
+        # file_modified_at after the Gumnut API lean-default flip; no people.
         assert kwargs.get("include") == ["metadata", "file_data"]
 
     @pytest.mark.anyio

@@ -1,4 +1,4 @@
-"""Streaming upload pipeline for forwarding large files to photos-api.
+"""Streaming upload pipeline for forwarding large files to the Gumnut API.
 
 Uses a three-thread pipeline to stream multipart uploads without buffering
 the entire file to disk or memory:
@@ -73,9 +73,9 @@ class StreamingUploadPipeline:
     Usage:
         pipeline = StreamingUploadPipeline(request, api_base_url, jwt_token)
         result = await pipeline.execute(extract_fields_fn)
-        # result is the JSON dict from photos-api
+        # result is the JSON dict from the Gumnut API
         # pipeline.last_status_code has the HTTP status (200=duplicate, 201=created)
-        # pipeline.refreshed_token has the JWT if photos-api refreshed it
+        # pipeline.refreshed_token has the JWT if the Gumnut API refreshed it
     """
 
     def __init__(
@@ -182,7 +182,7 @@ class StreamingUploadPipeline:
         self,
         extract_fields_fn: Callable[[dict[str, str]], Any],
     ) -> dict[str, Any]:
-        """Run the sync httpx POST to photos-api.
+        """Run the sync httpx POST to the Gumnut API.
 
         Args:
             extract_fields_fn: Callable that extracts upload fields from
@@ -206,7 +206,7 @@ class StreamingUploadPipeline:
 
         content_length = self._request.headers.get("content-length", "unknown")
         logger.info(
-            "Streaming %s to photos-api (%s bytes)",
+            "Streaming %s to the Gumnut API (%s bytes)",
             filename,
             content_length,
             extra={
@@ -250,7 +250,7 @@ class StreamingUploadPipeline:
         detail: str | None = None
         if response.status_code in (200, 201):
             logger.info(
-                "photos-api responded %d for %s",
+                "the Gumnut API responded %d for %s",
                 response.status_code,
                 filename,
                 extra={
@@ -268,7 +268,7 @@ class StreamingUploadPipeline:
                 logger,
                 context="streaming_upload",
                 status_code=response.status_code,
-                message=f"photos-api upload error for {filename}",
+                message=f"the Gumnut API upload error for {filename}",
                 extra={
                     "upload_filename": filename,
                     "error_detail": detail[:500],
@@ -291,7 +291,7 @@ class StreamingUploadPipeline:
                     status_code=QUOTA_EXCEEDED_STATUS,
                     detail=QUOTA_EXCEEDED_DETAIL,
                 )
-            # Map upstream 5xx and 401 to 502: a 401 from photos-api means
+            # Map upstream 5xx and 401 to 502: a 401 from the Gumnut API means
             # the adapter's internal JWT expired, not the client's session.
             # Forwarding 401 would cause Immich clients to clear their session.
             client_status = (
@@ -324,7 +324,7 @@ class StreamingUploadPipeline:
                 dict of form field strings. Passed to avoid circular imports.
 
         Returns:
-            The JSON response dict from photos-api.
+            The JSON response dict from the Gumnut API.
 
         Raises:
             HTTPException: On auth, validation, timeout, or upstream errors.

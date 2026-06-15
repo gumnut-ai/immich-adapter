@@ -195,7 +195,7 @@ class TestGenerateSyncStream:
         """
         user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(user_updated_at)
-        # What the SDK yields when an older photos-api omits the storage fields
+        # What the SDK yields when an older Gumnut API omits the storage fields
         mock_user.storage_limit_bytes = None
         mock_user.storage_used_bytes = None
         mock_client = create_mock_gumnut_client(mock_user)

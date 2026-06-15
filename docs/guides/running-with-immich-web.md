@@ -16,7 +16,7 @@ The simplest way to run the Immich web UI locally is to extract the pre-built st
 ```
 Browser (localhost:3001)
   → immich-adapter (serves static files + API)
-    → photos-api (localhost:8000)
+    → the Gumnut API (localhost:8000)
       → Clerk (OAuth provider)
 ```
 
@@ -25,8 +25,8 @@ For details on how the adapter handles requests in this setup, see the [adapter 
 ### Prerequisites
 
 1. **Docker** running locally
-2. **photos-api** running on `localhost:8000` — see the photos-api README for setup
-3. **Clerk OAuth configured** in photos-api — see the "Configure Clerk OAuth" section in the photos-api README
+2. **Gumnut API backend** running on `localhost:8000` (refer to the Gumnut API's own setup instructions)
+3. **Clerk OAuth configured** on the Gumnut API backend (the backend's `CLERK_OAUTH_CLIENT_ID` set to a real value, not the placeholder)
 4. **immich-adapter** running on `localhost:3001`
 
 ### Extract Immich web files
@@ -57,7 +57,7 @@ Other useful options:
 ### Troubleshooting
 
 - **"Failed to pull image"**: Ensure Docker is running
-- **OAuth `invalid_client` error**: Check that `CLERK_OAUTH_CLIENT_ID` in photos-api `.env` is set to a real value (not the placeholder)
+- **OAuth `invalid_client` error**: Check that `CLERK_OAUTH_CLIENT_ID` in the Gumnut API backend's `.env` is set to a real value (not the placeholder)
 - **OAuth `redirect_uri` mismatch**: Add `http://localhost:3001/auth/login` as an allowed redirect URI in the Clerk OAuth application settings
 - **OAuth `invalid_scope` error**: Enable the `openid`, `email`, and `profile` scopes on the Clerk OAuth application
 
@@ -69,14 +69,14 @@ If you need to modify the Immich web UI or debug frontend behavior, you can run 
 Browser (localhost:3000)
   → Vite dev server proxy (/api/*)
     → immich-adapter (localhost:3001)
-      → photos-api (localhost:8000)
+      → the Gumnut API (localhost:8000)
         → Clerk (OAuth provider)
 ```
 
 ### Prerequisites
 
-1. **photos-api** running on `localhost:8000` — see the photos-api README for setup
-2. **Clerk OAuth configured** in photos-api — see the "Configure Clerk OAuth" section in the photos-api README
+1. **Gumnut API backend** running on `localhost:8000` (refer to the Gumnut API's own setup instructions)
+2. **Clerk OAuth configured** on the Gumnut API backend (the backend's `CLERK_OAUTH_CLIENT_ID` set to a real value, not the placeholder)
 3. **immich-adapter** running on `localhost:3001`
 4. The [Immich repository](https://github.com/immich-app/immich) cloned as a sibling directory (`../immich/`)
 
@@ -115,7 +115,7 @@ The web app will be available at http://localhost:3000. The Vite dev server prox
 ### Troubleshooting
 
 - **404 errors from the proxy**: Ensure the immich-adapter is actually running on port 3001 and no other service is using that port
-- **OAuth `invalid_client` error**: Check that `CLERK_OAUTH_CLIENT_ID` in photos-api `.env` is set to a real value (not the placeholder)
+- **OAuth `invalid_client` error**: Check that `CLERK_OAUTH_CLIENT_ID` in the Gumnut API backend's `.env` is set to a real value (not the placeholder)
 - **OAuth `redirect_uri` mismatch**: Add `http://localhost:3000/auth/login` as an allowed redirect URI in the Clerk OAuth application settings
 - **OAuth `invalid_scope` error**: Enable the `openid`, `email`, and `profile` scopes on the Clerk OAuth application
 

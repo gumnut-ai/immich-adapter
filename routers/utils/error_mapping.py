@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Sentry / log search tractable while preserving enough context to debug.
 ERROR_DETAIL_MAX_CHARS = 500
 
-# photos-api returns 507 Insufficient Storage when a user/library storage cap is
+# The Gumnut API returns 507 Insufficient Storage when a user/library storage cap is
 # reached. Immich's own server returns 400 for an over-quota upload, so the
 # adapter remaps 507 -> 400 so Immich clients handle it as the over-quota
 # condition they expect rather than a generic 5xx (the streaming path would

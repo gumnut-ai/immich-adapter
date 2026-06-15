@@ -110,7 +110,7 @@ async def _fetch_assets_for_day(
 ) -> list[AssetResponse]:
     """Fetch up to `limit` non-trashed assets captured on (year, month, day).
 
-    Uses naive `local_datetime` bounds so the photos-api compares against each
+    Uses naive `local_datetime` bounds so the Gumnut API compares against each
     asset's wall-clock capture time directly. `local_datetime_after` is
     exclusive (matching `timeline.py`), so the microsecond on the midnight
     boundary is skipped — accepted edge case.

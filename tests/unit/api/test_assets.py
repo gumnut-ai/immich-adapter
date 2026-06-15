@@ -447,7 +447,7 @@ class TestUploadAsset:
     async def test_upload_asset_duplicate_returns_real_id(
         self, sample_uuid, mock_current_user
     ):
-        """Test that duplicate upload (HTTP 200 from photos-api) returns the real asset ID."""
+        """Test that duplicate upload (HTTP 200 from the Gumnut API) returns the real asset ID."""
         mock_gumnut_asset = Mock()
         mock_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
 
@@ -1152,7 +1152,7 @@ class TestUpdateAssets:
     """Test the bulk asset-metadata edit endpoint.
 
     `PUT /api/assets` forwards a subset of `AssetBulkUpdateDto` to the
-    Photos API `bulk_update_assets` call. In-scope fields: `description`,
+    Gumnut API `bulk_update_assets` call. In-scope fields: `description`,
     paired `latitude` + `longitude`, and the capture time via one of three
     mutually exclusive datetime modes — absolute `dateTimeOriginal` (with
     optional `timeZone`), per-asset `dateTimeRelative` shift, or standalone
@@ -1937,7 +1937,7 @@ class TestUpdateAsset:
     API `update_asset` PATCH: `description`, paired `latitude` + `longitude`,
     and `dateTimeOriginal`. Out-of-scope fields (`isFavorite`, `rating`,
     `visibility`, `livePhotoVideoId`) are silently ignored — the request
-    succeeds, the adapter just doesn't act on parts the Photos API doesn't
+    succeeds, the adapter just doesn't act on parts the Gumnut API doesn't
     model. An empty payload returns the asset unchanged without an SDK call.
     """
 
@@ -3190,7 +3190,7 @@ class TestViewAsset:
             (1920, 1080),  # landscape 16:9, ratio ~1.78 (<= 2) — mild upscale is fine
             (2000, 1000),  # landscape 2:1, ratio 2.0 (boundary, not > 2)
             (None, None),  # dimensions unknown
-            (0, 0),  # photos-api "unknown" sentinel
+            (0, 0),  # the Gumnut API "unknown" sentinel
         ],
     )
     async def test_view_asset_non_wide_landscape_thumbnail_stays_thumbnail(

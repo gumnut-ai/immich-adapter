@@ -60,7 +60,7 @@ def to_ack_string(
 
     The cursor MUST NOT contain pipe characters — ``_parse_ack()`` splits on
     ``|`` and would silently truncate the cursor, corrupting the checkpoint.
-    Upstream cursors are opaque strings controlled by photos-api; if they
+    Upstream cursors are opaque strings controlled by the Gumnut API; if they
     ever include pipes this assertion will surface the issue immediately.
 
     Args:

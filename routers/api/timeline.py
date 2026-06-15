@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from gumnut import AsyncGumnut
 from gumnut.types.asset_count_response import AssetCountResponse, Data
 
-from routers.api.constants import PHOTOS_API_MAX_PAGE_SIZE
+from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.immich_models import (
     AssetOrder,
     AssetTypeEnum,
@@ -40,8 +40,8 @@ async def fetch_asset_counts(
     person_id: str | None = None,
     state: Literal["live", "trashed", "all"] | None = None,
 ) -> list[Data]:
-    """Fetch all monthly asset counts from photos-api, paginating if needed."""
-    kwargs: dict[str, Any] = {"group_by": "month", "limit": PHOTOS_API_MAX_PAGE_SIZE}
+    """Fetch all monthly asset counts from the Gumnut API, paginating if needed."""
+    kwargs: dict[str, Any] = {"group_by": "month", "limit": GUMNUT_API_MAX_PAGE_SIZE}
     if album_id is not None:
         kwargs["album_id"] = album_id
     if person_id is not None:
@@ -152,7 +152,7 @@ async def get_time_bucket(
     # Compute month boundaries from timeBucket for server-side date filtering.
     # The Immich client may send naive ("2024-01-01T00:00:00") or UTC-aware
     # ("2024-01-01T00:00:00.000Z") timestamps. We always strip timezone info
-    # so boundaries are naive, matching the photos-api counts endpoint which
+    # so boundaries are naive, matching the Gumnut API counts endpoint which
     # groups by date_trunc("month", local_datetime) on the naive column.
     # Uses a half-open interval [month_start, next_month_start) for clean boundaries.
     bucket_date = datetime.fromisoformat(timeBucket).replace(tzinfo=None)

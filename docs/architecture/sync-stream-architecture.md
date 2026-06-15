@@ -5,7 +5,7 @@ last-updated: 2026-04-16
 
 # Sync Stream Architecture
 
-The sync stream (`routers/api/sync/stream.py`) consumes events from photos-api and converts them to Immich sync format. Key concepts:
+The sync stream (`routers/api/sync/stream.py`) consumes events from the Gumnut API and converts them to Immich sync format. Key concepts:
 
 ## Two-Phase Ordering
 
@@ -13,7 +13,7 @@ The stream yields all upserts first (in FK dependency order per `_SYNC_TYPE_ORDE
 
 ## Event Classification
 
-Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync event from event data), `_SKIPPED_EVENT_TYPES` (ignored), and everything else is treated as an upsert (fetch full entity from photos-api). Delete events are buffered during iteration and yielded in phase 2.
+Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync event from event data), `_SKIPPED_EVENT_TYPES` (ignored), and everything else is treated as an upsert (fetch full entity from the Gumnut API). Delete events are buffered during iteration and yielded in phase 2.
 
 ## Deletion Events
 
@@ -41,7 +41,7 @@ When the same gumnut entity type maps to multiple Immich sync versions (e.g., As
 
 Immich sync types that are accepted but have no Gumnut equivalent (e.g., `AssetEditsV1` — we don't support editing) go in `_NOOP_REQUEST_TYPES` in `stream.py`. This prevents "unsupported type" warnings while making the no-op explicit. Do not just add them to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that silently drops them.
 
-## Contract with photos-api
+## Contract with the Gumnut API
 
 The adapter depends on the events API response shape (`EventsResponse`). Fields like `payload` are typed in the SDK (v0.52.0+) and accessed directly. For backward compatibility with old events that predate a field, check for `None` before use.
 
