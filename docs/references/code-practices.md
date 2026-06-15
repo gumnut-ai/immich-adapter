@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-06-10
+last-updated: 2026-06-15
 ---
 
 # Code Practices
@@ -19,6 +19,7 @@ Style, patterns, and conventions for the immich-adapter codebase.
 
 ## Project Conventions
 
+- **Single source of truth for rationale**: explain a non-obvious *why* once; cite it elsewhere in one line rather than restating (copies multiply churn and drift). Home by scope: one symbol → its docstring; spanning files → one reference doc; a decision → the design doc. Never link to a doc *and* restate it.
 - **Committed text — no internal IDs**: Never reference internal issue tracker IDs (e.g., `GUM-123`) in anything committed to this public repository — code comments, docstrings, test docstrings, design docs (`docs/design-docs/`, `docs/architecture/`, `docs/references/`, `docs/guides/`), PR bodies, or commit messages. External readers cannot resolve internal IDs and they leak the existence of internal work-tracking. Inline the rationale instead so the reasoning is self-contained (e.g., "the recently shipped end-to-end Range path" rather than "GUM-713"). Existing references predate this clarification; sweep them out opportunistically when editing nearby content.
 - **Module organization**: `services/` is for stateful classes with methods (stores, pipelines, WebSocket handlers). `utils/` is for stateless utility functions and helpers. Don't put classes with state in `utils/`.
 - **Constructor parameters**: Accept specific parameters rather than the full `Settings` object in constructors. This keeps classes decoupled from the config layer and easier to test.
