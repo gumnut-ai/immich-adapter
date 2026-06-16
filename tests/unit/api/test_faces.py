@@ -352,7 +352,60 @@ class TestCreateFace:
     @pytest.mark.anyio
     async def test_creates_face_via_sdk(self):
         """Creates the face with converted IDs and a {x,y,w,h} box, then
-        returns the Immich-shaped response with the assigned person."""
+        returns the Immich-shaped response with the assigned person.
+
+        The client draws the box on a downscaled preview and reports that
+        preview's dimensions as imageWidth/imageHeight. Here the asset is twice
+        the preview (3840x2160 vs 1920x1080), so the box must be scaled 2x into
+        the asset's full-resolution frame before storing — otherwise it lands
+        shrunk in the top-left corner when read back by get_faces.
+        """
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        # Gumnut echoes the (scaled) box it stored; mirror that here.
+        created = _make_face(
+            asset_id=gumnut_asset_id,
+            person_id=gumnut_person_id,
+            bounding_box={"x": 200, "y": 400, "w": 600, "h": 800},
+            source="manual",
+        )
+        person = _make_person(gumnut_person_id, name="Calvin")
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=3840, height=2160)
+        )
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(return_value=person)
+
+        request = self._make_request(asset_uuid, person_uuid)
+        result = await create_face(request=request, client=mock_client)
+
+        # Box scaled 2x from the 1920x1080 preview to the 3840x2160 asset.
+        mock_client.faces.create.assert_called_once_with(
+            asset_id=gumnut_asset_id,
+            bounding_box={"x": 200, "y": 400, "w": 600, "h": 800},
+            person_id=gumnut_person_id,
+        )
+        assert result.id == safe_uuid_from_face_id(created.id)
+        assert result.boundingBoxX1 == 200
+        assert result.boundingBoxX2 == 800  # x + w
+        assert result.boundingBoxY1 == 400
+        assert result.boundingBoxY2 == 1200  # y + h
+        # Response reports the asset's full-resolution frame (matches get_faces).
+        assert result.imageWidth == 3840
+        assert result.imageHeight == 2160
+        assert result.person is not None
+        assert result.person.name == "Calvin"
+        assert result.person.id == str(safe_uuid_from_person_id(gumnut_person_id))
+
+    @pytest.mark.anyio
+    async def test_box_passes_through_when_preview_matches_asset(self):
+        """When the client's reported dimensions already match the asset's full
+        resolution, the box is stored unchanged (scale factor 1)."""
         asset_uuid = uuid4()
         person_uuid = uuid4()
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
@@ -364,30 +417,25 @@ class TestCreateFace:
             bounding_box={"x": 100, "y": 200, "w": 300, "h": 400},
             source="manual",
         )
-        person = _make_person(gumnut_person_id, name="Calvin")
 
         mock_client = Mock()
+        # Asset dimensions equal the request's imageWidth/imageHeight (1920x1080).
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=1920, height=1080)
+        )
         mock_client.faces.create = AsyncMock(return_value=created)
-        mock_client.people.retrieve = AsyncMock(return_value=person)
+        mock_client.people.retrieve = AsyncMock(
+            return_value=_make_person(gumnut_person_id)
+        )
 
         request = self._make_request(asset_uuid, person_uuid)
-        result = await create_face(request=request, client=mock_client)
+        await create_face(request=request, client=mock_client)
 
         mock_client.faces.create.assert_called_once_with(
             asset_id=gumnut_asset_id,
             bounding_box={"x": 100, "y": 200, "w": 300, "h": 400},
             person_id=gumnut_person_id,
         )
-        assert result.id == safe_uuid_from_face_id(created.id)
-        assert result.boundingBoxX1 == 100
-        assert result.boundingBoxX2 == 400  # x + w
-        assert result.boundingBoxY1 == 200
-        assert result.boundingBoxY2 == 600  # y + h
-        assert result.imageWidth == 1920
-        assert result.imageHeight == 1080
-        assert result.person is not None
-        assert result.person.name == "Calvin"
-        assert result.person.id == str(safe_uuid_from_person_id(gumnut_person_id))
 
     @pytest.mark.anyio
     async def test_manual_source_maps_to_manual_source_type(self):
@@ -396,13 +444,17 @@ class TestCreateFace:
         person_uuid = uuid4()
         gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
 
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
         created = _make_face(
-            asset_id=uuid_to_gumnut_asset_id(asset_uuid),
+            asset_id=gumnut_asset_id,
             person_id=gumnut_person_id,
             source="manual",
         )
 
         mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=1920, height=1080)
+        )
         mock_client.faces.create = AsyncMock(return_value=created)
         mock_client.people.retrieve = AsyncMock(
             return_value=_make_person(gumnut_person_id)
@@ -422,13 +474,17 @@ class TestCreateFace:
         person_uuid = uuid4()
         gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
 
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
         created = _make_face(
-            asset_id=uuid_to_gumnut_asset_id(asset_uuid),
+            asset_id=gumnut_asset_id,
             person_id=gumnut_person_id,
             source="automatic",
         )
 
         mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=1920, height=1080)
+        )
         mock_client.faces.create = AsyncMock(return_value=created)
         mock_client.people.retrieve = AsyncMock(
             return_value=_make_person(gumnut_person_id)
@@ -448,13 +504,17 @@ class TestCreateFace:
         person_uuid = uuid4()
         gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
 
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
         created = _make_face(
-            asset_id=uuid_to_gumnut_asset_id(asset_uuid),
+            asset_id=gumnut_asset_id,
             person_id=gumnut_person_id,
             source="manual",
         )
 
         mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=1920, height=1080)
+        )
         mock_client.faces.create = AsyncMock(return_value=created)
         mock_client.people.retrieve = AsyncMock(
             side_effect=Exception("Person not found")
@@ -477,6 +537,9 @@ class TestCreateFace:
         person_uuid = uuid4()
 
         mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(uuid_to_gumnut_asset_id(asset_uuid))
+        )
         mock_client.faces.create = AsyncMock(
             side_effect=make_sdk_status_error(500, "boom")
         )

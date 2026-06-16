@@ -129,13 +129,31 @@ async def create_face(
     gumnut_asset_id = uuid_to_gumnut_asset_id(request.assetId)
     gumnut_person_id = uuid_to_gumnut_person_id(request.personId)
 
+    # Immich's face editor reports the box in the pixel space of the *preview*
+    # it rendered (request.imageWidth/imageHeight — the downscaled image the
+    # user drew on), but Gumnut stores and returns face boxes in the asset's
+    # full-resolution pixel space (the frame get_faces pairs boxes with via
+    # asset.width/height). Without rescaling, a box drawn at the center of a
+    # 1440-wide preview is stored verbatim and later read back against the
+    # 3024-wide asset, landing shrunk in the top-left corner. Scale the box up
+    # to the asset's real dimensions before storing.
+    asset = await client.assets.retrieve(gumnut_asset_id)
+    scale_x = (
+        asset.width / request.imageWidth if asset.width and request.imageWidth else 1.0
+    )
+    scale_y = (
+        asset.height / request.imageHeight
+        if asset.height and request.imageHeight
+        else 1.0
+    )
+
     face = await client.faces.create(
         asset_id=gumnut_asset_id,
         bounding_box={
-            "x": request.x,
-            "y": request.y,
-            "w": request.width,
-            "h": request.height,
+            "x": round(request.x * scale_x),
+            "y": round(request.y * scale_y),
+            "w": round(request.width * scale_x),
+            "h": round(request.height * scale_y),
         },
         person_id=gumnut_person_id,
     )
@@ -164,8 +182,10 @@ async def create_face(
         boundingBoxX2=bb.get("x", 0) + bb.get("w", 0),
         boundingBoxY1=bb.get("y", 0),
         boundingBoxY2=bb.get("y", 0) + bb.get("h", 0),
-        imageWidth=request.imageWidth,
-        imageHeight=request.imageHeight,
+        # Report the asset's full-resolution frame the scaled box now lives in,
+        # matching get_faces so a re-fetch renders the box identically.
+        imageWidth=asset.width or request.imageWidth,
+        imageHeight=asset.height or request.imageHeight,
         person=person,
         sourceType=source_type,
     )
