@@ -221,6 +221,7 @@ def create_face_response(asset_id: str, face_data: dict) -> FaceResponse:
         id=face_data["id"],
         asset_id=asset_id,
         bounding_box=face_data["bounding_box"],
+        source="automatic",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         person_id=face_data.get("person_id"),

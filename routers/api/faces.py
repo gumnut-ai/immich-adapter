@@ -117,9 +117,55 @@ async def get_faces(
 @router.post("", status_code=201)
 async def create_face(
     request: AssetFaceCreateDto,
-):
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+) -> AssetFaceResponseDto:
+    """Draw a user-specified face box on an asset and assign it to a person.
+
+    Backs Immich's "create a face on-the-fly" flow in the face tag editor: the
+    client creates the person first (POST /people), then calls this to draw the
+    box and link it to that person. Both `assetId` and `personId` are required
+    by the Immich request DTO.
     """
-    Create a new face.
-    This is a stub implementation that returns a empty response.
-    """
-    return
+    gumnut_asset_id = uuid_to_gumnut_asset_id(request.assetId)
+    gumnut_person_id = uuid_to_gumnut_person_id(request.personId)
+
+    face = await client.faces.create(
+        asset_id=gumnut_asset_id,
+        bounding_box={
+            "x": request.x,
+            "y": request.y,
+            "w": request.width,
+            "h": request.height,
+        },
+        person_id=gumnut_person_id,
+    )
+
+    # The create response carries only person_id, so fetch the full person to
+    # populate the Immich response. Degrade to person=None on failure rather
+    # than failing the request — the face was created successfully either way
+    # (mirrors get_faces).
+    person: PersonResponseDto | None = None
+    try:
+        gumnut_person = await client.people.retrieve(gumnut_person_id)
+        person = convert_gumnut_person_to_immich(gumnut_person)
+    except Exception:
+        logger.warning(
+            "Failed to fetch person for created face",
+            extra={"person_id": gumnut_person_id, "asset_id": gumnut_asset_id},
+        )
+
+    bb = face.bounding_box or {}
+    source_type = (
+        SourceType.manual if face.source == "manual" else SourceType.machine_learning
+    )
+    return AssetFaceResponseDto(
+        id=safe_uuid_from_face_id(face.id),
+        boundingBoxX1=bb.get("x", 0),
+        boundingBoxX2=bb.get("x", 0) + bb.get("w", 0),
+        boundingBoxY1=bb.get("y", 0),
+        boundingBoxY2=bb.get("y", 0) + bb.get("h", 0),
+        imageWidth=request.imageWidth,
+        imageHeight=request.imageHeight,
+        person=person,
+        sourceType=source_type,
+    )

@@ -5,9 +5,20 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 from datetime import datetime, timezone
 
-from routers.api.faces import delete_face, get_faces, reassign_faces_by_id
-from routers.immich_models import AssetFaceDeleteDto, FaceDto
+from routers.api.faces import (
+    create_face,
+    delete_face,
+    get_faces,
+    reassign_faces_by_id,
+)
+from routers.immich_models import (
+    AssetFaceCreateDto,
+    AssetFaceDeleteDto,
+    FaceDto,
+    SourceType,
+)
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_face_id,
     safe_uuid_from_person_id,
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_face_id,
@@ -19,6 +30,7 @@ def _make_face(
     asset_id: str,
     person_id: str | None = None,
     bounding_box: dict | None = None,
+    source: str = "automatic",
 ) -> Mock:
     """Create a mock Gumnut FaceResponse."""
     face = Mock()
@@ -26,6 +38,7 @@ def _make_face(
     face.asset_id = asset_id
     face.person_id = person_id
     face.bounding_box = bounding_box or {"x": 100, "y": 200, "w": 300, "h": 400}
+    face.source = source
     face.created_at = datetime.now(timezone.utc)
     face.updated_at = datetime.now(timezone.utc)
     face.thumbnail_url = None
@@ -313,4 +326,162 @@ class TestReassignFace:
         with pytest.raises(APIStatusError):
             await reassign_faces_by_id(
                 id=person_uuid, request=request, client=mock_client
+            )
+
+
+class TestCreateFace:
+    """Test the create_face endpoint.
+
+    Backs Immich's "create a face on-the-fly" flow: the client draws a face box
+    on an asset and assigns it to a person it created moments earlier.
+    """
+
+    @staticmethod
+    def _make_request(asset_uuid, person_uuid) -> AssetFaceCreateDto:
+        return AssetFaceCreateDto(
+            assetId=asset_uuid,
+            personId=person_uuid,
+            x=100,
+            y=200,
+            width=300,
+            height=400,
+            imageWidth=1920,
+            imageHeight=1080,
+        )
+
+    @pytest.mark.anyio
+    async def test_creates_face_via_sdk(self):
+        """Creates the face with converted IDs and a {x,y,w,h} box, then
+        returns the Immich-shaped response with the assigned person."""
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        created = _make_face(
+            asset_id=gumnut_asset_id,
+            person_id=gumnut_person_id,
+            bounding_box={"x": 100, "y": 200, "w": 300, "h": 400},
+            source="manual",
+        )
+        person = _make_person(gumnut_person_id, name="Calvin")
+
+        mock_client = Mock()
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(return_value=person)
+
+        request = self._make_request(asset_uuid, person_uuid)
+        result = await create_face(request=request, client=mock_client)
+
+        mock_client.faces.create.assert_called_once_with(
+            asset_id=gumnut_asset_id,
+            bounding_box={"x": 100, "y": 200, "w": 300, "h": 400},
+            person_id=gumnut_person_id,
+        )
+        assert result.id == safe_uuid_from_face_id(created.id)
+        assert result.boundingBoxX1 == 100
+        assert result.boundingBoxX2 == 400  # x + w
+        assert result.boundingBoxY1 == 200
+        assert result.boundingBoxY2 == 600  # y + h
+        assert result.imageWidth == 1920
+        assert result.imageHeight == 1080
+        assert result.person is not None
+        assert result.person.name == "Calvin"
+        assert result.person.id == str(safe_uuid_from_person_id(gumnut_person_id))
+
+    @pytest.mark.anyio
+    async def test_manual_source_maps_to_manual_source_type(self):
+        """A user-drawn face (source='manual') reports sourceType=manual."""
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        created = _make_face(
+            asset_id=uuid_to_gumnut_asset_id(asset_uuid),
+            person_id=gumnut_person_id,
+            source="manual",
+        )
+
+        mock_client = Mock()
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(
+            return_value=_make_person(gumnut_person_id)
+        )
+
+        result = await create_face(
+            request=self._make_request(asset_uuid, person_uuid), client=mock_client
+        )
+
+        assert result.sourceType == SourceType.manual
+
+    @pytest.mark.anyio
+    async def test_automatic_source_maps_to_machine_learning_source_type(self):
+        """A detector-found face (source='automatic') reports
+        sourceType=machine-learning."""
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        created = _make_face(
+            asset_id=uuid_to_gumnut_asset_id(asset_uuid),
+            person_id=gumnut_person_id,
+            source="automatic",
+        )
+
+        mock_client = Mock()
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(
+            return_value=_make_person(gumnut_person_id)
+        )
+
+        result = await create_face(
+            request=self._make_request(asset_uuid, person_uuid), client=mock_client
+        )
+
+        assert result.sourceType == SourceType.machine_learning
+
+    @pytest.mark.anyio
+    async def test_person_fetch_failure_returns_face_with_null_person(self):
+        """If the person fetch fails, the created face is still returned with a
+        null person rather than failing the request."""
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        created = _make_face(
+            asset_id=uuid_to_gumnut_asset_id(asset_uuid),
+            person_id=gumnut_person_id,
+            source="manual",
+        )
+
+        mock_client = Mock()
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(
+            side_effect=Exception("Person not found")
+        )
+
+        result = await create_face(
+            request=self._make_request(asset_uuid, person_uuid), client=mock_client
+        )
+
+        assert result.id == safe_uuid_from_face_id(created.id)
+        assert result.person is None
+
+    @pytest.mark.anyio
+    async def test_sdk_error_propagates(self):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+
+        mock_client = Mock()
+        mock_client.faces.create = AsyncMock(
+            side_effect=make_sdk_status_error(500, "boom")
+        )
+
+        with pytest.raises(APIStatusError):
+            await create_face(
+                request=self._make_request(asset_uuid, person_uuid), client=mock_client
             )

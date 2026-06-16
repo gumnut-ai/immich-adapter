@@ -104,6 +104,10 @@ The two are not auto-synced, but CI enforces that they match (see the `check-imm
 
 Forgetting step 2 causes silent drift — the served web UI stays on the old Immich version while the API models advance.
 
+### Bumping the Gumnut SDK
+
+The SDK is auto-generated (Stainless), so a version bump can add **newly-required** fields to response models (e.g. `FaceResponse.source` arrived in 0.116). Tests construct these models directly as fixtures, so a bump can break suites unrelated to the endpoint you're touching. Run the **full** `uv run pytest` after a bump (not just the changed endpoint's tests), and when a required field is added, `grep` the tests for `<Model>(` to fix every direct construction.
+
 ### Implementing New Endpoints
 
 1. **Generate models**: Use `generate_immich_models.py` to create up-to-date Pydantic models (see [development tools](development-tools.md))
