@@ -75,30 +75,3 @@ def set_auth_cookies(
         secure=secure,
         samesite="lax",
     )
-
-
-def update_access_token_cookie(
-    response: Response,
-    access_token: str,
-    secure: bool = True,
-) -> None:
-    """
-    Update only the access token cookie (used for token refresh).
-
-    This is used by middleware when refreshing tokens - we only need to update
-    the access token, not the other auth cookies.
-
-    Args:
-        response: FastAPI Response object to set cookie on
-        access_token: The new JWT access token
-        secure: Optional boolean to determine if cookie should be secure.
-                 If not provided, secure flag defaults to True.
-    """
-    response.set_cookie(
-        key=ImmichCookie.ACCESS_TOKEN.value,
-        value=access_token,
-        max_age=COOKIE_MAX_AGE_SECONDS,
-        httponly=True,
-        secure=secure,
-        samesite="lax",
-    )
