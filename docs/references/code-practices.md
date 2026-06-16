@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-06-15
+last-updated: 2026-06-16
 ---
 
 # Code Practices
@@ -132,6 +132,10 @@ The SDK is auto-generated (Stainless), so a version bump can add **newly-require
    If the new endpoint also emits a WebSocket event (existing one or new), also update **both** websocket docs and bump their `last-updated`:
    - `docs/architecture/websocket-implementation.md` — move the event out of the "Not Applicable" table into the Phase 1 supported table (or add a new row), with the payload, Web/Mobile columns, and a Notes value that names the emit site.
    - `docs/references/websocket-events-reference.md` — update the Summary Table row and the per-event section. Upstream-Immich and adapter triggers may diverge (e.g., upstream emits `on_asset_update` only from sidecar processing; the adapter emits it from `PUT /api/assets/{id}`); make both paths explicit so future readers don't assume the upstream-only note still applies.
+
+### Derive multi-path fields through one helper
+
+A field the adapter surfaces from more than one path must be derived identically in each: the write handler, the paired read handler, **and** the sync-stream converter (`routers/api/sync/converters.py`). Route any value mapped from a Gumnut field through a shared helper instead of hardcoding it per site, or the same entity reads back differently by path — e.g. a face's `sourceType` (mapped from `FaceResponse.source`) returned by `create_face` but hardcoded in `get_faces` / the sync converter, or a face box stored in a different coordinate frame than `get_faces` reads back. When you touch one emit site for such a field, grep for every constructor of the Immich response type (`AssetFaceResponseDto`, `SyncAssetFaceV1` / `SyncAssetFaceV2`, …) before assuming it has one home.
 
 ### Reading Gumnut asset fields — request them via `include`
 

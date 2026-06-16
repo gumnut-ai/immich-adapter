@@ -32,6 +32,18 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 
+def _to_immich_source_type(source: str | None) -> SourceType:
+    """Map a Gumnut face ``source`` to Immich's ``sourceType``.
+
+    Gumnut reports ``manual`` for user-drawn boxes and ``automatic`` for
+    detector-found faces; Immich splits these into ``manual`` vs
+    ``machine-learning``. Kept in one place so ``create_face`` and ``get_faces``
+    agree — otherwise a manually created face reports ``manual`` on create but
+    flips to ``machine-learning`` when re-read via ``GET /faces``.
+    """
+    return SourceType.manual if source == "manual" else SourceType.machine_learning
+
+
 @router.delete("/{id}", status_code=204)
 async def delete_face(
     id: UUID,
@@ -107,7 +119,7 @@ async def get_faces(
                 imageWidth=image_width,
                 imageHeight=image_height,
                 person=person,
-                sourceType=SourceType.machine_learning,
+                sourceType=_to_immich_source_type(face.source),
             )
         )
 
@@ -147,14 +159,25 @@ async def create_face(
         else 1.0
     )
 
+    # Scale by the box's *endpoints*, not its width/height independently:
+    # rounding x and w (or y and h) separately can push x+w one pixel past the
+    # asset's right/bottom edge for a box drawn flush to that edge, and the
+    # Gumnut API *rejects* a box whose x+w exceeds asset.width (it validates the
+    # bound rather than clamping). Deriving the far edge from the scaled endpoint
+    # and clamping it to the asset bound keeps an edge-flush box in-bounds while
+    # leaving interior boxes unchanged.
+    x1 = round(request.x * scale_x)
+    y1 = round(request.y * scale_y)
+    x2 = round((request.x + request.width) * scale_x)
+    y2 = round((request.y + request.height) * scale_y)
+    if asset.width:
+        x2 = min(x2, asset.width)
+    if asset.height:
+        y2 = min(y2, asset.height)
+
     face = await client.faces.create(
         asset_id=gumnut_asset_id,
-        bounding_box={
-            "x": round(request.x * scale_x),
-            "y": round(request.y * scale_y),
-            "w": round(request.width * scale_x),
-            "h": round(request.height * scale_y),
-        },
+        bounding_box={"x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1},
         person_id=gumnut_person_id,
     )
 
@@ -173,9 +196,6 @@ async def create_face(
         )
 
     bb = face.bounding_box or {}
-    source_type = (
-        SourceType.manual if face.source == "manual" else SourceType.machine_learning
-    )
     return AssetFaceResponseDto(
         id=safe_uuid_from_face_id(face.id),
         boundingBoxX1=bb.get("x", 0),
@@ -187,5 +207,5 @@ async def create_face(
         imageWidth=asset.width or request.imageWidth,
         imageHeight=asset.height or request.imageHeight,
         person=person,
-        sourceType=source_type,
+        sourceType=_to_immich_source_type(face.source),
     )
