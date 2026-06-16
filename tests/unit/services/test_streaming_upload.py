@@ -190,7 +190,7 @@ class TestStreamingUploadPipeline:
 
     @pytest.mark.anyio
     async def test_refreshed_token_captured(self):
-        """Test that x-new-access-token from photos-api is captured."""
+        """Test that x-new-access-token from the Gumnut API is captured."""
         body, ct_header = _build_multipart_body()
         request = _make_mock_request(body, ct_header)
         base_url = "http://localhost:8000"
@@ -241,7 +241,7 @@ class TestStreamingUploadPipeline:
 
     @pytest.mark.anyio
     async def test_4xx_forwarded_as_is(self):
-        """Test that 4xx errors from photos-api are forwarded with their status code."""
+        """Test that 4xx errors from the Gumnut API are forwarded with their status code."""
         body, ct_header = _build_multipart_body()
         request = _make_mock_request(body, ct_header)
         base_url = "http://localhost:8000"
@@ -263,7 +263,7 @@ class TestStreamingUploadPipeline:
 
     @pytest.mark.anyio
     async def test_401_mapped_to_502(self):
-        """Test that 401 from photos-api maps to 502 (adapter's JWT expired, not client's session)."""
+        """Test that 401 from the Gumnut API maps to 502 (adapter's JWT expired, not client's session)."""
         body, ct_header = _build_multipart_body()
         request = _make_mock_request(body, ct_header)
         base_url = "http://localhost:8000"
@@ -280,5 +280,5 @@ class TestStreamingUploadPipeline:
             with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
-        # 401 from photos-api is an internal auth issue, not the client's
+        # 401 from the Gumnut API is an internal auth issue, not the client's
         assert exc_info.value.status_code == 502

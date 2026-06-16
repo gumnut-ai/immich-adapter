@@ -1,6 +1,6 @@
 """Trash router — restore-by-ids, restore-all, and empty-trash flows.
 
-Backed by the photos-api trash primitives:
+Backed by the Gumnut API trash primitives:
 
 - ``POST /api/assets/restore`` — bulk restore by ids (idempotent on already-live).
 - ``DELETE /api/assets`` (bulk body) — bulk permanent delete by ids.

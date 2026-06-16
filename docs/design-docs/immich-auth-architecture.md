@@ -163,7 +163,7 @@ User → Web Client → Adapter → Backend → OAuth Provider → Clerk
    - Body: `{redirectUri: "https://photos.gumnut.ai/auth/login"}`
 
 2. **Adapter forwards to backend**
-   - Adapter calls backend (`photos-api.gumnut.ai`): `GET /api/oauth/auth-url`
+   - Adapter calls backend (`api.gumnut.ai`): `GET /api/oauth/auth-url`
    - Params: `redirect_uri`, optional PKCE params
    - Backend creates CSRF state token
    - Backend creates nonce to prevent replay attacks
@@ -194,11 +194,11 @@ User → Web Client → Adapter → Backend → OAuth Provider → Clerk
          - state
          - error (if present)
    - Adapter parses parameters from callback URL
-   - Adapter calls backend (`photos-api.gumnut.ai`): `POST /api/oauth/exchange`
+   - Adapter calls backend (`api.gumnut.ai`): `POST /api/oauth/exchange`
      - Body: `{code: "code_from_provider", state: "state_from_provider", error: "error_if_any_from_provider", provider: "clerk"}`
 
 5. **Backend processes OAuth token**
-   - Backend (`photos-api.gumnut.ai`) validates CSRF state generated in step 2
+   - Backend (`api.gumnut.ai`) validates CSRF state generated in step 2
    - Backend calls OAuth provider to exchange code for token response
    - Backend validates ID token
    - Backend validates that nonce contained in ID token matches nonce generated in step 2
@@ -1256,7 +1256,7 @@ async def test_concurrent_state_validation_only_succeeds_once()
 
 ### Conclusion
 
-This design implements OAuth authentication in the Gumnut Photos API backend using Clerk as the OAuth provider. The backend handles all authentication logic including OAuth token validation, user provisioning, JWT generation and validation, and token refresh.
+This design implements OAuth authentication in the Gumnut API backend using Clerk as the OAuth provider. The backend handles all authentication logic including OAuth token validation, user provisioning, JWT generation and validation, and token refresh.
 
 The implementation reuses existing infrastructure (Clerk integration, user model, authentication dependencies) and adds minimal new code focused on OAuth-specific logic. The design maintains security through CSRF protection, PKCE support, JWT signing, and proper token expiration handling.
 
@@ -1281,7 +1281,7 @@ https://clerk.com/blog/how-oauth-works#common-o-auth-terminology
   - For clients that are dynamically registering, e.g. to use MCP on Gumnut, it'll be something they define. Each one of these clients has their own `client_id`, there's no shared ID for MCP clients.
   - For clients that want to use the Gumnut REST API for Immich API... these are M2M flows that should use API keys?
   - But if someone has, let's say a script that piggybacks on the Immich API. Could they theoretically go through the same OAuth flow and present to Gumnut that they're Immich? Yes, I think so. What in the OAuth spec is supposed to prevent this?
-- This means to me that architecturally, the `client_id` and `client_secret` should be part of `immich-adapter`, not `photos-api`. They have a specific `redirect_url` that is specific to `immich-adapter`.
+- This means to me that architecturally, the `client_id` and `client_secret` should be part of `immich-adapter`, not the Gumnut API. They have a specific `redirect_url` that is specific to `immich-adapter`.
 
 Notes from Claude on web client authentication:
 

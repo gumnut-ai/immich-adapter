@@ -28,7 +28,7 @@ def _reset_settings_cache():
 
 class TestServerConfigTrashDays:
     def test_default_trash_days_is_ninety(self, client):
-        """Default retention is 90 days, matching the photos-api default.
+        """Default retention is 90 days, matching the Gumnut API default.
 
         The previous hardcoded 30 was wrong and rendered a misleading message
         on the web trash page.

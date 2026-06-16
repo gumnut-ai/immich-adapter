@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from gumnut import AsyncGumnut
 from pydantic.json_schema import SkipJsonSchema
 
-from routers.api.constants import PHOTOS_API_MAX_PAGE_SIZE
+from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.immich_models import MapMarkerResponseDto, MapReverseGeocodeResponseDto
 from routers.utils.asset_conversion import ASSET_INCLUDE_METADATA_ONLY
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
@@ -38,7 +38,7 @@ MAP_MARKERS_CAP = 2000
 # Bounds the worst case where a low-GPS-density library would otherwise walk
 # tens of pages chasing a cap it'll never fill (e.g., 5% density × 50K assets
 # = 200 pages ≈ ~56 s without this bound). 30 pages ≈ ~8 s.
-MAX_ASSETS_SCANNED = 30 * PHOTOS_API_MAX_PAGE_SIZE
+MAX_ASSETS_SCANNED = 30 * GUMNUT_API_MAX_PAGE_SIZE
 
 
 @router.get("/markers")
@@ -71,7 +71,7 @@ async def get_map_markers(
         return []
 
     list_kwargs: dict[str, Any] = {
-        "limit": PHOTOS_API_MAX_PAGE_SIZE,
+        "limit": GUMNUT_API_MAX_PAGE_SIZE,
         "include": ASSET_INCLUDE_METADATA_ONLY,
     }
     if fileCreatedAfter is not None:

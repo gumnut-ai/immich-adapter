@@ -9,7 +9,7 @@ last-updated: 2026-05-12
 
 ## Context
 
-The adapter now implements Immich's trash flow on top of the Photos API soft-delete primitives. Immich clients still call the native `DELETE /api/assets` endpoint with the `force` flag plus the existing `/api/trash/*` routes; the adapter translates those calls into backend trash, restore, and permanent-delete operations without changing the public wire contract.
+The adapter now implements Immich's trash flow on top of the Gumnut API soft-delete primitives. Immich clients still call the native `DELETE /api/assets` endpoint with the `force` flag plus the existing `/api/trash/*` routes; the adapter translates those calls into backend trash, restore, and permanent-delete operations without changing the public wire contract.
 
 This work spans delete semantics, trash endpoints, timeline/statistics filters, sync `deletedAt` propagation, WebSocket events, and the `trashDays` value shown in the web app. This doc records the shipped adapter behavior and the remaining deliberate limitations.
 

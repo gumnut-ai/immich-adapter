@@ -2,9 +2,9 @@
 
 Parses multipart/form-data from the raw request stream using python-multipart's
 callback-based MultipartParser. File data is piped to a StreamingPipe for
-concurrent forwarding to photos-api. Form fields are collected into a dict.
+concurrent forwarding to the Gumnut API. Form fields are collected into a dict.
 
-This is a simplified version of photos-api's StreamingFormHandler, adapted for
+This is a simplified version of the Gumnut API's StreamingFormHandler, adapted for
 the proxy use case (no checksums, no S3, just form fields + pipe).
 """
 

@@ -170,7 +170,7 @@ Starting with the current upload-success events, but designed for future extensi
 | `on_session_delete` | `string` (sessionId) | Yes | No | Sessions managed by immich-adapter |
 | `on_server_version` | `ServerVersionResponseDto` | Yes | No | Sent on connect (existing) |
 
-### Phase 2: Requires photos-api Event Channel
+### Phase 2: Requires the Gumnut API Event Channel
 
 | Event | Payload | Web | Mobile | Notes |
 |---|---|---|---|---|
@@ -178,7 +178,7 @@ Starting with the current upload-success events, but designed for future extensi
 
 ### Not Applicable (Feature Not Supported)
 
-These events require features that don't exist in photos-api:
+These events require features that don't exist in the Gumnut API:
 
 | Event | Reason |
 |---|---|
@@ -228,7 +228,7 @@ class WebSocketEvent(Enum):
     SESSION_DELETE = "on_session_delete"
     SERVER_VERSION = "on_server_version"
 
-    # Phase 2: Requires photos-api event channel
+    # Phase 2: Requires the Gumnut API event channel
     PERSON_THUMBNAIL = "on_person_thumbnail"
 
 
@@ -310,7 +310,7 @@ class WebSocketEvent(Enum):
     SESSION_DELETE = "on_session_delete"
     SERVER_VERSION = "on_server_version"
 
-    # Phase 2: Requires photos-api event channel
+    # Phase 2: Requires the Gumnut API event channel
     PERSON_THUMBNAIL = "on_person_thumbnail"
 
 

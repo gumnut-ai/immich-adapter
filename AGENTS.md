@@ -2,7 +2,7 @@
 
 Before starting work, read `README.md` for project setup and consult the Documentation Map below for relevant docs.
 
-**This repo is public.** Do not reference private sibling repos (e.g., `gumnut-ai/gumnut-dev-setup`, `gumnut-ai/photos`) from committed files or PR bodies — links resolve to dead ends for external readers and surface the existence of internal docs. Inline the relevant rationale or context instead. Same principle as the existing clarity rule about absolute author-machine paths in committed files. Internal issue-tracker IDs (e.g., `GUM-123`) are likewise banned from anything committed — including **commit messages** and PR bodies, not just code and docs (see `docs/references/code-practices.md` § Project Conventions); let the Linear issue link to the PR instead of the other way around.
+**This repo is public.** Do not reference private sibling repos (e.g., `gumnut-ai/gumnut-dev-setup`, `gumnut-ai/photos`) from committed files or PR bodies — links resolve to dead ends for external readers and surface the existence of internal docs. Inline the relevant rationale or context instead. Same principle as the existing clarity rule about absolute author-machine paths in committed files. Refer to the backend by its public name — **the Gumnut API** (`api.gumnut.ai`) — never the internal `photos-api` project name, in comments, docstrings, tests, and docs alike. Internal issue-tracker IDs (e.g., `GUM-123`) are likewise banned from anything committed — including **commit messages** and PR bodies, not just code and docs. All three rules (public service name, no private repo file-paths, no internal IDs) are the one consolidated convention in `docs/references/code-practices.md` § Project Conventions; let the Linear issue link to the PR instead of the other way around.
 
 Concrete violations that have actually shipped: cross-link lines like `Cross-link: gumnut-ai/photos#NNN` in a PR description (the PR number resolves to a 404 for outsiders) and "see `photos-api/services/...`" file-path references. When a Linear issue or design doc that lives in a private repo asks you to "cross-link the photos-api PR," do not copy that framing verbatim — describe what the other repo's change does instead.
 
@@ -50,7 +50,7 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Running with Immich Web | `docs/guides/running-with-immich-web.md` | Setting up the full local stack (Immich web + adapter + photos-api + Clerk OAuth) |
+| Running with Immich Web | `docs/guides/running-with-immich-web.md` | Setting up the full local stack (Immich web + adapter + the Gumnut API + Clerk OAuth) |
 | Running with Immich Mobile | `docs/guides/running-with-immich-mobile.md` | Self-signed certs, HTTPS setup, connecting the Immich mobile app |
 
 ## References

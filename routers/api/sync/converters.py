@@ -219,7 +219,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         modifyDate=modified_datetime,
         orientation=wire_orientation,
         # profile_description is intentionally not surfaced on the Metadata
-        # type (per the photos-api design); always emit None.
+        # type (per the Gumnut API design); always emit None.
         profileDescription=None,
         projectionType=metadata.projection_type,
         rating=normalize_rating(metadata.rating),

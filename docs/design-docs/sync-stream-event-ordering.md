@@ -60,7 +60,7 @@ The two-phase fix handles ordering within a sync cycle, but the payload override
 
 Fix: after applying a payload override, check if the referenced entity ID is in the set of IDs that returned 404 during fetch (`stats.not_found_ids`). If so, null it out. The guard is skipped when the referenced entity type has a checkpoint, since the entity may exist on the client from a prior sync cycle. Applies to both `face_updated` (person_id) and `album_updated` (album_cover_asset_id).
 
-### Fix 5: Verify payload references against production (GUM-545)
+### Fix 5: Verify payload references against production
 
 Fix 4 only populated `not_found_ids` for entities deleted within the current sync window — if the referenced entity was deleted before the window started, the adapter never tried to fetch it and had no 404 to record. Combined with Fix 4's checkpoint-skip guard ("the entity may exist on the client from a prior sync cycle"), this leaked stale payload references across cycles:
 
@@ -69,7 +69,7 @@ Fix 4 only populated `not_found_ids` for entities deleted within the current syn
 3. Fix 4's guard skipped the null-out because `PersonV1` was in `checkpoint_map`. The payload person_id leaked through.
 4. Mobile client tried to insert the face referencing P1 — SQLite FK violation (`asset_face_entity` → `person`), sync stuck.
 
-Concrete production timeline for the face that surfaced GUM-545 (event IDs from photos-api):
+Concrete production timeline for the face that surfaced this bug (event IDs from the Gumnut API):
 
 - 79099 `person_created P1`
 - 79100 `face_updated` payload person_id=P1
@@ -91,7 +91,7 @@ The real Immich server (`server/src/services/sync.service.ts`) has a fundamental
 - **`updateId` gating.** Every entity has an `updateId` field (UUID v7, timestamp-based). When clustering assigns a person to a face, the face's `updateId` changes. The sync window uses `updateId < nowId` — if the person assignment falls outside the window, the face's update also falls outside. Both are excluded together.
 - **Delete-first within each type.** The real server sends deletes before upserts within each entity type (opposite of our approach). This works because upserts contain current state with deleted references already nullified.
 
-Our adapter can't replicate this because we consume events from photos-api (fixed timestamps, separate from entity state) rather than querying entities directly.
+Our adapter can't replicate this because we consume events from the Gumnut API (fixed timestamps, separate from entity state) rather than querying entities directly.
 
 ## Checkpoint Behavior
 
@@ -114,7 +114,7 @@ This is an acceptable tradeoff: permanently stuck sync (the bug) is far worse th
 
 The Fix 5 verification fetch (`people.list` / `assets.list` for payload-referenced IDs) reads the live production state of those entities, while the surrounding event stream is bounded by `created_at_lt=sync_started_at` (a point-in-time snapshot). If a person or asset is deleted *during* a sync cycle — after `sync_started_at` but before the face/album phase runs the verification — the verification will see a 404 and null the reference even though it was valid at the snapshot. The corresponding `*_deleted` event falls outside the current cycle's window (its cursor > `sync_started_at`), so it arrives in the next cycle instead.
 
-End-state impact: none. The client still receives the delete event in the next cycle; the face/album converges to the same final state (orphan reference, or cascaded to NULL). The only visible difference is a brief interval where the client shows the reference already nulled instead of "valid but about to be deleted." For the concrete GUM-545 FK-violation failure mode this is strictly safer (no stuck sync), and the cosmetic inconsistency resolves within one sync cycle.
+End-state impact: none. The client still receives the delete event in the next cycle; the face/album converges to the same final state (orphan reference, or cascaded to NULL). The only visible difference is a brief interval where the client shows the reference already nulled instead of "valid but about to be deleted." For the concrete FK-violation failure mode this is strictly safer (no stuck sync), and the cosmetic inconsistency resolves within one sync cycle.
 
 Making the verification snapshot-aware would require either an event-timeline check (query for `*_deleted` events with cursor ≤ `sync_started_at`) or a cross-repo `as_of` parameter on the list endpoints. Both add meaningful complexity for a cosmetic win; not implemented.
 
@@ -124,5 +124,5 @@ A potential long-term alternative is querying entity endpoints directly (like th
 
 - Query `updated_after` on entity list endpoints for upserts (current state, no time-window issues)
 - Still use events API for deletes (deleted entities don't appear in list queries)
-- Would require photos-api changes and a dual checkpoint system
+- Would require the Gumnut API changes and a dual checkpoint system
 - Would eliminate the entire class of time-window and ordering bugs

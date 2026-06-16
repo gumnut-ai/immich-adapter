@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     gumnut_api_base_url: str = "http://localhost:8000"
     sentry_dsn: str | None = None
 
-    # Redis settings (uses db 1 for isolation from photos-api which uses db 0)
+    # Redis settings (uses db 1 for isolation from the Gumnut API which uses db 0)
     redis_url: str = "redis://localhost:6379/1"
 
     # Redis connection pool settings
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     redis_health_check_interval: int = 30
 
     # Streaming upload threshold in bytes. Uploads with Content-Length above this
-    # stream directly to photos-api without buffering to /tmp. Uploads below use
+    # stream directly to the Gumnut API without buffering to /tmp. Uploads below use
     # the standard buffered UploadFile path. Set to 0 to stream all uploads
     # (note: streaming skips iOS live photo .MOV detection).
     streaming_upload_threshold_bytes: int = 100 * 1024 * 1024  # 100MB
@@ -52,10 +52,10 @@ class Settings(BaseSettings):
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
     oauth_mobile_redirect_uri: str = "app.immich:///oauth-callback"
 
-    # Trash retention before scheduled purge runs on the photos-api side.
+    # Trash retention before scheduled purge runs on the Gumnut API side.
     # Surfaced to Immich clients via /api/server/config as `trashDays` and
     # rendered on the web trash page as "permanently deleted after N days".
-    # Must be kept in sync with photos-api's TRASH_RETENTION_DAYS at deploy time.
+    # Must be kept in sync with the Gumnut API's TRASH_RETENTION_DAYS at deploy time.
     trash_retention_days: int = 90
 
     # Session encryption key for Fernet (base64-encoded 32-byte key)

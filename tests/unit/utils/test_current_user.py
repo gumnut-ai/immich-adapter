@@ -187,7 +187,7 @@ class TestGetCurrentUserAdmin:
     async def test_get_current_user_admin_quota_none_is_rollout_safe(self):
         """Quota maps to None when the upstream storage fields are None.
 
-        Mirrors a pre-storage-caps photos-api during rollout: when it omits the
+        Mirrors a pre-storage-caps Gumnut API during rollout: when it omits the
         fields, the SDK's non-validating construction materializes them as None
         (verified against the SDK's response model). The /me path must report no
         quota rather than a bogus value.
@@ -205,7 +205,7 @@ class TestGetCurrentUserAdmin:
         mock_user.is_active = True
         mock_user.created_at = datetime.now(timezone.utc)
         mock_user.updated_at = datetime.now(timezone.utc)
-        # What the SDK yields when photos-api omits the storage fields
+        # What the SDK yields when the Gumnut API omits the storage fields
         mock_user.storage_limit_bytes = None
         mock_user.storage_used_bytes = None
 
@@ -238,7 +238,7 @@ class TestMapUserQuota:
     def test_none_storage_fields_map_to_none(self):
         """None storage fields map to None quota fields for rollout safety.
 
-        This is what the SDK yields when an older photos-api omits the fields.
+        This is what the SDK yields when an older Gumnut API omits the fields.
         """
         user = Mock(spec=["storage_limit_bytes", "storage_used_bytes"])
         user.storage_limit_bytes = None

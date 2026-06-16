@@ -4,7 +4,7 @@ Immich sync endpoints for mobile client synchronization.
 This module implements the Immich sync protocol, providing both streaming sync
 (for beta timeline mode) and full/delta sync (for legacy timeline mode).
 
-The streaming sync uses the photos-api v2 events endpoint (/api/v2/events) to
+The streaming sync uses the Gumnut API v2 events endpoint (/api/v2/events) to
 fetch lightweight event records, then batch-fetches full entities as needed.
 Events are processed in priority order (assets before exif, etc.).
 """
@@ -441,7 +441,7 @@ async def get_sync_stream(
     """
     Get sync stream as JSON Lines (application/jsonlines+json).
 
-    Streams sync events for all requested entity types using the photos-api
+    Streams sync events for all requested entity types using the Gumnut API
     events endpoint. Events are returned in priority order to ensure proper
     entity dependencies (e.g., assets before exif data).
 

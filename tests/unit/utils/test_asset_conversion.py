@@ -32,9 +32,9 @@ from routers.utils.datetime_utils import to_actual_utc
 
 
 class TestDateResolution:
-    """Immich capture-date fields use Photos API's resolved ``local_datetime``;
+    """Immich capture-date fields use the Gumnut API's resolved ``local_datetime``;
     ``fileModifiedAt`` prefers EXIF ``metadata.modified_datetime`` because
-    photos-api does not resolve a separate modify-time field."""
+    the Gumnut API does not resolve a separate modify-time field."""
 
     LOCAL_DT = datetime(2017, 6, 3, 9, 15, 0, tzinfo=timezone.utc)
     METADATA_DT = datetime(2018, 7, 4, 10, 30, 0, tzinfo=timezone.utc)
@@ -261,9 +261,9 @@ def _attach_metadata(
 
 
 class TestDimensionEmission:
-    """Adapter passes through display-space dims from photos-api as-is.
+    """Adapter passes through display-space dims from the Gumnut API as-is.
 
-    photos-api stores ``asset.width/height`` in display space at ingest and
+    The Gumnut API stores ``asset.width/height`` in display space at ingest and
     exposes pre-rotation raw dims on ``metadata.raw_width/raw_height``. The
     adapter no longer compensates for orientation locally — it surfaces
     display dims on ``asset.width/height`` and raw dims on
@@ -277,7 +277,7 @@ class TestDimensionEmission:
         """Portrait shot (orientation=6): asset.width/height are display dims,
         exifInfo carries raw (pre-rotation) sensor dims, and the orientation
         tag is emitted unchanged."""
-        # As photos-api returns the asset: dims already in display space.
+        # As the Gumnut API returns the asset: dims already in display space.
         sample_gumnut_asset.width = 2268
         sample_gumnut_asset.height = 4032
         _attach_metadata(
@@ -300,7 +300,7 @@ class TestDimensionEmission:
     ):
         """Regardless of orientation, asset.width/height are emitted verbatim.
 
-        photos-api owns display-space dims at ingest; the adapter must not
+        The Gumnut API owns display-space dims at ingest; the adapter must not
         second-guess them.
         """
         sample_gumnut_asset.width = 4032
@@ -383,7 +383,7 @@ class TestDimensionEmission:
         assert payload.exif.orientation == "6"
 
     def test_zero_raw_dims_fall_back_to_asset_dims(self, sample_gumnut_asset):
-        """Zero from photos-api on raw dims is treated as unknown: fall back
+        """Zero from the Gumnut API on raw dims is treated as unknown: fall back
         to asset.width/height and null orientation, mirroring the NULL case.
 
         The Immich mobile asset viewer computes ``width / height`` to size

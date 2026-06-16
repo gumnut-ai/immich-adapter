@@ -221,7 +221,7 @@ class TestSearchMetadata:
             limit=10,
             page=1,
             # Opt back into the heavy fields the conversion reads, so the
-            # response survives the photos-api lean-default flip.
+            # response survives the Gumnut API lean-default flip.
             include=["metadata", "people", "file_data"],
         )
 
@@ -245,7 +245,7 @@ class TestSearchMetadata:
 
     @pytest.mark.anyio
     async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
-        """When size/page are absent, the SDK is called without them so photos-api
+        """When size/page are absent, the SDK is called without them so the Gumnut API
         applies its own defaults. Substituting our own defaults would fragment the
         single source of truth."""
         search_response = Mock()
@@ -265,9 +265,9 @@ class TestSearchMetadata:
         assert "page" not in call_kwargs
 
     @pytest.mark.anyio
-    async def test_clamps_size_to_photos_api_ceiling(self, mock_current_user):
-        """The Immich client sends size=1000 by default; photos-api caps at 200.
-        The adapter must clamp before forwarding, otherwise photos-api 422s."""
+    async def test_clamps_size_to_gumnut_api_ceiling(self, mock_current_user):
+        """The Immich client sends size=1000 by default; the Gumnut API caps at 200.
+        The adapter must clamp before forwarding, otherwise the Gumnut API 422s."""
         search_response = Mock()
         search_response.data = []
 
@@ -415,7 +415,7 @@ class TestSearchSmart:
 
     @pytest.mark.anyio
     async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
-        """When size/page are absent, the SDK is called without them so photos-api
+        """When size/page are absent, the SDK is called without them so the Gumnut API
         applies its own defaults. Substituting our own defaults would fragment the
         single source of truth."""
         search_response = Mock()
@@ -435,9 +435,9 @@ class TestSearchSmart:
         assert "page" not in call_kwargs
 
     @pytest.mark.anyio
-    async def test_clamps_size_to_photos_api_ceiling(self, mock_current_user):
-        """The Immich client sends size=1000 by default; photos-api caps at 200.
-        The adapter must clamp before forwarding, otherwise photos-api 422s."""
+    async def test_clamps_size_to_gumnut_api_ceiling(self, mock_current_user):
+        """The Immich client sends size=1000 by default; the Gumnut API caps at 200.
+        The adapter must clamp before forwarding, otherwise the Gumnut API 422s."""
         search_response = Mock()
         search_response.data = []
 

@@ -155,7 +155,7 @@ class TestUpdateMyUser:
         """Build a mock Gumnut user with the given storage field values.
 
         Both default to None, mirroring what the SDK yields when an older
-        photos-api omits the storage fields during rollout.
+        Gumnut API omits the storage fields during rollout.
         """
         user = Mock(
             spec=[

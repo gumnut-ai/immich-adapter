@@ -12,7 +12,7 @@ last-updated: 2026-06-11
 - **Sessions** keyed by a stable UUID session token that Immich clients send back on later requests
 - **Checkpoints** keyed by session and sync entity type so `/api/sync/stream` can resume from the last acknowledged cursor
 
-The important distinction is that the client-facing token is **not** the backend JWT. The adapter encrypts the backend JWT, keeps it server-side, and updates it in place when the backend refreshes it. Sync resume is likewise **cursor-based**, not timestamp-hash-based: each entity type stores the last opaque photos-api events cursor that the client acknowledged.
+The important distinction is that the client-facing token is **not** the backend JWT. The adapter encrypts the backend JWT, keeps it server-side, and updates it in place when the backend refreshes it. Sync resume is likewise **cursor-based**, not timestamp-hash-based: each entity type stores the last opaque Gumnut API events cursor that the client acknowledged.
 
 ## Redis data model
 
