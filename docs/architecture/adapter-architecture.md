@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-06-06
+last-updated: 2026-06-16
 ---
 
 # Immich Adapter Architecture
@@ -376,7 +376,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | Trash | Restore-by-ids, restore-all, empty-trash | `trashDays` comes from `TRASH_RETENTION_DAYS`; web and mobile clients see real trash state |
 | Albums | CRUD, add/remove assets, statistics | User sharing not supported (returns 501) |
 | People | CRUD, list with pagination/sort/filter, thumbnails, statistics, merge | |
-| Faces | List, delete, reassign | Create is a stub |
+| Faces | List, create, delete, reassign | Create draws a user-specified box on an asset and links it to a person (Immich's "create a face on-the-fly" flow) |
 | Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling, including `isTrashed=true` |
 | Search | Smart search, metadata search, person search, statistics | Places, suggestions, explore are stubs |
 | Sync | Full sync, delta sync, stream, ack | Two-phase ordering, checkpoint management |
@@ -389,7 +389,6 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 
 | Area | Why stubbed |
 |------|-------------|
-| Faces | Create is a stub (SDK doesn't support face creation) |
 | Libraries | Gumnut has a different library model |
 | Tags | Not yet implemented in Gumnut |
 | Map (reverse-geocode) | `/map/reverse-geocode` is unused by shipped Immich clients; not wired up |

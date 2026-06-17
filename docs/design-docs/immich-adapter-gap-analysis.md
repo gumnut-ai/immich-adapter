@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-05-15
+last-updated: 2026-06-16
 ---
 
 # Immich Adapter Gap Analysis
@@ -17,8 +17,8 @@ Today, the core photo workflow works: upload, browse timeline, organize into alb
 
 | Category | Endpoint count | Status |
 |----------|---------------|--------|
-| Fully implemented (real SDK calls) | ~76 | Assets (including video playback), albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
-| Stubs (empty/fake responses) | ~115 | Tags, shared links, stacks, activities, admin, server info, etc. |
+| Fully implemented (real SDK calls) | ~77 | Assets (including video playback), albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
+| Stubs (empty/fake responses) | ~114 | Tags, shared links, stacks, activities, admin, server info, etc. |
 | Total in adapter | ~192 | |
 | Not routed (no adapter endpoint) | ~52 | Immich endpoints with no adapter route at all (e.g., asset edits, database backups, workflows, plugins, some auth/admin endpoints) |
 | Total in Immich v2.7.5 spec | 244 | |
@@ -409,17 +409,11 @@ Immich API keys allow programmatic access without OAuth.
 
 ### 21. Faces — Create Endpoint (1 endpoint)
 
-The faces module has 3 real implementations but the create endpoint is stubbed.
+**Current behavior**: **Closed** — `POST /api/faces` is implemented in `create_face` (`routers/api/faces.py`). It converts the Immich asset and person UUIDs to Gumnut IDs, calls `client.faces.create(asset_id, bounding_box={x,y,w,h}, person_id)`, and returns the created face as an `AssetFaceResponseDto`. This backs Immich's "create a face on-the-fly" flow in the face tag editor (the client creates the person via `POST /people`, then draws the box via this endpoint). Required `gumnut-sdk >= 0.116.0`, which exposes the auto-generated `faces.create()` once the backend added the face-creation endpoint.
 
-**Current behavior**: Returns a stub response. The SDK doesn't support face creation.
+**User impact**: **Low** — Face creation is typically automated (ML-driven face detection). Manual face creation is rare. Without it, the on-the-fly flow created orphaned person records with no linked face/thumbnail.
 
-**User impact**: **Low** — Face creation is typically automated (ML-driven face detection). Manual face creation is rare.
-
-**Dependency**: **Both** — The Gumnut API does not currently have a face creation endpoint, so the backend needs to add one. The SDK (auto-generated from the API spec) will then expose it, and the adapter can call it.
-
-**Effort**: **S** — Backend endpoint is straightforward (face creation with person assignment). SDK is auto-generated. Adapter translation is minimal.
-
-**Recommendation**: **Close** — Small effort, completes the faces module.
+**Dependency**: **Both** — required a backend face-creation endpoint (now present, exposed by the auto-generated SDK) plus the adapter translation.
 
 ---
 
@@ -630,7 +624,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 
 | Gap | Effort | Dependency | Rationale |
 |-----|--------|------------|-----------|
-| #21 Face create | S | Both | Completes faces module |
+| ~~#21 Face create~~ | — | — | Closed — `POST /api/faces` draws a user box and links it to a person; needed `gumnut-sdk >= 0.116.0` |
 | #12 Search random/explore | S | Adapter-only | Easy adapter-only work |
 | #5 Download / archive | M | Adapter-only | Pure adapter work, clear user value |
 | ~~#33 Video playback (mobile)~~ | — | — | Closed — CDN streaming with Range support; advertises `Accept-Ranges: bytes` on 200 for iOS AVPlayer |

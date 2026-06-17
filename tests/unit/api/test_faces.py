@@ -5,9 +5,20 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 from datetime import datetime, timezone
 
-from routers.api.faces import delete_face, get_faces, reassign_faces_by_id
-from routers.immich_models import AssetFaceDeleteDto, FaceDto
+from routers.api.faces import (
+    create_face,
+    delete_face,
+    get_faces,
+    reassign_faces_by_id,
+)
+from routers.immich_models import (
+    AssetFaceCreateDto,
+    AssetFaceDeleteDto,
+    FaceDto,
+    SourceType,
+)
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_face_id,
     safe_uuid_from_person_id,
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_face_id,
@@ -19,6 +30,7 @@ def _make_face(
     asset_id: str,
     person_id: str | None = None,
     bounding_box: dict | None = None,
+    source: str = "automatic",
 ) -> Mock:
     """Create a mock Gumnut FaceResponse."""
     face = Mock()
@@ -26,14 +38,21 @@ def _make_face(
     face.asset_id = asset_id
     face.person_id = person_id
     face.bounding_box = bounding_box or {"x": 100, "y": 200, "w": 300, "h": 400}
+    face.source = source
     face.created_at = datetime.now(timezone.utc)
     face.updated_at = datetime.now(timezone.utc)
     face.thumbnail_url = None
     return face
 
 
-def _make_asset(asset_id: str, width: int = 1920, height: int = 1080) -> Mock:
-    """Create a mock Gumnut AssetResponse with dimensions."""
+def _make_asset(
+    asset_id: str, width: int | None = 1920, height: int | None = 1080
+) -> Mock:
+    """Create a mock Gumnut AssetResponse with dimensions.
+
+    ``width``/``height`` are ``Optional[int]`` in the SDK; pass ``None`` to model
+    an asset whose dimensions have not been extracted yet.
+    """
     asset = Mock()
     asset.id = asset_id
     asset.width = width
@@ -84,8 +103,30 @@ class TestGetFaces:
         assert result[0].imageWidth == 1920
         assert result[0].imageHeight == 1080
         assert result[0].person is None
+        # Default face source is 'automatic' -> machine-learning.
+        assert result[0].sourceType == SourceType.machine_learning
 
         mock_client.faces.list.assert_called_once_with(asset_id=gumnut_asset_id)
+
+    @pytest.mark.anyio
+    async def test_manual_face_reports_manual_source_type(self, mock_sync_cursor_page):
+        """A manually created face (source='manual') reports sourceType=manual on
+        re-read, matching what create_face returns rather than flipping to the
+        detector default."""
+        asset_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+
+        face = _make_face(asset_id=gumnut_asset_id, source="manual")
+
+        mock_client = Mock()
+        mock_client.faces.list = Mock(return_value=mock_sync_cursor_page([face]))
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id)
+        )
+
+        result = await get_faces(id=asset_uuid, client=mock_client)
+
+        assert result[0].sourceType == SourceType.manual
 
     @pytest.mark.anyio
     async def test_returns_empty_list_when_no_faces(self, mock_sync_cursor_page):
@@ -313,4 +354,317 @@ class TestReassignFace:
         with pytest.raises(APIStatusError):
             await reassign_faces_by_id(
                 id=person_uuid, request=request, client=mock_client
+            )
+
+
+class TestCreateFace:
+    """Test the create_face endpoint.
+
+    Backs Immich's "create a face on-the-fly" flow: the client draws a face box
+    on an asset and assigns it to a person it created moments earlier.
+    """
+
+    @staticmethod
+    def _make_request(asset_uuid, person_uuid) -> AssetFaceCreateDto:
+        return AssetFaceCreateDto(
+            assetId=asset_uuid,
+            personId=person_uuid,
+            x=100,
+            y=200,
+            width=300,
+            height=400,
+            imageWidth=1920,
+            imageHeight=1080,
+        )
+
+    @pytest.mark.anyio
+    async def test_creates_face_via_sdk(self):
+        """Creates the face with converted IDs and a {x,y,w,h} box, then
+        returns the Immich-shaped response with the assigned person.
+
+        The client draws the box on a downscaled preview and reports that
+        preview's dimensions as imageWidth/imageHeight. Here the asset is twice
+        the preview (3840x2160 vs 1920x1080), so the box must be scaled 2x into
+        the asset's full-resolution frame before storing — otherwise it lands
+        shrunk in the top-left corner when read back by get_faces.
+        """
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        # Gumnut echoes the (scaled) box it stored; mirror that here.
+        created = _make_face(
+            asset_id=gumnut_asset_id,
+            person_id=gumnut_person_id,
+            bounding_box={"x": 200, "y": 400, "w": 600, "h": 800},
+            source="manual",
+        )
+        person = _make_person(gumnut_person_id, name="Calvin")
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=3840, height=2160)
+        )
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(return_value=person)
+
+        request = self._make_request(asset_uuid, person_uuid)
+        result = await create_face(request=request, client=mock_client)
+
+        # Box scaled 2x from the 1920x1080 preview to the 3840x2160 asset.
+        mock_client.faces.create.assert_called_once_with(
+            asset_id=gumnut_asset_id,
+            bounding_box={"x": 200, "y": 400, "w": 600, "h": 800},
+            person_id=gumnut_person_id,
+        )
+        assert result.id == safe_uuid_from_face_id(created.id)
+        assert result.boundingBoxX1 == 200
+        assert result.boundingBoxX2 == 800  # x + w
+        assert result.boundingBoxY1 == 400
+        assert result.boundingBoxY2 == 1200  # y + h
+        # Response reports the asset's full-resolution frame (matches get_faces).
+        assert result.imageWidth == 3840
+        assert result.imageHeight == 2160
+        assert result.person is not None
+        assert result.person.name == "Calvin"
+        assert result.person.id == str(safe_uuid_from_person_id(gumnut_person_id))
+
+    @pytest.mark.anyio
+    async def test_box_passes_through_when_preview_matches_asset(self):
+        """When the client's reported dimensions already match the asset's full
+        resolution, the box is stored unchanged (scale factor 1)."""
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        created = _make_face(
+            asset_id=gumnut_asset_id,
+            person_id=gumnut_person_id,
+            bounding_box={"x": 100, "y": 200, "w": 300, "h": 400},
+            source="manual",
+        )
+
+        mock_client = Mock()
+        # Asset dimensions equal the request's imageWidth/imageHeight (1920x1080).
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=1920, height=1080)
+        )
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(
+            return_value=_make_person(gumnut_person_id)
+        )
+
+        request = self._make_request(asset_uuid, person_uuid)
+        await create_face(request=request, client=mock_client)
+
+        mock_client.faces.create.assert_called_once_with(
+            asset_id=gumnut_asset_id,
+            bounding_box={"x": 100, "y": 200, "w": 300, "h": 400},
+            person_id=gumnut_person_id,
+        )
+
+    @pytest.mark.anyio
+    async def test_edge_flush_box_does_not_exceed_asset_bounds(self):
+        """A box drawn flush to the preview's right/bottom edge scales onto the
+        asset's far edge exactly, never one pixel past it.
+
+        The Gumnut API rejects a box whose ``x + w`` exceeds ``asset.width`` (or
+        ``y + h`` exceeds ``asset.height``). Scaling width/height independently
+        with per-component rounding can overflow by 1px on an edge-flush box: for
+        this input (preview 1440x1920, asset 2469x1134) it would store
+        ``x=412, w=2058`` -> ``x + w = 2470 > 2469`` and the create would 422.
+        Endpoint scaling stores ``w=2057`` so ``x + w == 2469`` exactly.
+        """
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        created = _make_face(
+            asset_id=gumnut_asset_id,
+            person_id=gumnut_person_id,
+            source="manual",
+        )
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=2469, height=1134)
+        )
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(
+            return_value=_make_person(gumnut_person_id)
+        )
+
+        # Box flush to the preview's right/bottom edge: x+width == imageWidth,
+        # y+height == imageHeight.
+        request = AssetFaceCreateDto(
+            assetId=asset_uuid,
+            personId=person_uuid,
+            x=240,
+            y=459,
+            width=1200,
+            height=1461,
+            imageWidth=1440,
+            imageHeight=1920,
+        )
+        await create_face(request=request, client=mock_client)
+
+        box = mock_client.faces.create.call_args.kwargs["bounding_box"]
+        # Far edges land exactly on the asset bounds — never past them.
+        assert box["x"] + box["w"] == 2469
+        assert box["y"] + box["h"] == 1134
+        assert box == {"x": 412, "y": 271, "w": 2057, "h": 863}
+
+    @pytest.mark.anyio
+    async def test_box_passes_through_when_asset_has_no_dimensions(self):
+        """When the asset has no stored dimensions (width/height None — e.g.
+        before dimension extraction lands), the box can't be scaled, so it's
+        stored unchanged and the response falls back to the request's preview
+        dimensions."""
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        created = _make_face(
+            asset_id=gumnut_asset_id,
+            person_id=gumnut_person_id,
+            bounding_box={"x": 100, "y": 200, "w": 300, "h": 400},
+            source="manual",
+        )
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=None, height=None)
+        )
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(
+            return_value=_make_person(gumnut_person_id)
+        )
+
+        request = self._make_request(asset_uuid, person_uuid)
+        result = await create_face(request=request, client=mock_client)
+
+        # No scaling and no clamp: the box is stored exactly as drawn.
+        mock_client.faces.create.assert_called_once_with(
+            asset_id=gumnut_asset_id,
+            bounding_box={"x": 100, "y": 200, "w": 300, "h": 400},
+            person_id=gumnut_person_id,
+        )
+        # Response falls back to the request's reported preview dimensions.
+        assert result.imageWidth == 1920
+        assert result.imageHeight == 1080
+
+    @pytest.mark.anyio
+    async def test_manual_source_maps_to_manual_source_type(self):
+        """A user-drawn face (source='manual') reports sourceType=manual."""
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        created = _make_face(
+            asset_id=gumnut_asset_id,
+            person_id=gumnut_person_id,
+            source="manual",
+        )
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=1920, height=1080)
+        )
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(
+            return_value=_make_person(gumnut_person_id)
+        )
+
+        result = await create_face(
+            request=self._make_request(asset_uuid, person_uuid), client=mock_client
+        )
+
+        assert result.sourceType == SourceType.manual
+
+    @pytest.mark.anyio
+    async def test_automatic_source_maps_to_machine_learning_source_type(self):
+        """A detector-found face (source='automatic') reports
+        sourceType=machine-learning."""
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        created = _make_face(
+            asset_id=gumnut_asset_id,
+            person_id=gumnut_person_id,
+            source="automatic",
+        )
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=1920, height=1080)
+        )
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(
+            return_value=_make_person(gumnut_person_id)
+        )
+
+        result = await create_face(
+            request=self._make_request(asset_uuid, person_uuid), client=mock_client
+        )
+
+        assert result.sourceType == SourceType.machine_learning
+
+    @pytest.mark.anyio
+    async def test_person_fetch_failure_returns_face_with_null_person(self):
+        """If the person fetch fails, the created face is still returned with a
+        null person rather than failing the request."""
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
+
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        created = _make_face(
+            asset_id=gumnut_asset_id,
+            person_id=gumnut_person_id,
+            source="manual",
+        )
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, width=1920, height=1080)
+        )
+        mock_client.faces.create = AsyncMock(return_value=created)
+        mock_client.people.retrieve = AsyncMock(
+            side_effect=Exception("Person not found")
+        )
+
+        result = await create_face(
+            request=self._make_request(asset_uuid, person_uuid), client=mock_client
+        )
+
+        assert result.id == safe_uuid_from_face_id(created.id)
+        assert result.person is None
+
+    @pytest.mark.anyio
+    async def test_sdk_error_propagates(self):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(uuid_to_gumnut_asset_id(asset_uuid))
+        )
+        mock_client.faces.create = AsyncMock(
+            side_effect=make_sdk_status_error(500, "boom")
+        )
+
+        with pytest.raises(APIStatusError):
+            await create_face(
+                request=self._make_request(asset_uuid, person_uuid), client=mock_client
             )

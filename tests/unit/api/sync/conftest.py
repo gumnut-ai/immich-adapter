@@ -233,6 +233,7 @@ def create_mock_face_data(updated_at: datetime) -> FaceResponse:
         asset_id=uuid_to_gumnut_asset_id(TEST_UUID),
         person_id=uuid_to_gumnut_person_id(TEST_UUID),
         bounding_box={"x": 100, "y": 100, "w": 50, "h": 50},
+        source="automatic",
         created_at=updated_at,
         updated_at=updated_at,
     )
