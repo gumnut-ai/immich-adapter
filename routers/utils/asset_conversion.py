@@ -345,26 +345,42 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
     """
     metadata = gumnut_asset.metadata
 
-    # Extract metadata fields, defaulting to None if not available
-    make = getattr(metadata, "make", None) if metadata else None
-    model = getattr(metadata, "model", None) if metadata else None
-    lens_model = getattr(metadata, "lens_model", None) if metadata else None
-    f_number = getattr(metadata, "f_number", None) if metadata else None
-    focal_length = getattr(metadata, "focal_length", None) if metadata else None
-    iso = getattr(metadata, "iso", None) if metadata else None
-    exposure_time = getattr(metadata, "exposure_time", None) if metadata else None
-    latitude = getattr(metadata, "latitude", None) if metadata else None
-    longitude = getattr(metadata, "longitude", None) if metadata else None
-    city = getattr(metadata, "city", None) if metadata else None
-    state = getattr(metadata, "state", None) if metadata else None
-    country = getattr(metadata, "country", None) if metadata else None
-    description = getattr(metadata, "description", None) if metadata else None
-    rating = getattr(metadata, "rating", None) if metadata else None
-    projection_type = getattr(metadata, "projection_type", None) if metadata else None
-    date_time_original = (
-        getattr(metadata, "original_datetime", None) if metadata else None
-    )
-    modify_date = getattr(metadata, "modified_datetime", None) if metadata else None
+    if metadata is None:
+        make = None
+        model = None
+        lens_model = None
+        f_number = None
+        focal_length = None
+        iso = None
+        exposure_time = None
+        latitude = None
+        longitude = None
+        city = None
+        state = None
+        country = None
+        description = None
+        rating = None
+        projection_type = None
+        date_time_original = None
+        modify_date = None
+    else:
+        make = metadata.make
+        model = metadata.model
+        lens_model = metadata.lens_model
+        f_number = metadata.f_number
+        focal_length = metadata.focal_length
+        iso = metadata.iso
+        exposure_time = metadata.exposure_time
+        latitude = metadata.latitude
+        longitude = metadata.longitude
+        city = metadata.city
+        state = metadata.state
+        country = metadata.country
+        description = metadata.description
+        rating = metadata.rating
+        projection_type = metadata.projection_type
+        date_time_original = metadata.original_datetime
+        modify_date = metadata.modified_datetime
 
     # Convert exposure_time (float) to a fraction string like "1/66"
     exposure_time_str = None
