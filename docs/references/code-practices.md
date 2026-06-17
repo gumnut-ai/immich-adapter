@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-06-15
+last-updated: 2026-06-16
 ---
 
 # Code Practices
@@ -141,7 +141,7 @@ Use the constants in `routers/utils/asset_conversion.py`, chosen by what the con
 | `ASSET_INCLUDE_NO_PEOPLE` | `metadata, file_data` | The sync-stream `entity_fetch` reads, whose converters read the `file_data` scalars but never `people`. |
 | `ASSET_INCLUDE_METADATA_ONLY` | `metadata` | Reads that touch only `metadata`: map markers (GPS), the bulk per-asset datetime rewrite (`original_datetime`). |
 
-Reads that consume only **lean-core** fields (`id`, `mime_type`, `width`/`height`, `duration`, `trashed_at`, `local_datetime`) or `asset_urls` request **no** `include` — those stay populated regardless (today: timeline buckets, trash-id collection, asset-count stats, the image-serving `_retrieve_and_stream_variant`, and the `/faces` width/height read). `asset_urls` is **not** gated by `include`, so the streaming/serving paths never need one, and `faces` is never requested off the asset — the adapter reads faces from the dedicated `/faces` endpoint. The `create()` (buffered upload) and `update_asset()` (PATCH) responses keep the full shape and expose no `include` param, so they need no change.
+Reads that consume only **lean-core** fields (`id`, `mime_type`, `width`/`height`, `duration`, `trashed_at`, `local_datetime`) request **no** `include` — those stay populated regardless (today: timeline buckets, trash-id collection, asset-count stats, and the `/faces` width/height read). `asset_urls` is the exception when a call may stream non-thumbnail bytes: `_retrieve_and_stream_variant` now passes `include=variants`, because it serves the `small`/`preview`/`fullsize`/`original` rungs (and the video `_image` equivalents) and even a `thumbnail` request can aspect-upgrade to `small`. `faces` is never requested off the asset — the adapter reads faces from the dedicated `/faces` endpoint. The `create()` (buffered upload) and `update_asset()` (PATCH) responses keep the full shape and expose no `include` param, so they need no change.
 
 Bumping `gumnut-sdk` can itself relax a previously-non-null asset field to `| None` as part of this migration (e.g. `file_modified_at` went `datetime` → `datetime | None`), which then needs a null-guard at every read site (`resolve_file_modified_at` falls back through `metadata.modified_datetime → file_data.file_modified_at → capture time` so the required Immich `fileModifiedAt` is never null). Run `uv run pyright` after any `gumnut-sdk` bump to surface newly-required guards.
 
