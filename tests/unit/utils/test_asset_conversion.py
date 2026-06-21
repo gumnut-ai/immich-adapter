@@ -363,6 +363,24 @@ class TestDimensionEmission:
         # Fallback path nulls orientation to prevent mobile double-rotation.
         assert result.orientation is None
 
+    def test_extract_sync_exif_without_metadata_uses_asset_dims(
+        self, sample_gumnut_asset
+    ):
+        """Without metadata, the upload-ready payload still carries asset dims.
+
+        The WebSocket upload path builds ``exifInfo`` from the full asset even
+        when EXIF extraction has not populated ``metadata`` yet.
+        """
+        sample_gumnut_asset.width = 1920
+        sample_gumnut_asset.height = 1080
+        sample_gumnut_asset.metadata = None
+
+        result = extract_sync_exif(sample_gumnut_asset, asset_uuid="x")
+
+        assert result.exifImageWidth == 1920
+        assert result.exifImageHeight == 1080
+        assert result.orientation is None
+
     def test_build_asset_upload_ready_payload_emits_raw_and_display_dims(
         self, sample_gumnut_asset
     ):
