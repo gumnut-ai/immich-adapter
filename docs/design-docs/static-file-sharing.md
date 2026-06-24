@@ -2,7 +2,7 @@
 title: "Static File Sharing Proposal"
 status: active
 created: 2025-10-26
-last-updated: 2025-10-26
+last-updated: 2026-06-24
 ---
 
 # Proposed Immich-adapter Static File Sharing
@@ -13,9 +13,9 @@ When Immich-web is run locally in development code, vite is used to proxy reques
 
 In a production setting, the compiled Immich web client expects to have both the static files of the single page application and the backend API endpoints served from a single server. For example:
 
-- https://photos.gumnut.ai/index.html
+- https://immich.gumnut.ai/index.html
   - the root of the SPA
-- https://photos.gumnut.ai/api/albums
+- https://immich.gumnut.ai/api/albums
   - endpoint on the backend
 
 ## Possible Solutions
