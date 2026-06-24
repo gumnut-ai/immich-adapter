@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from unittest.mock import AsyncMock, Mock
@@ -110,6 +111,65 @@ class TestGetAllAlbums:
         assert result[0].assetCount == 5
         assert result[1].assetCount == 10
         assert result[2].assetCount == 0
+
+    @pytest.mark.anyio
+    async def test_get_all_albums_normalizes_start_end_dates(
+        self, multiple_gumnut_albums, mock_sync_cursor_page, mock_current_user
+    ):
+        """A naive album start/end date must not 500; it is made tz-aware.
+
+        The Gumnut API serializes an album's start/end date timezone-naive when
+        the bounding asset's capture timezone is unknown. AlbumResponseDto
+        requires timezone-aware values, so a non-null naive date previously
+        raised a pydantic ValidationError (HTTP 500). The conversion now routes
+        these through the keep-local-time helper: the wall-clock is preserved
+        and labeled UTC, and None passes through untouched.
+        """
+        # Album 0: non-null naive start/end dates (wall-clock, no tzinfo).
+        multiple_gumnut_albums[0].start_date = datetime(2011, 5, 7, 16, 17, 59, 500000)
+        multiple_gumnut_albums[0].end_date = datetime(2013, 7, 21, 19, 55, 13, 700000)
+        # Album 1: dates absent — must stay None.
+        multiple_gumnut_albums[1].start_date = None
+        multiple_gumnut_albums[1].end_date = None
+        # Album 2: tz-aware non-UTC date (offset known) — wall-clock is kept and
+        # re-labeled UTC, not instant-converted, matching how each asset's
+        # localDateTime is rendered.
+        multiple_gumnut_albums[2].start_date = datetime(
+            2020, 1, 1, 10, 0, 0, tzinfo=timezone(timedelta(hours=-8))
+        )
+        multiple_gumnut_albums[2].end_date = datetime(
+            2020, 1, 2, 22, 30, 0, tzinfo=timezone(timedelta(hours=5, minutes=30))
+        )
+
+        mock_client = Mock()
+        mock_client.albums.list.return_value = mock_sync_cursor_page(
+            multiple_gumnut_albums
+        )
+
+        # Previously raised ValidationError -> 500; must now succeed.
+        result = await get_all_albums(
+            asset_id=None,
+            shared=None,
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        # Naive dates become tz-aware with the wall-clock preserved (keepLocalTime).
+        assert result[0].startDate == datetime(
+            2011, 5, 7, 16, 17, 59, 500000, tzinfo=timezone.utc
+        )
+        assert result[0].endDate == datetime(
+            2013, 7, 21, 19, 55, 13, 700000, tzinfo=timezone.utc
+        )
+        # None stays None.
+        assert result[1].startDate is None
+        assert result[1].endDate is None
+        # Aware dates keep their wall-clock and are re-labeled UTC (not converted),
+        # so the album's range matches the local times shown on its assets.
+        assert result[2].startDate == datetime(
+            2020, 1, 1, 10, 0, 0, tzinfo=timezone.utc
+        )
+        assert result[2].endDate == datetime(2020, 1, 2, 22, 30, 0, tzinfo=timezone.utc)
 
     @pytest.mark.anyio
     async def test_get_all_albums_with_asset_id(

@@ -12,6 +12,7 @@ from routers.immich_models import (
     AssetResponseDto,
     UserResponseDto,
 )
+from routers.utils.datetime_utils import to_immich_local_datetime
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_album_id,
     safe_uuid_from_asset_id,
@@ -64,8 +65,14 @@ def convert_gumnut_album_to_immich(
         else "",
         createdAt=created_at,
         updatedAt=updated_at,
-        startDate=gumnut_album.start_date,
-        endDate=gumnut_album.end_date,
+        # An album's start/end date is the min/max of its assets' local capture
+        # datetimes, which the Gumnut API serializes timezone-naive when the
+        # capture timezone is unknown. AlbumResponseDto.startDate/endDate require
+        # timezone-aware values, so route them through the same keep-local-time
+        # helper used for each asset's localDateTime, keeping the album's date
+        # range consistent with the dates shown on its assets.
+        startDate=to_immich_local_datetime(gumnut_album.start_date),
+        endDate=to_immich_local_datetime(gumnut_album.end_date),
         lastModifiedAssetTimestamp=None,
         ownerId=current_user.id,
         owner=current_user,

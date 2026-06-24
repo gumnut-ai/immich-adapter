@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-06-16
+last-updated: 2026-06-24
 ---
 
 # Code Practices
@@ -35,6 +35,7 @@ Style, patterns, and conventions for the immich-adapter codebase.
 - **Asset date fields**: Any endpoint or converter that emits Immich asset date fields must use the shared helpers in `routers/utils/asset_conversion.py`:
   - `resolve_capture_datetime`, `resolve_file_created_at`, `resolve_local_date_time` — for capture-time fields. The Gumnut API resolves `asset.local_datetime` from `metadata.original_datetime → file_created_at → created_at` internally, so the helpers trust it as the single source of truth and the adapter must not re-add a fallback chain. The helpers then handle Immich's actual-UTC `fileCreatedAt` and keep-local-time `localDateTime` formats.
   - `resolve_file_modified_at` — for the `fileModifiedAt` field. Unlike capture time, the Gumnut API does not resolve a single modify-time field — `asset.file_modified_at` is the raw file mtime — so the helper applies a `metadata.modified_datetime → asset.file_modified_at` cascade here. Do not "align" this with the capture-time helpers; the asymmetry is deliberate.
+- **Immich DTO datetime fields are `AwareDatetime`; Gumnut datetimes can be naive.** The Gumnut API serializes a local capture datetime timezone-naive when the capture timezone is unknown, and a non-null naive value fails an `AwareDatetime` field's validator (unhandled `ValidationError` → 500). Don't assume a Gumnut datetime is tz-aware: route local-capture-time fields through `to_immich_local_datetime` (labels naive values UTC keep-local-time, passes `None` through). Server row timestamps (`created_at`/`updated_at`) are tz-aware and pass through raw. This applies beyond asset fields: `AlbumResponseDto.startDate`/`endDate` are the min/max of assets' `local_datetime`, so they use the same helper as each asset's `localDateTime`.
 - **Immich web "today" wire format**: Endpoints that take a "today" or "now" query param (e.g., `GET /memories?for=...`) receive a string produced by the web client's `asLocalTimeISO`, which does `setZone('utc', { keepLocalTime: true })`. The wire value's date and time components are the user's **local wall-clock**, with `Z` appended so it transports as a string — the offset is fictitious. Pull `.year/.month/.day/.hour/.minute` off the parsed datetime as-is; do **not** apply timezone math, or you'll shift the user's local "today" by their UTC offset. The same hack may appear on any future endpoint where the client wants the server to interpret a value in the user's local time without exposing the offset.
 
 ## Immich API Integration
