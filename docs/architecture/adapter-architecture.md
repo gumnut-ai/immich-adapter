@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-06-16
+last-updated: 2026-06-25
 ---
 
 # Immich Adapter Architecture
@@ -125,8 +125,10 @@ Each entity type has a dedicated conversion module in `routers/utils/`:
 | Module | Gumnut type | Immich type | Key mappings |
 |--------|------------|-------------|--------------|
 | `asset_conversion.py` | `AssetResponse` | `AssetResponseDto` | `local_datetime` → `fileCreatedAt`, `mime_type` → `type` (IMAGE/VIDEO/AUDIO/OTHER), EXIF extraction |
-| `album_conversion.py` | `AlbumResponse` | `AlbumResponseDto` | `name` → `albumName`, `album_cover_asset_id` → `albumThumbnailAssetId` |
+| `album_conversion.py` | `AlbumResponse` | `AlbumResponseDto` | `name` → `albumName`, `album_cover_asset_id` → `albumThumbnailAssetId`, album date range normalization |
 | `person_conversion.py` | `PersonResponse` | `PersonResponseDto` | `is_favorite` → `isFavorite`, `thumbnail_face_url` → `thumbnailPath`, null name → "Unknown Person" |
+
+`album_conversion.py` also routes `start_date` / `end_date` through `to_immich_local_datetime()` before emitting `AlbumResponseDto.startDate` / `endDate`. Album date ranges are derived from assets' `local_datetime`, so they intentionally share the same keep-local-time normalization as each asset's `localDateTime`: naive values are labeled `UTC` without shifting the wall-clock, and `None` passes through unchanged. This keeps the album range aligned with the dates shown on its assets and avoids list-response DTO validation failures when a local capture timezone is unknown.
 
 ### Field naming convention
 
