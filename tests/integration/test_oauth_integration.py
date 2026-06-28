@@ -10,13 +10,13 @@ from fastapi.testclient import TestClient
 from main import app
 from routers.utils.cookies import ImmichCookie
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_user_id
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_id
 from services.session_store import Session, SessionStore, get_session_store
 
 # Test UUIDs
 TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 TEST_USER_UUID = UUID("660e8400-e29b-41d4-a716-446655440001")
-TEST_GUMNUT_USER_ID = uuid_to_gumnut_user_id(TEST_USER_UUID)
+TEST_GUMNUT_USER_ID = uuid_to_gumnut_id(TEST_USER_UUID, "intuser")
 
 
 @pytest.fixture
@@ -50,8 +50,8 @@ def mock_session_store():
 def client(mock_gumnut_client, mock_session_store):
     """Create a test client with full middleware stack and mocked dependencies."""
     # Override the dependency injection
-    app.dependency_overrides[get_unauthenticated_gumnut_client] = (
-        lambda: mock_gumnut_client
+    app.dependency_overrides[get_unauthenticated_gumnut_client] = lambda: (
+        mock_gumnut_client
     )
     app.dependency_overrides[get_session_store] = lambda: mock_session_store
     yield TestClient(app, base_url="https://testserver")

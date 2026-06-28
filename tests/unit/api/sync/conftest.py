@@ -15,8 +15,8 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_face_id,
+    uuid_to_gumnut_id,
     uuid_to_gumnut_person_id,
-    uuid_to_gumnut_user_id,
 )
 from services.checkpoint_store import CheckpointStore
 from services.session_store import Session, SessionStore
@@ -41,7 +41,7 @@ def test_session_uuid():
 def create_mock_user(updated_at: datetime) -> Mock:
     """Create a mock Gumnut user."""
     user = Mock()
-    user.id = uuid_to_gumnut_user_id(TEST_UUID)
+    user.id = uuid_to_gumnut_id(TEST_UUID, "intuser")
     user.email = "test@example.com"
     user.first_name = "Test"
     user.last_name = "User"

@@ -33,7 +33,7 @@ from services.session_store import Session, SessionStore, get_session_store
 # Test constants
 TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 TEST_USER_UUID = UUID("660e8400-e29b-41d4-a716-446655440001")
-# Generated via: uuid_to_gumnut_user_id(TEST_USER_UUID)
+# Generated via: uuid_to_gumnut_id(TEST_USER_UUID, "intuser")
 TEST_GUMNUT_USER_ID = "intuser_LB2VTcVgieV6LNawiPgXG5"
 TEST_USER_UPDATED_AT = datetime(2025, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -493,8 +493,8 @@ def client(mock_gumnut_client, mock_checkpoint_store, mock_session_store):
     - Session store (via dependency override AND patch for middleware)
     """
     # Override FastAPI dependencies
-    app.dependency_overrides[get_authenticated_gumnut_client] = (
-        lambda: mock_gumnut_client
+    app.dependency_overrides[get_authenticated_gumnut_client] = lambda: (
+        mock_gumnut_client
     )
     app.dependency_overrides[get_checkpoint_store] = lambda: mock_checkpoint_store
     app.dependency_overrides[get_session_store] = lambda: mock_session_store
@@ -882,8 +882,8 @@ class TestSyncStreamAuthErrors:
             )
         )
 
-        app.dependency_overrides[get_authenticated_gumnut_client] = (
-            lambda: expired_client
+        app.dependency_overrides[get_authenticated_gumnut_client] = lambda: (
+            expired_client
         )
         app.dependency_overrides[get_checkpoint_store] = lambda: mock_checkpoint_store
         app.dependency_overrides[get_session_store] = lambda: mock_session_store

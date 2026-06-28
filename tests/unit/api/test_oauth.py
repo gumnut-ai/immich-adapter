@@ -10,12 +10,12 @@ import pytest
 
 from routers.api.oauth import finish_oauth, rewrite_redirect_uri
 from routers.immich_models import OAuthCallbackDto
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_user_id
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_id
 from services.session_store import SessionStore
 from tests.conftest import make_sdk_status_error
 
 TEST_USER_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
-TEST_GUMNUT_USER_ID = uuid_to_gumnut_user_id(TEST_USER_UUID)
+TEST_GUMNUT_USER_ID = uuid_to_gumnut_id(TEST_USER_UUID, "intuser")
 
 
 class TestRewriteRedirectUri:

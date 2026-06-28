@@ -99,8 +99,3 @@ def uuid_to_gumnut_face_id(uuid_obj: UUID) -> str:
 def safe_uuid_from_user_id(user_id: str) -> UUID:
     """Convert user ID to UUID."""
     return safe_uuid_from_gumnut_id(user_id, "intuser")
-
-
-def uuid_to_gumnut_user_id(uuid_obj: UUID) -> str:
-    """Convert UUID to user ID."""
-    return uuid_to_gumnut_id(uuid_obj, "intuser")
