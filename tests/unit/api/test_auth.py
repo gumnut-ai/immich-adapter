@@ -378,3 +378,24 @@ class TestValidateAccessTokenIntegration:
         body = response.json()
         assert body["statusCode"] == 401
         assert "JWT has expired" in body["message"]
+
+    def test_transient_backend_error_does_not_return_401(self, client):
+        """A transient (non-auth) backend failure maps to 502, not 401.
+
+        validateToken gates when the auth guard logs the user out, so only a
+        genuine auth failure may return 401. A backend blip (connection error)
+        must NOT masquerade as an expired token and eject a still-valid session.
+        """
+        from tests.conftest import make_sdk_connection_error
+
+        mock_client = Mock()
+        mock_client.users.me = AsyncMock(side_effect=make_sdk_connection_error())
+        headers = {"Authorization": f"Bearer {self.TEST_SESSION_ID}"}
+
+        with patch(
+            "routers.utils.gumnut_client.get_gumnut_client",
+            AsyncMock(return_value=mock_client),
+        ):
+            response = client.post("/api/auth/validateToken", headers=headers)
+
+        assert response.status_code == 502
