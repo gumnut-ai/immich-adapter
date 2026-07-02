@@ -22,22 +22,35 @@ router = APIRouter(
 )
 
 
+# A bounding box covering the whole globe. Passing it to the Gumnut API's
+# coordinate filter returns *only* geotagged assets — not because it narrows the
+# area (it spans the planet) but because the filter is a coordinate *range*
+# check: an asset with no coordinate has a NULL latitude/longitude, and
+# `NULL BETWEEN min AND max` is never true, so every non-geotagged asset is
+# excluded even by a world-wide box. That lets the adapter page through markers
+# instead of scanning the whole library and discarding coordinate-less assets
+# client-side (verified: on a mixed library the newest page drops from 7
+# coordinate-less assets to 0 with this box applied). The backend serves it
+# index-only from its geo covering index. Order is
+# `min_longitude,min_latitude,max_longitude,max_latitude`.
+GEOTAGGED_WORLD_BBOX = "-180,-90,180,90"
+
 # Hard cap on returned markers. Each list page requests only `metadata` via
 # `include` — not faces/people/file_data/asset_urls — since the marker build
-# reads just three GPS fields off `metadata`. `metadata` is still the large
-# EXIF block, so paging stays the cost driver. The ~280 ms/page figure below
-# predates that trim (it was measured against the full asset payload) against a
-# real library at ~70% GPS-tagged density, so it's now an upper bound: 2000
-# markers ≈ 15 pages ≈ 4 s; 5000 ≈ 31 pages ≈ 11 s — too slow for a map-view
-# load. Revisit (a dedicated backend `/map/markers` endpoint) if real usage
-# shows 2000 is insufficient. The SDK orders by capture time descending, so
-# when the cap fires the oldest GPS-tagged assets are dropped.
+# reads just three GPS fields off `metadata`. Because the coordinate filter
+# makes every returned asset a marker, paging cost now scales with the marker
+# count, not the library's GPS density: 2000 markers ≈ 2000 / page_size pages
+# regardless of how sparsely the library is geotagged. The SDK orders by
+# capture time descending, so when the cap fires the oldest GPS-tagged assets
+# are dropped.
 MAP_MARKERS_CAP = 2000
 
-# Ceiling on assets scanned, independent of how many fill the marker cap.
-# Bounds the worst case where a low-GPS-density library would otherwise walk
-# tens of pages chasing a cap it'll never fill (e.g., 5% density × 50K assets
-# = 200 pages ≈ ~56 s without this bound). 30 pages ≈ ~8 s.
+# Safety net bounding total assets walked. In the normal path the coordinate
+# filter returns only geotagged assets, so the marker cap fires first and this
+# never triggers. It guards the degraded case where the `bbox` filter is *not*
+# applied — an older Gumnut API that ignores the unknown param (e.g. the adapter
+# deploying ahead of the API), or a filter regression — which would otherwise
+# turn a low-GPS-density library's marker request into a full-library scan.
 MAX_ASSETS_SCANNED = 30 * GUMNUT_API_MAX_PAGE_SIZE
 
 
@@ -73,6 +86,9 @@ async def get_map_markers(
     list_kwargs: dict[str, Any] = {
         "limit": GUMNUT_API_MAX_PAGE_SIZE,
         "include": ASSET_INCLUDE_METADATA_ONLY,
+        # Filter to geotagged assets server-side (see GEOTAGGED_WORLD_BBOX) so we
+        # page through markers, not the whole library.
+        "bbox": GEOTAGGED_WORLD_BBOX,
     }
     if fileCreatedAfter is not None:
         list_kwargs["local_datetime_after"] = fileCreatedAfter.isoformat()
@@ -85,6 +101,8 @@ async def get_map_markers(
     async for asset in client.assets.list(**list_kwargs):
         assets_scanned += 1
         metadata = asset.metadata
+        # The bbox filter guarantees a coordinate, but guard defensively so an
+        # unexpected null can't crash marker construction (lat/lon are required).
         if (
             metadata is not None
             and metadata.latitude is not None
@@ -103,6 +121,9 @@ async def get_map_markers(
             if len(markers) >= MAP_MARKERS_CAP:
                 marker_cap_hit = True
                 break
+        # Safety net if the coordinate filter wasn't applied (see
+        # MAX_ASSETS_SCANNED) — bounds work so a low-GPS library can't degrade
+        # into a full-library scan.
         if assets_scanned >= MAX_ASSETS_SCANNED:
             break
 

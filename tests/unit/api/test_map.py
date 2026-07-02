@@ -6,7 +6,12 @@ from uuid import uuid4
 
 import pytest
 
-from routers.api.map import MAP_MARKERS_CAP, MAX_ASSETS_SCANNED, get_map_markers
+from routers.api.map import (
+    GEOTAGGED_WORLD_BBOX,
+    MAP_MARKERS_CAP,
+    MAX_ASSETS_SCANNED,
+    get_map_markers,
+)
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     uuid_to_gumnut_asset_id,
@@ -209,12 +214,23 @@ class TestGetMapMarkers:
         )
 
         kwargs = client.assets.list.call_args.kwargs
-        # Adapter forwards only `limit` + `include` (and date range when set);
-        # `withPartners` / `withSharedAlbums` must not leak through.
-        assert set(kwargs.keys()) == {"limit", "include"}
+        # Adapter forwards only `limit` + `include` + the geotagged `bbox` (and
+        # date range when set); `withPartners` / `withSharedAlbums` must not leak.
+        assert set(kwargs.keys()) == {"limit", "include", "bbox"}
         # Markers read only GPS off `metadata` — no people (needless aggregation
         # on the scan) and no file_data (never read on this path).
         assert kwargs["include"] == ["metadata"]
+
+    @pytest.mark.anyio
+    async def test_filters_to_geotagged_assets_via_world_bbox(self):
+        """The coordinate `bbox` filter is what makes the backend return only
+        geotagged assets, so the adapter no longer scans the whole library."""
+        client = Mock()
+        client.assets.list = Mock(return_value=MockSyncCursorPage([]))
+
+        await _call_markers(client=client)
+
+        assert client.assets.list.call_args.kwargs["bbox"] == GEOTAGGED_WORLD_BBOX
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(
@@ -290,17 +306,16 @@ class TestGetMapMarkers:
         assert listing.pages_fetched == MAP_MARKERS_CAP // page_size
 
     @pytest.mark.anyio
-    async def test_caps_assets_scanned_when_gps_density_is_low(self):
-        """`MAX_ASSETS_SCANNED` bounds total work, not just markers returned.
-
-        A low-GPS-density library would otherwise walk every page chasing a
-        marker cap it can never fill. We iterate `MAX_ASSETS_SCANNED + 1`
-        non-GPS assets and assert iteration stops at the cap — without the
-        bound, the loop would walk every item.
+    async def test_scan_cap_bounds_work_when_bbox_not_applied(self):
+        """Safety net: if the coordinate filter isn't honored (older API ignoring
+        the `bbox` param, or a regression), the backend returns non-geotagged
+        assets too. `MAX_ASSETS_SCANNED` must still bound the walk so a
+        low-GPS-density library can't degrade into a full-library scan.
         """
         page_size = 200
-        # Twice the scan cap, all metadata-less so they never feed the
-        # marker cap. Without MAX_ASSETS_SCANNED, the loop walks every asset.
+        # Twice the scan cap, all metadata-less (simulating the unfiltered
+        # response) so they never feed the marker cap. Without the bound the
+        # loop would walk every asset.
         total_assets = MAX_ASSETS_SCANNED * 2
         assets = [_make_asset(metadata_missing=True) for _ in range(total_assets)]
         listing = _PaginatedListing(assets, page_size=page_size)
@@ -310,9 +325,6 @@ class TestGetMapMarkers:
 
         result = await _call_markers(client=client)
 
-        # No markers (none had GPS) and iteration stopped before walking
-        # everything. With page_size=200 and MAX_ASSETS_SCANNED=6000, the
-        # scan cap fires at the last item of page 30, so page 31 must not
-        # have started.
+        # No markers (none had GPS) and iteration stopped at the scan cap.
         assert result == []
         assert listing.pages_fetched == MAX_ASSETS_SCANNED // page_size
