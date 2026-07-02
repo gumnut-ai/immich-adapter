@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from gumnut import AsyncGumnut, GumnutError
 
 from routers.immich_models import (
@@ -18,6 +18,7 @@ from routers.immich_models import (
 )
 from routers.utils.cookies import AuthType, ImmichCookie
 from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client,
     get_authenticated_gumnut_client_optional,
 )
 
@@ -175,20 +176,18 @@ async def get_auth_status() -> AuthStatusResponseDto:
 
 
 @router.post("/validateToken")
-async def validate_access_token(request: Request) -> ValidateAccessTokenResponseDto:
+async def validate_access_token(
+    gumnut_client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+) -> ValidateAccessTokenResponseDto:
     """
     Validate the caller's auth token.
 
-    The Immich auth guard calls this on app launch and trusts the result. If we
-    return authStatus=True without actually checking, an unauthenticated client
-    is let into the home screen and only discovers the missing auth on the next
-    API call (e.g., backup), which presents as a sudden mid-session expiry.
-    Reject explicitly when no JWT is present in request state so the client
-    bounces the user back to login.
+    The Immich AuthGuard calls this on navigation and trusts the result. A
+    stored-but-*expired* JWT must fail here (not just a missing one), otherwise
+    the client stays "logged in" while every real API call 401s. Probe the
+    backend with a lightweight authenticated call so an expired JWT surfaces as
+    a 401 (via the global GumnutError handler) and a still-refreshable one is
+    renewed transparently by the auth middleware.
     """
-    if not getattr(request.state, "jwt_token", None):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-        )
+    await gumnut_client.users.me()
     return ValidateAccessTokenResponseDto(authStatus=True)
