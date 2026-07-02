@@ -243,17 +243,17 @@ class TestValidateAccessToken:
     async def test_propagates_auth_error_when_jwt_expired(self):
         """An expired JWT makes users.me() raise AuthenticationError, which must
         propagate so the global GumnutError handler maps it to a 401."""
-        import httpx
         from gumnut import AuthenticationError
 
-        req = httpx.Request("GET", "http://test/api/users/me")
-        resp = httpx.Response(401, json={"detail": "JWT has expired"}, request=req)
+        from tests.conftest import make_sdk_status_error
+
         gumnut_client = Mock()
         gumnut_client.users.me = AsyncMock(
-            side_effect=AuthenticationError(
-                "Error code: 401",
-                response=resp,
+            side_effect=make_sdk_status_error(
+                401,
+                "JWT has expired",
                 body={"detail": "JWT has expired"},
+                cls=AuthenticationError,
             )
         )
 
@@ -353,17 +353,17 @@ class TestValidateAccessTokenIntegration:
         This is the fix: a present-but-expired JWT must fail validateToken so the
         iOS auth guard bounces the user to login instead of trusting a stale token.
         """
-        import httpx
         from gumnut import AuthenticationError
 
-        req = httpx.Request("GET", "http://test/api/users/me")
-        resp = httpx.Response(401, json={"detail": "JWT has expired"}, request=req)
+        from tests.conftest import make_sdk_status_error
+
         mock_client = Mock()
         mock_client.users.me = AsyncMock(
-            side_effect=AuthenticationError(
-                "Error code: 401",
-                response=resp,
+            side_effect=make_sdk_status_error(
+                401,
+                "JWT has expired",
                 body={"detail": "JWT has expired"},
+                cls=AuthenticationError,
             )
         )
         headers = {"Authorization": f"Bearer {self.TEST_SESSION_ID}"}
