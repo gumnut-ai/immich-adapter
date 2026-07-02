@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import UUID
 
 import pytest
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from socketio.exceptions import SocketIOError
 
@@ -219,57 +219,60 @@ class TestPostLogout:
 
 
 class TestValidateAccessToken:
-    """Tests for the /api/auth/validateToken endpoint.
+    """Unit tests for the /api/auth/validateToken handler.
 
-    The Immich auth guard calls this on app launch and trusts the result, so
-    returning authStatus=True without checking the request lets unauthenticated
-    clients past the login gate. The endpoint must 401 when no JWT is present.
+    The Immich auth guard calls this on navigation and trusts the result, so a
+    present-but-*expired* JWT must fail here, not just a missing one. The handler
+    probes the backend with users.me(); an expired token raises
+    AuthenticationError (mapped to a 401 by the global handler), which bounces
+    the client back to login.
     """
 
     @pytest.mark.anyio
-    async def test_returns_auth_status_true_when_jwt_present(self):
-        """Returns authStatus=True when the auth middleware populated jwt_token."""
-        request = Mock()
-        request.state = Mock(spec=["jwt_token"])
-        request.state.jwt_token = "valid-jwt"
+    async def test_returns_auth_status_true_when_backend_accepts_jwt(self):
+        """authStatus=True when the backend accepts the JWT (users.me succeeds)."""
+        gumnut_client = Mock()
+        gumnut_client.users.me = AsyncMock(return_value=Mock())
 
-        result = await validate_access_token(request)
+        result = await validate_access_token(gumnut_client)
 
         assert result.authStatus is True
+        gumnut_client.users.me.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_raises_401_when_no_jwt(self):
-        """Raises 401 when no JWT was populated on request.state."""
-        request = Mock()
-        request.state = Mock(spec=[])  # no jwt_token attribute
+    async def test_propagates_auth_error_when_jwt_expired(self):
+        """An expired JWT makes users.me() raise AuthenticationError, which must
+        propagate so the global GumnutError handler maps it to a 401."""
+        from gumnut import AuthenticationError
 
-        with pytest.raises(HTTPException) as exc_info:
-            await validate_access_token(request)
+        from tests.conftest import make_sdk_status_error
 
-        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        gumnut_client = Mock()
+        gumnut_client.users.me = AsyncMock(
+            side_effect=make_sdk_status_error(
+                401,
+                "JWT has expired",
+                body={"detail": "JWT has expired"},
+                cls=AuthenticationError,
+            )
+        )
 
-    @pytest.mark.anyio
-    async def test_raises_401_when_jwt_is_none(self):
-        """Raises 401 when jwt_token is set but None (unauthenticated request)."""
-        request = Mock()
-        request.state = Mock(spec=["jwt_token"])
-        request.state.jwt_token = None
-
-        with pytest.raises(HTTPException) as exc_info:
-            await validate_access_token(request)
-
-        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        with pytest.raises(AuthenticationError):
+            await validate_access_token(gumnut_client)
 
 
 class TestValidateAccessTokenIntegration:
     """Integration tests for /api/auth/validateToken through the auth middleware.
 
-    The unit tests above mock request.state directly, so they do not verify
-    that the middleware actually populates jwt_token correctly. A regression
-    that fails to populate jwt_token on an authenticated request would 401
-    every login, and one that populates it for unauthenticated requests would
-    re-introduce the iOS auth-guard bug this PR fixes. These tests exercise
-    the middleware → endpoint wiring end-to-end.
+    The unit tests above pass the client in directly, so they do not verify that
+    the middleware populates jwt_token and the dependency forwards it. These
+    exercise the middleware → dependency → endpoint wiring end-to-end, patching
+    only the SDK client construction so no real backend call is made:
+
+    - an authenticated request reaches the backend probe and returns authStatus=True,
+    - an unauthenticated request 401s in the dependency before any probe, and
+    - a request whose JWT the backend rejects 401s in Immich's error shape (the
+      iOS auth-guard bug this fix addresses).
     """
 
     TEST_SESSION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -314,19 +317,85 @@ class TestValidateAccessTokenIntegration:
             yield TestClient(app)
 
     def test_authenticated_request_returns_auth_status_true(self, client):
-        """Authed bearer token → 200 + authStatus=True (middleware populates jwt_token)."""
+        """Authed bearer + backend accepts JWT → 200 + authStatus=True.
+
+        Patches get_gumnut_client (not the dependency) so the real dependency
+        still reads the middleware-populated jwt_token and forwards it.
+        """
+        mock_client = Mock()
+        mock_client.users.me = AsyncMock(return_value=Mock())
         headers = {"Authorization": f"Bearer {self.TEST_SESSION_ID}"}
 
-        response = client.post("/api/auth/validateToken", headers=headers)
+        with patch(
+            "routers.utils.gumnut_client.get_gumnut_client",
+            AsyncMock(return_value=mock_client),
+        ) as mock_get_client:
+            response = client.post("/api/auth/validateToken", headers=headers)
 
         assert response.status_code == 200
         assert response.json() == {"authStatus": True}
+        # The middleware-populated JWT was forwarded to the SDK client.
+        mock_get_client.assert_awaited_once_with(self.TEST_JWT)
 
     def test_unauthenticated_request_returns_401(self, client):
-        """No auth → 401 in Immich's error shape (the iOS auth-guard bug fix)."""
+        """No auth → 401 in Immich's error shape, raised by the dependency before
+        any backend probe."""
         response = client.post("/api/auth/validateToken")
 
         assert response.status_code == 401
         body = response.json()
         assert body["statusCode"] == 401
         assert body["message"] == "Authentication required"
+
+    def test_expired_jwt_returns_401(self, client):
+        """Authed session but the backend rejects the JWT → 401 "JWT has expired".
+
+        This is the fix: a present-but-expired JWT must fail validateToken so the
+        iOS auth guard bounces the user to login instead of trusting a stale token.
+        """
+        from gumnut import AuthenticationError
+
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.users.me = AsyncMock(
+            side_effect=make_sdk_status_error(
+                401,
+                "JWT has expired",
+                body={"detail": "JWT has expired"},
+                cls=AuthenticationError,
+            )
+        )
+        headers = {"Authorization": f"Bearer {self.TEST_SESSION_ID}"}
+
+        with patch(
+            "routers.utils.gumnut_client.get_gumnut_client",
+            AsyncMock(return_value=mock_client),
+        ):
+            response = client.post("/api/auth/validateToken", headers=headers)
+
+        assert response.status_code == 401
+        body = response.json()
+        assert body["statusCode"] == 401
+        assert "JWT has expired" in body["message"]
+
+    def test_transient_backend_error_does_not_return_401(self, client):
+        """A transient (non-auth) backend failure maps to 502, not 401.
+
+        validateToken gates when the auth guard logs the user out, so only a
+        genuine auth failure may return 401. A backend blip (connection error)
+        must NOT masquerade as an expired token and eject a still-valid session.
+        """
+        from tests.conftest import make_sdk_connection_error
+
+        mock_client = Mock()
+        mock_client.users.me = AsyncMock(side_effect=make_sdk_connection_error())
+        headers = {"Authorization": f"Bearer {self.TEST_SESSION_ID}"}
+
+        with patch(
+            "routers.utils.gumnut_client.get_gumnut_client",
+            AsyncMock(return_value=mock_client),
+        ):
+            response = client.post("/api/auth/validateToken", headers=headers)
+
+        assert response.status_code == 502
