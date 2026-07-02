@@ -2,7 +2,7 @@
 title: "Immich v2.7.5 → v3.0 API Change Analysis"
 status: active
 created: 2026-06-16
-last-updated: 2026-06-16
+last-updated: 2026-07-02
 ---
 
 # Immich v2.7.5 → v3.0 API Change Analysis
@@ -10,9 +10,10 @@ last-updated: 2026-06-16
 ## Context
 
 The immich-adapter currently targets the Immich **v2.7.5** release (pinned in
-`.immich-container-tag`). Immich **3.0** is imminent; the current release
-candidate is **v3.0.0-rc.0**. This document is a structural diff of the two
-OpenAPI specs, scoped to what the adapter must change to retarget 3.0.
+`.immich-container-tag`). Immich **3.0** has since shipped (**v3.0.0** GA,
+2026-06-30). This document is a structural diff of the two OpenAPI specs — 2.7.5
+against **v3.0.0-rc.0**, re-validated against the GA spec (see the GA validation
+note below) — scoped to what the adapter must change to retarget 3.0.
 
 Both specs are OpenAPI 3.0.0. The diff was produced by comparing
 `immich/open-api/immich-openapi-specs.json` (2.7.5) against
@@ -29,14 +30,39 @@ Both specs are OpenAPI 3.0.0. The diff was produced by comparing
 > **codegen-only noise** (see §1) that does not change the JSON on the wire. The
 > real behavioral surface is much smaller and is captured in §2–§6.
 
-This is RC analysis — the final 3.0 spec may differ. Re-run the diff against the
-GA spec before treating any item here as final.
+> **GA validation (2026-07-02).** This analysis was produced against
+> `v3.0.0-rc.0`. The GA spec (`v3.0.0`, tagged 2026-06-30) has since been diffed
+> against `v3.0.0-rc.0`: **no material changes for the adapter.** No endpoints or
+> schemas were added, removed, or restructured, and every §2–§6 item below is
+> byte-stable between rc.0 and GA. The only spec differences are:
+>
+> - **UUID annotations** — `format: uuid` plus a strict UUID `pattern` added to
+>   ~90 ID fields. Same codegen-noise class as §1; the wire bytes are unchanged.
+> - **Datetime pattern relaxed** — the `date-time` regex now also accepts a
+>   timezone offset (`Z` → `Z | ±HH:MM`) on every datetime field. Validation
+>   annotation only; Immich still emits UTC `Z`.
+> - **Admin config validation loosened** — cron / time-of-day `pattern`s dropped
+>   from the system-config DTOs (`DatabaseBackupConfig`, integrity and
+>   library-scan job configs). Admin-only, not adapter-facing.
+> - **New optional header** — `x-immich-hls-pos` on the HLS playlist endpoint,
+>   part of the already-new-in-3.0 adaptive-streaming surface (§4).
+> - **Doc-string fixes** — face "created manually"; `AssetBulkUploadCheckItem` /
+>   `Result.id` reframed as a client-supplied echo token (not an asset ID); and
+>   `AssetBulkUpdateDto.dateTimeRelative` corrected from "seconds" to "minutes".
+>   The Immich server has always applied `dateTimeRelative` as **minutes** (the
+>   SQL adds `${delta} minute` in 2.7.5 and 3.0 alike), so the adapter's current
+>   seconds-based handling in `routers/api/assets.py` is off by 60× — a
+>   pre-existing bug the GA doc-string fix merely surfaced, independent of the
+>   v3 retarget.
+>
+> The rc.0-based plan below therefore stands unchanged for GA.
 
 ### Reproducing the diff
 
-The comparison scripts are ad hoc Python over the two JSON specs (path set diff,
-operation-signature diff, schema property diff). They are not checked in; regenerate
-against the GA spec when it lands. Key probes: path-set difference, per-operation
+The comparison scripts are ad hoc Python/jq over the two JSON specs (path set diff,
+operation-signature diff, schema property diff). They are not checked in. The same
+probes were re-run for the rc.0 → GA (`v3.0.0`) comparison behind the GA validation
+note above. Key probes: path-set difference, per-operation
 parameter/requestBody/response signature, and per-schema property/required/enum diff.
 
 ## Goals
