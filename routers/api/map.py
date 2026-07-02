@@ -40,6 +40,14 @@ GEOTAGGED_WORLD_BBOX = "-180,-90,180,90"
 # are dropped.
 MAP_MARKERS_CAP = 2000
 
+# Safety net bounding total assets walked. In the normal path the coordinate
+# filter returns only geotagged assets, so the marker cap fires first and this
+# never triggers. It guards the degraded case where the `bbox` filter is *not*
+# applied — an older Gumnut API that ignores the unknown param (e.g. the adapter
+# deploying ahead of the API), or a filter regression — which would otherwise
+# turn a low-GPS-density library's marker request into a full-library scan.
+MAX_ASSETS_SCANNED = 30 * GUMNUT_API_MAX_PAGE_SIZE
+
 
 @router.get("/markers")
 async def get_map_markers(
@@ -83,8 +91,10 @@ async def get_map_markers(
         list_kwargs["local_datetime_before"] = fileCreatedBefore.isoformat()
 
     markers: list[MapMarkerResponseDto] = []
+    assets_scanned = 0
     marker_cap_hit = False
     async for asset in client.assets.list(**list_kwargs):
+        assets_scanned += 1
         metadata = asset.metadata
         # The bbox filter guarantees a coordinate, but guard defensively so an
         # unexpected null can't crash marker construction (lat/lon are required).
@@ -106,14 +116,24 @@ async def get_map_markers(
             if len(markers) >= MAP_MARKERS_CAP:
                 marker_cap_hit = True
                 break
+        # Safety net if the coordinate filter wasn't applied (see
+        # MAX_ASSETS_SCANNED) — bounds work so a low-GPS library can't degrade
+        # into a full-library scan.
+        if assets_scanned >= MAX_ASSETS_SCANNED:
+            break
 
+    scan_cap_hit = assets_scanned >= MAX_ASSETS_SCANNED and not marker_cap_hit
     logger.info(
-        "map markers: returned %d markers (marker_cap_hit=%s)",
+        "map markers: scanned %d assets, returned %d markers (marker_cap_hit=%s, scan_cap_hit=%s)",
+        assets_scanned,
         len(markers),
         marker_cap_hit,
+        scan_cap_hit,
         extra={
+            "assets_scanned": assets_scanned,
             "markers_returned": len(markers),
             "marker_cap_hit": marker_cap_hit,
+            "scan_cap_hit": scan_cap_hit,
         },
     )
     return markers
