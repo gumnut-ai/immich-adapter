@@ -170,8 +170,42 @@ No new `/sync` paths — `/sync/stream` + `/sync/ack` now carry **V2 variants**:
   `SyncAssetOcrDeleteV1`. `SyncAssetV1` gains required `createdAt`;
   `SyncAuthUserV1`/`SyncUserV1` `avatarColor` no longer required.
 
-v3 mobile clients will negotiate V2 + OCR entities, so this is meaningful work in
-`routers/api/sync/` (converters, types, stream).
+### What V2 actually changes
+
+At the payload level, V2 adds almost nothing over V1:
+
+- `SyncAssetV2` is `SyncAssetV1` with **`duration` as integer-milliseconds**
+  instead of the interval string — the same change as §2. This is the *only*
+  payload difference between any V1 entity and its V2.
+- `SyncAlbumV2` and `SyncAssetFaceV2` are **byte-identical** to their V1 forms.
+- The `PartnerAsset*V2` and `AlbumAsset*V2` entity types reuse `SyncAssetV2`, so
+  they inherit only the int-ms `duration`.
+- `AssetOcrV1` is a genuinely new entity type (OCR text boxes), but the adapter
+  has no OCR data — it emits nothing for it and the client tolerates the absence.
+
+### Client behavior — V1 fallback is version-gated, not negotiated
+
+The mobile client picks V1 vs V2 request types purely from the version the
+adapter reports at `GET /server/version` (upstream Immich mobile
+`mobile/lib/infrastructure/repositories/sync_api.repository.dart`):
+`assetsV2` / `albumsV2` / `albumAssetsV2` / `partnerAssetsV2` and `assetOcrV1`
+only when the reported version is `>= 3.0.0`; `assetFacesV2` at `>= 2.6.0`. A
+below-client version merely sets a "server out of date" UI banner
+(`server_info.provider.dart`) — it never blocks sync. So the reported version is
+the lever: report `< 3.0.0` and the client requests the V1 surface the adapter
+already serves; report `3.0.x` and it requests V2.
+
+The adapter already runs the V1/V2 dual pattern today: it reports 2.7.5 (from
+`.immich-container-tag`), so current clients already request `assetFacesV2`, and
+`routers/api/sync/` already carries `gumnut_face_to_sync_face_v2`, the
+`AssetFacesV2` → `AssetFaceV2` stream mapping, and "skip V1 when V2 is requested"
+logic.
+
+**Conclusion:** Sync v2 is not a long pole. Reporting `3.0.x` and adding the V2
+entity mappings is small work that reuses the §2 int-ms `duration` converter —
+`AlbumV2` is identical to V1, `AssetV2` is the int-duration asset, and
+`AssetOcrV1` emits nothing. The one non-cosmetic V1 tweak to carry over is that
+v3 makes `SyncAssetV1.createdAt` required.
 
 ---
 
@@ -218,7 +252,9 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
    `immich_models.py`) — touches every asset/timeline/upload response.
 2. **`AlbumResponseDto`** — derive owner from `albumUsers[0]`, drop
    `owner`/`ownerId`/inline `assets`.
-3. **Sync v2** — handle V2 request/entity types + OCR in `routers/api/sync/`.
+3. **Sync v2** — small: report `3.0.x`, add the V2 entity mappings reusing the
+   §2 int-ms `duration` converter (`AlbumV2` == V1; `AssetOcrV1` emits nothing).
+   The V1/V2 dual pattern already exists in `routers/api/sync/`. See §5.
 4. **Shared links** — token/key/slug access model rework.
 5. **`AssetResponseDto`** — drop device fields + `unassignedFaces`, switch
    `people` to `PersonResponseDto`.
@@ -231,10 +267,15 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
 
 ## Open questions
 
-- Does the adapter retarget 3.0 GA in one cut, or run a compatibility window
-  supporting both 2.7.5 and 3.0 clients? (Affects whether removed endpoints and
-  string-duration stay as shims.)
-- Are 3.0 mobile clients hard-requiring Sync v2, or do they fall back to V1
-  entity types? Determines whether §5 is blocking or incremental.
+- ~~Does the adapter retarget 3.0 GA in one cut, or run a compatibility window
+  supporting both 2.7.5 and 3.0 clients?~~ **Resolved: clean cut to 3.0.** The
+  product is in alpha with a handful of testers, so the supported client version
+  is set by fiat (Immich mobile + web v3). No dual-support window — removed
+  endpoints and string-`duration` need not stay as shims.
+- ~~Are 3.0 mobile clients hard-requiring Sync v2, or do they fall back to V1
+  entity types?~~ **Resolved: incremental, not blocking.** The client picks V1
+  vs V2 by the adapter's reported version, and V2 adds only int-ms `duration`
+  (§5). Reporting `3.0.x` needs only a thin V2 layer that reuses the §2 duration
+  converter.
 - Which new feature areas (if any) are in scope vs. permanent intentional gaps —
   see the companion gap analysis in `immich-adapter-gap-analysis.md`.
