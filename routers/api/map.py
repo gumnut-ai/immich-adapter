@@ -22,23 +22,23 @@ router = APIRouter(
 )
 
 
+# A bounding box covering the whole globe, passed to the Gumnut API's
+# coordinate filter so it returns *only* geotagged assets — served index-only
+# from the backend's geo covering index. This is what lets the adapter page
+# through markers instead of scanning the whole library and discarding
+# non-geotagged assets client-side. Order is
+# `min_longitude,min_latitude,max_longitude,max_latitude`.
+GEOTAGGED_WORLD_BBOX = "-180,-90,180,90"
+
 # Hard cap on returned markers. Each list page requests only `metadata` via
 # `include` — not faces/people/file_data/asset_urls — since the marker build
-# reads just three GPS fields off `metadata`. `metadata` is still the large
-# EXIF block, so paging stays the cost driver. The ~280 ms/page figure below
-# predates that trim (it was measured against the full asset payload) against a
-# real library at ~70% GPS-tagged density, so it's now an upper bound: 2000
-# markers ≈ 15 pages ≈ 4 s; 5000 ≈ 31 pages ≈ 11 s — too slow for a map-view
-# load. Revisit (a dedicated backend `/map/markers` endpoint) if real usage
-# shows 2000 is insufficient. The SDK orders by capture time descending, so
-# when the cap fires the oldest GPS-tagged assets are dropped.
+# reads just three GPS fields off `metadata`. Because the coordinate filter
+# makes every returned asset a marker, paging cost now scales with the marker
+# count, not the library's GPS density: 2000 markers ≈ 2000 / page_size pages
+# regardless of how sparsely the library is geotagged. The SDK orders by
+# capture time descending, so when the cap fires the oldest GPS-tagged assets
+# are dropped.
 MAP_MARKERS_CAP = 2000
-
-# Ceiling on assets scanned, independent of how many fill the marker cap.
-# Bounds the worst case where a low-GPS-density library would otherwise walk
-# tens of pages chasing a cap it'll never fill (e.g., 5% density × 50K assets
-# = 200 pages ≈ ~56 s without this bound). 30 pages ≈ ~8 s.
-MAX_ASSETS_SCANNED = 30 * GUMNUT_API_MAX_PAGE_SIZE
 
 
 @router.get("/markers")
@@ -73,6 +73,9 @@ async def get_map_markers(
     list_kwargs: dict[str, Any] = {
         "limit": GUMNUT_API_MAX_PAGE_SIZE,
         "include": ASSET_INCLUDE_METADATA_ONLY,
+        # Filter to geotagged assets server-side (see GEOTAGGED_WORLD_BBOX) so we
+        # page through markers, not the whole library.
+        "bbox": GEOTAGGED_WORLD_BBOX,
     }
     if fileCreatedAfter is not None:
         list_kwargs["local_datetime_after"] = fileCreatedAfter.isoformat()
@@ -80,11 +83,11 @@ async def get_map_markers(
         list_kwargs["local_datetime_before"] = fileCreatedBefore.isoformat()
 
     markers: list[MapMarkerResponseDto] = []
-    assets_scanned = 0
     marker_cap_hit = False
     async for asset in client.assets.list(**list_kwargs):
-        assets_scanned += 1
         metadata = asset.metadata
+        # The bbox filter guarantees a coordinate, but guard defensively so an
+        # unexpected null can't crash marker construction (lat/lon are required).
         if (
             metadata is not None
             and metadata.latitude is not None
@@ -103,21 +106,14 @@ async def get_map_markers(
             if len(markers) >= MAP_MARKERS_CAP:
                 marker_cap_hit = True
                 break
-        if assets_scanned >= MAX_ASSETS_SCANNED:
-            break
 
-    scan_cap_hit = assets_scanned >= MAX_ASSETS_SCANNED and not marker_cap_hit
     logger.info(
-        "map markers: scanned %d assets, returned %d markers (marker_cap_hit=%s, scan_cap_hit=%s)",
-        assets_scanned,
+        "map markers: returned %d markers (marker_cap_hit=%s)",
         len(markers),
         marker_cap_hit,
-        scan_cap_hit,
         extra={
-            "assets_scanned": assets_scanned,
             "markers_returned": len(markers),
             "marker_cap_hit": marker_cap_hit,
-            "scan_cap_hit": scan_cap_hit,
         },
     )
     return markers
