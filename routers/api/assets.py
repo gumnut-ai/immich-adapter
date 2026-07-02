@@ -768,9 +768,9 @@ class _RelativeShift(NamedTuple):
     minutes (`dateTimeRelative`).
 
     Immich applies `dateTimeRelative` as a minute offset (its
-    `updateDateTimeOriginal` adds `${delta} minute`::interval), so the adapter
-    matches that unit — the DTO's field description ("seconds") is a known
-    upstream doc-string error; the server SQL has always been minutes.
+    `updateDateTimeOriginal` adds `${delta} minute`::interval in both v2.7.5
+    and v3.0), so the adapter matches that unit — the DTO's field description
+    ("seconds") is a known upstream doc-string error.
     """
 
     relative_minutes: float
