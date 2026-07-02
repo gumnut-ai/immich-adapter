@@ -22,11 +22,16 @@ router = APIRouter(
 )
 
 
-# A bounding box covering the whole globe, passed to the Gumnut API's
-# coordinate filter so it returns *only* geotagged assets — served index-only
-# from the backend's geo covering index. This is what lets the adapter page
-# through markers instead of scanning the whole library and discarding
-# non-geotagged assets client-side. Order is
+# A bounding box covering the whole globe. Passing it to the Gumnut API's
+# coordinate filter returns *only* geotagged assets — not because it narrows the
+# area (it spans the planet) but because the filter is a coordinate *range*
+# check: an asset with no coordinate has a NULL latitude/longitude, and
+# `NULL BETWEEN min AND max` is never true, so every non-geotagged asset is
+# excluded even by a world-wide box. That lets the adapter page through markers
+# instead of scanning the whole library and discarding coordinate-less assets
+# client-side (verified: on a mixed library the newest page drops from 7
+# coordinate-less assets to 0 with this box applied). The backend serves it
+# index-only from its geo covering index. Order is
 # `min_longitude,min_latitude,max_longitude,max_latitude`.
 GEOTAGGED_WORLD_BBOX = "-180,-90,180,90"
 
