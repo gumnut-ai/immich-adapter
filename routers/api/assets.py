@@ -765,12 +765,18 @@ def _combine_datetime_with_timezone(dt: datetime, tz_name: str) -> datetime:
 
 class _RelativeShift(NamedTuple):
     """Shift each asset's existing `original_datetime` by a fixed number of
-    seconds (`dateTimeRelative`)."""
+    minutes (`dateTimeRelative`).
 
-    relative_seconds: float
+    Immich applies `dateTimeRelative` as a minute offset (its
+    `updateDateTimeOriginal` adds `${delta} minute`::interval), so the adapter
+    matches that unit — the DTO's field description ("seconds") is a known
+    upstream doc-string error; the server SQL has always been minutes.
+    """
+
+    relative_minutes: float
 
     def apply(self, current: datetime) -> datetime:
-        return current + timedelta(seconds=self.relative_seconds)
+        return current + timedelta(minutes=self.relative_minutes)
 
 
 class _ReinterpretTimezone(NamedTuple):
@@ -857,8 +863,8 @@ def _build_bulk_metadata_change(
         )
 
     if relative is not None:
-        # Per-asset second-shift; needs each asset's current datetime.
-        transform = _RelativeShift(relative_seconds=relative)
+        # Per-asset minute-shift; needs each asset's current datetime.
+        transform = _RelativeShift(relative_minutes=relative)
     elif tz_name is not None and not has_absolute_dt:
         # Standalone timeZone reinterprets each asset's existing wall-clock;
         # resolve the zone eagerly so a bad name 422s before any read.
@@ -908,7 +914,8 @@ async def update_assets(
     - absolute `dateTimeOriginal` (optionally localized by a paired
       `timeZone`) — identical for every id, so it's replicated as a single
       homogeneous `change`;
-    - `dateTimeRelative` — a per-asset second-shift; and
+    - `dateTimeRelative` — a per-asset minute-shift (matching Immich, whose
+      server applies this field as minutes); and
     - standalone `timeZone` — reinterpret each asset's existing wall-clock in
       the given zone.
 

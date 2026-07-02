@@ -1455,7 +1455,8 @@ class TestUpdateAssets:
     @pytest.mark.anyio
     async def test_update_assets_relative_datetime_shifts_per_asset(self):
         # `dateTimeRelative` shifts each asset's existing datetime by N
-        # seconds: read current values, add the delta, write per-asset.
+        # minutes (matching Immich): read current values, add the delta,
+        # write per-asset.
         mock_client = Mock()
         mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
         a, b = uuid4(), uuid4()
@@ -1469,10 +1470,10 @@ class TestUpdateAssets:
         assert result.status_code == 204
         by_id = self._change_by_id(mock_client.assets.bulk_update_assets)
         assert by_id[uuid_to_gumnut_asset_id(a)] == {
-            "original_datetime": base_a + timedelta(seconds=3600)
+            "original_datetime": base_a + timedelta(minutes=3600)
         }
         assert by_id[uuid_to_gumnut_asset_id(b)] == {
-            "original_datetime": base_b + timedelta(seconds=3600)
+            "original_datetime": base_b + timedelta(minutes=3600)
         }
 
     @pytest.mark.anyio
@@ -1497,7 +1498,7 @@ class TestUpdateAssets:
         self._assert_calls_homogeneous_change(
             mock_client.assets.bulk_update_assets,
             [has_dt],
-            {"original_datetime": base + timedelta(seconds=60)},
+            {"original_datetime": base + timedelta(minutes=60)},
         )
 
     @pytest.mark.anyio
@@ -1522,7 +1523,7 @@ class TestUpdateAssets:
         by_id = self._change_by_id(mock_client.assets.bulk_update_assets)
         assert by_id[uuid_to_gumnut_asset_id(has_dt)] == {
             "description": "caption",
-            "original_datetime": base + timedelta(seconds=60),
+            "original_datetime": base + timedelta(minutes=60),
         }
         assert by_id[uuid_to_gumnut_asset_id(no_dt)] == {"description": "caption"}
 
@@ -1552,7 +1553,7 @@ class TestUpdateAssets:
         self._assert_calls_homogeneous_change(
             mock_client.assets.bulk_update_assets,
             [trashed],
-            {"original_datetime": base + timedelta(seconds=3600)},
+            {"original_datetime": base + timedelta(minutes=3600)},
         )
 
     @pytest.mark.anyio
@@ -1812,7 +1813,7 @@ class TestUpdateAssets:
         for call in mock_client.assets.bulk_update_assets.await_args_list:
             for item in call.kwargs["updates"]:
                 assert item["change"] == {
-                    "original_datetime": base + timedelta(seconds=60)
+                    "original_datetime": base + timedelta(minutes=60)
                 }
 
     @pytest.mark.anyio
