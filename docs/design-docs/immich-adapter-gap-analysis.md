@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-06-16
+last-updated: 2026-07-03
 ---
 
 # Immich Adapter Gap Analysis
@@ -88,9 +88,9 @@ Immich tags allow hierarchical labeling of assets (e.g., `vacation/2024/beach`).
 
 Immich has a map view showing photo locations on a world map based on GPS coordinates from EXIF data.
 
-**Current behavior**: Implemented. `GET /map/markers` paginates `client.assets.list()`, filters in-process for assets with `metadata.latitude`/`longitude`, and returns up to 2000 markers (newest first). The `map` server-feature flag is on, so Immich web and mobile render the map view.
+**Current behavior**: Implemented. `GET /map/markers` passes a world-wide `bbox` to `client.assets.list()` so the Gumnut API returns only geotagged assets, then returns up to 2000 markers (newest first). A scan bound remains only as a degraded-path safety net if the coordinate filter is unavailable. The `map` server-feature flag is on, so Immich web and mobile render the map view.
 
-**Status**: **Closed** — adapter-side wire-up; no backend changes. Reverse-geocoding (3b) remains the outstanding map-related gap.
+**Status**: **Closed** — adapter-side wire-up over the Gumnut API's coordinate filter. Reverse-geocoding (3b) remains the outstanding map-related gap.
 
 ---
 
@@ -633,7 +633,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 
 | Gap | Effort | Dependency | Rationale |
 |-----|--------|------------|-----------|
-| ~~#3a Map markers~~ | — | — | Closed — adapter wire-up over `client.assets.list()`; 2000-marker cap |
+| ~~#3a Map markers~~ | — | — | Closed — server-side geotag filter via `client.assets.list(bbox=...)`; 2000-marker cap |
 | #34 Performance (pagination) | L | Both | Scaling requirement |
 | #8 Memories (write path) | S | Both | Read path shipped; only save/hide persistence remains |
 | #2 Tags | L | Both | Power-user organization |
