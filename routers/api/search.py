@@ -1,18 +1,25 @@
+import asyncio
 import logging
+import random
 from typing import Any, List
 from fastapi import APIRouter, Depends, Query
 from uuid import UUID
 from datetime import datetime
 from gumnut import AsyncGumnut
+from gumnut.types.asset_response import AssetResponse
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.current_user import get_current_user
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_person_id
+from routers.utils.gumnut_id_conversion import (
+    uuid_to_gumnut_album_id,
+    uuid_to_gumnut_person_id,
+)
 from routers.utils.person_conversion import convert_gumnut_person_to_immich
 from routers.immich_models import (
     PersonResponseDto,
     SearchAlbumResponseDto,
+    SearchExploreItem,
     SearchExploreResponseDto,
     AssetResponseDto,
     AssetTypeEnum,
@@ -29,7 +36,12 @@ from routers.immich_models import (
     UserResponseDto,
 )
 from routers.api.timeline import fetch_asset_counts
-from routers.utils.asset_conversion import ASSET_INCLUDE, convert_gumnut_asset_to_immich
+from routers.utils.asset_conversion import (
+    ASSET_INCLUDE,
+    ASSET_INCLUDE_METADATA_ONLY,
+    convert_gumnut_asset_to_immich,
+    mime_type_to_asset_type,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +51,100 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+# Explore derives its "Places" cities from a bounded window of the most recent
+# live assets rather than a full-library scan; older cities that don't appear
+# in the window are omitted. Field limits mirror the Immich server defaults
+# (maxFields=12, minAssetsPerField=5).
+EXPLORE_SCAN_LIMIT = 1000
+EXPLORE_MAX_CITIES = 12
+EXPLORE_MIN_ASSETS_PER_CITY = 5
+EXPLORE_MAX_RECENT_ASSETS = 12
+
+# The Immich server samples 250 assets when the request doesn't specify a size.
+RANDOM_DEFAULT_SIZE = 250
+
 
 @router.get("/explore")
 async def get_explore_data(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> List[SearchExploreResponseDto]:
     """
-    Return a list of map markers.
-    This is a stub implementation that returns an empty list.
-    """
+    Return curated explore categories: one representative image per city
+    ("exifInfo.city", the group the Immich web and mobile explore pages
+    render as Places) and the most recently created images ("createdAt").
 
-    return []
+    Cities are derived from the `EXPLORE_SCAN_LIMIT` most recent live assets;
+    only cities with at least `EXPLORE_MIN_ASSETS_PER_CITY` images in that
+    window are included, capped at `EXPLORE_MAX_CITIES`.
+    """
+    scanned: list[AssetResponse] = []
+    async for asset in client.assets.list(
+        state="live",
+        limit=GUMNUT_API_MAX_PAGE_SIZE,
+        include=ASSET_INCLUDE_METADATA_ONLY,
+    ):
+        scanned.append(asset)
+        if len(scanned) >= EXPLORE_SCAN_LIMIT:
+            break
+
+    # Newest-first scan order, so the first asset seen for a city is its
+    # most recent image and becomes the representative.
+    city_representative: dict[str, str] = {}
+    city_counts: dict[str, int] = {}
+    recent_ids: list[str] = []
+    for asset in scanned:
+        if mime_type_to_asset_type(asset.mime_type) != AssetTypeEnum.IMAGE:
+            continue
+        if len(recent_ids) < EXPLORE_MAX_RECENT_ASSETS:
+            recent_ids.append(asset.id)
+        city = asset.metadata.city if asset.metadata else None
+        if city:
+            city_str = str(city)
+            city_counts[city_str] = city_counts.get(city_str, 0) + 1
+            city_representative.setdefault(city_str, asset.id)
+
+    cities = [
+        city
+        for city in city_representative
+        if city_counts[city] >= EXPLORE_MIN_ASSETS_PER_CITY
+    ][:EXPLORE_MAX_CITIES]
+
+    # Re-fetch the representatives with the full include set (the scan is
+    # metadata-only) in one batched call.
+    wanted_ids = list(
+        dict.fromkeys([city_representative[city] for city in cities] + recent_ids)
+    )
+    assets_by_id: dict[str, AssetResponse] = {}
+    if wanted_ids:
+        async for asset in client.assets.list(ids=wanted_ids, include=ASSET_INCLUDE):
+            assets_by_id[asset.id] = asset
+
+    converted = {
+        asset_id: convert_gumnut_asset_to_immich(asset, current_user)
+        for asset_id, asset in assets_by_id.items()
+    }
+
+    # Assets may disappear between the scan and the batched re-fetch; skip
+    # any representative that no longer resolves.
+    city_items = [
+        SearchExploreItem(value=city, data=converted[city_representative[city]])
+        for city in cities
+        if city_representative[city] in converted
+    ]
+    recent_items = [
+        SearchExploreItem(
+            value=assets_by_id[asset_id].created_at.isoformat(),
+            data=converted[asset_id],
+        )
+        for asset_id in recent_ids
+        if asset_id in converted
+    ]
+
+    return [
+        SearchExploreResponseDto(fieldName="exifInfo.city", items=city_items),
+        SearchExploreResponseDto(fieldName="createdAt", items=recent_items),
+    ]
 
 
 @router.post("/large-assets")
@@ -242,13 +337,132 @@ async def get_assets_by_city(
     return []
 
 
+def _month_window(time_bucket: datetime) -> tuple[datetime, datetime]:
+    """Return the naive [month_start, next_month_start) window for a count bucket."""
+    month_start = time_bucket.replace(
+        tzinfo=None, day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    if month_start.month == 12:
+        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month_start = month_start.replace(month=month_start.month + 1)
+    return month_start, next_month_start
+
+
+async def _fetch_month_assets_at_offsets(
+    client: AsyncGumnut,
+    time_bucket: datetime,
+    offsets: list[int],
+    *,
+    album_id: str | None,
+    person_id: str | None,
+) -> list[AssetResponse]:
+    """Fetch the assets at the given newest-first offsets within a month bucket.
+
+    Pages through the month only as far as the largest requested offset. If
+    the library changed between the counts call and this fetch, offsets past
+    the end of the month are silently skipped, so the sample may come up
+    short rather than erroring.
+    """
+    month_start, next_month_start = _month_window(time_bucket)
+    wanted = set(offsets)
+    max_offset = max(offsets)
+
+    list_kwargs: dict[str, Any] = {
+        "local_datetime_after": month_start.isoformat(),
+        "local_datetime_before": next_month_start.isoformat(),
+        "state": "live",
+        "limit": GUMNUT_API_MAX_PAGE_SIZE,
+        "include": ASSET_INCLUDE,
+    }
+    if album_id is not None:
+        list_kwargs["album_id"] = album_id
+    if person_id is not None:
+        list_kwargs["person_id"] = person_id
+
+    picked: list[AssetResponse] = []
+    index = 0
+    async for asset in client.assets.list(**list_kwargs):
+        if index in wanted:
+            picked.append(asset)
+        index += 1
+        if index > max_offset:
+            break
+    return picked
+
+
 @router.post("/random")
 async def search_random(
     request: RandomSearchDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
 ) -> List[AssetResponseDto]:
     """
-    Get random assets.
-    This is a stub implementation that returns an empty list.
+    Return a uniform random sample of live assets.
+
+    Samples without a full-library scan: fetches the per-month asset counts,
+    draws distinct global indices across the newest-first ordering, and pages
+    only the months containing sampled indices.
+
+    Supported filters: `size` (defaults to `RANDOM_DEFAULT_SIZE`, matching the
+    Immich server), and single-element `albumIds` / `personIds`. Requests for
+    favorites or non-timeline visibility return an empty list (Gumnut does not
+    support favorites, hidden, archived or locked assets), as do multi-element
+    `albumIds` / `personIds` (no Gumnut API for those combinations). Other
+    metadata filters are not supported and are ignored.
     """
-    return []
+    if request.isFavorite or (
+        request.visibility is not None
+        and request.visibility != AssetVisibility.timeline
+    ):
+        return []
+    if request.albumIds and len(request.albumIds) > 1:
+        return []
+    if request.personIds and len(request.personIds) > 1:
+        return []
+
+    album_id = (
+        uuid_to_gumnut_album_id(request.albumIds[0]) if request.albumIds else None
+    )
+    person_id = (
+        uuid_to_gumnut_person_id(request.personIds[0]) if request.personIds else None
+    )
+
+    buckets = await fetch_asset_counts(client, album_id=album_id, person_id=person_id)
+    total = sum(bucket.count for bucket in buckets)
+    if total == 0:
+        return []
+
+    sample_size = min(
+        int(request.size) if request.size is not None else RANDOM_DEFAULT_SIZE, total
+    )
+    picks = sorted(random.sample(range(total), sample_size))
+
+    # Map sampled global indices (over the newest-first ordering the counts
+    # buckets and asset listings share) to per-month offsets.
+    months_with_offsets: list[tuple[datetime, list[int]]] = []
+    cursor = 0
+    pick_iter = iter(picks)
+    current_pick = next(pick_iter, None)
+    for bucket in buckets:
+        bucket_end = cursor + bucket.count
+        offsets: list[int] = []
+        while current_pick is not None and current_pick < bucket_end:
+            offsets.append(current_pick - cursor)
+            current_pick = next(pick_iter, None)
+        if offsets:
+            months_with_offsets.append((bucket.time_bucket, offsets))
+        cursor = bucket_end
+
+    month_results = await asyncio.gather(
+        *(
+            _fetch_month_assets_at_offsets(
+                client, time_bucket, offsets, album_id=album_id, person_id=person_id
+            )
+            for time_bucket, offsets in months_with_offsets
+        )
+    )
+
+    sampled = [asset for month_assets in month_results for asset in month_assets]
+    random.shuffle(sampled)
+    return [convert_gumnut_asset_to_immich(asset, current_user) for asset in sampled]

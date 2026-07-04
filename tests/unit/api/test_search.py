@@ -6,17 +6,22 @@ from uuid import uuid4
 from datetime import datetime, timezone
 
 from routers.api.search import (
+    get_explore_data,
     search_person,
     search_assets,
     search_asset_statistics,
+    search_random,
     search_smart,
 )
 from routers.immich_models import (
+    AssetVisibility,
     MetadataSearchDto,
+    RandomSearchDto,
     SmartSearchDto,
     StatisticsSearchDto,
 )
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
     safe_uuid_from_person_id,
     uuid_to_gumnut_person_id,
 )
@@ -458,3 +463,391 @@ class TestSearchSmart:
             "people",
             "file_data",
         ]
+
+
+def _make_search_asset(taken_at: datetime, mime_type: str = "image/jpeg") -> Mock:
+    """Create a mock Gumnut AssetResponse with the full include set."""
+    from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
+
+    asset = Mock()
+    asset.id = uuid_to_gumnut_asset_id(uuid4())
+    asset.original_file_name = "photo.jpg"
+    asset.mime_type = mime_type
+    asset.thumbhash = None
+    asset.created_at = taken_at
+    asset.updated_at = taken_at
+    asset.local_datetime = taken_at
+    asset.width = 1920
+    asset.height = 1080
+    asset.duration = None
+    # File/provenance scalars live on the nested ``file_data`` group
+    # (requested via ``include=file_data``); the adapter reads them from there.
+    asset.file_data = Mock()
+    asset.file_data.checksum = "abc123"
+    asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+    asset.file_data.file_created_at = taken_at
+    asset.file_data.file_modified_at = taken_at
+    asset.file_data.file_size_bytes = 1024000
+    asset.metadata = None
+    asset.people = []
+    asset.trashed_at = None
+    return asset
+
+
+def _scan_view(asset: Mock, city: str | None) -> Mock:
+    """Create the metadata-only scan-time view of an asset (same id, city set)."""
+    scan = Mock()
+    scan.id = asset.id
+    scan.mime_type = asset.mime_type
+    scan.created_at = asset.created_at
+    scan.metadata = Mock()
+    scan.metadata.city = city
+    return scan
+
+
+def _counts_response(buckets: list[Mock]) -> Mock:
+    response = Mock()
+    response.data = buckets
+    response.has_more = False
+    return response
+
+
+class TestSearchExplore:
+    """Test the get_explore_data endpoint."""
+
+    @pytest.mark.anyio
+    async def test_returns_city_and_recents_groups(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """Cities with enough images produce an exifInfo.city item; recents fill createdAt."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        city_assets = [_make_search_asset(now) for _ in range(5)]
+        no_city_asset = _make_search_asset(now)
+        full_assets = city_assets + [no_city_asset]
+        scan_assets = [_scan_view(a, "Sydney") for a in city_assets] + [
+            _scan_view(no_city_asset, None)
+        ]
+
+        def list_side_effect(**kwargs):
+            if "ids" in kwargs:
+                wanted = set(kwargs["ids"])
+                return mock_sync_cursor_page([a for a in full_assets if a.id in wanted])
+            return mock_sync_cursor_page(scan_assets)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(side_effect=list_side_effect)
+
+        result = await get_explore_data(
+            client=mock_client, current_user=mock_current_user
+        )
+
+        assert [group.fieldName for group in result] == ["exifInfo.city", "createdAt"]
+        city_group, recents_group = result
+        assert len(city_group.items) == 1
+        assert city_group.items[0].value == "Sydney"
+        # The representative is the newest (first-scanned) image for the city.
+        assert city_group.items[0].data.originalFileName == "photo.jpg"
+        assert len(recents_group.items) == 6
+
+    @pytest.mark.anyio
+    async def test_city_below_min_threshold_excluded(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """Cities with fewer images than the minimum don't get an explore entry."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        full_assets = [_make_search_asset(now) for _ in range(4)]
+        scan_assets = [_scan_view(a, "Perth") for a in full_assets]
+
+        def list_side_effect(**kwargs):
+            if "ids" in kwargs:
+                return mock_sync_cursor_page(full_assets)
+            return mock_sync_cursor_page(scan_assets)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(side_effect=list_side_effect)
+
+        result = await get_explore_data(
+            client=mock_client, current_user=mock_current_user
+        )
+
+        city_group = result[0]
+        assert city_group.fieldName == "exifInfo.city"
+        assert city_group.items == []
+
+    @pytest.mark.anyio
+    async def test_empty_library_returns_empty_groups(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """An empty library still returns both groups (clients look them up by name)."""
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page([]))
+
+        result = await get_explore_data(
+            client=mock_client, current_user=mock_current_user
+        )
+
+        assert [group.fieldName for group in result] == ["exifInfo.city", "createdAt"]
+        assert all(group.items == [] for group in result)
+        # No batched re-fetch when nothing was scanned.
+        assert mock_client.assets.list.call_count == 1
+
+    @pytest.mark.anyio
+    async def test_videos_are_ignored(self, mock_sync_cursor_page, mock_current_user):
+        """Only images count toward cities and recents, matching the Immich server."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        videos = [_make_search_asset(now, mime_type="video/mp4") for _ in range(5)]
+        scan_assets = [_scan_view(a, "Hobart") for a in videos]
+
+        def list_side_effect(**kwargs):
+            if "ids" in kwargs:
+                return mock_sync_cursor_page(videos)
+            return mock_sync_cursor_page(scan_assets)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(side_effect=list_side_effect)
+
+        result = await get_explore_data(
+            client=mock_client, current_user=mock_current_user
+        )
+
+        assert all(group.items == [] for group in result)
+
+    @pytest.mark.anyio
+    async def test_sdk_error_propagates(self, mock_current_user):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(side_effect=make_sdk_status_error(500, "boom"))
+
+        with pytest.raises(APIStatusError):
+            await get_explore_data(client=mock_client, current_user=mock_current_user)
+
+
+class TestSearchRandom:
+    """Test the search_random endpoint."""
+
+    def _client_with_months(
+        self,
+        mock_sync_cursor_page,
+        months: dict[str, list[Mock]],
+        buckets: list[Mock],
+    ) -> Mock:
+        """Mock counts + a per-month assets.list keyed by local_datetime_after."""
+        mock_client = Mock()
+        mock_client.assets.counts = AsyncMock(return_value=_counts_response(buckets))
+
+        def list_side_effect(**kwargs):
+            return mock_sync_cursor_page(months[kwargs["local_datetime_after"]])
+
+        mock_client.assets.list = Mock(side_effect=list_side_effect)
+        return mock_client
+
+    @pytest.mark.anyio
+    async def test_returns_empty_for_favorites(self, mock_current_user):
+        """Gumnut has no favorites, so isFavorite=True returns an empty list."""
+        mock_client = Mock()
+
+        result = await search_random(
+            request=RandomSearchDto(isFavorite=True),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result == []
+        mock_client.assets.counts.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_returns_empty_for_non_timeline_visibility(self, mock_current_user):
+        """Gumnut has no hidden/archived/locked assets."""
+        mock_client = Mock()
+
+        result = await search_random(
+            request=RandomSearchDto(visibility=AssetVisibility.archive),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result == []
+        mock_client.assets.counts.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_returns_empty_for_multiple_album_or_person_ids(
+        self, mock_current_user
+    ):
+        """Multi-element albumIds/personIds have no Gumnut API equivalent."""
+        mock_client = Mock()
+
+        for request in (
+            RandomSearchDto(albumIds=[uuid4(), uuid4()]),
+            RandomSearchDto(personIds=[uuid4(), uuid4()]),
+        ):
+            result = await search_random(
+                request=request, client=mock_client, current_user=mock_current_user
+            )
+            assert result == []
+        mock_client.assets.counts.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_returns_empty_when_library_empty(self, mock_current_user):
+        """No count buckets means nothing to sample."""
+        mock_client = Mock()
+        mock_client.assets.counts = AsyncMock(return_value=_counts_response([]))
+
+        result = await search_random(
+            request=RandomSearchDto(),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result == []
+        mock_client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_returns_all_assets_when_size_exceeds_total(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """When size >= total, every asset comes back exactly once."""
+        feb_assets = [
+            _make_search_asset(datetime(2024, 2, 10, tzinfo=timezone.utc))
+            for _ in range(2)
+        ]
+        jan_assets = [
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+            for _ in range(3)
+        ]
+        buckets = [
+            _make_count_bucket(2, datetime(2024, 2, 1)),
+            _make_count_bucket(3, datetime(2024, 1, 1)),
+        ]
+        months = {
+            "2024-02-01T00:00:00": feb_assets,
+            "2024-01-01T00:00:00": jan_assets,
+        }
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        result = await search_random(
+            request=RandomSearchDto(size=10),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        expected_uuids = {
+            str(safe_uuid_from_asset_id(a.id)) for a in feb_assets + jan_assets
+        }
+        assert {asset.id for asset in result} == expected_uuids
+
+    @pytest.mark.anyio
+    async def test_month_windows_passed_to_list(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """Sampled months are fetched with naive month-boundary date windows."""
+        jan_assets = [
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+            for _ in range(2)
+        ]
+        buckets = [_make_count_bucket(2, datetime(2024, 1, 1))]
+        months = {"2024-01-01T00:00:00": jan_assets}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        await search_random(
+            request=RandomSearchDto(size=2),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        list_kwargs = mock_client.assets.list.call_args.kwargs
+        assert list_kwargs["local_datetime_after"] == "2024-01-01T00:00:00"
+        assert list_kwargs["local_datetime_before"] == "2024-02-01T00:00:00"
+        assert list_kwargs["state"] == "live"
+
+    @pytest.mark.anyio
+    async def test_sample_smaller_than_total(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """A sample smaller than the library returns exactly `size` distinct assets."""
+        jan_assets = [
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+            for _ in range(5)
+        ]
+        buckets = [_make_count_bucket(5, datetime(2024, 1, 1))]
+        months = {"2024-01-01T00:00:00": jan_assets}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        result = await search_random(
+            request=RandomSearchDto(size=2),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert len(result) == 2
+        all_uuids = {str(safe_uuid_from_asset_id(a.id)) for a in jan_assets}
+        assert {asset.id for asset in result} <= all_uuids
+        assert len({asset.id for asset in result}) == 2
+
+    @pytest.mark.anyio
+    async def test_single_album_filter_forwarded(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """A single-element albumIds filter is forwarded to counts and list."""
+        from routers.utils.gumnut_id_conversion import uuid_to_gumnut_album_id
+
+        album_uuid = uuid4()
+        jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))]
+        buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
+        months = {"2024-01-01T00:00:00": jan_assets}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        result = await search_random(
+            request=RandomSearchDto(albumIds=[album_uuid], size=1),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        expected_album_id = uuid_to_gumnut_album_id(album_uuid)
+        assert (
+            mock_client.assets.counts.call_args.kwargs["album_id"] == expected_album_id
+        )
+        assert mock_client.assets.list.call_args.kwargs["album_id"] == expected_album_id
+        assert len(result) == 1
+
+    @pytest.mark.anyio
+    async def test_stale_counts_return_short_sample(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """If assets vanish between counts and fetch, the sample comes up short, not 500."""
+        jan_assets = [
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+            for _ in range(2)
+        ]
+        # Counts claim 4 assets but the month only yields 2.
+        buckets = [_make_count_bucket(4, datetime(2024, 1, 1))]
+        months = {"2024-01-01T00:00:00": jan_assets}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        result = await search_random(
+            request=RandomSearchDto(size=4),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert len(result) == 2
+
+    @pytest.mark.anyio
+    async def test_sdk_error_propagates(self, mock_current_user):
+        """SDK errors bubble up; the global GumnutError handler maps them."""
+        from gumnut import APIStatusError
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.assets.counts = AsyncMock(
+            side_effect=make_sdk_status_error(500, "boom")
+        )
+
+        with pytest.raises(APIStatusError):
+            await search_random(
+                request=RandomSearchDto(),
+                client=mock_client,
+                current_user=mock_current_user,
+            )
