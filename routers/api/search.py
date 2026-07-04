@@ -51,10 +51,8 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-# Explore derives its "Places" cities from a bounded window of the most recent
-# live assets rather than a full-library scan; older cities that don't appear
-# in the window are omitted. Field limits mirror the Immich server defaults
-# (maxFields=12, minAssetsPerField=5).
+# Field limits mirror the Immich server defaults (maxFields=12,
+# minAssetsPerField=5); the derivation is described in get_explore_data.
 EXPLORE_SCAN_LIMIT = 1000
 EXPLORE_MAX_CITIES = 12
 EXPLORE_MIN_ASSETS_PER_CITY = 5
@@ -508,9 +506,7 @@ async def search_random(
 
     sampled = [asset for month_assets in month_results for asset in month_assets]
     if request.type is not None:
-        # Post-sample filtering keeps the sample uniform over matching assets
-        # (the Gumnut API has no server-side type filter) at the cost of
-        # under-filling `size` when the library is sparse in the type.
+        # Post-sample filter — rationale in the docstring's `type` note.
         sampled = [
             asset
             for asset in sampled

@@ -6,6 +6,7 @@ from uuid import uuid4
 from datetime import datetime, timezone
 
 from routers.api.search import (
+    _fetch_month_assets_at_offsets,
     get_explore_data,
     search_person,
     search_assets,
@@ -20,6 +21,10 @@ from routers.immich_models import (
     RandomSearchDto,
     SmartSearchDto,
     StatisticsSearchDto,
+)
+from routers.utils.asset_conversion import (
+    ASSET_INCLUDE,
+    ASSET_INCLUDE_METADATA_ONLY,
 )
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
@@ -41,6 +46,11 @@ def _make_person(
     person.created_at = datetime.now(timezone.utc)
     person.updated_at = datetime.now(timezone.utc)
     return person
+
+
+# Exclusive lower bound month_query_bounds emits for a January-2024 bucket;
+# used to key the per-month assets.list mocks in TestSearchRandom.
+JAN_2024_AFTER_BOUND = "2023-12-31T23:59:59.999999"
 
 
 def _make_count_bucket(count: int, time_bucket: datetime) -> Mock:
@@ -547,8 +557,17 @@ class TestSearchExplore:
         assert len(city_group.items) == 1
         assert city_group.items[0].value == "Sydney"
         # The representative is the newest (first-scanned) image for the city.
-        assert city_group.items[0].data.originalFileName == "photo.jpg"
+        assert city_group.items[0].data.id == str(
+            safe_uuid_from_asset_id(city_assets[0].id)
+        )
         assert len(recents_group.items) == 6
+        # The scan is metadata-only; the batched re-fetch carries the full
+        # include set the conversion needs.
+        scan_kwargs = mock_client.assets.list.call_args_list[0].kwargs
+        assert scan_kwargs["include"] == ASSET_INCLUDE_METADATA_ONLY
+        assert scan_kwargs["state"] == "live"
+        refetch_kwargs = mock_client.assets.list.call_args_list[1].kwargs
+        assert refetch_kwargs["include"] == ASSET_INCLUDE
 
     @pytest.mark.anyio
     async def test_city_below_min_threshold_excluded(
@@ -670,6 +689,63 @@ class TestSearchExplore:
         assert [item.value for item in city_group.items] == ["Sydney", "Perth"]
 
     @pytest.mark.anyio
+    async def test_scan_stops_at_scan_limit(
+        self, mock_sync_cursor_page, mock_current_user, monkeypatch
+    ):
+        """Assets past EXPLORE_SCAN_LIMIT are never considered."""
+        monkeypatch.setattr("routers.api.search.EXPLORE_SCAN_LIMIT", 2)
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        full_assets = [_make_search_asset(now) for _ in range(3)]
+        scan_assets = [_scan_view(a, None) for a in full_assets]
+
+        def list_side_effect(**kwargs):
+            if "ids" in kwargs:
+                wanted = set(kwargs["ids"])
+                return mock_sync_cursor_page([a for a in full_assets if a.id in wanted])
+            return mock_sync_cursor_page(scan_assets)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(side_effect=list_side_effect)
+
+        result = await get_explore_data(
+            client=mock_client, current_user=mock_current_user
+        )
+
+        recents_group = result[1]
+        # Only the first two scanned assets made it into recents.
+        assert [item.data.id for item in recents_group.items] == [
+            str(safe_uuid_from_asset_id(a.id)) for a in full_assets[:2]
+        ]
+
+    @pytest.mark.anyio
+    async def test_recents_capped_at_max_recent_assets(
+        self, mock_sync_cursor_page, mock_current_user, monkeypatch
+    ):
+        """The recents group holds at most EXPLORE_MAX_RECENT_ASSETS items."""
+        monkeypatch.setattr("routers.api.search.EXPLORE_MAX_RECENT_ASSETS", 2)
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        full_assets = [_make_search_asset(now) for _ in range(3)]
+        scan_assets = [_scan_view(a, None) for a in full_assets]
+
+        def list_side_effect(**kwargs):
+            if "ids" in kwargs:
+                wanted = set(kwargs["ids"])
+                return mock_sync_cursor_page([a for a in full_assets if a.id in wanted])
+            return mock_sync_cursor_page(scan_assets)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(side_effect=list_side_effect)
+
+        result = await get_explore_data(
+            client=mock_client, current_user=mock_current_user
+        )
+
+        recents_group = result[1]
+        assert [item.data.id for item in recents_group.items] == [
+            str(safe_uuid_from_asset_id(a.id)) for a in full_assets[:2]
+        ]
+
+    @pytest.mark.anyio
     async def test_sdk_error_propagates(self, mock_current_user):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
@@ -775,7 +851,7 @@ class TestSearchRandom:
         image = _make_search_asset(taken)
         video = _make_search_asset(taken, mime_type="video/mp4")
         buckets = [_make_count_bucket(2, datetime(2024, 1, 1))]
-        months = {"2023-12-31T23:59:59.999999": [image, video]}
+        months = {JAN_2024_AFTER_BOUND: [image, video]}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
@@ -795,7 +871,7 @@ class TestSearchRandom:
         """A type with no matching assets in the sample yields an empty list."""
         image = _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
-        months = {"2023-12-31T23:59:59.999999": [image]}
+        months = {JAN_2024_AFTER_BOUND: [image]}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
@@ -856,7 +932,7 @@ class TestSearchRandom:
         """Response-shape hints, widening flags, and falsy booleans don't empty the sample."""
         jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))]
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
-        months = {"2023-12-31T23:59:59.999999": jan_assets}
+        months = {JAN_2024_AFTER_BOUND: jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
@@ -910,7 +986,7 @@ class TestSearchRandom:
         ]
         months = {
             "2024-01-31T23:59:59.999999": feb_assets,
-            "2023-12-31T23:59:59.999999": jan_assets,
+            JAN_2024_AFTER_BOUND: jan_assets,
         }
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
@@ -935,7 +1011,7 @@ class TestSearchRandom:
             for _ in range(2)
         ]
         buckets = [_make_count_bucket(2, datetime(2024, 1, 1))]
-        months = {"2023-12-31T23:59:59.999999": jan_assets}
+        months = {JAN_2024_AFTER_BOUND: jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         await search_random(
@@ -948,6 +1024,7 @@ class TestSearchRandom:
         assert list_kwargs["local_datetime_after"] == "2023-12-31T23:59:59.999999"
         assert list_kwargs["local_datetime_before"] == "2024-02-01T00:00:00"
         assert list_kwargs["state"] == "live"
+        assert list_kwargs["include"] == ASSET_INCLUDE
 
     @pytest.mark.anyio
     async def test_sample_smaller_than_total(
@@ -959,7 +1036,7 @@ class TestSearchRandom:
             for _ in range(5)
         ]
         buckets = [_make_count_bucket(5, datetime(2024, 1, 1))]
-        months = {"2023-12-31T23:59:59.999999": jan_assets}
+        months = {JAN_2024_AFTER_BOUND: jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
@@ -983,7 +1060,7 @@ class TestSearchRandom:
         album_uuid = uuid4()
         jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))]
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
-        months = {"2023-12-31T23:59:59.999999": jan_assets}
+        months = {JAN_2024_AFTER_BOUND: jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
@@ -997,6 +1074,33 @@ class TestSearchRandom:
             mock_client.assets.counts.call_args.kwargs["album_id"] == expected_album_id
         )
         assert mock_client.assets.list.call_args.kwargs["album_id"] == expected_album_id
+        assert len(result) == 1
+
+    @pytest.mark.anyio
+    async def test_single_person_filter_forwarded(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """A single-element personIds filter is forwarded to counts and list."""
+        person_uuid = uuid4()
+        jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))]
+        buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
+        months = {JAN_2024_AFTER_BOUND: jan_assets}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        result = await search_random(
+            request=RandomSearchDto(personIds=[person_uuid], size=1),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        expected_person_id = uuid_to_gumnut_person_id(person_uuid)
+        assert (
+            mock_client.assets.counts.call_args.kwargs["person_id"]
+            == expected_person_id
+        )
+        assert (
+            mock_client.assets.list.call_args.kwargs["person_id"] == expected_person_id
+        )
         assert len(result) == 1
 
     @pytest.mark.anyio
@@ -1032,7 +1136,7 @@ class TestSearchRandom:
             for _ in range(3)
         ]
         buckets = [_make_count_bucket(3, datetime(2024, 1, 1))]
-        months = {"2023-12-31T23:59:59.999999": jan_assets}
+        months = {JAN_2024_AFTER_BOUND: jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
@@ -1063,7 +1167,7 @@ class TestSearchRandom:
         ]
         months = {
             "2024-01-31T23:59:59.999999": feb_assets,
-            "2023-12-31T23:59:59.999999": jan_assets,
+            JAN_2024_AFTER_BOUND: jan_assets,
         }
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
@@ -1096,7 +1200,7 @@ class TestSearchRandom:
         ]
         # Counts claim 4 assets but the month only yields 2.
         buckets = [_make_count_bucket(4, datetime(2024, 1, 1))]
-        months = {"2023-12-31T23:59:59.999999": jan_assets}
+        months = {JAN_2024_AFTER_BOUND: jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
@@ -1106,6 +1210,43 @@ class TestSearchRandom:
         )
 
         assert len(result) == 2
+
+    @pytest.mark.anyio
+    async def test_month_fetch_stops_at_max_offset(self):
+        """The month fetch pages only as far as the largest requested offset."""
+
+        class _TrackingPage:
+            """Async-iterable page that records how many items were consumed."""
+
+            def __init__(self, items):
+                self._items = items
+                self.consumed = 0
+
+            async def __aiter__(self):
+                for item in self._items:
+                    self.consumed += 1
+                    yield item
+
+        jan_assets = [
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+            for _ in range(10)
+        ]
+        page = _TrackingPage(jan_assets)
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=page)
+
+        picked = await _fetch_month_assets_at_offsets(
+            mock_client,
+            datetime(2024, 1, 1),
+            [1, 3],
+            album_id=None,
+            person_id=None,
+        )
+
+        assert picked == [jan_assets[1], jan_assets[3]]
+        # Iteration stopped right after the largest offset instead of paging
+        # the remaining six assets in the month.
+        assert page.consumed == 4
 
     @pytest.mark.anyio
     async def test_sdk_error_propagates(self, mock_current_user):
