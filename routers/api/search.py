@@ -402,11 +402,15 @@ async def search_random(
     only the months containing sampled indices.
 
     Supported filters: `size` (defaults to `RANDOM_DEFAULT_SIZE`, matching the
-    Immich server), and single-element `albumIds` / `personIds`. Requests for
-    favorites or non-timeline visibility return an empty list (Gumnut does not
-    support favorites, hidden, archived or locked assets), as do multi-element
-    `albumIds` / `personIds` (no Gumnut API for those combinations). Other
-    metadata filters are not supported and are ignored.
+    Immich server), and single-element `albumIds` / `personIds`. Any other
+    restricting filter (asset type, date bounds, location/camera metadata,
+    tags, rating, etc.) has no Gumnut API translation and returns an empty
+    list rather than silently sampling assets the caller filtered out — the
+    same posture the timeline endpoint takes for favorites and non-timeline
+    visibility. Response-shape hints (`withExif`, `withPeople`, `withStacked`)
+    are always satisfied (the sample converts with the full include set), and
+    `withDeleted` is ignored: it *widens* the requested set to include trashed
+    assets, so a live-only sample still matches the filter.
     """
     if request.isFavorite or (
         request.visibility is not None
@@ -416,6 +420,44 @@ async def search_random(
     if request.albumIds and len(request.albumIds) > 1:
         return []
     if request.personIds and len(request.personIds) > 1:
+        return []
+    # Restricting filters with no Gumnut API translation. Sampling without
+    # applying them would return assets the caller explicitly filtered out,
+    # so return empty instead. Booleans count only when truthy: `False` on
+    # flags like isMotion/isEncoded matches effectively every Gumnut asset
+    # (the backing features don't exist), so it doesn't restrict the sample.
+    unsupported_value_filters = (
+        request.city,
+        request.country,
+        request.state,
+        request.createdAfter,
+        request.createdBefore,
+        request.takenAfter,
+        request.takenBefore,
+        request.trashedAfter,
+        request.trashedBefore,
+        request.updatedAfter,
+        request.updatedBefore,
+        request.deviceId,
+        request.lensModel,
+        request.libraryId,
+        request.make,
+        request.model,
+        request.ocr,
+        request.rating,
+        request.type,
+    )
+    unsupported_flag_filters = (
+        request.isEncoded,
+        request.isMotion,
+        request.isNotInAlbum,
+        request.isOffline,
+    )
+    if (
+        any(value is not None for value in unsupported_value_filters)
+        or any(unsupported_flag_filters)
+        or request.tagIds
+    ):
         return []
 
     album_id = (

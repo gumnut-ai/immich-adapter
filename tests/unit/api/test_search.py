@@ -14,6 +14,7 @@ from routers.api.search import (
     search_smart,
 )
 from routers.immich_models import (
+    AssetTypeEnum,
     AssetVisibility,
     MetadataSearchDto,
     RandomSearchDto,
@@ -744,6 +745,54 @@ class TestSearchRandom:
             )
             assert result == []
         mock_client.assets.counts.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_returns_empty_for_unsupported_restricting_filters(
+        self, mock_current_user
+    ):
+        """Filters with no Gumnut translation return empty, never a mis-filtered sample."""
+        mock_client = Mock()
+
+        for request in (
+            RandomSearchDto(type=AssetTypeEnum.VIDEO),
+            RandomSearchDto(takenAfter=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            RandomSearchDto(city="Sydney"),
+            RandomSearchDto(rating=0),
+            RandomSearchDto(isMotion=True),
+            RandomSearchDto(tagIds=[uuid4()]),
+        ):
+            result = await search_random(
+                request=request, client=mock_client, current_user=mock_current_user
+            )
+            assert result == []
+        mock_client.assets.counts.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_non_restricting_fields_still_sample(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """Response-shape hints, widening flags, and falsy booleans don't empty the sample."""
+        jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))]
+        buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
+        months = {"2024-01-01T00:00:00": jan_assets}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        result = await search_random(
+            request=RandomSearchDto(
+                size=1,
+                withExif=True,
+                withPeople=True,
+                withStacked=True,
+                withDeleted=True,
+                isMotion=False,
+                isEncoded=False,
+                isFavorite=False,
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert len(result) == 1
 
     @pytest.mark.anyio
     async def test_returns_empty_when_library_empty(self, mock_current_user):
