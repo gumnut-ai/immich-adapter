@@ -17,8 +17,8 @@ Today, the core photo workflow works: upload, browse timeline, organize into alb
 
 | Category | Endpoint count | Status |
 |----------|---------------|--------|
-| Fully implemented (real SDK calls) | ~77 | Assets (including video playback), albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
-| Stubs (empty/fake responses) | ~114 | Tags, shared links, stacks, activities, admin, server info, etc. |
+| Fully implemented (real SDK calls) | ~79 | Assets (including video playback), albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
+| Stubs (empty/fake responses) | ~112 | Tags, shared links, stacks, activities, admin, server info, etc. |
 | Total in adapter | ~192 | |
 | Not routed (no adapter endpoint) | ~52 | Immich endpoints with no adapter route at all (e.g., asset edits, database backups, workflows, plugins, some auth/admin endpoints) |
 | Total in Immich v2.7.5 spec | 244 | |
