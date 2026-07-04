@@ -34,7 +34,7 @@ from routers.immich_models import (
     StatisticsSearchDto,
     UserResponseDto,
 )
-from routers.api.timeline import fetch_asset_counts, month_window
+from routers.api.timeline import fetch_asset_counts, month_query_bounds
 from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.asset_conversion import (
     ASSET_INCLUDE,
@@ -354,13 +354,13 @@ async def _fetch_month_assets_at_offsets(
     the end of the month are silently skipped, so the sample may come up
     short rather than erroring.
     """
-    month_start, next_month_start = month_window(time_bucket)
+    after_bound, before_bound = month_query_bounds(time_bucket)
     wanted = set(offsets)
     max_offset = max(offsets)
 
     list_kwargs: dict[str, Any] = {
-        "local_datetime_after": month_start.isoformat(),
-        "local_datetime_before": next_month_start.isoformat(),
+        "local_datetime_after": after_bound,
+        "local_datetime_before": before_bound,
         "state": "live",
         "limit": GUMNUT_API_MAX_PAGE_SIZE,
         "include": ASSET_INCLUDE,
@@ -381,7 +381,7 @@ async def _fetch_month_assets_at_offsets(
     if len(picked) < len(wanted):
         logger.debug(
             "random sample month %s yielded %d of %d requested offsets",
-            month_start.isoformat(),
+            time_bucket.isoformat(),
             len(picked),
             len(wanted),
         )
@@ -402,15 +402,18 @@ async def search_random(
     only the months containing sampled indices.
 
     Supported filters: `size` (defaults to `RANDOM_DEFAULT_SIZE`, matching the
-    Immich server), and single-element `albumIds` / `personIds`. Any other
-    restricting filter (asset type, date bounds, location/camera metadata,
-    tags, rating, etc.) has no Gumnut API translation and returns an empty
-    list rather than silently sampling assets the caller filtered out — the
-    same posture the timeline endpoint takes for favorites and non-timeline
-    visibility. Response-shape hints (`withExif`, `withPeople`, `withStacked`)
-    are always satisfied (the sample converts with the full include set), and
-    `withDeleted` is ignored: it *widens* the requested set to include trashed
-    assets, so a live-only sample still matches the filter.
+    Immich server), single-element `albumIds` / `personIds`, and `type`.
+    `type` is applied to the drawn sample (the Gumnut API cannot filter by
+    asset type server-side), so each matching asset is equally likely but the
+    response may hold fewer than `size` items when the library is sparse in
+    that type. Any other restricting filter (date bounds, location/camera
+    metadata, tags, rating, etc.) has no Gumnut API translation and returns
+    an empty list rather than silently sampling assets the caller filtered
+    out — the same posture the timeline endpoint takes for favorites and
+    non-timeline visibility. Response-shape hints (`withExif`, `withPeople`,
+    `withStacked`) are always satisfied (the sample converts with the full
+    include set), and `withDeleted` is ignored: it *widens* the requested set
+    to include trashed assets, so a live-only sample still matches the filter.
     """
     if request.isFavorite or (
         request.visibility is not None
@@ -445,7 +448,6 @@ async def search_random(
         request.model,
         request.ocr,
         request.rating,
-        request.type,
     )
     unsupported_flag_filters = (
         request.isEncoded,
@@ -505,5 +507,14 @@ async def search_random(
     )
 
     sampled = [asset for month_assets in month_results for asset in month_assets]
+    if request.type is not None:
+        # Post-sample filtering keeps the sample uniform over matching assets
+        # (the Gumnut API has no server-side type filter) at the cost of
+        # under-filling `size` when the library is sparse in the type.
+        sampled = [
+            asset
+            for asset in sampled
+            if mime_type_to_asset_type(asset.mime_type) == request.type
+        ]
     random.shuffle(sampled)
     return [convert_gumnut_asset_to_immich(asset, current_user) for asset in sampled]

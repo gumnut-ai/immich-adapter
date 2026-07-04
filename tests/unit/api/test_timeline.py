@@ -9,6 +9,7 @@ from routers.api.timeline import (
     get_time_buckets,
     get_time_bucket,
     fetch_asset_counts,
+    month_query_bounds,
     month_window,
 )
 from routers.immich_models import (
@@ -22,9 +23,10 @@ from routers.utils.gumnut_id_conversion import (
 )
 
 # Expected date range query for January 2024 — the most common test timeBucket.
-# Half-open interval: [month_start, next_month_start)
+# The after bound backs off 1µs from month start because the Gumnut API treats
+# local_datetime_after as exclusive (see month_query_bounds).
 JANUARY_2024_DATE_RANGE = {
-    "local_datetime_after": "2024-01-01T00:00:00",
+    "local_datetime_after": "2023-12-31T23:59:59.999999",
     "local_datetime_before": "2024-02-01T00:00:00",
 }
 
@@ -121,6 +123,33 @@ class TestMonthWindow:
         assert next_month_start == expected_end
         assert month_start.tzinfo is None
         assert next_month_start.tzinfo is None
+
+
+class TestMonthQueryBounds:
+    """Test the month_query_bounds helper."""
+
+    @pytest.mark.parametrize(
+        ("moment", "expected_after", "expected_before"),
+        [
+            # The after bound backs off 1µs so exclusive comparison at the
+            # Gumnut API still includes month-start-midnight assets.
+            (
+                datetime(2024, 3, 15, 12, 30, 45),
+                "2024-02-29T23:59:59.999999",
+                "2024-04-01T00:00:00",
+            ),
+            # January backs off into the previous year.
+            (
+                datetime(2024, 1, 1),
+                "2023-12-31T23:59:59.999999",
+                "2024-02-01T00:00:00",
+            ),
+        ],
+    )
+    def test_bounds(self, moment, expected_after, expected_before):
+        after_bound, before_bound = month_query_bounds(moment)
+        assert after_bound == expected_after
+        assert before_bound == expected_before
 
 
 class TestFetchAssetCounts:
@@ -1073,7 +1102,7 @@ class TestTimezoneAwareTimeBucket:
 
             assert mock_client.assets.list.call_count == 1
             assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
-                "local_datetime_after": "2025-10-01T00:00:00",
+                "local_datetime_after": "2025-09-30T23:59:59.999999",
                 "local_datetime_before": "2025-11-01T00:00:00",
             }
 
@@ -1093,7 +1122,7 @@ class TestTimezoneAwareTimeBucket:
 
             assert mock_client.assets.list.call_count == 1
             assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
-                "local_datetime_after": "2024-06-01T00:00:00",
+                "local_datetime_after": "2024-05-31T23:59:59.999999",
                 "local_datetime_before": "2024-07-01T00:00:00",
             }
 
@@ -1115,7 +1144,7 @@ class TestDateRangeFiltering:
 
             mock_client.assets.list.assert_called_once_with(
                 extra_query={
-                    "local_datetime_after": "2024-02-01T00:00:00",
+                    "local_datetime_after": "2024-01-31T23:59:59.999999",
                     "local_datetime_before": "2024-03-01T00:00:00",
                 }
             )
@@ -1134,7 +1163,7 @@ class TestDateRangeFiltering:
 
             mock_client.assets.list.assert_called_once_with(
                 extra_query={
-                    "local_datetime_after": "2023-02-01T00:00:00",
+                    "local_datetime_after": "2023-01-31T23:59:59.999999",
                     "local_datetime_before": "2023-03-01T00:00:00",
                 }
             )
@@ -1153,7 +1182,7 @@ class TestDateRangeFiltering:
 
             mock_client.assets.list.assert_called_once_with(
                 extra_query={
-                    "local_datetime_after": "2024-04-01T00:00:00",
+                    "local_datetime_after": "2024-03-31T23:59:59.999999",
                     "local_datetime_before": "2024-05-01T00:00:00",
                 }
             )
@@ -1172,7 +1201,7 @@ class TestDateRangeFiltering:
 
             mock_client.assets.list.assert_called_once_with(
                 extra_query={
-                    "local_datetime_after": "2024-12-01T00:00:00",
+                    "local_datetime_after": "2024-11-30T23:59:59.999999",
                     "local_datetime_before": "2025-01-01T00:00:00",
                 }
             )

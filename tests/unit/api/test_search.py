@@ -754,7 +754,6 @@ class TestSearchRandom:
         mock_client = Mock()
 
         for request in (
-            RandomSearchDto(type=AssetTypeEnum.VIDEO),
             RandomSearchDto(takenAfter=datetime(2024, 1, 1, tzinfo=timezone.utc)),
             RandomSearchDto(city="Sydney"),
             RandomSearchDto(rating=0),
@@ -767,6 +766,46 @@ class TestSearchRandom:
             assert result == []
         mock_client.assets.counts.assert_not_called()
 
+    @pytest.mark.anyio
+    async def test_type_filter_applied_to_sample(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """`type` filters the drawn sample by MIME-derived asset type."""
+        taken = datetime(2024, 1, 15, tzinfo=timezone.utc)
+        image = _make_search_asset(taken)
+        video = _make_search_asset(taken, mime_type="video/mp4")
+        buckets = [_make_count_bucket(2, datetime(2024, 1, 1))]
+        months = {"2023-12-31T23:59:59.999999": [image, video]}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        result = await search_random(
+            request=RandomSearchDto(size=2, type=AssetTypeEnum.IMAGE),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert [asset.id for asset in result] == [
+            str(safe_uuid_from_asset_id(image.id))
+        ]
+
+    @pytest.mark.anyio
+    async def test_type_filter_with_no_matches_returns_empty(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """A type with no matching assets in the sample yields an empty list."""
+        image = _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+        buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
+        months = {"2023-12-31T23:59:59.999999": [image]}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        result = await search_random(
+            request=RandomSearchDto(size=1, type=AssetTypeEnum.VIDEO),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result == []
+
     def test_all_dto_fields_have_a_disposition(self):
         """Force a conscious decision when the generated DTO gains fields.
 
@@ -776,7 +815,7 @@ class TestSearchRandom:
         silently ignored and the endpoint would sample assets the caller
         filtered out.
         """
-        translated = {"size", "albumIds", "personIds"}
+        translated = {"size", "albumIds", "personIds", "type"}
         guarded = {
             "isFavorite",
             "visibility",
@@ -799,7 +838,6 @@ class TestSearchRandom:
             "ocr",
             "rating",
             "tagIds",
-            "type",
             "isEncoded",
             "isMotion",
             "isNotInAlbum",
@@ -818,7 +856,7 @@ class TestSearchRandom:
         """Response-shape hints, widening flags, and falsy booleans don't empty the sample."""
         jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))]
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
-        months = {"2024-01-01T00:00:00": jan_assets}
+        months = {"2023-12-31T23:59:59.999999": jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
@@ -871,8 +909,8 @@ class TestSearchRandom:
             _make_count_bucket(3, datetime(2024, 1, 1)),
         ]
         months = {
-            "2024-02-01T00:00:00": feb_assets,
-            "2024-01-01T00:00:00": jan_assets,
+            "2024-01-31T23:59:59.999999": feb_assets,
+            "2023-12-31T23:59:59.999999": jan_assets,
         }
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
@@ -897,7 +935,7 @@ class TestSearchRandom:
             for _ in range(2)
         ]
         buckets = [_make_count_bucket(2, datetime(2024, 1, 1))]
-        months = {"2024-01-01T00:00:00": jan_assets}
+        months = {"2023-12-31T23:59:59.999999": jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         await search_random(
@@ -907,7 +945,7 @@ class TestSearchRandom:
         )
 
         list_kwargs = mock_client.assets.list.call_args.kwargs
-        assert list_kwargs["local_datetime_after"] == "2024-01-01T00:00:00"
+        assert list_kwargs["local_datetime_after"] == "2023-12-31T23:59:59.999999"
         assert list_kwargs["local_datetime_before"] == "2024-02-01T00:00:00"
         assert list_kwargs["state"] == "live"
 
@@ -921,7 +959,7 @@ class TestSearchRandom:
             for _ in range(5)
         ]
         buckets = [_make_count_bucket(5, datetime(2024, 1, 1))]
-        months = {"2024-01-01T00:00:00": jan_assets}
+        months = {"2023-12-31T23:59:59.999999": jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
@@ -945,7 +983,7 @@ class TestSearchRandom:
         album_uuid = uuid4()
         jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))]
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
-        months = {"2024-01-01T00:00:00": jan_assets}
+        months = {"2023-12-31T23:59:59.999999": jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
@@ -971,7 +1009,7 @@ class TestSearchRandom:
             for _ in range(2)
         ]
         buckets = [_make_count_bucket(2, datetime(2024, 12, 1))]
-        months = {"2024-12-01T00:00:00": dec_assets}
+        months = {"2024-11-30T23:59:59.999999": dec_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         await search_random(
@@ -981,7 +1019,7 @@ class TestSearchRandom:
         )
 
         list_kwargs = mock_client.assets.list.call_args.kwargs
-        assert list_kwargs["local_datetime_after"] == "2024-12-01T00:00:00"
+        assert list_kwargs["local_datetime_after"] == "2024-11-30T23:59:59.999999"
         assert list_kwargs["local_datetime_before"] == "2025-01-01T00:00:00"
 
     @pytest.mark.anyio
@@ -994,7 +1032,7 @@ class TestSearchRandom:
             for _ in range(3)
         ]
         buckets = [_make_count_bucket(3, datetime(2024, 1, 1))]
-        months = {"2024-01-01T00:00:00": jan_assets}
+        months = {"2023-12-31T23:59:59.999999": jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
@@ -1024,8 +1062,8 @@ class TestSearchRandom:
             _make_count_bucket(3, datetime(2024, 1, 1)),
         ]
         months = {
-            "2024-02-01T00:00:00": feb_assets,
-            "2024-01-01T00:00:00": jan_assets,
+            "2024-01-31T23:59:59.999999": feb_assets,
+            "2023-12-31T23:59:59.999999": jan_assets,
         }
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
@@ -1058,7 +1096,7 @@ class TestSearchRandom:
         ]
         # Counts claim 4 assets but the month only yields 2.
         buckets = [_make_count_bucket(4, datetime(2024, 1, 1))]
-        months = {"2024-01-01T00:00:00": jan_assets}
+        months = {"2023-12-31T23:59:59.999999": jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
