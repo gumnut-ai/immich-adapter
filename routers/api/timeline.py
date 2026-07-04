@@ -65,12 +65,15 @@ async def fetch_asset_counts(
 
 
 def month_window(moment: datetime) -> tuple[datetime, datetime]:
-    """Return the naive [month_start, next_month_start) window containing `moment`.
+    """Return the naive (month_start, next_month_start) window containing `moment`.
 
     Boundaries are naive on purpose: the Gumnut API counts endpoint groups by
     date_trunc("month", local_datetime) on the naive column, so month windows
     used to fetch a bucket's assets must compare wall-clock local_datetime
-    directly. Uses a half-open interval for clean boundaries.
+    directly. Note the Gumnut API treats `local_datetime_after` as exclusive,
+    so an asset captured at exactly month-start midnight is counted in the
+    bucket but skipped by a listing over this window — an accepted edge case
+    (matches the prior inline behavior of the time-bucket endpoint).
     """
     month_start = moment.replace(
         tzinfo=None, day=1, hour=0, minute=0, second=0, microsecond=0

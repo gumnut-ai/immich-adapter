@@ -9,6 +9,7 @@ from routers.api.timeline import (
     get_time_buckets,
     get_time_bucket,
     fetch_asset_counts,
+    month_window,
 )
 from routers.immich_models import (
     AssetOrder,
@@ -86,6 +87,40 @@ def call_get_time_bucket(timeBucket, **kwargs):
     }
     defaults.update(kwargs)
     return get_time_bucket(timeBucket, **defaults)  # type: ignore
+
+
+class TestMonthWindow:
+    """Test the month_window helper."""
+
+    @pytest.mark.parametrize(
+        ("moment", "expected_start", "expected_end"),
+        [
+            # Mid-month naive input truncates to the month start.
+            (
+                datetime(2024, 3, 15, 12, 30, 45),
+                datetime(2024, 3, 1),
+                datetime(2024, 4, 1),
+            ),
+            # Timezone-aware input is stripped to a naive boundary.
+            (
+                datetime(2024, 3, 15, tzinfo=timezone.utc),
+                datetime(2024, 3, 1),
+                datetime(2024, 4, 1),
+            ),
+            # December rolls over into January of the next year.
+            (
+                datetime(2024, 12, 31, 23, 59, 59),
+                datetime(2024, 12, 1),
+                datetime(2025, 1, 1),
+            ),
+        ],
+    )
+    def test_window_boundaries(self, moment, expected_start, expected_end):
+        month_start, next_month_start = month_window(moment)
+        assert month_start == expected_start
+        assert next_month_start == expected_end
+        assert month_start.tzinfo is None
+        assert next_month_start.tzinfo is None
 
 
 class TestFetchAssetCounts:

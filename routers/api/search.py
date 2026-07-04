@@ -72,7 +72,9 @@ async def get_explore_data(
     """
     Return curated explore categories: one representative image per city
     ("exifInfo.city", the group the Immich web and mobile explore pages
-    render as Places) and the most recently created images ("createdAt").
+    render as Places) and a recent-images group ("createdAt"). The recents
+    group approximates the Immich server's most-recently-*uploaded* group
+    using capture-time order, the only ordering the Gumnut list API offers.
 
     Cities are derived from the `EXPLORE_SCAN_LIMIT` most recent live assets;
     only cities with at least `EXPLORE_MIN_ASSETS_PER_CITY` images in that
