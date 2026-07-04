@@ -302,6 +302,8 @@ async for asset in client.assets.list(local_datetime_after=..., limit=N):
 
 Without the break, a `limit=1` "is this non-empty?" probe on a busy day burns one round-trip per matching asset.
 
+The `local_datetime_after` / `local_datetime_before` list filters are **exclusive on both ends**. Don't pass a month start directly as the after-bound — an asset captured exactly at month-start midnight is counted in that month's `counts` bucket but excluded from the listing. Build month windows with `month_query_bounds` in `routers/api/timeline.py`, which backs the after-bound off by one microsecond.
+
 ### Parallel Fan-Out with `asyncio.gather`
 
 For endpoints that fan out N parallel backend calls where partial results are friendlier than a 500 (e.g., the OnThisDay memories carousel — N-1 years still produces a useful response), pass `return_exceptions=True` so a single transient failure doesn't cancel the others. Filter on `Exception`, not `BaseException`, so `asyncio.CancelledError` (which inherits from `BaseException`) propagates instead of being swallowed as a backend error:
