@@ -613,6 +613,62 @@ class TestSearchExplore:
         assert all(group.items == [] for group in result)
 
     @pytest.mark.anyio
+    async def test_vanished_representative_skipped(
+        self, mock_sync_cursor_page, mock_current_user, monkeypatch
+    ):
+        """Representatives missing from the batched re-fetch are skipped, not 500s."""
+        monkeypatch.setattr("routers.api.search.EXPLORE_MIN_ASSETS_PER_CITY", 1)
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        asset = _make_search_asset(now)
+        scan_assets = [_scan_view(asset, "Darwin")]
+
+        def list_side_effect(**kwargs):
+            if "ids" in kwargs:
+                # Asset vanished between the scan and the re-fetch.
+                return mock_sync_cursor_page([])
+            return mock_sync_cursor_page(scan_assets)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(side_effect=list_side_effect)
+
+        result = await get_explore_data(
+            client=mock_client, current_user=mock_current_user
+        )
+
+        assert all(group.items == [] for group in result)
+
+    @pytest.mark.anyio
+    async def test_city_cap_applied(
+        self, mock_sync_cursor_page, mock_current_user, monkeypatch
+    ):
+        """No more than the configured maximum number of cities is returned."""
+        monkeypatch.setattr("routers.api.search.EXPLORE_MIN_ASSETS_PER_CITY", 1)
+        monkeypatch.setattr("routers.api.search.EXPLORE_MAX_CITIES", 2)
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        full_assets = [_make_search_asset(now) for _ in range(3)]
+        scan_assets = [
+            _scan_view(asset, city)
+            for asset, city in zip(full_assets, ["Sydney", "Perth", "Hobart"])
+        ]
+
+        def list_side_effect(**kwargs):
+            if "ids" in kwargs:
+                wanted = set(kwargs["ids"])
+                return mock_sync_cursor_page([a for a in full_assets if a.id in wanted])
+            return mock_sync_cursor_page(scan_assets)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(side_effect=list_side_effect)
+
+        result = await get_explore_data(
+            client=mock_client, current_user=mock_current_user
+        )
+
+        city_group = result[0]
+        # Newest-first scan order determines which cities make the cut.
+        assert [item.value for item in city_group.items] == ["Sydney", "Perth"]
+
+    @pytest.mark.anyio
     async def test_sdk_error_propagates(self, mock_current_user):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
@@ -811,6 +867,92 @@ class TestSearchRandom:
         )
         assert mock_client.assets.list.call_args.kwargs["album_id"] == expected_album_id
         assert len(result) == 1
+
+    @pytest.mark.anyio
+    async def test_december_rollover_month_window(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """A December bucket's window rolls over into January of the next year."""
+        dec_assets = [
+            _make_search_asset(datetime(2024, 12, 15, tzinfo=timezone.utc))
+            for _ in range(2)
+        ]
+        buckets = [_make_count_bucket(2, datetime(2024, 12, 1))]
+        months = {"2024-12-01T00:00:00": dec_assets}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        await search_random(
+            request=RandomSearchDto(size=2),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        list_kwargs = mock_client.assets.list.call_args.kwargs
+        assert list_kwargs["local_datetime_after"] == "2024-12-01T00:00:00"
+        assert list_kwargs["local_datetime_before"] == "2025-01-01T00:00:00"
+
+    @pytest.mark.anyio
+    async def test_default_size_caps_at_total(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """With no size, the default (250) is capped at the library total."""
+        jan_assets = [
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+            for _ in range(3)
+        ]
+        buckets = [_make_count_bucket(3, datetime(2024, 1, 1))]
+        months = {"2024-01-01T00:00:00": jan_assets}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        result = await search_random(
+            request=RandomSearchDto(),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        expected_uuids = {str(safe_uuid_from_asset_id(a.id)) for a in jan_assets}
+        assert {asset.id for asset in result} == expected_uuids
+
+    @pytest.mark.anyio
+    async def test_offset_mapping_across_bucket_boundary(
+        self, mock_sync_cursor_page, mock_current_user, monkeypatch
+    ):
+        """Global indices map to the correct per-month offsets across buckets."""
+        feb_assets = [
+            _make_search_asset(datetime(2024, 2, 10, tzinfo=timezone.utc))
+            for _ in range(2)
+        ]
+        jan_assets = [
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+            for _ in range(3)
+        ]
+        buckets = [
+            _make_count_bucket(2, datetime(2024, 2, 1)),
+            _make_count_bucket(3, datetime(2024, 1, 1)),
+        ]
+        months = {
+            "2024-02-01T00:00:00": feb_assets,
+            "2024-01-01T00:00:00": jan_assets,
+        }
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        # Pin the draw to global indices 1 and 2: the last asset of the newer
+        # (February) bucket and the first asset of the older (January) bucket.
+        monkeypatch.setattr(
+            "routers.api.search.random.sample", lambda population, k: [1, 2]
+        )
+
+        result = await search_random(
+            request=RandomSearchDto(size=2),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        expected_uuids = {
+            str(safe_uuid_from_asset_id(feb_assets[1].id)),
+            str(safe_uuid_from_asset_id(jan_assets[0].id)),
+        }
+        assert {asset.id for asset in result} == expected_uuids
 
     @pytest.mark.anyio
     async def test_stale_counts_return_short_sample(

@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import random
 from typing import Any, List
@@ -35,7 +34,8 @@ from routers.immich_models import (
     StatisticsSearchDto,
     UserResponseDto,
 )
-from routers.api.timeline import fetch_asset_counts
+from routers.api.timeline import fetch_asset_counts, month_window
+from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.asset_conversion import (
     ASSET_INCLUDE,
     ASSET_INCLUDE_METADATA_ONLY,
@@ -337,18 +337,6 @@ async def get_assets_by_city(
     return []
 
 
-def _month_window(time_bucket: datetime) -> tuple[datetime, datetime]:
-    """Return the naive [month_start, next_month_start) window for a count bucket."""
-    month_start = time_bucket.replace(
-        tzinfo=None, day=1, hour=0, minute=0, second=0, microsecond=0
-    )
-    if month_start.month == 12:
-        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
-    else:
-        next_month_start = month_start.replace(month=month_start.month + 1)
-    return month_start, next_month_start
-
-
 async def _fetch_month_assets_at_offsets(
     client: AsyncGumnut,
     time_bucket: datetime,
@@ -364,7 +352,7 @@ async def _fetch_month_assets_at_offsets(
     the end of the month are silently skipped, so the sample may come up
     short rather than erroring.
     """
-    month_start, next_month_start = _month_window(time_bucket)
+    month_start, next_month_start = month_window(time_bucket)
     wanted = set(offsets)
     max_offset = max(offsets)
 
@@ -388,6 +376,13 @@ async def _fetch_month_assets_at_offsets(
         index += 1
         if index > max_offset:
             break
+    if len(picked) < len(wanted):
+        logger.debug(
+            "random sample month %s yielded %d of %d requested offsets",
+            month_start.isoformat(),
+            len(picked),
+            len(wanted),
+        )
     return picked
 
 
@@ -454,13 +449,15 @@ async def search_random(
             months_with_offsets.append((bucket.time_bucket, offsets))
         cursor = bucket_end
 
-    month_results = await asyncio.gather(
-        *(
+    # A 250-asset sample over a long-lived library can touch hundreds of
+    # months; bound the fan-out so one request can't swamp the backend.
+    month_results = await gather_with_concurrency(
+        [
             _fetch_month_assets_at_offsets(
                 client, time_bucket, offsets, album_id=album_id, person_id=person_id
             )
             for time_bucket, offsets in months_with_offsets
-        )
+        ]
     )
 
     sampled = [asset for month_assets in month_results for asset in month_assets]

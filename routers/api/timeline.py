@@ -64,6 +64,24 @@ async def fetch_asset_counts(
     return all_buckets
 
 
+def month_window(moment: datetime) -> tuple[datetime, datetime]:
+    """Return the naive [month_start, next_month_start) window containing `moment`.
+
+    Boundaries are naive on purpose: the Gumnut API counts endpoint groups by
+    date_trunc("month", local_datetime) on the naive column, so month windows
+    used to fetch a bucket's assets must compare wall-clock local_datetime
+    directly. Uses a half-open interval for clean boundaries.
+    """
+    month_start = moment.replace(
+        tzinfo=None, day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    if month_start.month == 12:
+        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month_start = month_start.replace(month=month_start.month + 1)
+    return month_start, next_month_start
+
+
 @router.get("/buckets")
 async def get_time_buckets(
     albumId: UUID = Query(default=None),
@@ -151,16 +169,9 @@ async def get_time_bucket(
 
     # Compute month boundaries from timeBucket for server-side date filtering.
     # The Immich client may send naive ("2024-01-01T00:00:00") or UTC-aware
-    # ("2024-01-01T00:00:00.000Z") timestamps. We always strip timezone info
-    # so boundaries are naive, matching the Gumnut API counts endpoint which
-    # groups by date_trunc("month", local_datetime) on the naive column.
-    # Uses a half-open interval [month_start, next_month_start) for clean boundaries.
-    bucket_date = datetime.fromisoformat(timeBucket).replace(tzinfo=None)
-    month_start = bucket_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    if month_start.month == 12:
-        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
-    else:
-        next_month_start = month_start.replace(month=month_start.month + 1)
+    # ("2024-01-01T00:00:00.000Z") timestamps; month_window strips timezone
+    # info so boundaries are naive (see its docstring for why).
+    month_start, next_month_start = month_window(datetime.fromisoformat(timeBucket))
     date_range_query = {
         "local_datetime_after": month_start.isoformat(),
         "local_datetime_before": next_month_start.isoformat(),
