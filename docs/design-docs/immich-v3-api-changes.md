@@ -2,7 +2,7 @@
 title: "Immich v2.7.5 → v3.0 API Change Analysis"
 status: active
 created: 2026-06-16
-last-updated: 2026-07-02
+last-updated: 2026-07-04
 ---
 
 # Immich v2.7.5 → v3.0 API Change Analysis
@@ -50,10 +50,11 @@ Both specs are OpenAPI 3.0.0. The diff was produced by comparing
 >   `Result.id` reframed as a client-supplied echo token (not an asset ID); and
 >   `AssetBulkUpdateDto.dateTimeRelative` corrected from "seconds" to "minutes".
 >   The Immich server has always applied `dateTimeRelative` as **minutes** (the
->   SQL adds `${delta} minute` in 2.7.5 and 3.0 alike), so the adapter's current
->   seconds-based handling in `routers/api/assets.py` is off by 60× — a
->   pre-existing bug the GA doc-string fix merely surfaced, independent of the
->   v3 retarget.
+>   SQL adds `${delta} minute` in 2.7.5 and 3.0 alike), so the GA spec is just
+>   documenting the long-standing runtime behavior. The adapter now matches that
+>   minute-based unit in `routers/api/assets.py`; the remaining "seconds"
+>   wording lives only in the generated 2.7.5 model description in
+>   `routers/immich_models.py`, so this spec fix adds no new 3.0 retarget work.
 >
 > The rc.0-based plan below therefore stands unchanged for GA.
 
