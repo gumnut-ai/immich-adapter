@@ -767,6 +767,50 @@ class TestSearchRandom:
             assert result == []
         mock_client.assets.counts.assert_not_called()
 
+    def test_all_dto_fields_have_a_disposition(self):
+        """Force a conscious decision when the generated DTO gains fields.
+
+        The filter guard in search_random is a hand-maintained enumeration of
+        RandomSearchDto fields. immich_models.py is regenerated from the
+        Immich OpenAPI spec, so a new restricting field would otherwise be
+        silently ignored and the endpoint would sample assets the caller
+        filtered out.
+        """
+        translated = {"size", "albumIds", "personIds"}
+        guarded = {
+            "isFavorite",
+            "visibility",
+            "city",
+            "country",
+            "state",
+            "createdAfter",
+            "createdBefore",
+            "takenAfter",
+            "takenBefore",
+            "trashedAfter",
+            "trashedBefore",
+            "updatedAfter",
+            "updatedBefore",
+            "deviceId",
+            "lensModel",
+            "libraryId",
+            "make",
+            "model",
+            "ocr",
+            "rating",
+            "tagIds",
+            "type",
+            "isEncoded",
+            "isMotion",
+            "isNotInAlbum",
+            "isOffline",
+        }
+        non_restricting = {"withDeleted", "withExif", "withPeople", "withStacked"}
+
+        assert set(RandomSearchDto.model_fields) == (
+            translated | guarded | non_restricting
+        )
+
     @pytest.mark.anyio
     async def test_non_restricting_fields_still_sample(
         self, mock_sync_cursor_page, mock_current_user
