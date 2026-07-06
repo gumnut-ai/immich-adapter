@@ -108,7 +108,7 @@ mistake it for behavioral change.
 | **`AlbumResponseDto` restructured** | Removed `assets`, `owner`, `ownerId`. Owner now derived from **`albumUsers[0]`** (now `minItems:1`; documented ordering: owner first, then auth user if different, rest alphabetical). `shared` now required. | Album responses no longer inline assets or owner. Album conversion must populate `albumUsers[0]` as owner and stop emitting `owner`/`ownerId`/`assets`. |
 | **`AssetResponseDto` face/device fields** | Removed `deviceAssetId`, `deviceId`, `unassignedFaces`. `people`: `PersonWithFacesResponseDto` → `PersonResponseDto` (no inline face bounding boxes). | No inline face geometry on assets. Schemas `PersonWithFacesResponseDto` and `AssetFaceWithoutPersonResponseDto` deleted. |
 | **Shared-link tokens removed** | `SharedLinkResponseDto.token` gone; `GET /shared-links/me` lost `password`/`token` query params; `SharedLinkEditDto.changeExpiryTime` gone; `PUT /albums/{id}/assets`, `PUT /shared-links/{id}/assets`, `PUT /albums/assets` lost `key`/`slug` params. | Shared-link / anonymous (key/slug) access model changed — `routers/api/shared_links.py` and key/slug access path need rework. |
-| **`deviceId`/`deviceAssetId` dropped from search/upload DTOs** | `MetadataSearchDto`, `SmartSearchDto`, `RandomSearchDto`, `StatisticsSearchDto`, `AssetMediaCreateDto`. | Device-based dedup/filtering removed across search + upload. |
+| **`deviceId`/`deviceAssetId` dropped from search/upload DTOs** | `MetadataSearchDto`, `SmartSearchDto`, `RandomSearchDto`, `StatisticsSearchDto`, `AssetMediaCreateDto`. | Device-based dedup/filtering removed across search + upload. Upload still synthesizes `device_asset_id`/`device_id` (`GUMNUT_UPLOAD_DEVICE_ID` + a per-upload UUID) because the Gumnut API requires them; dedup is checksum-based. |
 | **Asset replace removed** | `AssetMediaStatus` lost `replaced`; `Permission` lost `asset.replace`; `AssetMediaReplaceDto` deleted. See also removed `PUT /assets/{id}/original` in §3. | |
 | **`LicenseResponseDto`** | Lost `activatedAt`, `activationKey`, `licenseKey`. | Licensing response shape changed. |
 
@@ -276,15 +276,17 @@ zero-new-errors pyright diff) rather than a green suite:
   regen removed from `immich_models.py`. This fails *collection* of every test
   module that imports the router layer (e.g. `test_albums.py`) until the bulk
   error enum is retargeted to its v3 name.
-- **`pattern`-constrained `UUID` fields** — the regenerated models annotate UUID
-  fields as `Annotated[UUID, Field(pattern=...)]`. Under the pinned pydantic +
-  Python 3.14, *instantiating* any such model raises `TypeError: Unable to apply
-  constraint 'pattern' … for schema of type 'uuid'`, so these DTOs cannot be
-  constructed at all — the adapter would 500 serving them, and every test that
-  builds one (or uses the `mock_current_user` fixture) errors at setup. This is
-  deeper than the collection errors above: fixing the imports alone will not
-  turn the suite green. Needs a codegen/dependency fix (drop `pattern` on UUID
-  fields, or pin pydantic), tracked separately from the per-endpoint retarget.
+- **`pattern`-constrained non-`str` fields** — the regenerated models annotate
+  UUID *and datetime* fields as `Annotated[UUID | datetime, Field(pattern=...)]`.
+  Under the pinned pydantic + Python 3.14, *instantiating* any such model raises
+  `TypeError: Unable to apply constraint 'pattern' … for schema of type 'uuid'`
+  (and the identical error `for schema of type 'datetime'` on the sync/exif
+  DTOs), so these DTOs cannot be constructed at all — the adapter would 500
+  serving them, and every test that builds one (or uses the `mock_current_user`
+  fixture) errors at setup. This is deeper than the collection errors above:
+  fixing the imports alone will not turn the suite green. Needs a
+  codegen/dependency fix (drop `pattern` on these fields, or pin pydantic),
+  tracked separately from the per-endpoint retarget.
 
 ## Open questions
 
