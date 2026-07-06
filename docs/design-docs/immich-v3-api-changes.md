@@ -265,6 +265,27 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
 
 ---
 
+## Known blockers on the integration branch
+
+`migration/immichv3` is intentionally red until the API-shape work lands. Two
+blockers keep the test suite un-runnable independent of any single issue, so
+per-issue changes are verified by inspection plus scoped checks (ruff, a
+zero-new-errors pyright diff) rather than a green suite:
+
+- **`Error1` import** — `routers/utils/bulk.py` imports `Error1`, which the v3
+  regen removed from `immich_models.py`. This fails *collection* of every test
+  module that imports the router layer (e.g. `test_albums.py`) until the bulk
+  error enum is retargeted to its v3 name.
+- **`pattern`-constrained `UUID` fields** — the regenerated models annotate UUID
+  fields as `Annotated[UUID, Field(pattern=...)]`. Under the pinned pydantic +
+  Python 3.14, *instantiating* any such model raises `TypeError: Unable to apply
+  constraint 'pattern' … for schema of type 'uuid'`, so these DTOs cannot be
+  constructed at all — the adapter would 500 serving them, and every test that
+  builds one (or uses the `mock_current_user` fixture) errors at setup. This is
+  deeper than the collection errors above: fixing the imports alone will not
+  turn the suite green. Needs a codegen/dependency fix (drop `pattern` on UUID
+  fields, or pin pydantic), tracked separately from the per-endpoint retarget.
+
 ## Open questions
 
 - ~~Does the adapter retarget 3.0 GA in one cut, or run a compatibility window

@@ -32,7 +32,6 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
 )
-from routers.utils.asset_conversion import ASSET_INCLUDE, convert_gumnut_asset_to_immich
 from routers.utils.album_conversion import convert_gumnut_album_to_immich
 from pydantic.json_schema import SkipJsonSchema
 
@@ -108,32 +107,21 @@ async def get_album_info(
 ) -> AlbumResponseDto:
     """
     Fetch a specific album from Gumnut and convert to AlbumResponseDto format.
-    If withoutAssets is False, also fetch and include the album's assets.
+
+    Immich v3's AlbumResponseDto no longer inlines assets, so the album's
+    assets are not fetched here — clients load them separately via the timeline
+    API. The `withoutAssets` query param is retained for client compatibility
+    but no longer affects the response.
     """
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
-    # Retrieve the specific album from Gumnut
+    # SDK raises NotFoundError on missing album → handled by global handler.
     gumnut_album = await client.albums.retrieve(gumnut_album_id)
-
-    immich_assets = []
-    if not withoutAssets:
-        async for gumnut_asset in client.assets.list(
-            album_id=gumnut_album_id, include=ASSET_INCLUDE
-        ):
-            try:
-                immich_assets.append(
-                    convert_gumnut_asset_to_immich(gumnut_asset, current_user)
-                )
-            except Exception as convert_error:
-                logger.warning(
-                    f"Warning: Could not convert asset {gumnut_asset}: {convert_error}"
-                )
 
     return convert_gumnut_album_to_immich(
         gumnut_album,
         current_user,
-        assets=immich_assets,
         asset_count=gumnut_album.asset_count,
     )
 
