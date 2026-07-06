@@ -22,7 +22,6 @@ class TestConvertGumnutAlbumToImmich:
 
         assert len(result.albumUsers) == 1
         assert result.albumUsers[0].role == AlbumUserRole.owner
-        assert result.albumUsers[0].user.id == mock_current_user.id
         assert result.albumUsers[0].user == mock_current_user
 
     def test_removed_v3_fields_absent(self, sample_gumnut_album, mock_current_user):
