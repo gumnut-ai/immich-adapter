@@ -21,6 +21,7 @@ from routers.api.sync.converters import gumnut_asset_to_sync_asset_v1
 from routers.utils.asset_conversion import (
     build_asset_upload_ready_payload,
     convert_gumnut_asset_to_immich,
+    duration_ms,
     extract_exif_info,
     extract_sync_exif,
     format_duration,
@@ -629,11 +630,39 @@ class TestFormatDuration:
         assert format_duration(seconds) == expected
 
 
+class TestDurationMs:
+    """``duration_ms`` turns upstream float seconds into Immich v3's integer
+    milliseconds, and ``None`` into ``None`` (the field is nullable — no
+    fabricated zero/empty placeholder)."""
+
+    def test_none_passes_through(self):
+        assert duration_ms(None) is None
+
+    @pytest.mark.parametrize(
+        "seconds, expected",
+        [
+            (0.0, 0),
+            (5.5, 5500),
+            (12.5, 12500),
+            (65.25, 65250),
+            (3661.5, 3661500),
+            (7200, 7200000),
+            # Sub-millisecond precision rounds to the nearest whole ms.
+            (1.0004, 1000),
+            (1.0006, 1001),
+        ],
+    )
+    def test_formats_seconds_as_milliseconds(self, seconds, expected):
+        assert duration_ms(seconds) == expected
+
+
 class TestDurationEmission:
-    """Every outbound converter forwards the upstream ``duration`` (float
-    seconds) as an ``HH:MM:SS.ffffff`` string. When upstream is NULL each site
-    preserves the value it emitted before this field existed — never a
-    fabricated length. Mirrors the width/height staged-rollout precedent."""
+    """Outbound duration handling, per emit site. The REST ``AssetResponseDto``
+    and the timeline bucket carry Immich v3 integer milliseconds (null when
+    unknown); the ``SyncAssetV1`` websocket/sync payloads still carry the
+    ``HH:MM:SS.ffffff`` interval string (unchanged in v3 — the int-ms sync
+    entity is ``SyncAssetV2``). Every site emits ``None`` on NULL upstream
+    rather than a fabricated length."""
 
     OWNER_ID = "22222222-2222-2222-2222-222222222222"
 
@@ -645,7 +674,7 @@ class TestDurationEmission:
 
         result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
 
-        assert result.duration == "00:00:12.500000"
+        assert result.duration == 12500
 
     def test_websocket_payload_formats_populated_duration(self, sample_gumnut_asset):
         sample_gumnut_asset.mime_type = "video/mp4"
@@ -667,11 +696,13 @@ class TestDurationEmission:
 
         assert result.duration == "00:00:30.000000"
 
-    def test_null_duration_preserves_prior_behavior(
+    def test_null_duration_video_emits_none(
         self, sample_gumnut_asset, mock_current_user
     ):
-        """Upstream NULL: the REST single-asset DTO keeps its zero placeholder
-        for video, while the WebSocket and sync converters keep ``None``."""
+        """Upstream NULL: every site emits ``None``. The REST DTO's ``duration``
+        is nullable in v3, so a not-yet-extracted video duration is ``null``
+        rather than the old zero placeholder; the WebSocket/sync SyncAssetV1
+        payloads keep ``None`` as before."""
         sample_gumnut_asset.mime_type = "video/mp4"
         sample_gumnut_asset.duration = None
 
@@ -683,21 +714,21 @@ class TestDurationEmission:
             sample_gumnut_asset, owner_id=self.OWNER_ID
         )
 
-        assert rest.duration == "00:00:00.000000"
+        assert rest.duration is None
         assert ws.asset.duration is None
         assert sync.duration is None
 
-    def test_null_duration_image_emits_empty_string_in_rest_dto(
+    def test_null_duration_image_emits_none_in_rest_dto(
         self, sample_gumnut_asset, mock_current_user
     ):
-        """For images (no duration concept) the REST DTO keeps its empty-string
-        placeholder rather than the video zero or a fabricated value."""
+        """For images (no duration concept) the nullable v3 REST DTO emits
+        ``null`` rather than the old empty-string placeholder."""
         sample_gumnut_asset.mime_type = "image/jpeg"
         sample_gumnut_asset.duration = None
 
         result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
 
-        assert result.duration == ""
+        assert result.duration is None
 
 
 class TestFileDataSourcing:

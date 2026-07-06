@@ -546,8 +546,8 @@ class TestGetTimeBucket:
     async def test_get_time_bucket_emits_per_asset_duration(
         self, multiple_gumnut_assets, mock_sync_cursor_page
     ):
-        """The bucket's ``duration`` array carries a real ``HH:MM:SS.ffffff``
-        string for a video whose upstream duration is populated, and stays
+        """The bucket's ``duration`` array carries Immich v3 integer
+        milliseconds for a video whose upstream duration is populated, and stays
         ``None`` for an asset whose upstream duration is NULL (image, or video
         not yet extracted) — matching the prior all-None behavior."""
         mock_client = Mock()
@@ -574,7 +574,7 @@ class TestGetTimeBucket:
                 timeBucket="2024-01-01T00:00:00", client=mock_client
             )
 
-            assert result["duration"] == ["00:01:05.250000", None]
+            assert result["duration"] == [65250, None]
 
     @pytest.mark.anyio
     async def test_get_time_bucket_emits_per_asset_thumbhash(
