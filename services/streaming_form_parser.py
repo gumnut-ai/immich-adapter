@@ -25,8 +25,10 @@ logger = logging.getLogger(__name__)
 
 MAX_FIELD_BYTES = 64 * 1024  # 64KB — cap for non-file form fields
 
-# Fields that must be present before the file part starts.
-_REQUIRED_FIELDS = {"deviceAssetId", "deviceId", "fileCreatedAt"}
+# Fields that must be present before the file part starts. Immich v3 dropped
+# deviceAssetId/deviceId from the upload DTO, so fileCreatedAt is the only
+# required pre-file field now.
+_REQUIRED_FIELDS = {"fileCreatedAt"}
 
 
 class StreamingFormParser:

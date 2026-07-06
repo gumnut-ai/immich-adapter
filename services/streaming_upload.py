@@ -20,11 +20,13 @@ import queue
 import threading
 from collections.abc import Callable
 from typing import IO, Any, cast
+from uuid import uuid4
 
 import httpx
 import sentry_sdk
 from fastapi import HTTPException, Request, status
 
+from routers.api.constants import GUMNUT_UPLOAD_DEVICE_ID
 from routers.utils.error_mapping import (
     QUOTA_EXCEEDED_DETAIL,
     QUOTA_EXCEEDED_STATUS,
@@ -200,9 +202,14 @@ class StreamingUploadPipeline:
         if not filename or not content_type:
             raise ValueError("Missing file part 'assetData'")
 
-        device_asset_id, device_id, file_created_at, file_modified_at = (
-            extract_fields_fn(self._form_parser.form_fields)
+        file_created_at, file_modified_at = extract_fields_fn(
+            self._form_parser.form_fields
         )
+        # Synthesize the device fields Gumnut requires; a unique device_asset_id
+        # keeps distinct assets from collapsing onto one device tuple (see
+        # GUMNUT_UPLOAD_DEVICE_ID).
+        device_asset_id = str(uuid4())
+        device_id = GUMNUT_UPLOAD_DEVICE_ID
 
         content_length = self._request.headers.get("content-length", "unknown")
         logger.info(
@@ -213,7 +220,6 @@ class StreamingUploadPipeline:
                 "upload_filename": filename,
                 "content_type": content_type,
                 "content_length": content_length,
-                "device_asset_id": device_asset_id,
             },
         )
 

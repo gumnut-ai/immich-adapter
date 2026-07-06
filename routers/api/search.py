@@ -439,7 +439,6 @@ async def search_random(
         request.trashedBefore,
         request.updatedAfter,
         request.updatedBefore,
-        request.deviceId,
         request.lensModel,
         request.libraryId,
         request.make,

@@ -906,7 +906,6 @@ class TestSearchRandom:
             "trashedBefore",
             "updatedAfter",
             "updatedBefore",
-            "deviceId",
             "lensModel",
             "libraryId",
             "make",
