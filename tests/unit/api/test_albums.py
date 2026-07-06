@@ -23,6 +23,7 @@ from routers.api.albums import (
     add_assets_to_albums,
 )
 from routers.immich_models import (
+    AlbumUserRole,
     CreateAlbumDto,
     UpdateAlbumDto,
     BulkIdsDto,
@@ -82,6 +83,11 @@ class TestGetAllAlbums:
         # Verify the real conversion happened by checking result structure
         assert all(hasattr(album, "id") for album in result)
         assert all(hasattr(album, "albumName") for album in result)
+        # v3: owner is carried in albumUsers[0]; owner/ownerId/assets are gone.
+        assert all(
+            album.albumUsers[0].user.id == mock_current_user.id for album in result
+        )
+        assert all(album.albumUsers[0].role == AlbumUserRole.owner for album in result)
 
     @pytest.mark.anyio
     async def test_get_all_albums_includes_asset_count(
@@ -347,18 +353,18 @@ class TestGetAlbumInfo:
     async def test_get_album_info_success(
         self,
         sample_gumnut_album,
-        multiple_gumnut_assets,
-        mock_sync_cursor_page,
         sample_uuid,
         mock_current_user,
     ):
-        """Test successful retrieval of album info."""
+        """Test successful retrieval of album info.
+
+        Immich v3's AlbumResponseDto no longer inlines assets, so the endpoint
+        must not fetch the album's assets. The owner is carried in
+        albumUsers[0].
+        """
         # Setup - create mock client
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
-        mock_client.assets.list.return_value = mock_sync_cursor_page(
-            multiple_gumnut_assets
-        )
 
         # Execute
         result = await get_album_info(
@@ -374,16 +380,16 @@ class TestGetAlbumInfo:
         assert hasattr(result, "albumName")
         assert result.albumName == "Test Album"  # From sample_gumnut_album.name
         mock_client.albums.retrieve.assert_called_once()
-        mock_client.assets.list.assert_called_once_with(
-            album_id=uuid_to_gumnut_album_id(sample_uuid),
-            include=["metadata", "people", "file_data"],
-        )
+        # v3 no longer inlines assets — the endpoint must not fetch them.
+        mock_client.assets.list.assert_not_called()
+        # Owner is derived from albumUsers[0].
+        assert result.albumUsers[0].user.id == mock_current_user.id
+        assert result.albumUsers[0].role == AlbumUserRole.owner
 
     @pytest.mark.anyio
     async def test_get_album_info_uses_gumnut_asset_count(
         self,
         sample_gumnut_album,
-        mock_sync_cursor_page,
         sample_uuid,
         mock_current_user,
     ):
@@ -393,8 +399,6 @@ class TestGetAlbumInfo:
 
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
-        # Return empty assets list
-        mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
         # Execute
         result = await get_album_info(
@@ -409,7 +413,7 @@ class TestGetAlbumInfo:
 
     @pytest.mark.anyio
     async def test_get_album_info_with_album_cover_asset_id(
-        self, sample_gumnut_album, mock_sync_cursor_page, sample_uuid, mock_current_user
+        self, sample_gumnut_album, sample_uuid, mock_current_user
     ):
         """Test that album_cover_asset_id is converted to albumThumbnailAssetId in get_album_info."""
         # Setup - set album_cover_asset_id on the album
@@ -418,7 +422,6 @@ class TestGetAlbumInfo:
 
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
-        mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
         # Execute
         result = await get_album_info(
@@ -436,7 +439,11 @@ class TestGetAlbumInfo:
     async def test_get_album_info_without_assets(
         self, sample_gumnut_album, sample_uuid, mock_current_user
     ):
-        """Test retrieval of album info without assets."""
+        """The vestigial withoutAssets=True is still accepted and returns the album.
+
+        Assets are never inlined in v3 regardless of this param, so it no longer
+        gates anything, but clients may still send it.
+        """
         # Setup - create mock client
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
@@ -454,7 +461,7 @@ class TestGetAlbumInfo:
         assert hasattr(result, "id")
         assert result.albumName == "Test Album"  # From sample_gumnut_album.name
         mock_client.albums.retrieve.assert_called_once()
-        # withoutAssets=True skips the assets.list call entirely
+        # Assets are never fetched in v3 (no longer inlined in the response).
         mock_client.assets.list.assert_not_called()
 
     @pytest.mark.anyio

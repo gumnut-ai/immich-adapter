@@ -8,8 +8,9 @@ to the Immich API format, including handling of datetime fields and album metada
 from gumnut.types.album_response import AlbumResponse
 from routers.immich_models import (
     AlbumResponseDto,
+    AlbumUserResponseDto,
+    AlbumUserRole,
     AssetOrder,
-    AssetResponseDto,
     UserResponseDto,
 )
 from routers.utils.datetime_utils import to_immich_local_datetime
@@ -22,7 +23,6 @@ from routers.utils.gumnut_id_conversion import (
 def convert_gumnut_album_to_immich(
     gumnut_album: AlbumResponse,
     current_user: UserResponseDto,
-    assets: list[AssetResponseDto] | None = None,
     asset_count: int | None = None,
 ) -> AlbumResponseDto:
     """
@@ -31,8 +31,7 @@ def convert_gumnut_album_to_immich(
     Args:
         gumnut_album: The Gumnut AlbumResponse object
         current_user: The current user's UserResponseDto
-        assets: Optional list of AssetResponseDto objects to include
-        asset_count: Optional asset count (if None, will use len(assets) or album's asset_count)
+        asset_count: Asset count (defaults to 0 if None)
 
     Returns:
         AlbumResponseDto object with processed data
@@ -43,16 +42,7 @@ def convert_gumnut_album_to_immich(
     created_at = gumnut_album.created_at
     updated_at = gumnut_album.updated_at
 
-    # Determine asset count
-    if asset_count is not None:
-        final_asset_count = asset_count
-    elif assets is not None:
-        final_asset_count = len(assets)
-    else:
-        final_asset_count = 0
-
-    # Use provided assets or empty list
-    final_assets = assets or []
+    final_asset_count = asset_count if asset_count is not None else 0
 
     return AlbumResponseDto(
         id=str(safe_uuid_from_album_id(album_id)),
@@ -74,12 +64,12 @@ def convert_gumnut_album_to_immich(
         startDate=to_immich_local_datetime(gumnut_album.start_date),
         endDate=to_immich_local_datetime(gumnut_album.end_date),
         lastModifiedAssetTimestamp=None,
-        ownerId=current_user.id,
-        owner=current_user,
-        albumUsers=[],
+        # Immich v3 derives the album owner from albumUsers[0] and no longer
+        # carries owner/ownerId or inline assets. Gumnut has no album sharing,
+        # so this is always exactly the single owner entry.
+        albumUsers=[AlbumUserResponseDto(role=AlbumUserRole.owner, user=current_user)],
         shared=False,
         hasSharedLink=False,
-        assets=final_assets,
         assetCount=final_asset_count,
         isActivityEnabled=True,
         order=AssetOrder.desc,
