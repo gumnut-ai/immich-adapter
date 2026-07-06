@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-07-02
+last-updated: 2026-07-03
 ---
 
 # Code Practices
@@ -118,6 +118,7 @@ The SDK is auto-generated (Stainless), so a version bump can add **newly-require
    - `PUT /people/{id}/reassign` — `{id}` is the target person (reassign TO); body items are sources.
    - `PUT /faces/{id}` — `{id}` is the target person (reassign TO); body `FaceDto.id` is the face being reassigned.
    - When fixing a path/body or ID-decoding bug in one handler, audit sibling handlers in the same router (and adjacent routers) for the same trap before closing the fix. A one-line search (`grep -rn` for the pattern) is cheap insurance against the same class-of-bug recurring.
+   - For loosely-specified response values (free-form strings, group/field names), also check how the Immich **clients** consume the response (`immich/web/src/` and `immich/mobile/lib/`) — clients hard-match values the OpenAPI spec doesn't constrain. E.g., the explore page renders only the group with `fieldName == "exifInfo.city"`, so a spec-valid response with different group names would silently render nothing.
 5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
 6. **Test endpoints**: Verify responses match Immich API expectations
 7. **Audit `/me/preferences` for a gating boolean**: Many client UI features (memories, tags, ratings, folders, people, shared links, email notifications, cast) are gated client-side on a flag in `UserPreferencesResponseDto`. The default in `routers/api/users.py::userPreferencesResponse` ships most of these as `enabled=False`, which silently hides the corresponding UI even after the backing endpoints are wired up. When implementing an endpoint that backs a client UI feature, grep `routers/api/users.py` for the matching preference field and flip its `enabled` to `True`. The Immich web client checks these via `$preferences?.<area>?.enabled`; missing the flip means the new endpoints become dead code on the client.
@@ -300,6 +301,8 @@ async for asset in client.assets.list(local_datetime_after=..., limit=N):
 ```
 
 Without the break, a `limit=1` "is this non-empty?" probe on a busy day burns one round-trip per matching asset.
+
+The `local_datetime_after` / `local_datetime_before` list filters are **exclusive on both ends**. Don't pass a month start directly as the after-bound — an asset captured exactly at month-start midnight is counted in that month's `counts` bucket but excluded from the listing. Build month windows with `month_query_bounds` in `routers/api/timeline.py`, which backs the after-bound off by one microsecond.
 
 ### Parallel Fan-Out with `asyncio.gather`
 

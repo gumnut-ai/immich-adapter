@@ -380,7 +380,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | People | CRUD, list with pagination/sort/filter, thumbnails, statistics, merge | |
 | Faces | List, create, delete, reassign | Create draws a user-specified box on an asset and links it to a person (Immich's "create a face on-the-fly" flow) |
 | Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling, including `isTrashed=true` |
-| Search | Smart search, metadata search, person search, statistics | Places, suggestions, explore are stubs |
+| Search | Smart search, metadata search, person search, statistics, random sampling, explore (cities + recents) | Places, cities, suggestions, and large-assets are stubs |
 | Sync | Full sync, delta sync, stream, ack | Two-phase ordering, checkpoint management |
 | Auth | OAuth login/callback, logout, session management | Clerk OAuth via the Gumnut API |
 | WebSockets | Real-time upload/trash/restore/delete notifications | Socket.IO with room-based messaging |
