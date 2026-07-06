@@ -102,13 +102,16 @@ def normalize_rating(rating: float | int | None) -> int | None:
 
 
 def format_duration(seconds: float | None) -> str | None:
-    """Format an upstream video duration (float seconds) as Immich's interval string.
+    """Format a video duration (float seconds) as Immich's ``HH:MM:SS.ffffff`` interval string.
 
-    Immich expresses video duration as an ``HH:MM:SS.ffffff`` string. The Gumnut
-    asset carries ``duration`` as float seconds, or ``None`` when the asset is an
-    image or its duration has not been extracted yet. Returns ``None`` for ``None``
-    so callers can preserve each emit site's existing absent-duration behavior
-    rather than fabricating a value.
+    Retained for the ``SyncAssetV1`` sync payload, whose ``duration`` field is
+    still the interval string in the Immich v3 spec. The asset/timeline REST
+    responses moved to integer milliseconds — see ``duration_ms`` — but the v1
+    sync entity did not (its int-ms successor is ``SyncAssetV2``, added by the
+    Sync v2 layer). The Gumnut asset carries ``duration`` as float seconds, or
+    ``None`` when the asset is an image or its duration has not been extracted
+    yet; ``None`` passes through so each sync emit site preserves its
+    absent-duration behavior rather than fabricating a value.
     """
     if seconds is None:
         return None
@@ -122,19 +125,21 @@ def format_duration(seconds: float | None) -> str | None:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{micros:06d}"
 
 
-def _resolve_single_asset_duration(
-    gumnut_asset: AssetResponse, asset_type: AssetTypeEnum
-) -> str:
-    """Duration string for the single-asset ``AssetResponseDto`` (non-nullable).
+def duration_ms(seconds: float | None) -> int | None:
+    """Convert an upstream video duration (float seconds) to Immich's integer milliseconds.
 
-    Uses the upstream value when present; when absent, preserves the prior
-    placeholder — zero duration for videos, empty string for images — rather
-    than fabricating a length.
+    Immich v3 expresses ``duration`` on ``AssetResponseDto`` and
+    ``TimeBucketAssetResponseDto`` (and, via the Sync v2 layer, the
+    ``SyncAssetV2`` payload) as integer **milliseconds**, nullable — ``null``
+    for a static image or a video whose duration has not been extracted yet.
+    The Gumnut asset carries ``duration`` as float seconds, so round to whole
+    milliseconds; ``None`` passes through as ``None`` rather than fabricating a
+    length (the nullable v3 field makes the old zero/empty-string placeholders
+    unnecessary).
     """
-    formatted = format_duration(gumnut_asset.duration)
-    if formatted is not None:
-        return formatted
-    return "00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else ""
+    if seconds is None:
+        return None
+    return round(float(seconds) * 1000)
 
 
 def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime:
@@ -530,7 +535,7 @@ def convert_gumnut_asset_to_immich(
         checksum=resolve_immich_checksum(gumnut_asset),
         exifInfo=exif_info,  # Now includes processed EXIF data
         createdAt=gumnut_asset.created_at,
-        duration=_resolve_single_asset_duration(gumnut_asset, asset_type),
+        duration=duration_ms(gumnut_asset.duration),
         hasMetadata=True,
         height=float(height) if height else None,
         isArchived=False,

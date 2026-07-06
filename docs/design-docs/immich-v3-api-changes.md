@@ -2,7 +2,7 @@
 title: "Immich v2.7.5 → v3.0 API Change Analysis"
 status: active
 created: 2026-06-16
-last-updated: 2026-07-02
+last-updated: 2026-07-06
 ---
 
 # Immich v2.7.5 → v3.0 API Change Analysis
@@ -104,7 +104,7 @@ mistake it for behavioral change.
 
 | Change | Detail | Adapter impact |
 |---|---|---|
-| **`duration` string → integer ms** | `AssetResponseDto`, `TimeBucketAssetResponseDto`, `AssetMediaCreateDto`. Was `"HH:MM:SS.ffffff"` interval string, now integer **milliseconds**, nullable on `AssetResponseDto`. | `routers/utils/asset_conversion.py:format_duration` emits the interval string today — must emit int ms. Touches `routers/models.py:69`, and the `duration` fields in `routers/immich_models.py`. Affects every asset/timeline/upload response. |
+| **`duration` string → integer ms** | `AssetResponseDto`, `TimeBucketAssetResponseDto`, `AssetMediaCreateDto`. Was `"HH:MM:SS.ffffff"` interval string, now integer **milliseconds**, nullable on `AssetResponseDto`. | A `duration_ms` helper in `routers/utils/asset_conversion.py` emits int ms (null when unknown) for `AssetResponseDto` / `TimeBucketAssetResponseDto`; the interval-string `format_duration` is retained for `SyncAssetV1`, whose `duration` stays a string in v3 (`SyncAssetV2` is the int-ms sync variant — see §5). The `duration` fields live in `routers/immich_models.py`. Affects every asset/timeline/upload response. |
 | **`AlbumResponseDto` restructured** | Removed `assets`, `owner`, `ownerId`. Owner now derived from **`albumUsers[0]`** (now `minItems:1`; documented ordering: owner first, then auth user if different, rest alphabetical). `shared` now required. | Album responses no longer inline assets or owner. Album conversion must populate `albumUsers[0]` as owner and stop emitting `owner`/`ownerId`/`assets`. |
 | **`AssetResponseDto` face/device fields** | Removed `deviceAssetId`, `deviceId`, `unassignedFaces`. `people`: `PersonWithFacesResponseDto` → `PersonResponseDto` (no inline face bounding boxes). | No inline face geometry on assets. Schemas `PersonWithFacesResponseDto` and `AssetFaceWithoutPersonResponseDto` deleted. |
 | **Shared-link tokens removed** | `SharedLinkResponseDto.token` gone; `GET /shared-links/me` lost `password`/`token` query params; `SharedLinkEditDto.changeExpiryTime` gone; `PUT /albums/{id}/assets`, `PUT /shared-links/{id}/assets`, `PUT /albums/assets` lost `key`/`slug` params. | Shared-link / anonymous (key/slug) access model changed — `routers/api/shared_links.py` and key/slug access path need rework. |
@@ -248,7 +248,7 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
 
 ## 7. Adapter retarget plan (priority order)
 
-1. **`duration` → integer ms** (`asset_conversion.py`, `models.py`,
+1. **`duration` → integer ms** (`asset_conversion.py`,
    `immich_models.py`) — touches every asset/timeline/upload response.
 2. **`AlbumResponseDto`** — derive owner from `albumUsers[0]`, drop
    `owner`/`ownerId`/inline `assets`.

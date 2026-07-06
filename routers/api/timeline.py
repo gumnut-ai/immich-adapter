@@ -14,7 +14,7 @@ from routers.immich_models import (
     TimeBucketsResponseDto,
 )
 from routers.utils.asset_conversion import (
-    format_duration,
+    duration_ms,
     mime_type_to_asset_type,
     resolve_capture_datetime,
 )
@@ -213,7 +213,7 @@ async def get_time_bucket(
     visibility_list = []
     local_offset_hours_list = []
     is_trashed_list = []
-    duration_list: list[str | None] = []
+    duration_list: list[int | None] = []
     thumbhash_list: list[str | None] = []
 
     for asset in filtered_assets:
@@ -246,10 +246,10 @@ async def get_time_bucket(
 
         is_trashed_list.append(bool(asset.trashed_at))
 
-        # Forward each asset's duration: format_duration returns the
-        # HH:MM:SS.ffffff string, or None on NULL upstream — preserving this
+        # Forward each asset's duration: duration_ms returns integer
+        # milliseconds (Immich v3), or None on NULL upstream — preserving this
         # bucket's prior all-None output for images / not-yet-extracted videos.
-        duration_list.append(format_duration(asset.duration))
+        duration_list.append(duration_ms(asset.duration))
 
         # Forward each asset's real thumbhash (base64 ThumbHash) so clients
         # render a distinct placeholder per tile. None until upstream generates
