@@ -339,7 +339,7 @@ async def _stream_entity_type(
                 # reference an asset added after the event was recorded
                 # — potentially outside the client's sync window.
                 if (
-                    sync_entity_type == SyncEntityType.AlbumV1
+                    sync_entity_type in (SyncEntityType.AlbumV1, SyncEntityType.AlbumV2)
                     and event.event_type == "album_updated"
                     and isinstance(entity, AlbumResponse)
                     and isinstance(event.payload, dict)

@@ -178,8 +178,8 @@ def gumnut_asset_to_sync_asset_v2(asset: AssetResponse, owner_id: str) -> SyncAs
     """Convert Gumnut AssetResponse to Immich SyncAssetV2 format.
 
     SyncAssetV2 is SyncAssetV1 with ``duration`` as integer milliseconds instead
-    of the interval string — the only payload difference between the two (Immich
-    v3 §5). Delegate to V1 and swap that one field.
+    of the interval string — the only payload difference between the two (see the
+    ``immich-v3-api-changes.md`` design doc, §5). Delegate to V1 and swap it.
     """
     fields = gumnut_asset_to_sync_asset_v1(asset, owner_id).model_dump()
     fields["duration"] = duration_ms(asset.duration)

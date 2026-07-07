@@ -22,6 +22,7 @@ Class/field/source inspection does not instantiate anything and runs cleanly.
 import inspect
 
 from routers.api.sync import converters, events, stream
+from routers.api.sync.fk_integrity import _GUMNUT_TYPE_TO_SYNC_TYPES
 from routers.api.sync.stream import (
     _NOOP_REQUEST_TYPES,
     _SUPPORTED_REQUEST_TYPES,
@@ -108,8 +109,9 @@ def test_v1_superseded_by_v2_covers_assets_albums_faces():
         SyncRequestType.AlbumsV1: SyncRequestType.AlbumsV2,
         SyncRequestType.AssetFacesV1: SyncRequestType.AssetFacesV2,
     }
-    # The stream loop must actually consult the table.
-    assert "_V1_SUPERSEDED_BY_V2" in inspect.getsource(stream.generate_sync_stream)
+    # The stream loop must actually consult the table — match the call site,
+    # not the bare identifier (which also appears in a nearby comment).
+    assert "_V1_SUPERSEDED_BY_V2.get(" in inspect.getsource(stream.generate_sync_stream)
 
 
 def test_ocr_partner_album_asset_v2_are_accepted_noops():
@@ -134,3 +136,39 @@ def test_event_conversion_routes_v2_entities():
     assert "gumnut_asset_to_sync_asset_v2" in src
     assert "SyncEntityType.AlbumV2" in src
     assert "gumnut_album_to_sync_album_v2" in src
+
+
+# --- Invariants: keep the V2 rollout consistent across the sync package ------
+# Adding a V2 to _SYNC_TYPE_ORDER means it must also be routed in events, kept in
+# the FK-checkpoint map, and (for the album/face causal-consistency overrides)
+# covered by those overrides — these guard against the half-wired V2 rollout.
+
+
+def test_fk_checkpoint_map_covers_every_streamed_type():
+    """Every _SYNC_TYPE_ORDER entity type is in the FK checkpoint map for its
+    gumnut type, so a client that synced under V2 still matches on checkpoint
+    lookups (else FK reference checks emit spurious warnings)."""
+    for _req, gumnut_type, sync_type in _SYNC_TYPE_ORDER:
+        assert sync_type in _GUMNUT_TYPE_TO_SYNC_TYPES.get(gumnut_type, []), (
+            f"{sync_type} missing from _GUMNUT_TYPE_TO_SYNC_TYPES[{gumnut_type!r}]"
+        )
+
+
+def test_events_routing_references_every_streamed_v2_type():
+    """Every V2 entity type in _SYNC_TYPE_ORDER is dispatched in the event
+    converter — a V2 added to the order but not routed would silently stream
+    as V1 (the converter falls through to the V1 branch)."""
+    routing_src = inspect.getsource(events.convert_entity_to_sync_event)
+    v2_types = [st for _r, _g, st in _SYNC_TYPE_ORDER if st.value.endswith("V2")]
+    assert v2_types  # guard against the filter silently matching nothing
+    for sync_type in v2_types:
+        assert f"SyncEntityType.{sync_type.name}" in routing_src, (
+            f"{sync_type} not routed in convert_entity_to_sync_event"
+        )
+
+
+def test_album_cover_override_applies_to_album_v2():
+    """The album cover causal-consistency override must run on the AlbumV2 path
+    (the v3 client streams albums as AlbumV2), not just AlbumV1. The override
+    lives in _stream_entity_type, where AlbumV2 appears only in that gate."""
+    assert "SyncEntityType.AlbumV2" in inspect.getsource(stream._stream_entity_type)
