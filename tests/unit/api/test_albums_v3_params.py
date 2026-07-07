@@ -1,8 +1,10 @@
 """Immich v3 query-param conformance for the albums asset-add endpoints.
 
 Immich v3 dropped the `key`/`slug` query params from `PUT /albums/{id}/assets`
-and `PUT /albums/assets`, while KEEPING them on `GET /albums/{id}` (v3 dropped
-only `withoutAssets` there). These guard that intentional asymmetry.
+and `PUT /albums/assets`, while KEEPING them on `GET /albums/{id}` (of that
+endpoint's params, v3 dropped only `withoutAssets` — which the adapter still
+declares as a documented no-op for client compatibility, so the parsed source
+below still shows it). These guard that intentional asymmetry.
 
 `routers/api/albums.py` cannot be imported on the `migration/immichv3` branch —
 it imports `Error1`, which the v3 model regen removed, so `inspect.signature`
@@ -42,7 +44,7 @@ def test_put_albums_assets_dropped_key_and_slug():
 
 
 def test_get_album_info_retains_key_and_slug():
-    """GET /albums/{id} keeps key/slug in v3 (only withoutAssets was dropped)."""
+    """GET /albums/{id} keeps key/slug in v3."""
     params = _param_names("get_album_info")
     assert "key" in params
     assert "slug" in params
