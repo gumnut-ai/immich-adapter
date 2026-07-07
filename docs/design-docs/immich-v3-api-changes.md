@@ -116,17 +116,23 @@ mistake it for behavioral change.
 
 ## 3. Removed endpoints (−7)
 
+**Decision (clean cut to 3.0): all dropped from the adapter.** None of these paths
+exist in the v3 spec, so no supported v3 client calls them — the handlers were
+removed rather than kept as shims. (`/plugins/triggers` was never implemented in
+the adapter, so there was nothing to drop.)
+
 - `POST /sync/delta-sync` & `POST /sync/full-sync` — legacy mobile sync gone,
   replaced by Sync v2 over the existing `/sync/stream` (see §5). Schemas
-  `AssetDeltaSyncDto/ResponseDto`, `AssetFullSyncDto` deleted.
-  *(Adapter already marks both deprecated at `routers/api/sync/routes.py:305,373`.)*
-- `POST /assets/exist` — `CheckExistingAssetsDto/ResponseDto` deleted.
-  *(Adapter implements at `routers/api/assets.py:295`.)*
-- `GET /assets/random` — use `POST /search/random`.
-- `GET /assets/device/{deviceId}` — *(adapter `routers/api/assets.py:1062`, already deprecated.)*
-- `PUT /assets/{id}/original` — asset original-file replace removed (only method drop on a retained path).
-- `GET /server/theme` — `ServerThemeDto` deleted.
+  `AssetDeltaSyncDto/ResponseDto`, `AssetFullSyncDto` deleted. **Dropped.**
+- `POST /assets/exist` — `CheckExistingAssetsDto/ResponseDto` deleted. **Dropped.**
+- `GET /assets/random` — use `POST /search/random`. **Dropped.**
+- `GET /assets/device/{deviceId}` — was a deprecated stub. **Dropped.**
+- `PUT /assets/{id}/original` — asset original-file replace removed (only method
+  drop on a retained path; the `GET /assets/{id}/original` download stays). **Dropped.**
+- `GET /server/theme` — `ServerThemeDto` deleted. **Dropped** (also removed from
+  `auth_middleware.py`'s unauthenticated-path set).
 - `GET /plugins/triggers` — replaced by `/plugins/methods` + `/plugins/templates`.
+  **N/A** — never implemented in the adapter.
 
 ---
 
@@ -266,8 +272,8 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
 4. **Shared links** — token/key/slug access model rework.
 5. **`AssetResponseDto`** — drop device fields + `unassignedFaces`, switch
    `people` to `PersonResponseDto`.
-6. **Compat decisions** — whether to keep the 7 removed endpoints as shims
-   (several already deprecated in the adapter) and the deprecated PUTs.
+6. **Compat decisions** — resolved: the 7 removed endpoints are **dropped** (clean
+   cut, no shims; see §3). The deprecated-in-place PUTs (§6) stay as-is.
 7. **New feature areas** (HLS streaming, integrity, calendar heatmap,
    plugins/workflows) — likely stub/skip initially for the adapter.
 

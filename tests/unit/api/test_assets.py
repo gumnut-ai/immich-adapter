@@ -23,21 +23,17 @@ from routers.api.assets import (
     _immich_checksum_to_base64,
     _parse_datetime,
     bulk_upload_check,
-    check_existing_assets,
     copy_asset,
     upload_asset,
     update_assets,
     delete_assets,
-    get_all_user_assets_by_device_id,
     get_asset_statistics,
-    get_random,
     run_asset_jobs,
     update_asset,
     get_asset_info,
     get_asset_ocr,
     view_asset,
     download_asset,
-    replace_asset,
     get_asset_metadata,
     update_asset_metadata,
     delete_asset_metadata,
@@ -52,7 +48,6 @@ from routers.immich_models import (
     AssetCopyDto,
     AssetMediaResponseDto,
     AssetVisibility,
-    CheckExistingAssetsDto,
     AssetBulkUpdateDto,
     AssetBulkDeleteDto,
     AssetJobsDto,
@@ -275,61 +270,6 @@ class TestImmichChecksumToBase64:
         # Should convert successfully
         decoded = base64.b64decode(result)
         assert decoded == bytes.fromhex("aabbccdd")
-
-
-class TestCheckExistingAssets:
-    """Test the check_existing_assets endpoint."""
-
-    @pytest.mark.anyio
-    async def test_check_existing_assets_returns_empty(self):
-        """Test that check_existing_assets returns empty list when no assets exist."""
-        # Setup
-        request = CheckExistingAssetsDto(
-            deviceAssetIds=["asset1", "asset2"], deviceId="device-123"
-        )
-
-        # Mock the Gumnut client - no existing assets
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.assets = []
-        mock_client.assets.check_existence = AsyncMock(return_value=mock_response)
-
-        # Execute
-        result = await check_existing_assets(request, client=mock_client)
-
-        # Assert
-        assert result.existingIds == []
-        mock_client.assets.check_existence.assert_called_once_with(
-            device_id="device-123", device_asset_ids=["asset1", "asset2"]
-        )
-
-    @pytest.mark.anyio
-    async def test_check_existing_assets_returns_existing(self, sample_uuid):
-        """Test that check_existing_assets returns IDs of existing assets."""
-        # Setup
-        request = CheckExistingAssetsDto(
-            deviceAssetIds=["asset1", "asset2", "asset3"], deviceId="device-123"
-        )
-
-        # Mock the Gumnut client - some assets exist
-        mock_client = Mock()
-        mock_asset1 = Mock()
-        mock_asset1.id = uuid_to_gumnut_asset_id(sample_uuid)
-        second_uuid = uuid4()
-        mock_asset2 = Mock()
-        mock_asset2.id = uuid_to_gumnut_asset_id(second_uuid)
-
-        mock_response = Mock()
-        mock_response.assets = [mock_asset1, mock_asset2]
-        mock_client.assets.check_existence = AsyncMock(return_value=mock_response)
-
-        # Execute
-        result = await check_existing_assets(request, client=mock_client)
-
-        # Assert
-        assert len(result.existingIds) == 2
-        assert str(sample_uuid) in result.existingIds
-        assert str(second_uuid) in result.existingIds
 
 
 def _make_mock_request(
@@ -2630,19 +2570,6 @@ class TestDeleteAssets:
                 )
 
 
-class TestGetAllUserAssetsByDeviceId:
-    """Test the get_all_user_assets_by_device_id endpoint."""
-
-    @pytest.mark.anyio
-    async def test_get_all_user_assets_by_device_id_returns_empty(self):
-        """Test that get_all_user_assets_by_device_id returns empty list."""
-        # Execute
-        result = await get_all_user_assets_by_device_id("device-123")
-
-        # Assert
-        assert result == []
-
-
 class TestGetAssetStatistics:
     """Test the get_asset_statistics endpoint."""
 
@@ -2732,19 +2659,6 @@ class TestGetAssetStatistics:
         await get_asset_statistics(isTrashed=False, client=mock_client)
 
         mock_client.assets.list.assert_called_once_with()
-
-
-class TestGetRandom:
-    """Test the get_random endpoint."""
-
-    @pytest.mark.anyio
-    async def test_get_random_returns_empty(self):
-        """Test that get_random returns empty list (deprecated endpoint)."""
-        # Execute
-        result = await get_random(count=5)
-
-        # Assert
-        assert result == []
 
 
 class TestRunAssetJobs:
@@ -3358,22 +3272,6 @@ class TestDownloadAsset:
                 "content-disposition",
             ),
         )
-
-
-class TestReplaceAsset:
-    """Test the replace_asset endpoint."""
-
-    @pytest.mark.anyio
-    async def test_replace_asset_returns_none(self, sample_uuid):
-        """Test replace asset (deprecated, returns None)."""
-        # Setup
-        request = Mock()  # AssetMediaReplaceDto mock
-
-        # Execute
-        result = await replace_asset(sample_uuid, request)
-
-        # Assert
-        assert result is None
 
 
 class TestGetAssetMetadata:
