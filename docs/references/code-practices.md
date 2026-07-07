@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-07-03
+last-updated: 2026-07-07
 ---
 
 # Code Practices
@@ -123,9 +123,10 @@ The SDK is auto-generated (Stainless), so a version bump can add **newly-require
 6. **Test endpoints**: Verify responses match Immich API expectations
 7. **Audit `/me/preferences` for a gating boolean**: Many client UI features (memories, tags, ratings, folders, people, shared links, email notifications, cast) are gated client-side on a flag in `UserPreferencesResponseDto`. The default in `routers/api/users.py::userPreferencesResponse` ships most of these as `enabled=False`, which silently hides the corresponding UI even after the backing endpoints are wired up. When implementing an endpoint that backs a client UI feature, grep `routers/api/users.py` for the matching preference field and flip its `enabled` to `True`. The Immich web client checks these via `$preferences?.<area>?.enabled`; missing the flip means the new endpoints become dead code on the client.
 8. **Audit `routers/api/server.py::server_features`**: Many client UI features are also gated by a server-feature flag advertised via `GET /server/features`. When promoting an area from stub to a real implementation, flip the matching key from `False` to `True` and update the explanatory comment so it scopes only to the remaining stubbed sub-features. Leaving the flag at `False` after implementing the endpoint silently hides the UI; flipping it to `True` while parts of the area are still stubbed surfaces non-functional UI.
-9. **Update the implementation-status docs**: Promoting an endpoint from stub to real changes two evergreen docs that the docs-as-system-of-record convention requires keeping current:
+9. **Update the implementation-status docs**: Promoting an endpoint from stub to real — **or dropping an endpoint removed upstream** — changes two evergreen docs that the docs-as-system-of-record convention requires keeping current:
    - `docs/architecture/adapter-architecture.md` — move the row from the "Stub implementations" table to "Fully implemented" (or split into a partial-implementation row, mirroring "Memories (read)" / "Memories (write)"); bump `last-updated` in the frontmatter.
    - `docs/design-docs/immich-adapter-gap-analysis.md` — flip the gap section to **Closed**, update the summary stub count, and strike the entry from the Tier-1/2/3 plan table; bump `last-updated`.
+   - **Removing an endpoint** is the inverse: strike it from the `adapter-architecture.md` "Fully implemented"/stub row (drop the whole row if nothing else remains) and update the gap-analysis row/count rather than moving anything. These curated tables live outside most code diffs, so diff-scoped self-review won't flag the drift — grep the docs for the removed path/handler. Also scrub endpoint-specific caller lists in *this* reference — e.g. the `ASSET_INCLUDE` row's `convert_gumnut_asset_to_immich` caller list — where the deleted handler was named.
 
    Skipping either leaves future readers (and gap-prioritization passes) reasoning from stale data — the gap-analysis doc explicitly carries `status: active`, so consistency with the implementation is part of its contract.
 
@@ -147,7 +148,7 @@ Use the constants in `routers/utils/asset_conversion.py`, chosen by what the con
 
 | Constant | Tokens | Use for |
 |----------|--------|---------|
-| `ASSET_INCLUDE` | `metadata, people, file_data` | Reads feeding `convert_gumnut_asset_to_immich` (it emits `people`): `get_asset_info`, search, albums, memories, full/delta sync, the upload-success retrieve. |
+| `ASSET_INCLUDE` | `metadata, people, file_data` | Reads feeding `convert_gumnut_asset_to_immich` (it emits `people`): `get_asset_info`, search, memories, the upload-success retrieve. |
 | `ASSET_INCLUDE_NO_PEOPLE` | `metadata, file_data` | The sync-stream `entity_fetch` reads, whose converters read the `file_data` scalars but never `people`. |
 | `ASSET_INCLUDE_METADATA_ONLY` | `metadata` | Reads that touch only `metadata`: map markers (GPS), the bulk per-asset datetime rewrite (`original_datetime`). |
 
