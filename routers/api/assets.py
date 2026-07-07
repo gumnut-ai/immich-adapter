@@ -50,7 +50,6 @@ from routers.immich_models import (
     AssetBulkUploadCheckResponseDto,
     AssetCopyDto,
     AssetJobsDto,
-    AssetMediaReplaceDto,
     AssetMediaSize,
     AssetMediaResponseDto,
     AssetMediaStatus,
@@ -60,9 +59,7 @@ from routers.immich_models import (
     AssetResponseDto,
     AssetStatsResponseDto,
     AssetVisibility,
-    CheckExistingAssetsDto,
     UserResponseDto,
-    CheckExistingAssetsResponseDto,
     UpdateAssetDto,
 )
 from routers.utils.gumnut_id_conversion import (
@@ -295,24 +292,6 @@ async def bulk_upload_check(
             results.append({"id": asset.id, "action": "accept"})
 
     return AssetBulkUploadCheckResponseDto(results=results)
-
-
-@router.post("/exist")
-async def check_existing_assets(
-    request: CheckExistingAssetsDto,
-    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> CheckExistingAssetsResponseDto:
-    """
-    Check if multiple assets exist on the server and return all existing.
-    """
-    existing_assets_response = await client.assets.check_existence(
-        device_id=request.deviceId, device_asset_ids=request.deviceAssetIds
-    )
-    existing_ids = [
-        str(safe_uuid_from_asset_id(asset.id))
-        for asset in existing_assets_response.assets
-    ]
-    return CheckExistingAssetsResponseDto(existingIds=existing_ids)
 
 
 def _parse_datetime(value: str | None, fallback: datetime) -> datetime:
@@ -1060,19 +1039,6 @@ async def _bulk_trash(
         )
 
 
-@router.get("/device/{deviceId}", deprecated=True)
-async def get_all_user_assets_by_device_id(
-    deviceId: str,
-    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[str]:
-    """
-    Retrieve assets by device ID.
-    This is a stub implementation as Gumnut does not support querying by device ID directly.
-    Returns an empty list.
-    """
-    return []
-
-
 @router.get("/statistics")
 async def get_asset_statistics(
     isFavorite: bool = Query(default=None, alias="isFavorite"),
@@ -1106,20 +1072,6 @@ async def get_asset_statistics(
         videos=video_count,
         total=total_assets,
     )
-
-
-@router.get("/random", deprecated=True)
-async def get_random(
-    count: int = Query(default=None, ge=1, type="number"),
-    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[AssetResponseDto]:
-    """
-    Get random assets.
-    This is a stub implementation that returns an empty list.
-    Deprecated in v1.116.0 - use search endpoint instead.
-    """
-    # Stub implementation: return empty list since this endpoint is deprecated
-    return []
 
 
 @router.post("/jobs", status_code=204)
@@ -1312,34 +1264,6 @@ async def download_asset(
         "original",
         forwarded_headers=DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
     )
-
-
-@router.put(
-    "/{id}/original",
-    deprecated=True,
-    response_model=AssetMediaResponseDto,
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "multipart/form-data": {
-                    "schema": {"$ref": "#/components/schemas/AssetMediaReplaceDto"}
-                }
-            }
-        }
-    },
-)
-async def replace_asset(
-    id: UUID,
-    request: AssetMediaReplaceDto,
-    key: str = Query(default=None, alias="key"),
-    slug: str = Query(default=None, alias="slug"),
-    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-):
-    """
-    Replace the asset with new file, without changing its id.
-    Deprecated in immich and not supported by Gumnut.
-    """
-    return
 
 
 @router.get("/{id}/metadata")

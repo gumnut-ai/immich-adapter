@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-03
+last-updated: 2026-07-07
 ---
 
 # Immich Adapter Gap Analysis
@@ -285,9 +285,9 @@ Immich libraries represent import sources (e.g., local folders, external storage
 
 ### 14. Server Info (15 endpoints)
 
-Most server info endpoints return hardcoded fake data (storage, statistics, features, config, theme).
+Most server info endpoints return hardcoded fake data (storage, statistics, features, config).
 
-**Current behavior**: Version endpoints return dynamic data from settings. `GET /server/features` is static but accurate. `GET /server/config` is still mostly hardcoded, but `trashDays` now reflects `TRASH_RETENTION_DAYS` at request time. Storage still shows fake disk usage, statistics still return zeros, and the about/theme/license responses remain placeholders.
+**Current behavior**: Version endpoints return dynamic data from settings. `GET /server/features` is static but accurate. `GET /server/config` is still mostly hardcoded, but `trashDays` now reflects `TRASH_RETENTION_DAYS` at request time. Storage still shows fake disk usage, statistics still return zeros, and the about/license responses remain placeholders. (`GET /server/theme` was removed in Immich v3 and dropped from the adapter.)
 
 | Endpoint | Current behavior | Impact |
 |----------|-----------------|--------|
@@ -296,7 +296,7 @@ Most server info endpoints return hardcoded fake data (storage, statistics, feat
 | `GET /server/storage` | Fake disk usage | **Low** — Cosmetic in admin panel |
 | `GET /server/statistics` | All zeros | **Low** — Admin panel stats |
 | `GET /server/about` | Fake tool versions | **Low** — About page |
-| `GET /server/theme` | Empty CSS | **None** — No custom theme |
+| `GET /server/theme` | **Removed in v3** — dropped from the adapter | **None** — Gone from the v3 spec |
 | `GET /server/license` | Fake license | **None** — Gumnut isn't licensed this way |
 | Other (6) | Version info, ping | **None** — Already functional or cosmetic |
 

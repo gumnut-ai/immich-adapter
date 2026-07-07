@@ -14,7 +14,6 @@ from routers.immich_models import (
     ServerPingResponse,
     ServerStatsResponseDto,
     ServerStorageResponseDto,
-    ServerThemeDto,
     ServerVersionHistoryResponseDto,
     ServerVersionResponseDto,
     ServerMediaTypesResponseDto,
@@ -326,12 +325,3 @@ async def set_server_license(request: LicenseKeyDto) -> LicenseResponseDto:
         activationKey=request.activationKey,
         activatedAt=datetime.now(timezone.utc),
     )
-
-
-@router.get("/theme")
-async def get_theme() -> ServerThemeDto:
-    """
-    Get server theme configuration.
-    This is a stub implementation returning empty custom CSS.
-    """
-    return ServerThemeDto(customCss="")

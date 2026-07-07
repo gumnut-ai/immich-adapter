@@ -45,7 +45,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         "/api/server/features",
         "/api/server/media-types",
         "/api/server/ping",
-        "/api/server/theme",
         "/api/server/version",
         "/api/server/version-history",
     }
