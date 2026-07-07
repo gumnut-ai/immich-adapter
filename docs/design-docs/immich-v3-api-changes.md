@@ -2,7 +2,7 @@
 title: "Immich v2.7.5 → v3.0 API Change Analysis"
 status: active
 created: 2026-06-16
-last-updated: 2026-07-06
+last-updated: 2026-07-07
 ---
 
 # Immich v2.7.5 → v3.0 API Change Analysis
@@ -172,12 +172,19 @@ No new `/sync` paths — `/sync/stream` + `/sync/ack` now carry **V2 variants**:
 
 ### What V2 actually changes
 
-At the payload level, V2 adds almost nothing over V1:
+At the payload level, V2 adds almost nothing over V1 (this list is the canonical
+V2-vs-V1 delta; later sections reference it rather than restate it). Verified
+against the v3.0.0 GA models, not the RC — an earlier draft called `SyncAlbumV2`
+byte-identical, but GA dropped a field:
 
 - `SyncAssetV2` is `SyncAssetV1` with **`duration` as integer-milliseconds**
-  instead of the interval string — the same change as §2. This is the *only*
-  payload difference between any V1 entity and its V2.
-- `SyncAlbumV2` and `SyncAssetFaceV2` are **byte-identical** to their V1 forms.
+  instead of the interval string — the same change as §2. This is the only
+  payload difference for the *asset* entity.
+- `SyncAlbumV2` is `SyncAlbumV1` **minus `ownerId`** (the GA model dropped it);
+  otherwise identical.
+- `SyncAssetFaceV2` is `SyncAssetFaceV1` **plus `deletedAt` / `isVisible`**
+  (both constant for the adapter — Gumnut has no face soft-delete or visibility;
+  already handled by the pre-existing faces V2 converter).
 - The `PartnerAsset*V2` and `AlbumAsset*V2` entity types reuse `SyncAssetV2`, so
   they inherit only the int-ms `duration`.
 - `AssetOcrV1` is a genuinely new entity type (OCR text boxes), but the adapter
@@ -203,9 +210,10 @@ logic.
 
 **Conclusion:** Sync v2 is not a long pole. Reporting `3.0.x` and adding the V2
 entity mappings is small work that reuses the §2 int-ms `duration` converter —
-`AlbumV2` is identical to V1, `AssetV2` is the int-duration asset, and
-`AssetOcrV1` emits nothing. The one non-cosmetic V1 tweak to carry over is that
-v3 makes `SyncAssetV1.createdAt` required.
+the per-entity deltas are small (see the "What V2 actually changes" list above),
+`AssetV2` is the int-duration asset, and `AssetOcrV1` emits nothing. The one
+non-cosmetic V1 tweak to carry over is that v3 makes `SyncAssetV1.createdAt`
+required.
 
 ---
 
@@ -305,7 +313,7 @@ or execute the broken import, so they stay green while the suite is red.
   endpoints and string-`duration` need not stay as shims.
 - ~~Are 3.0 mobile clients hard-requiring Sync v2, or do they fall back to V1
   entity types?~~ **Resolved: incremental, not blocking.** The client picks V1
-  vs V2 by the adapter's reported version, and V2 adds only int-ms `duration`
+  vs V2 by the adapter's reported version, and the V2 payload deltas are small
   (§5). Reporting `3.0.x` needs only a thin V2 layer that reuses the §2 duration
   converter.
 - Which new feature areas (if any) are in scope vs. permanent intentional gaps —

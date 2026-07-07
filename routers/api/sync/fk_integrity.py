@@ -66,8 +66,8 @@ PAYLOAD_FK_OVERRIDES: dict[str, list[PayloadFKOverride]] = {
 # Entity types with multiple versions (e.g., face V1/V2) list all variants
 # so checkpoint lookups match regardless of which version the client synced.
 _GUMNUT_TYPE_TO_SYNC_TYPES: dict[str, list[SyncEntityType]] = {
-    "asset": [SyncEntityType.AssetV1],
-    "album": [SyncEntityType.AlbumV1],
+    "asset": [SyncEntityType.AssetV1, SyncEntityType.AssetV2],
+    "album": [SyncEntityType.AlbumV1, SyncEntityType.AlbumV2],
     "album_asset": [SyncEntityType.AlbumToAssetV1],
     "metadata": [SyncEntityType.AssetExifV1],
     "person": [SyncEntityType.PersonV1],

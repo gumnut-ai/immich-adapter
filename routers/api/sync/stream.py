@@ -71,13 +71,25 @@ _SKIPPED_EVENT_TYPES: frozenset[str] = frozenset()
 # This ordering ensures FK parents are streamed before children during upserts.
 _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.AssetsV1, "asset", SyncEntityType.AssetV1),
+    (SyncRequestType.AssetsV2, "asset", SyncEntityType.AssetV2),
     (SyncRequestType.AlbumsV1, "album", SyncEntityType.AlbumV1),
+    (SyncRequestType.AlbumsV2, "album", SyncEntityType.AlbumV2),
     (SyncRequestType.AlbumToAssetsV1, "album_asset", SyncEntityType.AlbumToAssetV1),
     (SyncRequestType.AssetExifsV1, "metadata", SyncEntityType.AssetExifV1),
     (SyncRequestType.PeopleV1, "person", SyncEntityType.PersonV1),
     (SyncRequestType.AssetFacesV1, "face", SyncEntityType.AssetFaceV1),
     (SyncRequestType.AssetFacesV2, "face", SyncEntityType.AssetFaceV2),
 ]
+
+# When a client requests a V2 request type, skip its V1 counterpart: both map to
+# the same Gumnut entity type, so streaming both would duplicate every event. The
+# mobile client version-gates V1-vs-V2 and sends only one, but a non-standard
+# client could request both — this keeps the stream single-emission.
+_V1_SUPERSEDED_BY_V2: dict[SyncRequestType, SyncRequestType] = {
+    SyncRequestType.AssetsV1: SyncRequestType.AssetsV2,
+    SyncRequestType.AlbumsV1: SyncRequestType.AlbumsV2,
+    SyncRequestType.AssetFacesV1: SyncRequestType.AssetFacesV2,
+}
 
 # Order for streaming delete events — reverse of FK dependency order.
 # Children are deleted before parents so the client can clean up FK references
@@ -91,10 +103,20 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
     SyncEntityType.AssetDeleteV1,
 ]
 
-# Request types that are accepted but have no Gumnut equivalent.
-# Prevents "unsupported" warnings while making the no-op explicit.
+# Request types that are accepted but have no Gumnut equivalent, so nothing is
+# emitted for them (the client tolerates absence). Listing them here prevents an
+# "unsupported" warning and logs them as intentional no-ops instead.
+#   - AssetEditsV1:    Gumnut has no asset edit history.
+#   - AssetOcrV1:      Gumnut has no OCR text data (new v3 entity type).
+#   - PartnerAssetsV2: Gumnut is single-user; there is no partner sharing.
+#   - AlbumAssetsV2:   album assets are the user's own, already streamed via
+#                      AssetsV2 + AlbumToAssetsV1 (this stream is for assets
+#                      shared into an album by other users, which Gumnut lacks).
 _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
     SyncRequestType.AssetEditsV1: SyncEntityType.AssetEditV1,
+    SyncRequestType.AssetOcrV1: SyncEntityType.AssetOcrV1,
+    SyncRequestType.PartnerAssetsV2: SyncEntityType.PartnerAssetV2,
+    SyncRequestType.AlbumAssetsV2: SyncEntityType.AlbumAssetCreateV2,
 }
 
 # Supported SyncRequestTypes (used to detect unsupported types requested by client)
@@ -317,7 +339,7 @@ async def _stream_entity_type(
                 # reference an asset added after the event was recorded
                 # — potentially outside the client's sync window.
                 if (
-                    sync_entity_type == SyncEntityType.AlbumV1
+                    sync_entity_type in (SyncEntityType.AlbumV1, SyncEntityType.AlbumV2)
                     and event.event_type == "album_updated"
                     and isinstance(entity, AlbumResponse)
                     and isinstance(event.payload, dict)
@@ -525,12 +547,11 @@ async def generate_sync_stream(
             if request_type not in requested_types:
                 continue
 
-            # Skip V1 faces when V2 is also requested — both map to the same
-            # gumnut "face" entity type and would stream duplicate events.
-            if (
-                request_type == SyncRequestType.AssetFacesV1
-                and SyncRequestType.AssetFacesV2 in requested_types
-            ):
+            # Skip a V1 request type when its V2 counterpart is also requested —
+            # both map to the same gumnut entity type and would stream duplicate
+            # events. See _V1_SUPERSEDED_BY_V2.
+            superseding_v2 = _V1_SUPERSEDED_BY_V2.get(request_type)
+            if superseding_v2 is not None and superseding_v2 in requested_types:
                 continue
 
             # Get checkpoint for this entity type

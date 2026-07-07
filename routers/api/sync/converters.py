@@ -16,15 +16,18 @@ from routers.immich_models import (
     AssetVisibility,
     SyncAlbumToAssetV1,
     SyncAlbumV1,
+    SyncAlbumV2,
     SyncAssetExifV1,
     SyncAssetFaceV1,
     SyncAssetFaceV2,
     SyncAssetV1,
+    SyncAssetV2,
     SyncAuthUserV1,
     SyncPersonV1,
     SyncUserV1,
 )
 from routers.utils.asset_conversion import (
+    duration_ms,
     exif_dims_and_orientation,
     format_duration,
     mime_type_to_asset_type,
@@ -148,6 +151,8 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     return SyncAssetV1(
         id=str(safe_uuid_from_asset_id(asset.id)),
         checksum=resolve_immich_checksum(asset),
+        # "Uploaded to Immich at" — required on SyncAssetV1 in Immich v3.
+        createdAt=asset.created_at,
         isFavorite=False,  # Gumnut doesn't track favorites
         isEdited=False,
         originalFileName=asset.original_file_name,
@@ -167,6 +172,18 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         thumbhash=asset.thumbhash,
         width=asset.width if asset.width else None,
     )
+
+
+def gumnut_asset_to_sync_asset_v2(asset: AssetResponse, owner_id: str) -> SyncAssetV2:
+    """Convert Gumnut AssetResponse to Immich SyncAssetV2 format.
+
+    SyncAssetV2 is SyncAssetV1 with ``duration`` as integer milliseconds instead
+    of the interval string — the only payload difference between the two (see the
+    ``immich-v3-api-changes.md`` design doc, §5). Delegate to V1 and swap it.
+    """
+    fields = gumnut_asset_to_sync_asset_v1(asset, owner_id).model_dump()
+    fields["duration"] = duration_ms(asset.duration)
+    return SyncAssetV2(**fields)
 
 
 def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
@@ -272,6 +289,18 @@ def gumnut_album_to_sync_album_v1(album: AlbumResponse, owner_id: str) -> SyncAl
         isActivityEnabled=True,
         order=AssetOrder.desc,
     )
+
+
+def gumnut_album_to_sync_album_v2(album: AlbumResponse, owner_id: str) -> SyncAlbumV2:
+    """Convert Gumnut AlbumResponse to Immich SyncAlbumV2 format.
+
+    In the Immich v3 GA model SyncAlbumV2 is SyncAlbumV1 without ``ownerId``
+    (see the ``immich-v3-api-changes.md`` design doc, §5). Delegate to V1 and
+    drop the field V2 no longer carries.
+    """
+    fields = gumnut_album_to_sync_album_v1(album, owner_id).model_dump()
+    fields.pop("ownerId", None)
+    return SyncAlbumV2(**fields)
 
 
 def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
