@@ -281,16 +281,28 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
 
 ## Known blockers on the integration branch
 
-`migration/immichv3` is intentionally red until the API-shape work lands. One
-blocker still fails *collection* of the router-layer test modules independent of
-any single issue, so the affected per-issue changes are verified by inspection
-plus scoped checks (ruff, a zero-new-errors pyright diff) rather than a green
-suite:
+`migration/immichv3` is intentionally red until the API-shape work lands.
+Several removed-symbol imports still fail *collection* of some test modules
+independent of any single issue, so the affected per-issue changes are verified
+by inspection plus scoped checks (ruff, a zero-new-errors pyright diff) rather
+than a green suite. Each is its own retarget task:
 
-- **`Error1` import** — `routers/utils/bulk.py` imports `Error1`, which the v3
-  regen removed from `immich_models.py`. This fails collection of every test
-  module that imports the router layer (e.g. `test_albums.py`) until the bulk
-  error enum is retargeted to its v3 name (`BulkIdErrorReason`).
+- **`APIKeyCreateDto` import** — `routers/api/api_keys.py` imports
+  `APIKeyCreateDto`, which the v3 regen removed from `immich_models.py`. Because
+  `api_keys.py` sits on the app-import path (`main` → `routers.api`), this breaks
+  importing the app itself, so every `tests/integration/*` module that stands up
+  the app (server / oauth / well-known / sync-stream-e2e) fails collection until
+  it is retargeted.
+- **`Action` import** — `tests/unit/api/test_assets.py` imports `Action`, an
+  anonymous enum (values `accept` / `reject`) that the v3 regen removed. Only
+  that test module imports it, so only `test_assets.py` fails on it.
+
+**Resolved — `Error1` import.** `routers/utils/bulk.py` (and `people.py` /
+`albums.py`) imported `Error1`, the removed anonymous bulk-error enum; this
+failed collection of the bulk / people / albums unit test modules that import
+the router layer directly. The enum is now retargeted to its v3 name
+`BulkIdErrorReason` (value-compatible — v3 adds `validation`), so those modules
+collect again.
 
 **Resolved — `pattern`-constrained non-`str` fields.** The v3 GA spec annotated
 UUID *and* datetime fields with a string `pattern` alongside their `format`,
@@ -307,14 +319,13 @@ Dropping the redundant constraint also collapsed eight now-indistinguishable
 `RootModel[UUID]` id wrappers (`AlbumId`, `AssetId`, …) into plain `UUID`; none
 were referenced.
 
-Per-issue tests written while the `pattern` blocker was open assert on
-class-level metadata rather than building or calling the DTOs:
-`Model.model_fields` for field additions/removals, `inspect.signature(endpoint)`
-for query-param changes (when the router module imports cleanly), and
-`inspect.getsource` / `ast.parse` of the source when even the import is blocked
-(any module importing `Error1` via `routers/utils/bulk.py`). Those assertions
-remain valid; with the `pattern` blocker lifted, only the modules gated by the
-`Error1` collection blocker still *require* source inspection.
+Per-issue tests written while these blockers were open assert on class-level
+metadata rather than building or calling the DTOs: `Model.model_fields` for
+field additions/removals, `inspect.signature(endpoint)` for query-param changes
+(when the router module imports cleanly), and `inspect.getsource` / `ast.parse`
+of the source when the import is blocked. Those assertions remain valid; with
+the `pattern` and `Error1` blockers lifted, the router-layer unit modules import
+and most such tests could now build or call the DTOs directly.
 
 ## Open questions
 

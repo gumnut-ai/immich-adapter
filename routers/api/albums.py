@@ -20,12 +20,11 @@ from routers.immich_models import (
     CreateAlbumDto,
     AlbumsAddAssetsDto,
     AlbumsAddAssetsResponseDto,
-    BulkIdErrorReason,
     AlbumStatisticsResponseDto,
     UpdateAlbumDto,
     UpdateAlbumUserDto,
     AddUsersDto,
-    Error1,
+    BulkIdErrorReason,
     UserResponseDto,
 )
 from routers.utils.gumnut_id_conversion import (
@@ -162,7 +161,7 @@ async def add_assets_to_album(
     added: set[str] = set()
     duplicate: set[str] = set()
     not_found: set[str] = set()
-    errors_by_uuid: dict[UUID, Error1] = {}
+    errors_by_uuid: dict[UUID, BulkIdErrorReason] = {}
     async for outcome in chunked_per_item_bulk(
         request.ids,
         lambda ids: client.albums.assets_associations.add(
@@ -200,13 +199,13 @@ async def add_assets_to_album(
         elif gumnut_asset_id in duplicate:
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str, success=False, error=Error1.duplicate
+                    id=asset_uuid_str, success=False, error=BulkIdErrorReason.duplicate
                 )
             )
         elif gumnut_asset_id in not_found:
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str, success=False, error=Error1.not_found
+                    id=asset_uuid_str, success=False, error=BulkIdErrorReason.not_found
                 )
             )
         else:
@@ -219,7 +218,7 @@ async def add_assets_to_album(
             )
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str, success=False, error=Error1.unknown
+                    id=asset_uuid_str, success=False, error=BulkIdErrorReason.unknown
                 )
             )
     return results
@@ -273,7 +272,7 @@ async def remove_asset_from_album(
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
     # Upstream silently skips missing assets and 204s on success.
-    errors_by_uuid: dict[UUID, Error1] = {}
+    errors_by_uuid: dict[UUID, BulkIdErrorReason] = {}
     async for outcome in chunked_per_item_bulk(
         request.ids,
         lambda ids: client.albums.assets_associations.remove(

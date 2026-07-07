@@ -28,7 +28,7 @@ from routers.immich_models import (
     UpdateAlbumDto,
     BulkIdsDto,
     AlbumsAddAssetsDto,
-    Error1,
+    BulkIdErrorReason,
 )
 from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.utils.gumnut_client import BULK_CHUNK_SIZE
@@ -571,7 +571,7 @@ class TestAddAssetsToAlbum:
         assert result[0].success is True
         assert result[1].id == str(dup_asset)
         assert result[1].success is False
-        assert result[1].error == Error1.duplicate
+        assert result[1].error == BulkIdErrorReason.duplicate
 
     @pytest.mark.anyio
     async def test_add_assets_not_found_assets_from_response(self, sample_uuid):
@@ -599,7 +599,7 @@ class TestAddAssetsToAlbum:
         assert result[0].success is True
         assert result[1].id == str(missing_asset)
         assert result[1].success is False
-        assert result[1].error == Error1.not_found
+        assert result[1].error == BulkIdErrorReason.not_found
 
     @pytest.mark.anyio
     async def test_add_assets_not_found_marks_all(self, sample_uuid):
@@ -621,7 +621,7 @@ class TestAddAssetsToAlbum:
 
         assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.not_found for item in result)
+        assert all(item.error == BulkIdErrorReason.not_found for item in result)
         assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
@@ -640,7 +640,7 @@ class TestAddAssetsToAlbum:
 
         assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.unknown for item in result)
+        assert all(item.error == BulkIdErrorReason.unknown for item in result)
         assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
@@ -659,7 +659,7 @@ class TestAddAssetsToAlbum:
 
         assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.unknown for item in result)
+        assert all(item.error == BulkIdErrorReason.unknown for item in result)
         assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
@@ -740,7 +740,7 @@ class TestAddAssetsToAlbum:
         for item in result[:chunk2_dup_index]:
             assert item.success is True
         assert result[chunk2_dup_index].success is False
-        assert result[chunk2_dup_index].error == Error1.duplicate
+        assert result[chunk2_dup_index].error == BulkIdErrorReason.duplicate
 
     @pytest.mark.anyio
     async def test_add_assets_not_found_in_later_chunk_surfaces_in_response(
@@ -770,7 +770,7 @@ class TestAddAssetsToAlbum:
         for item in result[:chunk2_missing_index]:
             assert item.success is True
         assert result[chunk2_missing_index].success is False
-        assert result[chunk2_missing_index].error == Error1.not_found
+        assert result[chunk2_missing_index].error == BulkIdErrorReason.not_found
 
     @pytest.mark.anyio
     async def test_add_assets_empty_request(self, sample_uuid):
@@ -807,7 +807,7 @@ class TestAddAssetsToAlbum:
         # Chunk 1 ids are unknown; chunk 2 ids succeed.
         for item in result[:BULK_CHUNK_SIZE]:
             assert item.success is False
-            assert item.error == Error1.unknown
+            assert item.error == BulkIdErrorReason.unknown
         for item in result[BULK_CHUNK_SIZE:]:
             assert item.success is True
         assert mock_client.albums.assets_associations.add.call_count == 2
@@ -834,7 +834,7 @@ class TestAddAssetsToAlbum:
             assert item.success is True
         for item in result[BULK_CHUNK_SIZE:]:
             assert item.success is False
-            assert item.error == Error1.unknown
+            assert item.error == BulkIdErrorReason.unknown
 
     @pytest.mark.anyio
     async def test_add_assets_missing_from_response_marked_unknown(
@@ -864,7 +864,7 @@ class TestAddAssetsToAlbum:
         assert result[0].success is True
         assert result[1].id == str(missing)
         assert result[1].success is False
-        assert result[1].error == Error1.unknown
+        assert result[1].error == BulkIdErrorReason.unknown
         assert any(
             "missing from add_assets bulk response" in record.message
             for record in caplog.records
@@ -984,7 +984,7 @@ class TestRemoveAssetFromAlbum:
 
         assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.not_found for item in result)
+        assert all(item.error == BulkIdErrorReason.not_found for item in result)
 
     @pytest.mark.anyio
     async def test_remove_assets_other_error_marks_all(self, sample_uuid):
@@ -1001,7 +1001,7 @@ class TestRemoveAssetFromAlbum:
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.unknown for item in result)
+        assert all(item.error == BulkIdErrorReason.unknown for item in result)
         assert mock_client.albums.assets_associations.remove.call_count == 1
 
     @pytest.mark.anyio
@@ -1019,7 +1019,7 @@ class TestRemoveAssetFromAlbum:
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.unknown for item in result)
+        assert all(item.error == BulkIdErrorReason.unknown for item in result)
         assert mock_client.albums.assets_associations.remove.call_count == 1
 
     @pytest.mark.anyio
@@ -1093,7 +1093,7 @@ class TestRemoveAssetFromAlbum:
 
         for item in result[:BULK_CHUNK_SIZE]:
             assert item.success is False
-            assert item.error == Error1.unknown
+            assert item.error == BulkIdErrorReason.unknown
         for item in result[BULK_CHUNK_SIZE:]:
             assert item.success is True
         assert mock_client.albums.assets_associations.remove.call_count == 2
@@ -1119,7 +1119,7 @@ class TestRemoveAssetFromAlbum:
             assert item.success is True
         for item in result[BULK_CHUNK_SIZE:]:
             assert item.success is False
-            assert item.error == Error1.unknown
+            assert item.error == BulkIdErrorReason.unknown
 
 
 class TestDeleteAlbum:
@@ -1187,8 +1187,6 @@ class TestAddAssetsToAlbums:
         result = await add_assets_to_albums(request, client=mock_client)
 
         assert result.success is False
-        from routers.immich_models import BulkIdErrorReason
-
         assert result.error == BulkIdErrorReason.unknown
 
     @pytest.mark.anyio
@@ -1203,8 +1201,6 @@ class TestAddAssetsToAlbums:
         result = await add_assets_to_albums(request, client=mock_client)
 
         assert result.success is False
-        from routers.immich_models import BulkIdErrorReason
-
         assert result.error == BulkIdErrorReason.not_found
 
     @pytest.mark.anyio
@@ -1225,8 +1221,6 @@ class TestAddAssetsToAlbums:
         result = await add_assets_to_albums(request, client=mock_client)
 
         assert result.success is False
-        from routers.immich_models import BulkIdErrorReason
-
         assert result.error == BulkIdErrorReason.no_permission
 
     @pytest.mark.anyio
@@ -1244,8 +1238,6 @@ class TestAddAssetsToAlbums:
         result = await add_assets_to_albums(request, client=mock_client)
 
         assert result.success is False
-        from routers.immich_models import BulkIdErrorReason
-
         assert result.error == BulkIdErrorReason.not_found
 
     @pytest.mark.anyio
