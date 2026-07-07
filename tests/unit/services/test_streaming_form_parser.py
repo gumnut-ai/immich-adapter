@@ -47,9 +47,9 @@ class TestStreamingFormParser:
         pipe = StreamingPipe(maxsize=64)
         parser_handler = StreamingFormParser(pipe)
 
+        # Immich v3 no longer sends device fields; fileCreatedAt is the only
+        # pre-file field the upload path requires.
         fields = {
-            "deviceAssetId": "device-123",
-            "deviceId": "device-456",
             "fileCreatedAt": "2023-01-01T12:00:00Z",
         }
         file_data = b"fake image content here"
@@ -78,8 +78,6 @@ class TestStreamingFormParser:
         assert not parser_handler.headers_ready.is_set()
 
         fields = {
-            "deviceAssetId": "dev-123",
-            "deviceId": "dev-456",
             "fileCreatedAt": "2023-01-01T12:00:00Z",
         }
         body, ct_header = _build_multipart_body(fields)
@@ -243,8 +241,6 @@ class TestStreamingFormParser:
         parser_handler = StreamingFormParser(pipe)
 
         fields = {
-            "deviceAssetId": "dev-123",
-            "deviceId": "dev-456",
             "fileCreatedAt": "2023-01-01T12:00:00Z",
         }
         file_data = b"A" * 1000
@@ -257,7 +253,7 @@ class TestStreamingFormParser:
             parser.write(body[i : i + 100])
         parser.finalize()
 
-        assert parser_handler.form_fields["deviceAssetId"] == "dev-123"
+        assert parser_handler.form_fields["fileCreatedAt"] == "2023-01-01T12:00:00Z"
         assert parser_handler.filename == "test.jpg"
 
         # Read all file data from pipe

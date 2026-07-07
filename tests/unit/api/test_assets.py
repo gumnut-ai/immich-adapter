@@ -353,11 +353,10 @@ def _make_mock_request(
 
     request.state = _State()
 
-    # Build form dict from form_data + file
+    # Build form dict from form_data + file. Immich v3 no longer sends device
+    # fields; fileCreatedAt/fileModifiedAt are the timestamps the path reads.
     if form_data is None:
         form_data = {
-            "deviceAssetId": "device-123",
-            "deviceId": "device-456",
             "fileCreatedAt": "2023-01-01T12:00:00Z",
             "fileModifiedAt": "2023-01-01T12:00:00Z",
         }
@@ -442,6 +441,11 @@ class TestUploadAsset:
         mock_client.assets.with_raw_response.create.assert_called_once()
         call_kwargs = mock_client.assets.with_raw_response.create.call_args
         assert call_kwargs.kwargs["asset_data"][1] is mock_file.file
+        # Immich v3 sends no device fields; the adapter synthesizes the values
+        # the Gumnut API requires — a unique per-upload device_asset_id and a
+        # placeholder device_id.
+        UUID(call_kwargs.kwargs["device_asset_id"])  # raises if not a valid UUID
+        assert call_kwargs.kwargs["device_id"] == "gumnut-device"
 
     @pytest.mark.anyio
     async def test_upload_asset_duplicate_returns_real_id(
@@ -2781,7 +2785,10 @@ class TestGetAssetInfo:
         # Assert
         # Result should be a real AssetResponseDto from conversion
         assert hasattr(result, "id")
-        assert hasattr(result, "deviceAssetId")
+        # Immich v3 dropped these from AssetResponseDto.
+        assert not hasattr(result, "deviceAssetId")
+        assert not hasattr(result, "deviceId")
+        assert not hasattr(result, "unassignedFaces")
         mock_client.assets.retrieve.assert_called_once()
 
     @pytest.mark.anyio
@@ -3591,25 +3598,22 @@ class TestExtractUploadFields:
     """Tests for _extract_upload_fields helper."""
 
     def test_valid_fields(self):
+        # Immich v3 no longer sends device fields; only the timestamps remain.
         fields = {
-            "deviceAssetId": "device-123",
-            "deviceId": "device-456",
             "fileCreatedAt": "2023-06-15T10:30:00Z",
             "fileModifiedAt": "2023-06-15T11:00:00Z",
         }
         result = _extract_upload_fields(fields)
-        assert result.device_asset_id == "device-123"
-        assert result.device_id == "device-456"
         assert result.file_created_at.year == 2023
+        assert result.file_modified_at.hour == 11
 
     def test_missing_required_field_raises(self):
-        with pytest.raises(ValueError, match="Missing required"):
-            _extract_upload_fields({"deviceAssetId": "x", "deviceId": "y"})
+        # fileCreatedAt is now the only required field.
+        with pytest.raises(ValueError, match="Missing required field: fileCreatedAt"):
+            _extract_upload_fields({})
 
     def test_file_modified_at_defaults_to_created(self):
         fields = {
-            "deviceAssetId": "x",
-            "deviceId": "y",
             "fileCreatedAt": "2023-06-15T10:30:00Z",
         }
         result = _extract_upload_fields(fields)

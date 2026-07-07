@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import NamedTuple
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import httpx
 import pytest
@@ -11,26 +12,21 @@ from fastapi import HTTPException
 from services.streaming_upload import StreamingUploadPipeline
 
 
-# Minimal UploadFields stand-in (mirrors the real NamedTuple in assets.py)
+# Minimal UploadFields stand-in (mirrors the real NamedTuple in assets.py).
+# Immich v3 dropped the device fields; the pipeline synthesizes them internally.
 class _UploadFields(NamedTuple):
-    device_asset_id: str
-    device_id: str
     file_created_at: datetime
     file_modified_at: datetime
 
 
 def _extract_fields(fields: dict[str, str]) -> _UploadFields:
     return _UploadFields(
-        device_asset_id=fields.get("deviceAssetId", ""),
-        device_id=fields.get("deviceId", ""),
         file_created_at=datetime(2023, 1, 1),
         file_modified_at=datetime(2023, 1, 1),
     )
 
 
 _REQUIRED_FIELDS = {
-    "deviceAssetId": "dev-123",
-    "deviceId": "dev-456",
     "fileCreatedAt": "2023-01-01T00:00:00Z",
 }
 
@@ -123,6 +119,57 @@ class TestStreamingUploadPipeline:
         assert result["status"] == "created"
         assert pipeline.last_status_code == 201
         mock_client.post.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_synthesizes_device_fields_for_gumnut(self):
+        """Immich v3 sends no device fields; the pipeline synthesizes what the
+        Gumnut API requires — a unique per-upload device_asset_id and a
+        placeholder device_id — and forwards them in the upload body."""
+        body, ct_header = _build_multipart_body(filename="photo.jpg")
+        request = _make_mock_request(body, ct_header)
+        response = _make_httpx_response(201)
+
+        mock_client = MagicMock()
+        mock_client.post.return_value = response
+
+        with patch(
+            "services.streaming_upload._get_streaming_http_client",
+            return_value=mock_client,
+        ):
+            pipeline = StreamingUploadPipeline(request, "http://localhost:8000", "jwt")
+            await pipeline.execute(_extract_fields)
+
+        sent_data = mock_client.post.call_args.kwargs["data"]
+        # A unique UUID so distinct assets never collapse onto one device tuple.
+        UUID(sent_data["device_asset_id"])  # raises if not a valid UUID
+        assert sent_data["device_id"] == "gumnut-device"
+
+    @pytest.mark.anyio
+    async def test_device_asset_id_unique_per_upload(self):
+        """Each upload gets a fresh device_asset_id — the whole reason it is
+        synthesized per-upload rather than shared. Guards against a regression
+        that hoisted the UUID to module scope or reused GUMNUT_UPLOAD_DEVICE_ID,
+        which would still parse as a valid UUID but collapse distinct assets."""
+        mock_client = MagicMock()
+        mock_client.post.return_value = _make_httpx_response(201)
+
+        device_asset_ids = []
+        with patch(
+            "services.streaming_upload._get_streaming_http_client",
+            return_value=mock_client,
+        ):
+            for _ in range(2):
+                body, ct_header = _build_multipart_body()
+                request = _make_mock_request(body, ct_header)
+                pipeline = StreamingUploadPipeline(
+                    request, "http://localhost:8000", "jwt"
+                )
+                await pipeline.execute(_extract_fields)
+                device_asset_ids.append(
+                    mock_client.post.call_args.kwargs["data"]["device_asset_id"]
+                )
+
+        assert device_asset_ids[0] != device_asset_ids[1]
 
     @pytest.mark.anyio
     async def test_5xx_maps_to_502(self):

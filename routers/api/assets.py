@@ -27,6 +27,7 @@ from gumnut.types.asset_bulk_update_assets_params import Update, UpdateChange
 from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
+from routers.api.constants import GUMNUT_UPLOAD_DEVICE_ID
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import (
     BULK_CHUNK_SIZE,
@@ -329,8 +330,6 @@ def _parse_datetime(value: str | None, fallback: datetime) -> datetime:
 
 
 class UploadFields(NamedTuple):
-    device_asset_id: str
-    device_id: str
     file_created_at: datetime
     file_modified_at: datetime
 
@@ -340,20 +339,16 @@ def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
 
     Raises ValueError if required fields are missing.
     """
-    device_asset_id = fields.get("deviceAssetId", "")
-    device_id = fields.get("deviceId", "")
     file_created_at_str = fields.get("fileCreatedAt", "")
 
-    if not device_asset_id or not device_id or not file_created_at_str:
-        raise ValueError(
-            "Missing required fields: deviceAssetId, deviceId, fileCreatedAt"
-        )
+    if not file_created_at_str:
+        raise ValueError("Missing required field: fileCreatedAt")
 
     file_modified_at_str = fields.get("fileModifiedAt") or None
     file_created_at = _parse_datetime(file_created_at_str, datetime.now(timezone.utc))
     file_modified_at = _parse_datetime(file_modified_at_str, file_created_at)
 
-    return UploadFields(device_asset_id, device_id, file_created_at, file_modified_at)
+    return UploadFields(file_created_at, file_modified_at)
 
 
 # Delay applied before emitting upload-success events for video uploads, to give
@@ -536,14 +531,16 @@ async def _upload_buffered(
         # Convert Starlette form values to plain strings for shared helper
         fields = {key: str(value) for key, value in form.items() if key != "assetData"}
         try:
-            device_asset_id, device_id, file_created_at, file_modified_at = (
-                _extract_upload_fields(fields)
-            )
+            file_created_at, file_modified_at = _extract_upload_fields(fields)
         except ValueError as ve:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=str(ve),
             )
+
+        # Synthesize the device fields the Gumnut API requires (see
+        # GUMNUT_UPLOAD_DEVICE_ID).
+        device_asset_id = str(uuid4())
 
         try:
             # Drop iOS live photo .MOV files — they upload as separate video files
@@ -556,8 +553,6 @@ async def _upload_buffered(
                 logger.info(
                     "Dropping iOS live photo video",
                     extra={
-                        "device_asset_id": device_asset_id,
-                        "device_id": device_id,
                         "upload_filename": asset_data.filename,
                         "content_type": asset_data.content_type,
                     },
@@ -584,7 +579,7 @@ async def _upload_buffered(
                         asset_data.content_type,
                     ),
                     device_asset_id=device_asset_id,
-                    device_id=device_id,
+                    device_id=GUMNUT_UPLOAD_DEVICE_ID,
                     file_created_at=file_created_at,
                     file_modified_at=file_modified_at,
                 )
@@ -615,7 +610,6 @@ async def _upload_buffered(
                     "upload_filename": asset_data.filename,
                     "content_type": asset_data.content_type,
                     "device_asset_id": device_asset_id,
-                    "device_id": device_id,
                     "strategy": "buffered",
                 },
                 exc_info=True,
@@ -630,10 +624,10 @@ async def _upload_streaming(
 ) -> AssetMediaResponseDto | JSONResponse:
     """Streaming upload path — pipes file data to the Gumnut API without buffering.
 
-    Note: requires multipart form fields (deviceAssetId, deviceId, fileCreatedAt)
-    to precede the file part. All known Immich clients send fields first. Clients
-    that send the file before fields will receive a 422 error; those uploads fall
-    below the streaming threshold in practice, so they use the buffered path.
+    Note: requires the multipart form field fileCreatedAt to precede the file
+    part. All known Immich clients send fields first. Clients that send the file
+    before fields will receive a 422 error; those uploads fall below the
+    streaming threshold in practice, so they use the buffered path.
     """
     jwt_token = getattr(request.state, "jwt_token", None)
     if not jwt_token:
@@ -718,10 +712,6 @@ async def _upload_streaming(
                 log_extra["upload_filename"] = form_parser.filename
             if form_parser.content_type:
                 log_extra["content_type"] = form_parser.content_type
-            if device_asset_id := form_parser.form_fields.get("deviceAssetId"):
-                log_extra["device_asset_id"] = device_asset_id
-            if device_id := form_parser.form_fields.get("deviceId"):
-                log_extra["device_id"] = device_id
 
         raise map_gumnut_error(
             e,

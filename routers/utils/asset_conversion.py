@@ -25,7 +25,7 @@ from routers.immich_models import (
 )
 from services.websockets import AssetUploadReadyV1Payload
 from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
-from routers.utils.person_conversion import convert_gumnut_person_to_immich_with_faces
+from routers.utils.person_conversion import convert_gumnut_person_to_immich
 
 logger = logging.getLogger(__name__)
 
@@ -513,7 +513,7 @@ def convert_gumnut_asset_to_immich(
     people = []
     if gumnut_asset.people:
         for person in gumnut_asset.people:
-            people.append(convert_gumnut_person_to_immich_with_faces(person))
+            people.append(convert_gumnut_person_to_immich(person))
 
     # Extract EXIF object directly from AssetResponse
     exif_info = extract_exif_info(gumnut_asset)
@@ -523,8 +523,6 @@ def convert_gumnut_asset_to_immich(
 
     return AssetResponseDto(
         id=str(safe_uuid_from_asset_id(asset_id)),
-        deviceAssetId=str(asset_id),  # Keep original Gumnut asset ID
-        deviceId="gumnut-device",  # Placeholder device ID
         type=asset_type,
         originalFileName=original_filename,
         originalMimeType=mime_type,

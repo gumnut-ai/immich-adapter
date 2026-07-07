@@ -12,11 +12,14 @@ The DTO conversion sites in ``routers/utils/asset_conversion.py`` must surface
 import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.file_data_response import FileDataResponse
 
+from routers.immich_models import PersonResponseDto
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_person_id
 from routers.api.sync.converters import gumnut_asset_to_sync_asset_v1
 from routers.utils.asset_conversion import (
     build_asset_upload_ready_payload,
@@ -199,6 +202,44 @@ class TestConvertGumnutAssetToImmichTrashState:
         result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
 
         assert result.isTrashed is True
+
+
+def _make_gumnut_person() -> Mock:
+    """A minimal Gumnut person carrying the fields the converter reads."""
+    person = Mock()
+    person.id = uuid_to_gumnut_person_id(uuid4())
+    person.name = "Alice"
+    person.birth_date = None
+    person.is_favorite = False
+    person.is_hidden = False
+    person.updated_at = datetime.now(timezone.utc)
+    return person
+
+
+class TestConvertGumnutAssetToImmichV3Shape:
+    """Immich v3 dropped device fields + unassignedFaces from AssetResponseDto
+    and retyped ``people`` to ``PersonResponseDto`` (no inline face boxes)."""
+
+    def test_v3_removed_fields_absent(self, sample_gumnut_asset, mock_current_user):
+        result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+
+        assert not hasattr(result, "deviceAssetId")
+        assert not hasattr(result, "deviceId")
+        assert not hasattr(result, "unassignedFaces")
+
+    def test_people_use_person_response_dto(
+        self, sample_gumnut_asset, mock_current_user
+    ):
+        sample_gumnut_asset.people = [_make_gumnut_person()]
+
+        result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+
+        people = result.people
+        assert people is not None
+        assert len(people) == 1
+        assert isinstance(people[0], PersonResponseDto)
+        # v3 PersonResponseDto carries no inline face bounding boxes.
+        assert not hasattr(people[0], "faces")
 
 
 class TestBuildAssetUploadReadyPayloadTrashState:
