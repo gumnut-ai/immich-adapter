@@ -289,15 +289,17 @@ suite:
 **Resolved — `pattern`-constrained non-`str` fields.** The v3 GA spec annotated
 UUID *and* datetime fields with a string `pattern` alongside their `format`,
 which `datamodel-codegen` copied onto the generated `UUID` / `AwareDatetime`
-fields. Under the pinned pydantic + Python 3.14, *instantiating* any such model
-raised `TypeError: Unable to apply constraint 'pattern' … for schema of type
-'uuid'` (and the identical error `for schema of type 'datetime'` on the
+fields. Under the pinned pydantic + Python 3.14, *validating a value* for any
+such field raised `TypeError: Unable to apply constraint 'pattern' … for schema
+of type 'uuid'` (and the identical error `for schema of type 'datetime'` on the
 sync/exif DTOs), so every asset/album/user/sync response 500'd and every test
-that built a DTO errored at setup. The model generator now strips `pattern` from
-`format: uuid` / `format: date-time` schemas before codegen (keeping it on
-genuine string fields), so the DTOs construct normally. Dropping the redundant
-constraint also collapsed eight now-indistinguishable `RootModel[UUID]` id
-wrappers (`AlbumId`, `AssetId`, …) into plain `UUID`; none were referenced.
+that built a populated DTO errored at setup. The model generator now strips
+`pattern` from schemas whose `format` maps to a non-string type (`uuid`,
+`date-time`, and — defensively, for future specs — `date` / `time`) before
+codegen, keeping it on genuine string fields, so the DTOs construct normally.
+Dropping the redundant constraint also collapsed eight now-indistinguishable
+`RootModel[UUID]` id wrappers (`AlbumId`, `AssetId`, …) into plain `UUID`; none
+were referenced.
 
 Per-issue tests written while the `pattern` blocker was open assert on
 class-level metadata rather than building or calling the DTOs:

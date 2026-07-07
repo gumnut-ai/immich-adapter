@@ -29,6 +29,8 @@ import click
 import requests
 import yaml
 
+from spec_preprocess import strip_non_string_patterns
+
 
 def get_container_tag() -> str:
     """
@@ -46,32 +48,6 @@ def get_container_tag() -> str:
             raise Exception(".immich-container-tag file is empty")
     else:
         raise Exception(".immich-container-tag file not found")
-
-
-def _strip_non_string_patterns(node: object) -> int:
-    """Remove ``pattern`` from schemas declared as ``format: uuid`` or ``date-time``.
-
-    datamodel-codegen maps ``format: uuid`` to ``UUID`` and ``format: date-time`` to
-    ``AwareDatetime``, then copies the (string-only) ``pattern`` constraint onto that
-    non-string field. pydantic-core rejects a ``pattern`` constraint on a uuid/datetime
-    schema with a ``TypeError`` when the model is first instantiated, which makes every
-    generated DTO that carries an id or timestamp un-constructable. The regex is a
-    redundant re-encoding of what ``format`` already guarantees, so drop it before
-    codegen sees the spec while leaving ``pattern`` on genuine string fields intact.
-
-    Mutates ``node`` in place; returns the number of patterns removed.
-    """
-    removed = 0
-    if isinstance(node, dict):
-        if node.get("format") in ("uuid", "date-time") and "pattern" in node:
-            del node["pattern"]
-            removed += 1
-        for value in node.values():
-            removed += _strip_non_string_patterns(value)
-    elif isinstance(node, list):
-        for item in node:
-            removed += _strip_non_string_patterns(item)
-    return removed
 
 
 def _parse_spec(text: str) -> dict:
@@ -143,12 +119,15 @@ def fetch_spec(spec_path: str) -> tuple[str, str | None, str]:
         raw_text = path.read_text()
 
     spec_data = _parse_spec(raw_text)
-    removed = _strip_non_string_patterns(spec_data)
-    print(f"Stripped {removed} pattern constraint(s) from uuid/date-time fields")
+    removed = strip_non_string_patterns(spec_data)
+    print(f"Stripped {removed} pattern constraint(s) from non-string-format fields")
 
     # Write the preprocessed spec to a temp file for datamodel-codegen to consume.
+    # default=str keeps the dump robust to native datetime scalars a YAML spec may carry
+    # in example values (json can't serialize them, and a raise here would leak the temp
+    # file since main's cleanup only runs after fetch_spec returns).
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        json.dump(spec_data, f, indent=2)
+        json.dump(spec_data, f, indent=2, default=str)
         return f.name, tag_or_branch, source_label
 
 

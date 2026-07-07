@@ -1,7 +1,7 @@
 """Regression tests for the generated Immich models.
 
-Guards the pattern-strip fix in ``tools/generate_immich_models.py`` (see
-``_strip_non_string_patterns`` for the mechanism): the v3 spec puts string ``pattern``
+Guards the pattern-strip fix (see ``strip_non_string_patterns`` in
+``tools/spec_preprocess.py`` for the mechanism): the v3 spec puts string ``pattern``
 constraints on ``format: uuid`` / ``date-time`` fields, which pydantic-core rejects
 with a ``TypeError`` when a value for such a field is validated — so every DTO carrying
 a populated id or timestamp is un-constructable. These tests lock the committed
