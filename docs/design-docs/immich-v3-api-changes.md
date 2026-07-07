@@ -288,6 +288,14 @@ zero-new-errors pyright diff) rather than a green suite:
   codegen/dependency fix (drop `pattern` on these fields, or pin pydantic),
   tracked separately from the per-endpoint retarget.
 
+Per-issue tests that must run despite these blockers assert on class-level
+metadata rather than building or calling the DTOs: `Model.model_fields` for
+field additions/removals, `inspect.signature(endpoint)` for query-param changes
+(when the router module imports cleanly), and `ast.parse` of the source when
+even the import is blocked (any module importing `Error1` via
+`routers/utils/bulk.py`). None of these instantiate a `pattern`-constrained DTO
+or execute the broken import, so they stay green while the suite is red.
+
 ## Open questions
 
 - ~~Does the adapter retarget 3.0 GA in one cut, or run a compatibility window
