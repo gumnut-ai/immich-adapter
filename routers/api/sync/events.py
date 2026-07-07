@@ -29,7 +29,9 @@ from routers.utils.gumnut_id_conversion import (
 from routers.api.sync.converters import (
     gumnut_album_asset_to_sync_album_to_asset_v1,
     gumnut_album_to_sync_album_v1,
+    gumnut_album_to_sync_album_v2,
     gumnut_asset_to_sync_asset_v1,
+    gumnut_asset_to_sync_asset_v2,
     gumnut_face_to_sync_face_v1,
     gumnut_face_to_sync_face_v2,
     gumnut_metadata_to_sync_exif_v1,
@@ -276,13 +278,23 @@ def convert_entity_to_sync_event(
     """
     sync_model: Any
     if gumnut_entity_type == "asset":
-        sync_model = gumnut_asset_to_sync_asset_v1(
-            cast(AssetResponse, entity), owner_id
-        )
+        if sync_entity_type == SyncEntityType.AssetV2:
+            sync_model = gumnut_asset_to_sync_asset_v2(
+                cast(AssetResponse, entity), owner_id
+            )
+        else:
+            sync_model = gumnut_asset_to_sync_asset_v1(
+                cast(AssetResponse, entity), owner_id
+            )
     elif gumnut_entity_type == "album":
-        sync_model = gumnut_album_to_sync_album_v1(
-            cast(AlbumResponse, entity), owner_id
-        )
+        if sync_entity_type == SyncEntityType.AlbumV2:
+            sync_model = gumnut_album_to_sync_album_v2(
+                cast(AlbumResponse, entity), owner_id
+            )
+        else:
+            sync_model = gumnut_album_to_sync_album_v1(
+                cast(AlbumResponse, entity), owner_id
+            )
     elif gumnut_entity_type == "person":
         sync_model = gumnut_person_to_sync_person_v1(
             cast(PersonResponse, entity), owner_id

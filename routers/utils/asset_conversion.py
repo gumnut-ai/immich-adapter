@@ -462,6 +462,8 @@ def build_asset_upload_ready_payload(
     sync_asset = SyncAssetV1(
         id=asset_uuid,
         ownerId=owner_id,
+        # "Uploaded to Immich at" — required on SyncAssetV1 in Immich v3.
+        createdAt=gumnut_asset.created_at,
         thumbhash=gumnut_asset.thumbhash,
         checksum=resolve_immich_checksum(gumnut_asset),
         deletedAt=gumnut_asset.trashed_at,
