@@ -150,8 +150,6 @@ async def create_album(
 async def add_assets_to_album(
     id: UUID,
     request: BulkIdsDto,
-    key: str = Query(default=None, alias="key"),
-    slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[BulkIdResponseDto]:
     """
@@ -321,8 +319,6 @@ async def delete_album(
 @router.put("/assets")
 async def add_assets_to_albums(
     request: AlbumsAddAssetsDto,
-    key: str = Query(default=None, alias="key"),
-    slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> AlbumsAddAssetsResponseDto:
     """

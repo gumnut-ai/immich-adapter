@@ -51,14 +51,13 @@ async def create_shared_link(
         createdAt=now,
         description="Shared link",
         expiresAt=now,
-        id=str(uuid4()),
+        id=uuid4(),
         key="dummy-key",
         password="",
         showMetadata=True,
         slug="dummy-slug",
-        token="dummy-token",
         type=SharedLinkType.INDIVIDUAL,
-        userId=str(current_user_id),
+        userId=current_user_id,
     )
 
 
@@ -80,21 +79,18 @@ async def login_shared_link(
         createdAt=now,
         description="Shared link",
         expiresAt=now,
-        id=str(uuid4()),
+        id=uuid4(),
         key="dummy-key",
         password="",
         showMetadata=True,
         slug="dummy-slug",
-        token="dummy-token",
         type=SharedLinkType.INDIVIDUAL,
-        userId=str(current_user_id),
+        userId=current_user_id,
     )
 
 
 @router.get("/me")
 async def get_my_shared_link(
-    password: str = Query(default=None),
-    token: str = Query(default=None),
     key: str = Query(default=None),
     slug: str = Query(default=None),
     current_user_id: UUID = Depends(get_current_user_id),
@@ -112,14 +108,13 @@ async def get_my_shared_link(
         createdAt=now,
         description="My shared link",
         expiresAt=now,
-        id=str(current_user_id),
+        id=current_user_id,
         key=key or "dummy-key",
         password="",
         showMetadata=True,
         slug=slug or "dummy-slug",
-        token=token or "dummy-token",
         type=SharedLinkType.INDIVIDUAL,
-        userId=str(current_user_id),
+        userId=current_user_id,
     )
 
 
@@ -141,14 +136,13 @@ async def get_shared_link_by_id(
         createdAt=now,
         description="Shared link by ID",
         expiresAt=now,
-        id=str(id),
+        id=id,
         key="dummy-key",
         password="",
         showMetadata=True,
         slug="dummy-slug",
-        token="dummy-token",
         type=SharedLinkType.INDIVIDUAL,
-        userId=str(current_user_id),
+        userId=current_user_id,
     )
 
 
@@ -171,14 +165,13 @@ async def update_shared_link(
         createdAt=now,
         description="Updated shared link",
         expiresAt=now,
-        id=str(id),
+        id=id,
         key="dummy-key",
         password="",
         showMetadata=True,
         slug="dummy-slug",
-        token="dummy-token",
         type=SharedLinkType.INDIVIDUAL,
-        userId=str(current_user_id),
+        userId=current_user_id,
     )
 
 
@@ -195,8 +188,6 @@ async def remove_shared_link(id: UUID):
 async def add_shared_link_assets(
     id: UUID,
     request: AssetIdsDto,
-    key: str = Query(default=None),
-    slug: str = Query(default=None),
 ) -> List[AssetIdsResponseDto]:
     """
     Add assets to a shared link
