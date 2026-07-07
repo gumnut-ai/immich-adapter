@@ -31,11 +31,13 @@ Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync eve
 
 When the same gumnut entity type maps to multiple Immich sync versions (e.g., AssetFacesV2 alongside V1), update these files in coordination:
 
-1. `stream.py`: Add V2 entry to `_SYNC_TYPE_ORDER` (after V1, same gumnut entity type). Add a guard in the stream loop to skip V1 when V2 is also requested (prevents duplicate events). Update face/entity-specific event handling to match both V1 and V2 sync entity types.
-2. `fk_integrity.py`: Add V2 to the entity's list in `_GUMNUT_TYPE_TO_SYNC_TYPES` so FK checkpoint lookups match regardless of which version was synced.
+1. `stream.py`: Add the V2 entry to `_SYNC_TYPE_ORDER` (after V1, same gumnut entity type) and a `_V1_SUPERSEDED_BY_V2` entry so V1 is skipped when V2 is also requested (prevents duplicate events). **Extend every `sync_entity_type`-gated payload override in `_stream_entity_type` to also match the V2 type** — the "Face person_id Handling" and "Album Cover Handling" overlays above are gated on the sync entity type, and a V2 type left off silently drops that FK-safety guarantee on the v3 client path (the client streams that entity exclusively as V2).
+2. `fk_integrity.py`: Add V2 to the entity's list in `_GUMNUT_TYPE_TO_SYNC_TYPES` so FK checkpoint lookups match regardless of which version was synced — a client that checkpointed under the V2 type otherwise misses the "synced in a prior cycle" skip and logs spurious FK warnings.
 3. `converters.py`: Write a V2 converter function alongside the V1 one.
 4. `events.py`: Update the converter dispatch in `convert_entity_to_sync_event` to select V1 vs V2 converter based on `sync_entity_type`.
 5. `test_sync_stream_ordering.py`: Verify the consistency test handles one-to-many gumnut-type-to-sync-type mappings.
+
+The invariant tests in `test_sync_v2.py` assert that every V2 type in `_SYNC_TYPE_ORDER` is wired into the event dispatch (step 4), the FK checkpoint map (step 2), and — for albums — the cover override (step 1), so a half-wired addition fails a test instead of shipping. Extend them when adding a version.
 
 ## No-Op Request Types
 
