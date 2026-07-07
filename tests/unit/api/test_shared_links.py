@@ -7,11 +7,9 @@ Immich v3 removed the shared-link token/key/slug access surface:
 - `PUT /shared-links/{id}/assets` lost its `key`/`slug` query params.
 
 These guard against re-introducing the removed surface. They assert on
-`model_fields` and `inspect.signature` rather than constructing a
-`SharedLinkResponseDto`: on the `migration/immichv3` branch the regenerated
-DTOs cannot be instantiated (their `pattern`-constrained UUID/datetime fields
-raise under the pinned pydantic), but class-level field/signature inspection
-does not instantiate anything and runs cleanly.
+`model_fields` and `inspect.signature` — class-level shape inspection that pins
+the field and query-parameter surface directly, without needing to construct a
+`SharedLinkResponseDto`.
 """
 
 import inspect
