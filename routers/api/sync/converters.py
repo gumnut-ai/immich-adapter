@@ -295,8 +295,8 @@ def gumnut_album_to_sync_album_v2(album: AlbumResponse, owner_id: str) -> SyncAl
     """Convert Gumnut AlbumResponse to Immich SyncAlbumV2 format.
 
     In the Immich v3 GA model SyncAlbumV2 is SyncAlbumV1 without ``ownerId``
-    (the design doc's "byte-identical to V1" predates the GA drop of that field).
-    Delegate to V1 and drop the field V2 no longer carries.
+    (see the ``immich-v3-api-changes.md`` design doc, §5). Delegate to V1 and
+    drop the field V2 no longer carries.
     """
     fields = gumnut_album_to_sync_album_v1(album, owner_id).model_dump()
     fields.pop("ownerId", None)
