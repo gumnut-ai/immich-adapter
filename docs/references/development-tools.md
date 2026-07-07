@@ -49,6 +49,10 @@ When fetching the OpenAPI spec from a GitHub blob URL, the generator substitutes
 
 The generator's `datamodel-code-generator` dependency is unpinned (`>=0.25.0`, resolved fresh by `uv run`), so a regeneration can carry codegen-version stylistic churn (e.g. the `date`→`date_aliased` import alias) independent of any spec change — expected, not a wire change. Validate a regeneration diff against the targeted spec's known changes, not against an assumption that every hunk is spec-driven.
 
+### Constraint Preprocessing
+
+Before handing the spec to `datamodel-code-generator`, the generator drops constraints codegen would misapply to non-string types — currently `pattern` on `format: uuid` / `date-time` schemas, which otherwise yields `UUID` / `AwareDatetime` fields that raise `TypeError` at value validation under the pinned pydantic (and it collapses the now-redundant `RootModel[UUID]` id wrappers into plain `UUID`). Patterns on genuine string fields are kept. See `_strip_non_string_patterns` in the generator; if a future spec trips the same class of error for another non-string `format`, extend that pass rather than hand-editing the generated file.
+
 ## API Compatibility Tool
 
 The `validate_api_compatibility.py` tool ensures that immich-adapter correctly implements the Immich API endpoints.

@@ -13,10 +13,8 @@ V2 layer that extends the existing faces V1/V2 dual pattern:
   nothing (Gumnut has no such data); no V1/V2 double-emission.
 
 Assertions use `model_fields`, module-level constants, and `inspect.getsource`
-rather than constructing the DTOs: on the `migration/immichv3` branch the
-regenerated models carry `pattern`-constrained UUID/datetime fields that raise
-under the pinned pydantic, so instantiating a sync DTO is impossible here.
-Class/field/source inspection does not instantiate anything and runs cleanly.
+— shape and construction-site inspection that pins the sync DTO surface and the
+converter call sites directly, without needing to construct the DTOs.
 """
 
 import inspect
@@ -61,7 +59,7 @@ def test_sync_asset_v1_created_at_now_required():
     assert SyncAssetV1.model_fields["createdAt"].is_required()
 
 
-# --- Converters (source inspection — instantiation hits the pattern blocker) --
+# --- Converters (construction sites asserted via source inspection) ----------
 
 
 def test_both_sync_asset_v1_sites_set_created_at():

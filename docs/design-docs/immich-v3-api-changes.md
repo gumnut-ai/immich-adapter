@@ -275,34 +275,38 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
 
 ## Known blockers on the integration branch
 
-`migration/immichv3` is intentionally red until the API-shape work lands. Two
-blockers keep the test suite un-runnable independent of any single issue, so
-per-issue changes are verified by inspection plus scoped checks (ruff, a
-zero-new-errors pyright diff) rather than a green suite:
+`migration/immichv3` is intentionally red until the API-shape work lands. One
+blocker still fails *collection* of the router-layer test modules independent of
+any single issue, so the affected per-issue changes are verified by inspection
+plus scoped checks (ruff, a zero-new-errors pyright diff) rather than a green
+suite:
 
 - **`Error1` import** — `routers/utils/bulk.py` imports `Error1`, which the v3
-  regen removed from `immich_models.py`. This fails *collection* of every test
+  regen removed from `immich_models.py`. This fails collection of every test
   module that imports the router layer (e.g. `test_albums.py`) until the bulk
-  error enum is retargeted to its v3 name.
-- **`pattern`-constrained non-`str` fields** — the regenerated models annotate
-  UUID *and datetime* fields as `Annotated[UUID | datetime, Field(pattern=...)]`.
-  Under the pinned pydantic + Python 3.14, *instantiating* any such model raises
-  `TypeError: Unable to apply constraint 'pattern' … for schema of type 'uuid'`
-  (and the identical error `for schema of type 'datetime'` on the sync/exif
-  DTOs), so these DTOs cannot be constructed at all — the adapter would 500
-  serving them, and every test that builds one (or uses the `mock_current_user`
-  fixture) errors at setup. This is deeper than the collection errors above:
-  fixing the imports alone will not turn the suite green. Needs a
-  codegen/dependency fix (drop `pattern` on these fields, or pin pydantic),
-  tracked separately from the per-endpoint retarget.
+  error enum is retargeted to its v3 name (`BulkIdErrorReason`).
 
-Per-issue tests that must run despite these blockers assert on class-level
-metadata rather than building or calling the DTOs: `Model.model_fields` for
-field additions/removals, `inspect.signature(endpoint)` for query-param changes
-(when the router module imports cleanly), and `ast.parse` of the source when
-even the import is blocked (any module importing `Error1` via
-`routers/utils/bulk.py`). None of these instantiate a `pattern`-constrained DTO
-or execute the broken import, so they stay green while the suite is red.
+**Resolved — `pattern`-constrained non-`str` fields.** The v3 GA spec annotated
+UUID *and* datetime fields with a string `pattern` alongside their `format`,
+which `datamodel-codegen` copied onto the generated `UUID` / `AwareDatetime`
+fields. Under the pinned pydantic + Python 3.14, *instantiating* any such model
+raised `TypeError: Unable to apply constraint 'pattern' … for schema of type
+'uuid'` (and the identical error `for schema of type 'datetime'` on the
+sync/exif DTOs), so every asset/album/user/sync response 500'd and every test
+that built a DTO errored at setup. The model generator now strips `pattern` from
+`format: uuid` / `format: date-time` schemas before codegen (keeping it on
+genuine string fields), so the DTOs construct normally. Dropping the redundant
+constraint also collapsed eight now-indistinguishable `RootModel[UUID]` id
+wrappers (`AlbumId`, `AssetId`, …) into plain `UUID`; none were referenced.
+
+Per-issue tests written while the `pattern` blocker was open assert on
+class-level metadata rather than building or calling the DTOs:
+`Model.model_fields` for field additions/removals, `inspect.signature(endpoint)`
+for query-param changes (when the router module imports cleanly), and
+`inspect.getsource` / `ast.parse` of the source when even the import is blocked
+(any module importing `Error1` via `routers/utils/bulk.py`). Those assertions
+remain valid; with the `pattern` blocker lifted, only the modules gated by the
+`Error1` collection blocker still *require* source inspection.
 
 ## Open questions
 

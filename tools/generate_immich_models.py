@@ -48,20 +48,60 @@ def get_container_tag() -> str:
         raise Exception(".immich-container-tag file not found")
 
 
-def fetch_spec(spec_path: str) -> tuple[str, bool, str | None]:
+def _strip_non_string_patterns(node: object) -> int:
+    """Remove ``pattern`` from schemas declared as ``format: uuid`` or ``date-time``.
+
+    datamodel-codegen maps ``format: uuid`` to ``UUID`` and ``format: date-time`` to
+    ``AwareDatetime``, then copies the (string-only) ``pattern`` constraint onto that
+    non-string field. pydantic-core rejects a ``pattern`` constraint on a uuid/datetime
+    schema with a ``TypeError`` when the model is first instantiated, which makes every
+    generated DTO that carries an id or timestamp un-constructable. The regex is a
+    redundant re-encoding of what ``format`` already guarantees, so drop it before
+    codegen sees the spec while leaving ``pattern`` on genuine string fields intact.
+
+    Mutates ``node`` in place; returns the number of patterns removed.
     """
-    Fetch OpenAPI spec from URL or file path and return path to local file.
+    removed = 0
+    if isinstance(node, dict):
+        if node.get("format") in ("uuid", "date-time") and "pattern" in node:
+            del node["pattern"]
+            removed += 1
+        for value in node.values():
+            removed += _strip_non_string_patterns(value)
+    elif isinstance(node, list):
+        for item in node:
+            removed += _strip_non_string_patterns(item)
+    return removed
+
+
+def _parse_spec(text: str) -> dict:
+    """Parse an OpenAPI spec from text, trying JSON first and falling back to YAML."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            return yaml.safe_load(text)
+        except yaml.YAMLError as ye:
+            print(f"Failed to parse spec as JSON or YAML: {ye}", file=sys.stderr)
+            sys.exit(1)
+
+
+def fetch_spec(spec_path: str) -> tuple[str, str | None, str]:
+    """
+    Fetch an OpenAPI spec from a URL or file path, strip constraints that codegen
+    would misapply to non-string types, and write the result to a temp file.
 
     Args:
         spec_path: URL or file path to OpenAPI spec
 
     Returns:
-        Tuple of (path to local file containing the spec, is_temp_file, tag_or_branch)
+        Tuple of (path to temp file, tag_or_branch, source_label). The temp file is
+        always the caller's responsibility to delete.
     """
-    # Check if it's a URL
     parsed = urlparse(spec_path)
+    tag_or_branch: str | None = None
     if parsed.scheme in ("http", "https"):
-        tag_or_branch: str | None = None
+        source_label = "From URL"
         # Handle GitHub raw URLs
         if "github.com" in parsed.netloc and "/blob/" in spec_path:
             spec_path = spec_path.replace("github.com", "raw.githubusercontent.com")
@@ -89,28 +129,7 @@ def fetch_spec(spec_path: str) -> tuple[str, bool, str | None]:
             print(f"Fetching spec from: {spec_path}")
             response = requests.get(spec_path, timeout=30)
             response.raise_for_status()
-
-            # Parse content first to avoid creating temp file on parse failure
-            try:
-                spec_data = response.json()
-            except json.JSONDecodeError:
-                # Try YAML if JSON fails
-                try:
-                    spec_data = yaml.safe_load(response.text)
-                except yaml.YAMLError as ye:
-                    print(
-                        f"Failed to parse spec as JSON or YAML: {ye}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-
-            # Only create temp file after successful parsing
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", delete=False
-            ) as f:
-                json.dump(spec_data, f, indent=2)
-                return f.name, True, tag_or_branch
-
+            raw_text = response.text
         except requests.RequestException as e:
             print(f"Error fetching spec from {spec_path}: {e}", file=sys.stderr)
             sys.exit(1)
@@ -120,7 +139,17 @@ def fetch_spec(spec_path: str) -> tuple[str, bool, str | None]:
         if not path.exists():
             print(f"File not found: {spec_path}", file=sys.stderr)
             sys.exit(1)
-        return str(path), False, None
+        source_label = path.name
+        raw_text = path.read_text()
+
+    spec_data = _parse_spec(raw_text)
+    removed = _strip_non_string_patterns(spec_data)
+    print(f"Stripped {removed} pattern constraint(s) from uuid/date-time fields")
+
+    # Write the preprocessed spec to a temp file for datamodel-codegen to consume.
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(spec_data, f, indent=2)
+        return f.name, tag_or_branch, source_label
 
 
 @click.command()
@@ -144,8 +173,8 @@ def main(immich_spec: str, output: str, verbose: bool):
     # Resolve paths relative to current working directory for consistency
     output_file = Path(output).resolve()
 
-    # Fetch the spec (returns local file path and temp flag)
-    spec_file, is_temp_file, tag_or_branch = fetch_spec(immich_spec)
+    # Fetch and preprocess the spec (always returns a temp file to clean up)
+    spec_file, tag_or_branch, source_label = fetch_spec(immich_spec)
 
     try:
         # Ensure output directory exists
@@ -153,7 +182,7 @@ def main(immich_spec: str, output: str, verbose: bool):
 
         # Create custom header that replicates datamodel-codegen format
         timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        filename = "From URL" if is_temp_file else Path(spec_file).name
+        filename = source_label
 
         # Build header lines
         header_lines = [
@@ -218,8 +247,8 @@ def main(immich_spec: str, output: str, verbose: bool):
             sys.exit(1)
 
     finally:
-        # Clean up temporary file if it was created
-        if is_temp_file and Path(spec_file).exists():
+        # Clean up the temporary preprocessed spec file
+        if Path(spec_file).exists():
             Path(spec_file).unlink()
 
 
