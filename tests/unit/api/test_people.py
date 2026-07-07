@@ -31,7 +31,7 @@ from routers.immich_models import (
     AssetFaceUpdateDto,
     AssetFaceUpdateItem,
     BulkIdsDto,
-    Error1,
+    BulkIdErrorReason,
     MergePersonDto,
     PeopleUpdateDto,
     PeopleUpdateItem,
@@ -182,7 +182,7 @@ class TestUpdatePeople:
         assert result[0].error is None
         assert result[0].id == person_id1
         assert result[1].success is False
-        assert result[1].error == Error1.not_found
+        assert result[1].error == BulkIdErrorReason.not_found
         assert result[1].id == person_id2
 
     @pytest.mark.anyio
@@ -239,7 +239,7 @@ class TestUpdatePeople:
         assert result[0].id == person_id1
         assert result[1].success is False
         assert result[1].id == person_id2
-        assert result[1].error == Error1.unknown
+        assert result[1].error == BulkIdErrorReason.unknown
 
     @pytest.mark.anyio
     async def test_update_people_malformed_uuid_does_not_abort_batch(self):
@@ -265,7 +265,7 @@ class TestUpdatePeople:
         assert len(result) == 2
         assert result[0].success is False
         assert result[0].id == "not-a-uuid"
-        assert result[0].error == Error1.unknown
+        assert result[0].error == BulkIdErrorReason.unknown
         assert result[1].success is True
         assert result[1].id == valid_id
 
@@ -454,7 +454,7 @@ class TestUpdatePeopleFeatureFace:
         mock_client.people.update.assert_not_called()
         assert len(result) == 1
         assert result[0].success is False
-        assert result[0].error == Error1.unknown
+        assert result[0].error == BulkIdErrorReason.unknown
 
     @pytest.mark.anyio
     async def test_update_people_feature_face_resolve_sdk_error_isolated(self):
@@ -491,7 +491,7 @@ class TestUpdatePeopleFeatureFace:
 
         assert len(result) == 2
         assert result[0].success is False
-        assert result[0].error == Error1.not_found
+        assert result[0].error == BulkIdErrorReason.not_found
         # Sibling untouched by the first item's failure.
         assert result[1].success is True
         mock_client.people.update.assert_called_once_with(

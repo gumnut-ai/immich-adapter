@@ -18,7 +18,7 @@ from routers.immich_models import (
     AssetFaceUpdateItem,
     BulkIdResponseDto,
     BulkIdsDto,
-    Error1,
+    BulkIdErrorReason,
     MergePersonDto,
     PeopleResponseDto,
     PeopleUpdateDto,
@@ -150,12 +150,14 @@ async def _update_one_person(
             "Invalid person id in bulk update",
             extra={**log_extra, "error": str(ve)},
         )
-        return BulkIdResponseDto(id=person_item.id, success=False, error=Error1.unknown)
+        return BulkIdResponseDto(
+            id=person_item.id, success=False, error=BulkIdErrorReason.unknown
+        )
 
     try:
         sdk_error = await classify_bulk_item_call(
             _do_person_update(client, gumnut_person_id, person_item),
-            error_enum=Error1,
+            error_enum=BulkIdErrorReason,
             log_context="update_people",
             log_extra=log_extra,
         )
@@ -174,7 +176,9 @@ async def _update_one_person(
             ),
             extra=log_extra,
         )
-        return BulkIdResponseDto(id=person_item.id, success=False, error=Error1.unknown)
+        return BulkIdResponseDto(
+            id=person_item.id, success=False, error=BulkIdErrorReason.unknown
+        )
 
     if sdk_error is not None:
         return BulkIdResponseDto(id=person_item.id, success=False, error=sdk_error)

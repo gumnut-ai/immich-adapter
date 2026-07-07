@@ -6,10 +6,10 @@ endpoint's params, v3 dropped only `withoutAssets` — which the adapter still
 declares as a documented no-op for client compatibility, so the parsed source
 below still shows it). These guard that intentional asymmetry.
 
-`routers/api/albums.py` cannot be imported on the `migration/immichv3` branch —
-it imports `Error1`, which the v3 model regen removed, so `inspect.signature`
-(which requires importing the module) is unavailable here. Parsing the source
-with `ast` inspects the signatures without executing the module.
+These read `routers/api/albums.py` by parsing its source with `ast` rather than
+importing the module and calling `inspect.signature`. A static parse needs no
+app/SDK import side effects, so the check stays a pure inspection of the declared
+parameter lists.
 """
 
 import ast

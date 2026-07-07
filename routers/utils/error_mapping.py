@@ -77,7 +77,7 @@ def extract_detail_from_status_error(exc: APIStatusError) -> str:
 
 
 def classify_bulk_item_error(exc: APIStatusError, enum_cls: type[E]) -> E:
-    """Classify a per-item APIStatusError as an `Error1` / `BulkIdErrorReason` value.
+    """Classify a per-item APIStatusError as a `BulkIdErrorReason` value.
 
     Maps to the canonical `not_found` / `no_permission` / `unknown` buckets
     on the supplied enum. Per-endpoint nuances (e.g. mapping `ConflictError`
