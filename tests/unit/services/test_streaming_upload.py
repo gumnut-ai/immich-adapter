@@ -145,6 +145,33 @@ class TestStreamingUploadPipeline:
         assert sent_data["device_id"] == "gumnut-device"
 
     @pytest.mark.anyio
+    async def test_device_asset_id_unique_per_upload(self):
+        """Each upload gets a fresh device_asset_id — the whole reason it is
+        synthesized per-upload rather than shared. Guards against a regression
+        that hoisted the UUID to module scope or reused GUMNUT_UPLOAD_DEVICE_ID,
+        which would still parse as a valid UUID but collapse distinct assets."""
+        mock_client = MagicMock()
+        mock_client.post.return_value = _make_httpx_response(201)
+
+        device_asset_ids = []
+        with patch(
+            "services.streaming_upload._get_streaming_http_client",
+            return_value=mock_client,
+        ):
+            for _ in range(2):
+                body, ct_header = _build_multipart_body()
+                request = _make_mock_request(body, ct_header)
+                pipeline = StreamingUploadPipeline(
+                    request, "http://localhost:8000", "jwt"
+                )
+                await pipeline.execute(_extract_fields)
+                device_asset_ids.append(
+                    mock_client.post.call_args.kwargs["data"]["device_asset_id"]
+                )
+
+        assert device_asset_ids[0] != device_asset_ids[1]
+
+    @pytest.mark.anyio
     async def test_5xx_maps_to_502(self):
         """Test that upstream 5xx is mapped to 502."""
         body, ct_header = _build_multipart_body()

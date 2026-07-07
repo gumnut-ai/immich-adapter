@@ -205,8 +205,7 @@ class StreamingUploadPipeline:
         file_created_at, file_modified_at = extract_fields_fn(
             self._form_parser.form_fields
         )
-        # Synthesize the device fields Gumnut requires; a unique device_asset_id
-        # keeps distinct assets from collapsing onto one device tuple (see
+        # Synthesize the device fields the Gumnut API requires (see
         # GUMNUT_UPLOAD_DEVICE_ID).
         device_asset_id = str(uuid4())
         device_id = GUMNUT_UPLOAD_DEVICE_ID

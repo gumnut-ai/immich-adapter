@@ -538,10 +538,8 @@ async def _upload_buffered(
                 detail=str(ve),
             )
 
-        # Gumnut's asset-create requires device_asset_id/device_id, which Immich
-        # v3 no longer sends; synthesize them (see GUMNUT_UPLOAD_DEVICE_ID). A
-        # unique device_asset_id avoids collapsing distinct assets onto one
-        # device tuple; true duplicates are still caught by checksum dedup.
+        # Synthesize the device fields the Gumnut API requires (see
+        # GUMNUT_UPLOAD_DEVICE_ID).
         device_asset_id = str(uuid4())
 
         try:
