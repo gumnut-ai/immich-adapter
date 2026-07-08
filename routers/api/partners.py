@@ -21,7 +21,7 @@ router = APIRouter(
 
 fake_partner: PartnerResponseDto = PartnerResponseDto(
     avatarColor=UserAvatarColor.primary,
-    email="partner@immich.test",
+    email="partner@example.com",
     id="d6773835-4b91-4c7d-8667-26bd5daa1a45",
     name="Fake Partner",
     profileChangedAt=datetime.now(tz=ZoneInfo("Etc/UTC")),
