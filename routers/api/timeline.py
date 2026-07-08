@@ -17,6 +17,7 @@ from routers.utils.asset_conversion import (
     duration_ms,
     mime_type_to_asset_type,
     resolve_capture_datetime,
+    resolve_created_at,
 )
 from routers.utils.current_user import get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
@@ -207,6 +208,11 @@ async def get_time_bucket(
     asset_count = len(filtered_assets)
 
     asset_ids = []
+    created_at_list = []  # Upload timestamps (actual UTC)
+    # Capture timestamps, currently emitted as wall-clock local time. Immich v3
+    # expects actual UTC here (clients derive local time by adding
+    # localOffsetHours), so known-timezone captures display shifted — a known
+    # gap, fixed separately from the createdAt addition.
     file_created_at_list = []
     is_image_list = []
     ratio_list = []
@@ -218,12 +224,12 @@ async def get_time_bucket(
 
     for asset in filtered_assets:
         asset_id = asset.id
-        created_at = resolve_capture_datetime(asset)
+        captured_at = resolve_capture_datetime(asset)
         aspect_ratio = (
             asset.width / asset.height if asset.width and asset.height else 1.0
         )
-        utc_offset = created_at.utcoffset()
-        if created_at.tzinfo and utc_offset is not None:
+        utc_offset = captured_at.utcoffset()
+        if captured_at.tzinfo and utc_offset is not None:
             local_datetime_offset = int(utc_offset.total_seconds() / 3600)
         else:
             local_datetime_offset = 0
@@ -232,7 +238,10 @@ async def get_time_bucket(
 
         # Immich's TimeBucketAssetResponseDto needs ISO 8601 without timezone
         # and exactly 3 digits of milliseconds (e.g., "2023-10-05T09:41:00.123").
-        file_created_at_list.append(created_at.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3])
+        created_at_list.append(
+            resolve_created_at(asset).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+        )
+        file_created_at_list.append(captured_at.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3])
 
         is_image_list.append(
             mime_type_to_asset_type(asset.mime_type) == AssetTypeEnum.IMAGE
@@ -261,20 +270,21 @@ async def get_time_bucket(
     return {
         "city": [None] * asset_count,
         "country": [None] * asset_count,
+        "createdAt": created_at_list,
         "duration": duration_list,
-        "livePhotoVideoId": [None] * asset_count,
-        "projectionType": [None] * asset_count,
-        "id": asset_ids,
         "fileCreatedAt": file_created_at_list,
-        "isImage": is_image_list,
-        "ratio": ratio_list,
-        "visibility": visibility_list,
-        "localOffsetHours": local_offset_hours_list,
+        "id": asset_ids,
         "isFavorite": [False] * asset_count,
+        "isImage": is_image_list,
         "isTrashed": is_trashed_list,
-        "ownerId": [str(current_user_id)] * asset_count,
-        "thumbhash": thumbhash_list,
         "latitude": [None] * asset_count,
+        "livePhotoVideoId": [None] * asset_count,
+        "localOffsetHours": local_offset_hours_list,
         "longitude": [None] * asset_count,
+        "ownerId": [str(current_user_id)] * asset_count,
+        "projectionType": [None] * asset_count,
+        "ratio": ratio_list,
         "stack": [None] * asset_count,
+        "thumbhash": thumbhash_list,
+        "visibility": visibility_list,
     }

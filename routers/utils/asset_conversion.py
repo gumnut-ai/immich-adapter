@@ -158,6 +158,11 @@ def resolve_file_created_at(gumnut_asset: AssetResponse) -> datetime:
     return to_actual_utc(resolve_capture_datetime(gumnut_asset))
 
 
+def resolve_created_at(gumnut_asset: AssetResponse) -> datetime:
+    """Return the Gumnut upload time (``created_at``) formatted for Immich ``createdAt`` fields."""
+    return to_actual_utc(gumnut_asset.created_at)
+
+
 def resolve_local_date_time(gumnut_asset: AssetResponse) -> datetime:
     """Return capture time formatted for Immich ``localDateTime`` fields."""
     return to_immich_local_datetime(resolve_capture_datetime(gumnut_asset))
