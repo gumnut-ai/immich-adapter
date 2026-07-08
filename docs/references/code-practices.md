@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-07-03
+last-updated: 2026-07-06
 ---
 
 # Code Practices
