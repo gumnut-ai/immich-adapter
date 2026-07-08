@@ -244,7 +244,7 @@ async def get_user(id: UUID) -> UserResponseDto:
     """
     return UserResponseDto(
         avatarColor=UserAvatarColor.primary,
-        email="user@immich.test",
+        email="user@example.com",
         id=str(id),
         name="User",
         profileChangedAt=datetime.now(tz=timezone.utc),

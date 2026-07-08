@@ -282,23 +282,11 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
 ## Known blockers on the integration branch
 
 `migration/immichv3` is intentionally red until the API-shape work lands.
-Several import-time failures — removed-symbol imports, and on the app-import
-path a stub DTO that now fails *validation* at construction — still fail
-*collection* of some test modules independent of any single issue, so the
-affected per-issue changes are verified by inspection plus scoped checks (ruff,
-a zero-new-errors pyright diff) rather than a green suite. Each is its own
-retarget task:
+Several removed-symbol imports still fail *collection* of some test modules
+independent of any single issue, so the affected per-issue changes are verified
+by inspection plus scoped checks (ruff, a zero-new-errors pyright diff) rather
+than a green suite. Each is its own retarget task:
 
-- **`PartnerResponseDto` email validation** — `routers/api/partners.py`
-  constructs a module-level `fake_partner` with `email="partner@immich.test"`.
-  The v3 regen retyped `email` fields `str` → `EmailStr`, and `email-validator`
-  rejects the reserved `.test` TLD, so the DTO fails validation *at import time*.
-  Because `partners.py` sits on the app-import path (`main` → `routers.api`),
-  this breaks importing the app itself, so every `tests/integration/*` module
-  that stands up the app (server / oauth / well-known / sync-stream-e2e) fails
-  collection until the reserved-TLD email literals are replaced (a `users.py`
-  stub shares the root cause). It is the current app-import blocker, one layer
-  below the now-resolved `APIKey*` imports.
 - **`Action` import** — `tests/unit/api/test_assets.py` imports `Action`, an
   anonymous enum (values `accept` / `reject`) that the v3 regen removed. Only
   that test module imports it, so only `test_assets.py` fails on it.
@@ -316,12 +304,21 @@ collect again.
 app-import path this broke importing the app and failed collection of all seven
 `tests/integration/*` modules. The imports are retargeted to the `ApiKey*`
 casing (`Permission`, also imported there, was unaffected), so the app import
-advances past `api_keys.py` — surfacing the `PartnerResponseDto` blocker above.
-The recasing leaves one runtime residue: `ApiKeyResponseDto.id` was retyped
-`str` → `UUID`, so the two stub bodies that build a response with a literal
-non-UUID id (`create_api_key`, `get_my_api_key`) now raise `ValidationError`
-when reached — inert while the app can't import, and deferred with the rest of
-the `str` → `UUID` residue.
+advances past `api_keys.py` — surfacing the `PartnerResponseDto` blocker
+(resolved next). The recasing leaves one runtime residue: `ApiKeyResponseDto.id`
+was retyped `str` → `UUID`, so the two stub bodies that build a response with a
+literal non-UUID id (`create_api_key`, `get_my_api_key`) now raise
+`ValidationError` when reached — deferred with the rest of the `str` → `UUID`
+residue.
+
+**Resolved — `PartnerResponseDto` email.** `routers/api/partners.py` built a
+module-level `fake_partner` with `email="partner@immich.test"`; the v3 regen
+retyped `email` fields `str` → `EmailStr`, and `email-validator` rejects the
+reserved `.test` TLD, so the DTO failed validation *at import time* — the last
+module-level blocker on the app-import path. Both `.test` literals (partners.py
+and the `users.py` `get_user` stub) are replaced with `example.com` (which
+`EmailStr` accepts, matching the `admin.py` stubs), so `import main` now
+succeeds and the `tests/integration/*` suite collects.
 
 **Resolved — `pattern`-constrained non-`str` fields.** The v3 GA spec annotated
 UUID *and* datetime fields with a string `pattern` alongside their `format`,
