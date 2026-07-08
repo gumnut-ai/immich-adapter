@@ -136,7 +136,7 @@ class TestSearchMemories:
         for_param = datetime(2026, 5, 4, 23, 0, tzinfo=timezone.utc)
         result = await _call_search(
             client=client,
-            current_user_id=UUID(mock_current_user.id),
+            current_user_id=mock_current_user.id,
             current_user=mock_current_user,
             for_param=for_param,
         )
@@ -154,7 +154,7 @@ class TestSearchMemories:
         assert result[0].data.year == 2024
         assert len(result[0].assets) == 1
         # ID is decodable back to the same year/month/day.
-        decoded = decode_memory_id(UUID(result[0].id), UUID(mock_current_user.id))
+        decoded = decode_memory_id(result[0].id, mock_current_user.id)
         assert decoded == (2024, 5, 4)
 
     @pytest.mark.anyio
@@ -172,7 +172,7 @@ class TestSearchMemories:
 
         result = await _call_search(
             client=client,
-            current_user_id=UUID(mock_current_user.id),
+            current_user_id=mock_current_user.id,
             current_user=mock_current_user,
             for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
         )
@@ -188,7 +188,7 @@ class TestSearchMemories:
 
         result = await _call_search(
             client=client,
-            current_user_id=UUID(mock_current_user.id),
+            current_user_id=mock_current_user.id,
             current_user=mock_current_user,
             isSaved=True,
         )
@@ -203,7 +203,7 @@ class TestSearchMemories:
 
         result = await _call_search(
             client=client,
-            current_user_id=UUID(mock_current_user.id),
+            current_user_id=mock_current_user.id,
             current_user=mock_current_user,
             isTrashed=True,
         )
@@ -224,7 +224,7 @@ class TestSearchMemories:
 
         result = await _call_search(
             client=client,
-            current_user_id=UUID(mock_current_user.id),
+            current_user_id=mock_current_user.id,
             current_user=mock_current_user,
             type=MemoryType.on_this_day,
             for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
@@ -252,7 +252,7 @@ class TestSearchMemories:
             mock_dt.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
             result = await _call_search(
                 client=client,
-                current_user_id=UUID(mock_current_user.id),
+                current_user_id=mock_current_user.id,
                 current_user=mock_current_user,
                 for_param=for_param,
             )
@@ -285,7 +285,7 @@ class TestSearchMemories:
 
         result = await _call_search(
             client=client,
-            current_user_id=UUID(mock_current_user.id),
+            current_user_id=mock_current_user.id,
             current_user=mock_current_user,
             for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
             isSaved=isSaved,
@@ -305,7 +305,7 @@ class TestSearchMemories:
 
         result = await _call_search(
             client=client,
-            current_user_id=UUID(mock_current_user.id),
+            current_user_id=mock_current_user.id,
             current_user=mock_current_user,
             for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
             isTrashed=isTrashed,
@@ -333,7 +333,7 @@ class TestSearchMemories:
 
         result = await _call_search(
             client=client,
-            current_user_id=UUID(mock_current_user.id),
+            current_user_id=mock_current_user.id,
             current_user=mock_current_user,
             for_param=datetime(2024, 2, 29, tzinfo=timezone.utc),
         )
@@ -364,7 +364,7 @@ class TestSearchMemories:
 
         result = await _call_search(
             client=client,
-            current_user_id=UUID(mock_current_user.id),
+            current_user_id=mock_current_user.id,
             current_user=mock_current_user,
             for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
         )
@@ -387,7 +387,7 @@ class TestSearchMemories:
             mock_dt.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
             await _call_search(
                 client=client,
-                current_user_id=UUID(mock_current_user.id),
+                current_user_id=mock_current_user.id,
                 current_user=mock_current_user,
             )
 
@@ -470,7 +470,7 @@ class TestFetchAssetsForDay:
 class TestGetMemory:
     @pytest.mark.anyio
     async def test_returns_memory_for_valid_id(self, mock_current_user):
-        user_uuid = UUID(mock_current_user.id)
+        user_uuid = mock_current_user.id
         memory_id = encode_memory_id(user_uuid, 2024, 5, 4)
         captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
         client = Mock()
@@ -485,7 +485,7 @@ class TestGetMemory:
             current_user=mock_current_user,
         )
 
-        assert result.id == str(memory_id)
+        assert result.id == memory_id
         assert result.data.year == 2024
         assert len(result.assets) == 1
 
@@ -498,7 +498,7 @@ class TestGetMemory:
             await get_memory(
                 id=uuid4(),
                 client=client,
-                current_user_id=UUID(mock_current_user.id),
+                current_user_id=mock_current_user.id,
                 current_user=mock_current_user,
             )
         assert exc.value.status_code == 404
@@ -518,7 +518,7 @@ class TestGetMemory:
             await get_memory(
                 id=memory_id,
                 client=client,
-                current_user_id=UUID(mock_current_user.id),
+                current_user_id=mock_current_user.id,
                 current_user=mock_current_user,
             )
         assert exc.value.status_code == 404
@@ -527,7 +527,7 @@ class TestGetMemory:
 
     @pytest.mark.anyio
     async def test_404_when_year_has_no_assets(self, mock_current_user):
-        user_uuid = UUID(mock_current_user.id)
+        user_uuid = mock_current_user.id
         memory_id = encode_memory_id(user_uuid, 2024, 5, 4)
         client = Mock()
         client.assets.list = Mock(return_value=MockSyncCursorPage([]))

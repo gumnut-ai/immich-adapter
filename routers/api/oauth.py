@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from gumnut import AsyncGumnut, BadRequestError, omit
 
+from routers.api.constants import STUB_LICENSE_KEY
 from routers.immich_models import (
     LoginResponseDto,
     OAuthAuthorizeResponseDto,
@@ -213,7 +214,7 @@ async def finish_oauth(
         # Return login response with session token
         return LoginResponseDto(
             accessToken=session_token,
-            userId=result.user.id,
+            userId=user_uuid,
             userEmail=result.user.email or "",
             name=name,
             isAdmin=False,  # TODO: determine admin status
@@ -270,7 +271,7 @@ async def link_oauth_account(
         license=UserLicense(
             activatedAt=now,
             activationKey="dummy-activation-key",
-            licenseKey="dummy-license-key",
+            licenseKey=STUB_LICENSE_KEY,
         ),
         name=current_user.name,
         oauthId="oauth-123456",
@@ -328,7 +329,7 @@ async def unlink_oauth_account(
         license=UserLicense(
             activatedAt=now,
             activationKey="dummy-activation-key",
-            licenseKey="dummy-license-key",
+            licenseKey=STUB_LICENSE_KEY,
         ),
         name=current_user.name,
         oauthId="",

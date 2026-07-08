@@ -166,7 +166,7 @@ class TestGetFaces:
         assert len(result) == 1
         assert result[0].person is not None
         assert result[0].person.name == "Calvin"
-        assert result[0].person.id == str(safe_uuid_from_person_id(person_id))
+        assert result[0].person.id == safe_uuid_from_person_id(person_id)
 
     @pytest.mark.anyio
     async def test_multiple_faces_same_person_fetches_once(self, mock_sync_cursor_page):
@@ -334,7 +334,7 @@ class TestReassignFace:
         )
         mock_client.people.retrieve.assert_called_once_with(gumnut_person_id)
         assert result.name == "Calvin"
-        assert result.id == str(safe_uuid_from_person_id(gumnut_person_id))
+        assert result.id == safe_uuid_from_person_id(gumnut_person_id)
 
     @pytest.mark.anyio
     async def test_sdk_error_propagates(self):
@@ -428,7 +428,7 @@ class TestCreateFace:
         assert result.imageHeight == 2160
         assert result.person is not None
         assert result.person.name == "Calvin"
-        assert result.person.id == str(safe_uuid_from_person_id(gumnut_person_id))
+        assert result.person.id == safe_uuid_from_person_id(gumnut_person_id)
 
     @pytest.mark.anyio
     async def test_box_passes_through_when_preview_matches_asset(self):

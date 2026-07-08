@@ -113,9 +113,7 @@ class TestGetMapMarkers:
 
         assert len(result) == 1
         marker = result[0]
-        assert marker.id == str(
-            safe_uuid_from_asset_id(uuid_to_gumnut_asset_id(asset_uuid))
-        )
+        assert marker.id == safe_uuid_from_asset_id(uuid_to_gumnut_asset_id(asset_uuid))
         assert marker.lat == 37.7749
         assert marker.lon == -122.4194
         assert marker.city == "San Francisco"

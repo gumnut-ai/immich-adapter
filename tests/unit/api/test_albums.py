@@ -263,12 +263,12 @@ class TestGetAllAlbums:
         # Assert - verify albumThumbnailAssetId is set correctly
         assert len(result) == 3
         # First album should have the converted asset ID
-        expected_uuid0 = str(safe_uuid_from_asset_id(cover_asset_id0))
+        expected_uuid0 = safe_uuid_from_asset_id(cover_asset_id0)
         assert result[0].albumThumbnailAssetId == expected_uuid0
-        # Second album should have empty string (no cover)
-        assert result[1].albumThumbnailAssetId == ""
+        # Second album should have None (no cover)
+        assert result[1].albumThumbnailAssetId is None
         # Third album should have its converted asset ID
-        expected_uuid2 = str(safe_uuid_from_asset_id(cover_asset_id2))
+        expected_uuid2 = safe_uuid_from_asset_id(cover_asset_id2)
         assert result[2].albumThumbnailAssetId == expected_uuid2
 
     @pytest.mark.anyio
@@ -432,7 +432,7 @@ class TestGetAlbumInfo:
         )
 
         # Assert - verify albumThumbnailAssetId is set correctly
-        expected_uuid = str(safe_uuid_from_asset_id(cover_asset_id))
+        expected_uuid = safe_uuid_from_asset_id(cover_asset_id)
         assert result.albumThumbnailAssetId == expected_uuid
 
     @pytest.mark.anyio
@@ -543,7 +543,7 @@ class TestAddAssetsToAlbum:
         request = BulkIdsDto(ids=[asset_id1, asset_id2])
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is True for item in result)
         mock_client.albums.assets_associations.add.assert_called_once_with(
             uuid_to_gumnut_album_id(sample_uuid),
@@ -567,9 +567,9 @@ class TestAddAssetsToAlbum:
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
         assert len(result) == 2
-        assert result[0].id == str(new_asset)
+        assert result[0].id == new_asset
         assert result[0].success is True
-        assert result[1].id == str(dup_asset)
+        assert result[1].id == dup_asset
         assert result[1].success is False
         assert result[1].error == BulkIdErrorReason.duplicate
 
@@ -595,9 +595,9 @@ class TestAddAssetsToAlbum:
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
         assert len(result) == 2
-        assert result[0].id == str(new_asset)
+        assert result[0].id == new_asset
         assert result[0].success is True
-        assert result[1].id == str(missing_asset)
+        assert result[1].id == missing_asset
         assert result[1].success is False
         assert result[1].error == BulkIdErrorReason.not_found
 
@@ -619,7 +619,7 @@ class TestAddAssetsToAlbum:
 
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is False for item in result)
         assert all(item.error == BulkIdErrorReason.not_found for item in result)
         assert mock_client.albums.assets_associations.add.call_count == 1
@@ -638,7 +638,7 @@ class TestAddAssetsToAlbum:
 
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is False for item in result)
         assert all(item.error == BulkIdErrorReason.unknown for item in result)
         assert mock_client.albums.assets_associations.add.call_count == 1
@@ -657,7 +657,7 @@ class TestAddAssetsToAlbum:
 
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is False for item in result)
         assert all(item.error == BulkIdErrorReason.unknown for item in result)
         assert mock_client.albums.assets_associations.add.call_count == 1
@@ -695,7 +695,7 @@ class TestAddAssetsToAlbum:
         request = BulkIdsDto(ids=asset_uuids)
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(u) for u in asset_uuids]
+        assert [item.id for item in result] == asset_uuids
         assert all(item.success is True for item in result)
 
         assert (
@@ -860,9 +860,9 @@ class TestAddAssetsToAlbum:
         with caplog.at_level(logging.WARNING):
             result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert result[0].id == str(present)
+        assert result[0].id == present
         assert result[0].success is True
-        assert result[1].id == str(missing)
+        assert result[1].id == missing
         assert result[1].success is False
         assert result[1].error == BulkIdErrorReason.unknown
         assert any(
@@ -921,9 +921,7 @@ class TestUpdateAlbum:
             name="Updated Album",
             album_cover_asset_id=cover_gumnut_id,
         )
-        assert result.albumThumbnailAssetId == str(
-            safe_uuid_from_asset_id(cover_gumnut_id)
-        )
+        assert result.albumThumbnailAssetId == safe_uuid_from_asset_id(cover_gumnut_id)
 
     @pytest.mark.anyio
     async def test_update_album_not_found_propagates(
@@ -961,7 +959,7 @@ class TestRemoveAssetFromAlbum:
         request = BulkIdsDto(ids=[asset_id1, asset_id2])
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is True for item in result)
         mock_client.albums.assets_associations.remove.assert_called_once_with(
             uuid_to_gumnut_album_id(sample_uuid),
@@ -982,7 +980,7 @@ class TestRemoveAssetFromAlbum:
 
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is False for item in result)
         assert all(item.error == BulkIdErrorReason.not_found for item in result)
 
@@ -1046,7 +1044,7 @@ class TestRemoveAssetFromAlbum:
         request = BulkIdsDto(ids=asset_uuids)
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(u) for u in asset_uuids]
+        assert [item.id for item in result] == asset_uuids
         assert all(item.success is True for item in result)
 
         assert (

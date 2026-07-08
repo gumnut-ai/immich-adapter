@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import List
 
@@ -35,7 +35,7 @@ async def create_api_key(request: ApiKeyCreateDto) -> ApiKeyCreateResponseDto:
     This is a stub implementation that returns a fake API key response.
     """
     api_key = ApiKeyResponseDto(
-        id="api-key-id",
+        id=uuid4(),
         name=request.name or "API Key",
         permissions=request.permissions,
         createdAt=datetime.now(tz=timezone.utc),
@@ -51,7 +51,7 @@ async def get_my_api_key() -> ApiKeyResponseDto:
     This is a stub implementation that returns a fake API key response.
     """
     return ApiKeyResponseDto(
-        id="current-api-key-id",
+        id=uuid4(),
         name="Current API Key",
         permissions=[Permission.asset_read],
         createdAt=datetime.now(tz=timezone.utc),

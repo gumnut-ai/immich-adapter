@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import List
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Query
 from routers.utils.current_user import get_current_user
@@ -51,7 +51,7 @@ async def create_activity(
         assetId="d6773835-4b91-4c7d-8667-26bd5daa1a45",  # still a dummy asset id
         comment="Test activity comment",
         createdAt=now,
-        id="activity-id-123",
+        id=uuid4(),
         type=ReactionType.comment,
         user=UserResponseDto(
             avatarColor=UserAvatarColor.primary,

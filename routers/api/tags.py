@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from uuid import UUID
+from uuid import UUID, uuid4
 from typing import List
 from datetime import datetime, timezone
 
@@ -37,7 +37,7 @@ async def create_tag(request: TagCreateDto) -> TagResponseDto:
     This is a stub implementation that returns a fake tag response.
     """
     return TagResponseDto(
-        id="tag-id",
+        id=uuid4(),
         name=request.name,
         value=request.name.lower().replace(" ", "-"),
         color=request.color,

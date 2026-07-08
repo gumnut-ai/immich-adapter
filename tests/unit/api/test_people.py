@@ -128,8 +128,8 @@ class TestUpdatePeople:
         mock_client = Mock()
         mock_client.people.update = AsyncMock(return_value=None)
 
-        person_id1 = str(uuid4())
-        person_id2 = str(uuid4())
+        person_id1 = uuid4()
+        person_id2 = uuid4()
 
         person_updates = [
             PeopleUpdateItem(id=person_id1, name="Updated Name 1"),
@@ -164,8 +164,8 @@ class TestUpdatePeople:
             ]
         )
 
-        person_id1 = str(uuid4())
-        person_id2 = str(uuid4())
+        person_id1 = uuid4()
+        person_id2 = uuid4()
 
         person_updates = [
             PeopleUpdateItem(id=person_id1, name="Updated Name 1"),
@@ -192,8 +192,8 @@ class TestUpdatePeople:
         mock_client = Mock()
         mock_client.people.update = AsyncMock(return_value=None)
 
-        person_id1 = str(uuid4())
-        person_id2 = str(uuid4())
+        person_id1 = uuid4()
+        person_id2 = uuid4()
 
         # Only updating some fields
         person_updates = [
@@ -223,8 +223,8 @@ class TestUpdatePeople:
             side_effect=[None, make_sdk_connection_error("PUT")]
         )
 
-        person_id1 = str(uuid4())
-        person_id2 = str(uuid4())
+        person_id1 = uuid4()
+        person_id2 = uuid4()
         request = PeopleUpdateDto(
             people=[
                 PeopleUpdateItem(id=person_id1, name="Good"),
@@ -241,33 +241,17 @@ class TestUpdatePeople:
         assert result[1].id == person_id2
         assert result[1].error == BulkIdErrorReason.unknown
 
-    @pytest.mark.anyio
-    async def test_update_people_malformed_uuid_does_not_abort_batch(self):
-        """A malformed UUID in one item must not abort the bulk operation.
+    def test_update_people_malformed_uuid_rejected_at_dto_boundary(self):
+        """A malformed UUID is rejected at the request boundary.
 
-        Immich's `PeopleUpdateItem.id` is typed as `str` (the OpenAPI spec
-        switches between str and UUID for people ids), so `UUID(...)` can
-        raise `ValueError` here even when other items in the batch are
-        well-formed.
+        Immich v3 types `PeopleUpdateItem.id` as `UUID`, so a malformed id
+        fails DTO validation (FastAPI returns 422) before the handler runs —
+        it can never reach the per-item error mapping.
         """
-        mock_client = Mock()
-        mock_client.people.update = AsyncMock(return_value=None)
+        from pydantic import ValidationError
 
-        valid_id = str(uuid4())
-        person_updates = [
-            PeopleUpdateItem(id="not-a-uuid", name="Bad"),
-            PeopleUpdateItem(id=valid_id, name="Good"),
-        ]
-        request = PeopleUpdateDto(people=person_updates)
-
-        result = await update_people(request, client=mock_client)
-
-        assert len(result) == 2
-        assert result[0].success is False
-        assert result[0].id == "not-a-uuid"
-        assert result[0].error == BulkIdErrorReason.unknown
-        assert result[1].success is True
-        assert result[1].id == valid_id
+        with pytest.raises(ValidationError):
+            PeopleUpdateItem(id="not-a-uuid", name="Bad")  # type: ignore[arg-type]
 
     @pytest.mark.anyio
     async def test_update_people_uses_bounded_concurrency(self):
@@ -289,7 +273,7 @@ class TestUpdatePeople:
         mock_client.people.update = AsyncMock(side_effect=update_side_effect)
 
         person_updates = [
-            PeopleUpdateItem(id=str(uuid4()), name=f"Person {i}")
+            PeopleUpdateItem(id=uuid4(), name=f"Person {i}")
             for i in range(BULK_FANOUT_CONCURRENCY_LIMIT + 5)
         ]
         request = PeopleUpdateDto(people=person_updates)
@@ -409,7 +393,7 @@ class TestUpdatePeopleFeatureFace:
         mock_client.faces.list = AsyncMock(return_value=mock_faces_page)
 
         person_updates = [
-            PeopleUpdateItem(id=str(person_uuid), featureFaceAssetId=asset_uuid),
+            PeopleUpdateItem(id=person_uuid, featureFaceAssetId=asset_uuid),
         ]
         request = PeopleUpdateDto(people=person_updates)
 
@@ -439,9 +423,7 @@ class TestUpdatePeopleFeatureFace:
         person_uuid = uuid4()
         asset_uuid = uuid4()
         request = PeopleUpdateDto(
-            people=[
-                PeopleUpdateItem(id=str(person_uuid), featureFaceAssetId=asset_uuid)
-            ]
+            people=[PeopleUpdateItem(id=person_uuid, featureFaceAssetId=asset_uuid)]
         )
 
         result = await update_people(request, client=mock_client)
@@ -482,8 +464,8 @@ class TestUpdatePeopleFeatureFace:
         asset_uuid = uuid4()
         request = PeopleUpdateDto(
             people=[
-                PeopleUpdateItem(id=str(person_a), featureFaceAssetId=asset_uuid),
-                PeopleUpdateItem(id=str(person_b), name="b"),
+                PeopleUpdateItem(id=person_a, featureFaceAssetId=asset_uuid),
+                PeopleUpdateItem(id=person_b, name="b"),
             ]
         )
 
@@ -714,8 +696,8 @@ class TestGetAllPeopleSorting:
         result = await call_get_all_people(client=mock_client)
 
         # Older should come first — identify by person ID
-        older_id = str(safe_uuid_from_person_id(older.id))
-        newer_id = str(safe_uuid_from_person_id(newer.id))
+        older_id = safe_uuid_from_person_id(older.id)
+        newer_id = safe_uuid_from_person_id(newer.id)
         assert result.people[0].id == older_id
         assert result.people[1].id == newer_id
 
@@ -1167,7 +1149,7 @@ class TestMergePerson:
         result = await merge_person(target_uuid, request, client=mock_client)
 
         assert len(result) == 1
-        assert result[0].id == str(source_uuid)
+        assert result[0].id == source_uuid
         assert result[0].success is True
         assert result[0].error is None
 
@@ -1194,7 +1176,7 @@ class TestMergePerson:
 
         assert len(result) == 2
         assert all(r.success for r in result)
-        assert [r.id for r in result] == [str(source_1), str(source_2)]
+        assert [r.id for r in result] == [source_1, source_2]
 
         mock_client.people.merge.assert_called_once_with(
             uuid_to_gumnut_person_id(target_uuid),

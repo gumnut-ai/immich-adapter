@@ -14,6 +14,7 @@ from fastapi import Depends, Request
 from gumnut import AsyncGumnut
 from gumnut.types.user_response import UserResponse
 
+from routers.api.constants import STUB_LICENSE_KEY
 from routers.immich_models import (
     UserAdminResponseDto,
     UserAvatarColor,
@@ -95,7 +96,7 @@ async def get_current_user_admin(
     quota = map_user_quota(user)
 
     user_admin_dto = UserAdminResponseDto(
-        id=str(user_uuid),
+        id=user_uuid,
         email=user.email or "",
         name=full_name,
         isAdmin=False,  # Always False - no need to show Immich admin controls
@@ -115,7 +116,7 @@ async def get_current_user_admin(
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey=str(uuid4()),
-            licenseKey="/IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA/",
+            licenseKey=STUB_LICENSE_KEY,
         ),
     )
 
@@ -159,4 +160,4 @@ async def get_current_user_id(
     Returns:
         UUID of the current user
     """
-    return UUID(user_admin.id)
+    return user_admin.id
