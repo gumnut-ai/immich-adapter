@@ -42,7 +42,6 @@ from routers.api.assets import (
 )
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 from routers.immich_models import (
-    Action,
     AssetBulkUploadCheckDto,
     AssetBulkUploadCheckItem,
     AssetCopyDto,
@@ -57,6 +56,7 @@ from routers.immich_models import (
     AssetMetadataUpsertItemDto,
     AssetMediaSize,
     AssetMediaStatus,
+    AssetUploadAction,
 )
 
 
@@ -88,7 +88,7 @@ class TestBulkUploadCheck:
 
         # Assert
         assert len(result.results) == 2
-        assert all(item.action == Action.accept for item in result.results)
+        assert all(item.action == AssetUploadAction.accept for item in result.results)
         assert result.results[0].id == "asset1"
         assert result.results[1].id == "asset2"
         mock_client.assets.check_existence.assert_called_once()
@@ -127,11 +127,11 @@ class TestBulkUploadCheck:
         assert len(result.results) == 2
         # First asset should be rejected as duplicate
         assert result.results[0].id == "asset1"
-        assert result.results[0].action == Action.reject
+        assert result.results[0].action == AssetUploadAction.reject
         assert result.results[0].assetId == str(sample_uuid)
         # Second asset should be accepted
         assert result.results[1].id == "asset2"
-        assert result.results[1].action == Action.accept
+        assert result.results[1].action == AssetUploadAction.accept
 
     @pytest.mark.anyio
     async def test_bulk_upload_check_with_base64_checksum(self, sample_uuid):
@@ -165,7 +165,7 @@ class TestBulkUploadCheck:
         # Assert - should detect as duplicate
         assert len(result.results) == 1
         assert result.results[0].id == "mobile-asset-1"
-        assert result.results[0].action == Action.reject
+        assert result.results[0].action == AssetUploadAction.reject
         assert result.results[0].assetId == str(sample_uuid)
 
         # Verify the base64 checksum was passed to Gumnut as-is
@@ -203,7 +203,7 @@ class TestBulkUploadCheck:
 
         # Assert - both assets should be accepted (invalid one has false negative)
         assert len(result.results) == 2
-        assert all(item.action == Action.accept for item in result.results)
+        assert all(item.action == AssetUploadAction.accept for item in result.results)
 
 
 class TestImmichChecksumToBase64:
