@@ -14,13 +14,18 @@ from routers.immich_models import (
     MachineLearningAvailabilityChecksDto,
     OAuthTokenEndpointAuthMethod,
     OcrConfig,
+    ReleaseChannel,
     SystemConfigBackupsDto,
     SystemConfigDto,
     SystemConfigFFmpegDto,
+    SystemConfigFFmpegRealtimeDto,
     SystemConfigFacesDto,
     SystemConfigGeneratedFullsizeImageDto,
     SystemConfigGeneratedImageDto,
     SystemConfigImageDto,
+    SystemConfigIntegrityChecks,
+    SystemConfigIntegrityChecksumJob,
+    SystemConfigIntegrityJob,
     SystemConfigJobDto,
     SystemConfigLibraryDto,
     SystemConfigLibraryScanDto,
@@ -99,6 +104,7 @@ async def get_config() -> SystemConfigDto:
     job_settings_video = JobSettingsDto(concurrency=1)
     job_settings_ocr = JobSettingsDto(concurrency=1)
     job_settings_workflow = JobSettingsDto(concurrency=5)
+    job_settings_integrity = JobSettingsDto(concurrency=1)
 
     fullsize_image = SystemConfigGeneratedFullsizeImageDto(
         enabled=True,
@@ -174,6 +180,7 @@ async def get_config() -> SystemConfigDto:
         maxBitrate="0",
         preferredHwDevice="auto",
         preset="faster",
+        realtime=SystemConfigFFmpegRealtimeDto(enabled=False),
         refs=0,
         targetAudioCodec=AudioCodec.aac,
         targetResolution="720",
@@ -193,10 +200,30 @@ async def get_config() -> SystemConfigDto:
         thumbnail=thumbnail_image,
     )
 
+    # Integrity-check schedules mirror the Immich v3 server defaults, including
+    # the zero-padded cron form of "every day at 3am".
+    integrity_checks = SystemConfigIntegrityChecks(
+        checksumFiles=SystemConfigIntegrityChecksumJob(
+            cronExpression="0 03 * * *",
+            enabled=True,
+            percentageLimit=1,
+            timeLimit=3600000,
+        ),
+        missingFiles=SystemConfigIntegrityJob(
+            cronExpression="0 03 * * *",
+            enabled=True,
+        ),
+        untrackedFiles=SystemConfigIntegrityJob(
+            cronExpression="0 03 * * *",
+            enabled=True,
+        ),
+    )
+
     job_config = SystemConfigJobDto(
         backgroundTask=job_settings_bg,
         editor=job_settings_bg,
         faceDetection=job_settings_face,
+        integrityCheck=job_settings_integrity,
         library=job_settings_lib,
         metadataExtraction=job_settings_meta,
         migration=job_settings_mig,
@@ -238,7 +265,9 @@ async def get_config() -> SystemConfigDto:
         duplicateDetection=duplicate_detection,
         enabled=True,
         facialRecognition=facial_recognition,
-        urls=[],
+        # v3 requires at least one URL; no ML service sits behind the adapter,
+        # so mirror the Immich default placeholder.
+        urls=["http://immich-machine-learning:3003"],
         ocr=ocr_config,
     )
 
@@ -250,7 +279,10 @@ async def get_config() -> SystemConfigDto:
 
     metadata_config = SystemConfigMetadataDto(faces=faces_config)
 
-    new_version_check = SystemConfigNewVersionCheckDto(enabled=True)
+    new_version_check = SystemConfigNewVersionCheckDto(
+        channel=ReleaseChannel.stable,
+        enabled=True,
+    )
 
     nightly_tasks = SystemConfigNightlyTasksDto(
         clusterNewFaces=True,
@@ -267,6 +299,7 @@ async def get_config() -> SystemConfigDto:
     # web client to redirect to the OAuth provider automatically. enabled=True
     # ensures the system config is consistent with the /server/features response.
     oauth_config = SystemConfigOAuthDto(
+        allowInsecureRequests=False,
         autoLaunch=True,
         autoRegister=True,
         buttonText="Sign in with Gumnut",
@@ -274,10 +307,12 @@ async def get_config() -> SystemConfigDto:
         clientSecret="",
         defaultStorageQuota=0,
         enabled=True,
+        endSessionEndpoint="",
         issuerUrl="",
         mobileOverrideEnabled=False,
-        mobileRedirectUri=AnyUrl("https://example.com/oauth/redirect"),
+        mobileRedirectUri="https://example.com/oauth/redirect",
         profileSigningAlgorithm="RS256",
+        prompt="",
         roleClaim="preferred_username",
         scope="openid email profile",
         signingAlgorithm="RS256",
@@ -293,7 +328,7 @@ async def get_config() -> SystemConfigDto:
     reverse_geocoding = SystemConfigReverseGeocodingDto(enabled=True)
 
     server_config = SystemConfigServerDto(
-        externalDomain=AnyUrl("https://example.com"),
+        externalDomain="https://example.com",
         loginPageMessage="",
         publicUsers=False,
     )
@@ -320,6 +355,7 @@ async def get_config() -> SystemConfigDto:
         backup=backup_config,
         ffmpeg=ffmpeg_config,
         image=image_config,
+        integrityChecks=integrity_checks,
         job=job_config,
         library=library_config,
         logging=logging_config,
