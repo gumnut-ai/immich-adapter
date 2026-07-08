@@ -53,7 +53,7 @@ class TestGetCurrentUserAdmin:
 
         # Assert
         assert isinstance(result, UserAdminResponseDto)
-        assert result.id == str(test_uuid)
+        assert result.id == test_uuid
         assert result.email == "test@example.com"
         assert result.name == "Test User"
         assert result.isAdmin is False
@@ -276,7 +276,7 @@ class TestGetCurrentUser:
             license=UserLicense(
                 activatedAt=now,
                 activationKey="key123",
-                licenseKey="license123",
+                licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
             ),
         )
 
@@ -322,7 +322,7 @@ class TestGetCurrentUserId:
             license=UserLicense(
                 activatedAt=now,
                 activationKey="key123",
-                licenseKey="license123",
+                licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
             ),
         )
 

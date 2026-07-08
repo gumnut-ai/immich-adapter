@@ -48,11 +48,10 @@ def convert_gumnut_album_to_immich(
         id=str(safe_uuid_from_album_id(album_id)),
         albumName=album_name,
         description=album_description,  # type: ignore
-        albumThumbnailAssetId=str(
-            safe_uuid_from_asset_id(gumnut_album.album_cover_asset_id)
-        )
+        # v3 types this UUID | None; None (not "") is the no-cover value.
+        albumThumbnailAssetId=safe_uuid_from_asset_id(gumnut_album.album_cover_asset_id)
         if gumnut_album.album_cover_asset_id
-        else "",
+        else None,
         createdAt=created_at,
         updatedAt=updated_at,
         # An album's start/end date is the min/max of its assets' local capture

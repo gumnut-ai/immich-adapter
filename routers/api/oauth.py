@@ -213,7 +213,7 @@ async def finish_oauth(
         # Return login response with session token
         return LoginResponseDto(
             accessToken=session_token,
-            userId=result.user.id,
+            userId=user_uuid,
             userEmail=result.user.email or "",
             name=name,
             isAdmin=False,  # TODO: determine admin status
@@ -270,7 +270,7 @@ async def link_oauth_account(
         license=UserLicense(
             activatedAt=now,
             activationKey="dummy-activation-key",
-            licenseKey="dummy-license-key",
+            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
         ),
         name=current_user.name,
         oauthId="oauth-123456",
@@ -328,7 +328,7 @@ async def unlink_oauth_account(
         license=UserLicense(
             activatedAt=now,
             activationKey="dummy-activation-key",
-            licenseKey="dummy-license-key",
+            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
         ),
         name=current_user.name,
         oauthId="",

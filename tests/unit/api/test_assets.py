@@ -128,7 +128,7 @@ class TestBulkUploadCheck:
         # First asset should be rejected as duplicate
         assert result.results[0].id == "asset1"
         assert result.results[0].action == AssetUploadAction.reject
-        assert result.results[0].assetId == str(sample_uuid)
+        assert result.results[0].assetId == sample_uuid
         # Second asset should be accepted
         assert result.results[1].id == "asset2"
         assert result.results[1].action == AssetUploadAction.accept
@@ -166,7 +166,7 @@ class TestBulkUploadCheck:
         assert len(result.results) == 1
         assert result.results[0].id == "mobile-asset-1"
         assert result.results[0].action == AssetUploadAction.reject
-        assert result.results[0].assetId == str(sample_uuid)
+        assert result.results[0].assetId == sample_uuid
 
         # Verify the base64 checksum was passed to Gumnut as-is
         mock_client.assets.check_existence.assert_called_once()
@@ -376,7 +376,7 @@ class TestUploadAsset:
             )
 
         assert isinstance(result, AssetMediaResponseDto)
-        assert result.id == str(sample_uuid)
+        assert result.id == sample_uuid
         assert result.status == AssetMediaStatus.created
         mock_client.assets.with_raw_response.create.assert_called_once()
         call_kwargs = mock_client.assets.with_raw_response.create.call_args
@@ -556,7 +556,7 @@ class TestUploadAsset:
             )
 
         assert isinstance(result, AssetMediaResponseDto)
-        assert UUID(result.id)
+        assert isinstance(result.id, UUID)
         assert result.status == AssetMediaStatus.created
         mock_client.assets.with_raw_response.create.assert_not_called()
 
@@ -585,7 +585,7 @@ class TestUploadAsset:
             )
 
         assert isinstance(result, AssetMediaResponseDto)
-        assert UUID(result.id)
+        assert isinstance(result.id, UUID)
         assert result.status == AssetMediaStatus.created
         mock_client.assets.with_raw_response.create.assert_not_called()
 
@@ -642,7 +642,7 @@ class TestUploadAsset:
             )
 
             assert isinstance(result, AssetMediaResponseDto)
-            assert result.id == str(sample_uuid)
+            assert result.id == sample_uuid
             assert result.status == AssetMediaStatus.created
             mock_client.assets.with_raw_response.create.assert_called_once()
 
@@ -775,7 +775,7 @@ class TestUploadAsset:
             )
 
             assert isinstance(result, AssetMediaResponseDto)
-            assert result.id == str(sample_uuid)
+            assert result.id == sample_uuid
             assert result.status == AssetMediaStatus.created
 
     @pytest.mark.anyio
@@ -1907,7 +1907,7 @@ class TestUpdateAsset:
         mock_client.assets.update_asset.assert_awaited_once_with(
             uuid_to_gumnut_asset_id(sample_uuid), description="hello"
         )
-        assert result.id == str(sample_uuid)
+        assert result.id == sample_uuid
 
     @pytest.mark.anyio
     async def test_update_asset_description_null_clears(
@@ -2220,7 +2220,7 @@ class TestUpdateAsset:
             include=["metadata", "people", "file_data"],
         )
         mock_emit.assert_not_awaited()
-        assert result.id == str(sample_uuid)
+        assert result.id == sample_uuid
 
     @pytest.mark.anyio
     async def test_update_asset_out_of_scope_fields_no_sdk_call(

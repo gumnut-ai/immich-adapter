@@ -56,7 +56,7 @@ class TestHelperFunctions:
         assert result.deviceOS == "iOS 17"
         assert result.appVersion == "1.94.0"
         assert result.isPendingSyncReset is False
-        assert result.id == str(TEST_SESSION_ID)
+        assert result.id == TEST_SESSION_ID
 
     def test_session_to_response_dto_current_false(self):
         """Test converting session to DTO when it's not the current session."""
@@ -78,7 +78,7 @@ class TestHelperFunctions:
 
         assert result.current is False
         assert result.isPendingSyncReset is True
-        assert result.id == str(TEST_SESSION_ID)
+        assert result.id == TEST_SESSION_ID
 
     def test_session_to_response_dto_empty_app_version(self):
         """Test that empty app_version is converted to None."""
@@ -191,8 +191,8 @@ class TestGetSessions:
 
         # Verify session IDs are used as response IDs
         response_ids = {s.id for s in result}
-        assert str(TEST_SESSION_ID) in response_ids
-        assert str(TEST_SESSION_ID_2) in response_ids
+        assert TEST_SESSION_ID in response_ids
+        assert TEST_SESSION_ID_2 in response_ids
 
     @pytest.mark.anyio
     async def test_get_sessions_empty(self, mock_request, mock_session_store):
@@ -434,7 +434,7 @@ class TestUpdateSession:
         )
 
         assert result.isPendingSyncReset is True
-        assert result.id == str(TEST_SESSION_ID)
+        assert result.id == TEST_SESSION_ID
         mock_session_store.get_by_id.assert_called_with(str(TEST_SESSION_ID))
         mock_session_store.set_pending_sync_reset.assert_called_once_with(
             str(TEST_SESSION_ID), True
@@ -522,7 +522,7 @@ class TestUpdateSession:
             session_store=mock_session_store,
         )
 
-        assert result.id == str(TEST_SESSION_ID)
+        assert result.id == TEST_SESSION_ID
         # set_pending_sync_reset should not be called
         mock_session_store.set_pending_sync_reset.assert_not_called()
 

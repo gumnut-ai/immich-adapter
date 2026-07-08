@@ -127,7 +127,7 @@ async def create_user_admin(request: UserAdminCreateDto) -> UserAdminResponseDto
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey="activation-key",
-            licenseKey="license-key",
+            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
         ),
         profileChangedAt=datetime.now(tz=timezone.utc),
         deletedAt=datetime.now(tz=timezone.utc),
@@ -158,7 +158,7 @@ async def get_user_admin(id: UUID) -> UserAdminResponseDto:
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey="activation-key",
-            licenseKey="license-key",
+            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
         ),
         profileChangedAt=datetime.now(tz=timezone.utc),
         deletedAt=datetime.now(tz=timezone.utc),
@@ -191,7 +191,7 @@ async def update_user_admin(
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey="activation-key",
-            licenseKey="license-key",
+            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
         ),
         profileChangedAt=datetime.now(tz=timezone.utc),
         deletedAt=datetime.now(tz=timezone.utc),
@@ -224,7 +224,7 @@ async def delete_user_admin(
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey="activation-key",
-            licenseKey="license-key",
+            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
         ),
         profileChangedAt=datetime.now(tz=timezone.utc),
         deletedAt=datetime.now(tz=timezone.utc),
@@ -303,7 +303,7 @@ async def restore_user_admin(id: UUID) -> UserAdminResponseDto:
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey="activation-key",
-            licenseKey="license-key",
+            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
         ),
         profileChangedAt=datetime.now(tz=timezone.utc),
         deletedAt=datetime.now(tz=timezone.utc),

@@ -46,7 +46,7 @@ class TestGetMyUser:
             license=UserLicense(
                 activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 activationKey="test-key",
-                licenseKey="test-license",
+                licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
             ),
         )
 
@@ -56,8 +56,8 @@ class TestGetMyUser:
         # Assert response matches expected format (should just return what was passed in)
         assert isinstance(result, UserAdminResponseDto)
         assert result == mock_user_admin
-        # ID should be the UUID string
-        assert result.id == str(test_uuid)
+        # ID should be the UUID
+        assert result.id == test_uuid
         assert result.email == "test@example.com"
         assert result.name == "John Doe"
         assert result.isAdmin is True
@@ -100,7 +100,7 @@ class TestGetMyUser:
             license=UserLicense(
                 activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 activationKey="test-key",
-                licenseKey="test-license",
+                licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
             ),
         )
 
@@ -137,7 +137,7 @@ class TestGetMyUser:
             license=UserLicense(
                 activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 activationKey="test-key",
-                licenseKey="test-license",
+                licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
             ),
         )
 

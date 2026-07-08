@@ -385,7 +385,7 @@ class TestDimensionEmission:
             sample_gumnut_asset, orientation=6, raw_width=4032, raw_height=2268
         )
 
-        result = extract_sync_exif(sample_gumnut_asset, asset_uuid="x")
+        result = extract_sync_exif(sample_gumnut_asset, asset_uuid=str(uuid4()))
 
         assert result.exifImageWidth == 4032
         assert result.exifImageHeight == 2268
@@ -398,7 +398,7 @@ class TestDimensionEmission:
             sample_gumnut_asset, orientation=6, raw_width=None, raw_height=None
         )
 
-        result = extract_sync_exif(sample_gumnut_asset, asset_uuid="x")
+        result = extract_sync_exif(sample_gumnut_asset, asset_uuid=str(uuid4()))
 
         assert result.exifImageWidth == 2268
         assert result.exifImageHeight == 4032
@@ -417,7 +417,7 @@ class TestDimensionEmission:
         sample_gumnut_asset.height = 1080
         sample_gumnut_asset.metadata = None
 
-        result = extract_sync_exif(sample_gumnut_asset, asset_uuid="x")
+        result = extract_sync_exif(sample_gumnut_asset, asset_uuid=str(uuid4()))
 
         assert result.exifImageWidth == 1920
         assert result.exifImageHeight == 1080
@@ -454,7 +454,7 @@ class TestDimensionEmission:
         sample_gumnut_asset.height = 1080
         _attach_metadata(sample_gumnut_asset, orientation=6, raw_width=0, raw_height=0)
 
-        sync_result = extract_sync_exif(sample_gumnut_asset, asset_uuid="x")
+        sync_result = extract_sync_exif(sample_gumnut_asset, asset_uuid=str(uuid4()))
         assert sync_result.exifImageWidth == 1920
         assert sync_result.exifImageHeight == 1080
         assert sync_result.orientation is None
@@ -475,7 +475,7 @@ class TestDimensionEmission:
             sample_gumnut_asset, orientation=None, raw_width=0, raw_height=0
         )
 
-        sync_result = extract_sync_exif(sample_gumnut_asset, asset_uuid="x")
+        sync_result = extract_sync_exif(sample_gumnut_asset, asset_uuid=str(uuid4()))
         assert sync_result.exifImageWidth is None
         assert sync_result.exifImageHeight is None
         assert sync_result.orientation is None

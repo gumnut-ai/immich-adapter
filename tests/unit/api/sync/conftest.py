@@ -150,6 +150,9 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     asset.mime_type = "image/jpeg"
     asset.original_file_name = "test.jpg"
     asset.local_datetime = updated_at
+    # SyncAssetV1.createdAt is required in Immich v3 and validated as an
+    # aware datetime — a bare Mock attribute would fail validation.
+    asset.created_at = updated_at
     asset.updated_at = updated_at
     asset.thumbhash = None
     asset.width = 1920

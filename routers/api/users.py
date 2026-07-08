@@ -112,7 +112,7 @@ async def update_my_user(
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey=str(uuid4()),
-            licenseKey="/IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA/",
+            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
         ),
     )
 
@@ -124,7 +124,7 @@ async def get_user_license() -> LicenseResponseDto:
     This is a stub implementation that returns fake license data.
     """
     return LicenseResponseDto(
-        licenseKey="/IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA/",
+        licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
         activationKey=str(uuid4()),
         activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
     )

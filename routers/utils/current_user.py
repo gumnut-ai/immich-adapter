@@ -115,7 +115,7 @@ async def get_current_user_admin(
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey=str(uuid4()),
-            licenseKey="/IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA/",
+            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
         ),
     )
 
@@ -159,4 +159,4 @@ async def get_current_user_id(
     Returns:
         UUID of the current user
     """
-    return UUID(user_admin.id)
+    return user_admin.id
