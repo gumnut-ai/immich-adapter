@@ -21,6 +21,7 @@ class TestServerFeaturesEndpoint:
         data = response.json()
         for flag in (
             "duplicateDetection",
+            "realtimeTranscoding",
             "reverseGeocoding",
             "sidecar",
         ):

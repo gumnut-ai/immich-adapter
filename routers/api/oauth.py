@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from gumnut import AsyncGumnut, BadRequestError, omit
 
+from routers.api.constants import STUB_LICENSE_KEY
 from routers.immich_models import (
     LoginResponseDto,
     OAuthAuthorizeResponseDto,
@@ -270,7 +271,7 @@ async def link_oauth_account(
         license=UserLicense(
             activatedAt=now,
             activationKey="dummy-activation-key",
-            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
+            licenseKey=STUB_LICENSE_KEY,
         ),
         name=current_user.name,
         oauthId="oauth-123456",
@@ -328,7 +329,7 @@ async def unlink_oauth_account(
         license=UserLicense(
             activatedAt=now,
             activationKey="dummy-activation-key",
-            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
+            licenseKey=STUB_LICENSE_KEY,
         ),
         name=current_user.name,
         oauthId="",

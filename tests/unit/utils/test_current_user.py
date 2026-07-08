@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from datetime import datetime, timezone
 
 
+from routers.api.constants import STUB_LICENSE_KEY
 from routers.utils.current_user import (
     get_current_user_admin,
     get_current_user,
@@ -276,7 +277,7 @@ class TestGetCurrentUser:
             license=UserLicense(
                 activatedAt=now,
                 activationKey="key123",
-                licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
+                licenseKey=STUB_LICENSE_KEY,
             ),
         )
 
@@ -322,7 +323,7 @@ class TestGetCurrentUserId:
             license=UserLicense(
                 activatedAt=now,
                 activationKey="key123",
-                licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
+                licenseKey=STUB_LICENSE_KEY,
             ),
         )
 

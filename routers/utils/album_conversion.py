@@ -45,7 +45,7 @@ def convert_gumnut_album_to_immich(
     final_asset_count = asset_count if asset_count is not None else 0
 
     return AlbumResponseDto(
-        id=str(safe_uuid_from_album_id(album_id)),
+        id=safe_uuid_from_album_id(album_id),
         albumName=album_name,
         description=album_description,  # type: ignore
         # v3 types this UUID | None; None (not "") is the no-cover value.

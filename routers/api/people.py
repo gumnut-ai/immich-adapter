@@ -134,9 +134,10 @@ async def _update_one_person(
     `GumnutError`, raised from either `_resolve_thumbnail_face_id`'s inner
     `client.faces.list` or the final `client.people.update`) is delegated to
     `classify_bulk_item_call`, mirroring the per-chunk policy used by
-    `chunked_per_item_bulk` for chunked bulk endpoints. The pre-call
-    exception specific to this endpoint (`HTTPException` from
-    `_resolve_thumbnail_face_id`'s "missing face" branch) stays here.
+    `chunked_per_item_bulk` for chunked bulk endpoints. The exception
+    specific to this endpoint (`HTTPException` from
+    `_resolve_thumbnail_face_id`'s "missing face" branch) stays here — it
+    is not an SDK error, so `classify_bulk_item_call` lets it propagate.
     """
     log_extra = {"person_id": person_item.id}
 

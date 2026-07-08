@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from shortuuid import uuid
 
 from config.settings import get_settings
+from routers.api.constants import STUB_LICENSE_KEY
 from routers.immich_models import (
     LicenseKeyDto,
     LicenseResponseDto,
@@ -306,8 +307,7 @@ async def get_server_license() -> LicenseResponseDto:
     This is a stub implementation returning basic license info.
     """
     return LicenseResponseDto(
-        # Must match the v3 UserLicense key pattern or the endpoint 500s.
-        licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
+        licenseKey=STUB_LICENSE_KEY,
         activationKey=str(uuid()),
         activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
     )

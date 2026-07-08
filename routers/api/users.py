@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from typing import List
 import logging
 
+from routers.api.constants import STUB_LICENSE_KEY
 from routers.immich_models import (
     AlbumsResponse,
     AssetOrder,
@@ -112,7 +113,7 @@ async def update_my_user(
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey=str(uuid4()),
-            licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
+            licenseKey=STUB_LICENSE_KEY,
         ),
     )
 
@@ -124,7 +125,7 @@ async def get_user_license() -> LicenseResponseDto:
     This is a stub implementation that returns fake license data.
     """
     return LicenseResponseDto(
-        licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
+        licenseKey=STUB_LICENSE_KEY,
         activationKey=str(uuid4()),
         activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
     )

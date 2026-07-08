@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, List
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from gumnut import AsyncGumnut
@@ -261,7 +261,7 @@ async def create_memory(
     This is a stub implementation that returns a fake memory response.
     """
     return MemoryResponseDto(
-        id="memory-id",
+        id=uuid4(),
         assets=[],
         createdAt=datetime.now(tz=timezone.utc),
         data=OnThisDayDto(year=2024),

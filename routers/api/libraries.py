@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import List
 
@@ -39,7 +39,7 @@ async def create_library(
     This is a stub implementation that returns a fake library response.
     """
     return LibraryResponseDto(
-        id="library-id",
+        id=uuid4(),
         name=request.name or "New Library",
         ownerId=str(current_user_id),
         assetCount=0,

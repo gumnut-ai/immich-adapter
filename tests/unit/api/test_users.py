@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 import shortuuid
 
+from routers.api.constants import STUB_LICENSE_KEY
 from routers.api.users import get_my_user, update_my_user
 from routers.immich_models import (
     UserAdminResponseDto,
@@ -46,7 +47,7 @@ class TestGetMyUser:
             license=UserLicense(
                 activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 activationKey="test-key",
-                licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
+                licenseKey=STUB_LICENSE_KEY,
             ),
         )
 
@@ -100,7 +101,7 @@ class TestGetMyUser:
             license=UserLicense(
                 activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 activationKey="test-key",
-                licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
+                licenseKey=STUB_LICENSE_KEY,
             ),
         )
 
@@ -137,7 +138,7 @@ class TestGetMyUser:
             license=UserLicense(
                 activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 activationKey="test-key",
-                licenseKey="IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
+                licenseKey=STUB_LICENSE_KEY,
             ),
         )
 

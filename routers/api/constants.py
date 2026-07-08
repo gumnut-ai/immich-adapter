@@ -11,3 +11,9 @@ GUMNUT_API_MAX_PAGE_SIZE = 200
 # the backend deduplicates by checksum, not by device identifier, so true
 # re-uploads are still caught (see docs/design-docs/checksum-support.md).
 GUMNUT_UPLOAD_DEVICE_ID = "gumnut-device"
+
+# Placeholder license key for the stubbed license surfaces (the adapter has no
+# licensing). Immich v3's UserLicense DTO enforces the key pattern
+# ^IM(SV|CL)(-[\dA-Za-z]{4}){8}$ on responses, so any stub value must match it
+# or the returning endpoint 500s on response validation.
+STUB_LICENSE_KEY = "IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA"
