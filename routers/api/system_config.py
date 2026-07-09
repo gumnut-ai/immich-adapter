@@ -88,7 +88,7 @@ async def get_config() -> SystemConfigDto:
     database_backup = DatabaseBackupConfig(
         cronExpression="0 2 * * *",
         enabled=False,
-        keepLastAmount=7.0,
+        keepLastAmount=7,
     )
 
     job_settings_bg = JobSettingsDto(concurrency=5)
@@ -248,7 +248,7 @@ async def get_config() -> SystemConfigDto:
     )
 
     ml_availabilityChecks = MachineLearningAvailabilityChecksDto(
-        enabled=False, interval=1.0, timeout=1.0
+        enabled=False, interval=1, timeout=1
     )
 
     ocr_config = OcrConfig(

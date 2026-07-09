@@ -543,7 +543,7 @@ def convert_gumnut_asset_to_immich(
         createdAt=gumnut_asset.created_at,
         duration=duration_ms(gumnut_asset.duration),
         hasMetadata=True,
-        height=float(height) if height else None,
+        height=height if height else None,
         isArchived=False,
         isEdited=False,
         isFavorite=False,
@@ -557,6 +557,6 @@ def convert_gumnut_asset_to_immich(
         # Immich field — clients simply skip the blur until it is backfilled.
         thumbhash=gumnut_asset.thumbhash,
         visibility=AssetVisibility.timeline,
-        width=float(width) if width else None,
+        width=width if width else None,
         people=people,
     )
