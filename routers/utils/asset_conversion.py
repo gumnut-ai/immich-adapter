@@ -7,6 +7,7 @@ to the Immich API format, including metadata (camera/EXIF/GPS/location) processi
 
 import logging
 from datetime import datetime
+from uuid import UUID
 
 from gumnut.types.asset_response import AssetResponse
 from routers.utils.datetime_utils import (
@@ -443,14 +444,14 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
 
 
 def build_asset_upload_ready_payload(
-    gumnut_asset: AssetResponse, owner_id: str
+    gumnut_asset: AssetResponse, owner_id: UUID
 ) -> AssetUploadReadyV1Payload:
     """
     Build an AssetUploadReadyV1Payload from a Gumnut asset for WebSocket sync events.
 
     Args:
         gumnut_asset: The Gumnut AssetResponse object
-        owner_id: The owner's user ID string
+        owner_id: The owner's user id (UUID form of the Gumnut user id)
 
     Returns:
         AssetUploadReadyV1Payload containing SyncAssetV1 and SyncAssetExifV1
