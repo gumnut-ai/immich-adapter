@@ -48,7 +48,7 @@ async def create_activity(
     """
     now = datetime.now(timezone.utc)
     return ActivityResponseDto(
-        assetId="d6773835-4b91-4c7d-8667-26bd5daa1a45",  # still a dummy asset id
+        assetId=UUID("d6773835-4b91-4c7d-8667-26bd5daa1a45"),  # still a dummy asset id
         comment="Test activity comment",
         createdAt=now,
         id=uuid4(),
@@ -56,7 +56,7 @@ async def create_activity(
         user=UserResponseDto(
             avatarColor=UserAvatarColor.primary,
             email=current_user.email,
-            id=str(current_user.id),
+            id=current_user.id,
             name=current_user.name,
             profileChangedAt=now,
             profileImagePath="",

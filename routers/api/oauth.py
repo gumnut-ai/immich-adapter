@@ -266,7 +266,7 @@ async def link_oauth_account(
         createdAt=now,
         deletedAt=now,
         email=current_user.email,
-        id=str(current_user.id),
+        id=current_user.id,
         isAdmin=True,
         license=UserLicense(
             activatedAt=now,
@@ -324,7 +324,7 @@ async def unlink_oauth_account(
         createdAt=now,
         deletedAt=now,
         email=current_user.email,
-        id=str(current_user.id),
+        id=current_user.id,
         isAdmin=True,
         license=UserLicense(
             activatedAt=now,

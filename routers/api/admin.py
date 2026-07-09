@@ -148,7 +148,7 @@ async def get_user_admin(id: UUID) -> UserAdminResponseDto:
     This is a stub implementation that returns a fake user response.
     """
     return UserAdminResponseDto(
-        id=str(id),
+        id=id,
         email="user@example.com",
         name="User Name",
         isAdmin=False,
@@ -181,7 +181,7 @@ async def update_user_admin(
     This is a stub implementation that returns a fake updated user response.
     """
     return UserAdminResponseDto(
-        id=str(id),
+        id=id,
         email=request.email or "user@example.com",
         name=request.name or "Updated User",
         isAdmin=request.isAdmin or False,
@@ -214,7 +214,7 @@ async def delete_user_admin(
     This is a stub implementation that returns a fake user response.
     """
     return UserAdminResponseDto(
-        id=str(id),
+        id=id,
         email="deleted@example.com",
         name="Deleted User",
         isAdmin=False,
@@ -293,7 +293,7 @@ async def restore_user_admin(id: UUID) -> UserAdminResponseDto:
     This is a stub implementation that returns a fake restored user response.
     """
     return UserAdminResponseDto(
-        id=str(id),
+        id=id,
         email="restored@example.com",
         name="Restored User",
         isAdmin=False,

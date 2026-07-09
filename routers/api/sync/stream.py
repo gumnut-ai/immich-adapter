@@ -11,6 +11,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from collections.abc import Iterator
 from typing import Any, AsyncGenerator
+from uuid import UUID
 
 from gumnut import AsyncGumnut
 from gumnut.types.album_response import AlbumResponse
@@ -131,7 +132,7 @@ async def _stream_entity_type(
     gumnut_client: AsyncGumnut,
     gumnut_entity_type: str,
     sync_entity_type: SyncEntityType,
-    owner_id: str,
+    owner_id: UUID,
     checkpoint: Checkpoint | None,
     sync_started_at: datetime,
     stats: SyncStreamStats,
@@ -154,7 +155,7 @@ async def _stream_entity_type(
         gumnut_client: The Gumnut API client
         gumnut_entity_type: The entity type string for the Gumnut API (e.g., "asset")
         sync_entity_type: The Immich sync entity type (e.g., SyncEntityType.AssetV1)
-        owner_id: The owner UUID string
+        owner_id: The owner UUID
         checkpoint: The checkpoint with cursor (None for full sync)
         sync_started_at: Upper bound for the query window
         stats: Mutable stats tracker for streamed IDs, skip counts, and FK warnings
@@ -472,7 +473,11 @@ async def generate_sync_stream(
             instead of being silently swallowed inside the generator).
     """
     try:
-        owner_id = str(safe_uuid_from_user_id(current_user.id))
+        owner_uuid = safe_uuid_from_user_id(current_user.id)
+        # String form for logging extras — Sentry serializes unknown objects
+        # via repr, which would turn a raw UUID into "UUID('...')" and break
+        # user_id search/correlation.
+        owner_id = str(owner_uuid)
 
         requested_types = set(request.types)
 
@@ -562,7 +567,7 @@ async def generate_sync_stream(
                 gumnut_client,
                 gumnut_entity_type,
                 sync_entity_type,
-                owner_id,
+                owner_uuid,
                 checkpoint,
                 sync_started_at,
                 stats,

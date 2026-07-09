@@ -4,6 +4,8 @@ Converter functions mapping Gumnut SDK types to Immich sync models.
 Pure functions with no internal dependencies.
 """
 
+from uuid import UUID
+
 from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
@@ -85,7 +87,7 @@ def gumnut_user_to_sync_auth_user_v1(user: UserResponse) -> SyncAuthUserV1:
     quota = map_user_quota(user)
 
     return SyncAuthUserV1(
-        id=str(safe_uuid_from_user_id(user.id)),
+        id=safe_uuid_from_user_id(user.id),
         email=user.email or "",
         name=full_name,
         hasProfileImage=False,
@@ -120,7 +122,7 @@ def gumnut_user_to_sync_user_v1(user: UserResponse) -> SyncUserV1:
     full_name = " ".join(name_parts) if name_parts else user.email or "Unknown User"
 
     return SyncUserV1(
-        id=str(safe_uuid_from_user_id(user.id)),
+        id=safe_uuid_from_user_id(user.id),
         email=user.email or "",
         name=full_name,
         hasProfileImage=False,
@@ -130,7 +132,7 @@ def gumnut_user_to_sync_user_v1(user: UserResponse) -> SyncUserV1:
     )
 
 
-def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAssetV1:
+def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: UUID) -> SyncAssetV1:
     """
     Convert Gumnut AssetResponse to Immich SyncAssetV1 format.
 
@@ -149,7 +151,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     localDateTime = resolve_local_date_time(asset)
 
     return SyncAssetV1(
-        id=str(safe_uuid_from_asset_id(asset.id)),
+        id=safe_uuid_from_asset_id(asset.id),
         checksum=resolve_immich_checksum(asset),
         # "Uploaded to Immich at" — required on SyncAssetV1 in Immich v3.
         createdAt=asset.created_at,
@@ -174,7 +176,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     )
 
 
-def gumnut_asset_to_sync_asset_v2(asset: AssetResponse, owner_id: str) -> SyncAssetV2:
+def gumnut_asset_to_sync_asset_v2(asset: AssetResponse, owner_id: UUID) -> SyncAssetV2:
     """Convert Gumnut AssetResponse to Immich SyncAssetV2 format.
 
     SyncAssetV2 is SyncAssetV1 with ``duration`` as integer milliseconds instead
@@ -215,7 +217,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
     file_size = asset.file_data.file_size_bytes if asset.file_data else None
 
     return SyncAssetExifV1(
-        assetId=str(safe_uuid_from_asset_id(metadata.asset_id)),
+        assetId=safe_uuid_from_asset_id(metadata.asset_id),
         city=metadata.city,
         country=metadata.country,
         dateTimeOriginal=original_datetime,
@@ -246,7 +248,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
 
 
 def gumnut_person_to_sync_person_v1(
-    person: PersonResponse, owner_id: str
+    person: PersonResponse, owner_id: UUID
 ) -> SyncPersonV1:
     """
     Convert Gumnut PersonResponse to Immich SyncPersonV1 format.
@@ -259,7 +261,7 @@ def gumnut_person_to_sync_person_v1(
         SyncPersonV1 for sync stream
     """
     return SyncPersonV1(
-        id=str(safe_uuid_from_person_id(person.id)),
+        id=safe_uuid_from_person_id(person.id),
         createdAt=person.created_at,
         isFavorite=person.is_favorite,
         isHidden=person.is_hidden,
@@ -272,14 +274,14 @@ def gumnut_person_to_sync_person_v1(
     )
 
 
-def gumnut_album_to_sync_album_v1(album: AlbumResponse, owner_id: str) -> SyncAlbumV1:
+def gumnut_album_to_sync_album_v1(album: AlbumResponse, owner_id: UUID) -> SyncAlbumV1:
     """Convert Gumnut AlbumResponse to Immich SyncAlbumV1 format."""
     thumbnail_asset_id = None
     if album.album_cover_asset_id:
         thumbnail_asset_id = str(safe_uuid_from_asset_id(album.album_cover_asset_id))
 
     return SyncAlbumV1(
-        id=str(safe_uuid_from_album_id(album.id)),
+        id=safe_uuid_from_album_id(album.id),
         ownerId=owner_id,
         name=album.name,
         description=album.description or "",
@@ -291,7 +293,7 @@ def gumnut_album_to_sync_album_v1(album: AlbumResponse, owner_id: str) -> SyncAl
     )
 
 
-def gumnut_album_to_sync_album_v2(album: AlbumResponse, owner_id: str) -> SyncAlbumV2:
+def gumnut_album_to_sync_album_v2(album: AlbumResponse, owner_id: UUID) -> SyncAlbumV2:
     """Convert Gumnut AlbumResponse to Immich SyncAlbumV2 format.
 
     In the Immich v3 GA model SyncAlbumV2 is SyncAlbumV1 without ``ownerId``
@@ -312,8 +314,8 @@ def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
         person_id = str(safe_uuid_from_person_id(face.person_id))
 
     return SyncAssetFaceV1(
-        id=str(safe_uuid_from_face_id(face.id)),
-        assetId=str(safe_uuid_from_asset_id(face.asset_id)),
+        id=safe_uuid_from_face_id(face.id),
+        assetId=safe_uuid_from_asset_id(face.asset_id),
         boundingBoxX1=bounding_box.get("x", 0),
         boundingBoxX2=bounding_box.get("x", 0) + bounding_box.get("w", 0),
         boundingBoxY1=bounding_box.get("y", 0),
@@ -340,6 +342,6 @@ def gumnut_album_asset_to_sync_album_to_asset_v1(
 ) -> SyncAlbumToAssetV1:
     """Convert Gumnut AlbumAssetResponse to Immich SyncAlbumToAssetV1 format."""
     return SyncAlbumToAssetV1(
-        albumId=str(safe_uuid_from_album_id(album_asset.album_id)),
-        assetId=str(safe_uuid_from_asset_id(album_asset.asset_id)),
+        albumId=safe_uuid_from_album_id(album_asset.album_id),
+        assetId=safe_uuid_from_asset_id(album_asset.asset_id),
     )

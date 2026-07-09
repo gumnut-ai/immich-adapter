@@ -94,7 +94,7 @@ async def update_my_user(
     quota = map_user_quota(user)
 
     return UserAdminResponseDto(
-        id=str(user_uuid),
+        id=user_uuid,
         email=user.email or "",
         name=full_name,
         isAdmin=True,
@@ -224,7 +224,7 @@ async def create_profile_image(
     return CreateProfileImageResponseDto(
         profileChangedAt=datetime.now(tz=timezone.utc),
         profileImagePath="path/to/new/profile/image.jpg",
-        userId=str(current_user_id),
+        userId=current_user_id,
     )
 
 
@@ -246,7 +246,7 @@ async def get_user(id: UUID) -> UserResponseDto:
     return UserResponseDto(
         avatarColor=UserAvatarColor.primary,
         email="user@example.com",
-        id=str(id),
+        id=id,
         name="User",
         profileChangedAt=datetime.now(tz=timezone.utc),
         profileImagePath="",

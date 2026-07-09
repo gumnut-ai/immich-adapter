@@ -343,13 +343,13 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     )
 
 
-def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAssetExifV1:
+def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: UUID) -> SyncAssetExifV1:
     """
     Extract metadata from a Gumnut AssetResponse for sync events.
 
     Args:
         gumnut_asset: The Gumnut AssetResponse object
-        asset_uuid: The asset UUID string
+        asset_uuid: The asset UUID
 
     Returns:
         SyncAssetExifV1 object with metadata from the asset
@@ -456,7 +456,7 @@ def build_asset_upload_ready_payload(
     Returns:
         AssetUploadReadyV1Payload containing SyncAssetV1 and SyncAssetExifV1
     """
-    asset_uuid = str(safe_uuid_from_asset_id(gumnut_asset.id))
+    asset_uuid = safe_uuid_from_asset_id(gumnut_asset.id)
 
     file_created_at = resolve_file_created_at(gumnut_asset)
     file_modified_at = resolve_file_modified_at(gumnut_asset)
@@ -530,7 +530,7 @@ def convert_gumnut_asset_to_immich(
     height = gumnut_asset.height
 
     return AssetResponseDto(
-        id=str(safe_uuid_from_asset_id(asset_id)),
+        id=safe_uuid_from_asset_id(asset_id),
         type=asset_type,
         originalFileName=original_filename,
         originalMimeType=mime_type,

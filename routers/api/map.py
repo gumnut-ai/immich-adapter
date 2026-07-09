@@ -110,7 +110,7 @@ async def get_map_markers(
         ):
             markers.append(
                 MapMarkerResponseDto(
-                    id=str(safe_uuid_from_asset_id(asset.id)),
+                    id=safe_uuid_from_asset_id(asset.id),
                     lat=metadata.latitude,
                     lon=metadata.longitude,
                     city=metadata.city,

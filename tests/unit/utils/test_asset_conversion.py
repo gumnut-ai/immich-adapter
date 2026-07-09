@@ -385,7 +385,7 @@ class TestDimensionEmission:
             sample_gumnut_asset, orientation=6, raw_width=4032, raw_height=2268
         )
 
-        result = extract_sync_exif(sample_gumnut_asset, asset_uuid=str(uuid4()))
+        result = extract_sync_exif(sample_gumnut_asset, asset_uuid=uuid4())
 
         assert result.exifImageWidth == 4032
         assert result.exifImageHeight == 2268
@@ -398,7 +398,7 @@ class TestDimensionEmission:
             sample_gumnut_asset, orientation=6, raw_width=None, raw_height=None
         )
 
-        result = extract_sync_exif(sample_gumnut_asset, asset_uuid=str(uuid4()))
+        result = extract_sync_exif(sample_gumnut_asset, asset_uuid=uuid4())
 
         assert result.exifImageWidth == 2268
         assert result.exifImageHeight == 4032
@@ -417,7 +417,7 @@ class TestDimensionEmission:
         sample_gumnut_asset.height = 1080
         sample_gumnut_asset.metadata = None
 
-        result = extract_sync_exif(sample_gumnut_asset, asset_uuid=str(uuid4()))
+        result = extract_sync_exif(sample_gumnut_asset, asset_uuid=uuid4())
 
         assert result.exifImageWidth == 1920
         assert result.exifImageHeight == 1080
@@ -454,7 +454,7 @@ class TestDimensionEmission:
         sample_gumnut_asset.height = 1080
         _attach_metadata(sample_gumnut_asset, orientation=6, raw_width=0, raw_height=0)
 
-        sync_result = extract_sync_exif(sample_gumnut_asset, asset_uuid=str(uuid4()))
+        sync_result = extract_sync_exif(sample_gumnut_asset, asset_uuid=uuid4())
         assert sync_result.exifImageWidth == 1920
         assert sync_result.exifImageHeight == 1080
         assert sync_result.orientation is None
@@ -475,7 +475,7 @@ class TestDimensionEmission:
             sample_gumnut_asset, orientation=None, raw_width=0, raw_height=0
         )
 
-        sync_result = extract_sync_exif(sample_gumnut_asset, asset_uuid=str(uuid4()))
+        sync_result = extract_sync_exif(sample_gumnut_asset, asset_uuid=uuid4())
         assert sync_result.exifImageWidth is None
         assert sync_result.exifImageHeight is None
         assert sync_result.orientation is None
@@ -522,7 +522,7 @@ class TestChecksumEmission:
         sample_gumnut_asset.file_data.checksum_sha1 = self.SHA1_B64
 
         result = gumnut_asset_to_sync_asset_v1(
-            sample_gumnut_asset, owner_id=self.OWNER_ID
+            sample_gumnut_asset, owner_id=self.OWNER_UUID
         )
 
         assert result.checksum == self.SHA1_B64
@@ -541,7 +541,7 @@ class TestChecksumEmission:
             sample_gumnut_asset, owner_id=self.OWNER_UUID
         )
         sync = gumnut_asset_to_sync_asset_v1(
-            sample_gumnut_asset, owner_id=self.OWNER_ID
+            sample_gumnut_asset, owner_id=self.OWNER_UUID
         )
 
         for emitted in (rest.checksum, ws.asset.checksum, sync.checksum):
@@ -619,7 +619,7 @@ class TestThumbhashEmission:
         sample_gumnut_asset.thumbhash = self.THUMBHASH
 
         result = gumnut_asset_to_sync_asset_v1(
-            sample_gumnut_asset, owner_id=self.OWNER_ID
+            sample_gumnut_asset, owner_id=self.OWNER_UUID
         )
 
         assert result.thumbhash == self.THUMBHASH
@@ -637,7 +637,7 @@ class TestThumbhashEmission:
             sample_gumnut_asset, owner_id=self.OWNER_UUID
         )
         sync = gumnut_asset_to_sync_asset_v1(
-            sample_gumnut_asset, owner_id=self.OWNER_ID
+            sample_gumnut_asset, owner_id=self.OWNER_UUID
         )
 
         assert rest.thumbhash is None
@@ -735,7 +735,7 @@ class TestDurationEmission:
         sample_gumnut_asset.duration = 30.0
 
         result = gumnut_asset_to_sync_asset_v1(
-            sample_gumnut_asset, owner_id=self.OWNER_ID
+            sample_gumnut_asset, owner_id=self.OWNER_UUID
         )
 
         assert result.duration == "00:00:30.000000"
@@ -755,7 +755,7 @@ class TestDurationEmission:
             sample_gumnut_asset, owner_id=self.OWNER_UUID
         )
         sync = gumnut_asset_to_sync_asset_v1(
-            sample_gumnut_asset, owner_id=self.OWNER_ID
+            sample_gumnut_asset, owner_id=self.OWNER_UUID
         )
 
         assert rest.duration is None

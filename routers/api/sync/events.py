@@ -3,6 +3,7 @@
 import json
 import logging
 from typing import Any, cast
+from uuid import UUID
 
 from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
@@ -141,7 +142,7 @@ def make_delete_sync_event(
         return None
 
     if event.event_type == "asset_deleted":
-        data = SyncAssetDeleteV1(assetId=str(safe_uuid_from_asset_id(event.entity_id)))
+        data = SyncAssetDeleteV1(assetId=safe_uuid_from_asset_id(event.entity_id))
         return (
             make_sync_event(
                 SyncEntityType.AssetDeleteV1,
@@ -152,7 +153,7 @@ def make_delete_sync_event(
         )
 
     elif event.event_type == "album_deleted":
-        data = SyncAlbumDeleteV1(albumId=str(safe_uuid_from_album_id(event.entity_id)))
+        data = SyncAlbumDeleteV1(albumId=safe_uuid_from_album_id(event.entity_id))
         return (
             make_sync_event(
                 SyncEntityType.AlbumDeleteV1,
@@ -163,9 +164,7 @@ def make_delete_sync_event(
         )
 
     elif event.event_type == "person_deleted":
-        data = SyncPersonDeleteV1(
-            personId=str(safe_uuid_from_person_id(event.entity_id))
-        )
+        data = SyncPersonDeleteV1(personId=safe_uuid_from_person_id(event.entity_id))
         return (
             make_sync_event(
                 SyncEntityType.PersonDeleteV1,
@@ -177,7 +176,7 @@ def make_delete_sync_event(
 
     elif event.event_type == "face_deleted":
         data = SyncAssetFaceDeleteV1(
-            assetFaceId=str(safe_uuid_from_face_id(event.entity_id))
+            assetFaceId=safe_uuid_from_face_id(event.entity_id)
         )
         return (
             make_sync_event(
@@ -233,8 +232,8 @@ def make_delete_sync_event(
             return None
 
         data = SyncAlbumToAssetDeleteV1(
-            albumId=str(safe_uuid_from_album_id(album_id_str)),
-            assetId=str(safe_uuid_from_asset_id(asset_id_str)),
+            albumId=safe_uuid_from_album_id(album_id_str),
+            assetId=safe_uuid_from_asset_id(asset_id_str),
         )
         return (
             make_sync_event(
@@ -259,7 +258,7 @@ def make_delete_sync_event(
 def convert_entity_to_sync_event(
     gumnut_entity_type: str,
     entity: EntityType,
-    owner_id: str,
+    owner_id: UUID,
     cursor: str,
     sync_entity_type: SyncEntityType,
 ) -> str:

@@ -189,23 +189,23 @@ async def add_assets_to_album(
         if asset_uuid in errors_by_uuid:
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str,
+                    id=asset_uuid,
                     success=False,
                     error=errors_by_uuid[asset_uuid],
                 )
             )
         elif gumnut_asset_id in added:
-            results.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
+            results.append(BulkIdResponseDto(id=asset_uuid, success=True))
         elif gumnut_asset_id in duplicate:
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str, success=False, error=BulkIdErrorReason.duplicate
+                    id=asset_uuid, success=False, error=BulkIdErrorReason.duplicate
                 )
             )
         elif gumnut_asset_id in not_found:
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str, success=False, error=BulkIdErrorReason.not_found
+                    id=asset_uuid, success=False, error=BulkIdErrorReason.not_found
                 )
             )
         else:
@@ -218,7 +218,7 @@ async def add_assets_to_album(
             )
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str, success=False, error=BulkIdErrorReason.unknown
+                    id=asset_uuid, success=False, error=BulkIdErrorReason.unknown
                 )
             )
     return results
@@ -287,17 +287,16 @@ async def remove_asset_from_album(
 
     results: list[BulkIdResponseDto] = []
     for asset_uuid in request.ids:
-        asset_uuid_str = str(asset_uuid)
         if asset_uuid in errors_by_uuid:
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str,
+                    id=asset_uuid,
                     success=False,
                     error=errors_by_uuid[asset_uuid],
                 )
             )
         else:
-            results.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
+            results.append(BulkIdResponseDto(id=asset_uuid, success=True))
     return results
 
 

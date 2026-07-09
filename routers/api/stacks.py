@@ -42,9 +42,7 @@ async def create_stack(request: StackCreateDto) -> StackResponseDto:
     Create a stack.
     This is a stub implementation that returns a fake stack response.
     """
-    return StackResponseDto(
-        id=uuid4(), primaryAssetId=str(request.assetIds[0]), assets=[]
-    )
+    return StackResponseDto(id=uuid4(), primaryAssetId=request.assetIds[0], assets=[])
 
 
 @router.get("/{id}")

@@ -823,7 +823,7 @@ class TestUploadAsset:
             "routers.api.assets._upload_streaming", new_callable=AsyncMock
         ) as mock_streaming:
             mock_streaming.return_value = AssetMediaResponseDto(
-                id=str(uuid4()), status=AssetMediaStatus.created
+                id=uuid4(), status=AssetMediaStatus.created
             )
             await upload_asset(
                 request=request,
@@ -932,7 +932,7 @@ class TestUploadAsset:
             "routers.api.assets._upload_streaming", new_callable=AsyncMock
         ) as mock_streaming:
             mock_streaming.return_value = AssetMediaResponseDto(
-                id=str(uuid4()), status=AssetMediaStatus.created
+                id=uuid4(), status=AssetMediaStatus.created
             )
             await upload_asset(
                 request=request,

@@ -66,7 +66,7 @@ async def get_api_key(id: UUID) -> ApiKeyResponseDto:
     This is a stub implementation that returns a fake API key response.
     """
     return ApiKeyResponseDto(
-        id=str(id),
+        id=id,
         name="API Key",
         permissions=[Permission.asset_read],
         createdAt=datetime.now(tz=timezone.utc),
@@ -81,7 +81,7 @@ async def update_api_key(id: UUID, request: ApiKeyUpdateDto) -> ApiKeyResponseDt
     This is a stub implementation that returns a fake updated API key response.
     """
     return ApiKeyResponseDto(
-        id=str(id),
+        id=id,
         name=request.name or "Updated API Key",
         permissions=request.permissions or [Permission.asset_read],
         createdAt=datetime.now(tz=timezone.utc),

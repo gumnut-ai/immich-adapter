@@ -41,7 +41,7 @@ def _session_to_response_dto(
     """
     session_id_str = str(session.id)
     return SessionResponseDto(
-        id=session_id_str,
+        id=session.id,
         createdAt=session.created_at.isoformat(),
         updatedAt=session.updated_at.isoformat(),
         current=(session_id_str == current_session_token),
