@@ -125,9 +125,11 @@ async def get_user_license() -> LicenseResponseDto:
     This is a stub implementation that returns fake license data.
     """
     return LicenseResponseDto(
-        licenseKey=STUB_LICENSE_KEY,
-        activationKey=str(uuid4()),
-        activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+        root=UserLicense(
+            licenseKey=STUB_LICENSE_KEY,
+            activationKey=str(uuid4()),
+            activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+        )
     )
 
 
@@ -138,9 +140,11 @@ async def set_user_license(request: LicenseKeyDto) -> LicenseResponseDto:
     This is a stub implementation that returns fake license data.
     """
     return LicenseResponseDto(
-        licenseKey=request.licenseKey,
-        activationKey=request.activationKey,
-        activatedAt=datetime.now(timezone.utc),
+        root=UserLicense(
+            licenseKey=request.licenseKey,
+            activationKey=request.activationKey,
+            activatedAt=datetime.now(timezone.utc),
+        )
     )
 
 
