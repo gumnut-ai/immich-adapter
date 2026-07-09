@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-08
+last-updated: 2026-07-09
 ---
 
 # Immich Adapter Architecture
@@ -153,9 +153,10 @@ Used when Immich clients expect offset-based pagination or need the full result 
 
 | Endpoint | SDK call | Client-side logic |
 |----------|----------|-------------------|
-| `GET /api/people` | `client.people.list()` | Filter hidden → sort (hidden, favorite, named, asset count, alphabetical, created_at) → paginate |
-| `GET /api/albums` | `client.albums.list()` | Convert all to list, no pagination exposed |
-| `GET /api/assets/statistics` | `client.assets.list()` | Count total/images/videos from full set |
+| `GET /api/people` | `client.people.list(name_filter="all", limit=GUMNUT_API_MAX_PAGE_SIZE)` | Filter hidden → sort (hidden, favorite, named, asset count, alphabetical, created_at) → paginate |
+| `GET /api/albums` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Convert all to list, no pagination exposed |
+| `GET /api/albums/statistics` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total albums from the full set |
+| `GET /api/assets/statistics` | `client.assets.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total/images/videos from full set |
 
 **Performance implications:** Memory usage scales with total entity count, not page size. For a library with 10,000 people, every `GET /api/people` request loads all 10,000 into memory. This is acceptable for current Gumnut library sizes but will need optimization (e.g., server-side sorting support in the Gumnut API) as libraries grow.
 
@@ -201,7 +202,9 @@ Used for timeline bucket contents where the date range is known in advance.
 
 Used for detail endpoints where no pagination is needed.
 
-**Endpoints:** `GET /api/assets/{id}`, `GET /api/people/{id}`, `GET /api/albums/{id}`, etc.
+**Endpoints:** `GET /api/assets/{id}`, `GET /api/people/{id}`, `GET /api/albums/{id}` when `withoutAssets=true`, etc.
+
+`GET /api/albums/{id}` is otherwise a hybrid path: the adapter first does `client.albums.retrieve(id)` for the album itself, then exhausts `client.assets.list(album_id=id, include=ASSET_INCLUDE, limit=GUMNUT_API_MAX_PAGE_SIZE)` to inline the album's assets when Immich asks for the full payload.
 
 ### Pagination constants
 
