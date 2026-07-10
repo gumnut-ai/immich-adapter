@@ -11,6 +11,7 @@ from gumnut.types.albums import AssetsAssociationAddResponse
 from uuid import uuid4
 
 from tests.conftest import make_sdk_connection_error, make_sdk_status_error
+from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.albums import (
     get_all_albums,
     get_album_statistics,
@@ -75,10 +76,7 @@ class TestGetAllAlbums:
         # Assert
         assert isinstance(result, list)
         assert len(result) == 3
-        # Check that mocks were called
-        mock_client.albums.list.assert_called_once()
-        # make sure that asset_id=None results in no parameter passed to albums.list()
-        mock_client.albums.list.assert_called_once_with()
+        mock_client.albums.list.assert_called_once_with(limit=GUMNUT_API_MAX_PAGE_SIZE)
         # Verify the real conversion happened by checking result structure
         assert all(hasattr(album, "id") for album in result)
         assert all(hasattr(album, "albumName") for album in result)
@@ -199,7 +197,9 @@ class TestGetAllAlbums:
 
         # Verify the client was called with the exact converted asset_id
         expected_gumnut_id = uuid_to_gumnut_asset_id(test_asset_uuid)
-        mock_client.albums.list.assert_called_once_with(asset_id=expected_gumnut_id)
+        mock_client.albums.list.assert_called_once_with(
+            asset_id=expected_gumnut_id, limit=GUMNUT_API_MAX_PAGE_SIZE
+        )
 
     @pytest.mark.anyio
     async def test_get_all_albums_with_asset_id_no_results(
@@ -227,7 +227,9 @@ class TestGetAllAlbums:
 
         # Verify the client was called with the exact converted asset_id
         expected_gumnut_id = uuid_to_gumnut_asset_id(test_asset_uuid)
-        mock_client.albums.list.assert_called_once_with(asset_id=expected_gumnut_id)
+        mock_client.albums.list.assert_called_once_with(
+            asset_id=expected_gumnut_id, limit=GUMNUT_API_MAX_PAGE_SIZE
+        )
 
     @pytest.mark.anyio
     async def test_get_all_albums_with_album_cover_asset_id(
@@ -311,7 +313,9 @@ class TestGetAlbumStatistics:
         assert result.owned == 3
         assert result.shared == 0
         assert result.notShared == 3
-        mock_gumnut_client.albums.list.assert_called_once()
+        mock_gumnut_client.albums.list.assert_called_once_with(
+            limit=GUMNUT_API_MAX_PAGE_SIZE
+        )
 
     @pytest.mark.anyio
     async def test_get_album_statistics_empty(
@@ -377,6 +381,7 @@ class TestGetAlbumInfo:
         mock_client.assets.list.assert_called_once_with(
             album_id=uuid_to_gumnut_album_id(sample_uuid),
             include=["metadata", "people", "file_data"],
+            limit=GUMNUT_API_MAX_PAGE_SIZE,
         )
 
     @pytest.mark.anyio

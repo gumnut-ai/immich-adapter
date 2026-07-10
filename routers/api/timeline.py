@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, List, Literal
 from uuid import UUID
 
@@ -62,6 +62,41 @@ async def fetch_asset_counts(
         kwargs["local_datetime_before"] = response.data[-1].time_bucket
 
     return all_buckets
+
+
+def month_window(moment: datetime) -> tuple[datetime, datetime]:
+    """Return the naive (month_start, next_month_start) window containing `moment`.
+
+    Boundaries are naive on purpose: the Gumnut API counts endpoint groups by
+    date_trunc("month", local_datetime) on the naive column, so month windows
+    used to fetch a bucket's assets must compare wall-clock local_datetime
+    directly. When building `assets.list` date bounds from this window, use
+    `month_query_bounds` — passing `month_start` directly as
+    `local_datetime_after` silently excludes month-start-midnight assets.
+    """
+    month_start = moment.replace(
+        tzinfo=None, day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    if month_start.month == 12:
+        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month_start = month_start.replace(month=month_start.month + 1)
+    return month_start, next_month_start
+
+
+def month_query_bounds(moment: datetime) -> tuple[str, str]:
+    """ISO-8601 `assets.list` date bounds covering `moment`'s month.
+
+    The Gumnut API treats `local_datetime_after` as exclusive, so the lower
+    bound backs off one microsecond from month start — otherwise an asset
+    captured exactly at month-start midnight is counted in the month's bucket
+    by the counts endpoint but never returned by a listing over the window.
+    """
+    month_start, next_month_start = month_window(moment)
+    return (
+        (month_start - timedelta(microseconds=1)).isoformat(),
+        next_month_start.isoformat(),
+    )
 
 
 @router.get("/buckets")
@@ -151,19 +186,12 @@ async def get_time_bucket(
 
     # Compute month boundaries from timeBucket for server-side date filtering.
     # The Immich client may send naive ("2024-01-01T00:00:00") or UTC-aware
-    # ("2024-01-01T00:00:00.000Z") timestamps. We always strip timezone info
-    # so boundaries are naive, matching the Gumnut API counts endpoint which
-    # groups by date_trunc("month", local_datetime) on the naive column.
-    # Uses a half-open interval [month_start, next_month_start) for clean boundaries.
-    bucket_date = datetime.fromisoformat(timeBucket).replace(tzinfo=None)
-    month_start = bucket_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    if month_start.month == 12:
-        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
-    else:
-        next_month_start = month_start.replace(month=month_start.month + 1)
+    # ("2024-01-01T00:00:00.000Z") timestamps; the month helpers strip
+    # timezone info so boundaries are naive (see month_window's docstring).
+    after_bound, before_bound = month_query_bounds(datetime.fromisoformat(timeBucket))
     date_range_query = {
-        "local_datetime_after": month_start.isoformat(),
-        "local_datetime_before": next_month_start.isoformat(),
+        "local_datetime_after": after_bound,
+        "local_datetime_before": before_bound,
     }
 
     list_kwargs: dict[str, Any] = {"extra_query": date_range_query}

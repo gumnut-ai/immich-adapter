@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-03
+last-updated: 2026-07-09
 ---
 
 # Immich Adapter Gap Analysis
@@ -17,8 +17,8 @@ Today, the core photo workflow works: upload, browse timeline, organize into alb
 
 | Category | Endpoint count | Status |
 |----------|---------------|--------|
-| Fully implemented (real SDK calls) | ~77 | Assets (including video playback), albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
-| Stubs (empty/fake responses) | ~114 | Tags, shared links, stacks, activities, admin, server info, etc. |
+| Fully implemented (real SDK calls) | ~79 | Assets (including video playback), albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
+| Stubs (empty/fake responses) | ~112 | Tags, shared links, stacks, activities, admin, server info, etc. |
 | Total in adapter | ~192 | |
 | Not routed (no adapter endpoint) | ~52 | Immich endpoints with no adapter route at all (e.g., asset edits, database backups, workflows, plugins, some auth/admin endpoints) |
 | Total in Immich v2.7.5 spec | 244 | |
@@ -242,28 +242,28 @@ Immich has an in-app notification system for events like album sharing invitatio
 
 ---
 
-### 12. Search Gaps (6 stub endpoints within search module)
+### 12. Search Gaps (4 stub endpoints within search module)
 
-The search module has 3 real implementations (metadata, smart, person) and 6 stubs.
+The search module has 5 real implementations (metadata, smart, person, random, explore) and 4 stubs.
 
 | Endpoint | Current behavior | Impact |
 |----------|-----------------|--------|
-| `GET /search/explore` | Empty list | **Low** — Curated categories, rarely used |
+| ~~`GET /search/explore`~~ | Closed — cities (`exifInfo.city`) + recents (`createdAt`) groups derived from recent assets | — |
 | `POST /search/large-assets` | Empty list | **Low** — Storage management tool |
 | `GET /search/places` | Empty list | **Medium** — Location search, tied to map/EXIF |
 | `GET /search/suggestions` | Empty list | **Medium** — Autocomplete for search bar |
 | `GET /search/cities` | Empty list | **Low** — City list for location filtering |
-| `POST /search/random` | Empty list | **Low** — Random photo selection |
+| ~~`POST /search/random`~~ | Closed — uniform random sample via month-bucket counts | — |
 
 **Dependency**: Per-endpoint breakdown:
 - **Places/cities**: Need reverse geocoding for human-readable place names — tied to gap #3b, not #3a (GPS coordinates alone don't provide place names).
 - **Suggestions**: In v2.7.5, `SearchSuggestionType` includes `country`, `state`, `city` (location-based, tied to #3b) and `camera-make`, `camera-model` (EXIF-based, potentially adapter-only if EXIF data is already in the backend).
-- **Random/explore**: Adapter-only with existing asset APIs.
+- **Random/explore**: Closed — implemented adapter-only on existing asset APIs (random via month-bucket count sampling, explore via a recent-asset scan grouped by `metadata.city`).
 - **Large-assets**: Needs file size data from backend.
 
-**Effort**: **M** total for the adapter-implementable ones (random, explore, camera suggestions). Location-based search is tied to reverse geocoding (#3b).
+**Effort**: **S** for the remaining adapter-implementable one (camera suggestions). Location-based search is tied to reverse geocoding (#3b).
 
-**Recommendation**: **Close** random and explore (S each, adapter-only). Camera suggestions may be closeable independently (S, adapter-only if EXIF data available). Location-based endpoints close when reverse geocoding (#3b) closes.
+**Recommendation**: Camera suggestions may be closeable independently (S, adapter-only if EXIF data available). Location-based endpoints close when reverse geocoding (#3b) closes.
 
 ---
 
@@ -606,7 +606,7 @@ The video playback endpoint (`GET /assets/{id}/video/playback`) is used by Immic
 
 These are architectural limitations documented in `docs/architecture/adapter-architecture.md`:
 
-**Load-all-then-paginate pattern**: People, albums, and asset statistics endpoints load the entire dataset into memory before paginating. For a library with 10,000+ people or 100,000+ assets, this doesn't scale.
+**Load-all-then-paginate pattern**: People, albums, album statistics, and asset statistics still exhaust the full result set in memory before shaping the Immich response. These paths now scan at `GUMNUT_API_MAX_PAGE_SIZE` to cut upstream round-trips, but the latency and memory profile still scale with total entity count rather than the requested page size.
 
 **User impact**: **Medium** — Performance degrades with library size. Not visible to small libraries but will become a problem at scale.
 
@@ -625,7 +625,7 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 | Gap | Effort | Dependency | Rationale |
 |-----|--------|------------|-----------|
 | ~~#21 Face create~~ | — | — | Closed — `POST /api/faces` draws a user box and links it to a person; needed `gumnut-sdk >= 0.116.0` |
-| #12 Search random/explore | S | Adapter-only | Easy adapter-only work |
+| ~~#12 Search random/explore~~ | — | — | Closed — random samples uniformly via month-bucket counts; explore returns cities + recents groups |
 | #5 Download / archive | M | Adapter-only | Pure adapter work, clear user value |
 | ~~#33 Video playback (mobile)~~ | — | — | Closed — CDN streaming with Range support; advertises `Accept-Ranges: bytes` on 200 for iOS AVPlayer |
 

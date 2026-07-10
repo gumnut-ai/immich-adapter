@@ -27,6 +27,7 @@ from gumnut.types.asset_bulk_update_assets_params import Update, UpdateChange
 from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
+from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import (
     BULK_CHUNK_SIZE,
@@ -1096,7 +1097,9 @@ async def get_asset_statistics(
     """
 
     gumnut_assets = (
-        client.assets.list(state="trashed") if isTrashed else client.assets.list()
+        client.assets.list(state="trashed", limit=GUMNUT_API_MAX_PAGE_SIZE)
+        if isTrashed
+        else client.assets.list(limit=GUMNUT_API_MAX_PAGE_SIZE)
     )
 
     total_assets = 0
