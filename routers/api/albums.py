@@ -21,6 +21,7 @@ from routers.immich_models import (
     AlbumsAddAssetsDto,
     AlbumsAddAssetsResponseDto,
     AlbumStatisticsResponseDto,
+    MapMarkerResponseDto,
     UpdateAlbumDto,
     UpdateAlbumUserDto,
     AddUsersDto,
@@ -32,6 +33,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
 )
 from routers.utils.album_conversion import convert_gumnut_album_to_immich
+from routers.utils.map_markers import collect_geotagged_markers
 from pydantic.json_schema import SkipJsonSchema
 
 logger = logging.getLogger(__name__)
@@ -123,6 +125,36 @@ async def get_album_info(
         current_user,
         asset_count=gumnut_album.asset_count,
     )
+
+
+@router.get("/{id}/map-markers")
+async def get_album_map_markers(
+    id: UUID,
+    key: Annotated[str | SkipJsonSchema[None], Query(alias="key")] = None,
+    slug: Annotated[str | SkipJsonSchema[None], Query(alias="slug")] = None,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+) -> List[MapMarkerResponseDto]:
+    """Return map markers for the GPS-tagged assets in a single album.
+
+    New in Immich v3 (the global `/map/markers` dropped its `albumIds` filter),
+    the v3 web album view calls this on every album open. Markers are the
+    album's geotagged assets, collected by the shared `collect_geotagged_markers`
+    helper with the album filter AND-combined with the world bbox.
+
+    `key` / `slug` are accepted for client compatibility (shared-link tokens)
+    but dropped — this adapter doesn't support shared links. A missing album
+    404s: `albums.retrieve` raises `NotFoundError`, mapped to 404 by the global
+    handler (matching Immich, and consistent with `get_album_info`).
+    """
+    _ = key, slug  # accepted for client compat, dropped
+
+    gumnut_album_id = uuid_to_gumnut_album_id(id)
+
+    # Strict 404 for a missing album — retrieve first so a nonexistent album
+    # returns 404 rather than an empty marker list.
+    await client.albums.retrieve(gumnut_album_id)
+
+    return await collect_geotagged_markers(client, album_id=gumnut_album_id)
 
 
 @router.post("", status_code=201)
