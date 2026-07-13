@@ -543,6 +543,11 @@ Immich workflows allow defining automated processing pipelines.
 
 **Recommendation**: **Intentional gap** — Gumnut's Celery-based task system serves this purpose.
 
+**v3 (3.0) note**: The workflow model was restructured (`actions`/`filters` →
+`steps`/`methods`/`trigger`) and the endpoints reshaped; the intentional-gap
+verdict is unchanged. See *Immich v3 New Feature Areas — Scope Decisions* for the
+v3 endpoint list and client reachability.
+
 ---
 
 ### 30. Plugins (3 endpoints)
@@ -558,6 +563,11 @@ Immich plugin system for extending functionality.
 **Effort**: **N/A**
 
 **Recommendation**: **Intentional gap** — Gumnut has its own extension model.
+
+**v3 (3.0) note**: The plugin endpoints were reshaped (`/plugins/methods`,
+`/plugins/templates`); the intentional-gap verdict is unchanged. See *Immich v3
+New Feature Areas — Scope Decisions* for the v3 endpoint list and client
+reachability.
 
 ---
 
@@ -618,6 +628,100 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 
 ---
 
+## Immich v3 New Feature Areas — Scope Decisions
+
+The v3.0 retarget added 17 new endpoints across six feature areas (enumerated in
+`immich-v3-api-changes.md` §4). This section records the in-scope / stub /
+intentional-gap decision for each, resolving that document's open scoping
+question.
+
+The decisions turn on **reachability** for this deployment (single-tenant, Clerk
+OAuth, no Administration UI, `realtimeTranscoding: false`): whether the v3 web
+*and* mobile clients actually call an endpoint on a path our users exercise.
+Unimplemented paths return a FastAPI 404; the web client logs failed fetches (and
+on some screens shows an error toast), so **stub** means adding a benign `200` to
+silence a *reachable* error, while **intentional gap** means the 404 is
+unreachable or harmless and no adapter code is written.
+
+| Feature area | Endpoints | Reached by our clients? | Decision |
+|--------------|-----------|-------------------------|----------|
+| Adaptive video streaming (HLS) | 4 | No — gated by `realtimeTranscoding: false`; both clients fall back to direct playback | **Intentional gap** |
+| Integrity checks (admin) | 5 | No — web Administration UI only; mobile never calls | **Intentional gap** |
+| OAuth backchannel logout | 1 | No — identity-provider→server call; no client caller | **Intentional gap** |
+| Plugins / Workflows | 4 | Opt-in only — the Utilities → Workflows page; never on normal navigation or mobile | **Intentional gap** |
+| Calendar heatmap (`/users/me`) | 1 | Niche — manual "usage stats" accordion, desktop web only | **Stub** |
+| Calendar heatmap (`/admin/users/{id}`) | 1 | No — admin per-user page only | **Intentional gap** |
+| Albums — map markers | 1 | Yes — every album open (web) | **Implement** |
+
+**Adaptive video streaming (HLS)** — `GET /assets/{id}/video/stream/*` (+ session
+`DELETE`). Both the v3 web and mobile players branch on the `realtimeTranscoding`
+server feature; because the adapter reports it `false` (`routers/api/server.py`),
+neither ever constructs a stream URL — they use direct
+`GET /assets/{id}/video/playback` (gap #33, closed). The endpoints are never
+requested, so a stub would be unreachable code. A real implementation is out of
+scope regardless: the Gumnut API serves stored originals with no server-side
+transcoding. **Intentional gap.**
+
+**Integrity checks (admin)** — `/admin/integrity/{report,summary,…}` (5). A
+storage-layer audit (untracked files, missing files, checksum mismatch) reachable
+only from the web Administration UI, which this deployment's users never enter;
+mobile never calls it. There is no Gumnut API primitive for a storage audit.
+**Intentional gap**, consistent with the admin/system areas #16, #17, #19, #27,
+#28.
+
+**OAuth backchannel logout** — `POST /oauth/backchannel-logout`. OIDC
+back-channel logout is a server-to-server call from the identity provider to a
+registered relying party; no browser, mobile, or SDK code calls it. The adapter
+is not the OIDC relying party — all OAuth/JWT validation is delegated to the
+Gumnut backend — so it can neither validate the logout token nor map its `sid`
+claim to a session. User-initiated logout is already served by
+`POST /api/auth/logout`, and the new `SystemConfigOAuthDto` fields
+(`endSessionEndpoint`, `allowInsecureRequests`, `prompt`) are satisfied by benign
+config defaults. **Intentional gap**, consistent with #31.
+
+**Plugins / Workflows (experimental)** — `/plugins/methods`,
+`/plugins/templates`, `/workflows/triggers`, `/workflows/{id}/share`. v3
+restructured the model (`actions`/`filters` → `steps`/`methods`/`trigger`); the
+verdict from #29 and #30 is unchanged. These fire only when a user opens the
+Utilities → Workflows page — never on normal navigation and never on mobile — so
+ordinary use produces no error. One nuance: the Workflows route loader awaits an
+un-caught `Promise.all`, so a 404 there renders a SvelteKit error boundary rather
+than a bare console line; that is acceptable for an opt-in, unsupported utility.
+**Intentional gap.** *Optional softening (not planned):* stub the three `GET`
+reads and `GET /workflows` (#29) as `200 []` to render an empty page instead of
+the error boundary; leave `/workflows/{id}/share` at 404 (unreachable when the
+list is empty).
+
+**Calendar heatmap** — `GET /users/me/calendar-heatmap` (+
+`GET /admin/users/{id}/calendar-heatmap`). Per-day activity counts. The user
+endpoint is called only when a user manually expands the desktop-only "usage
+stats" accordion in Settings (never on primary navigation, never on mobile), and
+the client component has no error handler, so a 404 surfaces as a console error
+and two non-rendering widgets. A real implementation is materially more expensive
+than a stub — the Gumnut API's asset-count endpoint groups by month/capture-time
+only, whereas a heatmap needs per-day cells and an upload-date mode (which wants
+backend day-bucketing) — so it is not warranted for this widget. **Stub** the
+user endpoint; **intentional gap** for the admin variant. Stub shape: `200` with
+`{"from": <from param>, "to": <to param>, "totalCount": 0, "series": []}`,
+echoing the requested window so the client's date parse stays valid; an empty
+`series` renders a clean empty grid.
+
+**Albums — map markers** — `GET /albums/{id}/map-markers`. New in v3; the global
+`GET /map/markers` dropped its `albumIds` filter, so the v3 web album page calls
+this album-scoped endpoint on every album open. The current 404 produces a
+console error and a user-visible "Something went wrong" toast on a high-traffic
+screen (the album still renders). The existing `/api/map/markers` implementation
+(gap #3a) is directly reusable — the Gumnut client accepts `album_id` and a world
+`bbox` together — so a faithful implementation costs only a few lines more than a
+`[]` stub and is strictly better (real pins vs. a permanently empty map).
+**Implement** (adapter-only, effort S); tracked as separate implementation work.
+
+**Status:** the calendar-heatmap user-endpoint stub is implemented in
+`routers/api/users.py`. Album map markers are planned as a separate change. All
+other areas are intentional gaps with no adapter code.
+
+---
+
 ## Priority Summary
 
 ### Tier 1: Close Now (high value, reasonable effort)
@@ -671,6 +775,10 @@ These are architectural limitations documented in `docs/architecture/adapter-arc
 | #29 Workflows | Gumnut has own task processing |
 | #30 Plugins | Gumnut has own extension model |
 | #31 Auth (password/PIN) | OAuth via Clerk |
+
+> New Immich v3 feature areas (HLS streaming, integrity checks, OAuth backchannel
+> logout, plugins/workflows) are additional intentional gaps — see *Immich v3 New
+> Feature Areas — Scope Decisions* for the reachability analysis behind each.
 
 ## Stub Behavior Recommendation
 

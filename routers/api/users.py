@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, Response
+from datetime import datetime, timedelta, timezone
+from fastapi import APIRouter, Depends, Query, Response
 from gumnut import AsyncGumnut
 from uuid import UUID, uuid4
 from typing import List
@@ -9,6 +9,8 @@ from routers.api.constants import STUB_LICENSE_KEY
 from routers.immich_models import (
     AlbumsResponse,
     AssetOrder,
+    CalendarHeatmapResponseDto,
+    CalendarHeatmapType,
     CastResponse,
     CreateProfileImageDto,
     CreateProfileImageResponseDto,
@@ -202,6 +204,37 @@ async def update_my_preferences(
     This is a stub implementation that returns fake updated preferences.
     """
     return userPreferencesResponse
+
+
+@router.get("/me/calendar-heatmap")
+async def get_my_calendar_heatmap(
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None),
+    type: CalendarHeatmapType = Query(default=CalendarHeatmapType.Upload),
+) -> CalendarHeatmapResponseDto:
+    """Return an empty activity calendar heatmap.
+
+    The Immich web "usage stats" panel — a manually expanded, desktop-only
+    accordion in user settings — fetches this. The Gumnut API exposes asset
+    counts grouped by month/capture-time only, not the per-day upload-date
+    granularity a heatmap needs, so a faithful implementation would require
+    backend day-bucketing. Returning an empty series renders a clean empty grid
+    and avoids the client-side error the panel logs on a 404. The requested
+    window is echoed back (falling back to a ~1-year default) so the client's
+    date parsing stays valid; `type` is accepted for wire compatibility and
+    ignored.
+    """
+    today = datetime.now(tz=timezone.utc).date()
+    resolved_to = to or today.isoformat()
+    resolved_from = from_ or (today - timedelta(days=364)).isoformat()
+    return CalendarHeatmapResponseDto.model_validate(
+        {
+            "from": resolved_from,
+            "to": resolved_to,
+            "series": [],
+            "totalCount": 0,
+        }
+    )
 
 
 @router.post(

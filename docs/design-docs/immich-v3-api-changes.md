@@ -275,7 +275,10 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
 6. **Compat decisions** — resolved: the 7 removed endpoints are **dropped** (clean
    cut, no shims; see §3). The deprecated-in-place PUTs (§6) stay as-is.
 7. **New feature areas** (HLS streaming, integrity, calendar heatmap,
-   plugins/workflows) — likely stub/skip initially for the adapter.
+   plugins/workflows) — scoped: mostly intentional gaps (unreachable by the v3
+   clients), the calendar-heatmap user endpoint is stubbed, and album map markers
+   will be implemented. See *Immich v3 New Feature Areas — Scope Decisions* in
+   `immich-adapter-gap-analysis.md`.
 
 ---
 
@@ -355,5 +358,10 @@ and most such tests could now build or call the DTOs directly.
   vs V2 by the adapter's reported version, and the V2 payload deltas are small
   (§5). Reporting `3.0.x` needs only a thin V2 layer that reuses the §2 duration
   converter.
-- Which new feature areas (if any) are in scope vs. permanent intentional gaps —
-  see the companion gap analysis in `immich-adapter-gap-analysis.md`.
+- ~~Which new feature areas (if any) are in scope vs. permanent intentional
+  gaps?~~ **Resolved: mostly intentional gaps.** Of the six new areas, four are
+  intentional gaps unreachable by our v3 clients (HLS streaming, integrity checks,
+  OAuth backchannel logout, plugins/workflows), the calendar-heatmap user endpoint
+  is stubbed, and album map markers will be implemented. See *Immich v3 New
+  Feature Areas — Scope Decisions* in `immich-adapter-gap-analysis.md` for the
+  per-area reachability analysis and stub shapes.
