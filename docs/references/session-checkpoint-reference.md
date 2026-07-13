@@ -1,13 +1,9 @@
 ---
 title: "Session & Checkpoint Object Reference"
-last-updated: 2026-06-05
+last-updated: 2026-07-12
 ---
 
 # Session & Checkpoint Object Reference
-
-This document describes the Redis data model for Session and Checkpoint objects in immich-adapter.
-
----
 
 ## Redis Data Model
 
@@ -106,19 +102,7 @@ Contains all session UUIDs belonging to a user. Enables efficient lookup of all 
 **Key:** `session:{uuid}:checkpoints`
 **Type:** Hash
 
-Each field is an entity type, and the value is a pipe-delimited string:
-
-```text
-{last_synced_at}|{updated_at}
-```
-
-**Example:**
-
-```text
-AssetV1: "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00"
-```
-
-Both timestamps are fixed ISO 8601 format, so the value is split on the single `|` rather than carrying a JSON wrapper.
+Each field is an entity type, and the value is a pipe-delimited `{last_synced_at}|{updated_at}` string (see the [Key Schema](#key-schema) for an example). Both timestamps are fixed ISO 8601 format, so the value is split on the single `|` rather than carrying a JSON wrapper.
 
 **Why checkpoints are tied to sessions:**
 
@@ -126,8 +110,6 @@ Both timestamps are fixed ISO 8601 format, so the value is split on the single `
 - When a session is deleted, its checkpoints are also deleted
 - Client must re-sync from scratch if session is revoked
 - Because the session UUID is stable across JWT refresh (see [Session Token Architecture](#session-token-architecture)), checkpoints survive token refreshes
-
-### Checkpoint Fields
 
 ### `last_synced_at` (First Component)
 
@@ -157,11 +139,6 @@ last_synced_at, updated_at = checkpoint_value.split("|")
 - **Monitoring** - Alert if a session stops syncing
 
 **How it's used:** `cleanup_stale_sessions` (in `services/session_store.py`) range-queries `sessions:by_updated_at` (a sorted set scored by `updated_at`) for sessions whose score is older than its `days` threshold, then deletes each stale session and its associated data.
-
-**Difference from `last_synced_at`:**
-
-- `last_synced_at`: "Client processed data up to this time"
-- `updated_at`: "We received this checkpoint at this time"
 
 ---
 
