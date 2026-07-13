@@ -150,8 +150,7 @@ async def get_album_map_markers(
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
-    # Strict 404 for a missing album — retrieve first so a nonexistent album
-    # returns 404 rather than an empty marker list.
+    # Retrieve first so a missing album 404s instead of returning an empty list.
     await client.albums.retrieve(gumnut_album_id)
 
     return await collect_geotagged_markers(client, album_id=gumnut_album_id)

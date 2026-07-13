@@ -71,8 +71,7 @@ async def collect_geotagged_markers(
     list_kwargs: dict[str, Any] = {
         "limit": GUMNUT_API_MAX_PAGE_SIZE,
         "include": ASSET_INCLUDE_METADATA_ONLY,
-        # Filter to geotagged assets server-side (see GEOTAGGED_WORLD_BBOX) so we
-        # page through markers, not the whole library.
+        # World bbox → geotagged assets only; see GEOTAGGED_WORLD_BBOX.
         "bbox": GEOTAGGED_WORLD_BBOX,
     }
     if album_id is not None:
