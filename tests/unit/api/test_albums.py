@@ -1345,6 +1345,44 @@ class TestGetAlbumMapMarkers:
         assert kwargs["bbox"] == GEOTAGGED_WORLD_BBOX
 
     @pytest.mark.anyio
+    async def test_key_and_slug_are_dropped_not_forwarded(
+        self, sample_uuid, sample_gumnut_album, mock_sync_cursor_page
+    ):
+        """`key` / `slug` are accepted for client compat then dropped.
+
+        They're shared-link tokens this adapter doesn't honor (`_ = key, slug`).
+        This mirrors the global endpoint's `test_partner_and_shared_album_filters_are_dropped`
+        and guards against a future edit wiring them into `retrieve`/`list` — the
+        `retrieve` path especially, since threading a token there would be a
+        silent shared-link authorization change.
+        """
+        mock_client = Mock()
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        await get_album_map_markers(
+            sample_uuid,
+            key="shared-link-key",
+            slug="shared-slug",
+            client=mock_client,
+        )
+
+        # The album retrieve gets only the album id — no key/slug threaded in.
+        retrieve_call = mock_client.albums.retrieve.call_args
+        assert "key" not in retrieve_call.kwargs
+        assert "slug" not in retrieve_call.kwargs
+        assert "shared-link-key" not in retrieve_call.args
+        assert "shared-slug" not in retrieve_call.args
+
+        # The asset list forwards only album_id + limit + include + bbox.
+        assert set(mock_client.assets.list.call_args.kwargs.keys()) == {
+            "album_id",
+            "limit",
+            "include",
+            "bbox",
+        }
+
+    @pytest.mark.anyio
     async def test_empty_album_returns_empty_list(
         self, sample_uuid, sample_gumnut_album, mock_sync_cursor_page
     ):

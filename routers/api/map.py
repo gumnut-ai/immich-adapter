@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime
 from typing import Annotated, List
 
@@ -9,8 +8,6 @@ from pydantic.json_schema import SkipJsonSchema
 from routers.immich_models import MapMarkerResponseDto, MapReverseGeocodeResponseDto
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.map_markers import collect_geotagged_markers
-
-logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
@@ -30,7 +27,7 @@ async def get_map_markers(
     withSharedAlbums: Annotated[bool | SkipJsonSchema[None], Query()] = None,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[MapMarkerResponseDto]:
-    """Return up to `MAP_MARKERS_CAP` markers for the caller's GPS-tagged assets.
+    """Return a bounded list of markers for the caller's GPS-tagged assets.
 
     `withPartners` / `withSharedAlbums` are accepted for client-compatibility
     (Immich clients send them) but have no Gumnut analog, so they're dropped
