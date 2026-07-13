@@ -496,8 +496,7 @@ class TestChecksumEmission:
     # 28-char base64 SHA-1 (the correct Immich wire value) vs. the SHA-256
     # placeholder the fixture carries on ``.checksum``.
     SHA1_B64 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
-    OWNER_ID = "22222222-2222-2222-2222-222222222222"
-    OWNER_UUID = UUID(OWNER_ID)
+    OWNER_UUID = UUID("22222222-2222-2222-2222-222222222222")
 
     def test_rest_converter_emits_sha1(self, sample_gumnut_asset, mock_current_user):
         sample_gumnut_asset.file_data.checksum = "base64-sha256-value-not-this"
@@ -594,8 +593,7 @@ class TestThumbhashEmission:
 
     # A representative base64 ThumbHash value.
     THUMBHASH = "1QcSHQRnh493V4dIh4eXh1h4kJUI"
-    OWNER_ID = "22222222-2222-2222-2222-222222222222"
-    OWNER_UUID = UUID(OWNER_ID)
+    OWNER_UUID = UUID("22222222-2222-2222-2222-222222222222")
 
     def test_rest_converter_emits_thumbhash(
         self, sample_gumnut_asset, mock_current_user
@@ -707,8 +705,7 @@ class TestDurationEmission:
     entity is ``SyncAssetV2``). Every site emits ``None`` on NULL upstream
     rather than a fabricated length."""
 
-    OWNER_ID = "22222222-2222-2222-2222-222222222222"
-    OWNER_UUID = UUID(OWNER_ID)
+    OWNER_UUID = UUID("22222222-2222-2222-2222-222222222222")
 
     def test_rest_converter_formats_populated_duration(
         self, sample_gumnut_asset, mock_current_user

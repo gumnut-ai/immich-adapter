@@ -184,7 +184,6 @@ async def add_assets_to_album(
 
     results: list[BulkIdResponseDto] = []
     for asset_uuid in request.ids:
-        asset_uuid_str = str(asset_uuid)
         gumnut_asset_id = gumnut_id_by_uuid[asset_uuid]
         if asset_uuid in errors_by_uuid:
             results.append(
@@ -214,7 +213,7 @@ async def add_assets_to_album(
             # rather than silently succeeding.
             logger.warning(
                 "Asset missing from add_assets bulk response",
-                extra={"album_id": str(id), "asset_id": asset_uuid_str},
+                extra={"album_id": str(id), "asset_id": str(asset_uuid)},
             )
             results.append(
                 BulkIdResponseDto(
