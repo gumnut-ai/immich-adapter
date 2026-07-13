@@ -823,7 +823,7 @@ class TestUploadAsset:
             "routers.api.assets._upload_streaming", new_callable=AsyncMock
         ) as mock_streaming:
             mock_streaming.return_value = AssetMediaResponseDto(
-                id=str(uuid4()), status=AssetMediaStatus.created
+                id=uuid4(), status=AssetMediaStatus.created
             )
             await upload_asset(
                 request=request,
@@ -932,7 +932,7 @@ class TestUploadAsset:
             "routers.api.assets._upload_streaming", new_callable=AsyncMock
         ) as mock_streaming:
             mock_streaming.return_value = AssetMediaResponseDto(
-                id=str(uuid4()), status=AssetMediaStatus.created
+                id=uuid4(), status=AssetMediaStatus.created
             )
             await upload_asset(
                 request=request,
@@ -1407,7 +1407,7 @@ class TestUpdateAssets:
         base_a = datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc)
         base_b = datetime(2020, 1, 2, 9, 0, 0)
         mock_client.assets.list = self._mock_read({a: base_a, b: base_b})
-        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=3600.0)
+        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=3600)
 
         result = await update_assets(request, client=mock_client)
 
@@ -1432,9 +1432,7 @@ class TestUpdateAssets:
         base = datetime(2024, 6, 15, 14, 30, 0)
         # `missing` is omitted from the read entirely; `no_dt` has null metadata dt.
         mock_client.assets.list = self._mock_read({has_dt: base, no_dt: None})
-        request = AssetBulkUpdateDto(
-            ids=[has_dt, no_dt, missing], dateTimeRelative=60.0
-        )
+        request = AssetBulkUpdateDto(ids=[has_dt, no_dt, missing], dateTimeRelative=60)
 
         result = await update_assets(request, client=mock_client)
 
@@ -1458,7 +1456,7 @@ class TestUpdateAssets:
         base = datetime(2024, 6, 15, 14, 30, 0)
         mock_client.assets.list = self._mock_read({has_dt: base, no_dt: None})
         request = AssetBulkUpdateDto(
-            ids=[has_dt, no_dt], dateTimeRelative=60.0, description="caption"
+            ids=[has_dt, no_dt], dateTimeRelative=60, description="caption"
         )
 
         result = await update_assets(request, client=mock_client)
@@ -1482,7 +1480,7 @@ class TestUpdateAssets:
         trashed = uuid4()
         base = datetime(2024, 6, 15, 14, 30, 0)
         mock_client.assets.list = self._mock_read({trashed: base})
-        request = AssetBulkUpdateDto(ids=[trashed], dateTimeRelative=3600.0)
+        request = AssetBulkUpdateDto(ids=[trashed], dateTimeRelative=3600)
 
         result = await update_assets(request, client=mock_client)
 
@@ -1510,7 +1508,7 @@ class TestUpdateAssets:
         mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
         a, b = uuid4(), uuid4()
         mock_client.assets.list = self._mock_read({a: None, b: None})
-        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=60.0)
+        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=60)
 
         result = await update_assets(request, client=mock_client)
 
@@ -1526,7 +1524,7 @@ class TestUpdateAssets:
         mock_client.assets.list = AsyncMock()
         request = AssetBulkUpdateDto(
             ids=[uuid4()],
-            dateTimeRelative=3600.0,
+            dateTimeRelative=3600,
             dateTimeOriginal="2024-06-15T14:30:00",
         )
 
@@ -1544,7 +1542,7 @@ class TestUpdateAssets:
         mock_client.assets.bulk_update_assets = AsyncMock()
         mock_client.assets.list = AsyncMock()
         request = AssetBulkUpdateDto(
-            ids=[uuid4()], dateTimeRelative=3600.0, timeZone="America/Los_Angeles"
+            ids=[uuid4()], dateTimeRelative=3600, timeZone="America/Los_Angeles"
         )
 
         with pytest.raises(HTTPException) as exc_info:
@@ -1635,7 +1633,7 @@ class TestUpdateAssets:
         request = AssetBulkUpdateDto(
             ids=[uuid4()],
             isFavorite=True,
-            rating=4.0,
+            rating=4,
             visibility=AssetVisibility.archive,
             duplicateId=str(uuid4()),
         )
@@ -1656,7 +1654,7 @@ class TestUpdateAssets:
             ids=ids,
             description="caption",
             isFavorite=True,
-            rating=4.0,
+            rating=4,
         )
 
         await update_assets(request, client=mock_client)
@@ -1734,7 +1732,7 @@ class TestUpdateAssets:
             return MockSyncCursorPage(assets)
 
         mock_client.assets.list = Mock(side_effect=_page_for)
-        request = AssetBulkUpdateDto(ids=ids, dateTimeRelative=60.0)
+        request = AssetBulkUpdateDto(ids=ids, dateTimeRelative=60)
 
         result = await update_assets(request, client=mock_client)
 
@@ -2236,7 +2234,7 @@ class TestUpdateAsset:
 
         request = UpdateAssetDto(
             isFavorite=True,
-            rating=5.0,
+            rating=5,
             visibility=AssetVisibility.archive,
             livePhotoVideoId=uuid4(),
         )
@@ -2267,7 +2265,7 @@ class TestUpdateAsset:
         request = UpdateAssetDto(
             description="caption",
             isFavorite=True,
-            rating=4.0,
+            rating=4,
         )
 
         with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):

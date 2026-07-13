@@ -63,7 +63,7 @@ async def get_tag_by_id(id: UUID) -> TagResponseDto:
     This is a stub implementation that returns a fake tag response.
     """
     return TagResponseDto(
-        id=str(id),
+        id=id,
         name="Sample Tag",
         value="sample-tag",
         color="#ff0000",
@@ -80,7 +80,7 @@ async def update_tag(id: UUID, request: TagUpdateDto) -> TagResponseDto:
     This is a stub implementation that returns a fake tag response.
     """
     return TagResponseDto(
-        id=str(id),
+        id=id,
         name="Updated Tag",
         value="updated-tag",
         color=request.color,

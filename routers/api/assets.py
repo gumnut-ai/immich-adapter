@@ -537,7 +537,7 @@ async def _upload_buffered(
                     },
                 )
                 return AssetMediaResponseDto(
-                    id=str(uuid4()),
+                    id=uuid4(),
                     status=AssetMediaStatus.created,
                 )
 
@@ -577,9 +577,7 @@ async def _upload_buffered(
 
             await _emit_upload_events(gumnut_asset, current_user)
 
-            return AssetMediaResponseDto(
-                id=str(asset_uuid), status=AssetMediaStatus.created
-            )
+            return AssetMediaResponseDto(id=asset_uuid, status=AssetMediaStatus.created)
 
         except Exception as e:
             raise map_gumnut_error(
@@ -656,9 +654,7 @@ async def _upload_streaming(
                 extra={"asset_id": asset_id, "error": str(ws_err)},
             )
 
-        return AssetMediaResponseDto(
-            id=str(asset_uuid), status=AssetMediaStatus.created
-        )
+        return AssetMediaResponseDto(id=asset_uuid, status=AssetMediaStatus.created)
 
     except HTTPException:
         raise

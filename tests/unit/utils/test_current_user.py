@@ -258,7 +258,7 @@ class TestGetCurrentUser:
         # Setup - create a UserAdminResponseDto
         now = datetime.now(timezone.utc)
         user_admin = UserAdminResponseDto(
-            id="123e4567-e89b-12d3-a456-426614174000",
+            id=UUID("123e4567-e89b-12d3-a456-426614174000"),
             email="test@example.com",
             name="Test User",
             isAdmin=True,
@@ -302,7 +302,7 @@ class TestGetCurrentUserId:
         """Test extraction of UUID from UserAdminResponseDto."""
         # Setup - create a UserAdminResponseDto
         now = datetime.now(timezone.utc)
-        test_uuid = "123e4567-e89b-12d3-a456-426614174000"
+        test_uuid = UUID("123e4567-e89b-12d3-a456-426614174000")
         user_admin = UserAdminResponseDto(
             id=test_uuid,
             email="test@example.com",
@@ -332,4 +332,4 @@ class TestGetCurrentUserId:
 
         # Assert
         assert isinstance(result, UUID)
-        assert str(result) == test_uuid
+        assert result == test_uuid

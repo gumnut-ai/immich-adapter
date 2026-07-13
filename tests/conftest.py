@@ -301,7 +301,7 @@ def multiple_gumnut_people():
 def mock_current_user():
     """Create a mock current user for testing."""
     return UserResponseDto(
-        id=str(uuid4()),
+        id=uuid4(),
         email="test@example.com",
         name="Test User",
         avatarColor=UserAvatarColor.primary,

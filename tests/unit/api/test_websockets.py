@@ -389,6 +389,26 @@ class TestEmitUserEvent:
         )
 
     @pytest.mark.anyio
+    async def test_normalizes_uuid_user_id_to_string_room(self, mock_sio_emit):
+        """A UUID-object user id must reach socket.io as its canonical string.
+
+        Rooms are registered at connect time with the string form
+        (``Session.user_id``); socket.io matches rooms by exact value, so an
+        un-normalized ``UUID`` object would emit to an empty room and silently
+        drop the event. v3 DTOs type user ids as ``UUID``, so callers
+        naturally hold ``UUID`` objects now.
+        """
+        user_uuid = UUID("550e8400-e29b-41d4-a716-446655440000")
+
+        await emit_user_event(WebSocketEvent.UPLOAD_SUCCESS, user_uuid, "payload")
+
+        mock_sio_emit.assert_called_once_with(
+            "on_upload_success",
+            "payload",
+            room="550e8400-e29b-41d4-a716-446655440000",
+        )
+
+    @pytest.mark.anyio
     async def test_emits_with_list_payload(self, mock_sio_emit):
         """Test emission with a list payload."""
         asset_ids = ["asset-1", "asset-2", "asset-3"]

@@ -18,6 +18,7 @@ from routers.immich_models import (
     ServerVersionHistoryResponseDto,
     ServerVersionResponseDto,
     ServerMediaTypesResponseDto,
+    UserLicense,
     VersionCheckStateResponseDto,
 )
 
@@ -307,9 +308,11 @@ async def get_server_license() -> LicenseResponseDto:
     This is a stub implementation returning basic license info.
     """
     return LicenseResponseDto(
-        licenseKey=STUB_LICENSE_KEY,
-        activationKey=str(uuid()),
-        activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+        root=UserLicense(
+            licenseKey=STUB_LICENSE_KEY,
+            activationKey=str(uuid()),
+            activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+        )
     )
 
 
@@ -329,7 +332,9 @@ async def set_server_license(request: LicenseKeyDto) -> LicenseResponseDto:
     This is a stub implementation that does not perform any action.
     """
     return LicenseResponseDto(
-        licenseKey=request.licenseKey,
-        activationKey=request.activationKey,
-        activatedAt=datetime.now(timezone.utc),
+        root=UserLicense(
+            licenseKey=request.licenseKey,
+            activationKey=request.activationKey,
+            activatedAt=datetime.now(timezone.utc),
+        )
     )

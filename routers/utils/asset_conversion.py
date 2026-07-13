@@ -7,6 +7,7 @@ to the Immich API format, including metadata (camera/EXIF/GPS/location) processi
 
 import logging
 from datetime import datetime
+from uuid import UUID
 
 from gumnut.types.asset_response import AssetResponse
 from routers.utils.datetime_utils import (
@@ -342,13 +343,13 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     )
 
 
-def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAssetExifV1:
+def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: UUID) -> SyncAssetExifV1:
     """
     Extract metadata from a Gumnut AssetResponse for sync events.
 
     Args:
         gumnut_asset: The Gumnut AssetResponse object
-        asset_uuid: The asset UUID string
+        asset_uuid: The asset UUID
 
     Returns:
         SyncAssetExifV1 object with metadata from the asset
@@ -443,19 +444,19 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
 
 
 def build_asset_upload_ready_payload(
-    gumnut_asset: AssetResponse, owner_id: str
+    gumnut_asset: AssetResponse, owner_id: UUID
 ) -> AssetUploadReadyV1Payload:
     """
     Build an AssetUploadReadyV1Payload from a Gumnut asset for WebSocket sync events.
 
     Args:
         gumnut_asset: The Gumnut AssetResponse object
-        owner_id: The owner's user ID string
+        owner_id: The owner's user id (UUID form of the Gumnut user id)
 
     Returns:
         AssetUploadReadyV1Payload containing SyncAssetV1 and SyncAssetExifV1
     """
-    asset_uuid = str(safe_uuid_from_asset_id(gumnut_asset.id))
+    asset_uuid = safe_uuid_from_asset_id(gumnut_asset.id)
 
     file_created_at = resolve_file_created_at(gumnut_asset)
     file_modified_at = resolve_file_modified_at(gumnut_asset)
@@ -529,7 +530,7 @@ def convert_gumnut_asset_to_immich(
     height = gumnut_asset.height
 
     return AssetResponseDto(
-        id=str(safe_uuid_from_asset_id(asset_id)),
+        id=safe_uuid_from_asset_id(asset_id),
         type=asset_type,
         originalFileName=original_filename,
         originalMimeType=mime_type,
@@ -542,7 +543,7 @@ def convert_gumnut_asset_to_immich(
         createdAt=gumnut_asset.created_at,
         duration=duration_ms(gumnut_asset.duration),
         hasMetadata=True,
-        height=float(height) if height else None,
+        height=height if height else None,
         isArchived=False,
         isEdited=False,
         isFavorite=False,
@@ -556,6 +557,6 @@ def convert_gumnut_asset_to_immich(
         # Immich field — clients simply skip the blur until it is backfilled.
         thumbhash=gumnut_asset.thumbhash,
         visibility=AssetVisibility.timeline,
-        width=float(width) if width else None,
+        width=width if width else None,
         people=people,
     )

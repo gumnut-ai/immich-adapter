@@ -1,5 +1,6 @@
 """Tests for datetime conversion functions."""
 
+from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
@@ -12,7 +13,7 @@ from routers.utils.datetime_utils import (
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 from tests.unit.api.sync.conftest import TEST_UUID
 
-OWNER_UUID = "22222222-2222-2222-2222-222222222222"
+OWNER_UUID = UUID("22222222-2222-2222-2222-222222222222")
 
 
 class TestToImmichLocalDatetime:

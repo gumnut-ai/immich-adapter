@@ -86,7 +86,7 @@ def convert_gumnut_person_to_immich(
     ) = _extract_person_fields(gumnut_person)
 
     return PersonResponseDto(
-        id=str(safe_uuid_from_person_id(person_id)),
+        id=safe_uuid_from_person_id(person_id),
         name=person_name,
         birthDate=birth_date,
         isFavorite=is_favorite,

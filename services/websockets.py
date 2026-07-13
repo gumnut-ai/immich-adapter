@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from enum import Enum
 from http.cookies import SimpleCookie
 from typing import Any, TypeAlias
+from uuid import UUID
 
 import socketio
 from pydantic import BaseModel
@@ -219,7 +220,7 @@ async def _emit_event(
 
 async def emit_user_event(
     event: WebSocketEvent,
-    user_id: str,
+    user_id: str | UUID,
     payload: EventPayload = None,
 ) -> None:
     """
@@ -229,6 +230,11 @@ async def emit_user_event(
     UPLOAD_SUCCESS, ASSET_UPLOAD_READY_V1, ASSET_DELETE, ASSET_TRASH,
     ASSET_RESTORE, etc.
 
+    The user's room is keyed by the canonical UUID string that connect()
+    registers from ``Session.user_id``. A ``UUID`` object is normalized to
+    that string here — socket.io matches rooms by exact value, so an
+    un-normalized ``UUID`` would silently emit to an empty room.
+
     Fire-and-forget: ``SocketIOError`` from the underlying transport is
     caught and logged at WARN. Callers must not wrap this in try/except for
     ``SocketIOError`` — emission failures should never break the request
@@ -236,20 +242,21 @@ async def emit_user_event(
 
     Args:
         event: The event type (from WebSocketEvent enum)
-        user_id: The Gumnut user ID
+        user_id: The user's id — the UUID form of the Gumnut user id, or its string form
         payload: Event data - Pydantic model (auto-serialized), string, list, or None
 
     Raises:
         pydantic.ValidationError: If payload is a Pydantic model that fails serialization
     """
+    room = str(user_id)
     try:
-        await _emit_event(event, user_id, payload)
+        await _emit_event(event, room, payload)
     except SocketIOError as ws_error:
         logger.warning(
             "Failed to emit WebSocket user event",
             extra={
                 "event": event.value,
-                "user_id": user_id,
+                "user_id": room,
                 "error": str(ws_error),
             },
             exc_info=True,
@@ -258,7 +265,7 @@ async def emit_user_event(
 
 async def emit_user_event_per_id(
     event: WebSocketEvent,
-    user_id: str,
+    user_id: str | UUID,
     payload_ids: Iterable[str],
 ) -> None:
     """Fan out one user event per id under a single ``asyncio.gather`` wave.
