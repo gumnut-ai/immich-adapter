@@ -29,6 +29,7 @@ from routers.utils.gumnut_id_conversion import (
 
 from routers.api.sync.converters import (
     gumnut_album_asset_to_sync_album_to_asset_v1,
+    gumnut_album_to_sync_album_user_v1,
     gumnut_album_to_sync_album_v1,
     gumnut_album_to_sync_album_v2,
     gumnut_asset_to_sync_asset_v1,
@@ -286,7 +287,15 @@ def convert_entity_to_sync_event(
                 cast(AssetResponse, entity), owner_id
             )
     elif gumnut_entity_type == "album":
-        if sync_entity_type == SyncEntityType.AlbumV2:
+        # The "album" gumnut entity fans out to two Immich sync entities: the
+        # album itself (AlbumV1/V2) and the owner album-user link (AlbumUserV1),
+        # both derived from the same AlbumResponse. See
+        # gumnut_album_to_sync_album_user_v1 for why the owner link is required.
+        if sync_entity_type == SyncEntityType.AlbumUserV1:
+            sync_model = gumnut_album_to_sync_album_user_v1(
+                cast(AlbumResponse, entity), owner_id
+            )
+        elif sync_entity_type == SyncEntityType.AlbumV2:
             sync_model = gumnut_album_to_sync_album_v2(
                 cast(AlbumResponse, entity), owner_id
             )

@@ -365,6 +365,87 @@ class TestGenerateSyncStream:
         assert events[1]["type"] == "SyncCompleteV1"
 
     @pytest.mark.anyio
+    async def test_streams_owner_album_user_for_albums_v2(self):
+        """The v3 client (AlbumsV2 + AlbumUsersV1) gets an owner AlbumUserV1 link.
+
+        SyncAlbumV2 dropped ownerId, so the mobile album-list query inner-joins
+        on an owner-role album-user row. Without it, albums sync into the DB but
+        never display. The adapter derives that owner link from the same album
+        events, streamed after the album itself (FK parent ordering).
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        album_data = create_mock_album_data(updated_at)
+        mock_event = create_mock_event(
+            entity_type="album",
+            entity_id=album_data.id,
+            event_type="album_created",
+            created_at=updated_at,
+            cursor="cursor_album_1",
+        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
+        mock_client.albums.list.return_value = create_mock_entity_page([album_data])
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.AlbumsV2, SyncRequestType.AlbumUsersV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        types = [e["type"] for e in events]
+        # Album parent must precede its owner album-user link (FK ordering).
+        assert types == ["AlbumV2", "AlbumUserV1", "SyncCompleteV1"]
+
+        album_user = events[1]["data"]
+        assert album_user["albumId"] == str(TEST_UUID)
+        assert album_user["userId"] == str(TEST_UUID)  # single-user: owner == user
+        assert album_user["role"] == "owner"
+
+    @pytest.mark.anyio
+    async def test_album_users_v1_skips_album_delete_events(self):
+        """The AlbumUserV1 pass must not re-emit album deletes.
+
+        album_deleted is owned by the AlbumsV2 pass (→ AlbumDeleteV1); the
+        client's album-user FK cascades on album deletion, so the derived
+        album-user pass skips deletes to avoid a duplicate AlbumDeleteV1.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        album_id = uuid_to_gumnut_album_id(TEST_UUID)
+        delete_event = create_mock_event(
+            entity_type="album",
+            entity_id=album_id,
+            event_type="album_deleted",
+            created_at=updated_at,
+            cursor="cursor_album_del_1",
+        )
+        mock_client.events.get.return_value = create_mock_events_response(
+            [delete_event]
+        )
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.AlbumsV2, SyncRequestType.AlbumUsersV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        types = [e["type"] for e in events]
+        # Exactly one AlbumDeleteV1 (from the album pass), not two.
+        assert types.count("AlbumDeleteV1") == 1
+        assert "AlbumUserDeleteV1" not in types
+        assert types[-1] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
     async def test_streams_metadata_when_requested(self):
         """Metadata is streamed (as AssetExifV1) when AssetExifsV1 is requested."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)

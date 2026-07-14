@@ -187,7 +187,11 @@ byte-identical, but GA dropped a field:
   instead of the interval string — the same change as §2. This is the only
   payload difference for the *asset* entity.
 - `SyncAlbumV2` is `SyncAlbumV1` **minus `ownerId`** (the GA model dropped it);
-  otherwise identical.
+  otherwise identical. Consequence: the owner is no longer carried on the album
+  event, so the adapter must emit the owner album-user link on the separate
+  `AlbumUsersV1` stream, or the v3 client filters every album out of its list
+  (its album query inner-joins on an owner-role album-user row). See the
+  "Album Owner Album-User Link" section of the sync-stream-architecture doc.
 - `SyncAssetFaceV2` is `SyncAssetFaceV1` **plus `deletedAt` / `isVisible`**
   (both constant for the adapter — Gumnut has no face soft-delete or visibility;
   already handled by the pre-existing faces V2 converter).

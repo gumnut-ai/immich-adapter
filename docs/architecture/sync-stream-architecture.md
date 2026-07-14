@@ -27,6 +27,30 @@ Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync eve
 
 `album_updated` events use the causally-consistent `album_cover_asset_id` from the event payload instead of the entity's current computed cover (which is derived at fetch time via a lateral join and may reference an asset outside the sync window). Payload cover asset IDs are verified against production the same way face person_ids are — 404s null the cover regardless of `AssetV1` checkpoint state.
 
+## Album Owner Album-User Link (v3)
+
+The Immich v3 `SyncAlbumV2` payload dropped `ownerId`, so the mobile client no
+longer derives an album's owner from the album event itself. Instead it builds
+the album↔owner relationship from a separate `AlbumUsersV1` stream, and its
+album-list query **inner-joins on an owner-role album-user row** — an album with
+no such row is filtered out and never displayed, even though it synced into the
+client DB. (The v1 `SyncAlbumV1` path carried `ownerId` and the client
+synthesized the owner row itself, so the adapter never needed to emit it.)
+
+To cover this, `AlbumUsersV1` is a first-class entry in `_SYNC_TYPE_ORDER` mapped
+to the same `album` gumnut entity as `AlbumsV1/V2`, streamed **after** the album
+(FK parent) and after the owner `UserV1`. Each album fans out to two sync
+entities — the album (`AlbumV1/V2`) and its owner link (`AlbumUserV1`) — both
+derived from the same `AlbumResponse`. Gumnut is single-user with no album
+sharing, so every album has exactly one album-user: the owner (`role=owner`).
+
+`AlbumUserV1` is listed in `_DERIVED_UPSERT_ONLY_TYPES`, so its pass streams
+upserts only (`emit_deletes=False`). Album-user *deletes* are owned by the album
+pass: an `album_deleted` event emits `AlbumDeleteV1`, and the client's
+`remoteAlbumUserEntity.albumId` FK cascades on album deletion — re-emitting the
+delete from the album-user pass would duplicate `AlbumDeleteV1`. No
+`AlbumUserDeleteV1` is emitted (Gumnut has no unshare operation).
+
 ## Adding a New Sync Type Version
 
 When the same gumnut entity type maps to multiple Immich sync versions (e.g., AssetFacesV2 alongside V1), update these files in coordination:

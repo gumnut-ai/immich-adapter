@@ -67,7 +67,14 @@ PAYLOAD_FK_OVERRIDES: dict[str, list[PayloadFKOverride]] = {
 # so checkpoint lookups match regardless of which version the client synced.
 _GUMNUT_TYPE_TO_SYNC_TYPES: dict[str, list[SyncEntityType]] = {
     "asset": [SyncEntityType.AssetV1, SyncEntityType.AssetV2],
-    "album": [SyncEntityType.AlbumV1, SyncEntityType.AlbumV2],
+    # AlbumUserV1 is derived from the same "album" events as AlbumV1/V2 and
+    # streams with them; listing it keeps checkpoint lookups consistent and
+    # satisfies the _SYNC_TYPE_ORDER ↔ map invariant.
+    "album": [
+        SyncEntityType.AlbumV1,
+        SyncEntityType.AlbumV2,
+        SyncEntityType.AlbumUserV1,
+    ],
     "album_asset": [SyncEntityType.AlbumToAssetV1],
     "metadata": [SyncEntityType.AssetExifV1],
     "person": [SyncEntityType.PersonV1],

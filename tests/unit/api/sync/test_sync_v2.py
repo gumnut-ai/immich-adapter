@@ -22,12 +22,14 @@ import inspect
 from routers.api.sync import converters, events, stream
 from routers.api.sync.fk_integrity import _GUMNUT_TYPE_TO_SYNC_TYPES
 from routers.api.sync.stream import (
+    _DERIVED_UPSERT_ONLY_TYPES,
     _NOOP_REQUEST_TYPES,
     _SUPPORTED_REQUEST_TYPES,
     _SYNC_TYPE_ORDER,
     _V1_SUPERSEDED_BY_V2,
 )
 from routers.immich_models import (
+    SyncAlbumUserV1,
     SyncAlbumV1,
     SyncAlbumV2,
     SyncAssetV1,
@@ -170,3 +172,49 @@ def test_album_cover_override_applies_to_album_v2():
     (the v3 client streams albums as AlbumV2), not just AlbumV1. The override
     lives in _stream_entity_type, where AlbumV2 appears only in that gate."""
     assert "SyncEntityType.AlbumV2" in inspect.getsource(stream._stream_entity_type)
+
+
+# --- AlbumUsersV1: owner album-user link (required for v3 album display) ------
+# SyncAlbumV2 dropped ownerId, so the v3 client no longer derives the owner from
+# the album event. Its album-list query inner-joins on an owner-role album-user
+# row, so the adapter must emit AlbumUserV1 (derived from the same album events)
+# or every album is filtered out of the list and never displayed.
+
+
+def test_album_users_v1_streamed_from_album_entity():
+    """AlbumUsersV1 streams the owner link off the "album" gumnut entity, after
+    the album itself (FK parent) — placed before AlbumToAssetsV1 in the order."""
+    assert (
+        SyncRequestType.AlbumUsersV1,
+        "album",
+        SyncEntityType.AlbumUserV1,
+    ) in _SYNC_TYPE_ORDER
+    # Requested by the client, so it must not be logged as unsupported.
+    assert SyncRequestType.AlbumUsersV1 in _SUPPORTED_REQUEST_TYPES
+    # FK ordering: album (AlbumsV2) must be streamed before its owner link.
+    order = [st for _r, _g, st in _SYNC_TYPE_ORDER]
+    assert order.index(SyncEntityType.AlbumV2) < order.index(SyncEntityType.AlbumUserV1)
+
+
+def test_album_user_v1_is_derived_upsert_only():
+    """AlbumUserV1's deletes are handled by the album pass + client-side FK
+    cascade, so its own pass must be upsert-only (no duplicate AlbumDeleteV1)."""
+    assert SyncEntityType.AlbumUserV1 in _DERIVED_UPSERT_ONLY_TYPES
+    # The stream loop must actually gate emit_deletes on the set.
+    assert "_DERIVED_UPSERT_ONLY_TYPES" in inspect.getsource(
+        stream.generate_sync_stream
+    )
+    assert "emit_deletes" in inspect.getsource(stream._stream_entity_type)
+
+
+def test_album_user_converter_sets_owner_role():
+    """The owner link is single-user: albumId + owner userId + role=owner."""
+    src = inspect.getsource(converters.gumnut_album_to_sync_album_user_v1)
+    assert "AlbumUserRole.owner" in src
+    # AlbumUserV1 must be routed in the event converter (else it would fall
+    # through to the AlbumV1 branch and emit the wrong entity).
+    assert "SyncEntityType.AlbumUserV1" in inspect.getsource(
+        events.convert_entity_to_sync_event
+    )
+    # Role field exists on the DTO the converter builds.
+    assert "role" in SyncAlbumUserV1.model_fields
