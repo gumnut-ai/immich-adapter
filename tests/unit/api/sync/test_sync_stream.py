@@ -1,6 +1,7 @@
 """Tests for sync stream generation, endpoint, reset, and pagination."""
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, Mock, call
@@ -13,6 +14,7 @@ from routers.api.sync.converters import gumnut_album_to_sync_album_user_v1
 from routers.api.sync.fk_integrity import SyncStreamStats
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
+    _USER_METADATA_CURSOR,
     _stream_entity_type,
     generate_reset_stream,
     generate_sync_stream,
@@ -607,7 +609,7 @@ class TestGenerateSyncStream:
         checkpoint = Checkpoint(
             entity_type=SyncEntityType.UserMetadataV1,
             updated_at=updated_at,
-            cursor="preferences-v1",
+            cursor=_USER_METADATA_CURSOR,
         )
         checkpoint_map = {SyncEntityType.UserMetadataV1: checkpoint}
 
@@ -616,6 +618,80 @@ class TestGenerateSyncStream:
         )
 
         assert [e["type"] for e in events] == ["SyncCompleteV1"]
+
+    @pytest.mark.anyio
+    async def test_user_metadata_reemitted_when_cursor_changed(self):
+        """A client acked under a prior cursor (before the suffix was bumped) gets
+        the preferences row re-emitted — the constant-cursor design's forward-compat
+        path."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(types=[SyncRequestType.UserMetadataV1])
+        checkpoint = Checkpoint(
+            entity_type=SyncEntityType.UserMetadataV1,
+            updated_at=updated_at,
+            cursor="preferences-v0-stale",
+        )
+        checkpoint_map = {SyncEntityType.UserMetadataV1: checkpoint}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["UserMetadataV1", "SyncCompleteV1"]
+        assert events[0]["ack"].startswith(f"UserMetadataV1|{_USER_METADATA_CURSOR}|")
+
+    @pytest.mark.anyio
+    async def test_streams_user_then_user_metadata_in_fk_order(self):
+        """When both are requested, UserV1 is emitted before UserMetadataV1 so the
+        userId FK parent exists on the client first; a reorder regression fails here."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.UsersV1, SyncRequestType.UserMetadataV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        types = [e["type"] for e in events]
+        assert types == ["UserV1", "UserMetadataV1", "SyncCompleteV1"]
+
+    @pytest.mark.anyio
+    async def test_noop_request_types_emit_nothing_without_unsupported_log(
+        self, caplog
+    ):
+        """Requested-but-no-op v3 types stream nothing (just SyncCompleteV1) and do
+        not trip the 'unsupported types' log — the point of _NOOP_REQUEST_TYPES."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(
+            types=[
+                SyncRequestType.MemoriesV1,
+                SyncRequestType.StacksV1,
+                SyncRequestType.PartnersV1,
+                SyncRequestType.AssetMetadataV1,
+            ]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        with caplog.at_level(logging.INFO, logger="routers.api.sync.stream"):
+            events = await collect_stream(
+                generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+            )
+
+        assert [e["type"] for e in events] == ["SyncCompleteV1"]
+        assert not any(
+            "unsupported sync types" in record.message for record in caplog.records
+        )
 
     @pytest.mark.anyio
     async def test_streams_album_assets_when_requested(self):

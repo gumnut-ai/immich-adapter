@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-07-13
+last-updated: 2026-07-14
 ---
 
 # Sync Stream Architecture
@@ -35,6 +35,12 @@ right after `UserV1` (the `userId` FK parent) and keyed off a constant cursor
 bump the cursor suffix to force a re-emit if the payload changes. `value` is the
 server's nested `UserPreferences` JSON shape (`value["people"]["minimumFaces"]`),
 which the client parses via `Preferences.fromMap`.
+
+Only the `preferences` key is synthesized. The client's other `UserMetadataV1`
+keys are deliberately not emitted: onboarding UI is gated on the login response's
+`isOnboarded`, not the synced `onboarding` row (no client reader consumes it), so
+a synthesized onboarding row would change nothing; and Gumnut has no `license`
+concept.
 
 ## Album Cover Handling
 

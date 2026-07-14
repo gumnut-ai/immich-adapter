@@ -147,7 +147,7 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
 #   - StacksV1:            Gumnut has no stacks; assets carry stackId=None and
 #                          render individually, so absent stack rows hide nothing.
 # UserMetadataV1 is deliberately NOT here — it is emitted (a synthesized
-# preferences row); see _stream_user_metadata.
+# preferences row); see gumnut_user_to_sync_user_metadata_v1.
 _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
     SyncRequestType.AssetEditsV1: SyncEntityType.AssetEditV1,
     SyncRequestType.AssetOcrV1: SyncEntityType.AssetOcrV1,
@@ -172,7 +172,7 @@ _USER_METADATA_CURSOR = "preferences-v1"
 # Supported SyncRequestTypes (used to detect unsupported types requested by
 # client). AuthUsersV1/UsersV1/UserMetadataV1 are handled specially (not via
 # _SYNC_TYPE_ORDER): the first two stream the user record, and UserMetadataV1
-# streams a synthesized preferences row (see _stream_user_metadata).
+# streams a synthesized preferences row (see gumnut_user_to_sync_user_metadata_v1).
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
     | {

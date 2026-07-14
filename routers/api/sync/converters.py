@@ -146,10 +146,14 @@ def gumnut_user_to_sync_user_metadata_v1(owner_id: UUID) -> SyncUserMetadataV1:
     with at least one face is shown; all other fields mirror the client's own
     defaults.
 
-    ``value`` is the server's nested ``UserPreferences`` JSON shape — the client
-    parses it via ``Preferences.fromMap`` (reads ``value["people"]["minimumFaces"]``
-    etc.), storing the map verbatim. Only the keys the client reads are included;
-    it defensively defaults everything else.
+    ``value`` is the server's nested ``UserPreferences`` JSON shape, which the
+    client parses via ``Preferences.fromMap`` (reads
+    ``value["people"]["minimumFaces"]`` etc.) and stores verbatim.
+    ``Preferences.fromMap`` reads every section null-safely and falls back to its
+    own default for anything absent, so ``people.minimumFaces`` is the only
+    load-bearing field here. The other sections each restate the client's own
+    default and are included solely to mirror the full canonical shape a real
+    Immich server emits — none of them are required by ``Preferences.fromMap``.
     """
     return SyncUserMetadataV1(
         key=UserMetadataKey.preferences,
