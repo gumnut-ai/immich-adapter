@@ -105,6 +105,8 @@ _V1_SUPERSEDED_BY_V2: dict[SyncRequestType, SyncRequestType] = {
 # remoteAlbumUserEntity.albumId FK cascades on album deletion (onDelete:
 # cascade), removing the owner row automatically. Re-emitting the album delete
 # from this pass would duplicate the AlbumDeleteV1 event, so deletes are skipped.
+# This assumes an AlbumsV1/V2 pass is co-requested to emit the delete — the v3
+# client always requests AlbumsV2 alongside AlbumUsersV1, so that holds.
 _DERIVED_UPSERT_ONLY_TYPES: frozenset[SyncEntityType] = frozenset(
     {SyncEntityType.AlbumUserV1}
 )

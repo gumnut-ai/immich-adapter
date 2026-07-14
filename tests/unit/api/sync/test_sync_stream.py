@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 
 from routers.api.sync.routes import get_sync_stream
+from routers.api.sync.converters import gumnut_album_to_sync_album_user_v1
 from routers.api.sync.fk_integrity import SyncStreamStats
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
@@ -16,7 +17,12 @@ from routers.api.sync.stream import (
     generate_reset_stream,
     generate_sync_stream,
 )
-from routers.immich_models import SyncEntityType, SyncRequestType, SyncStreamDto
+from routers.immich_models import (
+    AlbumUserRole,
+    SyncEntityType,
+    SyncRequestType,
+    SyncStreamDto,
+)
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
@@ -444,6 +450,24 @@ class TestGenerateSyncStream:
         assert types.count("AlbumDeleteV1") == 1
         assert "AlbumUserDeleteV1" not in types
         assert types[-1] == "SyncCompleteV1"
+
+    def test_album_user_converter_maps_album_and_owner_distinctly(self):
+        """The converter maps albumId and userId to distinct sources.
+
+        The stream-level test above uses the single-user TEST_UUID for both the
+        album id and the owner id, so it can't tell albumId apart from userId —
+        a converter that swapped the two fields would still pass it. This pins
+        them to distinct sources (album.id vs. owner_id) so a swap is caught.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        album = create_mock_album_data(updated_at)  # album.id derives from TEST_UUID
+        owner_id = UUID("11111111-1111-1111-1111-111111111111")  # distinct from album
+
+        album_user = gumnut_album_to_sync_album_user_v1(album, owner_id)
+
+        assert album_user.albumId == TEST_UUID  # from album.id, not owner_id
+        assert album_user.userId == owner_id  # from owner_id, not album.id
+        assert album_user.role == AlbumUserRole.owner
 
     @pytest.mark.anyio
     async def test_streams_metadata_when_requested(self):
