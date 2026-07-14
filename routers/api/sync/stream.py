@@ -75,6 +75,12 @@ _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.AssetsV2, "asset", SyncEntityType.AssetV2),
     (SyncRequestType.AlbumsV1, "album", SyncEntityType.AlbumV1),
     (SyncRequestType.AlbumsV2, "album", SyncEntityType.AlbumV2),
+    # AlbumUsersV1 is a second sync entity derived from the same "album" events:
+    # the owner album-user link. It must stream after the album itself (FK
+    # parent) and after the owner UserV1 (streamed before phase 1). The v3
+    # client's album-list query inner-joins on an owner-role album-user row, so
+    # without this the album never displays. See _DERIVED_UPSERT_ONLY_TYPES.
+    (SyncRequestType.AlbumUsersV1, "album", SyncEntityType.AlbumUserV1),
     (SyncRequestType.AlbumToAssetsV1, "album_asset", SyncEntityType.AlbumToAssetV1),
     (SyncRequestType.AssetExifsV1, "metadata", SyncEntityType.AssetExifV1),
     (SyncRequestType.PeopleV1, "person", SyncEntityType.PersonV1),
@@ -91,6 +97,19 @@ _V1_SUPERSEDED_BY_V2: dict[SyncRequestType, SyncRequestType] = {
     SyncRequestType.AlbumsV1: SyncRequestType.AlbumsV2,
     SyncRequestType.AssetFacesV1: SyncRequestType.AssetFacesV2,
 }
+
+# Sync entity types that are streamed as upserts only — their delete events are
+# handled by another sync type's pass, so this pass must skip them. AlbumUserV1
+# is derived from "album" events, which it shares with the AlbumsV1/V2 pass; an
+# album_deleted event there already emits AlbumDeleteV1, and the client's
+# remoteAlbumUserEntity.albumId FK cascades on album deletion (onDelete:
+# cascade), removing the owner row automatically. Re-emitting the album delete
+# from this pass would duplicate the AlbumDeleteV1 event, so deletes are skipped.
+# This assumes an AlbumsV1/V2 pass is co-requested to emit the delete — the v3
+# client always requests AlbumsV2 alongside AlbumUsersV1, so that holds.
+_DERIVED_UPSERT_ONLY_TYPES: frozenset[SyncEntityType] = frozenset(
+    {SyncEntityType.AlbumUserV1}
+)
 
 # Order for streaming delete events — reverse of FK dependency order.
 # Children are deleted before parents so the client can clean up FK references
@@ -138,6 +157,7 @@ async def _stream_entity_type(
     stats: SyncStreamStats,
     checkpoint_map: dict[SyncEntityType, Checkpoint],
     delete_buffer: list[tuple[str, SyncEntityType]] | None = None,
+    emit_deletes: bool = True,
 ) -> AsyncGenerator[tuple[str, int], None]:
     """
     Stream events for a single entity type using the events API.
@@ -161,6 +181,9 @@ async def _stream_entity_type(
         stats: Mutable stats tracker for streamed IDs, skip counts, and FK warnings
         checkpoint_map: All checkpoints for this sync (used for FK reference checks)
         delete_buffer: If provided, delete events are appended here instead of yielded
+        emit_deletes: If False, delete events are skipped entirely (the cursor
+            still advances). Used for derived upsert-only sync types whose deletes
+            are handled by another pass — see _DERIVED_UPSERT_ONLY_TYPES.
 
     Yields:
         Tuples of (json_line, count) for each upsert event (deletes buffered when delete_buffer is set)
@@ -255,7 +278,13 @@ async def _stream_entity_type(
                 continue
 
             if event.event_type in _DELETE_EVENT_TYPES:
-                # Delete event — convert and either buffer or yield
+                # Delete event — convert and either buffer or yield.
+                # Skip entirely for derived upsert-only passes: the delete is
+                # emitted by the entity type that owns these events (e.g. the
+                # album pass owns album_deleted), and re-emitting here would
+                # duplicate it. The cursor still advances past this event below.
+                if not emit_deletes:
+                    continue
                 result = make_delete_sync_event(event)
                 if result:
                     json_line, delete_sync_type = result
@@ -562,7 +591,8 @@ async def generate_sync_stream(
             # Get checkpoint for this entity type
             checkpoint = checkpoint_map.get(sync_entity_type)
 
-            # Stream upsert events, buffer deletes
+            # Stream upsert events, buffer deletes. Derived upsert-only types
+            # (e.g. AlbumUserV1) skip deletes — see _DERIVED_UPSERT_ONLY_TYPES.
             async for event_line, count in _stream_entity_type(
                 gumnut_client,
                 gumnut_entity_type,
@@ -573,6 +603,7 @@ async def generate_sync_stream(
                 stats,
                 checkpoint_map,
                 delete_buffer=delete_buffer,
+                emit_deletes=sync_entity_type not in _DERIVED_UPSERT_ONLY_TYPES,
             ):
                 yield event_line
                 event_counts[sync_entity_type.value] = (

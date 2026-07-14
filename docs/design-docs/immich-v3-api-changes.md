@@ -2,7 +2,7 @@
 title: "Immich v2.7.5 → v3.0 API Change Analysis"
 status: active
 created: 2026-06-16
-last-updated: 2026-07-07
+last-updated: 2026-07-13
 ---
 
 # Immich v2.7.5 → v3.0 API Change Analysis
@@ -187,7 +187,11 @@ byte-identical, but GA dropped a field:
   instead of the interval string — the same change as §2. This is the only
   payload difference for the *asset* entity.
 - `SyncAlbumV2` is `SyncAlbumV1` **minus `ownerId`** (the GA model dropped it);
-  otherwise identical.
+  otherwise identical. Consequence: the owner is no longer carried on the album
+  event, so the adapter must emit the owner album-user link on the separate
+  `AlbumUsersV1` stream, or the v3 client filters every album out of its list
+  (its album query inner-joins on an owner-role album-user row). See the
+  "Album Owner Album-User Link" section of the sync-stream-architecture doc.
 - `SyncAssetFaceV2` is `SyncAssetFaceV1` **plus `deletedAt` / `isVisible`**
   (both constant for the adapter — Gumnut has no face soft-delete or visibility;
   already handled by the pre-existing faces V2 converter).
@@ -217,7 +221,8 @@ logic.
 **Conclusion:** Sync v2 is not a long pole. Reporting `3.0.x` and adding the V2
 entity mappings is small work that reuses the §2 int-ms `duration` converter —
 the per-entity deltas are small (see the "What V2 actually changes" list above),
-`AssetV2` is the int-duration asset, and `AssetOcrV1` emits nothing. The one
+`AssetV2` is the int-duration asset, `AlbumV2` drops `ownerId` (re-emitted as the
+owner link on `AlbumUsersV1`), and `AssetOcrV1` emits nothing. The one
 non-cosmetic V1 tweak to carry over is that v3 makes `SyncAssetV1.createdAt`
 required.
 
@@ -266,9 +271,10 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
    `immich_models.py`) — touches every asset/timeline/upload response.
 2. **`AlbumResponseDto`** — derive owner from `albumUsers[0]`, drop
    `owner`/`ownerId`/inline `assets`.
-3. **Sync v2** — small: report `3.0.x`, add the V2 entity mappings reusing the
-   §2 int-ms `duration` converter (`AlbumV2` == V1; `AssetOcrV1` emits nothing).
-   The V1/V2 dual pattern already exists in `routers/api/sync/`. See §5.
+3. **Sync v2** — report `3.0.x`, add the V2 entity mappings reusing the
+   §2 int-ms `duration` converter (`AlbumV2` is V1 minus `ownerId`, so also emit
+   the owner link on the separate `AlbumUsersV1` stream — see §5; `AssetOcrV1`
+   emits nothing). The V1/V2 dual pattern already exists in `routers/api/sync/`.
 4. **Shared links** — token/key/slug access model rework.
 5. **`AssetResponseDto`** — drop device fields + `unassignedFaces`, switch
    `people` to `PersonResponseDto`.

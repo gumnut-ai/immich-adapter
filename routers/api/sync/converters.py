@@ -14,9 +14,11 @@ from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
 
 from routers.immich_models import (
+    AlbumUserRole,
     AssetOrder,
     AssetVisibility,
     SyncAlbumToAssetV1,
+    SyncAlbumUserV1,
     SyncAlbumV1,
     SyncAlbumV2,
     SyncAssetExifV1,
@@ -303,6 +305,27 @@ def gumnut_album_to_sync_album_v2(album: AlbumResponse, owner_id: UUID) -> SyncA
     fields = gumnut_album_to_sync_album_v1(album, owner_id).model_dump()
     fields.pop("ownerId", None)
     return SyncAlbumV2(**fields)
+
+
+def gumnut_album_to_sync_album_user_v1(
+    album: AlbumResponse, owner_id: UUID
+) -> SyncAlbumUserV1:
+    """Synthesize the owner album-user link for an album.
+
+    Immich v3's ``SyncAlbumV2`` dropped ``ownerId`` (see the
+    ``immich-v3-api-changes.md`` design doc, §5), so the v3 mobile client no
+    longer derives the owner from the album event itself. It instead builds the
+    album↔owner relationship from the separate ``AlbumUsersV1`` stream, and its
+    album-list query inner-joins on an owner-role album-user row — without one,
+    every album is filtered out of the list and never displayed. Gumnut is
+    single-user with no album sharing, so each album has exactly one album-user:
+    the owner.
+    """
+    return SyncAlbumUserV1(
+        albumId=safe_uuid_from_album_id(album.id),
+        userId=owner_id,
+        role=AlbumUserRole.owner,
+    )
 
 
 def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
