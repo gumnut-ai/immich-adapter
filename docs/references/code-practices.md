@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-07-08
+last-updated: 2026-07-14
 ---
 
 # Code Practices
@@ -22,7 +22,7 @@ Style, patterns, and conventions for the immich-adapter codebase.
 - **Single source of truth for rationale**: explain a non-obvious *why* once; cite it elsewhere in one line rather than restating (copies multiply churn and drift). Home by scope: one symbol → its docstring; spanning files → one reference doc; a decision → the design doc. Never link to a doc *and* restate it.
 - **Comments earn their place**: explain what the code can't. Delete the road not taken ("did X not Y", unless Y is a trap someone will re-reach for), a "today" coincidence ("A equals B today" — enforce it in code if it's load-bearing, else cut it), and prose restating what the structure already shows (an explicit dict entry already means "explicit, not the default").
 - **Committed text — public names only, no internal references**: This is a public repository, so everything committed (code comments, docstrings, test names and docstrings, design docs under `docs/design-docs/`, `docs/architecture/`, `docs/references/`, `docs/guides/`, plus PR bodies and commit messages) must read cleanly for an external reader who can't see anything private. Three things to keep out:
-  - **The backend's internal name.** Refer to the backend as **the Gumnut API** (its public name, `api.gumnut.ai`) — or "the Gumnut backend" where a generic phrasing reads better — never `photos-api`, the internal project/repo name (it lives in the private `gumnut-ai/photos` repo). This applies to comments, docstrings, tests, and docs alike. Identifiers that embed the internal name follow the same rule (e.g., the `GUMNUT_API_MAX_PAGE_SIZE` constant, not `PHOTOS_API_MAX_PAGE_SIZE`).
+  - **The backend's internal name.** Refer to the backend as **the Gumnut API** (its public name, `api.gumnut.ai`) — or "the Gumnut backend" where a generic phrasing reads better — never `photos-api`, the internal project/repo name. This applies to comments, docstrings, tests, and docs alike. Identifiers that embed the internal name follow the same rule (e.g., the `GUMNUT_API_MAX_PAGE_SIZE` constant, not `PHOTOS_API_MAX_PAGE_SIZE`).
   - **Private repo file-paths.** Don't cite paths into private repos (e.g., `photos-api/routers/...`); describe the contract or behavior instead, so the note stays useful to a reader who can't open that file.
   - **Internal issue-tracker IDs** (e.g., `GUM-123`). External readers cannot resolve them and they leak the existence of internal work-tracking. Inline the rationale instead so the reasoning is self-contained (e.g., "the recently shipped end-to-end Range path" rather than "GUM-713").
 
