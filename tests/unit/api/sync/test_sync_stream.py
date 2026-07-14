@@ -14,7 +14,6 @@ from routers.api.sync.converters import gumnut_album_to_sync_album_user_v1
 from routers.api.sync.fk_integrity import SyncStreamStats
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
-    _USER_METADATA_CURSOR,
     _stream_entity_type,
     generate_reset_stream,
     generate_sync_stream,
@@ -593,14 +592,14 @@ class TestGenerateSyncStream:
         assert data["key"] == "preferences"
         assert data["userId"] == str(TEST_UUID)  # owner == user, FK parent
         assert data["value"]["people"]["minimumFaces"] == 1
-        # Static payload keyed off a constant cursor (emit-once).
-        assert events[0]["ack"].startswith("UserMetadataV1|preferences-v1|")
+        # Cursor is the user's updated_at, same as UserV1.
+        assert events[0]["ack"] == f"UserMetadataV1|{updated_at.isoformat()}|"
         assert events[1]["type"] == "SyncCompleteV1"
 
     @pytest.mark.anyio
     async def test_user_metadata_skipped_when_checkpoint_matches(self):
-        """The static preferences row is not re-emitted once the client has acked
-        its constant cursor."""
+        """The preferences row is not re-emitted once the client has acked the
+        current user cursor (unchanged user record)."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -609,7 +608,7 @@ class TestGenerateSyncStream:
         checkpoint = Checkpoint(
             entity_type=SyncEntityType.UserMetadataV1,
             updated_at=updated_at,
-            cursor=_USER_METADATA_CURSOR,
+            cursor=updated_at.isoformat(),
         )
         checkpoint_map = {SyncEntityType.UserMetadataV1: checkpoint}
 
@@ -620,10 +619,9 @@ class TestGenerateSyncStream:
         assert [e["type"] for e in events] == ["SyncCompleteV1"]
 
     @pytest.mark.anyio
-    async def test_user_metadata_reemitted_when_cursor_changed(self):
-        """A client acked under a prior cursor (before the suffix was bumped) gets
-        the preferences row re-emitted — the constant-cursor design's forward-compat
-        path."""
+    async def test_user_metadata_reemitted_when_user_changed(self):
+        """A client acked under an older user cursor gets the preferences row
+        re-emitted when the user record changes — same delta semantics as UserV1."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -632,7 +630,7 @@ class TestGenerateSyncStream:
         checkpoint = Checkpoint(
             entity_type=SyncEntityType.UserMetadataV1,
             updated_at=updated_at,
-            cursor="preferences-v0-stale",
+            cursor="2020-01-01T00:00:00+00:00",  # acked under an older user cursor
         )
         checkpoint_map = {SyncEntityType.UserMetadataV1: checkpoint}
 
@@ -641,7 +639,7 @@ class TestGenerateSyncStream:
         )
 
         assert [e["type"] for e in events] == ["UserMetadataV1", "SyncCompleteV1"]
-        assert events[0]["ack"].startswith(f"UserMetadataV1|{_USER_METADATA_CURSOR}|")
+        assert events[0]["ack"] == f"UserMetadataV1|{updated_at.isoformat()}|"
 
     @pytest.mark.anyio
     async def test_streams_user_then_user_metadata_in_fk_order(self):

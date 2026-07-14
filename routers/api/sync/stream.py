@@ -163,12 +163,6 @@ _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
     SyncRequestType.StacksV1: SyncEntityType.StackV1,
 }
 
-# Cursor for the synthesized UserMetadataV1 preferences row. The payload is
-# static, so a constant cursor makes the client ack it once and skip it on every
-# subsequent sync. Bump the suffix if the emitted preferences change, to force a
-# one-time re-emit to already-synced clients.
-_USER_METADATA_CURSOR = "preferences-v1"
-
 # Supported SyncRequestTypes (used to detect unsupported types requested by
 # client). AuthUsersV1/UsersV1/UserMetadataV1 are handled specially (not via
 # _SYNC_TYPE_ORDER): the first two stream the user record, and UserMetadataV1
@@ -603,18 +597,19 @@ async def generate_sync_stream(
                 )
                 logger.debug("Streamed user", extra={"user_id": owner_id})
 
-        # Stream a synthesized user-preferences row if requested. Static payload
-        # keyed off a constant cursor, so the client acks it once and skips it
-        # thereafter. Emitted after UserV1 so its userId FK parent exists on the
-        # client. See gumnut_user_to_sync_user_metadata_v1 for the why.
+        # Stream a synthesized user-preferences row if requested. Keyed off the
+        # same user_cursor as UserV1 — the payload is derived purely from the user,
+        # so it re-syncs exactly when the user record changes. Emitted after UserV1
+        # so its userId FK parent exists on the client. See
+        # gumnut_user_to_sync_user_metadata_v1 for the why.
         if SyncRequestType.UserMetadataV1 in requested_types:
             checkpoint = checkpoint_map.get(SyncEntityType.UserMetadataV1)
-            if checkpoint is None or checkpoint.cursor != _USER_METADATA_CURSOR:
+            if checkpoint is None or checkpoint.cursor != user_cursor:
                 sync_user_metadata = gumnut_user_to_sync_user_metadata_v1(owner_uuid)
                 yield make_sync_event(
                     SyncEntityType.UserMetadataV1,
                     sync_user_metadata.model_dump(mode="json"),
-                    _USER_METADATA_CURSOR,
+                    user_cursor,
                 )
                 logger.debug("Streamed user metadata", extra={"user_id": owner_id})
 

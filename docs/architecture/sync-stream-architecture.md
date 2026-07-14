@@ -30,11 +30,12 @@ from the `UserMetadataV1` stream to decide which people appear in the People tab
 defaulting to **3** when absent — which would hide Gumnut clusters of 1–2 faces.
 The adapter synthesizes a single `UserMetadataV1` *preferences* row with
 `minimumFaces=1` (all other fields mirror the client's defaults). It's emitted
-right after `UserV1` (the `userId` FK parent) and keyed off a constant cursor
-(`_USER_METADATA_CURSOR`) so the client acks it once and skips it thereafter;
-bump the cursor suffix to force a re-emit if the payload changes. `value` is the
-server's nested `UserPreferences` JSON shape (`value["people"]["minimumFaces"]`),
-which the client parses via `Preferences.fromMap`.
+right after `UserV1` (the `userId` FK parent) and keyed off the **same
+`user_cursor` as `UserV1`** (the user's `updated_at`) — the payload is derived
+purely from the user, so it re-syncs exactly when the user record changes and
+otherwise acks once. `value` is the server's nested `UserPreferences` JSON shape
+(`value["people"]["minimumFaces"]`), which the client parses via
+`Preferences.fromMap`.
 
 Only the `preferences` key is synthesized. The client's other `UserMetadataV1`
 keys are deliberately not emitted: onboarding UI is gated on the login response's
