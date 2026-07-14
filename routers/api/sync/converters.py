@@ -28,7 +28,9 @@ from routers.immich_models import (
     SyncAssetV2,
     SyncAuthUserV1,
     SyncPersonV1,
+    SyncUserMetadataV1,
     SyncUserV1,
+    UserMetadataKey,
 )
 from routers.utils.asset_conversion import (
     duration_ms,
@@ -131,6 +133,36 @@ def gumnut_user_to_sync_user_v1(user: UserResponse) -> SyncUserV1:
         profileChangedAt=user.updated_at,
         avatarColor=None,
         deletedAt=None,
+    )
+
+
+def gumnut_user_to_sync_user_metadata_v1(owner_id: UUID) -> SyncUserMetadataV1:
+    """Synthesize a UserMetadata *preferences* row.
+
+    Gumnut has no per-user preferences, but the v3 mobile client reads the
+    ``people.minimumFaces`` threshold from this stream to decide which people
+    appear in the People tab — defaulting to 3 when absent, which would hide
+    Gumnut clusters of 1–2 faces. We emit ``minimumFaces=1`` so every person
+    with at least one face is shown; all other fields mirror the client's own
+    defaults.
+
+    ``value`` is the server's nested ``UserPreferences`` JSON shape — the client
+    parses it via ``Preferences.fromMap`` (reads ``value["people"]["minimumFaces"]``
+    etc.), storing the map verbatim. Only the keys the client reads are included;
+    it defensively defaults everything else.
+    """
+    return SyncUserMetadataV1(
+        key=UserMetadataKey.preferences,
+        userId=owner_id,
+        value={
+            "folders": {"enabled": False},
+            "memories": {"enabled": True},
+            "people": {"enabled": True, "minimumFaces": 1},
+            "ratings": {"enabled": False},
+            "sharedLinks": {"enabled": True},
+            "tags": {"enabled": False},
+            "purchase": {"showSupportBadge": True},
+        },
     )
 
 
@@ -329,7 +361,13 @@ def gumnut_album_to_sync_album_user_v1(
 
 
 def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
-    """Convert Gumnut FaceResponse to Immich SyncAssetFaceV1 format."""
+    """Convert Gumnut FaceResponse to Immich SyncAssetFaceV1 format.
+
+    ``imageWidth``/``imageHeight`` are emitted as 0: the v3 mobile client stores
+    them but has no read path (face/person thumbnails are served from a server
+    URL, and there is no local bounding-box overlay). Emit real dimensions only
+    when a client consumer actually reads them.
+    """
     bounding_box = face.bounding_box
 
     person_id = None

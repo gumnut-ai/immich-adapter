@@ -571,6 +571,53 @@ class TestGenerateSyncStream:
         assert events[1]["type"] == "SyncCompleteV1"
 
     @pytest.mark.anyio
+    async def test_streams_user_metadata_preferences_with_min_faces(self):
+        """UserMetadataV1 emits a synthesized preferences row with minimumFaces=1
+        so people with 1-2 faces still appear in the client's People tab."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(types=[SyncRequestType.UserMetadataV1])
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        assert len(events) == 2
+        assert events[0]["type"] == "UserMetadataV1"
+        data = events[0]["data"]
+        assert data["key"] == "preferences"
+        assert data["userId"] == str(TEST_UUID)  # owner == user, FK parent
+        assert data["value"]["people"]["minimumFaces"] == 1
+        # Static payload keyed off a constant cursor (emit-once).
+        assert events[0]["ack"].startswith("UserMetadataV1|preferences-v1|")
+        assert events[1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_user_metadata_skipped_when_checkpoint_matches(self):
+        """The static preferences row is not re-emitted once the client has acked
+        its constant cursor."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(types=[SyncRequestType.UserMetadataV1])
+        checkpoint = Checkpoint(
+            entity_type=SyncEntityType.UserMetadataV1,
+            updated_at=updated_at,
+            cursor="preferences-v1",
+        )
+        checkpoint_map = {SyncEntityType.UserMetadataV1: checkpoint}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["SyncCompleteV1"]
+
+    @pytest.mark.anyio
     async def test_streams_album_assets_when_requested(self):
         """Album-to-asset links are streamed when AlbumToAssetsV1 is requested."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)

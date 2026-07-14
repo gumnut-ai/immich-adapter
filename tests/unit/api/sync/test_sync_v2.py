@@ -36,8 +36,10 @@ from routers.immich_models import (
     SyncAssetV2,
     SyncEntityType,
     SyncRequestType,
+    UserMetadataKey,
 )
 from routers.utils import asset_conversion
+from tests.unit.api.sync.conftest import TEST_UUID
 
 
 # --- Payload shape (model_fields only — no instantiation) --------------------
@@ -218,3 +220,42 @@ def test_album_user_converter_sets_owner_role():
     )
     # Role field exists on the DTO the converter builds.
     assert "role" in SyncAlbumUserV1.model_fields
+
+
+# --- Requested-but-empty v3 types: explicit no-ops, not "unsupported" logs -----
+
+
+def test_requested_empty_v3_types_are_explicit_noops():
+    """Every v3 type the client requests but the adapter has no data for is an
+    explicit no-op (so it is not logged "unsupported" on every sync). Excludes
+    UserMetadataV1, which is emitted, not a no-op."""
+    empty_requested = {
+        SyncRequestType.AssetMetadataV1,
+        SyncRequestType.PartnersV1,
+        SyncRequestType.PartnerAssetExifsV1,
+        SyncRequestType.PartnerStacksV1,
+        SyncRequestType.AlbumAssetExifsV1,
+        SyncRequestType.MemoriesV1,
+        SyncRequestType.MemoryToAssetsV1,
+        SyncRequestType.StacksV1,
+    }
+    assert empty_requested <= set(_NOOP_REQUEST_TYPES)
+    assert empty_requested <= _SUPPORTED_REQUEST_TYPES
+    # Never streamed (absent from the entity-producing order).
+    streamed = {rt for rt, _, _ in _SYNC_TYPE_ORDER}
+    assert empty_requested.isdisjoint(streamed)
+    # UserMetadataV1 is emitted, so it must NOT be a no-op, but still supported.
+    assert SyncRequestType.UserMetadataV1 not in _NOOP_REQUEST_TYPES
+    assert SyncRequestType.UserMetadataV1 in _SUPPORTED_REQUEST_TYPES
+
+
+# --- UserMetadataV1 preferences (minimumFaces override) ------------------------
+
+
+def test_user_metadata_converter_sets_min_faces_one():
+    """The synthesized preferences row nests minimumFaces=1 under people, matching
+    the shape the client's Preferences.fromMap reads."""
+    md = converters.gumnut_user_to_sync_user_metadata_v1(TEST_UUID)
+    assert md.key == UserMetadataKey.preferences
+    assert md.userId == TEST_UUID
+    assert md.value["people"]["minimumFaces"] == 1

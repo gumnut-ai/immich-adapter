@@ -23,6 +23,19 @@ Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync eve
 
 `face_created` events have person_id nulled out (face detection never assigns a person). `face_updated` events use the causally-consistent person_id from the event payload instead of current entity state. For every face batch, payload person_ids are collected (see `extract_payload_fk_refs`) and verified against production via `people.list` — IDs that return 404 are recorded in `stats.not_found_ids["person"]` and nulled out on the outgoing event, regardless of whether a `PersonV1` checkpoint exists. This prevents stale payload references (from clustering runs that predate a person's deletion) from leaking across sync cycles and causing FK violations on the client.
 
+## User Preferences (minimumFaces)
+
+Gumnut has no per-user preferences, but the v3 client reads `people.minimumFaces`
+from the `UserMetadataV1` stream to decide which people appear in the People tab,
+defaulting to **3** when absent — which would hide Gumnut clusters of 1–2 faces.
+The adapter synthesizes a single `UserMetadataV1` *preferences* row with
+`minimumFaces=1` (all other fields mirror the client's defaults). It's emitted
+right after `UserV1` (the `userId` FK parent) and keyed off a constant cursor
+(`_USER_METADATA_CURSOR`) so the client acks it once and skips it thereafter;
+bump the cursor suffix to force a re-emit if the payload changes. `value` is the
+server's nested `UserPreferences` JSON shape (`value["people"]["minimumFaces"]`),
+which the client parses via `Preferences.fromMap`.
+
 ## Album Cover Handling
 
 `album_updated` events use the causally-consistent `album_cover_asset_id` from the event payload instead of the entity's current computed cover (which is derived at fetch time via a lateral join and may reference an asset outside the sync window). Payload cover asset IDs are verified against production the same way face person_ids are — 404s null the cover regardless of `AssetV1` checkpoint state.
@@ -66,6 +79,8 @@ The invariant tests in `test_sync_v2.py` assert that every V2 type in `_SYNC_TYP
 ## No-Op Request Types
 
 Immich sync types that are accepted but have no Gumnut equivalent (e.g., `AssetEditsV1` — we don't support editing) go in `_NOOP_REQUEST_TYPES` in `stream.py`. This prevents "unsupported type" warnings while making the no-op explicit. Do not just add them to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that silently drops them.
+
+The v3 mobile client requests a broad set of these on **every** sync (partner-*, stacks-*, memories-*, `AssetMetadataV1`, `AssetOcrV1`, `AlbumAssetExifsV1`, the V2 partner/album-asset variants) — all no-ops for a single-user Gumnut backend with no sharing/stacks/memories/OCR. They all belong in `_NOOP_REQUEST_TYPES` so the per-sync "unsupported types" warning stays quiet. `UserMetadataV1` is the one requested type the adapter *does* synthesize (see "User Preferences" above), so it is deliberately **not** a no-op — it's handled specially alongside `UsersV1`/`AuthUsersV1`.
 
 ## Contract with the Gumnut API
 
