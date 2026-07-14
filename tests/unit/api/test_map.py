@@ -6,11 +6,11 @@ from uuid import uuid4
 
 import pytest
 
-from routers.api.map import (
+from routers.api.map import get_map_markers
+from routers.utils.map_markers import (
     GEOTAGGED_WORLD_BBOX,
     MAP_MARKERS_CAP,
     MAX_ASSETS_SCANNED,
-    get_map_markers,
 )
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,

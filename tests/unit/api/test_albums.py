@@ -15,13 +15,16 @@ from routers.api.albums import (
     get_all_albums,
     get_album_statistics,
     get_album_info,
+    get_album_map_markers,
     create_album,
     add_assets_to_album,
     update_album,
     remove_asset_from_album,
     delete_album,
     add_assets_to_albums,
+    router as albums_router,
 )
+from routers.utils.map_markers import GEOTAGGED_WORLD_BBOX
 from routers.immich_models import (
     AlbumUserRole,
     CreateAlbumDto,
@@ -1268,3 +1271,145 @@ class TestAddAssetsToAlbums:
         assert result.success is True
         assert peak > 1, "expected concurrent execution"
         assert peak <= BULK_FANOUT_CONCURRENCY_LIMIT
+
+
+def _make_geo_asset(
+    *,
+    lat: float | None = None,
+    lon: float | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    country: str | None = None,
+    metadata_missing: bool = False,
+) -> Mock:
+    """Mock Gumnut asset with the GPS-relevant subset of metadata fields."""
+    asset = Mock()
+    asset.id = uuid_to_gumnut_asset_id(uuid4())
+    if metadata_missing:
+        asset.metadata = None
+    else:
+        metadata = Mock()
+        metadata.latitude = lat
+        metadata.longitude = lon
+        metadata.city = city
+        metadata.state = state
+        metadata.country = country
+        asset.metadata = metadata
+    return asset
+
+
+class TestGetAlbumMapMarkers:
+    """Test the get_album_map_markers endpoint (GET /albums/{id}/map-markers)."""
+
+    @pytest.mark.anyio
+    async def test_returns_markers_for_geotagged_album_assets(
+        self, sample_uuid, sample_gumnut_album, mock_sync_cursor_page
+    ):
+        """Geotagged assets become markers; coordinate-less assets are skipped."""
+        asset_with_gps = _make_geo_asset(
+            lat=40.5, lon=-74.1, city="Trenton", state="NJ", country="USA"
+        )
+        asset_no_metadata = _make_geo_asset(metadata_missing=True)
+        asset_no_coords = _make_geo_asset(lat=None, lon=None, city="Nowhere")
+
+        mock_client = Mock()
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.assets.list.return_value = mock_sync_cursor_page(
+            [asset_with_gps, asset_no_metadata, asset_no_coords]
+        )
+
+        result = await get_album_map_markers(sample_uuid, client=mock_client)
+
+        assert len(result) == 1
+        marker = result[0]
+        assert marker.id == safe_uuid_from_asset_id(asset_with_gps.id)
+        assert marker.lat == 40.5
+        assert marker.lon == -74.1
+        assert marker.city == "Trenton"
+        assert marker.state == "NJ"
+        assert marker.country == "USA"
+
+    @pytest.mark.anyio
+    async def test_forwards_album_id_and_world_bbox(
+        self, sample_uuid, sample_gumnut_album, mock_sync_cursor_page
+    ):
+        """The album filter is AND-combined with the geotagged world bbox."""
+        mock_client = Mock()
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        await get_album_map_markers(sample_uuid, client=mock_client)
+
+        kwargs = mock_client.assets.list.call_args.kwargs
+        assert kwargs["album_id"] == uuid_to_gumnut_album_id(sample_uuid)
+        assert kwargs["bbox"] == GEOTAGGED_WORLD_BBOX
+
+    @pytest.mark.anyio
+    async def test_key_and_slug_are_dropped_not_forwarded(
+        self, sample_uuid, sample_gumnut_album, mock_sync_cursor_page
+    ):
+        """`key` / `slug` are accepted for client compat then dropped.
+
+        They're shared-link tokens this adapter doesn't honor (`_ = key, slug`).
+        This mirrors the global endpoint's `test_partner_and_shared_album_filters_are_dropped`
+        and guards against a future edit wiring them into `retrieve`/`list` — the
+        `retrieve` path especially, since threading a token there would be a
+        silent shared-link authorization change.
+        """
+        mock_client = Mock()
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        await get_album_map_markers(
+            sample_uuid,
+            key="shared-link-key",
+            slug="shared-slug",
+            client=mock_client,
+        )
+
+        # The album retrieve gets only the album id — no key/slug threaded in.
+        retrieve_call = mock_client.albums.retrieve.call_args
+        assert "key" not in retrieve_call.kwargs
+        assert "slug" not in retrieve_call.kwargs
+        assert "shared-link-key" not in retrieve_call.args
+        assert "shared-slug" not in retrieve_call.args
+
+        # The asset list forwards only album_id + limit + include + bbox.
+        assert set(mock_client.assets.list.call_args.kwargs.keys()) == {
+            "album_id",
+            "limit",
+            "include",
+            "bbox",
+        }
+
+    @pytest.mark.anyio
+    async def test_empty_album_returns_empty_list(
+        self, sample_uuid, sample_gumnut_album, mock_sync_cursor_page
+    ):
+        """An album with no geotagged assets returns an empty marker list."""
+        mock_client = Mock()
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        result = await get_album_map_markers(sample_uuid, client=mock_client)
+
+        assert result == []
+
+    @pytest.mark.anyio
+    async def test_missing_album_raises_not_found_before_listing(self, sample_uuid):
+        """A missing album 404s via retrieve; markers are never listed."""
+        mock_client = Mock()
+        mock_client.albums.retrieve = AsyncMock(
+            side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
+        )
+        mock_client.assets.list = Mock()
+
+        with pytest.raises(NotFoundError):
+            await get_album_map_markers(sample_uuid, client=mock_client)
+
+        mock_client.assets.list.assert_not_called()
+
+    def test_route_registered(self):
+        """The album map-markers route is registered on the albums router."""
+        paths = [getattr(route, "path", None) for route in albums_router.routes]
+        assert "/api/albums/{id}/map-markers" in paths

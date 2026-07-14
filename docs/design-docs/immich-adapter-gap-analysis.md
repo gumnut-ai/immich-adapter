@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-07
+last-updated: 2026-07-13
 ---
 
 # Immich Adapter Gap Analysis
@@ -708,17 +708,19 @@ echoing the requested window so the client's date parse stays valid; an empty
 
 **Albums — map markers** — `GET /albums/{id}/map-markers`. New in v3; the global
 `GET /map/markers` dropped its `albumIds` filter, so the v3 web album page calls
-this album-scoped endpoint on every album open. The current 404 produces a
-console error and a user-visible "Something went wrong" toast on a high-traffic
-screen (the album still renders). The existing `/api/map/markers` implementation
-(gap #3a) is directly reusable — the Gumnut client accepts `album_id` and a world
-`bbox` together — so a faithful implementation costs only a few lines more than a
-`[]` stub and is strictly better (real pins vs. a permanently empty map).
-**Implement** (adapter-only, effort S); tracked as separate implementation work.
+this album-scoped endpoint on every album open. Its 404 produced a console error
+and a user-visible "Something went wrong" toast on a high-traffic screen (the
+album still rendered). The existing `/api/map/markers` implementation (gap #3a)
+is directly reusable — the Gumnut client accepts `album_id` and a world `bbox`
+together — so a faithful implementation costs only a few lines more than a `[]`
+stub and is strictly better (real pins vs. a permanently empty map).
+**Implement** (adapter-only, effort S).
 
 **Status:** the calendar-heatmap user-endpoint stub is implemented in
-`routers/api/users.py`. Album map markers are planned as a separate change. All
-other areas are intentional gaps with no adapter code.
+`routers/api/users.py`. Album map markers are implemented in
+`routers/api/albums.py`, with the shared marker retrieval in
+`routers/utils/map_markers.py`. All other areas are intentional gaps with no
+adapter code.
 
 ---
 
