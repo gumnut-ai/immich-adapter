@@ -27,7 +27,7 @@ from gumnut.types.asset_bulk_update_assets_params import Update, UpdateChange
 from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
-from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
+from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE, GUMNUT_UPLOAD_DEVICE_ID
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import (
     BULK_CHUNK_SIZE,
@@ -50,7 +50,6 @@ from routers.immich_models import (
     AssetBulkUploadCheckResponseDto,
     AssetCopyDto,
     AssetJobsDto,
-    AssetMediaReplaceDto,
     AssetMediaSize,
     AssetMediaResponseDto,
     AssetMediaStatus,
@@ -60,9 +59,7 @@ from routers.immich_models import (
     AssetResponseDto,
     AssetStatsResponseDto,
     AssetVisibility,
-    CheckExistingAssetsDto,
     UserResponseDto,
-    CheckExistingAssetsResponseDto,
     UpdateAssetDto,
 )
 from routers.utils.gumnut_id_conversion import (
@@ -297,24 +294,6 @@ async def bulk_upload_check(
     return AssetBulkUploadCheckResponseDto(results=results)
 
 
-@router.post("/exist")
-async def check_existing_assets(
-    request: CheckExistingAssetsDto,
-    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> CheckExistingAssetsResponseDto:
-    """
-    Check if multiple assets exist on the server and return all existing.
-    """
-    existing_assets_response = await client.assets.check_existence(
-        device_id=request.deviceId, device_asset_ids=request.deviceAssetIds
-    )
-    existing_ids = [
-        str(safe_uuid_from_asset_id(asset.id))
-        for asset in existing_assets_response.assets
-    ]
-    return CheckExistingAssetsResponseDto(existingIds=existing_ids)
-
-
 def _parse_datetime(value: str | None, fallback: datetime) -> datetime:
     """Parse an ISO 8601 datetime string, falling back to the given default."""
     if not value:
@@ -330,8 +309,6 @@ def _parse_datetime(value: str | None, fallback: datetime) -> datetime:
 
 
 class UploadFields(NamedTuple):
-    device_asset_id: str
-    device_id: str
     file_created_at: datetime
     file_modified_at: datetime
 
@@ -341,20 +318,16 @@ def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
 
     Raises ValueError if required fields are missing.
     """
-    device_asset_id = fields.get("deviceAssetId", "")
-    device_id = fields.get("deviceId", "")
     file_created_at_str = fields.get("fileCreatedAt", "")
 
-    if not device_asset_id or not device_id or not file_created_at_str:
-        raise ValueError(
-            "Missing required fields: deviceAssetId, deviceId, fileCreatedAt"
-        )
+    if not file_created_at_str:
+        raise ValueError("Missing required field: fileCreatedAt")
 
     file_modified_at_str = fields.get("fileModifiedAt") or None
     file_created_at = _parse_datetime(file_created_at_str, datetime.now(timezone.utc))
     file_modified_at = _parse_datetime(file_modified_at_str, file_created_at)
 
-    return UploadFields(device_asset_id, device_id, file_created_at, file_modified_at)
+    return UploadFields(file_created_at, file_modified_at)
 
 
 # Delay applied before emitting upload-success events for video uploads, to give
@@ -537,14 +510,16 @@ async def _upload_buffered(
         # Convert Starlette form values to plain strings for shared helper
         fields = {key: str(value) for key, value in form.items() if key != "assetData"}
         try:
-            device_asset_id, device_id, file_created_at, file_modified_at = (
-                _extract_upload_fields(fields)
-            )
+            file_created_at, file_modified_at = _extract_upload_fields(fields)
         except ValueError as ve:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=str(ve),
             )
+
+        # Synthesize the device fields the Gumnut API requires (see
+        # GUMNUT_UPLOAD_DEVICE_ID).
+        device_asset_id = str(uuid4())
 
         try:
             # Drop iOS live photo .MOV files — they upload as separate video files
@@ -557,14 +532,12 @@ async def _upload_buffered(
                 logger.info(
                     "Dropping iOS live photo video",
                     extra={
-                        "device_asset_id": device_asset_id,
-                        "device_id": device_id,
                         "upload_filename": asset_data.filename,
                         "content_type": asset_data.content_type,
                     },
                 )
                 return AssetMediaResponseDto(
-                    id=str(uuid4()),
+                    id=uuid4(),
                     status=AssetMediaStatus.created,
                 )
 
@@ -585,7 +558,7 @@ async def _upload_buffered(
                         asset_data.content_type,
                     ),
                     device_asset_id=device_asset_id,
-                    device_id=device_id,
+                    device_id=GUMNUT_UPLOAD_DEVICE_ID,
                     file_created_at=file_created_at,
                     file_modified_at=file_modified_at,
                 )
@@ -604,9 +577,7 @@ async def _upload_buffered(
 
             await _emit_upload_events(gumnut_asset, current_user)
 
-            return AssetMediaResponseDto(
-                id=str(asset_uuid), status=AssetMediaStatus.created
-            )
+            return AssetMediaResponseDto(id=asset_uuid, status=AssetMediaStatus.created)
 
         except Exception as e:
             raise map_gumnut_error(
@@ -616,7 +587,6 @@ async def _upload_buffered(
                     "upload_filename": asset_data.filename,
                     "content_type": asset_data.content_type,
                     "device_asset_id": device_asset_id,
-                    "device_id": device_id,
                     "strategy": "buffered",
                 },
                 exc_info=True,
@@ -631,10 +601,10 @@ async def _upload_streaming(
 ) -> AssetMediaResponseDto | JSONResponse:
     """Streaming upload path — pipes file data to the Gumnut API without buffering.
 
-    Note: requires multipart form fields (deviceAssetId, deviceId, fileCreatedAt)
-    to precede the file part. All known Immich clients send fields first. Clients
-    that send the file before fields will receive a 422 error; those uploads fall
-    below the streaming threshold in practice, so they use the buffered path.
+    Note: requires the multipart form field fileCreatedAt to precede the file
+    part. All known Immich clients send fields first. Clients that send the file
+    before fields will receive a 422 error; those uploads fall below the
+    streaming threshold in practice, so they use the buffered path.
     """
     jwt_token = getattr(request.state, "jwt_token", None)
     if not jwt_token:
@@ -684,9 +654,7 @@ async def _upload_streaming(
                 extra={"asset_id": asset_id, "error": str(ws_err)},
             )
 
-        return AssetMediaResponseDto(
-            id=str(asset_uuid), status=AssetMediaStatus.created
-        )
+        return AssetMediaResponseDto(id=asset_uuid, status=AssetMediaStatus.created)
 
     except HTTPException:
         raise
@@ -719,10 +687,6 @@ async def _upload_streaming(
                 log_extra["upload_filename"] = form_parser.filename
             if form_parser.content_type:
                 log_extra["content_type"] = form_parser.content_type
-            if device_asset_id := form_parser.form_fields.get("deviceAssetId"):
-                log_extra["device_asset_id"] = device_asset_id
-            if device_id := form_parser.form_fields.get("deviceId"):
-                log_extra["device_id"] = device_id
 
         raise map_gumnut_error(
             e,
@@ -1071,19 +1035,6 @@ async def _bulk_trash(
         )
 
 
-@router.get("/device/{deviceId}", deprecated=True)
-async def get_all_user_assets_by_device_id(
-    deviceId: str,
-    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[str]:
-    """
-    Retrieve assets by device ID.
-    This is a stub implementation as Gumnut does not support querying by device ID directly.
-    Returns an empty list.
-    """
-    return []
-
-
 @router.get("/statistics")
 async def get_asset_statistics(
     isFavorite: bool = Query(default=None, alias="isFavorite"),
@@ -1119,20 +1070,6 @@ async def get_asset_statistics(
         videos=video_count,
         total=total_assets,
     )
-
-
-@router.get("/random", deprecated=True)
-async def get_random(
-    count: int = Query(default=None, ge=1, type="number"),
-    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[AssetResponseDto]:
-    """
-    Get random assets.
-    This is a stub implementation that returns an empty list.
-    Deprecated in v1.116.0 - use search endpoint instead.
-    """
-    # Stub implementation: return empty list since this endpoint is deprecated
-    return []
 
 
 @router.post("/jobs", status_code=204)
@@ -1325,34 +1262,6 @@ async def download_asset(
         "original",
         forwarded_headers=DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
     )
-
-
-@router.put(
-    "/{id}/original",
-    deprecated=True,
-    response_model=AssetMediaResponseDto,
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "multipart/form-data": {
-                    "schema": {"$ref": "#/components/schemas/AssetMediaReplaceDto"}
-                }
-            }
-        }
-    },
-)
-async def replace_asset(
-    id: UUID,
-    request: AssetMediaReplaceDto,
-    key: str = Query(default=None, alias="key"),
-    slug: str = Query(default=None, alias="slug"),
-    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-):
-    """
-    Replace the asset with new file, without changing its id.
-    Deprecated in immich and not supported by Gumnut.
-    """
-    return
 
 
 @router.get("/{id}/metadata")

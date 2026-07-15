@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import List
 
@@ -39,9 +39,9 @@ async def create_library(
     This is a stub implementation that returns a fake library response.
     """
     return LibraryResponseDto(
-        id="library-id",
+        id=uuid4(),
         name=request.name or "New Library",
-        ownerId=str(current_user_id),
+        ownerId=current_user_id,
         assetCount=0,
         importPaths=request.importPaths or [],
         exclusionPatterns=request.exclusionPatterns or [],
@@ -60,9 +60,9 @@ async def get_library(
     This is a stub implementation that returns a fake library response.
     """
     return LibraryResponseDto(
-        id=str(id),
+        id=id,
         name="Sample Library",
-        ownerId=str(current_user_id),
+        ownerId=current_user_id,
         assetCount=0,
         importPaths=[],
         exclusionPatterns=[],
@@ -83,9 +83,9 @@ async def update_library(
     This is a stub implementation that returns a fake updated library response.
     """
     return LibraryResponseDto(
-        id=str(id),
+        id=id,
         name=request.name or "Updated Library",
-        ownerId=str(current_user_id),
+        ownerId=current_user_id,
         assetCount=0,
         importPaths=request.importPaths or [],
         exclusionPatterns=request.exclusionPatterns or [],

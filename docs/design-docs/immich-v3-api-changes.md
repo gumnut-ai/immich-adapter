@@ -2,7 +2,7 @@
 title: "Immich v2.7.5 → v3.0 API Change Analysis"
 status: active
 created: 2026-06-16
-last-updated: 2026-07-04
+last-updated: 2026-07-14
 ---
 
 # Immich v2.7.5 → v3.0 API Change Analysis
@@ -105,11 +105,11 @@ mistake it for behavioral change.
 
 | Change | Detail | Adapter impact |
 |---|---|---|
-| **`duration` string → integer ms** | `AssetResponseDto`, `TimeBucketAssetResponseDto`, `AssetMediaCreateDto`. Was `"HH:MM:SS.ffffff"` interval string, now integer **milliseconds**, nullable on `AssetResponseDto`. | `routers/utils/asset_conversion.py:format_duration` emits the interval string today — must emit int ms. Touches `routers/models.py:69`, and the `duration` fields in `routers/immich_models.py`. Affects every asset/timeline/upload response. |
+| **`duration` string → integer ms** | `AssetResponseDto`, `TimeBucketAssetResponseDto`, `AssetMediaCreateDto`. Was `"HH:MM:SS.ffffff"` interval string, now integer **milliseconds**, nullable on `AssetResponseDto`. | A `duration_ms` helper in `routers/utils/asset_conversion.py` emits int ms (null when unknown) for `AssetResponseDto` / `TimeBucketAssetResponseDto`; the interval-string `format_duration` is retained for `SyncAssetV1`, whose `duration` stays a string in v3 (`SyncAssetV2` is the int-ms sync variant — see §5). The `duration` fields live in `routers/immich_models.py`. Affects every asset/timeline/upload response. |
 | **`AlbumResponseDto` restructured** | Removed `assets`, `owner`, `ownerId`. Owner now derived from **`albumUsers[0]`** (now `minItems:1`; documented ordering: owner first, then auth user if different, rest alphabetical). `shared` now required. | Album responses no longer inline assets or owner. Album conversion must populate `albumUsers[0]` as owner and stop emitting `owner`/`ownerId`/`assets`. |
 | **`AssetResponseDto` face/device fields** | Removed `deviceAssetId`, `deviceId`, `unassignedFaces`. `people`: `PersonWithFacesResponseDto` → `PersonResponseDto` (no inline face bounding boxes). | No inline face geometry on assets. Schemas `PersonWithFacesResponseDto` and `AssetFaceWithoutPersonResponseDto` deleted. |
 | **Shared-link tokens removed** | `SharedLinkResponseDto.token` gone; `GET /shared-links/me` lost `password`/`token` query params; `SharedLinkEditDto.changeExpiryTime` gone; `PUT /albums/{id}/assets`, `PUT /shared-links/{id}/assets`, `PUT /albums/assets` lost `key`/`slug` params. | Shared-link / anonymous (key/slug) access model changed — `routers/api/shared_links.py` and key/slug access path need rework. |
-| **`deviceId`/`deviceAssetId` dropped from search/upload DTOs** | `MetadataSearchDto`, `SmartSearchDto`, `RandomSearchDto`, `StatisticsSearchDto`, `AssetMediaCreateDto`. | Device-based dedup/filtering removed across search + upload. |
+| **`deviceId`/`deviceAssetId` dropped from search/upload DTOs** | `MetadataSearchDto`, `SmartSearchDto`, `RandomSearchDto`, `StatisticsSearchDto`, `AssetMediaCreateDto`. | Device-based dedup/filtering removed across search + upload. Upload still synthesizes `device_asset_id`/`device_id` (`GUMNUT_UPLOAD_DEVICE_ID` + a per-upload UUID) because the Gumnut API requires them; dedup is checksum-based. |
 | **Asset replace removed** | `AssetMediaStatus` lost `replaced`; `Permission` lost `asset.replace`; `AssetMediaReplaceDto` deleted. See also removed `PUT /assets/{id}/original` in §3. | |
 | **`LicenseResponseDto`** | Lost `activatedAt`, `activationKey`, `licenseKey`. | Licensing response shape changed. |
 
@@ -117,17 +117,23 @@ mistake it for behavioral change.
 
 ## 3. Removed endpoints (−7)
 
+**Decision (clean cut to 3.0): all dropped from the adapter.** None of these paths
+exist in the v3 spec, so no supported v3 client calls them — the handlers were
+removed rather than kept as shims. (`/plugins/triggers` was never implemented in
+the adapter, so there was nothing to drop.)
+
 - `POST /sync/delta-sync` & `POST /sync/full-sync` — legacy mobile sync gone,
   replaced by Sync v2 over the existing `/sync/stream` (see §5). Schemas
-  `AssetDeltaSyncDto/ResponseDto`, `AssetFullSyncDto` deleted.
-  *(Adapter already marks both deprecated at `routers/api/sync/routes.py:305,373`.)*
-- `POST /assets/exist` — `CheckExistingAssetsDto/ResponseDto` deleted.
-  *(Adapter implements at `routers/api/assets.py:295`.)*
-- `GET /assets/random` — use `POST /search/random`.
-- `GET /assets/device/{deviceId}` — *(adapter `routers/api/assets.py:1062`, already deprecated.)*
-- `PUT /assets/{id}/original` — asset original-file replace removed (only method drop on a retained path).
-- `GET /server/theme` — `ServerThemeDto` deleted.
+  `AssetDeltaSyncDto/ResponseDto`, `AssetFullSyncDto` deleted. **Dropped.**
+- `POST /assets/exist` — `CheckExistingAssetsDto/ResponseDto` deleted. **Dropped.**
+- `GET /assets/random` — use `POST /search/random`. **Dropped.**
+- `GET /assets/device/{deviceId}` — was a deprecated stub. **Dropped.**
+- `PUT /assets/{id}/original` — asset original-file replace removed (only method
+  drop on a retained path; the `GET /assets/{id}/original` download stays). **Dropped.**
+- `GET /server/theme` — `ServerThemeDto` deleted. **Dropped** (also removed from
+  `auth_middleware.py`'s unauthenticated-path set).
 - `GET /plugins/triggers` — replaced by `/plugins/methods` + `/plugins/templates`.
+  **N/A** — never implemented in the adapter.
 
 ---
 
@@ -173,12 +179,23 @@ No new `/sync` paths — `/sync/stream` + `/sync/ack` now carry **V2 variants**:
 
 ### What V2 actually changes
 
-At the payload level, V2 adds almost nothing over V1:
+At the payload level, V2 adds almost nothing over V1 (this list is the canonical
+V2-vs-V1 delta; later sections reference it rather than restate it). Verified
+against the v3.0.0 GA models, not the RC — an earlier draft called `SyncAlbumV2`
+byte-identical, but GA dropped a field:
 
 - `SyncAssetV2` is `SyncAssetV1` with **`duration` as integer-milliseconds**
-  instead of the interval string — the same change as §2. This is the *only*
-  payload difference between any V1 entity and its V2.
-- `SyncAlbumV2` and `SyncAssetFaceV2` are **byte-identical** to their V1 forms.
+  instead of the interval string — the same change as §2. This is the only
+  payload difference for the *asset* entity.
+- `SyncAlbumV2` is `SyncAlbumV1` **minus `ownerId`** (the GA model dropped it);
+  otherwise identical. Consequence: the owner is no longer carried on the album
+  event, so the adapter must emit the owner album-user link on the separate
+  `AlbumUsersV1` stream, or the v3 client filters every album out of its list
+  (its album query inner-joins on an owner-role album-user row). See the
+  "Album Owner Album-User Link" section of the sync-stream-architecture doc.
+- `SyncAssetFaceV2` is `SyncAssetFaceV1` **plus `deletedAt` / `isVisible`**
+  (both constant for the adapter — Gumnut has no face soft-delete or visibility;
+  already handled by the pre-existing faces V2 converter).
 - The `PartnerAsset*V2` and `AlbumAsset*V2` entity types reuse `SyncAssetV2`, so
   they inherit only the int-ms `duration`.
 - `AssetOcrV1` is a genuinely new entity type (OCR text boxes), but the adapter
@@ -204,9 +221,11 @@ logic.
 
 **Conclusion:** Sync v2 is not a long pole. Reporting `3.0.x` and adding the V2
 entity mappings is small work that reuses the §2 int-ms `duration` converter —
-`AlbumV2` is identical to V1, `AssetV2` is the int-duration asset, and
-`AssetOcrV1` emits nothing. The one non-cosmetic V1 tweak to carry over is that
-v3 makes `SyncAssetV1.createdAt` required.
+the per-entity deltas are small (see the "What V2 actually changes" list above),
+`AssetV2` is the int-duration asset, `AlbumV2` drops `ownerId` (re-emitted as the
+owner link on `AlbumUsersV1`), and `AssetOcrV1` emits nothing. The one
+non-cosmetic V1 tweak to carry over is that v3 makes `SyncAssetV1.createdAt`
+required.
 
 ---
 
@@ -249,22 +268,90 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
 
 ## 7. Adapter retarget plan (priority order)
 
-1. **`duration` → integer ms** (`asset_conversion.py`, `models.py`,
+1. **`duration` → integer ms** (`asset_conversion.py`,
    `immich_models.py`) — touches every asset/timeline/upload response.
 2. **`AlbumResponseDto`** — derive owner from `albumUsers[0]`, drop
    `owner`/`ownerId`/inline `assets`.
-3. **Sync v2** — small: report `3.0.x`, add the V2 entity mappings reusing the
-   §2 int-ms `duration` converter (`AlbumV2` == V1; `AssetOcrV1` emits nothing).
-   The V1/V2 dual pattern already exists in `routers/api/sync/`. See §5.
+3. **Sync v2** — report `3.0.x`, add the V2 entity mappings reusing the
+   §2 int-ms `duration` converter (`AlbumV2` is V1 minus `ownerId`, so also emit
+   the owner link on the separate `AlbumUsersV1` stream — see §5; `AssetOcrV1`
+   emits nothing). The V1/V2 dual pattern already exists in `routers/api/sync/`.
 4. **Shared links** — token/key/slug access model rework.
 5. **`AssetResponseDto`** — drop device fields + `unassignedFaces`, switch
    `people` to `PersonResponseDto`.
-6. **Compat decisions** — whether to keep the 7 removed endpoints as shims
-   (several already deprecated in the adapter) and the deprecated PUTs.
+6. **Compat decisions** — resolved: the 7 removed endpoints are **dropped** (clean
+   cut, no shims; see §3). The deprecated-in-place PUTs (§6) stay as-is.
 7. **New feature areas** (HLS streaming, integrity, calendar heatmap,
-   plugins/workflows) — likely stub/skip initially for the adapter.
+   plugins/workflows) — scoped: mostly intentional gaps (unreachable by the v3
+   clients), the calendar-heatmap user endpoint is stubbed, and album map markers
+   will be implemented. See *Immich v3 New Feature Areas — Scope Decisions* in
+   `immich-adapter-gap-analysis.md`.
 
 ---
+
+## Known blockers on the integration branch
+
+`migration/immichv3` is intentionally red until the API-shape work lands.
+Several removed-symbol imports still fail *collection* of some test modules
+independent of any single issue, so the affected per-issue changes are verified
+by inspection plus scoped checks (ruff, a zero-new-errors pyright diff) rather
+than a green suite. Each is its own retarget task:
+
+- **`Action` import** — `tests/unit/api/test_assets.py` imports `Action`, an
+  anonymous enum (values `accept` / `reject`) that the v3 regen removed. Only
+  that test module imports it, so only `test_assets.py` fails on it.
+
+**Resolved — `Error1` import.** `routers/utils/bulk.py` (and `people.py` /
+`albums.py`) imported `Error1`, the removed anonymous bulk-error enum; this
+failed collection of the bulk / people / albums unit test modules that import
+the router layer directly. The enum is now retargeted to its v3 name
+`BulkIdErrorReason` (value-compatible — v3 adds `validation`), so those modules
+collect again.
+
+**Resolved — `APIKey*` imports.** `routers/api/api_keys.py` imported four DTOs
+(`APIKeyCreateDto` / `APIKeyResponseDto` / `APIKeyUpdateDto` /
+`APIKeyCreateResponseDto`) that the v3 regen recased to `ApiKey*`; on the
+app-import path this broke importing the app and failed collection of all seven
+`tests/integration/*` modules. The imports are retargeted to the `ApiKey*`
+casing (`Permission`, also imported there, was unaffected), so the app import
+advances past `api_keys.py` — surfacing the `PartnerResponseDto` blocker
+(resolved next). The recasing leaves one runtime residue: `ApiKeyResponseDto.id`
+was retyped `str` → `UUID`, so the two stub bodies that build a response with a
+literal non-UUID id (`create_api_key`, `get_my_api_key`) now raise
+`ValidationError` when reached — deferred with the rest of the `str` → `UUID`
+residue.
+
+**Resolved — `PartnerResponseDto` email.** `routers/api/partners.py` built a
+module-level `fake_partner` with `email="partner@immich.test"`; the v3 regen
+retyped `email` fields `str` → `EmailStr`, and `email-validator` rejects the
+reserved `.test` TLD, so the DTO failed validation *at import time* — the last
+module-level blocker on the app-import path. Both `.test` literals (partners.py
+and the `users.py` `get_user` stub) are replaced with `example.com` (which
+`EmailStr` accepts, matching the `admin.py` stubs), so `import main` now
+succeeds and the `tests/integration/*` suite collects.
+
+**Resolved — `pattern`-constrained non-`str` fields.** The v3 GA spec annotated
+UUID *and* datetime fields with a string `pattern` alongside their `format`,
+which `datamodel-codegen` copied onto the generated `UUID` / `AwareDatetime`
+fields. Under the pinned pydantic + Python 3.14, *validating a value* for any
+such field raised `TypeError: Unable to apply constraint 'pattern' … for schema
+of type 'uuid'` (and the identical error `for schema of type 'datetime'` on the
+sync/exif DTOs), so every asset/album/user/sync response 500'd and every test
+that built a populated DTO errored at setup. The model generator now strips
+`pattern` from schemas whose `format` maps to a non-string type (`uuid`,
+`date-time`, and — defensively, for future specs — `date` / `time`) before
+codegen, keeping it on genuine string fields, so the DTOs construct normally.
+Dropping the redundant constraint also collapsed eight now-indistinguishable
+`RootModel[UUID]` id wrappers (`AlbumId`, `AssetId`, …) into plain `UUID`; none
+were referenced.
+
+Per-issue tests written while these blockers were open assert on class-level
+metadata rather than building or calling the DTOs: `Model.model_fields` for
+field additions/removals, `inspect.signature(endpoint)` for query-param changes
+(when the router module imports cleanly), and `inspect.getsource` / `ast.parse`
+of the source when the import is blocked. Those assertions remain valid; with
+the `pattern` and `Error1` blockers lifted, the router-layer unit modules import
+and most such tests could now build or call the DTOs directly.
 
 ## Open questions
 
@@ -275,8 +362,13 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
   endpoints and string-`duration` need not stay as shims.
 - ~~Are 3.0 mobile clients hard-requiring Sync v2, or do they fall back to V1
   entity types?~~ **Resolved: incremental, not blocking.** The client picks V1
-  vs V2 by the adapter's reported version, and V2 adds only int-ms `duration`
+  vs V2 by the adapter's reported version, and the V2 payload deltas are small
   (§5). Reporting `3.0.x` needs only a thin V2 layer that reuses the §2 duration
   converter.
-- Which new feature areas (if any) are in scope vs. permanent intentional gaps —
-  see the companion gap analysis in `immich-adapter-gap-analysis.md`.
+- ~~Which new feature areas (if any) are in scope vs. permanent intentional
+  gaps?~~ **Resolved: mostly intentional gaps.** Of the six new areas, four are
+  intentional gaps unreachable by our v3 clients (HLS streaming, integrity checks,
+  OAuth backchannel logout, plugins/workflows), the calendar-heatmap user endpoint
+  is stubbed, and album map markers will be implemented. See *Immich v3 New
+  Feature Areas — Scope Decisions* in `immich-adapter-gap-analysis.md` for the
+  per-area reachability analysis and stub shapes.

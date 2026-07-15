@@ -1,13 +1,16 @@
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, Response
+from datetime import datetime, timedelta, timezone
+from fastapi import APIRouter, Depends, Query, Response
 from gumnut import AsyncGumnut
 from uuid import UUID, uuid4
 from typing import List
 import logging
 
+from routers.api.constants import STUB_LICENSE_KEY
 from routers.immich_models import (
     AlbumsResponse,
     AssetOrder,
+    CalendarHeatmapResponseDto,
+    CalendarHeatmapType,
     CastResponse,
     CreateProfileImageDto,
     CreateProfileImageResponseDto,
@@ -93,7 +96,7 @@ async def update_my_user(
     quota = map_user_quota(user)
 
     return UserAdminResponseDto(
-        id=str(user_uuid),
+        id=user_uuid,
         email=user.email or "",
         name=full_name,
         isAdmin=True,
@@ -112,7 +115,7 @@ async def update_my_user(
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey=str(uuid4()),
-            licenseKey="/IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA/",
+            licenseKey=STUB_LICENSE_KEY,
         ),
     )
 
@@ -124,9 +127,11 @@ async def get_user_license() -> LicenseResponseDto:
     This is a stub implementation that returns fake license data.
     """
     return LicenseResponseDto(
-        licenseKey="/IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA/",
-        activationKey=str(uuid4()),
-        activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+        root=UserLicense(
+            licenseKey=STUB_LICENSE_KEY,
+            activationKey=str(uuid4()),
+            activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+        )
     )
 
 
@@ -137,9 +142,11 @@ async def set_user_license(request: LicenseKeyDto) -> LicenseResponseDto:
     This is a stub implementation that returns fake license data.
     """
     return LicenseResponseDto(
-        licenseKey=request.licenseKey,
-        activationKey=request.activationKey,
-        activatedAt=datetime.now(timezone.utc),
+        root=UserLicense(
+            licenseKey=request.licenseKey,
+            activationKey=request.activationKey,
+            activatedAt=datetime.now(timezone.utc),
+        )
     )
 
 
@@ -199,6 +206,37 @@ async def update_my_preferences(
     return userPreferencesResponse
 
 
+@router.get("/me/calendar-heatmap")
+async def get_my_calendar_heatmap(
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None),
+    type: CalendarHeatmapType = Query(default=CalendarHeatmapType.Upload),
+) -> CalendarHeatmapResponseDto:
+    """Return an empty activity calendar heatmap.
+
+    The Immich web "usage stats" panel — a manually expanded, desktop-only
+    accordion in user settings — fetches this. The Gumnut API exposes asset
+    counts grouped by month/capture-time only, not the per-day upload-date
+    granularity a heatmap needs, so a faithful implementation would require
+    backend day-bucketing. Returning an empty series renders a clean empty grid
+    and avoids the client-side error the panel logs on a 404. The requested
+    window is echoed back (falling back to a ~1-year default) so the client's
+    date parsing stays valid; `type` is accepted for wire compatibility and
+    ignored.
+    """
+    today = datetime.now(tz=timezone.utc).date()
+    resolved_to = to or today.isoformat()
+    resolved_from = from_ or (today - timedelta(days=364)).isoformat()
+    return CalendarHeatmapResponseDto.model_validate(
+        {
+            "from": resolved_from,
+            "to": resolved_to,
+            "series": [],
+            "totalCount": 0,
+        }
+    )
+
+
 @router.post(
     "/profile-image",
     status_code=201,
@@ -223,7 +261,7 @@ async def create_profile_image(
     return CreateProfileImageResponseDto(
         profileChangedAt=datetime.now(tz=timezone.utc),
         profileImagePath="path/to/new/profile/image.jpg",
-        userId=str(current_user_id),
+        userId=current_user_id,
     )
 
 
@@ -244,8 +282,8 @@ async def get_user(id: UUID) -> UserResponseDto:
     """
     return UserResponseDto(
         avatarColor=UserAvatarColor.primary,
-        email="user@immich.test",
-        id=str(id),
+        email="user@example.com",
+        id=id,
         name="User",
         profileChangedAt=datetime.now(tz=timezone.utc),
         profileImagePath="",

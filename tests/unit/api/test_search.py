@@ -81,7 +81,7 @@ class TestSearchPerson:
 
         assert len(result) == 1
         assert result[0].name == "Calvin"
-        assert result[0].id == str(safe_uuid_from_person_id(person_id))
+        assert result[0].id == safe_uuid_from_person_id(person_id)
         mock_client.people.list.assert_called_once_with(name="Calvin")
 
     @pytest.mark.anyio
@@ -384,7 +384,7 @@ class TestSearchMetadata:
 
         assert result.assets.count == 1
         assert len(result.assets.items) == 1
-        assert result.assets.items[0].id == str(asset_uuid)
+        assert result.assets.items[0].id == asset_uuid
         assert result.assets.items[0].originalFileName == "sunset.jpg"
 
     @pytest.mark.anyio
@@ -557,9 +557,7 @@ class TestSearchExplore:
         assert len(city_group.items) == 1
         assert city_group.items[0].value == "Sydney"
         # The representative is the newest (first-scanned) image for the city.
-        assert city_group.items[0].data.id == str(
-            safe_uuid_from_asset_id(city_assets[0].id)
-        )
+        assert city_group.items[0].data.id == safe_uuid_from_asset_id(city_assets[0].id)
         assert len(recents_group.items) == 6
         # The scan is metadata-only; the batched re-fetch carries the full
         # include set the conversion needs.
@@ -714,7 +712,7 @@ class TestSearchExplore:
         recents_group = result[1]
         # Only the first two scanned assets made it into recents.
         assert [item.data.id for item in recents_group.items] == [
-            str(safe_uuid_from_asset_id(a.id)) for a in full_assets[:2]
+            safe_uuid_from_asset_id(a.id) for a in full_assets[:2]
         ]
 
     @pytest.mark.anyio
@@ -742,7 +740,7 @@ class TestSearchExplore:
 
         recents_group = result[1]
         assert [item.data.id for item in recents_group.items] == [
-            str(safe_uuid_from_asset_id(a.id)) for a in full_assets[:2]
+            safe_uuid_from_asset_id(a.id) for a in full_assets[:2]
         ]
 
     @pytest.mark.anyio
@@ -832,7 +830,7 @@ class TestSearchRandom:
         for request in (
             RandomSearchDto(takenAfter=datetime(2024, 1, 1, tzinfo=timezone.utc)),
             RandomSearchDto(city="Sydney"),
-            RandomSearchDto(rating=0),
+            RandomSearchDto(rating=1),
             RandomSearchDto(isMotion=True),
             RandomSearchDto(tagIds=[uuid4()]),
         ):
@@ -860,9 +858,7 @@ class TestSearchRandom:
             current_user=mock_current_user,
         )
 
-        assert [asset.id for asset in result] == [
-            str(safe_uuid_from_asset_id(image.id))
-        ]
+        assert [asset.id for asset in result] == [safe_uuid_from_asset_id(image.id)]
 
     @pytest.mark.anyio
     async def test_type_filter_with_no_matches_returns_empty(
@@ -906,7 +902,6 @@ class TestSearchRandom:
             "trashedBefore",
             "updatedAfter",
             "updatedBefore",
-            "deviceId",
             "lensModel",
             "libraryId",
             "make",
@@ -997,7 +992,7 @@ class TestSearchRandom:
         )
 
         expected_uuids = {
-            str(safe_uuid_from_asset_id(a.id)) for a in feb_assets + jan_assets
+            safe_uuid_from_asset_id(a.id) for a in feb_assets + jan_assets
         }
         assert {asset.id for asset in result} == expected_uuids
 
@@ -1046,7 +1041,7 @@ class TestSearchRandom:
         )
 
         assert len(result) == 2
-        all_uuids = {str(safe_uuid_from_asset_id(a.id)) for a in jan_assets}
+        all_uuids = {safe_uuid_from_asset_id(a.id) for a in jan_assets}
         assert {asset.id for asset in result} <= all_uuids
         assert len({asset.id for asset in result}) == 2
 
@@ -1145,7 +1140,7 @@ class TestSearchRandom:
             current_user=mock_current_user,
         )
 
-        expected_uuids = {str(safe_uuid_from_asset_id(a.id)) for a in jan_assets}
+        expected_uuids = {safe_uuid_from_asset_id(a.id) for a in jan_assets}
         assert {asset.id for asset in result} == expected_uuids
 
     @pytest.mark.anyio
@@ -1184,8 +1179,8 @@ class TestSearchRandom:
         )
 
         expected_uuids = {
-            str(safe_uuid_from_asset_id(feb_assets[1].id)),
-            str(safe_uuid_from_asset_id(jan_assets[0].id)),
+            safe_uuid_from_asset_id(feb_assets[1].id),
+            safe_uuid_from_asset_id(jan_assets[0].id),
         }
         assert {asset.id for asset in result} == expected_uuids
 

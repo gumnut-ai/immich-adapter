@@ -1,5 +1,6 @@
 """Tests for datetime conversion functions."""
 
+from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
@@ -11,6 +12,8 @@ from routers.utils.datetime_utils import (
 )
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 from tests.unit.api.sync.conftest import TEST_UUID
+
+OWNER_UUID = UUID("22222222-2222-2222-2222-222222222222")
 
 
 class TestToImmichLocalDatetime:
@@ -266,6 +269,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         local_datetime: datetime,
         file_created_at: datetime,
         file_modified_at: datetime,
+        created_at: datetime | None = None,
     ) -> Mock:
         """Create a mock asset with the given dates."""
         asset = Mock()
@@ -273,6 +277,9 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset.mime_type = "image/jpeg"
         asset.original_file_name = "test.jpg"
         asset.local_datetime = local_datetime
+        # SyncAssetV1.createdAt is required in Immich v3 and validated as an
+        # aware datetime — a bare Mock attribute would fail validation.
+        asset.created_at = created_at if created_at is not None else file_created_at
         # File/provenance scalars live on the nested ``file_data`` group
         # (requested via ``include=file_data``); the adapter reads them from there.
         asset.file_data = Mock()
@@ -307,13 +314,32 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset = self._create_mock_asset(
             local_datetime, file_created_at, file_modified_at
         )
-        result = gumnut_asset_to_sync_asset_v1(asset, "owner-uuid")
+        result = gumnut_asset_to_sync_asset_v1(asset, OWNER_UUID)
 
         # fileCreatedAt should be 2020-05-15 (EXIF date), not 2024-12-01 (file date)
         assert result.fileCreatedAt is not None
         assert result.fileCreatedAt.year == 2020
         assert result.fileCreatedAt.month == 5
         assert result.fileCreatedAt.day == 15
+
+    def test_created_at_maps_from_asset_created_at(self):
+        """createdAt must come from the asset's own created_at.
+
+        Every other datetime in the fixture is distinct, so an accidental
+        mapping from file_created_at / file_modified_at / local_datetime
+        would fail this assertion rather than aliasing to the same value.
+        """
+        local_datetime = datetime(2020, 5, 15, 10, 30, 0, tzinfo=timezone.utc)
+        file_created_at = datetime(2024, 12, 1, 14, 0, 0, tzinfo=timezone.utc)
+        file_modified_at = datetime(2024, 12, 2, 9, 0, 0, tzinfo=timezone.utc)
+        created_at = datetime(2023, 3, 7, 8, 15, 0, tzinfo=timezone.utc)
+
+        asset = self._create_mock_asset(
+            local_datetime, file_created_at, file_modified_at, created_at=created_at
+        )
+        result = gumnut_asset_to_sync_asset_v1(asset, OWNER_UUID)
+
+        assert result.createdAt == created_at
 
     def test_local_datetime_uses_keep_local_time_format(self):
         """localDateTime should use Immich's "keepLocalTime" format.
@@ -330,7 +356,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset = self._create_mock_asset(
             local_datetime, file_created_at, file_modified_at
         )
-        result = gumnut_asset_to_sync_asset_v1(asset, "owner-uuid")
+        result = gumnut_asset_to_sync_asset_v1(asset, OWNER_UUID)
 
         # localDateTime should be 10:30:00 UTC (keepLocalTime - preserves 10:30)
         assert result.localDateTime is not None
@@ -356,7 +382,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset = self._create_mock_asset(
             local_datetime, file_created_at, file_modified_at
         )
-        result = gumnut_asset_to_sync_asset_v1(asset, "owner-uuid")
+        result = gumnut_asset_to_sync_asset_v1(asset, OWNER_UUID)
 
         # fileCreatedAt should be 18:30:00 UTC (actual UTC conversion)
         assert result.fileCreatedAt is not None
@@ -380,7 +406,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset = self._create_mock_asset(
             local_datetime, file_created_at, file_modified_at
         )
-        result = gumnut_asset_to_sync_asset_v1(asset, "owner-uuid")
+        result = gumnut_asset_to_sync_asset_v1(asset, OWNER_UUID)
 
         # localDateTime: 15:00 UTC (keepLocalTime - preserves the 3 PM)
         assert result.localDateTime is not None
@@ -403,7 +429,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset = self._create_mock_asset(
             local_datetime, file_created_at, file_modified_at
         )
-        result = gumnut_asset_to_sync_asset_v1(asset, "owner-uuid")
+        result = gumnut_asset_to_sync_asset_v1(asset, OWNER_UUID)
 
         # fileModifiedAt should be the same as input
         assert result.fileModifiedAt == file_modified_at

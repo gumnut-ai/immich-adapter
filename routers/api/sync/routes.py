@@ -1,8 +1,9 @@
 """
 Immich sync endpoints for mobile client synchronization.
 
-This module implements the Immich sync protocol, providing both streaming sync
-(for beta timeline mode) and full/delta sync (for legacy timeline mode).
+This module implements the Immich sync protocol via streaming sync. The legacy
+full/delta sync endpoints were removed in Immich v3 — Sync v2 supersedes them
+over the existing /sync/stream.
 
 The streaming sync uses the Gumnut API v2 events endpoint (/api/v2/events) to
 fetch lightweight event records, then batch-fetches full entities as needed.
@@ -25,19 +26,12 @@ from services.checkpoint_store import (
 from services.session_store import SessionStore, get_session_store
 
 from routers.immich_models import (
-    AssetDeltaSyncDto,
-    AssetDeltaSyncResponseDto,
-    AssetFullSyncDto,
-    AssetResponseDto,
     SyncAckDeleteDto,
     SyncAckDto,
     SyncAckSetDto,
     SyncEntityType,
     SyncStreamDto,
-    UserResponseDto,
 )
-from routers.utils.asset_conversion import ASSET_INCLUDE, convert_gumnut_asset_to_immich
-from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 
 from routers.api.sync.events import to_ack_string
@@ -300,134 +294,6 @@ async def delete_sync_ack(
         )
     # else: empty list - do nothing (no-op)
     return
-
-
-@router.post("/delta-sync", deprecated=True)
-async def get_delta_sync(
-    request: AssetDeltaSyncDto,
-    gumnut_client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-    current_user: UserResponseDto = Depends(get_current_user),
-) -> AssetDeltaSyncResponseDto:
-    """
-    Get delta sync data - returns assets modified after a specific timestamp.
-
-    Note: This implementation fetches all assets and filters in-memory,
-    which is inefficient for large libraries.
-    """
-    try:
-        logger.info(f"Delta sync requested for timestamp: {request.updatedAfter}")
-
-        upserted_assets = []
-        page_size = 100
-        starting_after_id = None
-
-        # Paginate through all assets using cursor-based pagination
-        while True:
-            # Fetch a page of assets
-            assets_page = await gumnut_client.assets.list(
-                limit=page_size,
-                starting_after_id=starting_after_id,
-                include=ASSET_INCLUDE,
-            )
-
-            page_assets = assets_page.data
-            if not page_assets:
-                break
-
-            # Filter and convert assets from this page
-            for asset in page_assets:
-                if asset.updated_at and asset.updated_at > request.updatedAfter:
-                    asset_dto = convert_gumnut_asset_to_immich(asset, current_user)
-                    upserted_assets.append(asset_dto)
-
-            # Check if there are more pages
-            if not assets_page.has_more:
-                break
-
-            # Update cursor for next page
-            starting_after_id = page_assets[-1].id
-
-        logger.info(
-            f"Delta sync found {len(upserted_assets)} updated assets",
-            extra={"asset_count": len(upserted_assets)},
-        )
-
-        # Note: Deletion tracking not supported by Gumnut
-        deleted_asset_ids = []
-
-        return AssetDeltaSyncResponseDto(
-            deleted=deleted_asset_ids,
-            needsFullSync=False,
-            upserted=upserted_assets,
-        )
-
-    except Exception as e:
-        logger.error(f"Error during delta sync: {str(e)}", exc_info=True)
-        return AssetDeltaSyncResponseDto(
-            deleted=[],
-            needsFullSync=True,
-            upserted=[],
-        )
-
-
-@router.post("/full-sync", deprecated=True)
-async def get_full_sync_for_user(
-    request: AssetFullSyncDto,
-    gumnut_client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-    current_user: UserResponseDto = Depends(get_current_user),
-) -> List[AssetResponseDto]:
-    """
-    Get paginated list of assets for full sync (legacy timeline mode).
-
-    Supports cursor-based pagination using lastId parameter.
-    """
-    try:
-        logger.info(
-            "Full sync requested",
-            extra={
-                "limit": request.limit,
-                "lastId": request.lastId,
-                "updatedUntil": request.updatedUntil,
-                "userId": request.userId,
-            },
-        )
-
-        assets = []
-        skip_until_cursor = request.lastId is not None
-
-        async for asset in gumnut_client.assets.list(include=ASSET_INCLUDE):
-            # Skip until we find the cursor asset
-            if skip_until_cursor:
-                if asset.id == request.lastId:
-                    skip_until_cursor = False
-                    continue
-                continue
-
-            # Apply updatedUntil filter
-            if request.updatedUntil and asset.updated_at:
-                if asset.updated_at > request.updatedUntil:
-                    continue
-
-            asset_dto = convert_gumnut_asset_to_immich(asset, current_user)
-            assets.append(asset_dto)
-
-            if len(assets) >= request.limit:
-                break
-
-        logger.info(
-            "Full sync completed",
-            extra={
-                "asset_count": len(assets),
-                "limit": request.limit,
-                "has_more": len(assets) >= request.limit,
-            },
-        )
-
-        return assets
-
-    except Exception as e:
-        logger.error(f"Error during full sync: {str(e)}", exc_info=True)
-        return []
 
 
 @router.post("/stream")

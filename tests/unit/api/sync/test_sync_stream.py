@@ -1,6 +1,7 @@
 """Tests for sync stream generation, endpoint, reset, and pagination."""
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, Mock, call
@@ -9,6 +10,7 @@ from uuid import UUID
 import pytest
 
 from routers.api.sync.routes import get_sync_stream
+from routers.api.sync.converters import gumnut_album_to_sync_album_user_v1
 from routers.api.sync.fk_integrity import SyncStreamStats
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
@@ -16,7 +18,12 @@ from routers.api.sync.stream import (
     generate_reset_stream,
     generate_sync_stream,
 )
-from routers.immich_models import SyncEntityType, SyncRequestType, SyncStreamDto
+from routers.immich_models import (
+    AlbumUserRole,
+    SyncEntityType,
+    SyncRequestType,
+    SyncStreamDto,
+)
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
@@ -365,6 +372,105 @@ class TestGenerateSyncStream:
         assert events[1]["type"] == "SyncCompleteV1"
 
     @pytest.mark.anyio
+    async def test_streams_owner_album_user_for_albums_v2(self):
+        """The v3 client (AlbumsV2 + AlbumUsersV1) gets an owner AlbumUserV1 link.
+
+        SyncAlbumV2 dropped ownerId, so the mobile album-list query inner-joins
+        on an owner-role album-user row. Without it, albums sync into the DB but
+        never display. The adapter derives that owner link from the same album
+        events, streamed after the album itself (FK parent ordering).
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        album_data = create_mock_album_data(updated_at)
+        mock_event = create_mock_event(
+            entity_type="album",
+            entity_id=album_data.id,
+            event_type="album_created",
+            created_at=updated_at,
+            cursor="cursor_album_1",
+        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
+        mock_client.albums.list.return_value = create_mock_entity_page([album_data])
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.AlbumsV2, SyncRequestType.AlbumUsersV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        types = [e["type"] for e in events]
+        # Album parent must precede its owner album-user link (FK ordering).
+        assert types == ["AlbumV2", "AlbumUserV1", "SyncCompleteV1"]
+
+        album_user = events[1]["data"]
+        assert album_user["albumId"] == str(TEST_UUID)
+        assert album_user["userId"] == str(TEST_UUID)  # single-user: owner == user
+        assert album_user["role"] == "owner"
+
+    @pytest.mark.anyio
+    async def test_album_users_v1_skips_album_delete_events(self):
+        """The AlbumUserV1 pass must not re-emit album deletes.
+
+        album_deleted is owned by the AlbumsV2 pass (→ AlbumDeleteV1); the
+        client's album-user FK cascades on album deletion, so the derived
+        album-user pass skips deletes to avoid a duplicate AlbumDeleteV1.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        album_id = uuid_to_gumnut_album_id(TEST_UUID)
+        delete_event = create_mock_event(
+            entity_type="album",
+            entity_id=album_id,
+            event_type="album_deleted",
+            created_at=updated_at,
+            cursor="cursor_album_del_1",
+        )
+        mock_client.events.get.return_value = create_mock_events_response(
+            [delete_event]
+        )
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.AlbumsV2, SyncRequestType.AlbumUsersV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        types = [e["type"] for e in events]
+        # Exactly one AlbumDeleteV1 (from the album pass), not two.
+        assert types.count("AlbumDeleteV1") == 1
+        assert "AlbumUserDeleteV1" not in types
+        assert types[-1] == "SyncCompleteV1"
+
+    def test_album_user_converter_maps_album_and_owner_distinctly(self):
+        """The converter maps albumId and userId to distinct sources.
+
+        The stream-level test above uses the single-user TEST_UUID for both the
+        album id and the owner id, so it can't tell albumId apart from userId —
+        a converter that swapped the two fields would still pass it. This pins
+        them to distinct sources (album.id vs. owner_id) so a swap is caught.
+        """
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        album = create_mock_album_data(updated_at)  # album.id derives from TEST_UUID
+        owner_id = UUID("11111111-1111-1111-1111-111111111111")  # distinct from album
+
+        album_user = gumnut_album_to_sync_album_user_v1(album, owner_id)
+
+        assert album_user.albumId == TEST_UUID  # from album.id, not owner_id
+        assert album_user.userId == owner_id  # from owner_id, not album.id
+        assert album_user.role == AlbumUserRole.owner
+
+    @pytest.mark.anyio
     async def test_streams_metadata_when_requested(self):
         """Metadata is streamed (as AssetExifV1) when AssetExifsV1 is requested."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
@@ -464,6 +570,126 @@ class TestGenerateSyncStream:
         assert events[0]["type"] == "AssetFaceV1"
         assert "boundingBoxX1" in events[0]["data"]
         assert events[1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_streams_user_metadata_preferences_with_min_faces(self):
+        """UserMetadataV1 emits a synthesized preferences row with minimumFaces=1
+        so people with 1-2 faces still appear in the client's People tab."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(types=[SyncRequestType.UserMetadataV1])
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        assert len(events) == 2
+        assert events[0]["type"] == "UserMetadataV1"
+        data = events[0]["data"]
+        assert data["key"] == "preferences"
+        assert data["userId"] == str(TEST_UUID)  # owner == user, FK parent
+        assert data["value"]["people"]["minimumFaces"] == 1
+        # Cursor is the user's updated_at, same as UserV1.
+        assert events[0]["ack"] == f"UserMetadataV1|{updated_at.isoformat()}|"
+        assert events[1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_user_metadata_skipped_when_checkpoint_matches(self):
+        """The preferences row is not re-emitted once the client has acked the
+        current user cursor (unchanged user record)."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(types=[SyncRequestType.UserMetadataV1])
+        checkpoint = Checkpoint(
+            entity_type=SyncEntityType.UserMetadataV1,
+            updated_at=updated_at,
+            cursor=updated_at.isoformat(),
+        )
+        checkpoint_map = {SyncEntityType.UserMetadataV1: checkpoint}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["SyncCompleteV1"]
+
+    @pytest.mark.anyio
+    async def test_user_metadata_reemitted_when_user_changed(self):
+        """A client acked under an older user cursor gets the preferences row
+        re-emitted when the user record changes — same delta semantics as UserV1."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(types=[SyncRequestType.UserMetadataV1])
+        checkpoint = Checkpoint(
+            entity_type=SyncEntityType.UserMetadataV1,
+            updated_at=updated_at,
+            cursor="2020-01-01T00:00:00+00:00",  # acked under an older user cursor
+        )
+        checkpoint_map = {SyncEntityType.UserMetadataV1: checkpoint}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["UserMetadataV1", "SyncCompleteV1"]
+        assert events[0]["ack"] == f"UserMetadataV1|{updated_at.isoformat()}|"
+
+    @pytest.mark.anyio
+    async def test_streams_user_then_user_metadata_in_fk_order(self):
+        """When both are requested, UserV1 is emitted before UserMetadataV1 so the
+        userId FK parent exists on the client first; a reorder regression fails here."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.UsersV1, SyncRequestType.UserMetadataV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        types = [e["type"] for e in events]
+        assert types == ["UserV1", "UserMetadataV1", "SyncCompleteV1"]
+
+    @pytest.mark.anyio
+    async def test_noop_request_types_emit_nothing_without_unsupported_log(
+        self, caplog
+    ):
+        """Requested-but-no-op v3 types stream nothing (just SyncCompleteV1) and do
+        not trip the 'unsupported types' log — the point of _NOOP_REQUEST_TYPES."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(
+            types=[
+                SyncRequestType.MemoriesV1,
+                SyncRequestType.StacksV1,
+                SyncRequestType.PartnersV1,
+                SyncRequestType.AssetMetadataV1,
+            ]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        with caplog.at_level(logging.INFO, logger="routers.api.sync.stream"):
+            events = await collect_stream(
+                generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+            )
+
+        assert [e["type"] for e in events] == ["SyncCompleteV1"]
+        assert not any(
+            "unsupported sync types" in record.message for record in caplog.records
+        )
 
     @pytest.mark.anyio
     async def test_streams_album_assets_when_requested(self):
@@ -984,7 +1210,7 @@ class TestStreamEntityTypePagination:
             gumnut_client=mock_client,
             gumnut_entity_type="asset",
             sync_entity_type=SyncEntityType.AssetV1,
-            owner_id=str(TEST_UUID),
+            owner_id=TEST_UUID,
             checkpoint=checkpoint,
             sync_started_at=sync_started_at,
             stats=SyncStreamStats(),
@@ -1014,7 +1240,7 @@ class TestStreamEntityTypePagination:
             gumnut_client=mock_client,
             gumnut_entity_type="asset",
             sync_entity_type=SyncEntityType.AssetV1,
-            owner_id=str(TEST_UUID),
+            owner_id=TEST_UUID,
             checkpoint=None,
             sync_started_at=sync_started_at,
             stats=SyncStreamStats(),
@@ -1099,7 +1325,7 @@ class TestStreamEntityTypePagination:
             gumnut_client=mock_client,
             gumnut_entity_type="asset",
             sync_entity_type=SyncEntityType.AssetV1,
-            owner_id=str(TEST_UUID),
+            owner_id=TEST_UUID,
             checkpoint=None,
             sync_started_at=sync_started_at,
             stats=SyncStreamStats(),
@@ -1167,7 +1393,7 @@ class TestStreamEntityTypePagination:
             gumnut_client=mock_client,
             gumnut_entity_type="asset",
             sync_entity_type=SyncEntityType.AssetV1,
-            owner_id=str(TEST_UUID),
+            owner_id=TEST_UUID,
             checkpoint=None,
             sync_started_at=sync_started_at,
             stats=SyncStreamStats(),

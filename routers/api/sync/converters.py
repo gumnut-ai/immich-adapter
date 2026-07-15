@@ -4,6 +4,8 @@ Converter functions mapping Gumnut SDK types to Immich sync models.
 Pure functions with no internal dependencies.
 """
 
+from uuid import UUID
+
 from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
@@ -12,19 +14,26 @@ from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
 
 from routers.immich_models import (
+    AlbumUserRole,
     AssetOrder,
     AssetVisibility,
     SyncAlbumToAssetV1,
+    SyncAlbumUserV1,
     SyncAlbumV1,
+    SyncAlbumV2,
     SyncAssetExifV1,
     SyncAssetFaceV1,
     SyncAssetFaceV2,
     SyncAssetV1,
+    SyncAssetV2,
     SyncAuthUserV1,
     SyncPersonV1,
+    SyncUserMetadataV1,
     SyncUserV1,
+    UserMetadataKey,
 )
 from routers.utils.asset_conversion import (
+    duration_ms,
     exif_dims_and_orientation,
     format_duration,
     mime_type_to_asset_type,
@@ -82,7 +91,7 @@ def gumnut_user_to_sync_auth_user_v1(user: UserResponse) -> SyncAuthUserV1:
     quota = map_user_quota(user)
 
     return SyncAuthUserV1(
-        id=str(safe_uuid_from_user_id(user.id)),
+        id=safe_uuid_from_user_id(user.id),
         email=user.email or "",
         name=full_name,
         hasProfileImage=False,
@@ -117,7 +126,7 @@ def gumnut_user_to_sync_user_v1(user: UserResponse) -> SyncUserV1:
     full_name = " ".join(name_parts) if name_parts else user.email or "Unknown User"
 
     return SyncUserV1(
-        id=str(safe_uuid_from_user_id(user.id)),
+        id=safe_uuid_from_user_id(user.id),
         email=user.email or "",
         name=full_name,
         hasProfileImage=False,
@@ -127,7 +136,41 @@ def gumnut_user_to_sync_user_v1(user: UserResponse) -> SyncUserV1:
     )
 
 
-def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAssetV1:
+def gumnut_user_to_sync_user_metadata_v1(owner_id: UUID) -> SyncUserMetadataV1:
+    """Synthesize a UserMetadata *preferences* row.
+
+    Gumnut has no per-user preferences, but the v3 mobile client reads the
+    ``people.minimumFaces`` threshold from this stream to decide which people
+    appear in the People tab — defaulting to 3 when absent, which would hide
+    Gumnut clusters of 1–2 faces. We emit ``minimumFaces=1`` so every person
+    with at least one face is shown; all other fields mirror the client's own
+    defaults.
+
+    ``value`` is the server's nested ``UserPreferences`` JSON shape, which the
+    client parses via ``Preferences.fromMap`` (reads
+    ``value["people"]["minimumFaces"]`` etc.) and stores verbatim.
+    ``Preferences.fromMap`` reads every section null-safely and falls back to its
+    own default for anything absent, so ``people.minimumFaces`` is the only
+    load-bearing field here. The other sections each restate the client's own
+    default and are included solely to mirror the full canonical shape a real
+    Immich server emits — none of them are required by ``Preferences.fromMap``.
+    """
+    return SyncUserMetadataV1(
+        key=UserMetadataKey.preferences,
+        userId=owner_id,
+        value={
+            "folders": {"enabled": False},
+            "memories": {"enabled": True},
+            "people": {"enabled": True, "minimumFaces": 1},
+            "ratings": {"enabled": False},
+            "sharedLinks": {"enabled": True},
+            "tags": {"enabled": False},
+            "purchase": {"showSupportBadge": True},
+        },
+    )
+
+
+def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: UUID) -> SyncAssetV1:
     """
     Convert Gumnut AssetResponse to Immich SyncAssetV1 format.
 
@@ -146,8 +189,10 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
     localDateTime = resolve_local_date_time(asset)
 
     return SyncAssetV1(
-        id=str(safe_uuid_from_asset_id(asset.id)),
+        id=safe_uuid_from_asset_id(asset.id),
         checksum=resolve_immich_checksum(asset),
+        # "Uploaded to Immich at" — required on SyncAssetV1 in Immich v3.
+        createdAt=asset.created_at,
         isFavorite=False,  # Gumnut doesn't track favorites
         isEdited=False,
         originalFileName=asset.original_file_name,
@@ -167,6 +212,18 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: str) -> SyncAs
         thumbhash=asset.thumbhash,
         width=asset.width if asset.width else None,
     )
+
+
+def gumnut_asset_to_sync_asset_v2(asset: AssetResponse, owner_id: UUID) -> SyncAssetV2:
+    """Convert Gumnut AssetResponse to Immich SyncAssetV2 format.
+
+    SyncAssetV2 is SyncAssetV1 with ``duration`` as integer milliseconds instead
+    of the interval string — the only payload difference between the two (see the
+    ``immich-v3-api-changes.md`` design doc, §5). Delegate to V1 and swap it.
+    """
+    fields = gumnut_asset_to_sync_asset_v1(asset, owner_id).model_dump()
+    fields["duration"] = duration_ms(asset.duration)
+    return SyncAssetV2(**fields)
 
 
 def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
@@ -198,7 +255,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
     file_size = asset.file_data.file_size_bytes if asset.file_data else None
 
     return SyncAssetExifV1(
-        assetId=str(safe_uuid_from_asset_id(metadata.asset_id)),
+        assetId=safe_uuid_from_asset_id(metadata.asset_id),
         city=metadata.city,
         country=metadata.country,
         dateTimeOriginal=original_datetime,
@@ -229,7 +286,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
 
 
 def gumnut_person_to_sync_person_v1(
-    person: PersonResponse, owner_id: str
+    person: PersonResponse, owner_id: UUID
 ) -> SyncPersonV1:
     """
     Convert Gumnut PersonResponse to Immich SyncPersonV1 format.
@@ -242,7 +299,7 @@ def gumnut_person_to_sync_person_v1(
         SyncPersonV1 for sync stream
     """
     return SyncPersonV1(
-        id=str(safe_uuid_from_person_id(person.id)),
+        id=safe_uuid_from_person_id(person.id),
         createdAt=person.created_at,
         isFavorite=person.is_favorite,
         isHidden=person.is_hidden,
@@ -255,14 +312,14 @@ def gumnut_person_to_sync_person_v1(
     )
 
 
-def gumnut_album_to_sync_album_v1(album: AlbumResponse, owner_id: str) -> SyncAlbumV1:
+def gumnut_album_to_sync_album_v1(album: AlbumResponse, owner_id: UUID) -> SyncAlbumV1:
     """Convert Gumnut AlbumResponse to Immich SyncAlbumV1 format."""
     thumbnail_asset_id = None
     if album.album_cover_asset_id:
         thumbnail_asset_id = str(safe_uuid_from_asset_id(album.album_cover_asset_id))
 
     return SyncAlbumV1(
-        id=str(safe_uuid_from_album_id(album.id)),
+        id=safe_uuid_from_album_id(album.id),
         ownerId=owner_id,
         name=album.name,
         description=album.description or "",
@@ -274,8 +331,47 @@ def gumnut_album_to_sync_album_v1(album: AlbumResponse, owner_id: str) -> SyncAl
     )
 
 
+def gumnut_album_to_sync_album_v2(album: AlbumResponse, owner_id: UUID) -> SyncAlbumV2:
+    """Convert Gumnut AlbumResponse to Immich SyncAlbumV2 format.
+
+    In the Immich v3 GA model SyncAlbumV2 is SyncAlbumV1 without ``ownerId``
+    (see the ``immich-v3-api-changes.md`` design doc, §5). Delegate to V1 and
+    drop the field V2 no longer carries.
+    """
+    fields = gumnut_album_to_sync_album_v1(album, owner_id).model_dump()
+    fields.pop("ownerId", None)
+    return SyncAlbumV2(**fields)
+
+
+def gumnut_album_to_sync_album_user_v1(
+    album: AlbumResponse, owner_id: UUID
+) -> SyncAlbumUserV1:
+    """Synthesize the owner album-user link for an album.
+
+    Immich v3's ``SyncAlbumV2`` dropped ``ownerId`` (see the
+    ``immich-v3-api-changes.md`` design doc, §5), so the v3 mobile client no
+    longer derives the owner from the album event itself. It instead builds the
+    album↔owner relationship from the separate ``AlbumUsersV1`` stream, and its
+    album-list query inner-joins on an owner-role album-user row — without one,
+    every album is filtered out of the list and never displayed. Gumnut is
+    single-user with no album sharing, so each album has exactly one album-user:
+    the owner.
+    """
+    return SyncAlbumUserV1(
+        albumId=safe_uuid_from_album_id(album.id),
+        userId=owner_id,
+        role=AlbumUserRole.owner,
+    )
+
+
 def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
-    """Convert Gumnut FaceResponse to Immich SyncAssetFaceV1 format."""
+    """Convert Gumnut FaceResponse to Immich SyncAssetFaceV1 format.
+
+    ``imageWidth``/``imageHeight`` are emitted as 0: the v3 mobile client stores
+    them but has no read path (face/person thumbnails are served from a server
+    URL, and there is no local bounding-box overlay). Emit real dimensions only
+    when a client consumer actually reads them.
+    """
     bounding_box = face.bounding_box
 
     person_id = None
@@ -283,8 +379,8 @@ def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
         person_id = str(safe_uuid_from_person_id(face.person_id))
 
     return SyncAssetFaceV1(
-        id=str(safe_uuid_from_face_id(face.id)),
-        assetId=str(safe_uuid_from_asset_id(face.asset_id)),
+        id=safe_uuid_from_face_id(face.id),
+        assetId=safe_uuid_from_asset_id(face.asset_id),
         boundingBoxX1=bounding_box.get("x", 0),
         boundingBoxX2=bounding_box.get("x", 0) + bounding_box.get("w", 0),
         boundingBoxY1=bounding_box.get("y", 0),
@@ -311,6 +407,6 @@ def gumnut_album_asset_to_sync_album_to_asset_v1(
 ) -> SyncAlbumToAssetV1:
     """Convert Gumnut AlbumAssetResponse to Immich SyncAlbumToAssetV1 format."""
     return SyncAlbumToAssetV1(
-        albumId=str(safe_uuid_from_album_id(album_asset.album_id)),
-        assetId=str(safe_uuid_from_asset_id(album_asset.asset_id)),
+        albumId=safe_uuid_from_album_id(album_asset.album_id),
+        assetId=safe_uuid_from_asset_id(album_asset.asset_id),
     )

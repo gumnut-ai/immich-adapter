@@ -45,3 +45,13 @@ class TestServerConfigTrashDays:
         response = client.get("/api/server/config")
         assert response.status_code == 200
         assert response.json()["trashDays"] == 45
+
+
+class TestServerConfigMinFaces:
+    def test_min_faces_matches_immich_default(self, client):
+        """minFaces (required by the v3 ServerConfigDto) pins Immich's
+        people-recognition server default; face detection itself runs in the
+        Gumnut API, so this only feeds the client's settings display."""
+        response = client.get("/api/server/config")
+        assert response.status_code == 200
+        assert response.json()["minFaces"] == 3

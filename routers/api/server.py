@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from shortuuid import uuid
 
 from config.settings import get_settings
+from routers.api.constants import STUB_LICENSE_KEY
 from routers.immich_models import (
     LicenseKeyDto,
     LicenseResponseDto,
@@ -14,10 +15,10 @@ from routers.immich_models import (
     ServerPingResponse,
     ServerStatsResponseDto,
     ServerStorageResponseDto,
-    ServerThemeDto,
     ServerVersionHistoryResponseDto,
     ServerVersionResponseDto,
     ServerMediaTypesResponseDto,
+    UserLicense,
     VersionCheckStateResponseDto,
 )
 
@@ -54,6 +55,8 @@ server_features = {
     "configFile": False,
     "email": False,
     "ocr": False,
+    # No server-side transcoding; assets are served as stored.
+    "realtimeTranscoding": False,
 }
 
 
@@ -78,6 +81,9 @@ def get_fake_config() -> dict:
         "publicUsers": True,
         "mapDarkStyleUrl": "https://tiles.immich.cloud/v1/style/dark.json",
         "mapLightStyleUrl": "https://tiles.immich.cloud/v1/style/light.json",
+        # Immich's people-recognition server default; face detection runs in
+        # the Gumnut API, so this only feeds the client's settings display.
+        "minFaces": 3,
     }
 
 
@@ -277,6 +283,8 @@ async def get_server_version() -> ServerVersionResponseDto:
         major=version.major,
         minor=version.minor,
         patch=version.patch,
+        # Tracked container tags are GA releases, never pre-releases.
+        prerelease=None,
     )
 
 
@@ -300,9 +308,11 @@ async def get_server_license() -> LicenseResponseDto:
     This is a stub implementation returning basic license info.
     """
     return LicenseResponseDto(
-        licenseKey="/IMSV-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA/",
-        activationKey=str(uuid()),
-        activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+        root=UserLicense(
+            licenseKey=STUB_LICENSE_KEY,
+            activationKey=str(uuid()),
+            activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+        )
     )
 
 
@@ -322,16 +332,9 @@ async def set_server_license(request: LicenseKeyDto) -> LicenseResponseDto:
     This is a stub implementation that does not perform any action.
     """
     return LicenseResponseDto(
-        licenseKey=request.licenseKey,
-        activationKey=request.activationKey,
-        activatedAt=datetime.now(timezone.utc),
+        root=UserLicense(
+            licenseKey=request.licenseKey,
+            activationKey=request.activationKey,
+            activatedAt=datetime.now(timezone.utc),
+        )
     )
-
-
-@router.get("/theme")
-async def get_theme() -> ServerThemeDto:
-    """
-    Get server theme configuration.
-    This is a stub implementation returning empty custom CSS.
-    """
-    return ServerThemeDto(customCss="")

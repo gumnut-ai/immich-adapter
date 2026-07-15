@@ -6,8 +6,15 @@ from uuid import UUID, uuid4
 import pytest
 import shortuuid
 
-from routers.api.users import get_my_user, update_my_user
+from routers.api.constants import STUB_LICENSE_KEY
+from routers.api.users import (
+    get_my_calendar_heatmap,
+    get_my_user,
+    update_my_user,
+)
 from routers.immich_models import (
+    CalendarHeatmapResponseDto,
+    CalendarHeatmapType,
     UserAdminResponseDto,
     UserAvatarColor,
     UserStatus,
@@ -27,7 +34,7 @@ class TestGetMyUser:
 
         # Create a mock UserAdminResponseDto (simulating what get_current_user_admin would return)
         mock_user_admin = UserAdminResponseDto(
-            id=str(test_uuid),
+            id=test_uuid,
             email="test@example.com",
             name="John Doe",
             isAdmin=True,
@@ -46,7 +53,7 @@ class TestGetMyUser:
             license=UserLicense(
                 activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 activationKey="test-key",
-                licenseKey="test-license",
+                licenseKey=STUB_LICENSE_KEY,
             ),
         )
 
@@ -56,8 +63,8 @@ class TestGetMyUser:
         # Assert response matches expected format (should just return what was passed in)
         assert isinstance(result, UserAdminResponseDto)
         assert result == mock_user_admin
-        # ID should be the UUID string
-        assert result.id == str(test_uuid)
+        # ID should be the UUID
+        assert result.id == test_uuid
         assert result.email == "test@example.com"
         assert result.name == "John Doe"
         assert result.isAdmin is True
@@ -81,7 +88,7 @@ class TestGetMyUser:
 
         # Create a mock UserAdminResponseDto (simulating what get_current_user_admin would return)
         mock_user_admin = UserAdminResponseDto(
-            id=str(test_uuid),
+            id=test_uuid,
             email="admin@example.com",
             name="Admin User",
             isAdmin=True,
@@ -100,7 +107,7 @@ class TestGetMyUser:
             license=UserLicense(
                 activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 activationKey="test-key",
-                licenseKey="test-license",
+                licenseKey=STUB_LICENSE_KEY,
             ),
         )
 
@@ -118,7 +125,7 @@ class TestGetMyUser:
 
         # Create a mock UserAdminResponseDto for an inactive user
         mock_user_admin = UserAdminResponseDto(
-            id=str(test_uuid),
+            id=test_uuid,
             email="inactive@example.com",
             name="Inactive User",
             isAdmin=True,
@@ -137,7 +144,7 @@ class TestGetMyUser:
             license=UserLicense(
                 activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 activationKey="test-key",
-                licenseKey="test-license",
+                licenseKey=STUB_LICENSE_KEY,
             ),
         )
 
@@ -210,3 +217,48 @@ class TestUpdateMyUser:
 
         assert result.quotaSizeInBytes is None
         assert result.quotaUsageInBytes is None
+
+
+class TestGetMyCalendarHeatmap:
+    """Test the get_my_calendar_heatmap stub endpoint."""
+
+    @pytest.mark.anyio
+    async def test_echoes_requested_window_with_empty_series(self):
+        """The stub echoes the requested from/to and returns an empty heatmap."""
+        result = await get_my_calendar_heatmap(
+            from_="2024-01-01",
+            to="2024-12-31",
+            type=CalendarHeatmapType.Upload,
+        )
+
+        assert isinstance(result, CalendarHeatmapResponseDto)
+        assert result.from_ == "2024-01-01"
+        assert result.to == "2024-12-31"
+        assert result.series == []
+        assert result.totalCount == 0
+
+    @pytest.mark.anyio
+    async def test_serializes_from_alias(self):
+        """Response serializes the start date under the wire alias `from`."""
+        result = await get_my_calendar_heatmap(
+            from_="2024-01-01", to="2024-12-31", type=CalendarHeatmapType.Taken
+        )
+
+        dumped = result.model_dump(by_alias=True)
+        assert dumped["from"] == "2024-01-01"
+        assert "from_" not in dumped
+
+    @pytest.mark.anyio
+    async def test_defaults_to_valid_window_when_params_absent(self):
+        """With no from/to, the stub still returns valid ISO dates spanning ~1 year."""
+        result = await get_my_calendar_heatmap(
+            from_=None, to=None, type=CalendarHeatmapType.Upload
+        )
+
+        # Both parse as ISO dates and `from` precedes `to`.
+        start = datetime.strptime(result.from_, "%Y-%m-%d").date()
+        end = datetime.strptime(result.to, "%Y-%m-%d").date()
+        assert start < end
+        assert (end - start).days == 364
+        assert result.series == []
+        assert result.totalCount == 0

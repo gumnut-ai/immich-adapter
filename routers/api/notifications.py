@@ -62,7 +62,7 @@ async def get_notification(id: UUID) -> NotificationDto:
     """
 
     return NotificationDto(
-        id=str(id),
+        id=id,
         title="Test Notification",
         description="This is a test notification",
         level=NotificationLevel.info,
@@ -91,7 +91,7 @@ async def update_notification(
     This is a stub implementation that does not perform any action.
     """
     return NotificationDto(
-        id=str(id),
+        id=id,
         title="Updated Notification",
         description="This is an updated test notification",
         level=NotificationLevel.info,

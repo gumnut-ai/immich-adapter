@@ -11,6 +11,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from collections.abc import Iterator
 from typing import Any, AsyncGenerator
+from uuid import UUID
 
 from gumnut import AsyncGumnut
 from gumnut.types.album_response import AlbumResponse
@@ -28,6 +29,7 @@ from services.checkpoint_store import Checkpoint
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.sync.converters import (
     gumnut_user_to_sync_auth_user_v1,
+    gumnut_user_to_sync_user_metadata_v1,
     gumnut_user_to_sync_user_v1,
 )
 from routers.api.sync.entity_fetch import fetch_entities_map
@@ -71,13 +73,44 @@ _SKIPPED_EVENT_TYPES: frozenset[str] = frozenset()
 # This ordering ensures FK parents are streamed before children during upserts.
 _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
     (SyncRequestType.AssetsV1, "asset", SyncEntityType.AssetV1),
+    (SyncRequestType.AssetsV2, "asset", SyncEntityType.AssetV2),
     (SyncRequestType.AlbumsV1, "album", SyncEntityType.AlbumV1),
+    (SyncRequestType.AlbumsV2, "album", SyncEntityType.AlbumV2),
+    # AlbumUsersV1 is a second sync entity derived from the same "album" events:
+    # the owner album-user link. It must stream after the album itself (FK
+    # parent) and after the owner UserV1 (streamed before phase 1). The v3
+    # client's album-list query inner-joins on an owner-role album-user row, so
+    # without this the album never displays. See _DERIVED_UPSERT_ONLY_TYPES.
+    (SyncRequestType.AlbumUsersV1, "album", SyncEntityType.AlbumUserV1),
     (SyncRequestType.AlbumToAssetsV1, "album_asset", SyncEntityType.AlbumToAssetV1),
     (SyncRequestType.AssetExifsV1, "metadata", SyncEntityType.AssetExifV1),
     (SyncRequestType.PeopleV1, "person", SyncEntityType.PersonV1),
     (SyncRequestType.AssetFacesV1, "face", SyncEntityType.AssetFaceV1),
     (SyncRequestType.AssetFacesV2, "face", SyncEntityType.AssetFaceV2),
 ]
+
+# When a client requests a V2 request type, skip its V1 counterpart: both map to
+# the same Gumnut entity type, so streaming both would duplicate every event. The
+# mobile client version-gates V1-vs-V2 and sends only one, but a non-standard
+# client could request both — this keeps the stream single-emission.
+_V1_SUPERSEDED_BY_V2: dict[SyncRequestType, SyncRequestType] = {
+    SyncRequestType.AssetsV1: SyncRequestType.AssetsV2,
+    SyncRequestType.AlbumsV1: SyncRequestType.AlbumsV2,
+    SyncRequestType.AssetFacesV1: SyncRequestType.AssetFacesV2,
+}
+
+# Sync entity types that are streamed as upserts only — their delete events are
+# handled by another sync type's pass, so this pass must skip them. AlbumUserV1
+# is derived from "album" events, which it shares with the AlbumsV1/V2 pass; an
+# album_deleted event there already emits AlbumDeleteV1, and the client's
+# remoteAlbumUserEntity.albumId FK cascades on album deletion (onDelete:
+# cascade), removing the owner row automatically. Re-emitting the album delete
+# from this pass would duplicate the AlbumDeleteV1 event, so deletes are skipped.
+# This assumes an AlbumsV1/V2 pass is co-requested to emit the delete — the v3
+# client always requests AlbumsV2 alongside AlbumUsersV1, so that holds.
+_DERIVED_UPSERT_ONLY_TYPES: frozenset[SyncEntityType] = frozenset(
+    {SyncEntityType.AlbumUserV1}
+)
 
 # Order for streaming delete events — reverse of FK dependency order.
 # Children are deleted before parents so the client can clean up FK references
@@ -91,16 +124,56 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
     SyncEntityType.AssetDeleteV1,
 ]
 
-# Request types that are accepted but have no Gumnut equivalent.
-# Prevents "unsupported" warnings while making the no-op explicit.
+# Request types that are accepted but have no Gumnut equivalent, so nothing is
+# emitted for them (the client tolerates absence). Listing them here prevents an
+# "unsupported" warning and logs them as intentional no-ops instead — the v3
+# mobile client requests all of these on every sync, so leaving them off this
+# list spams a misleading "unsupported types" warning each cycle.
+#   - AssetEditsV1:        Gumnut has no asset edit history.
+#   - AssetOcrV1:          Gumnut has no OCR text data (new v3 entity type).
+#   - AssetMetadataV1:     iCloud/device linking metadata; Gumnut has none, and
+#                          own-asset EXIF is delivered via AssetExifsV1 instead.
+#   - PartnerAssetsV2:     Gumnut is single-user; there is no partner sharing.
+#   - PartnersV1 /
+#     PartnerAssetExifsV1 /
+#     PartnerStacksV1:     partner-sharing streams — none for a single user.
+#   - AlbumAssetsV2:       album assets are the user's own, already streamed via
+#                          AssetsV2 + AlbumToAssetsV1 (this stream is for assets
+#                          shared into an album by other users, which Gumnut lacks).
+#   - AlbumAssetExifsV1:   EXIF for other users' album assets; own-album-photo
+#                          EXIF arrives via AssetExifsV1.
+#   - MemoriesV1 /
+#     MemoryToAssetsV1:    Gumnut has no memories feature; the tab renders empty.
+#   - StacksV1:            Gumnut has no stacks; assets carry stackId=None and
+#                          render individually, so absent stack rows hide nothing.
+# UserMetadataV1 is deliberately NOT here — it is emitted (a synthesized
+# preferences row); see gumnut_user_to_sync_user_metadata_v1.
 _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
     SyncRequestType.AssetEditsV1: SyncEntityType.AssetEditV1,
+    SyncRequestType.AssetOcrV1: SyncEntityType.AssetOcrV1,
+    SyncRequestType.AssetMetadataV1: SyncEntityType.AssetMetadataV1,
+    SyncRequestType.PartnerAssetsV2: SyncEntityType.PartnerAssetV2,
+    SyncRequestType.PartnersV1: SyncEntityType.PartnerV1,
+    SyncRequestType.PartnerAssetExifsV1: SyncEntityType.PartnerAssetExifV1,
+    SyncRequestType.PartnerStacksV1: SyncEntityType.PartnerStackV1,
+    SyncRequestType.AlbumAssetsV2: SyncEntityType.AlbumAssetCreateV2,
+    SyncRequestType.AlbumAssetExifsV1: SyncEntityType.AlbumAssetExifCreateV1,
+    SyncRequestType.MemoriesV1: SyncEntityType.MemoryV1,
+    SyncRequestType.MemoryToAssetsV1: SyncEntityType.MemoryToAssetV1,
+    SyncRequestType.StacksV1: SyncEntityType.StackV1,
 }
 
-# Supported SyncRequestTypes (used to detect unsupported types requested by client)
+# Supported SyncRequestTypes (used to detect unsupported types requested by
+# client). AuthUsersV1/UsersV1/UserMetadataV1 are handled specially (not via
+# _SYNC_TYPE_ORDER): the first two stream the user record, and UserMetadataV1
+# streams a synthesized preferences row (see gumnut_user_to_sync_user_metadata_v1).
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
-    | {SyncRequestType.AuthUsersV1, SyncRequestType.UsersV1}
+    | {
+        SyncRequestType.AuthUsersV1,
+        SyncRequestType.UsersV1,
+        SyncRequestType.UserMetadataV1,
+    }
     | _NOOP_REQUEST_TYPES.keys()
 )
 
@@ -109,12 +182,13 @@ async def _stream_entity_type(
     gumnut_client: AsyncGumnut,
     gumnut_entity_type: str,
     sync_entity_type: SyncEntityType,
-    owner_id: str,
+    owner_id: UUID,
     checkpoint: Checkpoint | None,
     sync_started_at: datetime,
     stats: SyncStreamStats,
     checkpoint_map: dict[SyncEntityType, Checkpoint],
     delete_buffer: list[tuple[str, SyncEntityType]] | None = None,
+    emit_deletes: bool = True,
 ) -> AsyncGenerator[tuple[str, int], None]:
     """
     Stream events for a single entity type using the events API.
@@ -132,12 +206,15 @@ async def _stream_entity_type(
         gumnut_client: The Gumnut API client
         gumnut_entity_type: The entity type string for the Gumnut API (e.g., "asset")
         sync_entity_type: The Immich sync entity type (e.g., SyncEntityType.AssetV1)
-        owner_id: The owner UUID string
+        owner_id: The owner UUID
         checkpoint: The checkpoint with cursor (None for full sync)
         sync_started_at: Upper bound for the query window
         stats: Mutable stats tracker for streamed IDs, skip counts, and FK warnings
         checkpoint_map: All checkpoints for this sync (used for FK reference checks)
         delete_buffer: If provided, delete events are appended here instead of yielded
+        emit_deletes: If False, delete events are skipped entirely (the cursor
+            still advances). Used for derived upsert-only sync types whose deletes
+            are handled by another pass — see _DERIVED_UPSERT_ONLY_TYPES.
 
     Yields:
         Tuples of (json_line, count) for each upsert event (deletes buffered when delete_buffer is set)
@@ -232,7 +309,13 @@ async def _stream_entity_type(
                 continue
 
             if event.event_type in _DELETE_EVENT_TYPES:
-                # Delete event — convert and either buffer or yield
+                # Delete event — convert and either buffer or yield.
+                # Skip entirely for derived upsert-only passes: the delete is
+                # emitted by the entity type that owns these events (e.g. the
+                # album pass owns album_deleted), and re-emitting here would
+                # duplicate it. The cursor still advances past this event below.
+                if not emit_deletes:
+                    continue
                 result = make_delete_sync_event(event)
                 if result:
                     json_line, delete_sync_type = result
@@ -317,7 +400,7 @@ async def _stream_entity_type(
                 # reference an asset added after the event was recorded
                 # — potentially outside the client's sync window.
                 if (
-                    sync_entity_type == SyncEntityType.AlbumV1
+                    sync_entity_type in (SyncEntityType.AlbumV1, SyncEntityType.AlbumV2)
                     and event.event_type == "album_updated"
                     and isinstance(entity, AlbumResponse)
                     and isinstance(event.payload, dict)
@@ -450,7 +533,11 @@ async def generate_sync_stream(
             instead of being silently swallowed inside the generator).
     """
     try:
-        owner_id = str(safe_uuid_from_user_id(current_user.id))
+        owner_uuid = safe_uuid_from_user_id(current_user.id)
+        # String form for logging extras — Sentry serializes unknown objects
+        # via repr, which would turn a raw UUID into "UUID('...')" and break
+        # user_id search/correlation.
+        owner_id = str(owner_uuid)
 
         requested_types = set(request.types)
 
@@ -510,6 +597,22 @@ async def generate_sync_stream(
                 )
                 logger.debug("Streamed user", extra={"user_id": owner_id})
 
+        # Stream a synthesized user-preferences row if requested. Keyed off the
+        # same user_cursor as UserV1 — the payload is derived purely from the user,
+        # so it re-syncs exactly when the user record changes. Emitted after UserV1
+        # so its userId FK parent exists on the client. See
+        # gumnut_user_to_sync_user_metadata_v1 for the why.
+        if SyncRequestType.UserMetadataV1 in requested_types:
+            checkpoint = checkpoint_map.get(SyncEntityType.UserMetadataV1)
+            if checkpoint is None or checkpoint.cursor != user_cursor:
+                sync_user_metadata = gumnut_user_to_sync_user_metadata_v1(owner_uuid)
+                yield make_sync_event(
+                    SyncEntityType.UserMetadataV1,
+                    sync_user_metadata.model_dump(mode="json"),
+                    user_cursor,
+                )
+                logger.debug("Streamed user metadata", extra={"user_id": owner_id})
+
         # Capture sync start time to bound the query window
         sync_started_at = datetime.now(timezone.utc)
 
@@ -525,28 +628,29 @@ async def generate_sync_stream(
             if request_type not in requested_types:
                 continue
 
-            # Skip V1 faces when V2 is also requested — both map to the same
-            # gumnut "face" entity type and would stream duplicate events.
-            if (
-                request_type == SyncRequestType.AssetFacesV1
-                and SyncRequestType.AssetFacesV2 in requested_types
-            ):
+            # Skip a V1 request type when its V2 counterpart is also requested —
+            # both map to the same gumnut entity type and would stream duplicate
+            # events. See _V1_SUPERSEDED_BY_V2.
+            superseding_v2 = _V1_SUPERSEDED_BY_V2.get(request_type)
+            if superseding_v2 is not None and superseding_v2 in requested_types:
                 continue
 
             # Get checkpoint for this entity type
             checkpoint = checkpoint_map.get(sync_entity_type)
 
-            # Stream upsert events, buffer deletes
+            # Stream upsert events, buffer deletes. Derived upsert-only types
+            # (e.g. AlbumUserV1) skip deletes — see _DERIVED_UPSERT_ONLY_TYPES.
             async for event_line, count in _stream_entity_type(
                 gumnut_client,
                 gumnut_entity_type,
                 sync_entity_type,
-                owner_id,
+                owner_uuid,
                 checkpoint,
                 sync_started_at,
                 stats,
                 checkpoint_map,
                 delete_buffer=delete_buffer,
+                emit_deletes=sync_entity_type not in _DERIVED_UPSERT_ONLY_TYPES,
             ):
                 yield event_line
                 event_counts[sync_entity_type.value] = (

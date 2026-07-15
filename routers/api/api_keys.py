@@ -1,13 +1,13 @@
 from fastapi import APIRouter
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import List
 
 from routers.immich_models import (
-    APIKeyCreateDto,
-    APIKeyResponseDto,
-    APIKeyUpdateDto,
-    APIKeyCreateResponseDto,
+    ApiKeyCreateDto,
+    ApiKeyResponseDto,
+    ApiKeyUpdateDto,
+    ApiKeyCreateResponseDto,
     Permission,
 )
 
@@ -20,7 +20,7 @@ router = APIRouter(
 
 
 @router.get("")
-async def get_api_keys() -> List[APIKeyResponseDto]:
+async def get_api_keys() -> List[ApiKeyResponseDto]:
     """
     Get all API keys.
     This is a stub implementation that returns an empty list.
@@ -29,29 +29,29 @@ async def get_api_keys() -> List[APIKeyResponseDto]:
 
 
 @router.post("", status_code=201)
-async def create_api_key(request: APIKeyCreateDto) -> APIKeyCreateResponseDto:
+async def create_api_key(request: ApiKeyCreateDto) -> ApiKeyCreateResponseDto:
     """
     Create a new API key.
     This is a stub implementation that returns a fake API key response.
     """
-    api_key = APIKeyResponseDto(
-        id="api-key-id",
+    api_key = ApiKeyResponseDto(
+        id=uuid4(),
         name=request.name or "API Key",
         permissions=request.permissions,
         createdAt=datetime.now(tz=timezone.utc),
         updatedAt=datetime.now(tz=timezone.utc),
     )
-    return APIKeyCreateResponseDto(apiKey=api_key, secret="fake-secret-key-12345")
+    return ApiKeyCreateResponseDto(apiKey=api_key, secret="fake-secret-key-12345")
 
 
 @router.get("/me")
-async def get_my_api_key() -> APIKeyResponseDto:
+async def get_my_api_key() -> ApiKeyResponseDto:
     """
     Get current API key.
     This is a stub implementation that returns a fake API key response.
     """
-    return APIKeyResponseDto(
-        id="current-api-key-id",
+    return ApiKeyResponseDto(
+        id=uuid4(),
         name="Current API Key",
         permissions=[Permission.asset_read],
         createdAt=datetime.now(tz=timezone.utc),
@@ -60,13 +60,13 @@ async def get_my_api_key() -> APIKeyResponseDto:
 
 
 @router.get("/{id}")
-async def get_api_key(id: UUID) -> APIKeyResponseDto:
+async def get_api_key(id: UUID) -> ApiKeyResponseDto:
     """
     Get API key by ID.
     This is a stub implementation that returns a fake API key response.
     """
-    return APIKeyResponseDto(
-        id=str(id),
+    return ApiKeyResponseDto(
+        id=id,
         name="API Key",
         permissions=[Permission.asset_read],
         createdAt=datetime.now(tz=timezone.utc),
@@ -75,13 +75,13 @@ async def get_api_key(id: UUID) -> APIKeyResponseDto:
 
 
 @router.put("/{id}")
-async def update_api_key(id: UUID, request: APIKeyUpdateDto) -> APIKeyResponseDto:
+async def update_api_key(id: UUID, request: ApiKeyUpdateDto) -> ApiKeyResponseDto:
     """
     Update API key.
     This is a stub implementation that returns a fake updated API key response.
     """
-    return APIKeyResponseDto(
-        id=str(id),
+    return ApiKeyResponseDto(
+        id=id,
         name=request.name or "Updated API Key",
         permissions=request.permissions or [Permission.asset_read],
         createdAt=datetime.now(tz=timezone.utc),

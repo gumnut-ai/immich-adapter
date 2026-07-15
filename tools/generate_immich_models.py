@@ -29,6 +29,8 @@ import click
 import requests
 import yaml
 
+from spec_preprocess import strip_non_string_patterns
+
 
 def get_container_tag() -> str:
     """
@@ -48,20 +50,34 @@ def get_container_tag() -> str:
         raise Exception(".immich-container-tag file not found")
 
 
-def fetch_spec(spec_path: str) -> tuple[str, bool, str | None]:
+def _parse_spec(text: str) -> dict:
+    """Parse an OpenAPI spec from text, trying JSON first and falling back to YAML."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            return yaml.safe_load(text)
+        except yaml.YAMLError as ye:
+            print(f"Failed to parse spec as JSON or YAML: {ye}", file=sys.stderr)
+            sys.exit(1)
+
+
+def fetch_spec(spec_path: str) -> tuple[str, str | None, str]:
     """
-    Fetch OpenAPI spec from URL or file path and return path to local file.
+    Fetch an OpenAPI spec from a URL or file path, strip constraints that codegen
+    would misapply to non-string types, and write the result to a temp file.
 
     Args:
         spec_path: URL or file path to OpenAPI spec
 
     Returns:
-        Tuple of (path to local file containing the spec, is_temp_file, tag_or_branch)
+        Tuple of (path to temp file, tag_or_branch, source_label). The temp file is
+        always the caller's responsibility to delete.
     """
-    # Check if it's a URL
     parsed = urlparse(spec_path)
+    tag_or_branch: str | None = None
     if parsed.scheme in ("http", "https"):
-        tag_or_branch: str | None = None
+        source_label = "From URL"
         # Handle GitHub raw URLs
         if "github.com" in parsed.netloc and "/blob/" in spec_path:
             spec_path = spec_path.replace("github.com", "raw.githubusercontent.com")
@@ -89,28 +105,7 @@ def fetch_spec(spec_path: str) -> tuple[str, bool, str | None]:
             print(f"Fetching spec from: {spec_path}")
             response = requests.get(spec_path, timeout=30)
             response.raise_for_status()
-
-            # Parse content first to avoid creating temp file on parse failure
-            try:
-                spec_data = response.json()
-            except json.JSONDecodeError:
-                # Try YAML if JSON fails
-                try:
-                    spec_data = yaml.safe_load(response.text)
-                except yaml.YAMLError as ye:
-                    print(
-                        f"Failed to parse spec as JSON or YAML: {ye}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-
-            # Only create temp file after successful parsing
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", delete=False
-            ) as f:
-                json.dump(spec_data, f, indent=2)
-                return f.name, True, tag_or_branch
-
+            raw_text = response.text
         except requests.RequestException as e:
             print(f"Error fetching spec from {spec_path}: {e}", file=sys.stderr)
             sys.exit(1)
@@ -120,7 +115,20 @@ def fetch_spec(spec_path: str) -> tuple[str, bool, str | None]:
         if not path.exists():
             print(f"File not found: {spec_path}", file=sys.stderr)
             sys.exit(1)
-        return str(path), False, None
+        source_label = path.name
+        raw_text = path.read_text()
+
+    spec_data = _parse_spec(raw_text)
+    removed = strip_non_string_patterns(spec_data)
+    print(f"Stripped {removed} pattern constraint(s) from non-string-format fields")
+
+    # Write the preprocessed spec to a temp file for datamodel-codegen to consume.
+    # default=str keeps the dump robust to native datetime scalars a YAML spec may carry
+    # in example values (json can't serialize them, and a raise here would leak the temp
+    # file since main's cleanup only runs after fetch_spec returns).
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(spec_data, f, indent=2, default=str)
+        return f.name, tag_or_branch, source_label
 
 
 @click.command()
@@ -144,8 +152,8 @@ def main(immich_spec: str, output: str, verbose: bool):
     # Resolve paths relative to current working directory for consistency
     output_file = Path(output).resolve()
 
-    # Fetch the spec (returns local file path and temp flag)
-    spec_file, is_temp_file, tag_or_branch = fetch_spec(immich_spec)
+    # Fetch and preprocess the spec (always returns a temp file to clean up)
+    spec_file, tag_or_branch, source_label = fetch_spec(immich_spec)
 
     try:
         # Ensure output directory exists
@@ -153,7 +161,7 @@ def main(immich_spec: str, output: str, verbose: bool):
 
         # Create custom header that replicates datamodel-codegen format
         timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        filename = "From URL" if is_temp_file else Path(spec_file).name
+        filename = source_label
 
         # Build header lines
         header_lines = [
@@ -218,8 +226,8 @@ def main(immich_spec: str, output: str, verbose: bool):
             sys.exit(1)
 
     finally:
-        # Clean up temporary file if it was created
-        if is_temp_file and Path(spec_file).exists():
+        # Clean up the temporary preprocessed spec file
+        if Path(spec_file).exists():
             Path(spec_file).unlink()
 
 

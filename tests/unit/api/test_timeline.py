@@ -498,6 +498,11 @@ class TestGetTimeBucket:
             assert result["fileCreatedAt"][0] == "2024-01-15T10:00:00.000"
             assert result["fileCreatedAt"][1] == "2024-01-25T16:00:00.000"
 
+            # createdAt is the upload time converted to actual UTC, unlike
+            # fileCreatedAt which keeps the capture wall-clock time.
+            assert result["createdAt"][0] == "2024-01-15T15:00:00.000"
+            assert result["createdAt"][1] == "2024-01-25T14:00:00.000"
+
             assert all(fav is False for fav in result["isFavorite"])
             assert all(trash is False for trash in result["isTrashed"])
             assert all(vis == AssetVisibility.timeline for vis in result["visibility"])
@@ -546,8 +551,8 @@ class TestGetTimeBucket:
     async def test_get_time_bucket_emits_per_asset_duration(
         self, multiple_gumnut_assets, mock_sync_cursor_page
     ):
-        """The bucket's ``duration`` array carries a real ``HH:MM:SS.ffffff``
-        string for a video whose upstream duration is populated, and stays
+        """The bucket's ``duration`` array carries Immich v3 integer
+        milliseconds for a video whose upstream duration is populated, and stays
         ``None`` for an asset whose upstream duration is NULL (image, or video
         not yet extracted) — matching the prior all-None behavior."""
         mock_client = Mock()
@@ -574,7 +579,7 @@ class TestGetTimeBucket:
                 timeBucket="2024-01-01T00:00:00", client=mock_client
             )
 
-            assert result["duration"] == ["00:01:05.250000", None]
+            assert result["duration"] == [65250, None]
 
     @pytest.mark.anyio
     async def test_get_time_bucket_emits_per_asset_thumbhash(
@@ -733,7 +738,7 @@ class TestGetTimeBucket:
         mock_asset = Mock()
         mock_asset.id = uuid_to_gumnut_asset_id(uuid4())
         mock_asset.local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        mock_asset.created_at = None
+        mock_asset.created_at = mock_asset.local_datetime
         mock_asset.mime_type = ""
         mock_asset.width = None
         mock_asset.height = None

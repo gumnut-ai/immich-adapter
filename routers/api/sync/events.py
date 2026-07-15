@@ -3,6 +3,7 @@
 import json
 import logging
 from typing import Any, cast
+from uuid import UUID
 
 from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.album_response import AlbumResponse
@@ -28,8 +29,11 @@ from routers.utils.gumnut_id_conversion import (
 
 from routers.api.sync.converters import (
     gumnut_album_asset_to_sync_album_to_asset_v1,
+    gumnut_album_to_sync_album_user_v1,
     gumnut_album_to_sync_album_v1,
+    gumnut_album_to_sync_album_v2,
     gumnut_asset_to_sync_asset_v1,
+    gumnut_asset_to_sync_asset_v2,
     gumnut_face_to_sync_face_v1,
     gumnut_face_to_sync_face_v2,
     gumnut_metadata_to_sync_exif_v1,
@@ -139,7 +143,7 @@ def make_delete_sync_event(
         return None
 
     if event.event_type == "asset_deleted":
-        data = SyncAssetDeleteV1(assetId=str(safe_uuid_from_asset_id(event.entity_id)))
+        data = SyncAssetDeleteV1(assetId=safe_uuid_from_asset_id(event.entity_id))
         return (
             make_sync_event(
                 SyncEntityType.AssetDeleteV1,
@@ -150,7 +154,7 @@ def make_delete_sync_event(
         )
 
     elif event.event_type == "album_deleted":
-        data = SyncAlbumDeleteV1(albumId=str(safe_uuid_from_album_id(event.entity_id)))
+        data = SyncAlbumDeleteV1(albumId=safe_uuid_from_album_id(event.entity_id))
         return (
             make_sync_event(
                 SyncEntityType.AlbumDeleteV1,
@@ -161,9 +165,7 @@ def make_delete_sync_event(
         )
 
     elif event.event_type == "person_deleted":
-        data = SyncPersonDeleteV1(
-            personId=str(safe_uuid_from_person_id(event.entity_id))
-        )
+        data = SyncPersonDeleteV1(personId=safe_uuid_from_person_id(event.entity_id))
         return (
             make_sync_event(
                 SyncEntityType.PersonDeleteV1,
@@ -175,7 +177,7 @@ def make_delete_sync_event(
 
     elif event.event_type == "face_deleted":
         data = SyncAssetFaceDeleteV1(
-            assetFaceId=str(safe_uuid_from_face_id(event.entity_id))
+            assetFaceId=safe_uuid_from_face_id(event.entity_id)
         )
         return (
             make_sync_event(
@@ -231,8 +233,8 @@ def make_delete_sync_event(
             return None
 
         data = SyncAlbumToAssetDeleteV1(
-            albumId=str(safe_uuid_from_album_id(album_id_str)),
-            assetId=str(safe_uuid_from_asset_id(asset_id_str)),
+            albumId=safe_uuid_from_album_id(album_id_str),
+            assetId=safe_uuid_from_asset_id(asset_id_str),
         )
         return (
             make_sync_event(
@@ -257,7 +259,7 @@ def make_delete_sync_event(
 def convert_entity_to_sync_event(
     gumnut_entity_type: str,
     entity: EntityType,
-    owner_id: str,
+    owner_id: UUID,
     cursor: str,
     sync_entity_type: SyncEntityType,
 ) -> str:
@@ -276,13 +278,31 @@ def convert_entity_to_sync_event(
     """
     sync_model: Any
     if gumnut_entity_type == "asset":
-        sync_model = gumnut_asset_to_sync_asset_v1(
-            cast(AssetResponse, entity), owner_id
-        )
+        if sync_entity_type == SyncEntityType.AssetV2:
+            sync_model = gumnut_asset_to_sync_asset_v2(
+                cast(AssetResponse, entity), owner_id
+            )
+        else:
+            sync_model = gumnut_asset_to_sync_asset_v1(
+                cast(AssetResponse, entity), owner_id
+            )
     elif gumnut_entity_type == "album":
-        sync_model = gumnut_album_to_sync_album_v1(
-            cast(AlbumResponse, entity), owner_id
-        )
+        # The "album" gumnut entity fans out to two Immich sync entities: the
+        # album itself (AlbumV1/V2) and the owner album-user link (AlbumUserV1),
+        # both derived from the same AlbumResponse. See
+        # gumnut_album_to_sync_album_user_v1 for why the owner link is required.
+        if sync_entity_type == SyncEntityType.AlbumUserV1:
+            sync_model = gumnut_album_to_sync_album_user_v1(
+                cast(AlbumResponse, entity), owner_id
+            )
+        elif sync_entity_type == SyncEntityType.AlbumV2:
+            sync_model = gumnut_album_to_sync_album_v2(
+                cast(AlbumResponse, entity), owner_id
+            )
+        else:
+            sync_model = gumnut_album_to_sync_album_v1(
+                cast(AlbumResponse, entity), owner_id
+            )
     elif gumnut_entity_type == "person":
         sync_model = gumnut_person_to_sync_person_v1(
             cast(PersonResponse, entity), owner_id

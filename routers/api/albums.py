@@ -20,12 +20,12 @@ from routers.immich_models import (
     CreateAlbumDto,
     AlbumsAddAssetsDto,
     AlbumsAddAssetsResponseDto,
-    BulkIdErrorReason,
     AlbumStatisticsResponseDto,
+    MapMarkerResponseDto,
     UpdateAlbumDto,
     UpdateAlbumUserDto,
     AddUsersDto,
-    Error1,
+    BulkIdErrorReason,
     UserResponseDto,
 )
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
@@ -33,8 +33,8 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
 )
-from routers.utils.asset_conversion import ASSET_INCLUDE, convert_gumnut_asset_to_immich
 from routers.utils.album_conversion import convert_gumnut_album_to_immich
+from routers.utils.map_markers import collect_geotagged_markers
 from pydantic.json_schema import SkipJsonSchema
 
 logger = logging.getLogger(__name__)
@@ -109,36 +109,52 @@ async def get_album_info(
 ) -> AlbumResponseDto:
     """
     Fetch a specific album from Gumnut and convert to AlbumResponseDto format.
-    If withoutAssets is False, also fetch and include the album's assets.
+
+    Immich v3's AlbumResponseDto no longer inlines assets, so the album's
+    assets are not fetched here — clients load them separately via the timeline
+    API. The `withoutAssets` query param is retained for client compatibility
+    but no longer affects the response.
     """
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
-    # Retrieve the specific album from Gumnut
+    # SDK raises NotFoundError on missing album → handled by global handler.
     gumnut_album = await client.albums.retrieve(gumnut_album_id)
-
-    immich_assets = []
-    if not withoutAssets:
-        async for gumnut_asset in client.assets.list(
-            album_id=gumnut_album_id,
-            include=ASSET_INCLUDE,
-            limit=GUMNUT_API_MAX_PAGE_SIZE,
-        ):
-            try:
-                immich_assets.append(
-                    convert_gumnut_asset_to_immich(gumnut_asset, current_user)
-                )
-            except Exception as convert_error:
-                logger.warning(
-                    f"Warning: Could not convert asset {gumnut_asset}: {convert_error}"
-                )
 
     return convert_gumnut_album_to_immich(
         gumnut_album,
         current_user,
-        assets=immich_assets,
         asset_count=gumnut_album.asset_count,
     )
+
+
+@router.get("/{id}/map-markers")
+async def get_album_map_markers(
+    id: UUID,
+    key: Annotated[str | SkipJsonSchema[None], Query(alias="key")] = None,
+    slug: Annotated[str | SkipJsonSchema[None], Query(alias="slug")] = None,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+) -> List[MapMarkerResponseDto]:
+    """Return map markers for the GPS-tagged assets in a single album.
+
+    New in Immich v3 (the global `/map/markers` dropped its `albumIds` filter),
+    the v3 web album view calls this on every album open. Markers are the
+    album's geotagged assets, collected by the shared `collect_geotagged_markers`
+    helper with the album filter AND-combined with the world bbox.
+
+    `key` / `slug` are accepted for client compatibility (shared-link tokens)
+    but dropped — this adapter doesn't support shared links. A missing album
+    404s: `albums.retrieve` raises `NotFoundError`, mapped to 404 by the global
+    handler (matching Immich, and consistent with `get_album_info`).
+    """
+    _ = key, slug  # accepted for client compat, dropped
+
+    gumnut_album_id = uuid_to_gumnut_album_id(id)
+
+    # Retrieve first so a missing album 404s instead of returning an empty list.
+    await client.albums.retrieve(gumnut_album_id)
+
+    return await collect_geotagged_markers(client, album_id=gumnut_album_id)
 
 
 @router.post("", status_code=201)
@@ -165,8 +181,6 @@ async def create_album(
 async def add_assets_to_album(
     id: UUID,
     request: BulkIdsDto,
-    key: str = Query(default=None, alias="key"),
-    slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[BulkIdResponseDto]:
     """
@@ -179,7 +193,7 @@ async def add_assets_to_album(
     added: set[str] = set()
     duplicate: set[str] = set()
     not_found: set[str] = set()
-    errors_by_uuid: dict[UUID, Error1] = {}
+    errors_by_uuid: dict[UUID, BulkIdErrorReason] = {}
     async for outcome in chunked_per_item_bulk(
         request.ids,
         lambda ids: client.albums.assets_associations.add(
@@ -202,28 +216,27 @@ async def add_assets_to_album(
 
     results: list[BulkIdResponseDto] = []
     for asset_uuid in request.ids:
-        asset_uuid_str = str(asset_uuid)
         gumnut_asset_id = gumnut_id_by_uuid[asset_uuid]
         if asset_uuid in errors_by_uuid:
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str,
+                    id=asset_uuid,
                     success=False,
                     error=errors_by_uuid[asset_uuid],
                 )
             )
         elif gumnut_asset_id in added:
-            results.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
+            results.append(BulkIdResponseDto(id=asset_uuid, success=True))
         elif gumnut_asset_id in duplicate:
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str, success=False, error=Error1.duplicate
+                    id=asset_uuid, success=False, error=BulkIdErrorReason.duplicate
                 )
             )
         elif gumnut_asset_id in not_found:
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str, success=False, error=Error1.not_found
+                    id=asset_uuid, success=False, error=BulkIdErrorReason.not_found
                 )
             )
         else:
@@ -232,11 +245,11 @@ async def add_assets_to_album(
             # rather than silently succeeding.
             logger.warning(
                 "Asset missing from add_assets bulk response",
-                extra={"album_id": str(id), "asset_id": asset_uuid_str},
+                extra={"album_id": str(id), "asset_id": str(asset_uuid)},
             )
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str, success=False, error=Error1.unknown
+                    id=asset_uuid, success=False, error=BulkIdErrorReason.unknown
                 )
             )
     return results
@@ -290,7 +303,7 @@ async def remove_asset_from_album(
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
     # Upstream silently skips missing assets and 204s on success.
-    errors_by_uuid: dict[UUID, Error1] = {}
+    errors_by_uuid: dict[UUID, BulkIdErrorReason] = {}
     async for outcome in chunked_per_item_bulk(
         request.ids,
         lambda ids: client.albums.assets_associations.remove(
@@ -305,17 +318,16 @@ async def remove_asset_from_album(
 
     results: list[BulkIdResponseDto] = []
     for asset_uuid in request.ids:
-        asset_uuid_str = str(asset_uuid)
         if asset_uuid in errors_by_uuid:
             results.append(
                 BulkIdResponseDto(
-                    id=asset_uuid_str,
+                    id=asset_uuid,
                     success=False,
                     error=errors_by_uuid[asset_uuid],
                 )
             )
         else:
-            results.append(BulkIdResponseDto(id=asset_uuid_str, success=True))
+            results.append(BulkIdResponseDto(id=asset_uuid, success=True))
     return results
 
 
@@ -336,8 +348,6 @@ async def delete_album(
 @router.put("/assets")
 async def add_assets_to_albums(
     request: AlbumsAddAssetsDto,
-    key: str = Query(default=None, alias="key"),
-    slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> AlbumsAddAssetsResponseDto:
     """

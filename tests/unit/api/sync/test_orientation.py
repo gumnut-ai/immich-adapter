@@ -7,6 +7,7 @@ adapter surfaces on ``exifInfo.exifImageWidth/Height`` for mobile clients
 that re-derive display dims locally.
 """
 
+from uuid import UUID
 from datetime import datetime, timezone
 
 import pytest
@@ -21,7 +22,7 @@ from tests.unit.api.sync.conftest import (
 )
 
 
-OWNER_UUID = "22222222-2222-2222-2222-222222222222"
+OWNER_UUID = UUID("22222222-2222-2222-2222-222222222222")
 UPDATED_AT = datetime(2026, 5, 1, tzinfo=timezone.utc)
 
 

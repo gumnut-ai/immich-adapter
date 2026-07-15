@@ -30,7 +30,7 @@ from uuid import UUID
 
 from gumnut import APIStatusError, GumnutError
 
-from routers.immich_models import Error1
+from routers.immich_models import BulkIdErrorReason
 from routers.utils.error_mapping import (
     classify_bulk_item_error,
     log_bulk_transport_error,
@@ -51,10 +51,10 @@ class BulkChunkSuccess[T]:
 
 @dataclass(frozen=True, slots=True)
 class BulkChunkError:
-    """Failed per-chunk outcome — carries the classified `Error1`."""
+    """Failed per-chunk outcome — carries the classified `BulkIdErrorReason`."""
 
     chunk_uuids: tuple[UUID, ...]
-    error: Error1
+    error: BulkIdErrorReason
 
 
 type BulkChunkOutcome[T] = BulkChunkSuccess[T] | BulkChunkError
@@ -74,7 +74,7 @@ async def chunked_per_item_bulk[T](
     `BulkChunkError`. On `APIStatusError` the chunk yields a
     `BulkChunkError` with `error = classify_bulk_item_error(...)`; on a
     transport-level `GumnutError` it yields a `BulkChunkError` with
-    `error = Error1.unknown` after logging via `log_bulk_transport_error`
+    `error = BulkIdErrorReason.unknown` after logging via `log_bulk_transport_error`
     (the helper augments `log_extra` with `chunk_size` and `request_size` so
     triage keeps full-request visibility).
 
@@ -94,7 +94,7 @@ async def chunked_per_item_bulk[T](
         except APIStatusError as exc:
             yield BulkChunkError(
                 chunk_uuids=chunk_uuids,
-                error=classify_bulk_item_error(exc, Error1),
+                error=classify_bulk_item_error(exc, BulkIdErrorReason),
             )
             continue
         except GumnutError as exc:
@@ -110,7 +110,7 @@ async def chunked_per_item_bulk[T](
             )
             yield BulkChunkError(
                 chunk_uuids=chunk_uuids,
-                error=Error1.unknown,
+                error=BulkIdErrorReason.unknown,
             )
             continue
         yield BulkChunkSuccess(

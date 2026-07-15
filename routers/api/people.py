@@ -19,7 +19,7 @@ from routers.immich_models import (
     AssetFaceUpdateItem,
     BulkIdResponseDto,
     BulkIdsDto,
-    Error1,
+    BulkIdErrorReason,
     MergePersonDto,
     PeopleResponseDto,
     PeopleUpdateDto,
@@ -135,28 +135,21 @@ async def _update_one_person(
     `GumnutError`, raised from either `_resolve_thumbnail_face_id`'s inner
     `client.faces.list` or the final `client.people.update`) is delegated to
     `classify_bulk_item_call`, mirroring the per-chunk policy used by
-    `chunked_per_item_bulk` for chunked bulk endpoints. The pre-call
-    exceptions specific to this endpoint (`ValueError` from UUID parsing,
-    `HTTPException` from `_resolve_thumbnail_face_id`'s "missing face"
-    branch) stay here.
+    `chunked_per_item_bulk` for chunked bulk endpoints. The exception
+    specific to this endpoint (`HTTPException` from
+    `_resolve_thumbnail_face_id`'s "missing face" branch) stays here — it
+    is not an SDK error, so `classify_bulk_item_call` lets it propagate.
     """
     log_extra = {"person_id": person_item.id}
 
-    try:
-        # immich openapi specs switch between str and UUID for people id, so
-        # UUID(...) can raise on malformed input.
-        gumnut_person_id = uuid_to_gumnut_person_id(UUID(person_item.id))
-    except ValueError as ve:
-        logger.warning(
-            "Invalid person id in bulk update",
-            extra={**log_extra, "error": str(ve)},
-        )
-        return BulkIdResponseDto(id=person_item.id, success=False, error=Error1.unknown)
+    # v3 types `PeopleUpdateItem.id` as UUID, so malformed ids are rejected
+    # with a 422 at the request boundary before reaching this handler.
+    gumnut_person_id = uuid_to_gumnut_person_id(person_item.id)
 
     try:
         sdk_error = await classify_bulk_item_call(
             _do_person_update(client, gumnut_person_id, person_item),
-            error_enum=Error1,
+            error_enum=BulkIdErrorReason,
             log_context="update_people",
             log_extra=log_extra,
         )
@@ -175,7 +168,9 @@ async def _update_one_person(
             ),
             extra=log_extra,
         )
-        return BulkIdResponseDto(id=person_item.id, success=False, error=Error1.unknown)
+        return BulkIdResponseDto(
+            id=person_item.id, success=False, error=BulkIdErrorReason.unknown
+        )
 
     if sdk_error is not None:
         return BulkIdResponseDto(id=person_item.id, success=False, error=sdk_error)
@@ -395,7 +390,7 @@ async def merge_person(
     )
 
     return [
-        BulkIdResponseDto(id=str(source_uuid), success=True, error=None)
+        BulkIdResponseDto(id=source_uuid, success=True, error=None)
         for source_uuid in request.ids
     ]
 

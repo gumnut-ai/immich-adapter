@@ -11,6 +11,7 @@ pieces have to land together:
   "likely deleted between event and fetch" warning.
 """
 
+from uuid import UUID
 from datetime import datetime, timezone
 from unittest.mock import Mock
 
@@ -32,7 +33,7 @@ class TestGumnutAssetToSyncAssetV1DeletedAt:
         asset.trashed_at = None
 
         sync_asset = gumnut_asset_to_sync_asset_v1(
-            asset, owner_id="11111111-1111-1111-1111-111111111111"
+            asset, owner_id=UUID("11111111-1111-1111-1111-111111111111")
         )
 
         assert sync_asset.deletedAt is None
@@ -50,7 +51,7 @@ class TestGumnutAssetToSyncAssetV1DeletedAt:
         asset.trashed_at = trashed_at
 
         sync_asset = gumnut_asset_to_sync_asset_v1(
-            asset, owner_id="11111111-1111-1111-1111-111111111111"
+            asset, owner_id=UUID("11111111-1111-1111-1111-111111111111")
         )
 
         assert sync_asset.deletedAt == trashed_at

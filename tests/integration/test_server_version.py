@@ -44,12 +44,13 @@ class TestServerVersionEndpoint:
         data = response.json()
 
         # Verify all required fields are present
-        assert set(data.keys()) == {"major", "minor", "patch"}
+        assert set(data.keys()) == {"major", "minor", "patch", "prerelease"}
 
         # Verify all values are integers
         assert isinstance(data["major"], int)
         assert isinstance(data["minor"], int)
         assert isinstance(data["patch"], int)
+        assert data["prerelease"] is None
 
 
 class TestVersionCheckEndpoint:

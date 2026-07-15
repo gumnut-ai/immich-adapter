@@ -6,11 +6,11 @@ from uuid import uuid4
 
 import pytest
 
-from routers.api.map import (
+from routers.api.map import get_map_markers
+from routers.utils.map_markers import (
     GEOTAGGED_WORLD_BBOX,
     MAP_MARKERS_CAP,
     MAX_ASSETS_SCANNED,
-    get_map_markers,
 )
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
@@ -113,9 +113,7 @@ class TestGetMapMarkers:
 
         assert len(result) == 1
         marker = result[0]
-        assert marker.id == str(
-            safe_uuid_from_asset_id(uuid_to_gumnut_asset_id(asset_uuid))
-        )
+        assert marker.id == safe_uuid_from_asset_id(uuid_to_gumnut_asset_id(asset_uuid))
         assert marker.lat == 37.7749
         assert marker.lon == -122.4194
         assert marker.city == "San Francisco"

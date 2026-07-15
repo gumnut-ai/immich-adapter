@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query
-from uuid import UUID
+from uuid import UUID, uuid4
 from typing import List
 
 from routers.immich_models import (
@@ -42,9 +42,7 @@ async def create_stack(request: StackCreateDto) -> StackResponseDto:
     Create a stack.
     This is a stub implementation that returns a fake stack response.
     """
-    return StackResponseDto(
-        id="stack-id", primaryAssetId=str(request.assetIds[0]), assets=[]
-    )
+    return StackResponseDto(id=uuid4(), primaryAssetId=request.assetIds[0], assets=[])
 
 
 @router.get("/{id}")
@@ -53,7 +51,7 @@ async def get_stack(id: UUID) -> StackResponseDto:
     Get stack by ID.
     This is a stub implementation that returns a fake stack response.
     """
-    return StackResponseDto(id=str(id), primaryAssetId="primary-asset-id", assets=[])
+    return StackResponseDto(id=id, primaryAssetId=uuid4(), assets=[])
 
 
 @router.put("/{id}")
@@ -63,10 +61,8 @@ async def update_stack(id: UUID, request: StackUpdateDto) -> StackResponseDto:
     This is a stub implementation that returns a fake stack response.
     """
     return StackResponseDto(
-        id=str(id),
-        primaryAssetId=str(request.primaryAssetId)
-        if request.primaryAssetId
-        else "primary-asset-id",
+        id=id,
+        primaryAssetId=request.primaryAssetId if request.primaryAssetId else uuid4(),
         assets=[],
     )
 

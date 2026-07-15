@@ -47,6 +47,16 @@ Always run linting and formatting on the generated model file before committing;
 
 When fetching the OpenAPI spec from a GitHub blob URL, the generator substitutes the Immich version tag from the `.immich-container-tag` file so the generated models match the specific Immich version you're targeting. If the file is missing or empty, it falls back to `main`. The generated file's comment header records which version was used.
 
+The generator's `datamodel-code-generator` dependency is unpinned (`>=0.25.0`, resolved fresh by `uv run`), so a regeneration can carry codegen-version stylistic churn (e.g. the `date`→`date_aliased` import alias) independent of any spec change — expected, not a wire change. Validate a regeneration diff against the targeted spec's known changes, not against an assumption that every hunk is spec-driven.
+
+### Constraint Preprocessing
+
+Before handing the spec to `datamodel-code-generator`, the generator drops constraints codegen would misapply to non-string types — currently `pattern` on schemas whose `format` maps to a non-string type (`uuid`, `date-time`, `date`, `time`), which otherwise yields `UUID` / `AwareDatetime` / `date` / `time` fields that raise `TypeError` at value validation under the pinned pydantic (and it collapses the now-redundant `RootModel[UUID]` id wrappers into plain `UUID`). Patterns on genuine string fields are kept. See `strip_non_string_patterns` in `tools/spec_preprocess.py`; if a future spec trips the same class of error for another non-string `format`, add it to `_NON_STRING_PATTERN_FORMATS` rather than hand-editing the generated file.
+
+### After Regenerating: Sweep Stub Literals via Pyright
+
+A regeneration that adds typing or pattern constraints (e.g. `str` → `UUID` ids, regex-patterned keys) silently turns hardcoded literals in stub endpoints into latent 500s — stubs have no test coverage, so the suite stays green while the endpoint fails response validation on every call. Don't hunt these by grep (partial sweeps have missed sites repeatedly); enumerate them from pyright's error list — `Literal['...'] cannot be assigned to parameter ... of type UUID` (or a pattern-constrained field) pinpoints every offending literal. Dynamic `str(...)`-of-UUID values coerce fine at runtime and are style cleanup, not defects; invalid *literals* are the class that 500s.
+
 ## API Compatibility Tool
 
 The `validate_api_compatibility.py` tool ensures that immich-adapter correctly implements the Immich API endpoints.

@@ -7,6 +7,7 @@ to the Immich API format, including metadata (camera/EXIF/GPS/location) processi
 
 import logging
 from datetime import datetime
+from uuid import UUID
 
 from gumnut.types.asset_response import AssetResponse
 from routers.utils.datetime_utils import (
@@ -25,7 +26,7 @@ from routers.immich_models import (
 )
 from services.websockets import AssetUploadReadyV1Payload
 from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
-from routers.utils.person_conversion import convert_gumnut_person_to_immich_with_faces
+from routers.utils.person_conversion import convert_gumnut_person_to_immich
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +103,16 @@ def normalize_rating(rating: float | int | None) -> int | None:
 
 
 def format_duration(seconds: float | None) -> str | None:
-    """Format an upstream video duration (float seconds) as Immich's interval string.
+    """Format a video duration (float seconds) as Immich's ``HH:MM:SS.ffffff`` interval string.
 
-    Immich expresses video duration as an ``HH:MM:SS.ffffff`` string. The Gumnut
-    asset carries ``duration`` as float seconds, or ``None`` when the asset is an
-    image or its duration has not been extracted yet. Returns ``None`` for ``None``
-    so callers can preserve each emit site's existing absent-duration behavior
-    rather than fabricating a value.
+    Retained for the ``SyncAssetV1`` sync payload, whose ``duration`` field is
+    still the interval string in the Immich v3 spec. The asset/timeline REST
+    responses moved to integer milliseconds — see ``duration_ms`` — but the v1
+    sync entity did not (its int-ms successor is ``SyncAssetV2``, added by the
+    Sync v2 layer). The Gumnut asset carries ``duration`` as float seconds, or
+    ``None`` when the asset is an image or its duration has not been extracted
+    yet; ``None`` passes through so each sync emit site preserves its
+    absent-duration behavior rather than fabricating a value.
     """
     if seconds is None:
         return None
@@ -122,19 +126,21 @@ def format_duration(seconds: float | None) -> str | None:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{micros:06d}"
 
 
-def _resolve_single_asset_duration(
-    gumnut_asset: AssetResponse, asset_type: AssetTypeEnum
-) -> str:
-    """Duration string for the single-asset ``AssetResponseDto`` (non-nullable).
+def duration_ms(seconds: float | None) -> int | None:
+    """Convert an upstream video duration (float seconds) to Immich's integer milliseconds.
 
-    Uses the upstream value when present; when absent, preserves the prior
-    placeholder — zero duration for videos, empty string for images — rather
-    than fabricating a length.
+    Immich v3 expresses ``duration`` on ``AssetResponseDto`` and
+    ``TimeBucketAssetResponseDto`` (and, via the Sync v2 layer, the
+    ``SyncAssetV2`` payload) as integer **milliseconds**, nullable — ``null``
+    for a static image or a video whose duration has not been extracted yet.
+    The Gumnut asset carries ``duration`` as float seconds, so round to whole
+    milliseconds; ``None`` passes through as ``None`` rather than fabricating a
+    length (the nullable v3 field makes the old zero/empty-string placeholders
+    unnecessary).
     """
-    formatted = format_duration(gumnut_asset.duration)
-    if formatted is not None:
-        return formatted
-    return "00:00:00.000000" if asset_type == AssetTypeEnum.VIDEO else ""
+    if seconds is None:
+        return None
+    return round(float(seconds) * 1000)
 
 
 def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime:
@@ -151,6 +157,11 @@ def resolve_capture_datetime(gumnut_asset: AssetResponse) -> datetime:
 def resolve_file_created_at(gumnut_asset: AssetResponse) -> datetime:
     """Return capture time formatted for Immich ``fileCreatedAt`` fields."""
     return to_actual_utc(resolve_capture_datetime(gumnut_asset))
+
+
+def resolve_created_at(gumnut_asset: AssetResponse) -> datetime:
+    """Return the Gumnut upload time (``created_at``) formatted for Immich ``createdAt`` fields."""
+    return to_actual_utc(gumnut_asset.created_at)
 
 
 def resolve_local_date_time(gumnut_asset: AssetResponse) -> datetime:
@@ -332,13 +343,13 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     )
 
 
-def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAssetExifV1:
+def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: UUID) -> SyncAssetExifV1:
     """
     Extract metadata from a Gumnut AssetResponse for sync events.
 
     Args:
         gumnut_asset: The Gumnut AssetResponse object
-        asset_uuid: The asset UUID string
+        asset_uuid: The asset UUID
 
     Returns:
         SyncAssetExifV1 object with metadata from the asset
@@ -433,19 +444,19 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: str) -> SyncAsset
 
 
 def build_asset_upload_ready_payload(
-    gumnut_asset: AssetResponse, owner_id: str
+    gumnut_asset: AssetResponse, owner_id: UUID
 ) -> AssetUploadReadyV1Payload:
     """
     Build an AssetUploadReadyV1Payload from a Gumnut asset for WebSocket sync events.
 
     Args:
         gumnut_asset: The Gumnut AssetResponse object
-        owner_id: The owner's user ID string
+        owner_id: The owner's user id (UUID form of the Gumnut user id)
 
     Returns:
         AssetUploadReadyV1Payload containing SyncAssetV1 and SyncAssetExifV1
     """
-    asset_uuid = str(safe_uuid_from_asset_id(gumnut_asset.id))
+    asset_uuid = safe_uuid_from_asset_id(gumnut_asset.id)
 
     file_created_at = resolve_file_created_at(gumnut_asset)
     file_modified_at = resolve_file_modified_at(gumnut_asset)
@@ -457,6 +468,8 @@ def build_asset_upload_ready_payload(
     sync_asset = SyncAssetV1(
         id=asset_uuid,
         ownerId=owner_id,
+        # "Uploaded to Immich at" — required on SyncAssetV1 in Immich v3.
+        createdAt=gumnut_asset.created_at,
         thumbhash=gumnut_asset.thumbhash,
         checksum=resolve_immich_checksum(gumnut_asset),
         deletedAt=gumnut_asset.trashed_at,
@@ -508,7 +521,7 @@ def convert_gumnut_asset_to_immich(
     people = []
     if gumnut_asset.people:
         for person in gumnut_asset.people:
-            people.append(convert_gumnut_person_to_immich_with_faces(person))
+            people.append(convert_gumnut_person_to_immich(person))
 
     # Extract EXIF object directly from AssetResponse
     exif_info = extract_exif_info(gumnut_asset)
@@ -517,9 +530,7 @@ def convert_gumnut_asset_to_immich(
     height = gumnut_asset.height
 
     return AssetResponseDto(
-        id=str(safe_uuid_from_asset_id(asset_id)),
-        deviceAssetId=str(asset_id),  # Keep original Gumnut asset ID
-        deviceId="gumnut-device",  # Placeholder device ID
+        id=safe_uuid_from_asset_id(asset_id),
         type=asset_type,
         originalFileName=original_filename,
         originalMimeType=mime_type,
@@ -530,9 +541,9 @@ def convert_gumnut_asset_to_immich(
         checksum=resolve_immich_checksum(gumnut_asset),
         exifInfo=exif_info,  # Now includes processed EXIF data
         createdAt=gumnut_asset.created_at,
-        duration=_resolve_single_asset_duration(gumnut_asset, asset_type),
+        duration=duration_ms(gumnut_asset.duration),
         hasMetadata=True,
-        height=float(height) if height else None,
+        height=height if height else None,
         isArchived=False,
         isEdited=False,
         isFavorite=False,
@@ -546,6 +557,6 @@ def convert_gumnut_asset_to_immich(
         # Immich field — clients simply skip the blur until it is backfilled.
         thumbhash=gumnut_asset.thumbhash,
         visibility=AssetVisibility.timeline,
-        width=float(width) if width else None,
+        width=width if width else None,
         people=people,
     )

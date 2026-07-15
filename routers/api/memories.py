@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, List
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from gumnut import AsyncGumnut
@@ -152,7 +152,7 @@ def _build_memory(
 ) -> MemoryResponseDto:
     memory_at = datetime(year, month, day, tzinfo=timezone.utc)
     return MemoryResponseDto(
-        id=str(encode_memory_id(user_uuid, year, month, day)),
+        id=encode_memory_id(user_uuid, year, month, day),
         assets=[
             convert_gumnut_asset_to_immich(asset, current_user) for asset in assets
         ],
@@ -261,13 +261,13 @@ async def create_memory(
     This is a stub implementation that returns a fake memory response.
     """
     return MemoryResponseDto(
-        id="memory-id",
+        id=uuid4(),
         assets=[],
         createdAt=datetime.now(tz=timezone.utc),
         data=OnThisDayDto(year=2024),
         isSaved=False,
         memoryAt=datetime.now(tz=timezone.utc),
-        ownerId=str(current_user_id),
+        ownerId=current_user_id,
         type=MemoryType.on_this_day,
         updatedAt=datetime.now(tz=timezone.utc),
     )
@@ -322,13 +322,13 @@ async def update_memory(
     This is a stub implementation that returns a fake memory response.
     """
     return MemoryResponseDto(
-        id=str(id),
+        id=id,
         assets=[],
         createdAt=datetime.now(tz=timezone.utc),
         data=OnThisDayDto(year=2024),
         isSaved=request.isSaved or False,
         memoryAt=request.memoryAt or datetime.now(tz=timezone.utc),
-        ownerId=str(current_user_id),
+        ownerId=current_user_id,
         type=MemoryType.on_this_day,
         updatedAt=datetime.now(tz=timezone.utc),
     )

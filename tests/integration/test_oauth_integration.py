@@ -159,7 +159,7 @@ class TestFinishOAuthIntegration:
         result = response.json()
         expected_session_token = str(TEST_SESSION_UUID)
         assert result["accessToken"] == expected_session_token
-        assert result["userId"] == TEST_GUMNUT_USER_ID
+        assert result["userId"] == str(TEST_USER_UUID)
         assert result["userEmail"] == "test@example.com"
         assert result["name"] == "Test User"
         assert result["isAdmin"] is False

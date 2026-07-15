@@ -1,0 +1,50 @@
+"""Immich v3 query-param conformance for the albums asset-add endpoints.
+
+Immich v3 dropped the `key`/`slug` query params from `PUT /albums/{id}/assets`
+and `PUT /albums/assets`, while KEEPING them on `GET /albums/{id}` (of that
+endpoint's params, v3 dropped only `withoutAssets` — which the adapter still
+declares as a documented no-op for client compatibility, so the parsed source
+below still shows it). These guard that intentional asymmetry.
+
+These read `routers/api/albums.py` by parsing its source with `ast` rather than
+importing the module and calling `inspect.signature`. A static parse needs no
+app/SDK import side effects, so the check stays a pure inspection of the declared
+parameter lists.
+"""
+
+import ast
+from pathlib import Path
+
+_ALBUMS_SRC = Path(__file__).resolve().parents[3] / "routers" / "api" / "albums.py"
+
+
+def _param_names(func_name: str) -> set[str]:
+    tree = ast.parse(_ALBUMS_SRC.read_text())
+    node = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.name == func_name
+    )
+    return {a.arg for a in node.args.args + node.args.kwonlyargs}
+
+
+def test_put_album_assets_dropped_key_and_slug():
+    """PUT /albums/{id}/assets no longer declares key/slug."""
+    params = _param_names("add_assets_to_album")
+    assert "key" not in params
+    assert "slug" not in params
+
+
+def test_put_albums_assets_dropped_key_and_slug():
+    """PUT /albums/assets no longer declares key/slug."""
+    params = _param_names("add_assets_to_albums")
+    assert "key" not in params
+    assert "slug" not in params
+
+
+def test_get_album_info_retains_key_and_slug():
+    """GET /albums/{id} keeps key/slug in v3."""
+    params = _param_names("get_album_info")
+    assert "key" in params
+    assert "slug" in params

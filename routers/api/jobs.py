@@ -50,6 +50,7 @@ async def get_all_jobs_status() -> QueuesResponseLegacyDto:
         editor=fake_status,
         faceDetection=fake_status,
         facialRecognition=fake_status,
+        integrityCheck=fake_status,
         library=fake_status,
         metadataExtraction=fake_status,
         migration=fake_status,

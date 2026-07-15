@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from datetime import datetime, timezone
 
 
+from routers.api.constants import STUB_LICENSE_KEY
 from routers.utils.current_user import (
     get_current_user_admin,
     get_current_user,
@@ -53,7 +54,7 @@ class TestGetCurrentUserAdmin:
 
         # Assert
         assert isinstance(result, UserAdminResponseDto)
-        assert result.id == str(test_uuid)
+        assert result.id == test_uuid
         assert result.email == "test@example.com"
         assert result.name == "Test User"
         assert result.isAdmin is False
@@ -257,7 +258,7 @@ class TestGetCurrentUser:
         # Setup - create a UserAdminResponseDto
         now = datetime.now(timezone.utc)
         user_admin = UserAdminResponseDto(
-            id="123e4567-e89b-12d3-a456-426614174000",
+            id=UUID("123e4567-e89b-12d3-a456-426614174000"),
             email="test@example.com",
             name="Test User",
             isAdmin=True,
@@ -276,7 +277,7 @@ class TestGetCurrentUser:
             license=UserLicense(
                 activatedAt=now,
                 activationKey="key123",
-                licenseKey="license123",
+                licenseKey=STUB_LICENSE_KEY,
             ),
         )
 
@@ -301,7 +302,7 @@ class TestGetCurrentUserId:
         """Test extraction of UUID from UserAdminResponseDto."""
         # Setup - create a UserAdminResponseDto
         now = datetime.now(timezone.utc)
-        test_uuid = "123e4567-e89b-12d3-a456-426614174000"
+        test_uuid = UUID("123e4567-e89b-12d3-a456-426614174000")
         user_admin = UserAdminResponseDto(
             id=test_uuid,
             email="test@example.com",
@@ -322,7 +323,7 @@ class TestGetCurrentUserId:
             license=UserLicense(
                 activatedAt=now,
                 activationKey="key123",
-                licenseKey="license123",
+                licenseKey=STUB_LICENSE_KEY,
             ),
         )
 
@@ -331,4 +332,4 @@ class TestGetCurrentUserId:
 
         # Assert
         assert isinstance(result, UUID)
-        assert str(result) == test_uuid
+        assert result == test_uuid

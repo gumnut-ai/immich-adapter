@@ -16,19 +16,23 @@ from routers.api.albums import (
     get_all_albums,
     get_album_statistics,
     get_album_info,
+    get_album_map_markers,
     create_album,
     add_assets_to_album,
     update_album,
     remove_asset_from_album,
     delete_album,
     add_assets_to_albums,
+    router as albums_router,
 )
+from routers.utils.map_markers import GEOTAGGED_WORLD_BBOX
 from routers.immich_models import (
+    AlbumUserRole,
     CreateAlbumDto,
     UpdateAlbumDto,
     BulkIdsDto,
     AlbumsAddAssetsDto,
-    Error1,
+    BulkIdErrorReason,
 )
 from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.utils.gumnut_client import BULK_CHUNK_SIZE
@@ -80,6 +84,11 @@ class TestGetAllAlbums:
         # Verify the real conversion happened by checking result structure
         assert all(hasattr(album, "id") for album in result)
         assert all(hasattr(album, "albumName") for album in result)
+        # v3: owner is carried in albumUsers[0]; owner/ownerId/assets are gone.
+        assert all(
+            album.albumUsers[0].user.id == mock_current_user.id for album in result
+        )
+        assert all(album.albumUsers[0].role == AlbumUserRole.owner for album in result)
 
     @pytest.mark.anyio
     async def test_get_all_albums_includes_asset_count(
@@ -259,12 +268,12 @@ class TestGetAllAlbums:
         # Assert - verify albumThumbnailAssetId is set correctly
         assert len(result) == 3
         # First album should have the converted asset ID
-        expected_uuid0 = str(safe_uuid_from_asset_id(cover_asset_id0))
+        expected_uuid0 = safe_uuid_from_asset_id(cover_asset_id0)
         assert result[0].albumThumbnailAssetId == expected_uuid0
-        # Second album should have empty string (no cover)
-        assert result[1].albumThumbnailAssetId == ""
+        # Second album should have None (no cover)
+        assert result[1].albumThumbnailAssetId is None
         # Third album should have its converted asset ID
-        expected_uuid2 = str(safe_uuid_from_asset_id(cover_asset_id2))
+        expected_uuid2 = safe_uuid_from_asset_id(cover_asset_id2)
         assert result[2].albumThumbnailAssetId == expected_uuid2
 
     @pytest.mark.anyio
@@ -351,18 +360,18 @@ class TestGetAlbumInfo:
     async def test_get_album_info_success(
         self,
         sample_gumnut_album,
-        multiple_gumnut_assets,
-        mock_sync_cursor_page,
         sample_uuid,
         mock_current_user,
     ):
-        """Test successful retrieval of album info."""
+        """Test successful retrieval of album info.
+
+        Immich v3's AlbumResponseDto no longer inlines assets, so the endpoint
+        must not fetch the album's assets. The owner is carried in
+        albumUsers[0].
+        """
         # Setup - create mock client
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
-        mock_client.assets.list.return_value = mock_sync_cursor_page(
-            multiple_gumnut_assets
-        )
 
         # Execute
         result = await get_album_info(
@@ -378,17 +387,16 @@ class TestGetAlbumInfo:
         assert hasattr(result, "albumName")
         assert result.albumName == "Test Album"  # From sample_gumnut_album.name
         mock_client.albums.retrieve.assert_called_once()
-        mock_client.assets.list.assert_called_once_with(
-            album_id=uuid_to_gumnut_album_id(sample_uuid),
-            include=["metadata", "people", "file_data"],
-            limit=GUMNUT_API_MAX_PAGE_SIZE,
-        )
+        # v3 no longer inlines assets — the endpoint must not fetch them.
+        mock_client.assets.list.assert_not_called()
+        # Owner is derived from albumUsers[0].
+        assert result.albumUsers[0].user.id == mock_current_user.id
+        assert result.albumUsers[0].role == AlbumUserRole.owner
 
     @pytest.mark.anyio
     async def test_get_album_info_uses_gumnut_asset_count(
         self,
         sample_gumnut_album,
-        mock_sync_cursor_page,
         sample_uuid,
         mock_current_user,
     ):
@@ -398,8 +406,6 @@ class TestGetAlbumInfo:
 
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
-        # Return empty assets list
-        mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
         # Execute
         result = await get_album_info(
@@ -414,7 +420,7 @@ class TestGetAlbumInfo:
 
     @pytest.mark.anyio
     async def test_get_album_info_with_album_cover_asset_id(
-        self, sample_gumnut_album, mock_sync_cursor_page, sample_uuid, mock_current_user
+        self, sample_gumnut_album, sample_uuid, mock_current_user
     ):
         """Test that album_cover_asset_id is converted to albumThumbnailAssetId in get_album_info."""
         # Setup - set album_cover_asset_id on the album
@@ -423,7 +429,6 @@ class TestGetAlbumInfo:
 
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
-        mock_client.assets.list.return_value = mock_sync_cursor_page([])
 
         # Execute
         result = await get_album_info(
@@ -434,14 +439,18 @@ class TestGetAlbumInfo:
         )
 
         # Assert - verify albumThumbnailAssetId is set correctly
-        expected_uuid = str(safe_uuid_from_asset_id(cover_asset_id))
+        expected_uuid = safe_uuid_from_asset_id(cover_asset_id)
         assert result.albumThumbnailAssetId == expected_uuid
 
     @pytest.mark.anyio
     async def test_get_album_info_without_assets(
         self, sample_gumnut_album, sample_uuid, mock_current_user
     ):
-        """Test retrieval of album info without assets."""
+        """The vestigial withoutAssets=True is still accepted and returns the album.
+
+        Assets are never inlined in v3 regardless of this param, so it no longer
+        gates anything, but clients may still send it.
+        """
         # Setup - create mock client
         mock_client = Mock()
         mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
@@ -459,7 +468,7 @@ class TestGetAlbumInfo:
         assert hasattr(result, "id")
         assert result.albumName == "Test Album"  # From sample_gumnut_album.name
         mock_client.albums.retrieve.assert_called_once()
-        # withoutAssets=True skips the assets.list call entirely
+        # Assets are never fetched in v3 (no longer inlined in the response).
         mock_client.assets.list.assert_not_called()
 
     @pytest.mark.anyio
@@ -541,7 +550,7 @@ class TestAddAssetsToAlbum:
         request = BulkIdsDto(ids=[asset_id1, asset_id2])
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is True for item in result)
         mock_client.albums.assets_associations.add.assert_called_once_with(
             uuid_to_gumnut_album_id(sample_uuid),
@@ -565,11 +574,11 @@ class TestAddAssetsToAlbum:
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
         assert len(result) == 2
-        assert result[0].id == str(new_asset)
+        assert result[0].id == new_asset
         assert result[0].success is True
-        assert result[1].id == str(dup_asset)
+        assert result[1].id == dup_asset
         assert result[1].success is False
-        assert result[1].error == Error1.duplicate
+        assert result[1].error == BulkIdErrorReason.duplicate
 
     @pytest.mark.anyio
     async def test_add_assets_not_found_assets_from_response(self, sample_uuid):
@@ -593,11 +602,11 @@ class TestAddAssetsToAlbum:
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
         assert len(result) == 2
-        assert result[0].id == str(new_asset)
+        assert result[0].id == new_asset
         assert result[0].success is True
-        assert result[1].id == str(missing_asset)
+        assert result[1].id == missing_asset
         assert result[1].success is False
-        assert result[1].error == Error1.not_found
+        assert result[1].error == BulkIdErrorReason.not_found
 
     @pytest.mark.anyio
     async def test_add_assets_not_found_marks_all(self, sample_uuid):
@@ -617,9 +626,9 @@ class TestAddAssetsToAlbum:
 
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.not_found for item in result)
+        assert all(item.error == BulkIdErrorReason.not_found for item in result)
         assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
@@ -636,9 +645,9 @@ class TestAddAssetsToAlbum:
 
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.unknown for item in result)
+        assert all(item.error == BulkIdErrorReason.unknown for item in result)
         assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
@@ -655,9 +664,9 @@ class TestAddAssetsToAlbum:
 
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.unknown for item in result)
+        assert all(item.error == BulkIdErrorReason.unknown for item in result)
         assert mock_client.albums.assets_associations.add.call_count == 1
 
     @pytest.mark.anyio
@@ -693,7 +702,7 @@ class TestAddAssetsToAlbum:
         request = BulkIdsDto(ids=asset_uuids)
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(u) for u in asset_uuids]
+        assert [item.id for item in result] == asset_uuids
         assert all(item.success is True for item in result)
 
         assert (
@@ -738,7 +747,7 @@ class TestAddAssetsToAlbum:
         for item in result[:chunk2_dup_index]:
             assert item.success is True
         assert result[chunk2_dup_index].success is False
-        assert result[chunk2_dup_index].error == Error1.duplicate
+        assert result[chunk2_dup_index].error == BulkIdErrorReason.duplicate
 
     @pytest.mark.anyio
     async def test_add_assets_not_found_in_later_chunk_surfaces_in_response(
@@ -768,7 +777,7 @@ class TestAddAssetsToAlbum:
         for item in result[:chunk2_missing_index]:
             assert item.success is True
         assert result[chunk2_missing_index].success is False
-        assert result[chunk2_missing_index].error == Error1.not_found
+        assert result[chunk2_missing_index].error == BulkIdErrorReason.not_found
 
     @pytest.mark.anyio
     async def test_add_assets_empty_request(self, sample_uuid):
@@ -805,7 +814,7 @@ class TestAddAssetsToAlbum:
         # Chunk 1 ids are unknown; chunk 2 ids succeed.
         for item in result[:BULK_CHUNK_SIZE]:
             assert item.success is False
-            assert item.error == Error1.unknown
+            assert item.error == BulkIdErrorReason.unknown
         for item in result[BULK_CHUNK_SIZE:]:
             assert item.success is True
         assert mock_client.albums.assets_associations.add.call_count == 2
@@ -832,7 +841,7 @@ class TestAddAssetsToAlbum:
             assert item.success is True
         for item in result[BULK_CHUNK_SIZE:]:
             assert item.success is False
-            assert item.error == Error1.unknown
+            assert item.error == BulkIdErrorReason.unknown
 
     @pytest.mark.anyio
     async def test_add_assets_missing_from_response_marked_unknown(
@@ -858,11 +867,11 @@ class TestAddAssetsToAlbum:
         with caplog.at_level(logging.WARNING):
             result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        assert result[0].id == str(present)
+        assert result[0].id == present
         assert result[0].success is True
-        assert result[1].id == str(missing)
+        assert result[1].id == missing
         assert result[1].success is False
-        assert result[1].error == Error1.unknown
+        assert result[1].error == BulkIdErrorReason.unknown
         assert any(
             "missing from add_assets bulk response" in record.message
             for record in caplog.records
@@ -919,9 +928,7 @@ class TestUpdateAlbum:
             name="Updated Album",
             album_cover_asset_id=cover_gumnut_id,
         )
-        assert result.albumThumbnailAssetId == str(
-            safe_uuid_from_asset_id(cover_gumnut_id)
-        )
+        assert result.albumThumbnailAssetId == safe_uuid_from_asset_id(cover_gumnut_id)
 
     @pytest.mark.anyio
     async def test_update_album_not_found_propagates(
@@ -959,7 +966,7 @@ class TestRemoveAssetFromAlbum:
         request = BulkIdsDto(ids=[asset_id1, asset_id2])
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is True for item in result)
         mock_client.albums.assets_associations.remove.assert_called_once_with(
             uuid_to_gumnut_album_id(sample_uuid),
@@ -980,9 +987,9 @@ class TestRemoveAssetFromAlbum:
 
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(asset_id1), str(asset_id2)]
+        assert [item.id for item in result] == [asset_id1, asset_id2]
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.not_found for item in result)
+        assert all(item.error == BulkIdErrorReason.not_found for item in result)
 
     @pytest.mark.anyio
     async def test_remove_assets_other_error_marks_all(self, sample_uuid):
@@ -999,7 +1006,7 @@ class TestRemoveAssetFromAlbum:
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.unknown for item in result)
+        assert all(item.error == BulkIdErrorReason.unknown for item in result)
         assert mock_client.albums.assets_associations.remove.call_count == 1
 
     @pytest.mark.anyio
@@ -1017,7 +1024,7 @@ class TestRemoveAssetFromAlbum:
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
         assert all(item.success is False for item in result)
-        assert all(item.error == Error1.unknown for item in result)
+        assert all(item.error == BulkIdErrorReason.unknown for item in result)
         assert mock_client.albums.assets_associations.remove.call_count == 1
 
     @pytest.mark.anyio
@@ -1044,7 +1051,7 @@ class TestRemoveAssetFromAlbum:
         request = BulkIdsDto(ids=asset_uuids)
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        assert [item.id for item in result] == [str(u) for u in asset_uuids]
+        assert [item.id for item in result] == asset_uuids
         assert all(item.success is True for item in result)
 
         assert (
@@ -1091,7 +1098,7 @@ class TestRemoveAssetFromAlbum:
 
         for item in result[:BULK_CHUNK_SIZE]:
             assert item.success is False
-            assert item.error == Error1.unknown
+            assert item.error == BulkIdErrorReason.unknown
         for item in result[BULK_CHUNK_SIZE:]:
             assert item.success is True
         assert mock_client.albums.assets_associations.remove.call_count == 2
@@ -1117,7 +1124,7 @@ class TestRemoveAssetFromAlbum:
             assert item.success is True
         for item in result[BULK_CHUNK_SIZE:]:
             assert item.success is False
-            assert item.error == Error1.unknown
+            assert item.error == BulkIdErrorReason.unknown
 
 
 class TestDeleteAlbum:
@@ -1185,8 +1192,6 @@ class TestAddAssetsToAlbums:
         result = await add_assets_to_albums(request, client=mock_client)
 
         assert result.success is False
-        from routers.immich_models import BulkIdErrorReason
-
         assert result.error == BulkIdErrorReason.unknown
 
     @pytest.mark.anyio
@@ -1201,8 +1206,6 @@ class TestAddAssetsToAlbums:
         result = await add_assets_to_albums(request, client=mock_client)
 
         assert result.success is False
-        from routers.immich_models import BulkIdErrorReason
-
         assert result.error == BulkIdErrorReason.not_found
 
     @pytest.mark.anyio
@@ -1223,8 +1226,6 @@ class TestAddAssetsToAlbums:
         result = await add_assets_to_albums(request, client=mock_client)
 
         assert result.success is False
-        from routers.immich_models import BulkIdErrorReason
-
         assert result.error == BulkIdErrorReason.no_permission
 
     @pytest.mark.anyio
@@ -1242,8 +1243,6 @@ class TestAddAssetsToAlbums:
         result = await add_assets_to_albums(request, client=mock_client)
 
         assert result.success is False
-        from routers.immich_models import BulkIdErrorReason
-
         assert result.error == BulkIdErrorReason.not_found
 
     @pytest.mark.anyio
@@ -1276,3 +1275,145 @@ class TestAddAssetsToAlbums:
         assert result.success is True
         assert peak > 1, "expected concurrent execution"
         assert peak <= BULK_FANOUT_CONCURRENCY_LIMIT
+
+
+def _make_geo_asset(
+    *,
+    lat: float | None = None,
+    lon: float | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    country: str | None = None,
+    metadata_missing: bool = False,
+) -> Mock:
+    """Mock Gumnut asset with the GPS-relevant subset of metadata fields."""
+    asset = Mock()
+    asset.id = uuid_to_gumnut_asset_id(uuid4())
+    if metadata_missing:
+        asset.metadata = None
+    else:
+        metadata = Mock()
+        metadata.latitude = lat
+        metadata.longitude = lon
+        metadata.city = city
+        metadata.state = state
+        metadata.country = country
+        asset.metadata = metadata
+    return asset
+
+
+class TestGetAlbumMapMarkers:
+    """Test the get_album_map_markers endpoint (GET /albums/{id}/map-markers)."""
+
+    @pytest.mark.anyio
+    async def test_returns_markers_for_geotagged_album_assets(
+        self, sample_uuid, sample_gumnut_album, mock_sync_cursor_page
+    ):
+        """Geotagged assets become markers; coordinate-less assets are skipped."""
+        asset_with_gps = _make_geo_asset(
+            lat=40.5, lon=-74.1, city="Trenton", state="NJ", country="USA"
+        )
+        asset_no_metadata = _make_geo_asset(metadata_missing=True)
+        asset_no_coords = _make_geo_asset(lat=None, lon=None, city="Nowhere")
+
+        mock_client = Mock()
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.assets.list.return_value = mock_sync_cursor_page(
+            [asset_with_gps, asset_no_metadata, asset_no_coords]
+        )
+
+        result = await get_album_map_markers(sample_uuid, client=mock_client)
+
+        assert len(result) == 1
+        marker = result[0]
+        assert marker.id == safe_uuid_from_asset_id(asset_with_gps.id)
+        assert marker.lat == 40.5
+        assert marker.lon == -74.1
+        assert marker.city == "Trenton"
+        assert marker.state == "NJ"
+        assert marker.country == "USA"
+
+    @pytest.mark.anyio
+    async def test_forwards_album_id_and_world_bbox(
+        self, sample_uuid, sample_gumnut_album, mock_sync_cursor_page
+    ):
+        """The album filter is AND-combined with the geotagged world bbox."""
+        mock_client = Mock()
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        await get_album_map_markers(sample_uuid, client=mock_client)
+
+        kwargs = mock_client.assets.list.call_args.kwargs
+        assert kwargs["album_id"] == uuid_to_gumnut_album_id(sample_uuid)
+        assert kwargs["bbox"] == GEOTAGGED_WORLD_BBOX
+
+    @pytest.mark.anyio
+    async def test_key_and_slug_are_dropped_not_forwarded(
+        self, sample_uuid, sample_gumnut_album, mock_sync_cursor_page
+    ):
+        """`key` / `slug` are accepted for client compat then dropped.
+
+        They're shared-link tokens this adapter doesn't honor (`_ = key, slug`).
+        This mirrors the global endpoint's `test_partner_and_shared_album_filters_are_dropped`
+        and guards against a future edit wiring them into `retrieve`/`list` — the
+        `retrieve` path especially, since threading a token there would be a
+        silent shared-link authorization change.
+        """
+        mock_client = Mock()
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        await get_album_map_markers(
+            sample_uuid,
+            key="shared-link-key",
+            slug="shared-slug",
+            client=mock_client,
+        )
+
+        # The album retrieve gets only the album id — no key/slug threaded in.
+        retrieve_call = mock_client.albums.retrieve.call_args
+        assert "key" not in retrieve_call.kwargs
+        assert "slug" not in retrieve_call.kwargs
+        assert "shared-link-key" not in retrieve_call.args
+        assert "shared-slug" not in retrieve_call.args
+
+        # The asset list forwards only album_id + limit + include + bbox.
+        assert set(mock_client.assets.list.call_args.kwargs.keys()) == {
+            "album_id",
+            "limit",
+            "include",
+            "bbox",
+        }
+
+    @pytest.mark.anyio
+    async def test_empty_album_returns_empty_list(
+        self, sample_uuid, sample_gumnut_album, mock_sync_cursor_page
+    ):
+        """An album with no geotagged assets returns an empty marker list."""
+        mock_client = Mock()
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.assets.list.return_value = mock_sync_cursor_page([])
+
+        result = await get_album_map_markers(sample_uuid, client=mock_client)
+
+        assert result == []
+
+    @pytest.mark.anyio
+    async def test_missing_album_raises_not_found_before_listing(self, sample_uuid):
+        """A missing album 404s via retrieve; markers are never listed."""
+        mock_client = Mock()
+        mock_client.albums.retrieve = AsyncMock(
+            side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
+        )
+        mock_client.assets.list = Mock()
+
+        with pytest.raises(NotFoundError):
+            await get_album_map_markers(sample_uuid, client=mock_client)
+
+        mock_client.assets.list.assert_not_called()
+
+    def test_route_registered(self):
+        """The album map-markers route is registered on the albums router."""
+        paths = [getattr(route, "path", None) for route in albums_router.routes]
+        assert "/api/albums/{id}/map-markers" in paths

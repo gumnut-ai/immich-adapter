@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Query
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import List
 
+from routers.api.constants import STUB_LICENSE_KEY
 from routers.immich_models import (
     AlbumsResponse,
     AssetOrder,
@@ -61,7 +62,8 @@ async def create_notification(request: NotificationCreateDto) -> NotificationDto
     This is a stub implementation that returns a fake notification response.
     """
     return NotificationDto(
-        id="notification-id",
+        # v3 types the id UUID; a non-UUID stub fails response validation.
+        id=uuid4(),
         title=request.title,
         level=request.level or NotificationLevel.info,
         type=request.type or NotificationType.Custom,
@@ -114,7 +116,8 @@ async def create_user_admin(request: UserAdminCreateDto) -> UserAdminResponseDto
     This is a stub implementation that returns a fake user response.
     """
     return UserAdminResponseDto(
-        id="user-id",
+        # v3 types the id UUID; a non-UUID stub fails response validation.
+        id=uuid4(),
         email=request.email,
         name=request.name,
         isAdmin=request.isAdmin or False,
@@ -127,7 +130,7 @@ async def create_user_admin(request: UserAdminCreateDto) -> UserAdminResponseDto
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey="activation-key",
-            licenseKey="license-key",
+            licenseKey=STUB_LICENSE_KEY,
         ),
         profileChangedAt=datetime.now(tz=timezone.utc),
         deletedAt=datetime.now(tz=timezone.utc),
@@ -145,7 +148,7 @@ async def get_user_admin(id: UUID) -> UserAdminResponseDto:
     This is a stub implementation that returns a fake user response.
     """
     return UserAdminResponseDto(
-        id=str(id),
+        id=id,
         email="user@example.com",
         name="User Name",
         isAdmin=False,
@@ -158,7 +161,7 @@ async def get_user_admin(id: UUID) -> UserAdminResponseDto:
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey="activation-key",
-            licenseKey="license-key",
+            licenseKey=STUB_LICENSE_KEY,
         ),
         profileChangedAt=datetime.now(tz=timezone.utc),
         deletedAt=datetime.now(tz=timezone.utc),
@@ -178,7 +181,7 @@ async def update_user_admin(
     This is a stub implementation that returns a fake updated user response.
     """
     return UserAdminResponseDto(
-        id=str(id),
+        id=id,
         email=request.email or "user@example.com",
         name=request.name or "Updated User",
         isAdmin=request.isAdmin or False,
@@ -191,7 +194,7 @@ async def update_user_admin(
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey="activation-key",
-            licenseKey="license-key",
+            licenseKey=STUB_LICENSE_KEY,
         ),
         profileChangedAt=datetime.now(tz=timezone.utc),
         deletedAt=datetime.now(tz=timezone.utc),
@@ -211,7 +214,7 @@ async def delete_user_admin(
     This is a stub implementation that returns a fake user response.
     """
     return UserAdminResponseDto(
-        id=str(id),
+        id=id,
         email="deleted@example.com",
         name="Deleted User",
         isAdmin=False,
@@ -224,7 +227,7 @@ async def delete_user_admin(
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey="activation-key",
-            licenseKey="license-key",
+            licenseKey=STUB_LICENSE_KEY,
         ),
         profileChangedAt=datetime.now(tz=timezone.utc),
         deletedAt=datetime.now(tz=timezone.utc),
@@ -290,7 +293,7 @@ async def restore_user_admin(id: UUID) -> UserAdminResponseDto:
     This is a stub implementation that returns a fake restored user response.
     """
     return UserAdminResponseDto(
-        id=str(id),
+        id=id,
         email="restored@example.com",
         name="Restored User",
         isAdmin=False,
@@ -303,7 +306,7 @@ async def restore_user_admin(id: UUID) -> UserAdminResponseDto:
         license=UserLicense(
             activatedAt=datetime.now(tz=timezone.utc),
             activationKey="activation-key",
-            licenseKey="license-key",
+            licenseKey=STUB_LICENSE_KEY,
         ),
         profileChangedAt=datetime.now(tz=timezone.utc),
         deletedAt=datetime.now(tz=timezone.utc),

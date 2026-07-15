@@ -8,7 +8,7 @@ to the Immich API format, including handling of datetime fields and person metad
 from datetime import datetime, date, timezone
 
 from gumnut.types.person_response import PersonResponse
-from routers.immich_models import PersonWithFacesResponseDto, PersonResponseDto
+from routers.immich_models import PersonResponseDto
 from routers.utils.gumnut_id_conversion import safe_uuid_from_person_id
 
 
@@ -86,7 +86,7 @@ def convert_gumnut_person_to_immich(
     ) = _extract_person_fields(gumnut_person)
 
     return PersonResponseDto(
-        id=str(safe_uuid_from_person_id(person_id)),
+        id=safe_uuid_from_person_id(person_id),
         name=person_name,
         birthDate=birth_date,
         isFavorite=is_favorite,
@@ -94,39 +94,4 @@ def convert_gumnut_person_to_immich(
         thumbnailPath=thumbnail_path,
         updatedAt=updated_at,
         color=None,  # Gumnut doesn't have color field
-    )
-
-
-def convert_gumnut_person_to_immich_with_faces(
-    gumnut_person: PersonResponse,
-) -> PersonWithFacesResponseDto:
-    """
-    Convert a Gumnut person to PersonWithFacesResponseDto format.
-
-    Args:
-        gumnut_person: The Gumnut PersonResponse object
-
-    Returns:
-        PersonWithFacesResponseDto object with processed data
-    """
-    (
-        person_id,
-        person_name,
-        birth_date,
-        is_favorite,
-        is_hidden,
-        updated_at,
-        thumbnail_path,
-    ) = _extract_person_fields(gumnut_person)
-
-    return PersonWithFacesResponseDto(
-        id=str(safe_uuid_from_person_id(person_id)),
-        name=person_name,
-        birthDate=birth_date,
-        isFavorite=is_favorite,
-        isHidden=is_hidden,
-        thumbnailPath=thumbnail_path,
-        updatedAt=updated_at,
-        color=None,  # Gumnut doesn't have color field
-        faces=[],  # Empty faces list - would need separate API call
     )

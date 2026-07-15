@@ -24,21 +24,17 @@ from routers.api.assets import (
     _immich_checksum_to_base64,
     _parse_datetime,
     bulk_upload_check,
-    check_existing_assets,
     copy_asset,
     upload_asset,
     update_assets,
     delete_assets,
-    get_all_user_assets_by_device_id,
     get_asset_statistics,
-    get_random,
     run_asset_jobs,
     update_asset,
     get_asset_info,
     get_asset_ocr,
     view_asset,
     download_asset,
-    replace_asset,
     get_asset_metadata,
     update_asset_metadata,
     delete_asset_metadata,
@@ -47,13 +43,11 @@ from routers.api.assets import (
 )
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 from routers.immich_models import (
-    Action,
     AssetBulkUploadCheckDto,
     AssetBulkUploadCheckItem,
     AssetCopyDto,
     AssetMediaResponseDto,
     AssetVisibility,
-    CheckExistingAssetsDto,
     AssetBulkUpdateDto,
     AssetBulkDeleteDto,
     AssetJobsDto,
@@ -63,6 +57,7 @@ from routers.immich_models import (
     AssetMetadataUpsertItemDto,
     AssetMediaSize,
     AssetMediaStatus,
+    AssetUploadAction,
 )
 
 
@@ -94,7 +89,7 @@ class TestBulkUploadCheck:
 
         # Assert
         assert len(result.results) == 2
-        assert all(item.action == Action.accept for item in result.results)
+        assert all(item.action == AssetUploadAction.accept for item in result.results)
         assert result.results[0].id == "asset1"
         assert result.results[1].id == "asset2"
         mock_client.assets.check_existence.assert_called_once()
@@ -133,11 +128,11 @@ class TestBulkUploadCheck:
         assert len(result.results) == 2
         # First asset should be rejected as duplicate
         assert result.results[0].id == "asset1"
-        assert result.results[0].action == Action.reject
-        assert result.results[0].assetId == str(sample_uuid)
+        assert result.results[0].action == AssetUploadAction.reject
+        assert result.results[0].assetId == sample_uuid
         # Second asset should be accepted
         assert result.results[1].id == "asset2"
-        assert result.results[1].action == Action.accept
+        assert result.results[1].action == AssetUploadAction.accept
 
     @pytest.mark.anyio
     async def test_bulk_upload_check_with_base64_checksum(self, sample_uuid):
@@ -171,8 +166,8 @@ class TestBulkUploadCheck:
         # Assert - should detect as duplicate
         assert len(result.results) == 1
         assert result.results[0].id == "mobile-asset-1"
-        assert result.results[0].action == Action.reject
-        assert result.results[0].assetId == str(sample_uuid)
+        assert result.results[0].action == AssetUploadAction.reject
+        assert result.results[0].assetId == sample_uuid
 
         # Verify the base64 checksum was passed to Gumnut as-is
         mock_client.assets.check_existence.assert_called_once()
@@ -209,7 +204,7 @@ class TestBulkUploadCheck:
 
         # Assert - both assets should be accepted (invalid one has false negative)
         assert len(result.results) == 2
-        assert all(item.action == Action.accept for item in result.results)
+        assert all(item.action == AssetUploadAction.accept for item in result.results)
 
 
 class TestImmichChecksumToBase64:
@@ -278,61 +273,6 @@ class TestImmichChecksumToBase64:
         assert decoded == bytes.fromhex("aabbccdd")
 
 
-class TestCheckExistingAssets:
-    """Test the check_existing_assets endpoint."""
-
-    @pytest.mark.anyio
-    async def test_check_existing_assets_returns_empty(self):
-        """Test that check_existing_assets returns empty list when no assets exist."""
-        # Setup
-        request = CheckExistingAssetsDto(
-            deviceAssetIds=["asset1", "asset2"], deviceId="device-123"
-        )
-
-        # Mock the Gumnut client - no existing assets
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.assets = []
-        mock_client.assets.check_existence = AsyncMock(return_value=mock_response)
-
-        # Execute
-        result = await check_existing_assets(request, client=mock_client)
-
-        # Assert
-        assert result.existingIds == []
-        mock_client.assets.check_existence.assert_called_once_with(
-            device_id="device-123", device_asset_ids=["asset1", "asset2"]
-        )
-
-    @pytest.mark.anyio
-    async def test_check_existing_assets_returns_existing(self, sample_uuid):
-        """Test that check_existing_assets returns IDs of existing assets."""
-        # Setup
-        request = CheckExistingAssetsDto(
-            deviceAssetIds=["asset1", "asset2", "asset3"], deviceId="device-123"
-        )
-
-        # Mock the Gumnut client - some assets exist
-        mock_client = Mock()
-        mock_asset1 = Mock()
-        mock_asset1.id = uuid_to_gumnut_asset_id(sample_uuid)
-        second_uuid = uuid4()
-        mock_asset2 = Mock()
-        mock_asset2.id = uuid_to_gumnut_asset_id(second_uuid)
-
-        mock_response = Mock()
-        mock_response.assets = [mock_asset1, mock_asset2]
-        mock_client.assets.check_existence = AsyncMock(return_value=mock_response)
-
-        # Execute
-        result = await check_existing_assets(request, client=mock_client)
-
-        # Assert
-        assert len(result.existingIds) == 2
-        assert str(sample_uuid) in result.existingIds
-        assert str(second_uuid) in result.existingIds
-
-
 def _make_mock_request(
     content_length: int = 1024,
     form_data: dict | None = None,
@@ -354,11 +294,10 @@ def _make_mock_request(
 
     request.state = _State()
 
-    # Build form dict from form_data + file
+    # Build form dict from form_data + file. Immich v3 no longer sends device
+    # fields; fileCreatedAt/fileModifiedAt are the timestamps the path reads.
     if form_data is None:
         form_data = {
-            "deviceAssetId": "device-123",
-            "deviceId": "device-456",
             "fileCreatedAt": "2023-01-01T12:00:00Z",
             "fileModifiedAt": "2023-01-01T12:00:00Z",
         }
@@ -438,11 +377,16 @@ class TestUploadAsset:
             )
 
         assert isinstance(result, AssetMediaResponseDto)
-        assert result.id == str(sample_uuid)
+        assert result.id == sample_uuid
         assert result.status == AssetMediaStatus.created
         mock_client.assets.with_raw_response.create.assert_called_once()
         call_kwargs = mock_client.assets.with_raw_response.create.call_args
         assert call_kwargs.kwargs["asset_data"][1] is mock_file.file
+        # Immich v3 sends no device fields; the adapter synthesizes the values
+        # the Gumnut API requires — a unique per-upload device_asset_id and a
+        # placeholder device_id.
+        UUID(call_kwargs.kwargs["device_asset_id"])  # raises if not a valid UUID
+        assert call_kwargs.kwargs["device_id"] == "gumnut-device"
 
     @pytest.mark.anyio
     async def test_upload_asset_duplicate_returns_real_id(
@@ -613,7 +557,7 @@ class TestUploadAsset:
             )
 
         assert isinstance(result, AssetMediaResponseDto)
-        assert UUID(result.id)
+        assert isinstance(result.id, UUID)
         assert result.status == AssetMediaStatus.created
         mock_client.assets.with_raw_response.create.assert_not_called()
 
@@ -642,7 +586,7 @@ class TestUploadAsset:
             )
 
         assert isinstance(result, AssetMediaResponseDto)
-        assert UUID(result.id)
+        assert isinstance(result.id, UUID)
         assert result.status == AssetMediaStatus.created
         mock_client.assets.with_raw_response.create.assert_not_called()
 
@@ -699,7 +643,7 @@ class TestUploadAsset:
             )
 
             assert isinstance(result, AssetMediaResponseDto)
-            assert result.id == str(sample_uuid)
+            assert result.id == sample_uuid
             assert result.status == AssetMediaStatus.created
             mock_client.assets.with_raw_response.create.assert_called_once()
 
@@ -832,7 +776,7 @@ class TestUploadAsset:
             )
 
             assert isinstance(result, AssetMediaResponseDto)
-            assert result.id == str(sample_uuid)
+            assert result.id == sample_uuid
             assert result.status == AssetMediaStatus.created
 
     @pytest.mark.anyio
@@ -880,7 +824,7 @@ class TestUploadAsset:
             "routers.api.assets._upload_streaming", new_callable=AsyncMock
         ) as mock_streaming:
             mock_streaming.return_value = AssetMediaResponseDto(
-                id=str(uuid4()), status=AssetMediaStatus.created
+                id=uuid4(), status=AssetMediaStatus.created
             )
             await upload_asset(
                 request=request,
@@ -989,7 +933,7 @@ class TestUploadAsset:
             "routers.api.assets._upload_streaming", new_callable=AsyncMock
         ) as mock_streaming:
             mock_streaming.return_value = AssetMediaResponseDto(
-                id=str(uuid4()), status=AssetMediaStatus.created
+                id=uuid4(), status=AssetMediaStatus.created
             )
             await upload_asset(
                 request=request,
@@ -1464,7 +1408,7 @@ class TestUpdateAssets:
         base_a = datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc)
         base_b = datetime(2020, 1, 2, 9, 0, 0)
         mock_client.assets.list = self._mock_read({a: base_a, b: base_b})
-        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=3600.0)
+        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=3600)
 
         result = await update_assets(request, client=mock_client)
 
@@ -1489,9 +1433,7 @@ class TestUpdateAssets:
         base = datetime(2024, 6, 15, 14, 30, 0)
         # `missing` is omitted from the read entirely; `no_dt` has null metadata dt.
         mock_client.assets.list = self._mock_read({has_dt: base, no_dt: None})
-        request = AssetBulkUpdateDto(
-            ids=[has_dt, no_dt, missing], dateTimeRelative=60.0
-        )
+        request = AssetBulkUpdateDto(ids=[has_dt, no_dt, missing], dateTimeRelative=60)
 
         result = await update_assets(request, client=mock_client)
 
@@ -1515,7 +1457,7 @@ class TestUpdateAssets:
         base = datetime(2024, 6, 15, 14, 30, 0)
         mock_client.assets.list = self._mock_read({has_dt: base, no_dt: None})
         request = AssetBulkUpdateDto(
-            ids=[has_dt, no_dt], dateTimeRelative=60.0, description="caption"
+            ids=[has_dt, no_dt], dateTimeRelative=60, description="caption"
         )
 
         result = await update_assets(request, client=mock_client)
@@ -1539,7 +1481,7 @@ class TestUpdateAssets:
         trashed = uuid4()
         base = datetime(2024, 6, 15, 14, 30, 0)
         mock_client.assets.list = self._mock_read({trashed: base})
-        request = AssetBulkUpdateDto(ids=[trashed], dateTimeRelative=3600.0)
+        request = AssetBulkUpdateDto(ids=[trashed], dateTimeRelative=3600)
 
         result = await update_assets(request, client=mock_client)
 
@@ -1567,7 +1509,7 @@ class TestUpdateAssets:
         mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
         a, b = uuid4(), uuid4()
         mock_client.assets.list = self._mock_read({a: None, b: None})
-        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=60.0)
+        request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=60)
 
         result = await update_assets(request, client=mock_client)
 
@@ -1583,7 +1525,7 @@ class TestUpdateAssets:
         mock_client.assets.list = AsyncMock()
         request = AssetBulkUpdateDto(
             ids=[uuid4()],
-            dateTimeRelative=3600.0,
+            dateTimeRelative=3600,
             dateTimeOriginal="2024-06-15T14:30:00",
         )
 
@@ -1601,7 +1543,7 @@ class TestUpdateAssets:
         mock_client.assets.bulk_update_assets = AsyncMock()
         mock_client.assets.list = AsyncMock()
         request = AssetBulkUpdateDto(
-            ids=[uuid4()], dateTimeRelative=3600.0, timeZone="America/Los_Angeles"
+            ids=[uuid4()], dateTimeRelative=3600, timeZone="America/Los_Angeles"
         )
 
         with pytest.raises(HTTPException) as exc_info:
@@ -1692,7 +1634,7 @@ class TestUpdateAssets:
         request = AssetBulkUpdateDto(
             ids=[uuid4()],
             isFavorite=True,
-            rating=4.0,
+            rating=4,
             visibility=AssetVisibility.archive,
             duplicateId=str(uuid4()),
         )
@@ -1713,7 +1655,7 @@ class TestUpdateAssets:
             ids=ids,
             description="caption",
             isFavorite=True,
-            rating=4.0,
+            rating=4,
         )
 
         await update_assets(request, client=mock_client)
@@ -1791,7 +1733,7 @@ class TestUpdateAssets:
             return MockSyncCursorPage(assets)
 
         mock_client.assets.list = Mock(side_effect=_page_for)
-        request = AssetBulkUpdateDto(ids=ids, dateTimeRelative=60.0)
+        request = AssetBulkUpdateDto(ids=ids, dateTimeRelative=60)
 
         result = await update_assets(request, client=mock_client)
 
@@ -1964,7 +1906,7 @@ class TestUpdateAsset:
         mock_client.assets.update_asset.assert_awaited_once_with(
             uuid_to_gumnut_asset_id(sample_uuid), description="hello"
         )
-        assert result.id == str(sample_uuid)
+        assert result.id == sample_uuid
 
     @pytest.mark.anyio
     async def test_update_asset_description_null_clears(
@@ -2277,7 +2219,7 @@ class TestUpdateAsset:
             include=["metadata", "people", "file_data"],
         )
         mock_emit.assert_not_awaited()
-        assert result.id == str(sample_uuid)
+        assert result.id == sample_uuid
 
     @pytest.mark.anyio
     async def test_update_asset_out_of_scope_fields_no_sdk_call(
@@ -2293,7 +2235,7 @@ class TestUpdateAsset:
 
         request = UpdateAssetDto(
             isFavorite=True,
-            rating=5.0,
+            rating=5,
             visibility=AssetVisibility.archive,
             livePhotoVideoId=uuid4(),
         )
@@ -2324,7 +2266,7 @@ class TestUpdateAsset:
         request = UpdateAssetDto(
             description="caption",
             isFavorite=True,
-            rating=4.0,
+            rating=4,
         )
 
         with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
@@ -2627,19 +2569,6 @@ class TestDeleteAssets:
                 )
 
 
-class TestGetAllUserAssetsByDeviceId:
-    """Test the get_all_user_assets_by_device_id endpoint."""
-
-    @pytest.mark.anyio
-    async def test_get_all_user_assets_by_device_id_returns_empty(self):
-        """Test that get_all_user_assets_by_device_id returns empty list."""
-        # Execute
-        result = await get_all_user_assets_by_device_id("device-123")
-
-        # Assert
-        assert result == []
-
-
 class TestGetAssetStatistics:
     """Test the get_asset_statistics endpoint."""
 
@@ -2733,19 +2662,6 @@ class TestGetAssetStatistics:
         mock_client.assets.list.assert_called_once_with(limit=GUMNUT_API_MAX_PAGE_SIZE)
 
 
-class TestGetRandom:
-    """Test the get_random endpoint."""
-
-    @pytest.mark.anyio
-    async def test_get_random_returns_empty(self):
-        """Test that get_random returns empty list (deprecated endpoint)."""
-        # Execute
-        result = await get_random(count=5)
-
-        # Assert
-        assert result == []
-
-
 class TestRunAssetJobs:
     """Test the run_asset_jobs endpoint."""
 
@@ -2784,7 +2700,10 @@ class TestGetAssetInfo:
         # Assert
         # Result should be a real AssetResponseDto from conversion
         assert hasattr(result, "id")
-        assert hasattr(result, "deviceAssetId")
+        # Immich v3 dropped these from AssetResponseDto.
+        assert not hasattr(result, "deviceAssetId")
+        assert not hasattr(result, "deviceId")
+        assert not hasattr(result, "unassignedFaces")
         mock_client.assets.retrieve.assert_called_once()
 
     @pytest.mark.anyio
@@ -3356,22 +3275,6 @@ class TestDownloadAsset:
         )
 
 
-class TestReplaceAsset:
-    """Test the replace_asset endpoint."""
-
-    @pytest.mark.anyio
-    async def test_replace_asset_returns_none(self, sample_uuid):
-        """Test replace asset (deprecated, returns None)."""
-        # Setup
-        request = Mock()  # AssetMediaReplaceDto mock
-
-        # Execute
-        result = await replace_asset(sample_uuid, request)
-
-        # Assert
-        assert result is None
-
-
 class TestGetAssetMetadata:
     """Test the get_asset_metadata endpoint."""
 
@@ -3594,25 +3497,22 @@ class TestExtractUploadFields:
     """Tests for _extract_upload_fields helper."""
 
     def test_valid_fields(self):
+        # Immich v3 no longer sends device fields; only the timestamps remain.
         fields = {
-            "deviceAssetId": "device-123",
-            "deviceId": "device-456",
             "fileCreatedAt": "2023-06-15T10:30:00Z",
             "fileModifiedAt": "2023-06-15T11:00:00Z",
         }
         result = _extract_upload_fields(fields)
-        assert result.device_asset_id == "device-123"
-        assert result.device_id == "device-456"
         assert result.file_created_at.year == 2023
+        assert result.file_modified_at.hour == 11
 
     def test_missing_required_field_raises(self):
-        with pytest.raises(ValueError, match="Missing required"):
-            _extract_upload_fields({"deviceAssetId": "x", "deviceId": "y"})
+        # fileCreatedAt is now the only required field.
+        with pytest.raises(ValueError, match="Missing required field: fileCreatedAt"):
+            _extract_upload_fields({})
 
     def test_file_modified_at_defaults_to_created(self):
         fields = {
-            "deviceAssetId": "x",
-            "deviceId": "y",
             "fileCreatedAt": "2023-06-15T10:30:00Z",
         }
         result = _extract_upload_fields(fields)
