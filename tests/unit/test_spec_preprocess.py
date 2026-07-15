@@ -6,8 +6,8 @@ pyyaml). ``tools/`` is not an importable package (no ``__init__.py``, not on
 ``sys.path`` during tests), so we load the module by path.
 
 Unlike ``test_immich_models.py`` (which locks the committed generated artifact), these
-tests exercise the strip logic directly — including the ``time`` format the spec carries
-no ``pattern`` on, so the artifact can't cover it.
+tests exercise the strip logic directly — including ``time``, a format the spec never
+uses, so the artifact can't cover it.
 """
 
 import importlib.util
