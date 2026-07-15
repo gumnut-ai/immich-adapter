@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-07-13
+last-updated: 2026-07-14
 ---
 
 # Sync Stream Architecture
@@ -22,6 +22,26 @@ Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync eve
 ## Face person_id Handling
 
 `face_created` events have person_id nulled out (face detection never assigns a person). `face_updated` events use the causally-consistent person_id from the event payload instead of current entity state. For every face batch, payload person_ids are collected (see `extract_payload_fk_refs`) and verified against production via `people.list` — IDs that return 404 are recorded in `stats.not_found_ids["person"]` and nulled out on the outgoing event, regardless of whether a `PersonV1` checkpoint exists. This prevents stale payload references (from clustering runs that predate a person's deletion) from leaking across sync cycles and causing FK violations on the client.
+
+## User Preferences (minimumFaces)
+
+Gumnut has no per-user preferences, but the v3 client reads `people.minimumFaces`
+from the `UserMetadataV1` stream to decide which people appear in the People tab,
+defaulting to **3** when absent — which would hide Gumnut clusters of 1–2 faces.
+The adapter synthesizes a single `UserMetadataV1` *preferences* row with
+`minimumFaces=1` (all other fields mirror the client's defaults). It's emitted
+right after `UserV1` (the `userId` FK parent) and keyed off the **same
+`user_cursor` as `UserV1`** (the user's `updated_at`) — the payload is derived
+purely from the user, so it re-syncs exactly when the user record changes and
+otherwise acks once. `value` is the server's nested `UserPreferences` JSON shape
+(`value["people"]["minimumFaces"]`), which the client parses via
+`Preferences.fromMap`.
+
+Only the `preferences` key is synthesized. The client's other `UserMetadataV1`
+keys are deliberately not emitted: onboarding UI is gated on the login response's
+`isOnboarded`, not the synced `onboarding` row (no client reader consumes it), so
+a synthesized onboarding row would change nothing; and Gumnut has no `license`
+concept.
 
 ## Album Cover Handling
 
@@ -66,6 +86,8 @@ The invariant tests in `test_sync_v2.py` assert that every V2 type in `_SYNC_TYP
 ## No-Op Request Types
 
 Immich sync types that are accepted but have no Gumnut equivalent (e.g., `AssetEditsV1` — we don't support editing) go in `_NOOP_REQUEST_TYPES` in `stream.py`. This prevents "unsupported type" warnings while making the no-op explicit. Do not just add them to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that silently drops them.
+
+The v3 mobile client requests a broad set of these on **every** sync (partner-*, stacks-*, memories-*, `AssetMetadataV1`, `AssetOcrV1`, `AlbumAssetExifsV1`, the V2 partner/album-asset variants) — all no-ops for a single-user Gumnut backend with no sharing/stacks/memories/OCR. They all belong in `_NOOP_REQUEST_TYPES` so the per-sync "unsupported types" warning stays quiet. `UserMetadataV1` is the one requested type the adapter *does* synthesize (see "User Preferences" above), so it is deliberately **not** a no-op — it's handled specially alongside `UsersV1`/`AuthUsersV1`.
 
 ## Contract with the Gumnut API
 

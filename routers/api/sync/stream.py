@@ -29,6 +29,7 @@ from services.checkpoint_store import Checkpoint
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.sync.converters import (
     gumnut_user_to_sync_auth_user_v1,
+    gumnut_user_to_sync_user_metadata_v1,
     gumnut_user_to_sync_user_v1,
 )
 from routers.api.sync.entity_fetch import fetch_entities_map
@@ -125,24 +126,54 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
 
 # Request types that are accepted but have no Gumnut equivalent, so nothing is
 # emitted for them (the client tolerates absence). Listing them here prevents an
-# "unsupported" warning and logs them as intentional no-ops instead.
-#   - AssetEditsV1:    Gumnut has no asset edit history.
-#   - AssetOcrV1:      Gumnut has no OCR text data (new v3 entity type).
-#   - PartnerAssetsV2: Gumnut is single-user; there is no partner sharing.
-#   - AlbumAssetsV2:   album assets are the user's own, already streamed via
-#                      AssetsV2 + AlbumToAssetsV1 (this stream is for assets
-#                      shared into an album by other users, which Gumnut lacks).
+# "unsupported" warning and logs them as intentional no-ops instead — the v3
+# mobile client requests all of these on every sync, so leaving them off this
+# list spams a misleading "unsupported types" warning each cycle.
+#   - AssetEditsV1:        Gumnut has no asset edit history.
+#   - AssetOcrV1:          Gumnut has no OCR text data (new v3 entity type).
+#   - AssetMetadataV1:     iCloud/device linking metadata; Gumnut has none, and
+#                          own-asset EXIF is delivered via AssetExifsV1 instead.
+#   - PartnerAssetsV2:     Gumnut is single-user; there is no partner sharing.
+#   - PartnersV1 /
+#     PartnerAssetExifsV1 /
+#     PartnerStacksV1:     partner-sharing streams — none for a single user.
+#   - AlbumAssetsV2:       album assets are the user's own, already streamed via
+#                          AssetsV2 + AlbumToAssetsV1 (this stream is for assets
+#                          shared into an album by other users, which Gumnut lacks).
+#   - AlbumAssetExifsV1:   EXIF for other users' album assets; own-album-photo
+#                          EXIF arrives via AssetExifsV1.
+#   - MemoriesV1 /
+#     MemoryToAssetsV1:    Gumnut has no memories feature; the tab renders empty.
+#   - StacksV1:            Gumnut has no stacks; assets carry stackId=None and
+#                          render individually, so absent stack rows hide nothing.
+# UserMetadataV1 is deliberately NOT here — it is emitted (a synthesized
+# preferences row); see gumnut_user_to_sync_user_metadata_v1.
 _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
     SyncRequestType.AssetEditsV1: SyncEntityType.AssetEditV1,
     SyncRequestType.AssetOcrV1: SyncEntityType.AssetOcrV1,
+    SyncRequestType.AssetMetadataV1: SyncEntityType.AssetMetadataV1,
     SyncRequestType.PartnerAssetsV2: SyncEntityType.PartnerAssetV2,
+    SyncRequestType.PartnersV1: SyncEntityType.PartnerV1,
+    SyncRequestType.PartnerAssetExifsV1: SyncEntityType.PartnerAssetExifV1,
+    SyncRequestType.PartnerStacksV1: SyncEntityType.PartnerStackV1,
     SyncRequestType.AlbumAssetsV2: SyncEntityType.AlbumAssetCreateV2,
+    SyncRequestType.AlbumAssetExifsV1: SyncEntityType.AlbumAssetExifCreateV1,
+    SyncRequestType.MemoriesV1: SyncEntityType.MemoryV1,
+    SyncRequestType.MemoryToAssetsV1: SyncEntityType.MemoryToAssetV1,
+    SyncRequestType.StacksV1: SyncEntityType.StackV1,
 }
 
-# Supported SyncRequestTypes (used to detect unsupported types requested by client)
+# Supported SyncRequestTypes (used to detect unsupported types requested by
+# client). AuthUsersV1/UsersV1/UserMetadataV1 are handled specially (not via
+# _SYNC_TYPE_ORDER): the first two stream the user record, and UserMetadataV1
+# streams a synthesized preferences row (see gumnut_user_to_sync_user_metadata_v1).
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
-    | {SyncRequestType.AuthUsersV1, SyncRequestType.UsersV1}
+    | {
+        SyncRequestType.AuthUsersV1,
+        SyncRequestType.UsersV1,
+        SyncRequestType.UserMetadataV1,
+    }
     | _NOOP_REQUEST_TYPES.keys()
 )
 
@@ -565,6 +596,22 @@ async def generate_sync_stream(
                     user_cursor,
                 )
                 logger.debug("Streamed user", extra={"user_id": owner_id})
+
+        # Stream a synthesized user-preferences row if requested. Keyed off the
+        # same user_cursor as UserV1 — the payload is derived purely from the user,
+        # so it re-syncs exactly when the user record changes. Emitted after UserV1
+        # so its userId FK parent exists on the client. See
+        # gumnut_user_to_sync_user_metadata_v1 for the why.
+        if SyncRequestType.UserMetadataV1 in requested_types:
+            checkpoint = checkpoint_map.get(SyncEntityType.UserMetadataV1)
+            if checkpoint is None or checkpoint.cursor != user_cursor:
+                sync_user_metadata = gumnut_user_to_sync_user_metadata_v1(owner_uuid)
+                yield make_sync_event(
+                    SyncEntityType.UserMetadataV1,
+                    sync_user_metadata.model_dump(mode="json"),
+                    user_cursor,
+                )
+                logger.debug("Streamed user metadata", extra={"user_id": owner_id})
 
         # Capture sync start time to bound the query window
         sync_started_at = datetime.now(timezone.utc)

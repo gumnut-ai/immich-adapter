@@ -1,6 +1,7 @@
 """Tests for sync stream generation, endpoint, reset, and pagination."""
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, Mock, call
@@ -569,6 +570,126 @@ class TestGenerateSyncStream:
         assert events[0]["type"] == "AssetFaceV1"
         assert "boundingBoxX1" in events[0]["data"]
         assert events[1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_streams_user_metadata_preferences_with_min_faces(self):
+        """UserMetadataV1 emits a synthesized preferences row with minimumFaces=1
+        so people with 1-2 faces still appear in the client's People tab."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(types=[SyncRequestType.UserMetadataV1])
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        assert len(events) == 2
+        assert events[0]["type"] == "UserMetadataV1"
+        data = events[0]["data"]
+        assert data["key"] == "preferences"
+        assert data["userId"] == str(TEST_UUID)  # owner == user, FK parent
+        assert data["value"]["people"]["minimumFaces"] == 1
+        # Cursor is the user's updated_at, same as UserV1.
+        assert events[0]["ack"] == f"UserMetadataV1|{updated_at.isoformat()}|"
+        assert events[1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_user_metadata_skipped_when_checkpoint_matches(self):
+        """The preferences row is not re-emitted once the client has acked the
+        current user cursor (unchanged user record)."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(types=[SyncRequestType.UserMetadataV1])
+        checkpoint = Checkpoint(
+            entity_type=SyncEntityType.UserMetadataV1,
+            updated_at=updated_at,
+            cursor=updated_at.isoformat(),
+        )
+        checkpoint_map = {SyncEntityType.UserMetadataV1: checkpoint}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["SyncCompleteV1"]
+
+    @pytest.mark.anyio
+    async def test_user_metadata_reemitted_when_user_changed(self):
+        """A client acked under an older user cursor gets the preferences row
+        re-emitted when the user record changes — same delta semantics as UserV1."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(types=[SyncRequestType.UserMetadataV1])
+        checkpoint = Checkpoint(
+            entity_type=SyncEntityType.UserMetadataV1,
+            updated_at=updated_at,
+            cursor="2020-01-01T00:00:00+00:00",  # acked under an older user cursor
+        )
+        checkpoint_map = {SyncEntityType.UserMetadataV1: checkpoint}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["UserMetadataV1", "SyncCompleteV1"]
+        assert events[0]["ack"] == f"UserMetadataV1|{updated_at.isoformat()}|"
+
+    @pytest.mark.anyio
+    async def test_streams_user_then_user_metadata_in_fk_order(self):
+        """When both are requested, UserV1 is emitted before UserMetadataV1 so the
+        userId FK parent exists on the client first; a reorder regression fails here."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.UsersV1, SyncRequestType.UserMetadataV1]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        types = [e["type"] for e in events]
+        assert types == ["UserV1", "UserMetadataV1", "SyncCompleteV1"]
+
+    @pytest.mark.anyio
+    async def test_noop_request_types_emit_nothing_without_unsupported_log(
+        self, caplog
+    ):
+        """Requested-but-no-op v3 types stream nothing (just SyncCompleteV1) and do
+        not trip the 'unsupported types' log — the point of _NOOP_REQUEST_TYPES."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        request = SyncStreamDto(
+            types=[
+                SyncRequestType.MemoriesV1,
+                SyncRequestType.StacksV1,
+                SyncRequestType.PartnersV1,
+                SyncRequestType.AssetMetadataV1,
+            ]
+        )
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        with caplog.at_level(logging.INFO, logger="routers.api.sync.stream"):
+            events = await collect_stream(
+                generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+            )
+
+        assert [e["type"] for e in events] == ["SyncCompleteV1"]
+        assert not any(
+            "unsupported sync types" in record.message for record in caplog.records
+        )
 
     @pytest.mark.anyio
     async def test_streams_album_assets_when_requested(self):
