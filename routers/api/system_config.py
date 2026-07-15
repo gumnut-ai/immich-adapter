@@ -8,6 +8,7 @@ from routers.immich_models import (
     DatabaseBackupConfig,
     DuplicateDetectionConfig,
     FacialRecognitionConfig,
+    HlsVideoResolution,
     ImageFormat,
     JobSettingsDto,
     LogLevel,
@@ -180,7 +181,19 @@ async def get_config() -> SystemConfigDto:
         maxBitrate="0",
         preferredHwDevice="auto",
         preset="faster",
-        realtime=SystemConfigFFmpegRealtimeDto(enabled=False),
+        # Real-time HLS transcoding is an intentional gap: enabled=False keeps
+        # both clients on direct playback. The resolution/codec lists are inert
+        # while disabled but are required by the schema as of Immich v3.0.2, so
+        # they mirror the upstream server defaults.
+        realtime=SystemConfigFFmpegRealtimeDto(
+            enabled=False,
+            resolutions=[
+                HlsVideoResolution.integer_480,
+                HlsVideoResolution.integer_720,
+                HlsVideoResolution.integer_1080,
+            ],
+            videoCodecs=[VideoCodec.h264, VideoCodec.hevc],
+        ),
         refs=0,
         targetAudioCodec=AudioCodec.aac,
         targetResolution="720",

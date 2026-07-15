@@ -21,6 +21,7 @@ from routers.immich_models import (
     PeopleResponse,
     PurchaseResponse,
     RatingsResponse,
+    RecentlyAddedResponse,
     SharedLinksResponse,
     SystemConfigSmtpDto,
     TagsResponse,
@@ -256,6 +257,7 @@ async def get_user_preferences_admin(id: UUID) -> UserPreferencesResponseDto:
         people=PeopleResponse(enabled=False, sidebarWeb=False),
         purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
         ratings=RatingsResponse(enabled=False),
+        recentlyAdded=RecentlyAddedResponse(sidebarWeb=False),
         sharedLinks=SharedLinksResponse(enabled=False, sidebarWeb=False),
         tags=TagsResponse(enabled=False, sidebarWeb=False),
     )
@@ -281,6 +283,7 @@ async def update_user_preferences_admin(
         people=PeopleResponse(enabled=False, sidebarWeb=False),
         purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
         ratings=RatingsResponse(enabled=False),
+        recentlyAdded=RecentlyAddedResponse(sidebarWeb=False),
         sharedLinks=SharedLinksResponse(enabled=False, sidebarWeb=False),
         tags=TagsResponse(enabled=False, sidebarWeb=False),
     )

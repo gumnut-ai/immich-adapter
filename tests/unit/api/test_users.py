@@ -9,7 +9,9 @@ import shortuuid
 from routers.api.constants import STUB_LICENSE_KEY
 from routers.api.users import (
     get_my_calendar_heatmap,
+    get_my_preferences,
     get_my_user,
+    update_my_preferences,
     update_my_user,
 )
 from routers.immich_models import (
@@ -17,6 +19,8 @@ from routers.immich_models import (
     CalendarHeatmapType,
     UserAdminResponseDto,
     UserAvatarColor,
+    UserPreferencesResponseDto,
+    UserPreferencesUpdateDto,
     UserStatus,
     UserLicense,
     UserUpdateMeDto,
@@ -217,6 +221,43 @@ class TestUpdateMyUser:
 
         assert result.quotaSizeInBytes is None
         assert result.quotaUsageInBytes is None
+
+
+class TestMyPreferences:
+    """Test the preferences stub endpoints.
+
+    The stub hand-builds `UserPreferencesResponseDto`, so a model regeneration
+    that adds a required field breaks it at construction. `recentlyAdded`
+    arrived in Immich v3.0.1 and the web sidebar reads it without optional
+    chaining, so omitting it is a client-side TypeError on every authenticated
+    page rather than a cosmetic gap.
+    """
+
+    @pytest.mark.anyio
+    async def test_get_constructs_valid_dto(self):
+        """The stub preferences must validate against the generated models."""
+        assert isinstance(await get_my_preferences(), UserPreferencesResponseDto)
+
+    @pytest.mark.anyio
+    async def test_recently_added_present_and_hidden(self):
+        """`recentlyAdded` is emitted, with the sidebar link hidden by default."""
+        result = await get_my_preferences()
+
+        assert result.recentlyAdded.sidebarWeb is False
+
+    @pytest.mark.anyio
+    async def test_recently_added_survives_serialization(self):
+        """The wire payload carries `recentlyAdded` — what the web sidebar reads."""
+        dumped = (await get_my_preferences()).model_dump(by_alias=True)
+
+        assert dumped["recentlyAdded"] == {"sidebarWeb": False}
+
+    @pytest.mark.anyio
+    async def test_update_returns_the_stub_unchanged(self):
+        """The update stub ignores the request and echoes the same preferences."""
+        result = await update_my_preferences(UserPreferencesUpdateDto())
+
+        assert result == await get_my_preferences()
 
 
 class TestGetMyCalendarHeatmap:
