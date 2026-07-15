@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-06-05
+last-updated: 2026-07-15
 ---
 
 # Development Tools
@@ -53,9 +53,11 @@ The generator's `datamodel-code-generator` dependency is unpinned (`>=0.25.0`, r
 
 Before handing the spec to `datamodel-code-generator`, the generator drops constraints codegen would misapply to non-string types — currently `pattern` on schemas whose `format` maps to a non-string type (`uuid`, `date-time`, `date`, `time`), which otherwise yields `UUID` / `AwareDatetime` / `date` / `time` fields that raise `TypeError` at value validation under the pinned pydantic (and it collapses the now-redundant `RootModel[UUID]` id wrappers into plain `UUID`). Patterns on genuine string fields are kept. See `strip_non_string_patterns` in `tools/spec_preprocess.py`; if a future spec trips the same class of error for another non-string `format`, add it to `_NON_STRING_PATTERN_FORMATS` rather than hand-editing the generated file.
 
-### After Regenerating: Sweep Stub Literals via Pyright
+### After Regenerating: Sweep Stub Breakage via Pyright
 
 A regeneration that adds typing or pattern constraints (e.g. `str` → `UUID` ids, regex-patterned keys) silently turns hardcoded literals in stub endpoints into latent 500s — stubs have no test coverage, so the suite stays green while the endpoint fails response validation on every call. Don't hunt these by grep (partial sweeps have missed sites repeatedly); enumerate them from pyright's error list — `Literal['...'] cannot be assigned to parameter ... of type UUID` (or a pattern-constrained field) pinpoints every offending literal. Dynamic `str(...)`-of-UUID values coerce fine at runtime and are style cleanup, not defects; invalid *literals* are the class that 500s.
+
+A regen that makes a field **required** breaks the same stubs through a different error — `Argument missing for parameter "<name>"` at every hand-construction site. Sweep it the same way: pyright is the only pre-runtime signal for a stub that has no smoke test yet, and the smoke tests [code practices](./code-practices.md#bumping-the-immich-version) prescribes only cover stubs that already have one.
 
 ## API Compatibility Tool
 
@@ -95,10 +97,10 @@ The workflow checks the `server` endpoint by default, but this can be customized
 The `dump_openapi_json.py` tool prints the adapter's OpenAPI specification from the FastAPI app to stdout, without running a server:
 
 ```bash
-uv run tools/dump_openapi_json.py > /tmp/spec.json
+uv run tools/dump_openapi_json.py 2>/dev/null | sed -n '/^{/,$p' > /tmp/spec.json
 ```
 
-Redirect it to a file to feed the dumped spec into the compatibility validator via `--adapter-spec=/tmp/spec.json`.
+Importing the app emits log lines to **stdout** ahead of the JSON, so a bare `> /tmp/spec.json` yields a file the validator rejects (`Extra data: line 1 column 5`). Strip everything before the first `{`, then feed the result to the compatibility validator via `--adapter-spec=/tmp/spec.json`.
 
 ## Dependency Update Automation
 
