@@ -230,8 +230,9 @@ class TestMyPreferences:
     The stub hand-builds `UserPreferencesResponseDto`, so a model regeneration
     that adds a required field breaks it at construction. `recentlyAdded`
     arrived in Immich v3.0.1 and the web sidebar reads it without optional
-    chaining, so omitting it is a client-side TypeError on every authenticated
-    page rather than a cosmetic gap.
+    chaining, so omitting it is a client-side TypeError on every page that
+    renders the sidebar — including the `/photos` landing page — rather than a
+    cosmetic gap.
     """
 
     @pytest.mark.anyio
