@@ -156,22 +156,21 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
         extra={"sid": sid, "user_id": user_id},
     )
 
-    # Send server version (existing behavior)
+    # Send server version. The payload is `ServerVersionResponseDto` — the same
+    # shape `GET /server/version` returns. Immich v2 emitted a parsed semver.js
+    # object here and its web client read only major/minor/patch; v3 renders the
+    # payload with `prerelease === null ? '' : `-rc.${prerelease}``, so any
+    # non-null value (the old `[]` included) shows up as a "-rc." suffix.
     version = get_settings().immich_version
     try:
         await sio.emit(
             "on_server_version",
             {
-                "options": {},
-                "loose": False,
-                "includePrerelease": False,
-                "raw": str(version),
                 "major": version.major,
                 "minor": version.minor,
                 "patch": version.patch,
-                "prerelease": [],
-                "build": [],
-                "version": str(version),
+                # Tracked container tags are GA releases, never pre-releases.
+                "prerelease": None,
             },
             room=sid,
         )

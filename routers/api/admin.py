@@ -21,6 +21,7 @@ from routers.immich_models import (
     PeopleResponse,
     PurchaseResponse,
     RatingsResponse,
+    RecentlyAddedResponse,
     SharedLinksResponse,
     SystemConfigSmtpDto,
     TagsResponse,
@@ -43,6 +44,27 @@ router = APIRouter(
     prefix="/api/admin",
     tags=["admin"],
     responses={404: {"description": "Not found"}},
+)
+
+
+# Both admin preference stubs return this same tree; keeping one copy means a
+# regen that adds a required field is a one-line fix here rather than one per
+# endpoint. Distinct from `users.py`'s stub, which enables memories.
+_USER_PREFERENCES_RESPONSE: UserPreferencesResponseDto = UserPreferencesResponseDto(
+    albums=AlbumsResponse(defaultAssetOrder=AssetOrder.desc),
+    cast=CastResponse(gCastEnabled=False),
+    download=DownloadResponse(archiveSize=0, includeEmbeddedVideos=False),
+    emailNotifications=EmailNotificationsResponse(
+        albumInvite=False, albumUpdate=False, enabled=False
+    ),
+    folders=FoldersResponse(enabled=False, sidebarWeb=False),
+    memories=MemoriesResponse(duration=7, enabled=False),
+    people=PeopleResponse(enabled=False, sidebarWeb=False),
+    purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
+    ratings=RatingsResponse(enabled=False),
+    recentlyAdded=RecentlyAddedResponse(sidebarWeb=False),
+    sharedLinks=SharedLinksResponse(enabled=False, sidebarWeb=False),
+    tags=TagsResponse(enabled=False, sidebarWeb=False),
 )
 
 
@@ -244,21 +266,7 @@ async def get_user_preferences_admin(id: UUID) -> UserPreferencesResponseDto:
     Get user preferences.
     This is a stub implementation that returns fake preferences.
     """
-    return UserPreferencesResponseDto(
-        albums=AlbumsResponse(defaultAssetOrder=AssetOrder.desc),
-        cast=CastResponse(gCastEnabled=False),
-        download=DownloadResponse(archiveSize=0, includeEmbeddedVideos=False),
-        emailNotifications=EmailNotificationsResponse(
-            albumInvite=False, albumUpdate=False, enabled=False
-        ),
-        folders=FoldersResponse(enabled=False, sidebarWeb=False),
-        memories=MemoriesResponse(duration=7, enabled=False),
-        people=PeopleResponse(enabled=False, sidebarWeb=False),
-        purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
-        ratings=RatingsResponse(enabled=False),
-        sharedLinks=SharedLinksResponse(enabled=False, sidebarWeb=False),
-        tags=TagsResponse(enabled=False, sidebarWeb=False),
-    )
+    return _USER_PREFERENCES_RESPONSE
 
 
 @router.put("/users/{id}/preferences")
@@ -269,21 +277,7 @@ async def update_user_preferences_admin(
     Update user preferences.
     This is a stub implementation that returns fake updated preferences.
     """
-    return UserPreferencesResponseDto(
-        albums=AlbumsResponse(defaultAssetOrder=AssetOrder.desc),
-        cast=CastResponse(gCastEnabled=False),
-        download=DownloadResponse(archiveSize=0, includeEmbeddedVideos=False),
-        emailNotifications=EmailNotificationsResponse(
-            albumInvite=False, albumUpdate=False, enabled=False
-        ),
-        folders=FoldersResponse(enabled=False, sidebarWeb=False),
-        memories=MemoriesResponse(duration=7, enabled=False),
-        people=PeopleResponse(enabled=False, sidebarWeb=False),
-        purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
-        ratings=RatingsResponse(enabled=False),
-        sharedLinks=SharedLinksResponse(enabled=False, sidebarWeb=False),
-        tags=TagsResponse(enabled=False, sidebarWeb=False),
-    )
+    return _USER_PREFERENCES_RESPONSE
 
 
 @router.post("/users/{id}/restore")

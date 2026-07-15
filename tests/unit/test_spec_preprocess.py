@@ -6,8 +6,10 @@ pyyaml). ``tools/`` is not an importable package (no ``__init__.py``, not on
 ``sys.path`` during tests), so we load the module by path.
 
 Unlike ``test_immich_models.py`` (which locks the committed generated artifact), these
-tests exercise the strip logic directly — including the ``date`` / ``time`` formats that
-the current v3.0.0 spec carries no ``pattern`` on, so the artifact can't cover them.
+tests exercise the strip logic directly — including ``date`` and ``time``, neither of
+which the artifact can cover: every pattern-carrying ``date`` node lives on a query
+parameter, outside codegen's default ``schemas`` scope, and ``time`` never appears in
+the spec at all.
 """
 
 import importlib.util
@@ -48,7 +50,7 @@ def test_keeps_pattern_on_genuine_string_fields():
 
 def test_dict_valued_format_key_does_not_crash():
     """A property literally named "format" whose value is a nested schema (unhashable)
-    must be skipped by the membership test, not raise — the real v3.0.0 spec has one."""
+    must be skipped by the membership test, not raise — the real spec has one."""
     node = {"format": {"type": "string", "pattern": "^keep$"}, "type": "object"}
     removed = strip_non_string_patterns(node)
     assert removed == 0

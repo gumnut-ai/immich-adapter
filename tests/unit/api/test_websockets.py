@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from routers.api.server import get_server_version
 from services.websockets import (
     _extract_session_token,
     _sid_to_user,
@@ -250,7 +251,14 @@ class TestConnectHandler:
 
     @pytest.mark.anyio
     async def test_emits_server_version_on_connect(self, mock_session_store, mock_sio):
-        """Test that on_server_version is emitted on successful connect."""
+        """The connect handshake emits `ServerVersionResponseDto`.
+
+        Assert the payload's values, not just its keys. This event carried a
+        parsed semver.js object until the v3 retarget, and the presence-only
+        check that used to live here was blind to it: `prerelease` was `[]`,
+        which the v3 web client renders as a `-rc.` suffix on the version it
+        shows in the sidebar.
+        """
 
         async def mock_get_session_store():
             return mock_session_store
@@ -268,12 +276,11 @@ class TestConnectHandler:
             assert call_args[0][0] == "on_server_version"
             assert call_args[1]["room"] == "test-sid"
 
-            # Verify payload structure
+            # The socket payload and `GET /server/version` are the same DTO, so
+            # they must not drift apart — that drift is what shipped the suffix.
             payload = call_args[0][1]
-            assert "major" in payload
-            assert "minor" in payload
-            assert "patch" in payload
-            assert "version" in payload
+            assert payload == (await get_server_version()).model_dump(mode="json")
+            assert payload["prerelease"] is None
 
     @pytest.mark.anyio
     async def test_accepts_bearer_token_auth(self, mock_session_store, mock_sio):

@@ -9,14 +9,19 @@ import shortuuid
 from routers.api.constants import STUB_LICENSE_KEY
 from routers.api.users import (
     get_my_calendar_heatmap,
+    get_my_preferences,
     get_my_user,
+    update_my_preferences,
     update_my_user,
 )
 from routers.immich_models import (
     CalendarHeatmapResponseDto,
     CalendarHeatmapType,
+    RecentlyAddedUpdate,
     UserAdminResponseDto,
     UserAvatarColor,
+    UserPreferencesResponseDto,
+    UserPreferencesUpdateDto,
     UserStatus,
     UserLicense,
     UserUpdateMeDto,
@@ -217,6 +222,43 @@ class TestUpdateMyUser:
 
         assert result.quotaSizeInBytes is None
         assert result.quotaUsageInBytes is None
+
+
+class TestMyPreferences:
+    """Test the preferences stub endpoints.
+
+    The stub hand-builds `UserPreferencesResponseDto`, so a model regeneration
+    that adds a required field breaks it at construction. `recentlyAdded`
+    arrived in Immich v3.0.1 and the web sidebar reads it without optional
+    chaining, so omitting it is a client-side TypeError on every page that
+    renders the sidebar — including the `/photos` landing page — rather than a
+    cosmetic gap.
+    """
+
+    @pytest.mark.anyio
+    async def test_get_constructs_valid_dto(self):
+        """The stub preferences must validate against the generated models."""
+        assert isinstance(await get_my_preferences(), UserPreferencesResponseDto)
+
+    @pytest.mark.anyio
+    async def test_recently_added_hidden_by_default(self):
+        """The wire payload carries `recentlyAdded` — what the web sidebar reads."""
+        dumped = (await get_my_preferences()).model_dump(by_alias=True)
+
+        assert dumped["recentlyAdded"] == {"sidebarWeb": False}
+
+    @pytest.mark.anyio
+    async def test_update_ignores_the_request(self):
+        """The update stub discards the request rather than applying it.
+
+        The update must be non-empty to distinguish "ignored" from "applied" —
+        an all-`None` payload echoes unchanged preferences either way.
+        """
+        result = await update_my_preferences(
+            UserPreferencesUpdateDto(recentlyAdded=RecentlyAddedUpdate(sidebarWeb=True))
+        )
+
+        assert result.recentlyAdded.sidebarWeb is False
 
 
 class TestGetMyCalendarHeatmap:

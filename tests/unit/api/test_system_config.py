@@ -32,6 +32,9 @@ class TestGetConfig:
         # values are load-bearing for the Immich clients' login flow.
         assert config.oauth.enabled is True
         assert config.passwordLogin.enabled is False
+        # Real-time HLS is an intentional gap; disabling it keeps both clients
+        # on direct playback.
+        assert config.ffmpeg.realtime.enabled is False
 
     @pytest.mark.anyio
     async def test_get_config_defaults_matches_config(self):
