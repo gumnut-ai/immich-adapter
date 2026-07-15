@@ -1,16 +1,19 @@
 """Tests for memories.py endpoints."""
 
+import inspect
 from datetime import datetime, timezone
 from unittest.mock import Mock, patch
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
+from pydantic import TypeAdapter
 
 from routers.api.memories import (
     _ASSETS_PER_MEMORY,
     _YEAR_WINDOW,
     _fetch_assets_for_day,
+    _local_today,
     decode_memory_id,
     encode_memory_id,
     get_memory,
@@ -88,6 +91,32 @@ def _stub_assets_per_year(client: Mock, asset_lists_by_year: dict[int, list[Mock
 # Use a fixed user UUID with non-zero high bytes to make sure the "low 8 bytes"
 # binding logic in the encoder doesn't accidentally drop user identity.
 USER_UUID = UUID("11112222-3333-4444-5555-666677778888")
+
+
+class TestForParamWireFormats:
+    """The `for` param accepts both wire formats Immich clients send.
+
+    Immich v3.0.3 retyped `for` from `date-time` to `date`, so current web
+    sends `yyyy-MM-dd` while older clients send a fictitious-UTC wall-clock.
+    The param stays typed `datetime` to accept both; narrowing it to `date` to
+    match the v3.0.3 spec would 422 the older form. Nothing else pins that
+    deviation — the other tests pass `datetime` objects straight in, bypassing
+    query parsing entirely.
+    """
+
+    @pytest.mark.parametrize(
+        "wire",
+        ["2026-05-04", "2026-05-04T23:30:00.000Z"],
+        ids=["v3.0.3-local-date", "pre-v3.0.3-wall-clock"],
+    )
+    def test_both_wire_formats_yield_the_same_local_date(self, wire: str):
+        annotation = (
+            inspect.signature(search_memories).parameters["for_param"].annotation
+        )
+
+        parsed = TypeAdapter(annotation).validate_python(wire)
+
+        assert _local_today(parsed) == (2026, 5, 4)
 
 
 class TestMemoryIdCodec:
