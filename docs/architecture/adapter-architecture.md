@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-07
+last-updated: 2026-07-14
 ---
 
 # Immich Adapter Architecture
@@ -143,7 +143,7 @@ The Gumnut API uses **cursor-based pagination** (`limit` + `starting_after_id`),
 Used when Immich clients expect offset-based pagination or need the full result set for client-side features (e.g., total counts, filtering).
 
 **How it works:**
-1. Exhaust the Gumnut SDK's async paginator: `[p async for p in client.entity.list()]`
+1. Exhaust the Gumnut SDK's async paginator at the max page size to minimize upstream page fetches: `[p async for p in client.entity.list(limit=GUMNUT_API_MAX_PAGE_SIZE)]`
 2. Apply any filters (e.g., `withHidden`)
 3. Apply sorting (e.g., people endpoint sorts to match Immich's expected order)
 4. Slice for the requested page: `all_items[(page-1)*size : page*size]`
@@ -153,10 +153,10 @@ Used when Immich clients expect offset-based pagination or need the full result 
 
 | Endpoint | SDK call | Client-side logic |
 |----------|----------|-------------------|
-| `GET /api/people` | `client.people.list()` | Filter hidden → sort (hidden, favorite, named, asset count, alphabetical, created_at) → paginate |
-| `GET /api/albums` | `client.albums.list()` | Convert all to list, no pagination exposed |
-| `GET /api/assets/statistics` | `client.assets.list()` | Count total/images/videos from full set |
-| `GET /api/people/{id}/statistics` | `client.assets.list(person_id=...)` | Count all assets for person |
+| `GET /api/people` | `client.people.list(name_filter="all", limit=GUMNUT_API_MAX_PAGE_SIZE)` | Filter hidden → sort (hidden, favorite, named, asset count, alphabetical, created_at) → paginate |
+| `GET /api/albums` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Convert all to list, no pagination exposed |
+| `GET /api/albums/statistics` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total albums from the full set |
+| `GET /api/assets/statistics` | `client.assets.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total/images/videos from full set |
 
 **Performance implications:** Memory usage scales with total entity count, not page size. For a library with 10,000 people, every `GET /api/people` request loads all 10,000 into memory. This is acceptable for current Gumnut library sizes but will need optimization (e.g., server-side sorting support in the Gumnut API) as libraries grow.
 

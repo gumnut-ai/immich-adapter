@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from uuid import uuid4
 from datetime import datetime, timezone, timedelta
 
+from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.api.people import (
     create_person,
@@ -504,7 +505,9 @@ class TestGetAllPeople:
         assert result.total == 3
         assert result.hidden == 0
         assert result.hasNextPage is False  # No pagination in this case
-        mock_client.people.list.assert_called_once_with(name_filter="all")
+        mock_client.people.list.assert_called_once_with(
+            name_filter="all", limit=GUMNUT_API_MAX_PAGE_SIZE
+        )
 
     @pytest.mark.anyio
     async def test_get_all_people_with_pagination(

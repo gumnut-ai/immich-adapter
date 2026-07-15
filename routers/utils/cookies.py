@@ -13,7 +13,6 @@ class ImmichCookie(str, Enum):
     ACCESS_TOKEN = "immich_access_token"
     AUTH_TYPE = "immich_auth_type"
     IS_AUTHENTICATED = "immich_is_authenticated"
-    SHARED_LINK_TOKEN = "immich_shared_link_token"
 
 
 class AuthType(str, Enum):

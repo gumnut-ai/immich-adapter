@@ -2,7 +2,7 @@
 title: "Checksum Support"
 status: completed
 created: 2025-11-25
-last-updated: 2025-11-25
+last-updated: 2026-07-11
 ---
 
 # Asset Checksum & Deduplication Analysis
@@ -125,20 +125,7 @@ Add a `checksum_sha1` column to the existing Assets table alongside the existing
 
 ### Schema Changes
 
-**Gumnut Assets Table:**
-
-```sql
-ALTER TABLE assets
-ADD COLUMN checksum_sha1 BYTEA;
-
--- Index for checksum lookups
-CREATE INDEX idx_assets_checksum_sha1
-ON assets(checksum_sha1);
-
--- Composite index for library-scoped deduplication
-CREATE INDEX idx_assets_library_checksum_sha1
-ON assets(library_id, checksum_sha1);
-```
+Add a `checksum_sha1 BYTEA` column to the Gumnut backend Assets table, indexed on `checksum_sha1` and on `(library_id, checksum_sha1)` for library-scoped deduplication lookups. The column lives in the Gumnut backend, not this adapter.
 
 ### Key Points
 

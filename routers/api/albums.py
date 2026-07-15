@@ -28,6 +28,7 @@ from routers.immich_models import (
     BulkIdErrorReason,
     UserResponseDto,
 )
+from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
@@ -66,7 +67,7 @@ async def get_all_albums(
     if asset_id:
         kwargs["asset_id"] = uuid_to_gumnut_asset_id(asset_id)
 
-    gumnut_albums = client.albums.list(**kwargs)
+    gumnut_albums = client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE, **kwargs)
 
     return [
         convert_gumnut_album_to_immich(
@@ -85,7 +86,7 @@ async def get_album_statistics(
     Since Gumnut doesn't support shared albums, all albums are considered owned and not shared.
     """
 
-    gumnut_albums = client.albums.list()
+    gumnut_albums = client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)
     albums_list = [a async for a in gumnut_albums]
     total_albums = len(albums_list)
 

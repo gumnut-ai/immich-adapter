@@ -62,9 +62,6 @@ class Settings(BaseSettings):
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     session_encryption_key: str = ""
 
-    # Private field to cache the loaded Immich version
-    _immich_version: ImmichVersion | None = None
-
     @property
     def immich_version(self) -> ImmichVersion:
         return get_immich_version()

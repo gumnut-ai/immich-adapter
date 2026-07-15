@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-13
+last-updated: 2026-07-14
 ---
 
 # Immich Adapter Gap Analysis
@@ -616,7 +616,7 @@ The video playback endpoint (`GET /assets/{id}/video/playback`) is used by Immic
 
 These are architectural limitations documented in `docs/architecture/adapter-architecture.md`:
 
-**Load-all-then-paginate pattern**: People, albums, and asset statistics endpoints load the entire dataset into memory before paginating. For a library with 10,000+ people or 100,000+ assets, this doesn't scale.
+**Load-all-then-paginate pattern**: People, albums, album statistics, and asset statistics still exhaust the full result set in memory before shaping the Immich response. These paths now scan at `GUMNUT_API_MAX_PAGE_SIZE` to cut upstream round-trips, but the latency and memory profile still scale with total entity count rather than the requested page size.
 
 **User impact**: **Medium** — Performance degrades with library size. Not visible to small libraries but will become a problem at scale.
 

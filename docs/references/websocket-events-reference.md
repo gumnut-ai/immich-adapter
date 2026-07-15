@@ -1,11 +1,9 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-06-05
+last-updated: 2026-07-12
 ---
 
 # Immich WebSocket Events Reference
-
-This document describes the WebSocket events emitted by the Immich server and how clients handle them.
 
 ## Summary Table
 
@@ -37,7 +35,7 @@ This document describes the WebSocket events emitted by the Immich server and ho
 
 **Adapter trigger**:
 - **Images**: emitted synchronously from the upload handler. Image variants (`thumbnail`, `preview`, `fullsize`) are CDN-resized URLs to the same uploaded file, so they're available the moment the upload write completes.
-- **Videos**: emission is **deferred** by `_VIDEO_EMIT_DELAY_SECONDS` (3.0s, defined in `routers/api/assets.py`) via a detached `asyncio.create_task`. Video still-image variants (`thumbnail_image`, `preview_image`, `fullsize_image`) live at a separate `derived_path` that only exists after the Gumnut API's ffmpeg extraction finishes — without the delay, the Immich web client receives `on_upload_success`, inserts the asset into the timeline grid, then renders "Error loading image" because the thumbnail URL still 404s. The HTTP `POST /api/assets` 201 response is **not** delayed; only the WebSocket emission waits.
+- **Videos**: emission is **deferred** by `_VIDEO_EMIT_DELAY_SECONDS` (defined in `routers/api/assets.py`) via a detached `asyncio.create_task`. Video still-image variants (`thumbnail_image`, `preview_image`, `fullsize_image`) live at a separate `derived_path` that only exists after the Gumnut API's ffmpeg extraction finishes — without the delay, the Immich web client receives `on_upload_success`, inserts the asset into the timeline grid, then renders "Error loading image" because the thumbnail URL still 404s. The HTTP `POST /api/assets` 201 response is **not** delayed; only the WebSocket emission waits.
 
 **Sent to**: Asset owner (by userId)
 **Payload**: Full `AssetResponseDto` (see `routers/immich_models.py`)
@@ -70,37 +68,25 @@ This document describes the WebSocket events emitted by the Immich server and ho
 
 ### `on_asset_delete`
 
-**Trigger**: Emitted when asset is permanently deleted (`notification.service.ts`).
 **Sent to**: Asset owner (by userId)
-**Payload**: `assetId: string`
 
-**Client handling**:
-- **Web**: Global listener
-- **Mobile**: Listener, triggers sync
+Otherwise as in the Summary Table; emitted from `notification.service.ts`, and the mobile listener triggers a sync.
 
 ---
 
 ### `on_asset_trash`
 
-**Trigger**: Emitted when asset(s) moved to trash (`notification.service.ts`).
 **Sent to**: Asset owner (by userId)
-**Payload**: `assetIds: string[]`
 
-**Client handling**:
-- **Web**: Global listener
-- **Mobile**: Listener, triggers sync
+Otherwise as in the Summary Table; emitted from `notification.service.ts`, and the mobile listener triggers a sync.
 
 ---
 
 ### `on_asset_restore`
 
-**Trigger**: Emitted when asset(s) restored from trash (`notification.service.ts`).
 **Sent to**: Asset owner (by userId)
-**Payload**: `assetIds: string[]`
 
-**Client handling**:
-- **Web**: Global listener
-- **Mobile**: Listener, triggers sync
+Otherwise as in the Summary Table; emitted from `notification.service.ts`, and the mobile listener triggers a sync.
 
 ---
 
@@ -123,13 +109,9 @@ This document describes the WebSocket events emitted by the Immich server and ho
 
 ### `on_asset_stack_update`
 
-**Trigger**: Emitted when stack is created, updated, or deleted (`notification.service.ts`).
 **Sent to**: Stack owner (by userId)
-**Payload**: None (empty)
 
-**Client handling**:
-- **Web**: Global listener
-- **Mobile**: Listener, triggers sync
+Otherwise as in the Summary Table; emitted from `notification.service.ts`, and the mobile listener triggers a sync.
 
 ---
 
@@ -206,13 +188,9 @@ When received, the client updates `person.updatedAt` to force the browser to fet
 
 ### `on_config_update`
 
-**Trigger**: Emitted when admin updates system configuration (`notification.service.ts`).
 **Sent to**: All connected clients (broadcast)
-**Payload**: None (empty)
 
-**Client handling**:
-- **Web**: Global listener
-- **Mobile**: Listener
+Otherwise as in the Summary Table; emitted from `notification.service.ts`.
 
 ---
 
@@ -230,29 +208,23 @@ When received, the client updates `person.updatedAt` to force the browser to fet
 
 ### `on_server_version`
 
-**Trigger**: Sent on WebSocket connection establishment.
 **Sent to**: Connecting client
-**Payload**: `ServerVersionResponseDto`
 
-**Client handling**:
-- **Web**: Global listener. Updates `websocketStore.serverVersion`.
+Otherwise as in the Summary Table; sent on WebSocket connection establishment, and the web listener updates `websocketStore.serverVersion`.
 
 ---
 
 ### `on_user_delete`
 
-**Trigger**: Emitted when user account is deleted (`notification.service.ts`).
 **Sent to**: All connected clients (broadcast)
-**Payload**: `userId: string`
 
-**Client handling**:
-- **Web**: Global listener
+Otherwise as in the Summary Table; emitted from `notification.service.ts`.
 
 ---
 
 ## Client Event Registration
 
-Per-event subscriptions are listed in each event's "Client handling" subsection and in the Summary Table's Web/Mobile columns. The grouping below covers only the registration distinctions not visible there.
+Per-event subscriptions are listed in the Summary Table's Web/Mobile columns and, for events with a detailed section, that event's "Client handling" subsection. The grouping below covers only the registration distinctions not visible there.
 
 ### Web Client (`websocket.ts`)
 

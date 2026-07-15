@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from gumnut import AsyncGumnut
 from gumnut.types import PersonResponse
 
+from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.utils.bulk import classify_bulk_item_call
 from routers.utils.cdn_client import stream_from_cdn
 from routers.utils.concurrency import gather_with_concurrency
@@ -247,7 +248,9 @@ async def get_all_people(
     """
     Get all people with optional pagination and filtering.
     """
-    gumnut_people = client.people.list(name_filter="all")
+    gumnut_people = client.people.list(
+        name_filter="all", limit=GUMNUT_API_MAX_PAGE_SIZE
+    )
     all_people = [p async for p in gumnut_people]
 
     # Count hidden before filtering so the response includes the total

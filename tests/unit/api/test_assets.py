@@ -18,6 +18,7 @@ from socketio.exceptions import SocketIOError
 
 from services.websockets import WebSocketEvent
 
+from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.assets import (
     _extract_upload_fields,
     _immich_checksum_to_base64,
@@ -2642,7 +2643,9 @@ class TestGetAssetStatistics:
         assert result.total == 3
         assert result.images == 2
         assert result.videos == 1
-        mock_client.assets.list.assert_called_once_with(state="trashed")
+        mock_client.assets.list.assert_called_once_with(
+            state="trashed", limit=GUMNUT_API_MAX_PAGE_SIZE
+        )
 
     @pytest.mark.anyio
     async def test_get_asset_statistics_is_trashed_false_omits_state(
@@ -2656,7 +2659,7 @@ class TestGetAssetStatistics:
 
         await get_asset_statistics(isTrashed=False, client=mock_client)
 
-        mock_client.assets.list.assert_called_once_with()
+        mock_client.assets.list.assert_called_once_with(limit=GUMNUT_API_MAX_PAGE_SIZE)
 
 
 class TestRunAssetJobs:
