@@ -17,6 +17,7 @@ from routers.api.users import (
 from routers.immich_models import (
     CalendarHeatmapResponseDto,
     CalendarHeatmapType,
+    RecentlyAddedUpdate,
     UserAdminResponseDto,
     UserAvatarColor,
     UserPreferencesResponseDto,
@@ -239,25 +240,24 @@ class TestMyPreferences:
         assert isinstance(await get_my_preferences(), UserPreferencesResponseDto)
 
     @pytest.mark.anyio
-    async def test_recently_added_present_and_hidden(self):
-        """`recentlyAdded` is emitted, with the sidebar link hidden by default."""
-        result = await get_my_preferences()
-
-        assert result.recentlyAdded.sidebarWeb is False
-
-    @pytest.mark.anyio
-    async def test_recently_added_survives_serialization(self):
+    async def test_recently_added_hidden_by_default(self):
         """The wire payload carries `recentlyAdded` — what the web sidebar reads."""
         dumped = (await get_my_preferences()).model_dump(by_alias=True)
 
         assert dumped["recentlyAdded"] == {"sidebarWeb": False}
 
     @pytest.mark.anyio
-    async def test_update_returns_the_stub_unchanged(self):
-        """The update stub ignores the request and echoes the same preferences."""
-        result = await update_my_preferences(UserPreferencesUpdateDto())
+    async def test_update_ignores_the_request(self):
+        """The update stub discards the request rather than applying it.
 
-        assert result == await get_my_preferences()
+        The update must be non-empty to distinguish "ignored" from "applied" —
+        an all-`None` payload echoes unchanged preferences either way.
+        """
+        result = await update_my_preferences(
+            UserPreferencesUpdateDto(recentlyAdded=RecentlyAddedUpdate(sidebarWeb=True))
+        )
+
+        assert result.recentlyAdded.sidebarWeb is False
 
 
 class TestGetMyCalendarHeatmap:

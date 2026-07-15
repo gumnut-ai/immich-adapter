@@ -1,11 +1,9 @@
 """Unit tests for Admin API endpoints.
 
-The preference stubs here hand-build `UserPreferencesResponseDto` inline, so a
-model regeneration that adds a required field breaks them at construction
-(pydantic ValidationError -> 500). Unlike the module-level stub in
-`routers/api/users.py` — whose breakage surfaces loudly at import — these fail
-only when a client actually hits the route, so they need explicit construction
-coverage. See code-practices § "Bumping the Immich Version".
+Unlike the module-level preferences stub in `routers/api/users.py`, whose
+breakage surfaces at import, these stubs build the DTO inline and fail only
+when a client hits the route — so they need explicit construction coverage.
+See code-practices § "Bumping the Immich Version".
 """
 
 from uuid import uuid4

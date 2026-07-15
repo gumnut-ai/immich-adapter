@@ -82,9 +82,14 @@ def decode_memory_id(memory_id: UUID, user_id: UUID) -> tuple[int, int, int] | N
 def _local_today(for_param: datetime | None) -> tuple[int, int, int]:
     """Return today's (year, month, day) in the user's local timezone.
 
-    `for_param` carries the user's local wall-clock as a fictitious UTC value
-    (Immich web's `keepLocalTime` hack — see `docs/references/code-practices.md`
-    "Immich web 'today' wire format"); pull the components off as-is.
+    `for_param` carries the user's local calendar date, in either of two wire
+    forms: Immich v3.0.3+ web sends `yyyy-MM-dd`, which pydantic parses to
+    midnight; earlier clients sent the local wall-clock as a fictitious UTC
+    value (the `keepLocalTime` hack — see `docs/references/code-practices.md`
+    "Immich web 'today' wire format"). Both carry local y/m/d, so pull the
+    components off as-is and apply no timezone math. The parameter stays typed
+    `datetime` rather than `date` to keep accepting both forms; narrowing it to
+    match the v3.0.3 spec would 422 the older one.
 
     When the client omits `for`, fall back to today UTC; the carousel always
     sends `for`, so this branch is only hit by direct API consumers.
