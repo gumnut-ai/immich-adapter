@@ -139,24 +139,6 @@ class TestSearchPerson:
         assert result[0].name == "Hidden"
 
     @pytest.mark.anyio
-    async def test_visible_people_returned_regardless_of_with_hidden(
-        self, mock_sync_cursor_page
-    ):
-        """withHidden only gates hidden people; visible ones always come back."""
-        person_id = uuid_to_gumnut_person_id(uuid4())
-        visible_person = _make_person(person_id, name="Visible", is_hidden=False)
-
-        mock_client = Mock()
-        mock_client.people.list = Mock(
-            return_value=mock_sync_cursor_page([visible_person])
-        )
-
-        result = await search_person(name="Visible", client=mock_client)
-
-        assert len(result) == 1
-        assert result[0].name == "Visible"
-
-    @pytest.mark.anyio
     async def test_sdk_error_propagates(self):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError

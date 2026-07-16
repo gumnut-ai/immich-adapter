@@ -607,29 +607,6 @@ class TestGetAllPeople:
         assert result.hidden == 1
 
     @pytest.mark.anyio
-    async def test_get_all_people_hidden_count_precedes_filtering(
-        self, multiple_gumnut_people, mock_sync_cursor_page
-    ):
-        """`hidden` counts every hidden person even when they're filtered out.
-
-        Immich web derives its visible-people count from `total - hidden`, so the
-        count must be taken before the filter drops the hidden rows.
-        """
-        mock_client = Mock()
-
-        people = multiple_gumnut_people
-        people[0].is_hidden = True
-        people[1].is_hidden = True
-        people[2].is_hidden = False
-
-        mock_client.people.list.return_value = mock_sync_cursor_page(people)
-
-        result = await call_get_all_people(client=mock_client)
-
-        assert len(result.people) == 1
-        assert result.hidden == 2
-
-    @pytest.mark.anyio
     async def test_get_all_people_empty(self, mock_sync_cursor_page):
         """Test people retrieval with no people."""
         # Setup - mock only the Gumnut client

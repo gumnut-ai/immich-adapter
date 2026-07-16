@@ -199,8 +199,8 @@ async def search_person(
 ) -> List[PersonResponseDto]:
     """Search for people by name.
 
-    ``withHidden`` matches Immich's ``!withHidden`` rule: only an explicit true
-    includes hidden people, so omitting the param excludes them.
+    ``withHidden`` mirrors upstream Immich's ``!withHidden``: only an explicit
+    true includes hidden people.
     """
     people = [p async for p in client.people.list(name=name)]
     if not withHidden:

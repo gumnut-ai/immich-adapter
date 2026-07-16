@@ -249,15 +249,16 @@ async def get_all_people(
     """
     Get all people with optional pagination and filtering.
 
-    ``withHidden`` matches Immich's ``!withHidden`` rule: only an explicit true
-    includes hidden people, so omitting the param excludes them.
+    ``withHidden`` mirrors upstream Immich's ``!withHidden``: only an explicit
+    true includes hidden people.
     """
     gumnut_people = client.people.list(
         name_filter="all", limit=GUMNUT_API_MAX_PAGE_SIZE
     )
     all_people = [p async for p in gumnut_people]
 
-    # Count hidden before filtering so the response includes the total
+    # Mirrors upstream's hidden count, which is taken independently of
+    # withHidden — so count before the filter drops the hidden rows.
     hidden_count = sum(1 for p in all_people if p.is_hidden)
 
     if not withHidden:
