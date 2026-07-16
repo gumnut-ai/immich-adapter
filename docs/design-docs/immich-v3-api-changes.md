@@ -2,18 +2,19 @@
 title: "Immich v2.7.5 → v3.0 API Change Analysis"
 status: active
 created: 2026-06-16
-last-updated: 2026-07-14
+last-updated: 2026-07-16
 ---
 
 # Immich v2.7.5 → v3.0 API Change Analysis
 
 ## Context
 
-The immich-adapter currently targets the Immich **v2.7.5** release (pinned in
-`.immich-container-tag`). Immich **3.0** has since shipped (**v3.0.0** GA,
-2026-06-30). This document is a structural diff of the two OpenAPI specs — 2.7.5
-against **v3.0.0-rc.0**, re-validated against the GA spec (see the GA validation
-note below) — scoped to what the adapter must change to retarget 3.0.
+The immich-adapter now targets Immich **v3.0.3** (pinned in
+`.immich-container-tag`). Immich **3.0** shipped as **v3.0.0** GA on 2026-06-30,
+and the adapter retarget is complete. This document is a structural diff of the
+two OpenAPI specs — 2.7.5 against **v3.0.0-rc.0**, re-validated against the GA
+spec (see the GA validation note below) — that records the compatibility work and
+the remaining intentional gaps.
 
 Both specs are OpenAPI 3.0.0. The diff was produced by comparing
 `immich/open-api/immich-openapi-specs.json` (2.7.5) against
@@ -56,7 +57,13 @@ Both specs are OpenAPI 3.0.0. The diff was produced by comparing
 >   wording lives only in the generated 2.7.5 model description in
 >   `routers/immich_models.py`, so this spec fix adds no new 3.0 retarget work.
 >
-> The rc.0-based plan below therefore stands unchanged for GA.
+> The rc.0-based behavioral analysis below therefore stands unchanged for GA.
+
+> **Current target (v3.0.3).** The v3.0.3 spec retains the v3.0.0 GA endpoint
+> surface: 173 paths and 254 operations. It adds three schemas —
+> `HlsVideoResolution`, `RecentlyAddedResponse`, and `RecentlyAddedUpdate` —
+> which are reflected in the regenerated models and the adapter's hand-built
+> responses.
 
 ### Reproducing the diff
 
@@ -71,7 +78,7 @@ parameter/requestBody/response signature, and per-schema property/required/enum 
 1. Inventory every API change between 2.7.5 and 3.0.0-rc.0.
 2. Separate codegen noise from real behavioral changes.
 3. Map each behavioral change to the adapter code it affects.
-4. Give a prioritized retarget plan.
+4. Record retarget status and remaining gaps.
 
 ---
 
@@ -213,19 +220,18 @@ below-client version merely sets a "server out of date" UI banner
 the lever: report `< 3.0.0` and the client requests the V1 surface the adapter
 already serves; report `3.0.x` and it requests V2.
 
-The adapter already runs the V1/V2 dual pattern today: it reports 2.7.5 (from
-`.immich-container-tag`), so current clients already request `assetFacesV2`, and
-`routers/api/sync/` already carries `gumnut_face_to_sync_face_v2`, the
-`AssetFacesV2` → `AssetFaceV2` stream mapping, and "skip V1 when V2 is requested"
-logic.
+The adapter now reports v3.0.3 (from `.immich-container-tag`), so current clients
+request the V2 sync surface. `routers/api/sync/` carries
+`gumnut_face_to_sync_face_v2`, the `AssetFacesV2` → `AssetFaceV2` stream mapping,
+the `AssetsV2` and `AlbumsV2` converters, the owner link on the separate
+`AlbumUsersV1` stream, and "skip V1 when V2 is requested" logic. The v3-only
+`AssetOcrV1`, `PartnerAssetsV2`, and `AlbumAssetsV2` requests are accepted as
+no-ops because Gumnut has no corresponding data.
 
-**Conclusion:** Sync v2 is not a long pole. Reporting `3.0.x` and adding the V2
-entity mappings is small work that reuses the §2 int-ms `duration` converter —
-the per-entity deltas are small (see the "What V2 actually changes" list above),
-`AssetV2` is the int-duration asset, `AlbumV2` drops `ownerId` (re-emitted as the
-owner link on `AlbumUsersV1`), and `AssetOcrV1` emits nothing. The one
-non-cosmetic V1 tweak to carry over is that v3 makes `SyncAssetV1.createdAt`
-required.
+**Retarget status:** Sync v2 is complete. The V2 mappings reuse the §2 int-ms
+`duration` converter; `AssetV2` carries the integer duration, `AlbumV2` drops
+`ownerId`, and the adapter supplies the required v3 owner link and
+`SyncAssetV1.createdAt` field.
 
 ---
 
@@ -266,92 +272,50 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
 
 ---
 
-## 7. Adapter retarget plan (priority order)
+## 7. Adapter retarget status and remaining gaps
 
-1. **`duration` → integer ms** (`asset_conversion.py`,
-   `immich_models.py`) — touches every asset/timeline/upload response.
-2. **`AlbumResponseDto`** — derive owner from `albumUsers[0]`, drop
-   `owner`/`ownerId`/inline `assets`.
-3. **Sync v2** — report `3.0.x`, add the V2 entity mappings reusing the
-   §2 int-ms `duration` converter (`AlbumV2` is V1 minus `ownerId`, so also emit
-   the owner link on the separate `AlbumUsersV1` stream — see §5; `AssetOcrV1`
-   emits nothing). The V1/V2 dual pattern already exists in `routers/api/sync/`.
-4. **Shared links** — token/key/slug access model rework.
-5. **`AssetResponseDto`** — drop device fields + `unassignedFaces`, switch
-   `people` to `PersonResponseDto`.
-6. **Compat decisions** — resolved: the 7 removed endpoints are **dropped** (clean
-   cut, no shims; see §3). The deprecated-in-place PUTs (§6) stay as-is.
-7. **New feature areas** (HLS streaming, integrity, calendar heatmap,
-   plugins/workflows) — scoped: mostly intentional gaps (unreachable by the v3
-   clients), the calendar-heatmap user endpoint is stubbed, and album map markers
-   will be implemented. See *Immich v3 New Feature Areas — Scope Decisions* in
+1. **Completed — `duration` → integer ms** (`asset_conversion.py`,
+   `immich_models.py`) — applied to asset, timeline, upload, and sync responses.
+2. **Completed — `AlbumResponseDto`** — derives the owner from `albumUsers[0]`
+   and drops `owner`/`ownerId`/inline `assets` from the v3 response shape.
+3. **Completed — Sync v2** — reports `v3.0.3`, emits the V2 entity mappings, and
+   supplies the separate owner link required by v3 clients.
+4. **Remaining gap — Shared links** — token/key/slug access model rework is not
+   part of the retarget and remains a separate feature gap.
+5. **Completed — `AssetResponseDto`** — drops device fields and
+   `unassignedFaces`, and uses `PersonResponseDto` for `people`.
+6. **Resolved — compatibility decisions** — the 7 removed endpoints are dropped
+   with a clean cut and no shims (see §3); the deprecated-in-place PUTs (§6) stay
+   as-is.
+7. **Completed — new feature-area scope** — HLS streaming, integrity checks,
+   OAuth backchannel logout, and plugins/workflows remain intentional gaps; the
+   calendar-heatmap user endpoint is stubbed, and album map markers are
+   implemented. See *Immich v3 New Feature Areas — Scope Decisions* in
    `immich-adapter-gap-analysis.md`.
 
 ---
 
-## Known blockers on the integration branch
+## Retarget blocker status
 
-`migration/immichv3` is intentionally red until the API-shape work lands.
-Several removed-symbol imports still fail *collection* of some test modules
-independent of any single issue, so the affected per-issue changes are verified
-by inspection plus scoped checks (ruff, a zero-new-errors pyright diff) rather
-than a green suite. Each is its own retarget task:
+`migration/immichv3` was intentionally red while the API-shape work was landing.
+The blockers that made the branch fail import or test collection are resolved on
+main and are retained here as a closeout record rather than an active work list:
 
-- **`Action` import** — `tests/unit/api/test_assets.py` imports `Action`, an
-  anonymous enum (values `accept` / `reject`) that the v3 regen removed. Only
-  that test module imports it, so only `test_assets.py` fails on it.
+- **Removed symbols:** the `Action` enum was retargeted to
+  `AssetUploadAction`; `Error1` was retargeted to `BulkIdErrorReason`; and the
+  `APIKey*` imports were retargeted to the v3 `ApiKey*` names.
+- **Generated-model validation:** the model preprocessor strips `pattern` from
+  non-string formats (`uuid`, `date-time`, `date`, and `time`) before codegen,
+  so UUID and datetime DTOs validate normally under the v3 models.
+- **Email validation:** stub partner and user addresses use
+  `user@example.com`, which satisfies the regenerated `EmailStr` fields.
+- **v3.0.1/v3.0.2 required fields:** the preferences stubs now emit
+  `recentlyAdded`, and the realtime FFmpeg config supplies `resolutions` and
+  `videoCodecs` while keeping realtime HLS disabled.
 
-**Resolved — `Error1` import.** `routers/utils/bulk.py` (and `people.py` /
-`albums.py`) imported `Error1`, the removed anonymous bulk-error enum; this
-failed collection of the bulk / people / albums unit test modules that import
-the router layer directly. The enum is now retargeted to its v3 name
-`BulkIdErrorReason` (value-compatible — v3 adds `validation`), so those modules
-collect again.
-
-**Resolved — `APIKey*` imports.** `routers/api/api_keys.py` imported four DTOs
-(`APIKeyCreateDto` / `APIKeyResponseDto` / `APIKeyUpdateDto` /
-`APIKeyCreateResponseDto`) that the v3 regen recased to `ApiKey*`; on the
-app-import path this broke importing the app and failed collection of all seven
-`tests/integration/*` modules. The imports are retargeted to the `ApiKey*`
-casing (`Permission`, also imported there, was unaffected), so the app import
-advances past `api_keys.py` — surfacing the `PartnerResponseDto` blocker
-(resolved next). The recasing leaves one runtime residue: `ApiKeyResponseDto.id`
-was retyped `str` → `UUID`, so the two stub bodies that build a response with a
-literal non-UUID id (`create_api_key`, `get_my_api_key`) now raise
-`ValidationError` when reached — deferred with the rest of the `str` → `UUID`
-residue.
-
-**Resolved — `PartnerResponseDto` email.** `routers/api/partners.py` built a
-module-level `fake_partner` with `email="partner@immich.test"`; the v3 regen
-retyped `email` fields `str` → `EmailStr`, and `email-validator` rejects the
-reserved `.test` TLD, so the DTO failed validation *at import time* — the last
-module-level blocker on the app-import path. Both `.test` literals (partners.py
-and the `users.py` `get_user` stub) are replaced with `example.com` (which
-`EmailStr` accepts, matching the `admin.py` stubs), so `import main` now
-succeeds and the `tests/integration/*` suite collects.
-
-**Resolved — `pattern`-constrained non-`str` fields.** The v3 GA spec annotated
-UUID *and* datetime fields with a string `pattern` alongside their `format`,
-which `datamodel-codegen` copied onto the generated `UUID` / `AwareDatetime`
-fields. Under the pinned pydantic + Python 3.14, *validating a value* for any
-such field raised `TypeError: Unable to apply constraint 'pattern' … for schema
-of type 'uuid'` (and the identical error `for schema of type 'datetime'` on the
-sync/exif DTOs), so every asset/album/user/sync response 500'd and every test
-that built a populated DTO errored at setup. The model generator now strips
-`pattern` from schemas whose `format` maps to a non-string type (`uuid`,
-`date-time`, and — defensively, for future specs — `date` / `time`) before
-codegen, keeping it on genuine string fields, so the DTOs construct normally.
-Dropping the redundant constraint also collapsed eight now-indistinguishable
-`RootModel[UUID]` id wrappers (`AlbumId`, `AssetId`, …) into plain `UUID`; none
-were referenced.
-
-Per-issue tests written while these blockers were open assert on class-level
-metadata rather than building or calling the DTOs: `Model.model_fields` for
-field additions/removals, `inspect.signature(endpoint)` for query-param changes
-(when the router module imports cleanly), and `inspect.getsource` / `ast.parse`
-of the source when the import is blocked. Those assertions remain valid; with
-the `pattern` and `Error1` blockers lifted, the router-layer unit modules import
-and most such tests could now build or call the DTOs directly.
+The retarget-specific tests cover these construction and wire-shape cases, and
+the main-branch retarget checks pass linting, type checking, tests, and API
+compatibility validation.
 
 ## Open questions
 
@@ -363,12 +327,12 @@ and most such tests could now build or call the DTOs directly.
 - ~~Are 3.0 mobile clients hard-requiring Sync v2, or do they fall back to V1
   entity types?~~ **Resolved: incremental, not blocking.** The client picks V1
   vs V2 by the adapter's reported version, and the V2 payload deltas are small
-  (§5). Reporting `3.0.x` needs only a thin V2 layer that reuses the §2 duration
-  converter.
+  (§5). The adapter now reports `v3.0.3` and ships the thin V2 layer that reuses
+  the §2 duration converter.
 - ~~Which new feature areas (if any) are in scope vs. permanent intentional
   gaps?~~ **Resolved: mostly intentional gaps.** Of the six new areas, four are
   intentional gaps unreachable by our v3 clients (HLS streaming, integrity checks,
   OAuth backchannel logout, plugins/workflows), the calendar-heatmap user endpoint
-  is stubbed, and album map markers will be implemented. See *Immich v3 New
+  is stubbed, and album map markers are implemented. See *Immich v3 New
   Feature Areas — Scope Decisions* in `immich-adapter-gap-analysis.md` for the
   per-area reachability analysis and stub shapes.
