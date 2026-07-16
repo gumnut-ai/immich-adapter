@@ -1,9 +1,10 @@
 import logging
-from typing import Any, List
+from typing import Annotated, Any, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
+from pydantic.json_schema import SkipJsonSchema
 
 from gumnut import AsyncGumnut
 from gumnut.types import PersonResponse
@@ -238,15 +239,18 @@ async def update_person(
 
 @router.get("")
 async def get_all_people(
-    closestAssetId: UUID = Query(default=None),
-    closestPersonId: UUID = Query(default=None),
+    closestAssetId: Annotated[UUID | SkipJsonSchema[None], Query()] = None,
+    closestPersonId: Annotated[UUID | SkipJsonSchema[None], Query()] = None,
     page: int = Query(default=1, ge=1, type="number"),
     size: int = Query(default=500, ge=1, le=1000, type="number"),
-    withHidden: bool = Query(default=None),
+    withHidden: Annotated[bool, Query()] = False,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> PeopleResponseDto:
     """
     Get all people with optional pagination and filtering.
+
+    ``withHidden`` matches Immich's ``!withHidden`` rule: only an explicit true
+    includes hidden people, so omitting the param excludes them.
     """
     gumnut_people = client.people.list(
         name_filter="all", limit=GUMNUT_API_MAX_PAGE_SIZE
@@ -256,7 +260,7 @@ async def get_all_people(
     # Count hidden before filtering so the response includes the total
     hidden_count = sum(1 for p in all_people if p.is_hidden)
 
-    if withHidden is False:
+    if not withHidden:
         all_people = [p for p in all_people if not p.is_hidden]
 
     all_people.sort(key=_immich_people_sort_key)

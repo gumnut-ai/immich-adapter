@@ -73,11 +73,7 @@ class TestSearchPerson:
         mock_client = Mock()
         mock_client.people.list = Mock(return_value=mock_sync_cursor_page([person]))
 
-        result = await search_person(
-            name="Calvin",
-            withHidden=None,  # type: ignore[arg-type]
-            client=mock_client,
-        )
+        result = await search_person(name="Calvin", client=mock_client)
 
         assert len(result) == 1
         assert result[0].name == "Calvin"
@@ -90,17 +86,13 @@ class TestSearchPerson:
         mock_client = Mock()
         mock_client.people.list = Mock(return_value=mock_sync_cursor_page([]))
 
-        result = await search_person(
-            name="Nobody",
-            withHidden=None,  # type: ignore[arg-type]
-            client=mock_client,
-        )
+        result = await search_person(name="Nobody", client=mock_client)
 
         assert result == []
 
     @pytest.mark.anyio
-    async def test_includes_hidden_by_default(self, mock_sync_cursor_page):
-        """Test that hidden people are included when withHidden is None."""
+    async def test_excludes_hidden_when_omitted(self, mock_sync_cursor_page):
+        """Omitting withHidden excludes hidden people, as upstream's !withHidden does."""
         person_id = uuid_to_gumnut_person_id(uuid4())
         hidden_person = _make_person(person_id, name="Hidden", is_hidden=True)
 
@@ -109,13 +101,9 @@ class TestSearchPerson:
             return_value=mock_sync_cursor_page([hidden_person])
         )
 
-        result = await search_person(
-            name="Hidden",
-            withHidden=None,  # type: ignore[arg-type]
-            client=mock_client,
-        )
+        result = await search_person(name="Hidden", client=mock_client)
 
-        assert len(result) == 1
+        assert result == []
 
     @pytest.mark.anyio
     async def test_excludes_hidden_when_false(self, mock_sync_cursor_page):
@@ -135,6 +123,40 @@ class TestSearchPerson:
         assert result == []
 
     @pytest.mark.anyio
+    async def test_includes_hidden_when_true(self, mock_sync_cursor_page):
+        """An explicit withHidden=true is the only way to opt into hidden people."""
+        person_id = uuid_to_gumnut_person_id(uuid4())
+        hidden_person = _make_person(person_id, name="Hidden", is_hidden=True)
+
+        mock_client = Mock()
+        mock_client.people.list = Mock(
+            return_value=mock_sync_cursor_page([hidden_person])
+        )
+
+        result = await search_person(name="Hidden", withHidden=True, client=mock_client)
+
+        assert len(result) == 1
+        assert result[0].name == "Hidden"
+
+    @pytest.mark.anyio
+    async def test_visible_people_returned_regardless_of_with_hidden(
+        self, mock_sync_cursor_page
+    ):
+        """withHidden only gates hidden people; visible ones always come back."""
+        person_id = uuid_to_gumnut_person_id(uuid4())
+        visible_person = _make_person(person_id, name="Visible", is_hidden=False)
+
+        mock_client = Mock()
+        mock_client.people.list = Mock(
+            return_value=mock_sync_cursor_page([visible_person])
+        )
+
+        result = await search_person(name="Visible", client=mock_client)
+
+        assert len(result) == 1
+        assert result[0].name == "Visible"
+
+    @pytest.mark.anyio
     async def test_sdk_error_propagates(self):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
@@ -144,11 +166,7 @@ class TestSearchPerson:
         mock_client.people.list = Mock(side_effect=make_sdk_status_error(500, "boom"))
 
         with pytest.raises(APIStatusError):
-            await search_person(
-                name="Test",
-                withHidden=None,  # type: ignore[arg-type]
-                client=mock_client,
-            )
+            await search_person(name="Test", client=mock_client)
 
 
 class TestSearchStatistics:

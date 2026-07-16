@@ -1,6 +1,6 @@
 import logging
 import random
-from typing import Any, List
+from typing import Annotated, Any, List
 from fastapi import APIRouter, Depends, Query
 from uuid import UUID
 from datetime import datetime
@@ -194,12 +194,16 @@ async def search_large_assets(
 @router.get("/person")
 async def search_person(
     name: str,
-    withHidden: bool = Query(default=None),
+    withHidden: Annotated[bool, Query()] = False,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[PersonResponseDto]:
-    """Search for people by name."""
+    """Search for people by name.
+
+    ``withHidden`` matches Immich's ``!withHidden`` rule: only an explicit true
+    includes hidden people, so omitting the param excludes them.
+    """
     people = [p async for p in client.people.list(name=name)]
-    if withHidden is False:
+    if not withHidden:
         people = [p for p in people if not p.is_hidden]
     return [convert_gumnut_person_to_immich(p) for p in people]
 

@@ -42,13 +42,17 @@ from routers.immich_models import (
 
 
 def call_get_all_people(**kwargs):
-    """Helper function to call get_all_people with proper None defaults for Query parameters."""
+    """Helper function to call get_all_people with proper defaults for Query parameters.
+
+    Defaults mirror the handler's own declared defaults, since direct calls
+    bypass FastAPI's parameter resolution.
+    """
     defaults = {
         "closestAssetId": None,
         "closestPersonId": None,
         "page": 1,
         "size": 500,
-        "withHidden": None,
+        "withHidden": False,
     }
     defaults.update(kwargs)
     return get_all_people(**defaults)
@@ -551,6 +555,79 @@ class TestGetAllPeople:
         assert len(result.people) == 2  # Only non-hidden people
         assert result.total == 2  # Total reflects filtered count
         assert result.hidden == 1  # One person was hidden
+
+    @pytest.mark.anyio
+    async def test_get_all_people_excludes_hidden_when_omitted(
+        self, multiple_gumnut_people, mock_sync_cursor_page
+    ):
+        """Omitting withHidden excludes hidden people, as upstream's !withHidden does.
+
+        Calls the handler directly rather than through ``call_get_all_people`` so
+        the declared default for ``withHidden`` is what's under test.
+        """
+        mock_client = Mock()
+
+        people = multiple_gumnut_people
+        people[0].is_hidden = False
+        people[1].is_hidden = True
+        people[2].is_hidden = False
+
+        mock_client.people.list.return_value = mock_sync_cursor_page(people)
+
+        result = await get_all_people(
+            closestAssetId=None,
+            closestPersonId=None,
+            page=1,
+            size=500,
+            client=mock_client,
+        )
+
+        assert len(result.people) == 2
+        assert result.total == 2
+        assert result.hidden == 1
+
+    @pytest.mark.anyio
+    async def test_get_all_people_includes_hidden_when_true(
+        self, multiple_gumnut_people, mock_sync_cursor_page
+    ):
+        """An explicit withHidden=true is the only way to opt into hidden people."""
+        mock_client = Mock()
+
+        people = multiple_gumnut_people
+        people[0].is_hidden = False
+        people[1].is_hidden = True
+        people[2].is_hidden = False
+
+        mock_client.people.list.return_value = mock_sync_cursor_page(people)
+
+        result = await call_get_all_people(withHidden=True, client=mock_client)
+
+        assert len(result.people) == 3  # Hidden person retained
+        assert result.total == 3
+        assert result.hidden == 1
+
+    @pytest.mark.anyio
+    async def test_get_all_people_hidden_count_precedes_filtering(
+        self, multiple_gumnut_people, mock_sync_cursor_page
+    ):
+        """`hidden` counts every hidden person even when they're filtered out.
+
+        Immich web derives its visible-people count from `total - hidden`, so the
+        count must be taken before the filter drops the hidden rows.
+        """
+        mock_client = Mock()
+
+        people = multiple_gumnut_people
+        people[0].is_hidden = True
+        people[1].is_hidden = True
+        people[2].is_hidden = False
+
+        mock_client.people.list.return_value = mock_sync_cursor_page(people)
+
+        result = await call_get_all_people(client=mock_client)
+
+        assert len(result.people) == 1
+        assert result.hidden == 2
 
     @pytest.mark.anyio
     async def test_get_all_people_empty(self, mock_sync_cursor_page):
