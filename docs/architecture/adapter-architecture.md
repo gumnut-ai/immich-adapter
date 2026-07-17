@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-14
+last-updated: 2026-07-16
 ---
 
 # Immich Adapter Architecture
@@ -148,6 +148,16 @@ Used when Immich clients expect offset-based pagination or need the full result 
 3. Apply sorting (e.g., people endpoint sorts to match Immich's expected order)
 4. Slice for the requested page: `all_items[(page-1)*size : page*size]`
 5. Return with `total`, `hasNextPage`, and other metadata
+
+**`GET /api/people` — `total` is a post-filter count, unlike upstream's.** Upstream sources both `total` and `hidden` from a single count that ignores `withHidden`, so it guarantees `total >= hidden`. The adapter instead counts `total` after the hidden filter runs, while `hidden` still counts every hidden person — so `total < hidden` is reachable, and `total - hidden` is only meaningful when no filter ran.
+
+Immich web's readers of `total` all stay correct:
+
+- **People page and people-manage page** — both load with `withHidden=true`, so no filter runs and their counts (`total - hidden` and a plain header count respectively) match upstream.
+- **Explore page** — gates its People section on `total > 0` with `withHidden=false`. Here the counts genuinely differ, in the adapter's favor: a fully-hidden people set hides the section, where upstream's unfiltered `total` renders the header over an empty grid.
+- **Face editor** — compares `candidates.length` against `total` to stop paging, having built `candidates` from the same filtered response.
+
+Mobile reads only the `people` array. A third-party client assuming upstream's `total >= hidden` invariant would be affected.
 
 **Endpoints using this pattern:**
 
