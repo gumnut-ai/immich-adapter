@@ -105,6 +105,18 @@ out=$(payload 'git \"push\"' | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
 out=$(payload "printf git push" | "$ADAPTER" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok || fail "adapter: printf git push must not match (rc=$rc out=$out)"
 
+# Shell control-structure bodies are command positions.
+out=$(payload "if true; then git push; fi" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: if/then git push must be detected (rc=$rc out=$out)"
+
+# Quoted-push fallback is subcommand-position only: a quoted "push"
+# ARGUMENT to a non-push git command is data.
+out=$(payload 'git grep \"push\"' | "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && ok || fail "adapter: git grep \"push\" must not match (rc=$rc out=$out)"
+
+out=$(payload 'git commit -m \"push\"' | "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && ok || fail "adapter: git commit -m \"push\" must not match (rc=$rc out=$out)"
+
 # An unterminated quote (apostrophe in prose) falls back to raw matching —
 # a real push after it must still be detected (never fail open).
 out=$(payload "echo don't forget >> notes.txt\ngit push" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?

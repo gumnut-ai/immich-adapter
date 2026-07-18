@@ -120,11 +120,14 @@ masked = re.sub(r"(?<![\w./-])stash\s+push(?![\w./-])",
 # removal, so a second pass over the ORIGINAL text catches it. Residual
 # over-match: an unquoted free-text `push` argument to a real git command
 # still matches — err broad; the fix is quoting the message.
-CMD_POS = r"(?:^|[;&|\n(])\s*(?:(?:env|command|exec)\s+)*(?:[A-Za-z_][A-Za-z_0-9]*=(?:[^\s;|&]|\"[^\"]*\"|\x27[^\x27]*\x27)*\s+)*"
+CMD_POS = r"(?:^|[;&|\n(]|(?<![\w-])(?:then|do|else|elif)\s)\s*(?:(?:env|command|exec)\s+)*(?:[A-Za-z_][A-Za-z_0-9]*=(?:[^\s;|&]|\"[^\"]*\"|\x27[^\x27]*\x27)*\s+)*"
 # Optional path prefix: `/usr/bin/git push` is still a push.
 GIT_TOKEN = r"(?:[^\s;|&]*/)?git(?![\w./-])"
 PUSH_RE = CMD_POS + GIT_TOKEN + r"[^|;&\n]*?(?<![\w./-])push(?![\w./-])"
-QPUSH_RE = CMD_POS + GIT_TOKEN + r"[^|;&\n]*?[\"\x27]push[\"\x27]"
+# Quoted-push fallback is restricted to SUBCOMMAND position (git, then
+# only flag tokens, then the quoted word) — `git commit -m "push"` and
+# `git grep "push"` have a non-flag token first and are data, not pushes.
+QPUSH_RE = CMD_POS + GIT_TOKEN + r"(?:\s+-{1,2}[^\s;|&]+(?:\s+[^\s;|&\"\x27-][^\s;|&]*)?)*\s+[\"\x27]push[\"\x27]"
 
 pushes = list(re.finditer(PUSH_RE, masked))
 starts = set(p.start() for p in pushes)
@@ -156,7 +159,7 @@ def applies(x, p):
 # `export GUMNUT_SKIP_PUSH_CHECKS=1` precedes it in an applicable scope.
 # A bare assignment on another command does not persist and skips nothing;
 # a partial skip leaves the other pushes checked.
-exports = list(re.finditer(r"(?:^|[;&|\n(])\s*export\s+GUMNUT_SKIP_PUSH_CHECKS=1(?!\w)", masked))
+exports = list(re.finditer(r"(?:^|[;&|\n(]|(?<![\w-])(?:then|do|else|elif)\s)\s*export\s+GUMNUT_SKIP_PUSH_CHECKS=1(?!\w)", masked))
 
 def is_skipped(p):
     seg = masked[p.start():p.end()]
