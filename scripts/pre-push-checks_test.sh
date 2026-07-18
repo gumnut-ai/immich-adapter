@@ -85,6 +85,26 @@ out=$(payload "git commit -m 'document GUMNUT_SKIP_PUSH_CHECKS=1' && git push" |
 out=$(payload "grep -r GUMNUT_SKIP_PUSH_CHECKS=1 docs && git push" | "$ADAPTER" 2>&1); rc=$?
 [ "$rc" -eq 2 ] && echo "$out" | grep -q "FAILED: immich-version-sync" && ok || fail "adapter: argument-position skip-flag text must NOT bypass (rc=$rc out=$out)"
 
+# An assignment scoped to a DIFFERENT command does not skip the push.
+out=$(payload "GUMNUT_SKIP_PUSH_CHECKS=1 true && git push" | "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 2 ] && echo "$out" | grep -q "FAILED: immich-version-sync" && ok || fail "adapter: assignment on another command must NOT skip (rc=$rc out=$out)"
+
+# Partial skip: an unskipped push in the chain still runs the checks.
+out=$(payload "GUMNUT_SKIP_PUSH_CHECKS=1 git push && git push" | "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 2 ] && echo "$out" | grep -q "FAILED: immich-version-sync" && ok || fail "adapter: partial skip must still run checks (rc=$rc out=$out)"
+
+# Escaped quotes inside a double-quoted message stay masked.
+out=$(payload 'git commit -m \"release \\\"git push\\\"\"' | "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && ok || fail "adapter: escaped quotes in a message must stay masked (rc=$rc out=$out)"
+
+# A quoted SUBCOMMAND still executes a push after quote removal — detected.
+out=$(payload 'git \"push\"' | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: git \"push\" quoted subcommand must be detected (rc=$rc out=$out)"
+
+# git not in command position is not a push.
+out=$(payload "printf git push" | "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && ok || fail "adapter: printf git push must not match (rc=$rc out=$out)"
+
 # An unterminated quote (apostrophe in prose) falls back to raw matching —
 # a real push after it must still be detected (never fail open).
 out=$(payload "echo don't forget >> notes.txt\ngit push" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
@@ -96,7 +116,7 @@ out=$(payload "out=\\\"\$(git push origin HEAD 2>&1)\\\"" | GUMNUT_SKIP_PUSH_CHE
 
 # --- adapter: push detection positives (exported skip keeps it hermetic;
 # the checker's "skipped" message proves the adapter reached it) ---
-for cmd in "git push" "git push -u origin HEAD" "git -C /tmp/x push" "git add -A && git commit -m msg && git push" "git stash push -m wip && git push"; do
+for cmd in "git push" "git push -u origin HEAD" "git -C /tmp/x push" "git add -A && git commit -m msg && git push" "git stash push -m wip && git push" "/usr/bin/git push"; do
   out=$(payload "$cmd" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
   [ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter should detect push in: $cmd"
 done

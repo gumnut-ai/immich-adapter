@@ -67,27 +67,41 @@ cmd = payload.get("tool_input", {}).get("command", "")
 def mask_quotes(s):
     # Blank quoted contents, keeping quote chars and all offsets intact.
     # ("\x27" is a single quote — spelled as an escape because this program
-    # is embedded in a single-quoted shell string.) Two deliberate
-    # carve-outs:
+    # is embedded in a single-quoted shell string.) Deliberate carve-outs:
+    #   - Backslash escapes are honored: outside quotes, an escaped quote
+    #     does not open a span; inside double quotes it does not close one.
     #   - A double-quoted span containing $( or ` re-enters command context
-    #     (command substitution: "$(git push)" really pushes) — left
-    #     unmasked. Single-quoted spans are pure data in shell.
-    #   - If a quote never terminates, this masker cannot trust its read of
-    #     the rest (backslash escapes and heredocs it does not model) —
-    #     return the RAW string and err broad: over-matching runs checks
-    #     needlessly; masking away a real push would fail open.
+    #     (command substitution really pushes) — left unmasked.
+    #   - If a quote never terminates, return the RAW string and err broad:
+    #     masking away a real push would fail open.
     out = []
     i, n = 0, len(s)
     while i < n:
         ch = s[i]
-        if ch in "\"\x27":
+        if ch == "\\" and i + 1 < n:
+            out.append(s[i:i + 2])
+            i += 2
+        elif ch == "\x27":
             j = i + 1
-            while j < n and s[j] != ch:
+            while j < n and s[j] != "\x27":
                 j += 1
             if j >= n:
                 return s
-            content = s[i + 1:j]
-            if ch == "\"" and ("$(" in content or "`" in content):
+            out.append(ch + " " * (j - i - 1) + ch)
+            i = j + 1
+        elif ch == "\"":
+            j = i + 1
+            cmdsub = False
+            while j < n and s[j] != "\"":
+                if s[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if s[j] == "`" or (s[j] == "$" and j + 1 < n and s[j + 1] == "("):
+                    cmdsub = True
+                j += 1
+            if j >= n:
+                return s
+            if cmdsub:
                 out.append(s[i:j + 1])
             else:
                 out.append(ch + " " * (j - i - 1) + ch)
@@ -100,12 +114,58 @@ def mask_quotes(s):
 masked = mask_quotes(cmd)
 masked = re.sub(r"(?<![\w./-])stash\s+push(?![\w./-])",
                 lambda m: " " * len(m.group(0)), masked)
-if not re.search(r"(?<![\w./-])git(?![\w./-])[^|;&\n]*(?<![\w./-])push(?![\w./-])", masked):
+
+# `git` must sit in command position; `push` must be a standalone token. A
+# QUOTED subcommand (`git "push"`) still executes a push after shell quote
+# removal, so a second pass over the ORIGINAL text catches it. Residual
+# over-match: an unquoted free-text `push` argument to a real git command
+# still matches — err broad; the fix is quoting the message.
+CMD_POS = r"(?:^|[;&|\n(])\s*(?:(?:env|command|exec)\s+)*(?:[A-Za-z_][A-Za-z_0-9]*=(?:[^\s;|&]|\"[^\"]*\"|\x27[^\x27]*\x27)*\s+)*"
+# Optional path prefix: `/usr/bin/git push` is still a push.
+GIT_TOKEN = r"(?:[^\s;|&]*/)?git(?![\w./-])"
+PUSH_RE = CMD_POS + GIT_TOKEN + r"[^|;&\n]*?(?<![\w./-])push(?![\w./-])"
+QPUSH_RE = CMD_POS + GIT_TOKEN + r"[^|;&\n]*?[\"\x27]push[\"\x27]"
+
+pushes = list(re.finditer(PUSH_RE, masked))
+starts = set(p.start() for p in pushes)
+pushes += [m for m in re.finditer(QPUSH_RE, cmd) if m.start() not in starts]
+pushes.sort(key=lambda m: m.start())
+if not pushes:
     sys.exit(NOT_A_PUSH)
-# Any command-position assignment anywhere in the command counts (even one
-# not syntactically applied to the push): an unquoted deliberate assignment
-# is a clear statement of intent. Quoted mentions never count (masked).
-if re.search(r"(?:^|[;&|\n(])\s*(?:export\s+|env\s+)?GUMNUT_SKIP_PUSH_CHECKS=1(?!\w)", masked):
+
+# Shell scope model for exports: chains computed at match END (the match
+# START is the anchor, which may itself be the paren opening the scope).
+def stack_at(pos):
+    st = []
+    for k in range(pos):
+        c = masked[k]
+        if c == "(":
+            st.append(k)
+        elif c == ")" and st:
+            st.pop()
+    return st
+
+def applies(x, p):
+    if x.start() >= p.start():
+        return False
+    xs, ps = stack_at(x.end()), stack_at(p.end())
+    return xs == ps[:len(xs)]
+
+# Skip semantics, per push (a quoted mention never counts — masked): the
+# segment of the push itself is prefixed with the assignment, or an
+# `export GUMNUT_SKIP_PUSH_CHECKS=1` precedes it in an applicable scope.
+# A bare assignment on another command does not persist and skips nothing;
+# a partial skip leaves the other pushes checked.
+exports = list(re.finditer(r"(?:^|[;&|\n(])\s*export\s+GUMNUT_SKIP_PUSH_CHECKS=1(?!\w)", masked))
+
+def is_skipped(p):
+    seg = masked[p.start():p.end()]
+    git_at = re.search(GIT_TOKEN, seg)
+    if git_at and "GUMNUT_SKIP_PUSH_CHECKS=1" in seg[:git_at.start()]:
+        return True
+    return any(applies(e, p) for e in exports)
+
+if all(is_skipped(p) for p in pushes):
     sys.exit(SKIPPED)
 sys.exit(0)
 '
