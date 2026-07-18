@@ -116,6 +116,15 @@ out=$(payload "git log --grep=push" | "$ADAPTER" 2>&1); rc=$?
 out=$(payload "{ git push; }" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: { git push; } must be detected (rc=$rc out=$out)"
 
+# A nested shell script argument is command context, not data.
+out=$(payload "bash -lc 'git push'" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: bash -lc 'git push' must be detected (rc=$rc out=$out)"
+
+# The skip flag must be its own assignment — a mention inside another
+# assignment's VALUE does not skip (the checker runs).
+out=$(payload "FOO=GUMNUT_SKIP_PUSH_CHECKS=1 git push" | "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 2 ] && echo "$out" | grep -q "FAILED: immich-version-sync" && ok || fail "adapter: skip text inside another assignment value must NOT skip (rc=$rc out=$out)"
+
 # Shell control-structure bodies are command positions.
 out=$(payload "if true; then git push; fi" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: if/then git push must be detected (rc=$rc out=$out)"
