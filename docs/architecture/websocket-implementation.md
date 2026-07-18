@@ -1,13 +1,13 @@
 ---
 title: "WebSocket Implementation Documentation for immich-adapter"
-last-updated: 2026-05-27
+last-updated: 2026-07-15
 ---
 
 # WebSocket Implementation Documentation for immich-adapter
 
 ## Overview
 
-This document describes how to implement WebSocket support in immich-adapter, with a focus on authentication and the extensible event system needed to support `on_upload_success` and future events.
+This document describes the current Socket.IO implementation in immich-adapter, with a focus on authentication, room membership, and the event helpers used by the API routers.
 
 **Transport note:** the WebSocket transport that Socket.IO sits on top of is provided by uvicorn, configured via `--ws websockets-sansio` in the Dockerfile and `.vscode/launch.json`. The default `--ws auto` would route through the deprecated legacy `websockets` API and leak `"exception in shielded future"` errors on peer close. Application code in this file does not interact with that layer directly. See `../references/uvicorn-settings.md` § "ws (WebSocket protocol implementation)" for the full rationale.
 
@@ -22,59 +22,60 @@ This document describes how to implement WebSocket support in immich-adapter, wi
 
 ### 1.1 Current Implementation
 
-immich-adapter already has a Socket.IO server in `routers/api/websockets.py`:
+immich-adapter has a Socket.IO server in `services/websockets.py`. The ASGI wrapper is mounted at `/api/socket.io` by `main.py`:
 
 ```python
 import socketio
 
-# Socket.IO server with ASGI mode
 sio = socketio.AsyncServer(
     async_mode="asgi",
     cors_allowed_origins="*",
     engineio_version=4,
 )
 
-# ASGI app mounted at /socket.io
 socket_app = socketio.ASGIApp(socketio_server=sio, socketio_path="/")
 ```
 
 The server currently:
 
-- Accepts all connections (no authentication)
-- Emits `on_server_version` on connect
-- Logs connect/disconnect events
+- Authenticates connections with an Immich session token.
+- Joins each authenticated socket to both a user room and a session room.
+- Emits `on_server_version` to the connecting socket.
+- Tracks sockets for disconnect cleanup and logs connect/disconnect events.
 
 ### 1.2 Room-Based Messaging
 
 Socket.IO rooms allow sending messages to specific subsets of connected clients:
 
 ```text
-User A (2 devices)          User B (1 device)
-    |                           |
-    +- Phone (sid: abc)         +- Browser (sid: xyz)
-    +- Tablet (sid: def)
+User A (2 devices)
+    |
+    +- Phone (sid: abc, session: session-1)
+    +- Tablet (sid: def, session: session-2)
 
-Room "user-A": [abc, def]
-Room "user-B": [xyz]
+User room "user-A": [abc, def]
+Session room "session-1": [abc]
+Session room "session-2": [def]
 ```
 
-When we emit to room "user-A", both of User A's devices receive the message.
+Emitting to a user room reaches all of that user's connected devices. Emitting to a session room targets one session, which is how `on_session_delete` tells a specific client to log out.
 
-**Room naming convention**: Use the Gumnut user ID as the room name:
+**Room naming convention**: Use the Gumnut user ID and the session UUID as room names:
 
 ```python
-room_name = session.user_id  # e.g., "550e8400-e29b-41d4-a716-446655440000"
+await sio.enter_room(sid, session.user_id)
+await sio.enter_room(sid, str(session.id))
 ```
 
-This matches Immich's approach where clients join a room named with their user ID.
+The user room is shared by all of a user's sessions; the session room is unique to one session.
 
 ### 1.3 Session Tracking
 
-To support disconnect cleanup and debugging, maintain a mapping of socket IDs to user IDs:
+To support disconnect cleanup and debugging, the service maintains a mapping of socket IDs to both room identities:
 
 ```python
-# Maps socket ID -> user ID (for disconnect cleanup)
-_sid_to_user: dict[str, str] = {}
+# Maps socket ID -> (user ID, session ID)
+_sid_to_user: dict[str, tuple[str, str]] = {}
 ```
 
 This is accessed from async coroutines. Since Python's GIL and asyncio's single-threaded event loop handle this, no explicit locking is needed for dict operations.
@@ -126,19 +127,20 @@ The `environ` dict includes:
 4. If session not found:
    -> Return False to reject connection
 
-5. Extract user_id from session:
+5. Extract the room identities from the session:
    user_id = session.user_id
+   session_id = str(session.id)
 
-6. Join the socket to a user-specific room:
+6. Join the socket to both rooms:
    await sio.enter_room(sid, user_id)
+   await sio.enter_room(sid, session_id)
 
 7. Store mapping for cleanup:
-   - sid -> user_id (for disconnect cleanup)
-   - Optionally: user_id -> [sids] (for multi-device support)
+   - sid -> (user_id, session_id)
 
 8. Emit on_server_version to the client (existing behavior)
 
-9. Return True (implicit) to accept connection
+9. Return normally (the handler's implicit None accepts the connection)
 ```
 
 ---
@@ -153,6 +155,7 @@ Starting with the current upload-success events, but designed for future extensi
 |---|---|---|---|
 | `on_upload_success` | `AssetResponseDto` | Asset owner | Images: immediately after upload completes; videos: after the shared 3s WebSocket deferral |
 | `AssetUploadReadyV1` | `{ asset: SyncAssetV1, exif: SyncAssetExifV1 }` | Asset owner | Emitted alongside `on_upload_success` on the same schedule |
+| `on_asset_update` | `AssetResponseDto` | Asset owner | After `PUT /api/assets/{id}` updates metadata |
 | `on_server_version` | Version info | Connecting client | On connect (existing) |
 
 ### 3.2 Event Implementation Status
@@ -204,220 +207,59 @@ Mobile clients using the v2 sync protocol listen to `AssetUploadReadyV1` instead
 
 The mobile client batches these events and updates its local SQLite database immediately. Immich plans to deprecate `on_upload_success` in favor of `AssetUploadReadyV1`.
 
-**Recommendation**: Emit both upload-success events from the same helper so images stay immediate and videos share the same 3-second deferral across web and mobile clients.
+The implementation emits both upload-success events from `_do_emit_upload_events`, so images stay immediate and videos share the same 3-second deferral across web and mobile clients.
 
 ### 3.4 Event Emission Interface
 
-A single generic interface handles all event types using an enum for type safety:
+The service keeps the room target explicit and exposes wrappers for the two supported scopes:
 
-```python
-from enum import Enum
-from typing import TypeAlias
-from pydantic import BaseModel
+- `_emit_event` is the internal serializer and Socket.IO call. Callers should use a public wrapper instead.
+- `emit_user_event` sends to every connected session for a user.
+- `emit_user_event_per_id` gathers one user event per identifier for wire formats such as permanent-delete events.
+- `emit_session_event` sends to one session room, currently used for `on_session_delete`.
 
-
-class WebSocketEvent(Enum):
-    """WebSocket events that can be emitted to clients."""
-
-    # Phase 1: Can implement now
-    UPLOAD_SUCCESS = "on_upload_success"
-    ASSET_UPLOAD_READY_V1 = "AssetUploadReadyV1"
-    ASSET_DELETE = "on_asset_delete"
-    ASSET_TRASH = "on_asset_trash"
-    ASSET_RESTORE = "on_asset_restore"
-    SESSION_DELETE = "on_session_delete"
-    SERVER_VERSION = "on_server_version"
-
-    # Phase 2: Requires the Gumnut API event channel
-    PERSON_THUMBNAIL = "on_person_thumbnail"
-
-
-# Payload types: Pydantic models, strings, or lists of strings
-EventPayload: TypeAlias = BaseModel | str | list[str] | None
-
-
-async def emit_event(event: WebSocketEvent, user_id: str, payload: EventPayload = None) -> None:
-    """
-    Emit a WebSocket event to all of a user's connected clients.
-
-    Args:
-        event: The event type (from WebSocketEvent enum)
-        user_id: The Gumnut user ID (room name)
-        payload: Event data - a Pydantic model (auto-serialized), string, list of strings, or None
-    """
-    if isinstance(payload, BaseModel):
-        data = payload.model_dump(mode="json")
-    else:
-        data = payload
-    await sio.emit(event.value, data, room=user_id)
-```
+The `WebSocketEvent` enum supplies type-safe event names, and `EventPayload` accepts a Pydantic model, string, string list, or `None`. `AssetUploadReadyV1Payload` is the Pydantic model used for the mobile upload event.
 
 Usage:
 
 ```python
-# Pydantic model payload (auto-serialized)
-await emit_event(WebSocketEvent.UPLOAD_SUCCESS, user_id, asset_dto)
+from services.websockets import (
+    WebSocketEvent,
+    emit_session_event,
+    emit_user_event,
+    emit_user_event_per_id,
+)
 
-# String payload
-await emit_event(WebSocketEvent.ASSET_DELETE, user_id, asset_id)
+# Pydantic models are serialized with model_dump(mode="json").
+await emit_user_event(WebSocketEvent.ASSET_UPDATE, user_id, asset_dto)
 
-# List of strings payload
-await emit_event(WebSocketEvent.ASSET_TRASH, user_id, asset_ids)
+# The one-id-per-event wire shape is gathered concurrently.
+await emit_user_event_per_id(WebSocketEvent.ASSET_DELETE, user_id, asset_ids)
 
-# No payload
-await emit_event(WebSocketEvent.CONFIG_UPDATE, user_id)
+# Session-scoped events target the session UUID room.
+await emit_session_event(WebSocketEvent.SESSION_DELETE, session_id, session_id)
 ```
 
 ---
 
 ## 4. Implementation Structure
 
-### 4.1 File: `routers/api/websockets.py`
+### 4.1 Service module: `services/websockets.py`
+
+The service owns the Socket.IO server, authentication callbacks, room tracking, event enum, and emission helpers:
+
+1. `sio` is the Socket.IO server and `socket_app` is its ASGI wrapper. `main.py` mounts the wrapper at `/api/socket.io`.
+2. `connect` extracts a session token from the mobile header, Bearer header, or web cookie, then looks up the session in the session store. Missing, unknown, or lookup-error sessions are rejected.
+3. A successful connection joins both `session.user_id` and `str(session.id)` rooms, records the `(user_id, session_id)` tuple, and emits the current server version to that socket.
+4. `disconnect` removes the socket from `_sid_to_user`; `connect_error` logs connection errors.
+5. `_emit_event` serializes Pydantic payloads and performs the Socket.IO emit. The public wrappers catch and log `SocketIOError` so event transport failures do not fail the paired HTTP request.
+
+The application mount is explicit:
 
 ```python
-# Proposed structure
+from services import websockets
 
-import logging
-from enum import Enum
-from http.cookies import SimpleCookie
-from typing import TypeAlias
-
-import socketio
-from pydantic import BaseModel
-
-from config.settings import get_settings
-from services.session_store import get_session_store
-
-logger = logging.getLogger(__name__)
-
-sio = socketio.AsyncServer(
-    async_mode="asgi",
-    cors_allowed_origins="*",
-    engineio_version=4,
-)
-socket_app = socketio.ASGIApp(socketio_server=sio, socketio_path="/")
-
-
-class WebSocketEvent(Enum):
-    """WebSocket events that can be emitted to clients."""
-
-    # Phase 1: Can implement now
-    UPLOAD_SUCCESS = "on_upload_success"
-    ASSET_UPLOAD_READY_V1 = "AssetUploadReadyV1"
-    ASSET_DELETE = "on_asset_delete"
-    ASSET_TRASH = "on_asset_trash"
-    ASSET_RESTORE = "on_asset_restore"
-    SESSION_DELETE = "on_session_delete"
-    SERVER_VERSION = "on_server_version"
-
-    # Phase 2: Requires the Gumnut API event channel
-    PERSON_THUMBNAIL = "on_person_thumbnail"
-
-
-EventPayload: TypeAlias = BaseModel | str | list[str] | None
-
-
-# Maps socket ID -> user ID (for disconnect cleanup)
-_sid_to_user: dict[str, str] = {}
-
-
-def _extract_session_token(environ: dict) -> str | None:
-    """
-    Extract session token from Socket.IO connection environment.
-
-    Checks in order:
-    1. x-immich-user-token header (mobile)
-    2. Authorization: Bearer header (mobile alt)
-    3. immich_access_token cookie (web)
-    """
-    # Check mobile header (HTTP_ prefix, dashes become underscores)
-    if token := environ.get("HTTP_X_IMMICH_USER_TOKEN"):
-        return token
-
-    # Check Bearer token
-    if auth := environ.get("HTTP_AUTHORIZATION", ""):
-        if auth.lower().startswith("bearer "):
-            return auth[7:]
-
-    # Check cookie
-    if cookie_str := environ.get("HTTP_COOKIE"):
-        cookies = SimpleCookie()
-        cookies.load(cookie_str)
-        if "immich_access_token" in cookies:
-            return cookies["immich_access_token"].value
-
-    return None
-
-
-@sio.event
-async def connect(sid, environ):
-    """
-    Handle new WebSocket connection.
-
-    Authenticates the client, joins them to their user room,
-    and sends initial server version info.
-    """
-    logger.debug(f"WebSocket connect attempt - SID: {sid}")
-
-    # Extract session token
-    session_token = _extract_session_token(environ)
-    if not session_token:
-        logger.warning(f"WebSocket auth failed - no token found")
-        return False  # Reject connection
-
-    # Look up session in Redis
-    try:
-        session_store = await get_session_store()
-        session = await session_store.get_by_id(session_token)
-    except Exception:
-        logger.exception("WebSocket auth failed - session lookup error")
-        return False
-
-    if not session:
-        logger.warning(f"WebSocket auth failed - session not found")
-        return False  # Reject connection
-
-    # Join user room and track session
-    user_id = session.user_id
-    await sio.enter_room(sid, user_id)
-    _sid_to_user[sid] = user_id
-
-    logger.debug(f"WebSocket authenticated - SID: {sid}, User: {user_id}")
-
-    # Send server version (existing behavior)
-    version = get_settings().immich_version
-    await emit_event(
-        WebSocketEvent.SERVER_VERSION,
-        sid,  # Send to this socket only, not the user room
-        ServerVersionResponseDto(
-            major=version.major,
-            minor=version.minor,
-            patch=version.patch,
-        ),
-    )
-
-
-@sio.event
-async def disconnect(sid):
-    """Handle WebSocket disconnection."""
-    user_id = _sid_to_user.pop(sid, None)
-    logger.debug(f"WebSocket disconnected - SID: {sid}, User: {user_id}")
-
-
-async def emit_event(event: WebSocketEvent, user_id: str, payload: EventPayload = None) -> None:
-    """
-    Emit a WebSocket event to all of a user's connected clients.
-
-    Args:
-        event: The event type (from WebSocketEvent enum)
-        user_id: The Gumnut user ID (room name), or a socket ID for targeted emission
-        payload: Event data - a Pydantic model (auto-serialized), string, list of strings, or None
-    """
-    if isinstance(payload, BaseModel):
-        data = payload.model_dump(mode="json")
-    else:
-        data = payload
-    await sio.emit(event.value, data, room=user_id)
+app.mount("/api/socket.io", websockets.socket_app)
 ```
 
 ### 4.2 Usage from Assets Router
@@ -445,14 +287,13 @@ async def _emit_upload_events(gumnut_asset, current_user):
 ```
 
 ```python
-# In routers/api/assets.py (after delete completes)
+# In routers/api/assets.py (after a permanent delete completes)
 
-@router.delete("/assets")
-async def delete_assets(...):
-    # ... delete logic ...
-
-    for asset_id in deleted_asset_ids:
-        await emit_user_event(WebSocketEvent.ASSET_DELETE, current_user.id, asset_id)
+await emit_user_event_per_id(
+    WebSocketEvent.ASSET_DELETE,
+    user_id,
+    (str(asset_id) for asset_id in chunk),
+)
 ```
 
 ---
@@ -487,9 +328,12 @@ This means the adapter doesn't need special batching logic -- mobile handles it 
 
 ## 6. Testing Strategy
 
-1. **Unit tests for `_extract_session_token`**: Test cookie parsing, header extraction
-2. **Integration tests for connect/disconnect**: Mock session store, verify room joining
-3. **End-to-end tests**: Upload asset, verify websocket event received
+`tests/unit/api/test_websockets.py` covers:
+
+1. **Token extraction**: Mobile header, Bearer header, cookie, precedence, and malformed or missing values.
+2. **Connection lifecycle**: Rejection for missing or invalid sessions, acceptance for valid sessions, joining both rooms, and `on_server_version` emission.
+3. **Disconnect cleanup**: Removing known sockets and safely handling unknown sockets.
+4. **Event helpers**: User- and session-scoped room targeting, Pydantic serialization, event names, and swallowed `SocketIOError` failures.
 
 ---
 
@@ -497,11 +341,12 @@ This means the adapter doesn't need special batching logic -- mobile handles it 
 
 The implementation:
 
-1. **Builds on** existing Socket.IO infrastructure in `routers/api/websockets.py`
+1. **Builds on** existing Socket.IO infrastructure in `services/websockets.py`, mounted at `/api/socket.io`
 2. **Authenticates** websocket connections using the same session tokens as HTTP requests
-3. **Joins** authenticated clients to a room named with their user ID
-4. **Exposes** a single `emit_event(event, user_id, payload)` API with:
+3. **Joins** authenticated clients to both user and session rooms
+4. **Exposes** user- and session-scoped event helpers with:
    - `WebSocketEvent` enum for type-safe event names
    - `EventPayload` type supporting Pydantic models, strings, string lists, or None
    - Automatic serialization of Pydantic models via `model_dump(mode="json")`
-5. **Is extensible** - adding new events requires only a new enum value
+   - `emit_user_event_per_id` for one-id-per-event wire contracts
+5. **Is extensible** - adding a supported event requires a new enum value and its router call site
