@@ -18,7 +18,6 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_face_id,
     uuid_to_gumnut_face_id,
     safe_uuid_from_user_id,
-    uuid_to_gumnut_user_id,
 )
 
 
@@ -156,7 +155,7 @@ class TestConvenienceFunctions:
         test_uuid = uuid4()
 
         # UUID to user ID
-        user_id = uuid_to_gumnut_user_id(test_uuid)
+        user_id = uuid_to_gumnut_id(test_uuid, "intuser")
         assert user_id.startswith("intuser_")
 
         # User ID back to UUID
@@ -206,10 +205,6 @@ class TestConvenienceFunctions:
         )
 
         # User functions
-        assert uuid_to_gumnut_user_id(test_uuid) == uuid_to_gumnut_id(
-            test_uuid, "intuser"
-        )
-
         user_id = f"intuser_{shortuuid.encode(test_uuid)}"
         assert safe_uuid_from_user_id(user_id) == safe_uuid_from_gumnut_id(
             user_id, "intuser"
