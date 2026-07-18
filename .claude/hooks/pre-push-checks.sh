@@ -28,49 +28,104 @@ esac
 # Stdin carried the PreToolUse payload: {"tool_input": {"command": "..."}, ...}.
 # python3 does the JSON parsing AND the push matching: unlike jq it's present
 # on every macOS/Linux dev and cloud image this repo targets, and unlike
-# sed/grep its \b regex semantics don't vary between BSD and GNU tools.
+# sed/grep its regex semantics don't vary between BSD and GNU tools.
+# Matching principles:
+#   - Quoted spans are DATA, not command: they are masked (offset-preserving)
+#     before any matching, so a commit message mentioning "git push" or the
+#     skip flag can neither trigger nor bypass the hook.
+#   - `push` must be a standalone token ((?<![\w./-]) / (?![\w./-])), so
+#     "pre-push-checks.sh" or "pre-push checks" never match.
+#   - `git stash push` is blanked first — a stash is what an agent reaches
+#     for when the tree is dirty, i.e. exactly when checks would fail.
+#   - The skip flag counts only as a command-position assignment
+#     (`GUMNUT_SKIP_PUSH_CHECKS=1 ...`, optionally export/env-prefixed).
+# A remaining over-match (a push targeting a *different* repo via
+# `git -C ../other-repo push`) still runs this repo's checks — the skip
+# assignment is the remedy. Under-matching would let a real push through
+# unchecked, so err broad.
 #
-# Match `git push` allowing intervening flags (`git -C x push`) and compound
-# commands (`git add ... && git push`), but not `git stash push` — a stash is
-# what an agent reaches for when the tree is dirty, i.e. exactly when checks
-# would fail, so a false match there would block an unrelated command.
-# Remaining over-matches cost a needless check run when checks pass but DO
-# block the command when checks fail — notably a push targeting a *different*
-# repo from a session in this one (`git -C ../other-repo push`), which this
-# repo's failures would block with confusing errors; the
-# GUMNUT_SKIP_PUSH_CHECKS=1 escape hatch is the remedy. Under-matching would
-# let a real push through unchecked, so still err broad.
-#
-# python3 exit codes: 0 = push detected, 1 = not a push. Anything else means
-# python3 itself is missing/broken — treat that as push-detected (fail
-# closed, per the err-broad posture) rather than silently disabling the
-# guard forever on that environment.
+# python3 exit codes: 0 = push detected; 3 = not a push; 4 = skip flag
+# applied; 5 = payload did not parse as JSON (the payload producer is Claude
+# Code itself, so malformed means something changed — warn, then fail
+# closed). "Not a push" is deliberately NOT exit 1: a broken interpreter
+# shim or a syntax error in this embedded program exits 1, and mapping that
+# to "not a push" would silently disable the guard forever — any exit
+# outside {0,3,4,5} warns and fails closed (runs the checks).
 printf '%s' "$payload" | python3 -c '
 import json, re, sys
+
+NOT_A_PUSH = 3
+SKIPPED = 4
+PARSE_FAILURE = 5
+
 try:
     payload = json.load(sys.stdin)
 except Exception:
-    sys.exit(1)
+    sys.exit(PARSE_FAILURE)
 cmd = payload.get("tool_input", {}).get("command", "")
-cmd = re.sub(r"\bstash\s+push\b", "", cmd)
-sys.exit(0 if re.search(r"\bgit\b[^|;&\n]*\bpush\b", cmd) else 1)
+
+def mask_quotes(s):
+    # Blank quoted contents, keeping quote chars and all offsets intact.
+    # ("\x27" is a single quote — spelled as an escape because this program
+    # is embedded in a single-quoted shell string.) Two deliberate
+    # carve-outs:
+    #   - A double-quoted span containing $( or ` re-enters command context
+    #     (command substitution: "$(git push)" really pushes) — left
+    #     unmasked. Single-quoted spans are pure data in shell.
+    #   - If a quote never terminates, this masker cannot trust its read of
+    #     the rest (backslash escapes and heredocs it does not model) —
+    #     return the RAW string and err broad: over-matching runs checks
+    #     needlessly; masking away a real push would fail open.
+    out = []
+    i, n = 0, len(s)
+    while i < n:
+        ch = s[i]
+        if ch in "\"\x27":
+            j = i + 1
+            while j < n and s[j] != ch:
+                j += 1
+            if j >= n:
+                return s
+            content = s[i + 1:j]
+            if ch == "\"" and ("$(" in content or "`" in content):
+                out.append(s[i:j + 1])
+            else:
+                out.append(ch + " " * (j - i - 1) + ch)
+            i = j + 1
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+masked = mask_quotes(cmd)
+masked = re.sub(r"(?<![\w./-])stash\s+push(?![\w./-])",
+                lambda m: " " * len(m.group(0)), masked)
+if not re.search(r"(?<![\w./-])git(?![\w./-])[^|;&\n]*(?<![\w./-])push(?![\w./-])", masked):
+    sys.exit(NOT_A_PUSH)
+# Any command-position assignment anywhere in the command counts (even one
+# not syntactically applied to the push): an unquoted deliberate assignment
+# is a clear statement of intent. Quoted mentions never count (masked).
+if re.search(r"(?:^|[;&|\n(])\s*(?:export\s+|env\s+)?GUMNUT_SKIP_PUSH_CHECKS=1(?!\w)", masked):
+    sys.exit(SKIPPED)
+sys.exit(0)
 '
 rc=$?
-if [ "$rc" = "1" ]; then
+if [ "$rc" = "3" ]; then
   exit 0
+elif [ "$rc" = "4" ]; then
+  echo "pre-push-checks: skipped (GUMNUT_SKIP_PUSH_CHECKS=1)" >&2
+  exit 0
+elif [ "$rc" = "5" ]; then
+  echo "pre-push-checks adapter: hook payload did not parse as JSON — this should not happen (the payload comes from Claude Code itself); investigate. Running checks anyway (fail closed)." >&2
 elif [ "$rc" != "0" ]; then
   echo "pre-push-checks adapter: python3 failed (exit $rc); treating command as a push and running checks (fail closed)" >&2
 fi
 
-# Honor the escape hatch whether exported or written inline in the command
-# (the checker itself also honors the exported form).
-if printf '%s' "$payload" | grep -q 'GUMNUT_SKIP_PUSH_CHECKS=1'; then
-  echo "pre-push-checks: skipped (GUMNUT_SKIP_PUSH_CHECKS=1)" >&2
-  exit 0
-fi
-
+# Checker output goes to stderr (1>&2): on exit 2 the hook contract feeds
+# stderr — not stdout — back to the model, and the failure text is the
+# actionable part.
 script_dir=$(cd "$(dirname "$0")" && pwd)
-if "$script_dir/../../scripts/pre-push-checks.sh"; then
+if "$script_dir/../../scripts/pre-push-checks.sh" 1>&2; then
   exit 0
 else
   exit 2
