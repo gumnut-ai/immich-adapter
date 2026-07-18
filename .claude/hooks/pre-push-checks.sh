@@ -156,7 +156,7 @@ masked = re.sub(r"(?<![\w./-])stash\s+push(?![\w./-])",
 # removal, so a second pass over the ORIGINAL text catches it. push must sit in
 # SUBCOMMAND position (git, then only flag/value tokens), so `git log
 # --grep=push` and `git grep push` are data, not pushes.
-CMD_POS = r"(?:^|[;&|\n({\"\x27]|(?<![\w-])(?:then|do|else|elif)\s)\s*(?:(?:env|command|exec|time)(?:\s+-p)?\s+)*(?:[A-Za-z_][A-Za-z_0-9]*=(?:[^\s;|&]|\"[^\"]*\"|\x27[^\x27]*\x27)*\s+)*"
+CMD_POS = r"(?:^|[;&|\n({\"\x27]|(?<![\w-])(?:then|do|else|elif|if|while|until)\s)\s*(?:!\s+)?(?:(?:env|command|exec|time)(?:\s+-p)?\s+)*(?:[A-Za-z_][A-Za-z_0-9]*=(?:[^\s;|&]|\"[^\"]*\"|\x27[^\x27]*\x27)*\s+)*"
 # Optional path prefix: `/usr/bin/git push` is still a push.
 GIT_TOKEN = r"(?:[^\s;|&]*/)?git(?![\w./-])"
 GIT_FLAGS = r"(?:\s+-{1,2}[^\s;|&]+(?:\s+(?:[^\s;|&\"\x27-][^\s;|&]*|\"[^\"]*\"|\x27[^\x27]*\x27))?)*"
@@ -196,7 +196,7 @@ def applies(x, p):
 # `export GUMNUT_SKIP_PUSH_CHECKS=1` precedes it in an applicable scope.
 # A bare assignment on another command does not persist and skips nothing;
 # a partial skip leaves the other pushes checked.
-exports = list(re.finditer(r"(?:^|[;&|\n({\"\x27]|(?<![\w-])(?:then|do|else|elif)\s)\s*export\s+GUMNUT_SKIP_PUSH_CHECKS=1(?!\w)", masked))
+exports = list(re.finditer(r"(?:^|[;&|\n({\"\x27]|(?<![\w-])(?:then|do|else|elif|if|while|until)\s)\s*export\s+GUMNUT_SKIP_PUSH_CHECKS=1(?!\w)", masked))
 
 def is_skipped(p):
     seg = masked[p.start():p.end()]

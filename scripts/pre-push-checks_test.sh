@@ -124,6 +124,10 @@ out=$(payload "bash -lc 'git push'" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1)
 out=$(payload "time git push" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: time git push must be detected (rc=$rc out=$out)"
 
+# A negated push still executes the push.
+out=$(payload "if ! git push; then echo failed; fi" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: ! git push must be detected (rc=$rc out=$out)"
+
 # Heredoc bodies are data.
 out=$(payload "cat >doc.md <<'EOF'\ngit push\nEOF" | "$ADAPTER" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok || fail "adapter: heredoc body mentioning git push must no-op (rc=$rc out=$out)"
@@ -211,6 +215,23 @@ rm -rf "$STUBBIN"
 echo "$out" | grep -q "FAILED: immich-version-sync" && ok || fail "version mismatch should be reported"
 echo "$out" | grep -q "Mismatch: .immich-container-tag=v1.2.3" && ok || fail "mismatch message should show both values"
 rm -f .immich-container-tag Dockerfile
+
+# --- checker: clone paths containing quotes or $ must not break the group
+# scripts (repo root is passed unexpanded via env, expanded once inside) ---
+EXOTIC="$REPO/o'con\$nor"
+mkdir -p "$EXOTIC/repo-e"
+git -C "$EXOTIC/repo-e" -c init.defaultBranch=main init -q
+git -C "$EXOTIC/repo-e" config user.email t@example.com
+git -C "$EXOTIC/repo-e" config user.name T
+echo "v1.2.3" >"$EXOTIC/repo-e/.immich-container-tag"
+printf 'ARG IMMICH_VERSION=v1.2.3\nFROM scratch\n' >"$EXOTIC/repo-e/Dockerfile"
+git -C "$EXOTIC/repo-e" add -A && git -C "$EXOTIC/repo-e" commit -qm base
+STUBBIN=$(mktemp -d "${TMPDIR:-/tmp}/prepushstub.XXXXXX")
+printf '#!/usr/bin/env bash\nexit 0\n' >"$STUBBIN/uv"
+chmod +x "$STUBBIN/uv"
+out=$(cd "$EXOTIC/repo-e" && PATH="$STUBBIN:$PATH" "$CHECKER" 2>&1); rc=$?
+rm -rf "$STUBBIN"
+[ "$rc" -eq 0 ] && echo "$out" | grep -q "all checks passed" && ok || fail "checker must pass from a quote/dollar clone path (rc=$rc out=$out)"
 
 echo ""
 if [ "$failed" -gt 0 ]; then

@@ -35,8 +35,9 @@ repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
   exit 1
 }
 cd "$repo_root" || exit 1
-# Exported for the group scripts below: embedding the path literally in the
-# bash -c strings would break on clone paths containing quotes.
+# Exported for the group scripts below, which reference it UNEXPANDED
+# (\$PRE_PUSH_REPO_ROOT) so only the inner shell expands it once — embedding
+# the literal path would break on clone paths containing quotes or $.
 export PRE_PUSH_REPO_ROOT="$repo_root"
 
 tmpdir=$(mktemp -d) || exit 1
@@ -58,13 +59,13 @@ run_check() {
 # --locked mirrors CI's `uv sync --locked`: a stale uv.lock must fail here
 # too (bare `uv run` would silently re-lock it and green-light a push that
 # CI then rejects).
-run_check "ruff-check" "cd \"$PRE_PUSH_REPO_ROOT\" && uv run --locked ruff check"
-run_check "ruff-format" "cd \"$PRE_PUSH_REPO_ROOT\" && uv run --locked ruff format --check"
-run_check "pyright" "cd \"$PRE_PUSH_REPO_ROOT\" && uv run --locked pyright"
+run_check "ruff-check" "cd \"\$PRE_PUSH_REPO_ROOT\" && uv run --locked ruff check"
+run_check "ruff-format" "cd \"\$PRE_PUSH_REPO_ROOT\" && uv run --locked ruff format --check"
+run_check "pyright" "cd \"\$PRE_PUSH_REPO_ROOT\" && uv run --locked pyright"
 # Mirrors ci.yml's check-immich-version-sync job; see
 # docs/references/code-practices.md § "Bumping the Immich Version".
 run_check "immich-version-sync" "
-  cd \"$PRE_PUSH_REPO_ROOT\" &&
+  cd \"\$PRE_PUSH_REPO_ROOT\" &&
   TAG=\$(cat .immich-container-tag) &&
   DOCKERFILE_VERSION=\$(grep -E '^ARG IMMICH_VERSION=' Dockerfile | cut -d= -f2) &&
   if [ \"\$TAG\" != \"\$DOCKERFILE_VERSION\" ]; then
