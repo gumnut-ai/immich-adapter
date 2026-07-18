@@ -105,6 +105,17 @@ out=$(payload 'git \"push\"' | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
 out=$(payload "printf git push" | "$ADAPTER" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok || fail "adapter: printf git push must not match (rc=$rc out=$out)"
 
+# Unquoted push must also be in subcommand position.
+out=$(payload "git grep push" | "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && ok || fail "adapter: git grep push must not match (rc=$rc out=$out)"
+
+out=$(payload "git log --grep=push" | "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && ok || fail "adapter: git log --grep=push must not match (rc=$rc out=$out)"
+
+# Brace groups are command positions.
+out=$(payload "{ git push; }" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: { git push; } must be detected (rc=$rc out=$out)"
+
 # Shell control-structure bodies are command positions.
 out=$(payload "if true; then git push; fi" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: if/then git push must be detected (rc=$rc out=$out)"
