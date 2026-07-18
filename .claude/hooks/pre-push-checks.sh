@@ -53,7 +53,7 @@ except Exception:
     sys.exit(1)
 cmd = payload.get("tool_input", {}).get("command", "")
 cmd = re.sub(r"\bstash\s+push\b", "", cmd)
-sys.exit(0 if re.search(r"\bgit\b[^|;&]*\bpush\b", cmd) else 1)
+sys.exit(0 if re.search(r"\bgit\b[^|;&\n]*\bpush\b", cmd) else 1)
 '
 rc=$?
 if [ "$rc" = "1" ]; then

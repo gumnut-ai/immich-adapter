@@ -52,6 +52,10 @@ out=$(payload "git stash push -m wip" | "$ADAPTER" 2>&1); rc=$?
 out=$(printf 'push but not json' | "$ADAPTER" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok || fail "adapter: invalid JSON should no-op"
 
+# "push" on a separate line is a different command, not this git's argument.
+out=$(payload "git commit -m msg\necho push" | "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && ok || fail "adapter: newline-separated push should no-op (rc=$rc out=$out)"
+
 # --- adapter: inline skip flag ---
 out=$(payload "GUMNUT_SKIP_PUSH_CHECKS=1 git push" | "$ADAPTER" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: inline skip flag should skip"
