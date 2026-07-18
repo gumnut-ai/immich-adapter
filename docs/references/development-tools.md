@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-07-15
+last-updated: 2026-07-17
 ---
 
 # Development Tools
@@ -101,6 +101,12 @@ uv run tools/dump_openapi_json.py | sed -n '/^{/,$p' > /tmp/spec.json
 ```
 
 Importing the app emits log lines to **stdout** ahead of the JSON, so a bare `> /tmp/spec.json` yields a file the validator rejects (`Extra data: line 1 column 5`). Strip everything before the first `{`, then feed the result to the compatibility validator via `--adapter-spec=/tmp/spec.json`.
+
+## Pre-push Checks
+
+`scripts/pre-push-checks.sh` runs the fast subset of CI in parallel before a push — `ruff check`, `ruff format --check`, `pyright` (all with `--locked`, matching CI's `uv sync --locked`), and the `.immich-container-tag` ↔ Dockerfile version-sync check. Tests and the API compatibility workflow stay CI-only.
+
+Claude Code sessions opened in this repo run it automatically on every `git push`: `.claude/hooks/pre-push-checks.sh` (wired as a `PreToolUse` hook in `.claude/settings.json`) intercepts the push tool call and blocks it when checks fail. Other agents and humans run the script directly. Emergency skip: `GUMNUT_SKIP_PUSH_CHECKS=1 git push`. See the script headers for the full behavior contract; `scripts/pre-push-checks_test.sh` (run by CI's lint job) guards it.
 
 ## Dependency Update Automation
 

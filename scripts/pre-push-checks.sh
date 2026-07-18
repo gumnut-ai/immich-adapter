@@ -52,9 +52,12 @@ run_check() {
   check_names+=("$name")
 }
 
-run_check "ruff-check" "cd '$repo_root' && uv run ruff check"
-run_check "ruff-format" "cd '$repo_root' && uv run ruff format --check"
-run_check "pyright" "cd '$repo_root' && uv run pyright"
+# --locked mirrors CI's `uv sync --locked`: a stale uv.lock must fail here
+# too (bare `uv run` would silently re-lock it and green-light a push that
+# CI then rejects).
+run_check "ruff-check" "cd '$repo_root' && uv run --locked ruff check"
+run_check "ruff-format" "cd '$repo_root' && uv run --locked ruff format --check"
+run_check "pyright" "cd '$repo_root' && uv run --locked pyright"
 # Mirrors ci.yml's check-immich-version-sync job; see
 # docs/references/code-practices.md § "Bumping the Immich Version".
 run_check "immich-version-sync" "

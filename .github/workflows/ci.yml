@@ -72,6 +72,8 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
+  # NOTE: mirrored by scripts/pre-push-checks.sh's immich-version-sync
+  # check — update both.
   check-immich-version-sync:
     name: Check Immich version sync
     runs-on: ubuntu-latest
