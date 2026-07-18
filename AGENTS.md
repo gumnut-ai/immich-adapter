@@ -17,6 +17,8 @@ Run from the `immich-adapter/` directory:
 - **Type check**: `uv run pyright`
 - **Test**: `uv run pytest`
 
+**Before pushing**: run `scripts/pre-push-checks.sh` — the fast subset of CI (ruff check/format, pyright, Immich version-sync; no tests). Claude Code sessions opened in this repo run it automatically on every `git push` (via the `.claude/hooks/pre-push-checks.sh` adapter wired as a `PreToolUse` hook in `.claude/settings.json`; `git push --no-verify` does not bypass it). Sessions opened elsewhere and agents on other platforms run it themselves before pushing or finishing a task. Emergency skip: `GUMNUT_SKIP_PUSH_CHECKS=1 git push` (use sparingly; CI still runs everything).
+
 # Documentation Map
 
 This file is a concise quick-reference. Detailed content belongs in the appropriate `docs/` subdirectory, not here. Add new topics to the table below and create a corresponding doc file.
