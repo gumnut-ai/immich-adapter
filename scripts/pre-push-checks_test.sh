@@ -120,6 +120,14 @@ out=$(payload "{ git push; }" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$
 out=$(payload "bash -lc 'git push'" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: bash -lc 'git push' must be detected (rc=$rc out=$out)"
 
+# A timed push is still a push.
+out=$(payload "time git push" | GUMNUT_SKIP_PUSH_CHECKS=1 "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && echo "$out" | grep -q "skipped" && ok || fail "adapter: time git push must be detected (rc=$rc out=$out)"
+
+# Heredoc bodies are data.
+out=$(payload "cat >doc.md <<'EOF'\ngit push\nEOF" | "$ADAPTER" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && ok || fail "adapter: heredoc body mentioning git push must no-op (rc=$rc out=$out)"
+
 # The skip flag must be its own assignment — a mention inside another
 # assignment's VALUE does not skip (the checker runs).
 out=$(payload "FOO=GUMNUT_SKIP_PUSH_CHECKS=1 git push" | "$ADAPTER" 2>&1); rc=$?

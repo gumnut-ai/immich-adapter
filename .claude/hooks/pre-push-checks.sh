@@ -120,7 +120,34 @@ def mask_quotes(s):
             i += 1
     return "".join(out)
 
-masked = mask_quotes(cmd)
+def mask_heredocs(s):
+    # Heredoc bodies are data: blank every line between <<DELIM and the
+    # closing delimiter line (offset-preserving; newlines kept). Openers may
+    # be quoted (<<'EOF') or dash-led (<<-EOF). Openers that fall inside an
+    # already-blanked body are ignored.
+    out = list(s)
+    for m in re.finditer(r"<<-?\s*([\"\x27]?)(\w+)\1", s):
+        if out[m.start()] == " ":
+            continue
+        delim = m.group(2)
+        nl = s.find("\n", m.end())
+        if nl == -1:
+            break
+        i = nl + 1
+        while i < len(s):
+            j = s.find("\n", i)
+            line_end = len(s) if j == -1 else j
+            if s[i:line_end].strip() == delim:
+                break
+            for k in range(i, line_end):
+                out[k] = " "
+            if j == -1:
+                break
+            i = j + 1
+    return "".join(out)
+
+cmd_hd = mask_heredocs(cmd)
+masked = mask_quotes(cmd_hd)
 masked = re.sub(r"(?<![\w./-])stash\s+push(?![\w./-])",
                 lambda m: " " * len(m.group(0)), masked)
 
@@ -129,7 +156,7 @@ masked = re.sub(r"(?<![\w./-])stash\s+push(?![\w./-])",
 # removal, so a second pass over the ORIGINAL text catches it. push must sit in
 # SUBCOMMAND position (git, then only flag/value tokens), so `git log
 # --grep=push` and `git grep push` are data, not pushes.
-CMD_POS = r"(?:^|[;&|\n({\"\x27]|(?<![\w-])(?:then|do|else|elif)\s)\s*(?:(?:env|command|exec)\s+)*(?:[A-Za-z_][A-Za-z_0-9]*=(?:[^\s;|&]|\"[^\"]*\"|\x27[^\x27]*\x27)*\s+)*"
+CMD_POS = r"(?:^|[;&|\n({\"\x27]|(?<![\w-])(?:then|do|else|elif)\s)\s*(?:(?:env|command|exec|time)(?:\s+-p)?\s+)*(?:[A-Za-z_][A-Za-z_0-9]*=(?:[^\s;|&]|\"[^\"]*\"|\x27[^\x27]*\x27)*\s+)*"
 # Optional path prefix: `/usr/bin/git push` is still a push.
 GIT_TOKEN = r"(?:[^\s;|&]*/)?git(?![\w./-])"
 GIT_FLAGS = r"(?:\s+-{1,2}[^\s;|&]+(?:\s+(?:[^\s;|&\"\x27-][^\s;|&]*|\"[^\"]*\"|\x27[^\x27]*\x27))?)*"
@@ -141,7 +168,7 @@ QPUSH_RE = CMD_POS + GIT_TOKEN + GIT_FLAGS + r"\s+[\"\x27]push[\"\x27]"
 
 pushes = list(re.finditer(PUSH_RE, masked))
 starts = set(p.start() for p in pushes)
-pushes += [m for m in re.finditer(QPUSH_RE, cmd) if m.start() not in starts]
+pushes += [m for m in re.finditer(QPUSH_RE, cmd_hd) if m.start() not in starts]
 pushes.sort(key=lambda m: m.start())
 if not pushes:
     sys.exit(NOT_A_PUSH)
