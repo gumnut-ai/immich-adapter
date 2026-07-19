@@ -544,35 +544,6 @@ class SessionStore:
 
         return count
 
-    async def get_ttl(self, session_token: str) -> int | None:
-        """
-        Get remaining TTL for a session in seconds.
-
-        Args:
-            session_token: The session token (UUID string)
-
-        Returns:
-            Seconds remaining, None if no TTL set, or session doesn't exist
-        """
-        ttl = await self._redis.ttl(f"session:{session_token}")
-        if ttl == -2:  # Key doesn't exist
-            return None
-        if ttl == -1:  # No TTL set
-            return None
-        return ttl
-
-    async def exists(self, session_token: str) -> bool:
-        """
-        Check if session exists.
-
-        Args:
-            session_token: The session token (UUID string)
-
-        Returns:
-            True if session exists
-        """
-        return await self._redis.exists(f"session:{session_token}") > 0
-
 
 async def get_session_store() -> SessionStore:
     """
