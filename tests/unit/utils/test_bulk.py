@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from gumnut import NotFoundError
 
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.immich_models import BulkIdErrorReason
 from routers.utils.bulk import (
     BulkChunkError,
@@ -15,7 +16,6 @@ from routers.utils.bulk import (
     chunked_per_item_bulk,
     classify_bulk_item_call,
 )
-from routers.utils.gumnut_client import BULK_CHUNK_SIZE
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 from tests.conftest import make_sdk_connection_error, make_sdk_status_error
 
@@ -67,9 +67,9 @@ class TestChunkedPerItemBulk:
         [
             # Exact-boundary cases: pinning these locks the chunking math
             # against a future hand-rolled `if len(ids) > N` style split.
-            (BULK_CHUNK_SIZE, 1),
-            (BULK_CHUNK_SIZE + 1, 2),
-            (BULK_CHUNK_SIZE * 2 + 5, 3),
+            (GUMNUT_API_MAX_BULK_IDS, 1),
+            (GUMNUT_API_MAX_BULK_IDS + 1, 2),
+            (GUMNUT_API_MAX_BULK_IDS * 2 + 5, 3),
         ],
     )
     async def test_splits_oversized_input_into_ordered_chunks(
@@ -91,7 +91,10 @@ class TestChunkedPerItemBulk:
         assert len(outcomes) == expected_chunks
         assert sdk_call.call_count == expected_chunks
         for idx, outcome in enumerate(outcomes):
-            expected_slice = slice(idx * BULK_CHUNK_SIZE, (idx + 1) * BULK_CHUNK_SIZE)
+            expected_slice = slice(
+                idx * GUMNUT_API_MAX_BULK_IDS,
+                (idx + 1) * GUMNUT_API_MAX_BULK_IDS,
+            )
             assert isinstance(outcome, BulkChunkSuccess)
             assert outcome.chunk_uuids == tuple(asset_uuids[expected_slice])
             assert outcome.response == f"r{idx}"
@@ -139,7 +142,7 @@ class TestChunkedPerItemBulk:
 
     @pytest.mark.anyio
     async def test_transport_error_logs_with_chunk_and_request_size(self, caplog):
-        total = BULK_CHUNK_SIZE + 3
+        total = GUMNUT_API_MAX_BULK_IDS + 3
         asset_uuids = [uuid4() for _ in range(total)]
         sdk_call = AsyncMock(
             side_effect=[
@@ -162,13 +165,13 @@ class TestChunkedPerItemBulk:
             isinstance(o, BulkChunkError) and o.error == BulkIdErrorReason.unknown
             for o in outcomes
         )
-        # First chunk's log record carries chunk_size=BULK_CHUNK_SIZE and the
+        # First chunk's log record carries the upstream limit and the
         # full request_size; trailing-chunk record carries the residual size.
         records = [
             r for r in caplog.records if r.message == "Transport error in test_ctx"
         ]
         assert len(records) == 2
-        assert records[0].chunk_size == BULK_CHUNK_SIZE
+        assert records[0].chunk_size == GUMNUT_API_MAX_BULK_IDS
         assert records[0].request_size == total
         assert records[0].album_id == "alb-1"
         assert records[1].chunk_size == 3
@@ -176,7 +179,7 @@ class TestChunkedPerItemBulk:
 
     @pytest.mark.anyio
     async def test_mixed_success_and_failure_chunks_yield_in_order(self):
-        total = BULK_CHUNK_SIZE * 3
+        total = GUMNUT_API_MAX_BULK_IDS * 3
         asset_uuids = [uuid4() for _ in range(total)]
         sdk_call = AsyncMock(
             side_effect=[

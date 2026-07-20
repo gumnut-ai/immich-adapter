@@ -365,13 +365,13 @@ If you write a *new* fan-out helper instead of using `gather_with_concurrency`, 
 
 ### Bulk-ID Endpoints
 
-For backend endpoints that accept `{"ids": [...]}` (e.g., `POST /api/assets/trash`, `POST /api/assets/restore`, bulk `DELETE /api/assets`), chunk the request to stay under the backend's `MAX_BULK_GET_IDS=100` cap. Use the shared `BULK_CHUNK_SIZE` constant from `routers/utils/gumnut_client.py` and `itertools.batched`:
+For Gumnut API endpoints that accept bulk IDs (e.g., `POST /api/assets/trash`, `POST /api/assets/restore`, bulk `DELETE /api/assets`, and list filters with `ids=...`), chunk the request at `GUMNUT_API_MAX_BULK_IDS`. The constant lives in `routers/api/constants.py` and currently matches the API's 200-ID cap:
 
 ```python
 from itertools import batched
-from routers.utils.gumnut_client import BULK_CHUNK_SIZE
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 
-for chunk in batched(asset_uuids, BULK_CHUNK_SIZE):
+for chunk in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
     gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
     await client.post("/api/assets/trash", body={"ids": gumnut_ids}, cast_to=type(None))
 ```
@@ -386,7 +386,7 @@ Pin the no-swallow contract with a `test_*_propagates_sdk_error` test per bulk f
 
 **Per-item response contract variant.** Some Immich bulk endpoints (e.g. `PUT`/`DELETE /api/albums/{id}/assets`) must return `List[BulkIdResponseDto]` with per-id `success` / `error` mapping, so the no-swallow contract above does not apply — the handler has to catch upstream errors locally and translate them into per-id `BulkIdErrorReason` values. Use `chunked_per_item_bulk` from `routers/utils/bulk.py`: it owns the chunking loop and the `APIStatusError`/`GumnutError` mapping (errors are classified via `classify_bulk_item_error` and transport failures are logged with `chunk_size` + `request_size` extras), and yields per-chunk outcomes as `BulkChunkOutcome[T]` with either a `response` or an `error`. Callers compose the final per-asset list — that's where response-shape variation lives (e.g. `add` accumulates `added`/`duplicate`/`not_found` sets and walks input order to look up each id; `remove` only needs an error vs success branch). See `routers/api/albums.py::add_assets_to_album` / `remove_asset_from_album` for canonical call sites and `tests/unit/utils/test_bulk.py` for the helper's contract.
 
-Pin the chunking math with exact-boundary tests at `total = BULK_CHUNK_SIZE` (one chunk, no split) and `total = BULK_CHUNK_SIZE + 1` (two chunks, second is a single element) — these catch off-by-one regressions a future hand-rolled `if len(ids) > N` split would introduce. See the parametrized cases in `tests/unit/utils/test_bulk.py::test_splits_oversized_input_into_ordered_chunks` and `tests/unit/api/test_albums.py::test_*_chunks_large_request`.
+Pin the chunking math with exact-boundary tests at `total = GUMNUT_API_MAX_BULK_IDS` (one chunk, no split) and `total = GUMNUT_API_MAX_BULK_IDS + 1` (two chunks, second is a single element) — these catch off-by-one regressions a future hand-rolled `if len(ids) > N` split would introduce. See the parametrized cases in `tests/unit/utils/test_bulk.py::test_splits_oversized_input_into_ordered_chunks` and `tests/unit/api/test_albums.py::test_*_chunks_large_request`.
 
 When the SDK doesn't yet expose a typed method for a backend endpoint (Stainless regenerates on a delay after each backend release), call the raw HTTP layer directly via `AsyncGumnut.post()` / `.delete()` with `cast_to=type(None)` for 204-returning endpoints:
 

@@ -1,4 +1,5 @@
 import logging
+from itertools import batched
 from typing import Annotated, List
 from uuid import UUID
 
@@ -28,7 +29,7 @@ from routers.immich_models import (
     BulkIdErrorReason,
     UserResponseDto,
 )
-from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
@@ -381,15 +382,20 @@ async def _add_assets_to_one_album(
     album_uuid: UUID,
     gumnut_asset_ids: list[str],
 ) -> BulkIdErrorReason | None:
-    """Add assets to one album; return None on success or the mapped error."""
-    return await classify_bulk_item_call(
-        client.albums.assets_associations.add(
-            uuid_to_gumnut_album_id(album_uuid), asset_ids=gumnut_asset_ids
-        ),
-        error_enum=BulkIdErrorReason,
-        log_context="add_assets_to_albums",
-        log_extra={"album_id": str(album_uuid)},
-    )
+    """Add assets to one album in bounded chunks; return the first error."""
+    gumnut_album_id = uuid_to_gumnut_album_id(album_uuid)
+    for chunk in batched(gumnut_asset_ids, GUMNUT_API_MAX_BULK_IDS):
+        error = await classify_bulk_item_call(
+            client.albums.assets_associations.add(
+                gumnut_album_id, asset_ids=list(chunk)
+            ),
+            error_enum=BulkIdErrorReason,
+            log_context="add_assets_to_albums",
+            log_extra={"album_id": str(album_uuid)},
+        )
+        if error is not None:
+            return error
+    return None
 
 
 @router.delete("/{id}/user/{userId}", status_code=204)

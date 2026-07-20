@@ -47,12 +47,6 @@ _refresh_holder_var: ContextVar[_RefreshTokenHolder | None] = ContextVar(
 
 _shared_http_client: httpx.AsyncClient | None = None
 
-# Backend caps bulk-id endpoints at MAX_BULK_GET_IDS=100 per request; chunk
-# requests larger than that to stay under the cap. Also used as the per-page
-# `limit` when enumerating ids for bulk operations so each enumeration page
-# maps to a single bulk call.
-BULK_CHUNK_SIZE = 100
-
 
 def init_refresh_token_holder() -> None:
     """Install a fresh per-request refreshed-token holder.

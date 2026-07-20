@@ -11,7 +11,7 @@ from gumnut.types.albums import AssetsAssociationAddResponse
 from uuid import uuid4
 
 from tests.conftest import make_sdk_connection_error, make_sdk_status_error
-from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.albums import (
     get_all_albums,
     get_album_statistics,
@@ -35,7 +35,6 @@ from routers.immich_models import (
     BulkIdErrorReason,
 )
 from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
-from routers.utils.gumnut_client import BULK_CHUNK_SIZE
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
@@ -675,15 +674,15 @@ class TestAddAssetsToAlbum:
         [
             # Exact-boundary cases: pinning these locks the chunking math
             # against a future hand-rolled `if len(ids) > N` style split.
-            (BULK_CHUNK_SIZE, 1),
-            (BULK_CHUNK_SIZE + 1, 2),
-            (BULK_CHUNK_SIZE * 2 + 5, 3),
+            (GUMNUT_API_MAX_BULK_IDS, 1),
+            (GUMNUT_API_MAX_BULK_IDS + 1, 2),
+            (GUMNUT_API_MAX_BULK_IDS * 2 + 5, 3),
         ],
     )
     async def test_add_assets_chunks_large_request(
         self, sample_uuid, total, expected_call_count
     ):
-        """A request larger than BULK_CHUNK_SIZE is split across multiple SDK calls.
+        """A request over the upstream limit is split across SDK calls.
 
         Each chunk's `added` set is merged into the final response, results
         come back in input order, and each chunk receives only its own ids.
@@ -693,8 +692,8 @@ class TestAddAssetsToAlbum:
 
         # Each chunk's response echoes the chunk's gumnut_ids back as `added`.
         responses = [
-            _add_response(added=gumnut_ids[i : i + BULK_CHUNK_SIZE])
-            for i in range(0, total, BULK_CHUNK_SIZE)
+            _add_response(added=gumnut_ids[i : i + GUMNUT_API_MAX_BULK_IDS])
+            for i in range(0, total, GUMNUT_API_MAX_BULK_IDS)
         ]
         mock_client = Mock()
         mock_client.albums.assets_associations.add = AsyncMock(side_effect=responses)
@@ -712,7 +711,7 @@ class TestAddAssetsToAlbum:
             mock_client.albums.assets_associations.add.call_args_list
         ):
             expected_chunk = gumnut_ids[
-                idx * BULK_CHUNK_SIZE : (idx + 1) * BULK_CHUNK_SIZE
+                idx * GUMNUT_API_MAX_BULK_IDS : (idx + 1) * GUMNUT_API_MAX_BULK_IDS
             ]
             assert call.kwargs["asset_ids"] == expected_chunk
 
@@ -724,14 +723,14 @@ class TestAddAssetsToAlbum:
         in the per-asset response. Locks down the cross-chunk merge contract
         for `duplicate.update(...)` (the `added` merge has the symmetric
         coverage in `test_add_assets_chunks_large_request`)."""
-        total = BULK_CHUNK_SIZE * 2
+        total = GUMNUT_API_MAX_BULK_IDS * 2
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
         # Chunk 1 → all added. Chunk 2 → all added except the last id, which
         # the upstream reports as duplicate.
         chunk2_dup_index = total - 1
-        chunk1_added = gumnut_ids[:BULK_CHUNK_SIZE]
-        chunk2_added = gumnut_ids[BULK_CHUNK_SIZE:chunk2_dup_index]
+        chunk1_added = gumnut_ids[:GUMNUT_API_MAX_BULK_IDS]
+        chunk2_added = gumnut_ids[GUMNUT_API_MAX_BULK_IDS:chunk2_dup_index]
         chunk2_dup = [gumnut_ids[chunk2_dup_index]]
         mock_client = Mock()
         mock_client.albums.assets_associations.add = AsyncMock(
@@ -756,12 +755,12 @@ class TestAddAssetsToAlbum:
         """`not_found_assets` returned by a non-first chunk surfaces correctly
         in the per-asset response. Locks down the cross-chunk merge contract
         for `not_found.update(...)` — symmetric to the duplicate test above."""
-        total = BULK_CHUNK_SIZE * 2
+        total = GUMNUT_API_MAX_BULK_IDS * 2
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
         chunk2_missing_index = total - 1
-        chunk1_added = gumnut_ids[:BULK_CHUNK_SIZE]
-        chunk2_added = gumnut_ids[BULK_CHUNK_SIZE:chunk2_missing_index]
+        chunk1_added = gumnut_ids[:GUMNUT_API_MAX_BULK_IDS]
+        chunk2_added = gumnut_ids[GUMNUT_API_MAX_BULK_IDS:chunk2_missing_index]
         chunk2_missing = [gumnut_ids[chunk2_missing_index]]
         mock_client = Mock()
         mock_client.albums.assets_associations.add = AsyncMock(
@@ -795,7 +794,7 @@ class TestAddAssetsToAlbum:
     @pytest.mark.anyio
     async def test_add_assets_chunk_failure_isolated_to_chunk(self, sample_uuid):
         """A failed chunk only fails its own ids; other chunks still succeed."""
-        total = BULK_CHUNK_SIZE * 2
+        total = GUMNUT_API_MAX_BULK_IDS * 2
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
 
@@ -804,7 +803,7 @@ class TestAddAssetsToAlbum:
         mock_client.albums.assets_associations.add = AsyncMock(
             side_effect=[
                 make_sdk_status_error(500, "boom"),
-                _add_response(added=gumnut_ids[BULK_CHUNK_SIZE:]),
+                _add_response(added=gumnut_ids[GUMNUT_API_MAX_BULK_IDS:]),
             ]
         )
 
@@ -812,24 +811,24 @@ class TestAddAssetsToAlbum:
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
         # Chunk 1 ids are unknown; chunk 2 ids succeed.
-        for item in result[:BULK_CHUNK_SIZE]:
+        for item in result[:GUMNUT_API_MAX_BULK_IDS]:
             assert item.success is False
             assert item.error == BulkIdErrorReason.unknown
-        for item in result[BULK_CHUNK_SIZE:]:
+        for item in result[GUMNUT_API_MAX_BULK_IDS:]:
             assert item.success is True
         assert mock_client.albums.assets_associations.add.call_count == 2
 
     @pytest.mark.anyio
     async def test_add_assets_chunk_transport_error_isolated(self, sample_uuid):
         """A transport error on one chunk only fails its own ids."""
-        total = BULK_CHUNK_SIZE * 2
+        total = GUMNUT_API_MAX_BULK_IDS * 2
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
 
         mock_client = Mock()
         mock_client.albums.assets_associations.add = AsyncMock(
             side_effect=[
-                _add_response(added=gumnut_ids[:BULK_CHUNK_SIZE]),
+                _add_response(added=gumnut_ids[:GUMNUT_API_MAX_BULK_IDS]),
                 make_sdk_connection_error(),
             ]
         )
@@ -837,9 +836,9 @@ class TestAddAssetsToAlbum:
         request = BulkIdsDto(ids=asset_uuids)
         result = await add_assets_to_album(sample_uuid, request, client=mock_client)
 
-        for item in result[:BULK_CHUNK_SIZE]:
+        for item in result[:GUMNUT_API_MAX_BULK_IDS]:
             assert item.success is True
-        for item in result[BULK_CHUNK_SIZE:]:
+        for item in result[GUMNUT_API_MAX_BULK_IDS:]:
             assert item.success is False
             assert item.error == BulkIdErrorReason.unknown
 
@@ -1033,15 +1032,15 @@ class TestRemoveAssetFromAlbum:
         [
             # Exact-boundary cases: pinning these locks the chunking math
             # against a future hand-rolled `if len(ids) > N` style split.
-            (BULK_CHUNK_SIZE, 1),
-            (BULK_CHUNK_SIZE + 1, 2),
-            (BULK_CHUNK_SIZE * 2 + 5, 3),
+            (GUMNUT_API_MAX_BULK_IDS, 1),
+            (GUMNUT_API_MAX_BULK_IDS + 1, 2),
+            (GUMNUT_API_MAX_BULK_IDS * 2 + 5, 3),
         ],
     )
     async def test_remove_assets_chunks_large_request(
         self, sample_uuid, total, expected_call_count
     ):
-        """A request larger than BULK_CHUNK_SIZE is split across multiple SDK calls."""
+        """A request over the upstream limit is split across SDK calls."""
         asset_uuids = [uuid4() for _ in range(total)]
         gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
 
@@ -1062,7 +1061,7 @@ class TestRemoveAssetFromAlbum:
             mock_client.albums.assets_associations.remove.call_args_list
         ):
             expected_chunk = gumnut_ids[
-                idx * BULK_CHUNK_SIZE : (idx + 1) * BULK_CHUNK_SIZE
+                idx * GUMNUT_API_MAX_BULK_IDS : (idx + 1) * GUMNUT_API_MAX_BULK_IDS
             ]
             assert call.kwargs["asset_ids"] == expected_chunk
 
@@ -1082,7 +1081,7 @@ class TestRemoveAssetFromAlbum:
     @pytest.mark.anyio
     async def test_remove_assets_chunk_failure_isolated_to_chunk(self, sample_uuid):
         """A failed chunk only fails its own ids; other chunks still succeed."""
-        total = BULK_CHUNK_SIZE * 2
+        total = GUMNUT_API_MAX_BULK_IDS * 2
         asset_uuids = [uuid4() for _ in range(total)]
 
         mock_client = Mock()
@@ -1096,17 +1095,17 @@ class TestRemoveAssetFromAlbum:
         request = BulkIdsDto(ids=asset_uuids)
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        for item in result[:BULK_CHUNK_SIZE]:
+        for item in result[:GUMNUT_API_MAX_BULK_IDS]:
             assert item.success is False
             assert item.error == BulkIdErrorReason.unknown
-        for item in result[BULK_CHUNK_SIZE:]:
+        for item in result[GUMNUT_API_MAX_BULK_IDS:]:
             assert item.success is True
         assert mock_client.albums.assets_associations.remove.call_count == 2
 
     @pytest.mark.anyio
     async def test_remove_assets_chunk_transport_error_isolated(self, sample_uuid):
         """A transport error on one chunk only fails its own ids."""
-        total = BULK_CHUNK_SIZE * 2
+        total = GUMNUT_API_MAX_BULK_IDS * 2
         asset_uuids = [uuid4() for _ in range(total)]
 
         mock_client = Mock()
@@ -1120,9 +1119,9 @@ class TestRemoveAssetFromAlbum:
         request = BulkIdsDto(ids=asset_uuids)
         result = await remove_asset_from_album(sample_uuid, request, client=mock_client)
 
-        for item in result[:BULK_CHUNK_SIZE]:
+        for item in result[:GUMNUT_API_MAX_BULK_IDS]:
             assert item.success is True
-        for item in result[BULK_CHUNK_SIZE:]:
+        for item in result[GUMNUT_API_MAX_BULK_IDS:]:
             assert item.success is False
             assert item.error == BulkIdErrorReason.unknown
 
@@ -1170,6 +1169,34 @@ class TestAddAssetsToAlbums:
 
         assert result.success is True
         assert mock_client.albums.assets_associations.add.call_count == 2
+
+    @pytest.mark.anyio
+    async def test_add_assets_to_albums_chunks_assets_for_each_album(self):
+        """Each album receives limit-sized asset chunks in input order."""
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(return_value=None)
+
+        album_ids = [uuid4(), uuid4()]
+        asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
+        request = AlbumsAddAssetsDto(albumIds=album_ids, assetIds=asset_ids)
+
+        result = await add_assets_to_albums(request, client=mock_client)
+
+        assert result.success is True
+        calls_by_album: dict[str, list[list[str]]] = {
+            uuid_to_gumnut_album_id(album_id): [] for album_id in album_ids
+        }
+        for add_call in mock_client.albums.assets_associations.add.await_args_list:
+            calls_by_album[add_call.args[0]].append(add_call.kwargs["asset_ids"])
+
+        expected_ids = [uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_ids]
+        for album_id in album_ids:
+            chunks = calls_by_album[uuid_to_gumnut_album_id(album_id)]
+            assert [len(chunk) for chunk in chunks] == [
+                GUMNUT_API_MAX_BULK_IDS,
+                1,
+            ]
+            assert [asset_id for chunk in chunks for asset_id in chunk] == expected_ids
 
     @pytest.mark.anyio
     async def test_add_assets_to_albums_unexpected_conflict_records_unknown(self):

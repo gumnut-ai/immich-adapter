@@ -3,6 +3,10 @@
 # forwarding. Keep in sync with the backend's own per-page ceiling.
 GUMNUT_API_MAX_PAGE_SIZE = 200
 
+# Maximum number of IDs accepted by the Gumnut API's bulk filters and mutation
+# endpoints. Keep all adapter-side chunking tied to this single upstream limit.
+GUMNUT_API_MAX_BULK_IDS = 200
+
 # Placeholder device_id the adapter sends to the Gumnut API on upload. The
 # Gumnut API requires device_asset_id/device_id, but Immich v3 dropped both
 # from the upload DTO (clients no longer send them). The adapter passes this

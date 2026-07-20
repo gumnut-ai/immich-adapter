@@ -18,7 +18,7 @@ from socketio.exceptions import SocketIOError
 
 from services.websockets import WebSocketEvent
 
-from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.assets import (
     _extract_upload_fields,
     _immich_checksum_to_base64,
@@ -1670,11 +1670,17 @@ class TestUpdateAssets:
         [
             # Exact-boundary cases per docs/references/code-practices.md to
             # catch off-by-one regressions a hand-rolled `if len > N` split
-            # would introduce. BULK_CHUNK_SIZE=100; the third case verifies
+            # would introduce. The third case verifies
             # the "second chunk is a single element" edge.
-            (100, [100]),
-            (101, [100, 1]),
-            (205, [100, 100, 5]),
+            (GUMNUT_API_MAX_BULK_IDS, [GUMNUT_API_MAX_BULK_IDS]),
+            (
+                GUMNUT_API_MAX_BULK_IDS + 1,
+                [GUMNUT_API_MAX_BULK_IDS, 1],
+            ),
+            (
+                GUMNUT_API_MAX_BULK_IDS * 2 + 5,
+                [GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_BULK_IDS, 5],
+            ),
         ],
     )
     async def test_update_assets_chunks_when_over_cap(
@@ -1711,16 +1717,15 @@ class TestUpdateAssets:
         """Per-asset datetime mode reads and writes once per chunk.
 
         The bulk GET (`assets.list`) is chunked alongside the bulk PATCH, so a
-        101-id relative shift is two reads + two writes — not a per-asset GET
-        fan-out — with ids preserved in input order across chunks.
+        limit-plus-one relative shift is two reads + two writes — not a
+        per-asset GET fan-out — with ids preserved in input order across chunks.
         """
         from tests.conftest import MockSyncCursorPage
-        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
 
         mock_client = Mock()
         mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
 
-        ids = [uuid4() for _ in range(BULK_CHUNK_SIZE + 1)]
+        ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
         base = datetime(2024, 6, 15, 14, 30, 0)
 
         def _page_for(*_args, **kwargs):
@@ -1741,12 +1746,12 @@ class TestUpdateAssets:
         read_sizes = [
             len(call.kwargs["ids"]) for call in mock_client.assets.list.call_args_list
         ]
-        assert read_sizes == [100, 1]
+        assert read_sizes == [GUMNUT_API_MAX_BULK_IDS, 1]
         write_sizes = [
             len(call.kwargs["updates"])
             for call in mock_client.assets.bulk_update_assets.await_args_list
         ]
-        assert write_sizes == [100, 1]
+        assert write_sizes == [GUMNUT_API_MAX_BULK_IDS, 1]
         flat_ids = [
             item["id"]
             for call in mock_client.assets.bulk_update_assets.await_args_list
@@ -1854,7 +1859,6 @@ class TestUpdateAssets:
         this test.
         """
         from gumnut import APIStatusError
-        from routers.utils.gumnut_client import BULK_CHUNK_SIZE
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -1863,7 +1867,7 @@ class TestUpdateAssets:
             side_effect=[None, make_sdk_status_error(500, "boom")]
         )
 
-        ids = [uuid4() for _ in range(BULK_CHUNK_SIZE + 1)]
+        ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
         request = AssetBulkUpdateDto(ids=ids, description="caption")
 
         with pytest.raises(APIStatusError):
@@ -2438,8 +2442,7 @@ class TestDeleteAssets:
         mock_client = Mock()
         mock_client.post = AsyncMock(return_value=None)
 
-        # 250 ids → 100 + 100 + 50 across three trash calls.
-        asset_ids = [uuid4() for _ in range(250)]
+        asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 50)]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
         current_user_id = uuid4()
 
@@ -2451,13 +2454,13 @@ class TestDeleteAssets:
             )
 
         assert result.status_code == 204
-        assert mock_client.post.await_count == 3
+        assert mock_client.post.await_count == 2
         chunk_sizes = [
             len(call.kwargs["body"]["ids"]) for call in mock_client.post.await_args_list
         ]
-        assert chunk_sizes == [100, 100, 50]
+        assert chunk_sizes == [GUMNUT_API_MAX_BULK_IDS, 50]
         # One batched on_asset_trash per chunk.
-        assert mock_emit.await_count == 3
+        assert mock_emit.await_count == 2
 
     @pytest.mark.anyio
     async def test_delete_assets_force_true_chunks_and_emits_per_id(self):
@@ -2465,7 +2468,7 @@ class TestDeleteAssets:
         mock_client = Mock()
         mock_client.delete = AsyncMock(return_value=None)
 
-        asset_ids = [uuid4() for _ in range(250)]
+        asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 50)]
         request = AssetBulkDeleteDto(ids=asset_ids, force=True)
         current_user_id = uuid4()
 
@@ -2480,14 +2483,13 @@ class TestDeleteAssets:
             )
 
         assert result.status_code == 204
-        assert mock_client.delete.await_count == 3
+        assert mock_client.delete.await_count == 2
         chunk_sizes = [
             len(call.kwargs["body"]["ids"])
             for call in mock_client.delete.await_args_list
         ]
-        assert chunk_sizes == [100, 100, 50]
-        # 250 per-id on_asset_delete events across all chunks.
-        assert mock_emit.await_count == 250
+        assert chunk_sizes == [GUMNUT_API_MAX_BULK_IDS, 50]
+        assert mock_emit.await_count == len(asset_ids)
 
     @pytest.mark.anyio
     async def test_delete_assets_websocket_error_does_not_fail_deletion(self):

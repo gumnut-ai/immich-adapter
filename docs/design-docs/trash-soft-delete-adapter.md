@@ -22,7 +22,7 @@ This work spans delete semantics, trash endpoints, timeline/statistics filters, 
 - `force=false` or omitted: soft-delete via `POST /api/assets/trash`
 - `force=true`: permanent delete via bulk `DELETE /api/assets`
 
-Both paths batch requests by `BULK_CHUNK_SIZE`. Soft-delete emits one `on_asset_trash` event per chunk carrying the full id array. Permanent delete emits one `on_asset_delete` event per id, matching Immich's wire shape for hard deletes.
+Both paths batch requests by `GUMNUT_API_MAX_BULK_IDS`. Soft-delete emits one `on_asset_trash` event per chunk carrying the full id array. Permanent delete emits one `on_asset_delete` event per id, matching Immich's wire shape for hard deletes.
 
 The backend trash and delete endpoints are idempotent for already-transitioned ids, so the adapter does not need the old per-id 404 swallowing loop.
 

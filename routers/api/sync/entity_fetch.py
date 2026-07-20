@@ -4,13 +4,11 @@ import logging
 
 from gumnut import AsyncGumnut
 
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.sync.types import EntityType
 from routers.utils.asset_conversion import ASSET_INCLUDE_NO_PEOPLE
 
 logger = logging.getLogger(__name__)
-
-# Batch size for entity fetch API calls (conservative to avoid upstream limits)
-FETCH_BATCH_SIZE = 100
 
 
 def _batched(items: list[str], size: int) -> list[list[str]]:
@@ -26,9 +24,9 @@ async def fetch_entities_map(
     """
     Batch-fetch entities by ID and return a dict keyed by entity ID.
 
-    IDs are chunked into batches of FETCH_BATCH_SIZE to avoid exceeding
-    upstream API limits. Missing entities (deleted between event and fetch)
-    result in fewer entries.
+    IDs are chunked at ``GUMNUT_API_MAX_BULK_IDS`` to stay within the upstream
+    API limit. Missing entities (deleted between event and fetch) result in
+    fewer entries.
 
     Args:
         gumnut_client: The async Gumnut API client
@@ -52,7 +50,7 @@ async def fetch_entities_map(
     result: dict[str, EntityType] = {}
     missing_ids: set[str] = set()
 
-    for chunk in _batched(unique_ids, FETCH_BATCH_SIZE):
+    for chunk in _batched(unique_ids, GUMNUT_API_MAX_BULK_IDS):
         if gumnut_entity_type == "asset":
             # state="all" includes trashed assets so ASSET_TRASHED events hydrate
             # successfully — the default live-only filter would silently drop

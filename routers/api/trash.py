@@ -18,15 +18,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from gumnut import AsyncGumnut
 
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.immich_models import (
     BulkIdsDto,
     TrashResponseDto,
 )
 from routers.utils.current_user import get_current_user_id
-from routers.utils.gumnut_client import (
-    BULK_CHUNK_SIZE,
-    get_authenticated_gumnut_client,
-)
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     uuid_to_gumnut_asset_id,
@@ -62,7 +60,7 @@ async def empty_trash(
     """
     user_id = str(current_user_id)
     trashed_gumnut_ids = await _list_trashed_ids(client)
-    for chunk in batched(trashed_gumnut_ids, BULK_CHUNK_SIZE):
+    for chunk in batched(trashed_gumnut_ids, GUMNUT_API_MAX_BULK_IDS):
         await client.delete(
             "/api/assets",
             body={"ids": list(chunk)},
@@ -93,7 +91,7 @@ async def restore_trash(
     """
     user_id = str(current_user_id)
     trashed_gumnut_ids = await _list_trashed_ids(client)
-    for chunk in batched(trashed_gumnut_ids, BULK_CHUNK_SIZE):
+    for chunk in batched(trashed_gumnut_ids, GUMNUT_API_MAX_BULK_IDS):
         await client.post(
             "/api/assets/restore",
             body={"ids": list(chunk)},
@@ -117,7 +115,7 @@ async def restore_assets(
     """Restore the caller's trashed assets identified by the given ids.
 
     Issues bulk ``POST /api/assets/restore`` calls in chunks of
-    ``BULK_CHUNK_SIZE``. Emits a single batched ``on_asset_restore`` event
+    ``GUMNUT_API_MAX_BULK_IDS``. Emits one batched ``on_asset_restore`` event
     per chunk. Already-live ids are silently skipped on the backend; the
     returned count therefore reflects the request size, not the number of
     rows that actually transitioned (the backend's restore endpoint returns
@@ -127,7 +125,7 @@ async def restore_assets(
         return TrashResponseDto(count=0)
 
     user_id = str(current_user_id)
-    for chunk in batched(request.ids, BULK_CHUNK_SIZE):
+    for chunk in batched(request.ids, GUMNUT_API_MAX_BULK_IDS):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
         await client.post(
             "/api/assets/restore",
@@ -153,5 +151,7 @@ async def _list_trashed_ids(client: AsyncGumnut) -> list[str]:
     """
     return [
         asset.id
-        async for asset in client.assets.list(state="trashed", limit=BULK_CHUNK_SIZE)
+        async for asset in client.assets.list(
+            state="trashed", limit=GUMNUT_API_MAX_BULK_IDS
+        )
     ]

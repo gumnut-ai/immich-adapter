@@ -216,7 +216,10 @@ Used for detail endpoints where no pagination is needed.
 
 ### Pagination constants
 
-`GUMNUT_API_MAX_PAGE_SIZE = 200` — Used as the `limit` parameter when internally paginating the Gumnut API responses (defined in `routers/api/constants.py`).
+- `GUMNUT_API_MAX_PAGE_SIZE = 200` — Used as the `limit` parameter when internally paginating Gumnut API responses.
+- `GUMNUT_API_MAX_BULK_IDS = 200` — Used to chunk ID-filtered reads and bulk mutations at the Gumnut API's per-request cap.
+
+Both constants are defined in `routers/api/constants.py`.
 
 ### Offset-based pagination limitations
 
@@ -372,7 +375,7 @@ Immich clients have no HTTP 429 handling — a rate limit response causes sync f
 Bulk operations expose per-item results to Immich clients via `BulkIdResponseDto[]`, but use one of two implementation shapes depending on whether the upstream Gumnut endpoint is itself bulk-aware:
 
 1. **Single bulk SDK call** (e.g. single-album `add_assets_to_album` / `remove_asset_from_album`). The upstream accepts a list and either splits the result server-side (`add` returns `{added_assets, duplicate_assets}`) or silently skips missing IDs (`remove` returns 204). The adapter maps the response body into per-item results on success; on a bulk error, the whole batch failed (the upstream validates before any DB write), so every requested asset is annotated with the same classified error.
-2. **Per-item fan-out** (e.g. `delete_assets`, `update_people`, multi-album `add_assets_to_albums`). The upstream operates one entity at a time; the adapter loops and tracks per-item results, continuing past per-item failures.
+2. **Per-item or per-album fan-out** (e.g. `delete_assets`, `update_people`, multi-album `add_assets_to_albums`). The adapter runs independent entity operations with bounded concurrency. Multi-album adds also chunk each album's asset IDs at `GUMNUT_API_MAX_BULK_IDS`, sequentially within that album, while different albums remain concurrent.
 
 Both shapes use `classify_bulk_item_error()` in `routers/utils/error_mapping.py` to map `APIStatusError` subclasses to the canonical `not_found` / `no_permission` / `unknown` buckets. Per-endpoint nuances are layered on top — e.g. multi-album `add_assets_to_albums` still catches `ConflictError` → `duplicate` from a per-album call, though that catch is effectively dead today since the upstream returns 200 with `duplicate_assets` rather than 409 (tracked for cleanup).
 
@@ -384,7 +387,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 
 | Area | Endpoints | Notes |
 |------|-----------|-------|
-| Assets | Upload, download (original + thumbnail), video playback, delete, bulk delete, statistics, single-asset and bulk metadata edit | Streaming downloads via `StreamingResponse`; video playback streams the `original` variant from CDN with Range/seek support; `DELETE /api/assets` soft-deletes by default and permanently deletes when `force=true`; `PUT /api/assets/{id}` forwards `description`, paired `latitude` + `longitude`, and `dateTimeOriginal` to the Gumnut API and emits `on_asset_update`; `PUT /api/assets` forwards the same in-scope fields via `client.assets.bulk_update_assets`, chunking over `BULK_CHUNK_SIZE`. Capture time uses one of three mutually exclusive datetime modes: absolute `dateTimeOriginal` (optionally localized by `timeZone`) replicated as one homogeneous `change`; per-asset `dateTimeRelative` minute-shift (matching Immich, which applies this field as minutes); or standalone `timeZone` reinterpret. The two per-asset modes read each chunk's current `original_datetime` (`assets.list(state="all", ids=...)`, including trashed assets so they aren't silently skipped, matching the homogeneous path) before writing a heterogeneous per-item change, skipping ids with no existing capture time; conflicting datetime modes are rejected with 422. `isFavorite`/`rating`/`visibility` are silently ignored on both paths; `livePhotoVideoId` on the single-asset path and `duplicateId` on the bulk path are silently ignored; the bulk path skips WebSocket emission |
+| Assets | Upload, download (original + thumbnail), video playback, delete, bulk delete, statistics, single-asset and bulk metadata edit | Streaming downloads via `StreamingResponse`; video playback streams the `original` variant from CDN with Range/seek support; `DELETE /api/assets` soft-deletes by default and permanently deletes when `force=true`; `PUT /api/assets/{id}` forwards `description`, paired `latitude` + `longitude`, and `dateTimeOriginal` to the Gumnut API and emits `on_asset_update`; `PUT /api/assets` forwards the same in-scope fields via `client.assets.bulk_update_assets`, chunking over `GUMNUT_API_MAX_BULK_IDS`. Capture time uses one of three mutually exclusive datetime modes: absolute `dateTimeOriginal` (optionally localized by `timeZone`) replicated as one homogeneous `change`; per-asset `dateTimeRelative` minute-shift (matching Immich, which applies this field as minutes); or standalone `timeZone` reinterpret. The two per-asset modes read each chunk's current `original_datetime` (`assets.list(state="all", ids=...)`, including trashed assets so they aren't silently skipped, matching the homogeneous path) before writing a heterogeneous per-item change, skipping ids with no existing capture time; conflicting datetime modes are rejected with 422. `isFavorite`/`rating`/`visibility` are silently ignored on both paths; `livePhotoVideoId` on the single-asset path and `duplicateId` on the bulk path are silently ignored; the bulk path skips WebSocket emission |
 | Trash | Restore-by-ids, restore-all, empty-trash | `trashDays` comes from `TRASH_RETENTION_DAYS`; web and mobile clients see real trash state |
 | Albums | CRUD, add/remove assets, statistics | User sharing not supported (returns 501) |
 | People | CRUD, list with pagination/sort/filter, thumbnails, statistics, merge | |
@@ -416,7 +419,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 |----------------|---------|
 | `routers/api/` | All HTTP route handlers, organized by Immich API domain |
 | `routers/api/sync/` | Sync protocol implementation (stream, ack, checkpoint) |
-| `routers/api/constants.py` | Shared constants (`GUMNUT_API_MAX_PAGE_SIZE = 200`) |
+| `routers/api/constants.py` | Shared Gumnut API page-size and bulk-ID limits |
 | `routers/middleware/auth_middleware.py` | Session token extraction, JWT lookup, token refresh |
 | `routers/middleware/observability_middleware.py` | Request-scoped Sentry tagging (`interface`, `user_agent.original`) |
 | `routers/utils/gumnut_id_conversion.py` | Bidirectional Gumnut ↔ Immich ID conversion |
