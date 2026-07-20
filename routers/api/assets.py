@@ -27,12 +27,13 @@ from gumnut.types.asset_bulk_update_assets_params import Update, UpdateChange
 from gumnut.types.asset_response import AssetResponse
 
 from config.settings import Settings, get_settings
-from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE, GUMNUT_UPLOAD_DEVICE_ID
-from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
-from routers.utils.gumnut_client import (
-    BULK_CHUNK_SIZE,
-    get_authenticated_gumnut_client,
+from routers.api.constants import (
+    GUMNUT_API_MAX_BULK_IDS,
+    GUMNUT_API_MAX_PAGE_SIZE,
+    GUMNUT_UPLOAD_DEVICE_ID,
 )
+from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
@@ -907,8 +908,8 @@ async def update_assets(
     above is pre-update state for the datetime modes only). Clients fall back
     to refresh on next sync.
 
-    The SDK caps each call at `BULK_CHUNK_SIZE` (100) items, so requests over
-    that are split into chunks. The SDK guarantees per-call atomicity (a
+    Calls are capped at ``GUMNUT_API_MAX_BULK_IDS`` items, so larger requests
+    are split into chunks. The Gumnut API guarantees per-call atomicity (a
     single chunk either fully commits or writes nothing), but that guarantee
     does not extend across chunks: a failure on chunk N (N ≥ 2) leaves chunks
     1..N-1 already committed, with no compensating rollback and no per-chunk
@@ -922,7 +923,7 @@ async def update_assets(
     if not base_change and transform is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    for chunk in batched(request.ids, BULK_CHUNK_SIZE):
+    for chunk in batched(request.ids, GUMNUT_API_MAX_BULK_IDS):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
         updates: list[Update]
 
@@ -1000,7 +1001,7 @@ async def _bulk_permanent_delete(
     user_id: str,
 ) -> None:
     """Bulk hard-delete; emits one on_asset_delete per id."""
-    for chunk in batched(asset_uuids, BULK_CHUNK_SIZE):
+    for chunk in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
         await client.delete(
             "/api/assets",
@@ -1020,7 +1021,7 @@ async def _bulk_trash(
     user_id: str,
 ) -> None:
     """Bulk soft-delete; emits one batched on_asset_trash per chunk."""
-    for chunk in batched(asset_uuids, BULK_CHUNK_SIZE):
+    for chunk in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
         await client.post(
             "/api/assets/trash",

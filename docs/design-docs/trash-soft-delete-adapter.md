@@ -2,7 +2,7 @@
 title: "Trash: Soft-Delete with Retention (Adapter)"
 status: completed
 created: 2026-04-20
-last-updated: 2026-05-12
+last-updated: 2026-07-20
 ---
 
 # Trash: Soft-Delete with Retention (Adapter)
@@ -89,3 +89,7 @@ This adapter behavior relies on the following backend capabilities:
 - asset listing/counting with `state="trashed"` and `state="all"`
 - distinct trash, restore, and permanent-delete asset events for the sync stream and realtime channels
 - a shared `TRASH_RETENTION_DAYS` deployment contract
+
+## Evolution Notes
+
+- **2026-07-20**: Moved trash mutation chunking to the shared `GUMNUT_API_MAX_BULK_IDS` contract so trash, album, asset-update, and sync hydration calls follow the same Gumnut API bulk limit.

@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 from socketio.exceptions import SocketIOError
 
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.trash import empty_trash, restore_assets, restore_trash
 from routers.immich_models import BulkIdsDto
 from routers.utils.gumnut_id_conversion import (
@@ -92,8 +93,7 @@ class TestRestoreAssets:
         mock_client = Mock()
         mock_client.post = AsyncMock(return_value=None)
 
-        # 150 ids → 100 + 50.
-        asset_ids = [uuid4() for _ in range(150)]
+        asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 50)]
         request = BulkIdsDto(ids=asset_ids)
 
         with patch(
@@ -103,12 +103,12 @@ class TestRestoreAssets:
                 request, client=mock_client, current_user_id=uuid4()
             )
 
-        assert result.count == 150
+        assert result.count == len(asset_ids)
         assert mock_client.post.await_count == 2
         chunk_sizes = [
             len(call.kwargs["body"]["ids"]) for call in mock_client.post.await_args_list
         ]
-        assert chunk_sizes == [100, 50]
+        assert chunk_sizes == [GUMNUT_API_MAX_BULK_IDS, 50]
         # One batched on_asset_restore event per chunk.
         assert mock_emit.await_count == 2
 
@@ -168,7 +168,9 @@ class TestRestoreTrash:
 
         assert result.count == 0
         mock_client.post.assert_not_awaited()
-        mock_client.assets.list.assert_called_once_with(state="trashed", limit=100)
+        mock_client.assets.list.assert_called_once_with(
+            state="trashed", limit=GUMNUT_API_MAX_PAGE_SIZE
+        )
 
     @pytest.mark.anyio
     async def test_restores_enumerated_ids_and_emits_per_chunk_event(self):
@@ -224,8 +226,8 @@ class TestRestoreTrash:
         mock_client = Mock()
         mock_client.post = AsyncMock(return_value=None)
 
-        # 250 trashed assets → 100 + 100 + 50 across three restore calls.
-        gumnut_ids = [uuid_to_gumnut_asset_id(uuid4()) for _ in range(250)]
+        total = GUMNUT_API_MAX_BULK_IDS * 2 + 50
+        gumnut_ids = [uuid_to_gumnut_asset_id(uuid4()) for _ in range(total)]
         trashed_assets = [_make_trashed_asset_mock(gid) for gid in gumnut_ids]
         mock_client.assets.list = Mock(return_value=MockSyncCursorPage(trashed_assets))
 
@@ -234,12 +236,16 @@ class TestRestoreTrash:
         ) as mock_emit:
             result = await restore_trash(client=mock_client, current_user_id=uuid4())
 
-        assert result.count == 250
+        assert result.count == total
         assert mock_client.post.await_count == 3
         chunk_sizes = [
             len(call.kwargs["body"]["ids"]) for call in mock_client.post.await_args_list
         ]
-        assert chunk_sizes == [100, 100, 50]
+        assert chunk_sizes == [
+            GUMNUT_API_MAX_BULK_IDS,
+            GUMNUT_API_MAX_BULK_IDS,
+            50,
+        ]
         assert mock_emit.await_count == 3
 
     @pytest.mark.anyio
@@ -315,21 +321,25 @@ class TestEmptyTrash:
         mock_client = Mock()
         mock_client.delete = AsyncMock(return_value=None)
 
-        # 250 trashed assets → 100 + 100 + 50 across three delete calls.
-        gumnut_ids = [uuid_to_gumnut_asset_id(uuid4()) for _ in range(250)]
+        total = GUMNUT_API_MAX_BULK_IDS * 2 + 50
+        gumnut_ids = [uuid_to_gumnut_asset_id(uuid4()) for _ in range(total)]
         trashed_assets = [_make_trashed_asset_mock(gid) for gid in gumnut_ids]
         mock_client.assets.list = Mock(return_value=MockSyncCursorPage(trashed_assets))
 
         with patch("routers.api.trash.emit_user_event", new_callable=AsyncMock):
             result = await empty_trash(client=mock_client, current_user_id=uuid4())
 
-        assert result.count == 250
+        assert result.count == total
         assert mock_client.delete.await_count == 3
         chunk_sizes = [
             len(call.kwargs["body"]["ids"])
             for call in mock_client.delete.await_args_list
         ]
-        assert chunk_sizes == [100, 100, 50]
+        assert chunk_sizes == [
+            GUMNUT_API_MAX_BULK_IDS,
+            GUMNUT_API_MAX_BULK_IDS,
+            50,
+        ]
 
     @pytest.mark.anyio
     async def test_websocket_error_does_not_fail_empty_trash(self):

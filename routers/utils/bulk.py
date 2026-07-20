@@ -30,12 +30,12 @@ from uuid import UUID
 
 from gumnut import APIStatusError, GumnutError
 
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.immich_models import BulkIdErrorReason
 from routers.utils.error_mapping import (
     classify_bulk_item_error,
     log_bulk_transport_error,
 )
-from routers.utils.gumnut_client import BULK_CHUNK_SIZE
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ async def chunked_per_item_bulk[T](
     log_context: str,
     log_extra: dict[str, Any],
 ) -> AsyncIterator[BulkChunkOutcome[T]]:
-    """Chunk `asset_uuids` and call `sdk_call` per chunk under `BULK_CHUNK_SIZE`.
+    """Chunk IDs and call ``sdk_call`` under ``GUMNUT_API_MAX_BULK_IDS``.
 
     For each chunk: convert uuids to gumnut asset ids, await `sdk_call` with
     the chunked id list, and yield either a `BulkChunkSuccess[T]` or a
@@ -86,7 +86,7 @@ async def chunked_per_item_bulk[T](
     """
     request_size = len(asset_uuids)
     gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
-    for chunk in batched(zip(gumnut_ids, asset_uuids), BULK_CHUNK_SIZE):
+    for chunk in batched(zip(gumnut_ids, asset_uuids), GUMNUT_API_MAX_BULK_IDS):
         chunk_gumnut_ids = [g for g, _ in chunk]
         chunk_uuids = tuple(u for _, u in chunk)
         try:

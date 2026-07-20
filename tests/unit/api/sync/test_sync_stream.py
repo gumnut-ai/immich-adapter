@@ -1306,8 +1306,7 @@ class TestStreamEntityTypePagination:
         mock_client.events.get.side_effect = [first_response, second_response]
 
         # Mock assets.list to return entities matching the requested IDs.
-        # With FETCH_BATCH_SIZE chunking, assets.list is called multiple times
-        # per event page.
+        # Entity hydration is chunked at the shared Gumnut API bulk-ID limit.
         all_assets_by_id = {
             **first_page_assets_by_id,
             second_asset_id: second_asset_data,
