@@ -18,7 +18,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from gumnut import AsyncGumnut
 
-from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.immich_models import (
     BulkIdsDto,
     TrashResponseDto,
@@ -152,6 +152,6 @@ async def _list_trashed_ids(client: AsyncGumnut) -> list[str]:
     return [
         asset.id
         async for asset in client.assets.list(
-            state="trashed", limit=GUMNUT_API_MAX_BULK_IDS
+            state="trashed", limit=GUMNUT_API_MAX_PAGE_SIZE
         )
     ]

@@ -1,17 +1,18 @@
 import logging
-from itertools import batched
 from typing import Annotated, List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from gumnut import AsyncGumnut
 
 from routers.utils.bulk import (
     BulkChunkError,
     chunked_per_item_bulk,
-    classify_bulk_item_call,
 )
-from routers.utils.concurrency import gather_with_concurrency
+from routers.utils.concurrency import (
+    BULK_FANOUT_CONCURRENCY_LIMIT,
+    gather_with_concurrency,
+)
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.current_user import get_current_user
 from routers.immich_models import (
@@ -356,13 +357,22 @@ async def add_assets_to_albums(
     Returns a single result indicating overall success/failure.
     """
 
-    gumnut_asset_ids = [
-        uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in request.assetIds
-    ]
+    chunks_per_album = (
+        len(request.assetIds) + GUMNUT_API_MAX_BULK_IDS - 1
+    ) // GUMNUT_API_MAX_BULK_IDS
+    upstream_call_count = len(request.albumIds) * chunks_per_album
+    if upstream_call_count > BULK_FANOUT_CONCURRENCY_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Album asset request exceeds the maximum upstream call budget of "
+                f"{BULK_FANOUT_CONCURRENCY_LIMIT}"
+            ),
+        )
 
     per_album_errors: list[BulkIdErrorReason | None] = await gather_with_concurrency(
         [
-            _add_assets_to_one_album(client, album_uuid, gumnut_asset_ids)
+            _add_assets_to_one_album(client, album_uuid, request.assetIds)
             for album_uuid in request.albumIds
         ]
     )
@@ -380,22 +390,24 @@ async def add_assets_to_albums(
 async def _add_assets_to_one_album(
     client: AsyncGumnut,
     album_uuid: UUID,
-    gumnut_asset_ids: list[str],
+    asset_uuids: list[UUID],
 ) -> BulkIdErrorReason | None:
-    """Add assets to one album in bounded chunks; return the first error."""
+    """Return the first failed-chunk error, else not_found from any response."""
     gumnut_album_id = uuid_to_gumnut_album_id(album_uuid)
-    for chunk in batched(gumnut_asset_ids, GUMNUT_API_MAX_BULK_IDS):
-        error = await classify_bulk_item_call(
-            client.albums.assets_associations.add(
-                gumnut_album_id, asset_ids=list(chunk)
-            ),
-            error_enum=BulkIdErrorReason,
-            log_context="add_assets_to_albums",
-            log_extra={"album_id": str(album_uuid)},
-        )
-        if error is not None:
-            return error
-    return None
+    response_error: BulkIdErrorReason | None = None
+    async for outcome in chunked_per_item_bulk(
+        asset_uuids,
+        lambda ids: client.albums.assets_associations.add(
+            gumnut_album_id, asset_ids=ids
+        ),
+        log_context="add_assets_to_albums",
+        log_extra={"album_id": str(album_uuid)},
+    ):
+        if isinstance(outcome, BulkChunkError):
+            return outcome.error
+        if outcome.response.not_found_assets:
+            response_error = BulkIdErrorReason.not_found
+    return response_error
 
 
 @router.delete("/{id}/user/{userId}", status_code=204)

@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-07-16
+last-updated: 2026-07-20
 ---
 
 # Code Practices
@@ -365,7 +365,7 @@ If you write a *new* fan-out helper instead of using `gather_with_concurrency`, 
 
 ### Bulk-ID Endpoints
 
-For Gumnut API endpoints that accept bulk IDs (e.g., `POST /api/assets/trash`, `POST /api/assets/restore`, bulk `DELETE /api/assets`, and list filters with `ids=...`), chunk the request at `GUMNUT_API_MAX_BULK_IDS`. The constant lives in `routers/api/constants.py` and currently matches the API's 200-ID cap:
+For Gumnut API endpoints that accept bulk IDs (e.g., `POST /api/assets/trash`, `POST /api/assets/restore`, bulk `DELETE /api/assets`, and list filters with `ids=...`), chunk the request at `GUMNUT_API_MAX_BULK_IDS`. The constant in `routers/api/constants.py` is the source of truth for the current API cap:
 
 ```python
 from itertools import batched

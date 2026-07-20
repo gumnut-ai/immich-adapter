@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi import HTTPException
 from unittest.mock import AsyncMock, Mock
 from gumnut import NotFoundError
 from gumnut.types.albums import AssetsAssociationAddResponse
@@ -1159,7 +1160,9 @@ class TestAddAssetsToAlbums:
     async def test_add_assets_to_albums_success(self, sample_uuid):
         """Test successful addition of assets to multiple albums."""
         mock_client = Mock()
-        mock_client.albums.assets_associations.add = AsyncMock(return_value=None)
+        mock_client.albums.assets_associations.add = AsyncMock(
+            return_value=_add_response()
+        )
 
         album_ids = [uuid4(), uuid4()]
         asset_ids = [uuid4()]
@@ -1174,7 +1177,9 @@ class TestAddAssetsToAlbums:
     async def test_add_assets_to_albums_chunks_assets_for_each_album(self):
         """Each album receives limit-sized asset chunks in input order."""
         mock_client = Mock()
-        mock_client.albums.assets_associations.add = AsyncMock(return_value=None)
+        mock_client.albums.assets_associations.add = AsyncMock(
+            return_value=_add_response()
+        )
 
         album_ids = [uuid4(), uuid4()]
         asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
@@ -1197,6 +1202,68 @@ class TestAddAssetsToAlbums:
                 1,
             ]
             assert [asset_id for chunk in chunks for asset_id in chunk] == expected_ids
+
+    @pytest.mark.anyio
+    async def test_add_assets_to_albums_surfaces_later_chunk_not_found(self):
+        """A successful upstream response can still report missing assets."""
+        mock_client = Mock()
+        asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
+        gumnut_ids = [uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_ids]
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                _add_response(added=gumnut_ids[:GUMNUT_API_MAX_BULK_IDS]),
+                _add_response(not_found=[gumnut_ids[-1]]),
+            ]
+        )
+
+        result = await add_assets_to_albums(
+            AlbumsAddAssetsDto(albumIds=[uuid4()], assetIds=asset_ids),
+            client=mock_client,
+        )
+
+        assert result.success is False
+        assert result.error == BulkIdErrorReason.not_found
+
+    @pytest.mark.anyio
+    async def test_add_assets_to_albums_continues_after_chunk_not_found(self):
+        """Missing assets in one chunk do not prevent later chunks from running."""
+        mock_client = Mock()
+        asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
+        gumnut_ids = [uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_ids]
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                _add_response(not_found=[gumnut_ids[0]]),
+                _add_response(added=[gumnut_ids[-1]]),
+            ]
+        )
+
+        result = await add_assets_to_albums(
+            AlbumsAddAssetsDto(albumIds=[uuid4()], assetIds=asset_ids),
+            client=mock_client,
+        )
+
+        assert result.success is False
+        assert result.error == BulkIdErrorReason.not_found
+        assert mock_client.albums.assets_associations.add.await_count == 2
+
+    @pytest.mark.anyio
+    async def test_add_assets_to_albums_rejects_excess_upstream_calls(self):
+        """The album-by-chunk product cannot exceed the per-request budget."""
+        mock_client = Mock()
+        mock_client.albums.assets_associations.add = AsyncMock(
+            return_value=_add_response()
+        )
+        request = AlbumsAddAssetsDto(
+            albumIds=[uuid4() for _ in range(BULK_FANOUT_CONCURRENCY_LIMIT + 1)],
+            assetIds=[uuid4()],
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await add_assets_to_albums(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        assert "maximum upstream call budget" in exc_info.value.detail
+        mock_client.albums.assets_associations.add.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_add_assets_to_albums_unexpected_conflict_records_unknown(self):
@@ -1261,7 +1328,7 @@ class TestAddAssetsToAlbums:
         mock_client = Mock()
         mock_client.albums.assets_associations.add = AsyncMock(
             side_effect=[
-                None,
+                _add_response(),
                 make_sdk_status_error(404, "Not found", cls=NotFoundError),
             ]
         )
@@ -1289,12 +1356,13 @@ class TestAddAssetsToAlbums:
             await asyncio.sleep(0.01)
             async with lock:
                 active -= 1
+            return _add_response()
 
         mock_client.albums.assets_associations.add = AsyncMock(
             side_effect=add_side_effect
         )
 
-        album_ids = [uuid4() for _ in range(BULK_FANOUT_CONCURRENCY_LIMIT + 5)]
+        album_ids = [uuid4() for _ in range(BULK_FANOUT_CONCURRENCY_LIMIT)]
         request = AlbumsAddAssetsDto(albumIds=album_ids, assetIds=[uuid4()])
 
         result = await add_assets_to_albums(request, client=mock_client)

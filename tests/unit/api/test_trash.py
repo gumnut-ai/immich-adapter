@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 from socketio.exceptions import SocketIOError
 
-from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.trash import empty_trash, restore_assets, restore_trash
 from routers.immich_models import BulkIdsDto
 from routers.utils.gumnut_id_conversion import (
@@ -169,7 +169,7 @@ class TestRestoreTrash:
         assert result.count == 0
         mock_client.post.assert_not_awaited()
         mock_client.assets.list.assert_called_once_with(
-            state="trashed", limit=GUMNUT_API_MAX_BULK_IDS
+            state="trashed", limit=GUMNUT_API_MAX_PAGE_SIZE
         )
 
     @pytest.mark.anyio

@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-16
+last-updated: 2026-07-20
 ---
 
 # Immich Adapter Architecture
@@ -216,8 +216,8 @@ Used for detail endpoints where no pagination is needed.
 
 ### Pagination constants
 
-- `GUMNUT_API_MAX_PAGE_SIZE = 200` — Used as the `limit` parameter when internally paginating Gumnut API responses.
-- `GUMNUT_API_MAX_BULK_IDS = 200` — Used to chunk ID-filtered reads and bulk mutations at the Gumnut API's per-request cap.
+- `GUMNUT_API_MAX_PAGE_SIZE` — Used as the `limit` parameter when internally paginating Gumnut API responses.
+- `GUMNUT_API_MAX_BULK_IDS` — Used to chunk ID-filtered reads and bulk mutations at the Gumnut API's per-request cap.
 
 Both constants are defined in `routers/api/constants.py`.
 
@@ -370,14 +370,15 @@ Immich clients have no HTTP 429 handling — a rate limit response causes sync f
 3. Immich clients display a generic error on 5xx and do not automatically retry — there is no risk of tight retry loops from the client side
 4. Custom retry wrappers must not be added on top of SDK retry (causes retry amplification)
 
-### Per-item error handling
+### Bulk error handling
 
-Bulk operations expose per-item results to Immich clients via `BulkIdResponseDto[]`, but use one of two implementation shapes depending on whether the upstream Gumnut endpoint is itself bulk-aware:
+Bulk operations use three implementation shapes according to their Immich response contract and the available Gumnut API operation:
 
-1. **Single bulk SDK call** (e.g. single-album `add_assets_to_album` / `remove_asset_from_album`). The upstream accepts a list and either splits the result server-side (`add` returns `{added_assets, duplicate_assets}`) or silently skips missing IDs (`remove` returns 204). The adapter maps the response body into per-item results on success; on a bulk error, the whole batch failed (the upstream validates before any DB write), so every requested asset is annotated with the same classified error.
-2. **Per-item or per-album fan-out** (e.g. `delete_assets`, `update_people`, multi-album `add_assets_to_albums`). The adapter runs independent entity operations with bounded concurrency. Multi-album adds also chunk each album's asset IDs at `GUMNUT_API_MAX_BULK_IDS`, sequentially within that album, while different albums remain concurrent.
+1. **Chunked bulk calls with per-item results** (single-album `add_assets_to_album` / `remove_asset_from_album`). The adapter merges each chunk's response into `BulkIdResponseDto[]`, mapping chunk failures back to the IDs in that chunk.
+2. **Chunked bulk mutations with request-level errors** (`delete_assets` and the trash routes). Successful chunks emit their events; validation, transport, and server failures propagate through the global `GumnutError` handler.
+3. **Bounded per-item or per-album fan-out** (`update_people` and multi-album `add_assets_to_albums`). Independent entities run under `gather_with_concurrency`. Multi-album adds chunk each album's asset IDs sequentially, preserve successful response bodies that report missing assets, and cap the album-by-chunk call product before starting work.
 
-Both shapes use `classify_bulk_item_error()` in `routers/utils/error_mapping.py` to map `APIStatusError` subclasses to the canonical `not_found` / `no_permission` / `unknown` buckets. Per-endpoint nuances are layered on top — e.g. multi-album `add_assets_to_albums` still catches `ConflictError` → `duplicate` from a per-album call, though that catch is effectively dead today since the upstream returns 200 with `duplicate_assets` rather than 409 (tracked for cleanup).
+The per-item and fan-out shapes use `classify_bulk_item_error()` to map `APIStatusError` subclasses to the canonical `not_found` / `no_permission` / `unknown` buckets. Plain chunked mutations intentionally leave errors to the global handler instead of translating them into per-item results.
 
 ## Endpoint Implementation Status
 

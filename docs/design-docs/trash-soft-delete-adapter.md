@@ -2,7 +2,7 @@
 title: "Trash: Soft-Delete with Retention (Adapter)"
 status: completed
 created: 2026-04-20
-last-updated: 2026-05-12
+last-updated: 2026-07-20
 ---
 
 # Trash: Soft-Delete with Retention (Adapter)
@@ -22,7 +22,7 @@ This work spans delete semantics, trash endpoints, timeline/statistics filters, 
 - `force=false` or omitted: soft-delete via `POST /api/assets/trash`
 - `force=true`: permanent delete via bulk `DELETE /api/assets`
 
-Both paths batch requests by `GUMNUT_API_MAX_BULK_IDS`. Soft-delete emits one `on_asset_trash` event per chunk carrying the full id array. Permanent delete emits one `on_asset_delete` event per id, matching Immich's wire shape for hard deletes.
+Both paths batch requests by `BULK_CHUNK_SIZE`. Soft-delete emits one `on_asset_trash` event per chunk carrying the full id array. Permanent delete emits one `on_asset_delete` event per id, matching Immich's wire shape for hard deletes.
 
 The backend trash and delete endpoints are idempotent for already-transitioned ids, so the adapter does not need the old per-id 404 swallowing loop.
 
@@ -89,3 +89,7 @@ This adapter behavior relies on the following backend capabilities:
 - asset listing/counting with `state="trashed"` and `state="all"`
 - distinct trash, restore, and permanent-delete asset events for the sync stream and realtime channels
 - a shared `TRASH_RETENTION_DAYS` deployment contract
+
+## Evolution Notes
+
+- **2026-07-20**: Moved trash mutation chunking to the shared `GUMNUT_API_MAX_BULK_IDS` contract so trash, album, asset-update, and sync hydration calls follow the same Gumnut API bulk limit.

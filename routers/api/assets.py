@@ -909,7 +909,7 @@ async def update_assets(
     to refresh on next sync.
 
     Calls are capped at ``GUMNUT_API_MAX_BULK_IDS`` items, so larger requests
-    are split into chunks. The SDK guarantees per-call atomicity (a
+    are split into chunks. The Gumnut API guarantees per-call atomicity (a
     single chunk either fully commits or writes nothing), but that guarantee
     does not extend across chunks: a failure on chunk N (N ≥ 2) leaves chunks
     1..N-1 already committed, with no compensating rollback and no per-chunk
