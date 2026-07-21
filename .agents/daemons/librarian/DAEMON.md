@@ -1,8 +1,6 @@
 ---
 id: librarian
 purpose: Keeps this repo's documentation current and complete.
-watch:
-  - when a pull request is merged into main
 routines:
   - detect stale docs in this repo based on recent code changes and update them
   - create new docs for undocumented top-level features, routers, or services in this repo

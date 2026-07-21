@@ -2,7 +2,6 @@
 id: codebase-maintainer
 purpose: Keeps the codebase clean, secure, and current.
 watch:
-  - when a pull request is merged into main
   - when a security advisory is published for a dependency in this repo
 routines:
   - propose tested upgrade PRs for outdated dependencies
