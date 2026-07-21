@@ -2,14 +2,14 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-14
+last-updated: 2026-07-19
 ---
 
 # Immich Adapter Gap Analysis
 
 ## Context
 
-The immich-adapter translates Immich API calls into Gumnut SDK calls, allowing unmodified Immich clients (web v2.7.5 and mobile) to work with the Gumnut API. The adapter implements 192 HTTP endpoints across 30 modules, but many of these are stubs that return empty lists, hardcoded fake data, or 204 responses.
+The immich-adapter translates Immich API calls into Gumnut SDK calls, allowing unmodified Immich v3.0.3 clients (web and mobile) to work with the Gumnut API. The adapter exposes 212 HTTP operations across 30 route modules, but many of these are stubs that return empty lists, hardcoded fake data, or 204 responses.
 
 Today, the core photo workflow works: upload, browse timeline, organize into albums, manage people/faces, search, and sync to mobile. Beyond this core, most Immich features are stubbed. This document inventories every gap, assesses user impact, estimates the effort to close each one, and identifies whether the work is adapter-only or requires the Gumnut API changes.
 
@@ -17,15 +17,13 @@ Today, the core photo workflow works: upload, browse timeline, organize into alb
 
 | Category | Endpoint count | Status |
 |----------|---------------|--------|
-| Fully implemented (real SDK calls) | ~79 | Assets (including video playback), albums, people, faces, timeline, sync, OAuth, search (partial), sessions (partial) |
-| Stubs (empty/fake responses) | ~112 | Tags, shared links, stacks, activities, admin, server info, etc. |
-| Total in adapter | ~192 | |
-| Not routed (no adapter endpoint) | ~52 | Immich endpoints with no adapter route at all (e.g., asset edits, database backups, workflows, plugins, some auth/admin endpoints) |
-| Total in Immich v2.7.5 spec | 244 | |
+| Current adapter operations | 212 | 30 route modules; a mix of real SDK-backed endpoints and intentional stubs |
+| Not routed (no adapter endpoint) | 42 | Immich v3.0.3 operations with no adapter route at all (e.g., asset edits, database backups, workflows, plugins, and some auth/admin endpoints) |
+| Total in Immich v3.0.3 spec | 254 | |
 
 ## Goals
 
-1. **Complete inventory** of every gap between the adapter and Immich v2.7.5's API surface
+1. **Complete inventory** of every gap between the adapter and Immich v3.0.3's API surface, using v2.7.5 as the historical baseline
 2. **User impact assessment** for each gap — does it break workflows or is it invisible?
 3. **Dependency classification** — adapter-only work vs. requires the Gumnut API changes vs. both
 4. **Effort estimates** in T-shirt sizes (S/M/L/XL) per gap
@@ -651,7 +649,7 @@ unreachable or harmless and no adapter code is written.
 | Plugins / Workflows | 4 | Opt-in only — the Utilities → Workflows page; never on normal navigation or mobile | **Intentional gap** |
 | Calendar heatmap (`/users/me`) | 1 | Niche — manual "usage stats" accordion, desktop web only | **Stub** |
 | Calendar heatmap (`/admin/users/{id}`) | 1 | No — admin per-user page only | **Intentional gap** |
-| Albums — map markers | 1 | Yes — every album open (web) | **Implement** |
+| Albums — map markers | 1 | Yes — every album open (web) | **Closed** |
 
 **Adaptive video streaming (HLS)** — `GET /assets/{id}/video/stream/*` (+ session
 `DELETE`). Both the v3 web and mobile players branch on the `realtimeTranscoding`
@@ -714,7 +712,7 @@ album still rendered). The existing `/api/map/markers` implementation (gap #3a)
 is directly reusable — the Gumnut client accepts `album_id` and a world `bbox`
 together — so a faithful implementation costs only a few lines more than a `[]`
 stub and is strictly better (real pins vs. a permanently empty map).
-**Implement** (adapter-only, effort S).
+**Closed** (adapter-only, effort S).
 
 **Status:** the calendar-heatmap user-endpoint stub is implemented in
 `routers/api/users.py`. Album map markers are implemented in
@@ -796,11 +794,11 @@ The `GET /server/features` fix (gap #14) is the primary mechanism for hiding uns
 
 > **Design decision —** Changing stubs from fake-success to 501 is a low-risk improvement that should be done alongside the server features endpoint fix (gap #14). Together, they give users an honest picture of what the adapter supports. Read-only stubs can continue returning empty data since this is harmless. Before bulk-converting stubs to 501, test how Immich web and mobile clients display 501 errors to ensure they degrade gracefully — if clients show confusing errors or crash, a softer approach (e.g., 404 with a descriptive message) may be preferable for some endpoints.
 
-## Newer Immich Version Considerations
+## Version target and future considerations
 
-The adapter targets Immich v2.7.5. Newer Immich releases may introduce:
+The adapter targets Immich v3.0.3. References to v2.7.5 elsewhere in this document are the historical baseline used for the v2-to-v3 comparison. Future Immich releases may introduce:
 
-- **New API endpoints** not present in v2.7.5 — these would require new stubs at minimum
+- **New API endpoints** not present in v3.0.3 — these would require new stubs at minimum
 - **Changed request/response schemas** — the model generator (`tools/generate_immich_models.py`) and API compatibility validator (`tools/validate_api_compatibility.py`) can detect these
 - **New sync entity types** — the sync stream implementation would need new converters
 - **Breaking client changes** — newer Immich clients may require endpoints or fields that the adapter doesn't provide, causing errors rather than graceful degradation
@@ -811,10 +809,10 @@ The adapter targets Immich v2.7.5. Newer Immich releases may introduce:
 
 This document's accuracy can be verified by:
 
-1. **Running the API compatibility tool** against the full Immich v2.7.5 spec to confirm endpoint coverage:
+1. **Running the API compatibility tool** against the full Immich v3.0.3 spec to confirm endpoint coverage:
    ```bash
    uv run tools/validate_api_compatibility.py \
-     --immich-spec=https://raw.githubusercontent.com/immich-app/immich/v2.7.5/open-api/immich-openapi-specs.json \
+     --immich-spec=https://raw.githubusercontent.com/immich-app/immich/v3.0.3/open-api/immich-openapi-specs.json \
      --adapter-spec=http://localhost:3001/openapi.json
    ```
 2. **Testing each stub endpoint** to confirm it returns the documented behavior

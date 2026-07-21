@@ -67,9 +67,9 @@ docker run --rm -p 8080:8080 \
 - `ENVIRONMENT`: Set to `development` or `production`
 - `LOG_LEVEL`: Log level (default: `info`, options: `debug`, `info`, `warning`, `error`)
 
-**Build with custom Immich version:**
+**Build with a specific Immich version:**
 ```bash
-docker build --build-arg IMMICH_VERSION=v2.2.3 -t immich-adapter .
+docker build --build-arg IMMICH_VERSION=v3.0.3 -t immich-adapter .
 ```
 
 ### Production Mode
