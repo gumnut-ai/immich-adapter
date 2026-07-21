@@ -28,3 +28,4 @@ fields used by daemons already in this directory, since the spec may change over
 
 - `codebase-maintainer/` — keeps dependencies current and the codebase clean.
 - `librarian/` — keeps this repo's documentation current and complete.
+- `pr-simplicity-review/` — advises PR authors on removable implementation complexity.
