@@ -2,8 +2,8 @@ from fastapi import APIRouter
 
 from routers.immich_models import (
     JobCreateDto,
-    JobName,
     QueueCommandDto,
+    QueueName,
     QueueResponseLegacyDto,
     QueueStatisticsDto,
     QueueStatusLegacyDto,
@@ -75,12 +75,22 @@ async def create_job(request: JobCreateDto):
     return
 
 
-@router.put("/{id}", deprecated=True)
+@router.put("/{name}", deprecated=True)
 async def send_job_command(
-    id: JobName, request: QueueCommandDto
+    name: QueueName, request: QueueCommandDto
 ) -> QueueResponseLegacyDto:
     """
     Send job command.
-    This is a stub implementation that returns a fake job status.
+
+    This is a stub implementation that returns a fake job status. Gumnut
+    manages its own background processing, so there is nothing to pause or
+    resume — a benign ack keeps clients like immich-go (which pauses/resumes
+    queues around an upload run by default) from treating the control call
+    as fatal.
+
+    The path parameter is the legacy camelCase queue name (`QueueName`, e.g.
+    `thumbnailGeneration`), matching the Immich `PUT /api/jobs/{name}`
+    contract; typing it as the newer PascalCase `JobName` enum caused
+    immich-go's default pause to 422.
     """
     return create_fake_job_status()
