@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from routers.api.search import (
     _fetch_month_assets_at_offsets,
+    _is_criterion_less_enumeration,
     get_explore_data,
     search_person,
     search_assets,
@@ -15,6 +16,7 @@ from routers.api.search import (
     search_smart,
 )
 from routers.immich_models import (
+    AssetOrder,
     AssetTypeEnum,
     AssetVisibility,
     MetadataSearchDto,
@@ -398,7 +400,9 @@ class TestSearchMetadata:
             side_effect=make_sdk_status_error(500, "boom")
         )
 
-        request = MetadataSearchDto()
+        # A description keeps this on the search.search path (a criterion-less
+        # request instead enumerates via assets.list — see TestSearchMetadataEnumeration).
+        request = MetadataSearchDto(description="boom")
 
         with pytest.raises(APIStatusError):
             await search_assets(
@@ -521,6 +525,399 @@ def _counts_response(buckets: list[Mock]) -> Mock:
     response.data = buckets
     response.has_more = False
     return response
+
+
+class TestCriterionLessEnumeration:
+    """Test the classifier that routes a filter-less metadata search to a listing."""
+
+    def test_empty_request_is_enumeration(self):
+        assert _is_criterion_less_enumeration(MetadataSearchDto()) is True
+
+    def test_enumeration_honorable_fields_do_not_disqualify(self):
+        # The fields immich-go's asset sweep sends, plus withDeleted.
+        assert (
+            _is_criterion_less_enumeration(
+                MetadataSearchDto(
+                    page=1,
+                    size=1000,
+                    withExif=True,
+                    order=AssetOrder.asc,
+                    visibility=AssetVisibility.timeline,
+                    trashedAfter=datetime(1, 1, 1, tzinfo=timezone.utc),
+                )
+            )
+            is True
+        )
+        assert (
+            _is_criterion_less_enumeration(MetadataSearchDto(withDeleted=True)) is True
+        )
+
+    def test_false_flags_do_not_disqualify(self):
+        # A false boolean narrows nothing, so it stays an enumeration.
+        assert (
+            _is_criterion_less_enumeration(
+                MetadataSearchDto(isFavorite=False, isNotInAlbum=False)
+            )
+            is True
+        )
+
+    @pytest.mark.parametrize(
+        "request_kwargs",
+        [
+            {"description": "sunset"},
+            {"takenAfter": datetime(2024, 1, 1, tzinfo=timezone.utc)},
+            {"takenBefore": datetime(2024, 1, 1, tzinfo=timezone.utc)},
+            {"personIds": [uuid4()]},
+            {"albumIds": [uuid4()]},
+            {"tagIds": [uuid4()]},
+            {"city": "Paris"},
+            {"make": "Canon"},
+            {"checksum": "abc123"},
+            {"rating": 5},
+            {"type": AssetTypeEnum.IMAGE},
+            {"state": "California"},
+            {"isFavorite": True},
+            {"isNotInAlbum": True},
+        ],
+    )
+    def test_restricting_filters_disqualify(self, request_kwargs):
+        assert (
+            _is_criterion_less_enumeration(MetadataSearchDto(**request_kwargs)) is False
+        )
+
+
+class TestSearchMetadataEnumeration:
+    """Test that a criterion-less /search/metadata enumerates via a plain listing."""
+
+    @pytest.mark.anyio
+    async def test_criterion_less_routes_to_listing(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """A filter-less request lists assets instead of hitting search.search
+        (which 400s on an empty criterion and aborts immich-go)."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(3)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+        mock_client.search.search = AsyncMock()
+
+        result = await search_assets(
+            request=MetadataSearchDto(withExif=True),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        mock_client.search.search.assert_not_called()
+        list_kwargs = mock_client.assets.list.call_args.kwargs
+        assert list_kwargs["state"] == "live"
+        assert list_kwargs["limit"] == 200
+        assert list_kwargs["include"] == ASSET_INCLUDE
+        assert result.assets.count == 3
+        assert result.assets.total == 3
+        assert result.assets.nextPage is None
+        assert len(result.assets.items) == 3
+
+    @pytest.mark.anyio
+    async def test_paginates_with_string_next_page(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """total counts the full set; nextPage is a string until the last page,
+        then None — the throwaway eval patch returned nextPage=None always and
+        so truncated any library larger than one page."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(5)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+
+        async def _search(page: int):
+            return await search_assets(
+                request=MetadataSearchDto(size=2, page=page),
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        page1 = await _search(1)
+        assert page1.assets.count == 2
+        assert page1.assets.total == 5
+        assert page1.assets.nextPage == "2"
+
+        page2 = await _search(2)
+        assert page2.assets.count == 2
+        assert page2.assets.nextPage == "3"
+
+        page3 = await _search(3)
+        assert page3.assets.count == 1
+        assert page3.assets.nextPage is None
+
+    @pytest.mark.anyio
+    async def test_exact_full_final_page_has_no_next_page(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """When total is an exact multiple of size, the last full page ends the
+        walk — nextPage is None (the `start + size < total` boundary, not `<=`)."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(4)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+
+        result = await search_assets(
+            request=MetadataSearchDto(size=2, page=2),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.count == 2
+        assert result.assets.total == 4
+        assert result.assets.nextPage is None
+
+    @pytest.mark.anyio
+    async def test_page_past_end_is_empty(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """A page beyond the last returns no items and no nextPage, so immich-go
+        stops rather than looping."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(3)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+
+        result = await search_assets(
+            request=MetadataSearchDto(size=2, page=4),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.count == 0
+        assert result.assets.total == 3
+        assert result.assets.nextPage is None
+
+    @pytest.mark.anyio
+    async def test_empty_library_returns_empty_page(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page([]))
+
+        result = await search_assets(
+            request=MetadataSearchDto(),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.count == 0
+        assert result.assets.total == 0
+        assert result.assets.nextPage is None
+
+    @pytest.mark.anyio
+    async def test_clamps_size_to_ceiling(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """size=1000 is clamped to the 200 per-page ceiling, so a >200 library
+        is paged rather than dumped in one oversized page."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(201)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+
+        result = await search_assets(
+            request=MetadataSearchDto(size=1000, page=1),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.count == 200
+        assert result.assets.total == 201
+        assert result.assets.nextPage == "2"
+
+    @pytest.mark.anyio
+    async def test_trashed_after_reads_trashed_state(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """immich-go's trashed pass sends trashedAfter; it selects the trashed set."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        trashed = _make_search_asset(now)
+        trashed.trashed_at = now
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page([trashed]))
+        mock_client.search.search = AsyncMock()
+
+        result = await search_assets(
+            request=MetadataSearchDto(
+                trashedAfter=datetime(1, 1, 1, tzinfo=timezone.utc)
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        mock_client.search.search.assert_not_called()
+        assert mock_client.assets.list.call_args.kwargs["state"] == "trashed"
+        assert result.assets.count == 1
+
+    @pytest.mark.anyio
+    async def test_trashed_after_honors_real_lower_bound(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """A real trashedAfter drops assets trashed before it (the min sentinel
+        immich-go sends keeps everything, but a genuine bound is respected)."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        old = _make_search_asset(now)
+        old.trashed_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        recent = _make_search_asset(now)
+        recent.trashed_at = datetime(2024, 6, 20, tzinfo=timezone.utc)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(
+            return_value=mock_sync_cursor_page([recent, old])
+        )
+
+        result = await search_assets(
+            request=MetadataSearchDto(
+                trashedAfter=datetime(2024, 6, 10, tzinfo=timezone.utc)
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        # Only the asset trashed after 2024-06-10 survives.
+        assert result.assets.count == 1
+        assert result.assets.total == 1
+        assert result.assets.items[0].id == safe_uuid_from_asset_id(recent.id)
+
+    @pytest.mark.anyio
+    async def test_with_deleted_reads_all_state(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        mock_client = Mock()
+        mock_client.assets.list = Mock(
+            return_value=mock_sync_cursor_page([_make_search_asset(now)])
+        )
+
+        await search_assets(
+            request=MetadataSearchDto(withDeleted=True),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert mock_client.assets.list.call_args.kwargs["state"] == "all"
+
+    @pytest.mark.anyio
+    async def test_with_deleted_honors_trashed_after_and_keeps_live(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """state=all (withDeleted) with a real trashedAfter keeps live assets and
+        recently-trashed ones, but drops trash older than the bound — the bound
+        isn't silently ignored just because withDeleted selected state=all."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        live = _make_search_asset(now)  # trashed_at is None
+        old_trash = _make_search_asset(now)
+        old_trash.trashed_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        recent_trash = _make_search_asset(now)
+        recent_trash.trashed_at = datetime(2024, 6, 20, tzinfo=timezone.utc)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(
+            return_value=mock_sync_cursor_page([live, recent_trash, old_trash])
+        )
+
+        result = await search_assets(
+            request=MetadataSearchDto(
+                withDeleted=True,
+                trashedAfter=datetime(2024, 6, 10, tzinfo=timezone.utc),
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert mock_client.assets.list.call_args.kwargs["state"] == "all"
+        returned = {item.id for item in result.assets.items}
+        assert returned == {
+            safe_uuid_from_asset_id(live.id),
+            safe_uuid_from_asset_id(recent_trash.id),
+        }
+        assert safe_uuid_from_asset_id(old_trash.id) not in returned
+        assert result.assets.total == 2
+
+    @pytest.mark.anyio
+    async def test_non_timeline_visibility_filters_to_empty(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """All Gumnut assets convert to timeline visibility, so immich-go's
+        archive/hidden sweeps correctly return nothing rather than the live set."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(3)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+
+        archived = await search_assets(
+            request=MetadataSearchDto(visibility=AssetVisibility.archive),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+        assert archived.assets.count == 0
+        assert archived.assets.total == 0
+        # The empty result is returned before loading the library, so the
+        # archive/hidden sweeps don't each fetch and discard the whole listing.
+        mock_client.assets.list.assert_not_called()
+
+        timeline = await search_assets(
+            request=MetadataSearchDto(visibility=AssetVisibility.timeline),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+        assert timeline.assets.count == 3
+
+    @pytest.mark.anyio
+    async def test_order_asc_reverses_newest_first_listing(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """assets.list is newest-first; order=asc must reverse to oldest-first."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(3)]
+        expected_desc = [safe_uuid_from_asset_id(a.id) for a in assets]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+
+        desc = await search_assets(
+            request=MetadataSearchDto(order=AssetOrder.desc),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+        assert [item.id for item in desc.assets.items] == expected_desc
+
+        asc = await search_assets(
+            request=MetadataSearchDto(order=AssetOrder.asc),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+        assert [item.id for item in asc.assets.items] == list(reversed(expected_desc))
+
+    @pytest.mark.anyio
+    async def test_real_criterion_still_uses_search(self, mock_current_user):
+        """A description keeps the existing semantic-search path; no listing."""
+        search_response = Mock()
+        search_response.data = []
+
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+        mock_client.assets.list = Mock()
+
+        await search_assets(
+            request=MetadataSearchDto(description="sunset"),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        mock_client.search.search.assert_called_once()
+        mock_client.assets.list.assert_not_called()
 
 
 class TestSearchExplore:

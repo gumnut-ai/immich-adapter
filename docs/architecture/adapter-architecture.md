@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-20
+last-updated: 2026-07-22
 ---
 
 # Immich Adapter Architecture
@@ -169,8 +169,11 @@ Mobile reads only the `people` array. A third-party client assuming upstream's `
 | `GET /api/albums` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Convert all to list, no pagination exposed |
 | `GET /api/albums/statistics` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total albums from the full set |
 | `GET /api/assets/statistics` | `client.assets.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total/images/videos from full set |
+| `POST /api/search/metadata` (criterion-less) | `client.assets.list(state=…, limit=GUMNUT_API_MAX_PAGE_SIZE)` | Full-library enumeration (immich-go's asset sweep): load all → filter visibility / order → slice `page`/`size` → real `total` + `nextPage`. A request carrying a real criterion instead uses `client.search.search` (which mandates one). |
 
 **Performance implications:** Memory usage scales with total entity count, not page size. For a library with 10,000 people, every `GET /api/people` request loads all 10,000 into memory. This is acceptable for current Gumnut library sizes but will need optimization (e.g., server-side sorting support in the Gumnut API) as libraries grow.
+
+The criterion-less `POST /api/search/metadata` enumeration is a heavier case of this pattern: unlike the fetch-once endpoints above (each loaded once per client action), a client *pages through* it. immich-go requests `size:1000` (clamped to 200) and follows `nextPage` to the end, so the full library is re-loaded and re-converted on every page — cost scales with `library_size × page_count` for one bulk sweep. It's bounded and one-time (a library import), and the Gumnut API's cursor-only listing offers no stateless offset to page against, so load-all is the pragmatic choice today; cursor-based paging or a short-lived per-sweep cache is the optimization path if bulk-import cost against the Gumnut API becomes a concern.
 
 ### Pattern 2: Server-side cursor pagination
 
