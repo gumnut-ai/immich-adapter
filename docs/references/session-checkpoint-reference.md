@@ -1,6 +1,6 @@
 ---
 title: "Session & Checkpoint Object Reference"
-last-updated: 2026-07-12
+last-updated: 2026-07-22
 ---
 
 # Session & Checkpoint Object Reference
@@ -53,7 +53,7 @@ session:{uuid}:checkpoints
   ├── AlbumV1: "2025-01-20T09:30:00.000000+00:00|2025-01-20T09:30:00+00:00"
   └── PeopleV1: "2025-01-19T14:00:00.000000+00:00|2025-01-19T14:00:00+00:00"
 
-# Session activity index (Sorted Set) - enables stale session cleanup
+# Session activity index (Sorted Set) - supports explicit stale-session maintenance
 sessions:by_updated_at
   └── {uuid → updated_at_timestamp_score}
 ```
@@ -84,7 +84,7 @@ sessions:by_updated_at
 
 Sessions can optionally expire using Redis TTL. When a session is created with an expiration time, the same TTL is applied to both the session key (`session:{uuid}`) and its checkpoint key (`session:{uuid}:checkpoints`) so they expire together.
 
-**Note:** When Redis expires a session key via TTL, the checkpoint key expires too (same TTL), but the index entries (`user:{user_id}:sessions` and `sessions:by_updated_at`) are not automatically cleaned. The stale session cleanup job handles orphaned index entries.
+**Note:** When Redis expires a session key via TTL, the checkpoint key expires too (same TTL), but the index entries (`user:{user_id}:sessions` and `sessions:by_updated_at`) are not automatically cleaned. The adapter does not run a background cleanup scheduler. `SessionStore.cleanup_stale_sessions()` is an explicit maintenance method, while normal reads through `get_by_user()` lazily remove orphaned entries when they encounter expired or corrupted sessions.
 
 ---
 
@@ -135,10 +135,10 @@ last_synced_at, updated_at = checkpoint_value.split("|")
 **Why needed:**
 
 - **Session activity tracking** - Know when each session last acknowledged data
-- **Cleanup operations** - Delete checkpoints for sessions that have been inactive past the cleanup threshold
+- **Cleanup operations** - Support explicit deletion of sessions that have been inactive past the cleanup threshold
 - **Monitoring** - Alert if a session stops syncing
 
-**How it's used:** `cleanup_stale_sessions` (in `services/session_store.py`) range-queries `sessions:by_updated_at` (a sorted set scored by `updated_at`) for sessions whose score is older than its `days` threshold, then deletes each stale session and its associated data.
+**How it's used:** `cleanup_stale_sessions` (in `services/session_store.py`) range-queries `sessions:by_updated_at` (a sorted set scored by `updated_at`) for sessions whose score is older than its `days` threshold, then deletes each stale session and its associated data. This is an explicit maintenance method; the adapter does not invoke it on a schedule.
 
 ---
 
@@ -152,7 +152,7 @@ last_synced_at, updated_at = checkpoint_value.split("|")
 Enables efficient queries for:
 
 - Finding stale sessions (inactive > N days)
-- Cleanup jobs
+- Supporting explicit stale-session maintenance
 
 ---
 
