@@ -95,11 +95,17 @@ def resolve_immich_checksum(gumnut_asset: AssetResponse) -> str:
 
 
 def normalize_rating(rating: float | int | None) -> int | None:
-    """Normalize a rating value: convert -1 (deprecated 'unrated') to None."""
+    """Bound a rating to the Immich DTO's valid 1-5 range, or None.
+
+    ``ExifResponseDto.rating`` is constrained ``ge=1, le=5``, so any value
+    outside that range must become None ("unrated") rather than reach the DTO
+    and raise a ValidationError. Cameras write 0 (XMP:Rating) or the deprecated
+    -1 to mean "unrated"; those, and any other out-of-range value, map to None.
+    """
     if rating is None:
         return None
     value = int(float(rating))
-    return None if value == -1 else value
+    return value if 1 <= value <= 5 else None
 
 
 def format_duration(seconds: float | None) -> str | None:

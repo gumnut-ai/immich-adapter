@@ -28,6 +28,7 @@ from routers.utils.asset_conversion import (
     extract_exif_info,
     extract_sync_exif,
     format_duration,
+    normalize_rating,
     resolve_capture_datetime,
     resolve_file_modified_at,
     resolve_immich_checksum,
@@ -641,6 +642,43 @@ class TestThumbhashEmission:
         assert rest.thumbhash is None
         assert ws.asset.thumbhash is None
         assert sync.thumbhash is None
+
+
+class TestNormalizeRating:
+    """``normalize_rating`` bounds a Gumnut rating to the Immich DTO's valid
+    range (1-5) or None, so an unrated or out-of-range value can never reach
+    ``ExifResponseDto.rating`` (``ge=1, le=5``) and raise a ValidationError."""
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            (None, None),
+            (-1, None),  # deprecated 'unrated' sentinel
+            (0, None),  # camera 'unrated' (XMP:Rating)
+            (1, 1),
+            (3, 3),
+            (5, 5),
+            (3.0, 3),  # upstream float coerced to int
+            (6, None),  # above range
+        ],
+    )
+    def test_normalizes_to_valid_range_or_none(self, raw, expected):
+        assert normalize_rating(raw) == expected
+
+    def test_zero_rating_survives_exif_extraction(self, sample_gumnut_asset):
+        """End-to-end guard for the reported crash: a 0 rating flows through
+        ``extract_exif_info`` as None instead of raising on the ge=1 DTO."""
+        _attach_metadata(sample_gumnut_asset, orientation=1)
+        sample_gumnut_asset.metadata.rating = 0
+
+        assert extract_exif_info(sample_gumnut_asset).rating is None
+
+    def test_zero_rating_survives_sync_extraction(self, sample_gumnut_asset):
+        """The sync path normalizes 0 to None too, matching the REST path."""
+        _attach_metadata(sample_gumnut_asset, orientation=1)
+        sample_gumnut_asset.metadata.rating = 0
+
+        assert extract_sync_exif(sample_gumnut_asset, asset_uuid=uuid4()).rating is None
 
 
 class TestFormatDuration:
