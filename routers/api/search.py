@@ -21,6 +21,7 @@ from routers.immich_models import (
     SearchExploreItem,
     SearchExploreResponseDto,
     AssetResponseDto,
+    AssetOrder,
     AssetTypeEnum,
     AssetVisibility,
     SearchResponseDto,
@@ -248,6 +249,152 @@ async def search_asset_statistics(
     return SearchStatisticsResponseDto(total=total)
 
 
+def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
+    """True when a metadata search is a filter-less full-library enumeration.
+
+    immich-go lists every server asset with a criterion-less
+    `POST /api/search/metadata` — its body carries only pagination plus
+    `visibility`/`order`/`withExif` and (for its trashed pass) `trashedAfter`,
+    no query/date/person/etc. Real Immich returns *all* assets for such a
+    request, but the Gumnut API's `search.search` mandates a criterion and 400s
+    on an empty one, aborting immich-go before it uploads anything. So route a
+    criterion-less enumeration to a plain asset listing instead
+    (`_list_all_assets`).
+
+    Any *restricting* filter disqualifies the request, which then keeps the
+    existing `search.search` path — that path serves query/date/person and 400s
+    on the rest, exactly as before. Gating on the absence of every restricting
+    filter (rather than ignoring the ones the listing can't honor) means the
+    enumeration branch never silently drops a filter and returns everything.
+    `page`/`size`/`withExif`/`order`/`visibility`/`trashedAfter`/`withDeleted`
+    are enumeration-honorable (handled in `_list_all_assets`) and so are absent
+    from the restricting set below.
+    """
+    restricting_values = (
+        request.description,
+        request.albumIds,
+        request.checksum,
+        request.city,
+        request.country,
+        request.createdAfter,
+        request.createdBefore,
+        request.encodedVideoPath,
+        request.id,
+        request.lensModel,
+        request.libraryId,
+        request.make,
+        request.model,
+        request.ocr,
+        request.originalFileName,
+        request.originalPath,
+        request.personIds,
+        request.previewPath,
+        request.rating,
+        request.state,
+        request.tagIds,
+        request.takenAfter,
+        request.takenBefore,
+        request.thumbnailPath,
+        request.trashedBefore,
+        request.type,
+        request.updatedAfter,
+        request.updatedBefore,
+    )
+    # Booleans count only when explicitly true: `False` narrows nothing (the
+    # backing features don't exist in the Gumnut API), so it doesn't disqualify
+    # the enumeration — same posture as `search_random`.
+    restricting_flags = (
+        request.isEncoded,
+        request.isFavorite,
+        request.isMotion,
+        request.isNotInAlbum,
+        request.isOffline,
+    )
+    return not (
+        any(value is not None for value in restricting_values) or any(restricting_flags)
+    )
+
+
+async def _list_all_assets(
+    request: MetadataSearchDto,
+    client: AsyncGumnut,
+    current_user: UserResponseDto,
+) -> SearchResponseDto:
+    """Serve a criterion-less metadata search as a plain, paginated asset listing.
+
+    Follows the adapter's load-all + client-side pagination pattern (as in
+    `/api/assets/statistics`): the Gumnut API's asset listing is cursor-based
+    with no total, while Immich clients page by offset and read `total` /
+    `nextPage`, so the full set is loaded once and sliced here.
+    """
+    # `withDeleted` widens to live+trashed; immich-go's trashed pass instead
+    # sends `trashedAfter` (a min date meaning "all trashed ever"). The Gumnut
+    # API has no trash-date filter, so `trashedAfter`'s value isn't honored —
+    # its presence just selects the trashed set, which is exactly immich-go's
+    # all-trashed intent.
+    if request.withDeleted:
+        state = "all"
+    elif request.trashedAfter is not None:
+        state = "trashed"
+    else:
+        state = "live"
+
+    all_assets = [
+        asset
+        async for asset in client.assets.list(
+            state=state,
+            limit=GUMNUT_API_MAX_PAGE_SIZE,
+            include=ASSET_INCLUDE,
+        )
+    ]
+
+    immich_assets = [
+        convert_gumnut_asset_to_immich(asset, current_user) for asset in all_assets
+    ]
+
+    # The Gumnut API listing can't filter by visibility, and every asset
+    # converts to `timeline` visibility, so a non-timeline query (immich-go
+    # sweeps archive/timeline/hidden) correctly matches nothing here rather than
+    # returning the live/trashed set once per visibility.
+    if request.visibility is not None:
+        immich_assets = [
+            asset for asset in immich_assets if asset.visibility == request.visibility
+        ]
+
+    # The Gumnut API lists newest-first; honor an explicit ascending request
+    # (immich-go sends order="asc"). Mirrors the timeline endpoint.
+    if request.order == AssetOrder.asc:
+        immich_assets.reverse()
+
+    total = len(immich_assets)
+    # Clamp at the Gumnut API per-page ceiling. The Immich client default is
+    # 1000; the adapter pages the client through the library at 200 per page.
+    size = (
+        min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
+        if request.size is not None
+        else GUMNUT_API_MAX_PAGE_SIZE
+    )
+    page = int(request.page) if request.page is not None else 1
+    start = (page - 1) * size
+    page_items = immich_assets[start : start + size]
+
+    # `nextPage` is a JSON string (immich-go decodes it as `nextPage,string`);
+    # `None` — never "" — on the last page keeps the mobile client's
+    # `nextPage?.toInt()` from throwing (see `test_response_next_page_is_none`).
+    next_page = str(page + 1) if start + size < total else None
+
+    return SearchResponseDto(
+        albums=SearchAlbumResponseDto(count=0, facets=[], items=[], total=0),
+        assets=SearchAssetResponseDto(
+            count=len(page_items),
+            facets=[],
+            items=page_items,
+            nextPage=next_page,
+            total=total,
+        ),
+    )
+
+
 @router.post("/metadata")
 async def search_assets(
     request: MetadataSearchDto,
@@ -255,6 +402,12 @@ async def search_assets(
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> SearchResponseDto:
     """Search for assets by metadata filters."""
+    # A criterion-less request is a full-library enumeration (immich-go's asset
+    # sweep). The Gumnut API's search requires a criterion and 400s on an empty
+    # one, so route these to a plain listing instead.
+    if _is_criterion_less_enumeration(request):
+        return await _list_all_assets(request, client, current_user)
+
     person_ids = None
     if request.personIds:
         person_ids = [uuid_to_gumnut_person_id(pid) for pid in request.personIds]

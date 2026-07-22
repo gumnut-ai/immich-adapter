@@ -169,6 +169,7 @@ Mobile reads only the `people` array. A third-party client assuming upstream's `
 | `GET /api/albums` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Convert all to list, no pagination exposed |
 | `GET /api/albums/statistics` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total albums from the full set |
 | `GET /api/assets/statistics` | `client.assets.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total/images/videos from full set |
+| `POST /api/search/metadata` (criterion-less) | `client.assets.list(state=…, limit=GUMNUT_API_MAX_PAGE_SIZE)` | Full-library enumeration (immich-go's asset sweep): load all → filter visibility / order → slice `page`/`size` → real `total` + `nextPage`. A request carrying a real criterion instead uses `client.search.search` (which mandates one). |
 
 **Performance implications:** Memory usage scales with total entity count, not page size. For a library with 10,000 people, every `GET /api/people` request loads all 10,000 into memory. This is acceptable for current Gumnut library sizes but will need optimization (e.g., server-side sorting support in the Gumnut API) as libraries grow.
 
