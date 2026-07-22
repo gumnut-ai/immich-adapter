@@ -760,6 +760,36 @@ class TestSearchMetadataEnumeration:
         assert result.assets.count == 1
 
     @pytest.mark.anyio
+    async def test_trashed_after_honors_real_lower_bound(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """A real trashedAfter drops assets trashed before it (the min sentinel
+        immich-go sends keeps everything, but a genuine bound is respected)."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        old = _make_search_asset(now)
+        old.trashed_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        recent = _make_search_asset(now)
+        recent.trashed_at = datetime(2024, 6, 20, tzinfo=timezone.utc)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(
+            return_value=mock_sync_cursor_page([recent, old])
+        )
+
+        result = await search_assets(
+            request=MetadataSearchDto(
+                trashedAfter=datetime(2024, 6, 10, tzinfo=timezone.utc)
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        # Only the asset trashed after 2024-06-10 survives.
+        assert result.assets.count == 1
+        assert result.assets.total == 1
+        assert result.assets.items[0].id == safe_uuid_from_asset_id(recent.id)
+
+    @pytest.mark.anyio
     async def test_with_deleted_reads_all_state(
         self, mock_sync_cursor_page, mock_current_user
     ):
@@ -776,6 +806,43 @@ class TestSearchMetadataEnumeration:
         )
 
         assert mock_client.assets.list.call_args.kwargs["state"] == "all"
+
+    @pytest.mark.anyio
+    async def test_with_deleted_honors_trashed_after_and_keeps_live(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """state=all (withDeleted) with a real trashedAfter keeps live assets and
+        recently-trashed ones, but drops trash older than the bound — the bound
+        isn't silently ignored just because withDeleted selected state=all."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        live = _make_search_asset(now)  # trashed_at is None
+        old_trash = _make_search_asset(now)
+        old_trash.trashed_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        recent_trash = _make_search_asset(now)
+        recent_trash.trashed_at = datetime(2024, 6, 20, tzinfo=timezone.utc)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(
+            return_value=mock_sync_cursor_page([live, recent_trash, old_trash])
+        )
+
+        result = await search_assets(
+            request=MetadataSearchDto(
+                withDeleted=True,
+                trashedAfter=datetime(2024, 6, 10, tzinfo=timezone.utc),
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert mock_client.assets.list.call_args.kwargs["state"] == "all"
+        returned = {item.id for item in result.assets.items}
+        assert returned == {
+            safe_uuid_from_asset_id(live.id),
+            safe_uuid_from_asset_id(recent_trash.id),
+        }
+        assert safe_uuid_from_asset_id(old_trash.id) not in returned
+        assert result.assets.total == 2
 
     @pytest.mark.anyio
     async def test_non_timeline_visibility_filters_to_empty(

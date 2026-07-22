@@ -342,26 +342,38 @@ async def _list_all_assets(
         )
     ]
 
-    immich_assets = [
-        convert_gumnut_asset_to_immich(asset, current_user) for asset in all_assets
-    ]
-
-    # The Gumnut API listing can't filter by visibility, and every asset
-    # converts to `timeline` visibility, so a non-timeline query (immich-go
-    # sweeps archive/timeline/hidden) correctly matches nothing here rather than
-    # returning the live/trashed set once per visibility.
-    if request.visibility is not None:
-        immich_assets = [
-            asset for asset in immich_assets if asset.visibility == request.visibility
+    # Honor a `trashedAfter` lower bound. The Gumnut API can't filter the trashed
+    # set by trash time, so drop assets trashed before the requested instant
+    # here. immich-go sends the min sentinel ("all trashed ever"), for which this
+    # keeps everything; a real bound (e.g. "deleted since last week") is honored
+    # rather than silently widened to the whole trash. Live assets (`trashed_at`
+    # is None) are always kept — the bound only restricts trashed ones — so this
+    # is correct for both `state="trashed"` and the `withDeleted` `state="all"`
+    # case (live + trash), which can also carry `trashedAfter`.
+    if request.trashedAfter is not None:
+        all_assets = [
+            asset
+            for asset in all_assets
+            if asset.trashed_at is None or asset.trashed_at >= request.trashedAfter
         ]
 
-    # The Gumnut API lists in descending order (capture time for live/all,
-    # trash time for trashed); honor an explicit ascending request by reversing
-    # that order (immich-go sends order="asc"). Mirrors the timeline endpoint.
-    if request.order == AssetOrder.asc:
-        immich_assets.reverse()
+    # Every Gumnut asset converts to `timeline` visibility (hardcoded in
+    # `convert_gumnut_asset_to_immich`), so a non-timeline query — immich-go
+    # sweeps archive/timeline/hidden — matches nothing rather than returning the
+    # live/trashed set once per visibility.
+    if (
+        request.visibility is not None
+        and request.visibility != AssetVisibility.timeline
+    ):
+        all_assets = []
 
-    total = len(immich_assets)
+    # The Gumnut API lists in descending order (capture time for live/all, trash
+    # time for trashed); honor an explicit ascending request by reversing it
+    # (immich-go sends order="asc"). Mirrors the timeline endpoint.
+    if request.order == AssetOrder.asc:
+        all_assets.reverse()
+
+    total = len(all_assets)
     # Clamp at the Gumnut API per-page ceiling. The Immich client default is
     # 1000; the adapter pages the client through the library at 200 per page.
     size = (
@@ -371,7 +383,15 @@ async def _list_all_assets(
     )
     page = int(request.page) if request.page is not None else 1
     start = (page - 1) * size
-    page_items = immich_assets[start : start + size]
+    # Convert only the requested page, not the whole library, so the heavy Immich
+    # DTOs are built for at most `size` assets even when the library is large.
+    # The listing itself is still fully loaded — offset paging over the Gumnut
+    # API's cursor listing needs the full ordered set for `total` and slicing
+    # (native offset/order support is tracked as a follow-up).
+    page_items = [
+        convert_gumnut_asset_to_immich(asset, current_user)
+        for asset in all_assets[start : start + size]
+    ]
 
     # `nextPage` is a JSON string (immich-go decodes it as `nextPage,string`);
     # `None` — never "" — on the last page keeps the mobile client's
