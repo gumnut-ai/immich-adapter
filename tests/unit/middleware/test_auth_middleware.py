@@ -278,6 +278,30 @@ class TestAuthMiddleware:
         assert data["session_token"] is None
         mock_session_store.get_by_id.assert_not_awaited()
 
+    def test_empty_api_key_falls_through_to_session_auth(
+        self, client_with_mocks, mock_session_store
+    ):
+        """An empty x-api-key is falsy, so it must not shadow the session path.
+
+        The branch hinges on Python truthiness (`if api_key:`), so an empty header
+        value must fall through to the Bearer/cookie session lookup rather than
+        being used as a (blank) credential — locking that boundary in.
+        """
+        session_token = str(TEST_SESSION_ID)
+        headers = {
+            "x-api-key": "",
+            "Authorization": f"Bearer {session_token}",
+        }
+
+        response = client_with_mocks.get("/api/test/protected", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        # Resolved via the session store, not the empty api key.
+        assert data["jwt_token"] == TEST_JWT
+        assert data["session_token"] == session_token
+        mock_session_store.get_by_id.assert_awaited_once()
+
     def test_invalid_api_key_still_reaches_backend(
         self, client_with_mocks, mock_session_store
     ):
