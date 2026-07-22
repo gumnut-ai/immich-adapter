@@ -249,6 +249,31 @@ async def search_asset_statistics(
     return SearchStatisticsResponseDto(total=total)
 
 
+# Fields on MetadataSearchDto that a plain asset listing can honor (or that
+# don't restrict the result set), so their presence does NOT disqualify a
+# request from the criterion-less enumeration path: pagination, response-shape
+# hints, sort order, and the visibility/trash selectors `_list_all_assets`
+# translates. Every *other* field is a restricting filter. Framing this as an
+# allow-list (rather than enumerating the restricting fields) fails safe:
+# MetadataSearchDto is generated from Immich's OpenAPI spec and regenerated on
+# version bumps, so a newly added filter is absent from this set and therefore
+# treated as restricting — it keeps the existing search path instead of being
+# silently ignored by an enumeration that returns the whole library.
+_ENUMERATION_HONORABLE_FIELDS = frozenset(
+    {
+        "page",
+        "size",
+        "order",
+        "visibility",
+        "trashedAfter",
+        "withDeleted",
+        "withExif",
+        "withPeople",
+        "withStacked",
+    }
+)
+
+
 def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
     """True when a metadata search is a filter-less full-library enumeration.
 
@@ -261,58 +286,27 @@ def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
     criterion-less enumeration to a plain asset listing instead
     (`_list_all_assets`).
 
-    Any *restricting* filter disqualifies the request, which then keeps the
-    existing `search.search` path — that path serves query/date/person and 400s
-    on the rest, exactly as before. Gating on the absence of every restricting
-    filter (rather than ignoring the ones the listing can't honor) means the
-    enumeration branch never silently drops a filter and returns everything.
-    `page`/`size`/`withExif`/`order`/`visibility`/`trashedAfter`/`withDeleted`
-    are enumeration-honorable (handled in `_list_all_assets`) and so are absent
-    from the restricting set below.
+    A request is criterion-less only when every populated field is
+    enumeration-honorable (see `_ENUMERATION_HONORABLE_FIELDS`). Any restricting
+    filter keeps the request on the existing `search.search` path — which serves
+    query/date/person and 400s on the rest, exactly as before. Gating on the
+    absence of every restricting filter (rather than ignoring the ones the
+    listing can't honor) means the enumeration branch never silently drops a
+    filter and returns everything.
     """
-    restricting_values = (
-        request.description,
-        request.albumIds,
-        request.checksum,
-        request.city,
-        request.country,
-        request.createdAfter,
-        request.createdBefore,
-        request.encodedVideoPath,
-        request.id,
-        request.lensModel,
-        request.libraryId,
-        request.make,
-        request.model,
-        request.ocr,
-        request.originalFileName,
-        request.originalPath,
-        request.personIds,
-        request.previewPath,
-        request.rating,
-        request.state,
-        request.tagIds,
-        request.takenAfter,
-        request.takenBefore,
-        request.thumbnailPath,
-        request.trashedBefore,
-        request.type,
-        request.updatedAfter,
-        request.updatedBefore,
-    )
-    # Booleans count only when explicitly true: `False` narrows nothing (the
-    # backing features don't exist in the Gumnut API), so it doesn't disqualify
-    # the enumeration — same posture as `search_random`.
-    restricting_flags = (
-        request.isEncoded,
-        request.isFavorite,
-        request.isMotion,
-        request.isNotInAlbum,
-        request.isOffline,
-    )
-    return not (
-        any(value is not None for value in restricting_values) or any(restricting_flags)
-    )
+    for field_name, value in request:
+        if field_name in _ENUMERATION_HONORABLE_FIELDS:
+            continue
+        # Boolean filters (isFavorite/isMotion/…) restrict only when explicitly
+        # true: `False` narrows nothing (the backing features don't exist in the
+        # Gumnut API), so it doesn't disqualify the enumeration — same posture as
+        # `search_random`.
+        if isinstance(value, bool):
+            if value:
+                return False
+        elif value is not None:
+            return False
+    return True
 
 
 async def _list_all_assets(
@@ -361,8 +355,9 @@ async def _list_all_assets(
             asset for asset in immich_assets if asset.visibility == request.visibility
         ]
 
-    # The Gumnut API lists newest-first; honor an explicit ascending request
-    # (immich-go sends order="asc"). Mirrors the timeline endpoint.
+    # The Gumnut API lists in descending order (capture time for live/all,
+    # trash time for trashed); honor an explicit ascending request by reversing
+    # that order (immich-go sends order="asc"). Mirrors the timeline endpoint.
     if request.order == AssetOrder.asc:
         immich_assets.reverse()
 
@@ -402,9 +397,6 @@ async def search_assets(
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> SearchResponseDto:
     """Search for assets by metadata filters."""
-    # A criterion-less request is a full-library enumeration (immich-go's asset
-    # sweep). The Gumnut API's search requires a criterion and 400s on an empty
-    # one, so route these to a plain listing instead.
     if _is_criterion_less_enumeration(request):
         return await _list_all_assets(request, client, current_user)
 

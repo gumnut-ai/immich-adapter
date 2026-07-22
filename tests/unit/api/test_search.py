@@ -652,6 +652,67 @@ class TestSearchMetadataEnumeration:
         assert page3.assets.nextPage is None
 
     @pytest.mark.anyio
+    async def test_exact_full_final_page_has_no_next_page(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """When total is an exact multiple of size, the last full page ends the
+        walk — nextPage is None (the `start + size < total` boundary, not `<=`)."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(4)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+
+        result = await search_assets(
+            request=MetadataSearchDto(size=2, page=2),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.count == 2
+        assert result.assets.total == 4
+        assert result.assets.nextPage is None
+
+    @pytest.mark.anyio
+    async def test_page_past_end_is_empty(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """A page beyond the last returns no items and no nextPage, so immich-go
+        stops rather than looping."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(3)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+
+        result = await search_assets(
+            request=MetadataSearchDto(size=2, page=4),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.count == 0
+        assert result.assets.total == 3
+        assert result.assets.nextPage is None
+
+    @pytest.mark.anyio
+    async def test_empty_library_returns_empty_page(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page([]))
+
+        result = await search_assets(
+            request=MetadataSearchDto(),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.count == 0
+        assert result.assets.total == 0
+        assert result.assets.nextPage is None
+
+    @pytest.mark.anyio
     async def test_clamps_size_to_ceiling(
         self, mock_sync_cursor_page, mock_current_user
     ):
