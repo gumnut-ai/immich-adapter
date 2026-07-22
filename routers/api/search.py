@@ -354,9 +354,7 @@ async def _list_all_assets(
             state=state,
             limit=GUMNUT_API_MAX_PAGE_SIZE,
             include=ASSET_INCLUDE,
-            # The deployed SDK predates the typed `order` parameter. Forward it
-            # through Stainless's escape hatch until the post-deploy regen lands.
-            extra_query={"order": request.order.value},
+            order=request.order.value,
         )
     ]
 

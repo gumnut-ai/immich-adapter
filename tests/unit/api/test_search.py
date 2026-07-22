@@ -892,9 +892,7 @@ class TestSearchMetadataEnumeration:
             current_user=mock_current_user,
         )
         assert [item.id for item in desc.assets.items] == expected_desc
-        assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
-            "order": "desc"
-        }
+        assert mock_client.assets.list.call_args.kwargs["order"] == "desc"
 
         asc = await search_assets(
             request=MetadataSearchDto(order=AssetOrder.asc),
@@ -902,9 +900,7 @@ class TestSearchMetadataEnumeration:
             current_user=mock_current_user,
         )
         assert [item.id for item in asc.assets.items] == expected_desc
-        assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
-            "order": "asc"
-        }
+        assert mock_client.assets.list.call_args.kwargs["order"] == "asc"
 
     @pytest.mark.anyio
     async def test_real_criterion_still_uses_search(self, mock_current_user):
