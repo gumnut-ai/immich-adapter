@@ -321,6 +321,22 @@ async def _list_all_assets(
     with no total, while Immich clients page by offset and read `total` /
     `nextPage`, so the full set is loaded once and sliced here.
     """
+    # Every Gumnut asset converts to `timeline` visibility (hardcoded in
+    # `convert_gumnut_asset_to_immich`), so a non-timeline query matches nothing.
+    # immich-go sweeps archive/timeline/hidden, so 4 of its 6 enumeration queries
+    # are non-timeline — short-circuit here, before the load, so those don't each
+    # fetch the whole library only to discard it.
+    if (
+        request.visibility is not None
+        and request.visibility != AssetVisibility.timeline
+    ):
+        return SearchResponseDto(
+            albums=SearchAlbumResponseDto(count=0, facets=[], items=[], total=0),
+            assets=SearchAssetResponseDto(
+                count=0, facets=[], items=[], nextPage=None, total=0
+            ),
+        )
+
     # `withDeleted` widens to live+trashed; immich-go's trashed pass instead
     # sends `trashedAfter` (a min date meaning "all trashed ever"). The Gumnut
     # API has no trash-date filter, so `trashedAfter`'s value isn't honored —
@@ -356,16 +372,6 @@ async def _list_all_assets(
             for asset in all_assets
             if asset.trashed_at is None or asset.trashed_at >= request.trashedAfter
         ]
-
-    # Every Gumnut asset converts to `timeline` visibility (hardcoded in
-    # `convert_gumnut_asset_to_immich`), so a non-timeline query — immich-go
-    # sweeps archive/timeline/hidden — matches nothing rather than returning the
-    # live/trashed set once per visibility.
-    if (
-        request.visibility is not None
-        and request.visibility != AssetVisibility.timeline
-    ):
-        all_assets = []
 
     # The Gumnut API lists in descending order (capture time for live/all, trash
     # time for trashed); honor an explicit ascending request by reversing it

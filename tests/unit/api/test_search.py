@@ -863,6 +863,9 @@ class TestSearchMetadataEnumeration:
         )
         assert archived.assets.count == 0
         assert archived.assets.total == 0
+        # The empty result is returned before loading the library, so the
+        # archive/hidden sweeps don't each fetch and discard the whole listing.
+        mock_client.assets.list.assert_not_called()
 
         timeline = await search_assets(
             request=MetadataSearchDto(visibility=AssetVisibility.timeline),
