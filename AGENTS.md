@@ -53,6 +53,7 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 |-------|----------|-----------------|
 | Running with Immich Web | `docs/guides/running-with-immich-web.md` | Setting up the full local stack (Immich web + adapter + the Gumnut API + Clerk OAuth) |
 | Running with Immich Mobile | `docs/guides/running-with-immich-mobile.md` | Self-signed certs, HTTPS setup, connecting the Immich mobile app |
+| Importing with immich-go | `docs/guides/importing-with-immich-go.md` | Bulk-importing a library with the immich-go CLI, `x-api-key` auth via a Gumnut API key |
 
 ## References
 

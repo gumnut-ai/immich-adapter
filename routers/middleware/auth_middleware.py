@@ -19,15 +19,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
     Middleware that handles session token extraction and JWT refresh for all requests.
 
     This middleware:
-    1. Detects client type (web vs mobile)
-    2. Extracts session token from cookies (web) or Authorization header (mobile)
-    3. Looks up the session in Redis and decrypts the stored JWT
-    4. Stores the JWT in request.state for dependency injection
+    1. Detects client type (web, mobile, or API-key client)
+    2. Extracts the caller's credential: a Gumnut API key from the `x-api-key`
+       header (immich-go and other Immich API-key clients), or a session token
+       from cookies (web) or the Authorization header (mobile)
+    3. For session tokens, looks up the session in Redis and decrypts the stored
+       JWT; for API keys, forwards the key straight through as the credential
+    4. Stores the resulting credential in request.state for dependency injection
     5. Handles JWT refresh from backend by updating stored JWT in session
+       (session-token clients only; API keys are non-refreshing)
     """
 
     COOKIE_NAME = "immich_access_token"
     AUTH_HEADER = "authorization"
+    API_KEY_HEADER = "x-api-key"
     REFRESH_HEADER = "x-new-access-token"
 
     # Auth middleware ONLY applies to paths starting with these prefixes.
@@ -89,64 +94,76 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path in self.UNAUTHENTICATED_PATHS:
             return await call_next(request)
 
-        # Detect client type and extract session token
+        # Detect client type and extract the caller's credential
         session_token = None
         is_web_client = False
-
-        # Check for Authorization header (standard Bearer token)
-        auth_header = request.headers.get(self.AUTH_HEADER)
-        if auth_header and auth_header.lower().startswith("bearer "):
-            session_token = auth_header[7:]  # Remove "Bearer " prefix
-            is_web_client = False
-        # Check for Immich mobile client custom header
-        elif "x-immich-user-token" in request.headers:
-            session_token = request.headers.get("x-immich-user-token")
-            is_web_client = False
-        # Check for cookie (web client)
-        elif self.COOKIE_NAME in request.cookies:
-            session_token = request.cookies[self.COOKIE_NAME]
-            is_web_client = True
-        else:
-            logger.warning(
-                "No session token found in request",
-                extra={
-                    "path": path,
-                    "cookies": list(request.cookies.keys()),
-                },
-            )
-
-        # Look up session and decrypt JWT
         jwt_token = None
-        if session_token:
-            try:
-                session_store = await get_session_store()
-                session = await session_store.get_by_id(session_token)
 
-                if session:
-                    jwt_token = session.get_jwt()
-                else:
-                    logger.warning(
-                        "Session not found for token",
-                        extra={"path": path},
-                    )
-                    return self._invalid_token_response()
-            except Exception:
-                logger.error(
-                    "Error during session lookup",
-                    exc_info=True,
-                )
-                # An exception thrown inside dispatch will get wrapped
-                # by Starlette and not handled by our global exception handler.
-                # We need the response to be in the expected Immich format,
-                # so we return it directly here.
-                return JSONResponse(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    content={
-                        "message": "Internal server error",
-                        "statusCode": status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        "error": "Internal Server Error",
+        # API-key auth (e.g. the immich-go CLI and other Immich API-key clients):
+        # the `x-api-key` header carries a Gumnut API key (`apikey_...`), which is
+        # a self-contained, long-lived backend credential. Forward it directly as
+        # the Gumnut credential — there is no Redis session to look up, because API
+        # keys are minted and validated by the Gumnut backend, not by the adapter.
+        # Checked first because it is unambiguous and cheap: Immich web (cookie) and
+        # mobile (Bearer / x-immich-user-token) never send this header, so there is
+        # no precedence conflict with the session-token clients below.
+        api_key = request.headers.get(self.API_KEY_HEADER)
+        if api_key:
+            jwt_token = api_key
+        else:
+            # Check for Authorization header (standard Bearer token)
+            auth_header = request.headers.get(self.AUTH_HEADER)
+            if auth_header and auth_header.lower().startswith("bearer "):
+                session_token = auth_header[7:]  # Remove "Bearer " prefix
+                is_web_client = False
+            # Check for Immich mobile client custom header
+            elif "x-immich-user-token" in request.headers:
+                session_token = request.headers.get("x-immich-user-token")
+                is_web_client = False
+            # Check for cookie (web client)
+            elif self.COOKIE_NAME in request.cookies:
+                session_token = request.cookies[self.COOKIE_NAME]
+                is_web_client = True
+            else:
+                logger.warning(
+                    "No session token found in request",
+                    extra={
+                        "path": path,
+                        "cookies": list(request.cookies.keys()),
                     },
                 )
+
+            # Look up session and decrypt JWT
+            if session_token:
+                try:
+                    session_store = await get_session_store()
+                    session = await session_store.get_by_id(session_token)
+
+                    if session:
+                        jwt_token = session.get_jwt()
+                    else:
+                        logger.warning(
+                            "Session not found for token",
+                            extra={"path": path},
+                        )
+                        return self._invalid_token_response()
+                except Exception:
+                    logger.error(
+                        "Error during session lookup",
+                        exc_info=True,
+                    )
+                    # An exception thrown inside dispatch will get wrapped
+                    # by Starlette and not handled by our global exception handler.
+                    # We need the response to be in the expected Immich format,
+                    # so we return it directly here.
+                    return JSONResponse(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        content={
+                            "message": "Internal server error",
+                            "statusCode": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            "error": "Internal Server Error",
+                        },
+                    )
 
         # Store in request state for dependency injection
         request.state.jwt_token = jwt_token

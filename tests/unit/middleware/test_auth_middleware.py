@@ -238,6 +238,63 @@ class TestAuthMiddleware:
         assert response.status_code == 200
         assert response.json() == {"message": "login page"}
 
+    def test_api_key_used_directly_without_session_lookup(
+        self, client_with_mocks, mock_session_store
+    ):
+        """API-key clients (immich-go): x-api-key is forwarded as the credential.
+
+        The key must become request.state.jwt_token verbatim, with no Redis
+        session lookup and no session_token recorded.
+        """
+        api_key = "apikey_abc123"
+        headers = {"x-api-key": api_key}
+
+        response = client_with_mocks.get("/api/test/protected", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["jwt_token"] == api_key
+        assert data["session_token"] is None
+        assert data["is_web_client"] is False
+        # API keys are self-contained backend credentials — no session lookup.
+        mock_session_store.get_by_id.assert_not_awaited()
+
+    def test_api_key_takes_precedence_over_session_token(
+        self, client_with_mocks, mock_session_store
+    ):
+        """x-api-key wins over Bearer/cookie and skips the session lookup."""
+        api_key = "apikey_abc123"
+        headers = {
+            "x-api-key": api_key,
+            "Authorization": f"Bearer {TEST_SESSION_ID}",
+        }
+        client_with_mocks.cookies = {"immich_access_token": str(TEST_SESSION_ID)}
+
+        response = client_with_mocks.get("/api/test/protected", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["jwt_token"] == api_key
+        assert data["session_token"] is None
+        mock_session_store.get_by_id.assert_not_awaited()
+
+    def test_invalid_api_key_still_reaches_backend(
+        self, client_with_mocks, mock_session_store
+    ):
+        """The adapter does not validate the key shape — the Gumnut backend does.
+
+        Even a non-apikey_ value is forwarded verbatim; rejection happens upstream
+        when the credential is used, not in the middleware.
+        """
+        headers = {"x-api-key": "not-a-real-key"}
+
+        response = client_with_mocks.get("/api/test/protected", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["jwt_token"] == "not-a-real-key"
+        mock_session_store.get_by_id.assert_not_awaited()
+
 
 class TestTokenRefresh:
     """Test cases for JWT refresh handling."""
