@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 
 # Build arguments for versioning and metadata
 # Override with: docker build --build-arg IMMICH_VERSION=v3.0.3 .
@@ -24,7 +24,7 @@ FROM ghcr.io/immich-app/immich-server:${IMMICH_VERSION} AS immich-source
 # ============================================================================
 # Stage 2: Build the immich-adapter application
 # ============================================================================
-FROM python:3.14-slim AS builder
+FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS builder
 
 # Copy uv from official image (pinned by digest for reproducible builds)
 COPY --from=ghcr.io/astral-sh/uv:0.11.3@sha256:90bbb3c16635e9627f49eec6539f956d70746c409209041800a0280b93152823 /uv /usr/local/bin/uv
@@ -43,7 +43,7 @@ RUN uv sync --frozen --no-dev
 # ============================================================================
 # Stage 3: Runtime image (final, smallest image)
 # ============================================================================
-FROM python:3.14-slim
+FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
 
 # Propagate build args for labels
 ARG GIT_COMMIT
