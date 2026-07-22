@@ -169,7 +169,7 @@ Mobile reads only the `people` array. A third-party client assuming upstream's `
 | `GET /api/albums` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Convert all to list, no pagination exposed |
 | `GET /api/albums/statistics` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total albums from the full set |
 | `GET /api/assets/statistics` | `client.assets.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total/images/videos from full set |
-| `POST /api/search/metadata` (criterion-less) | `client.assets.list(state=…, limit=GUMNUT_API_MAX_PAGE_SIZE)` | Full-library enumeration (immich-go's asset sweep): load all → filter visibility / order → slice `page`/`size` → real `total` + `nextPage`. A request carrying a real criterion instead uses `client.search.search` (which mandates one). |
+| `POST /api/search/metadata` (criterion-less) | `client.assets.list(state=…, limit=GUMNUT_API_MAX_PAGE_SIZE, extra_query={"order": request.order.value})` | Full-library enumeration (immich-go's asset sweep): load in the requested native order → apply any `trashedAfter` lower bound → slice `page`/`size` → real `total` + `nextPage`. A request carrying a real criterion instead uses `client.search.search` (which mandates one). |
 
 **Performance implications:** Memory usage scales with total entity count, not page size. For a library with 10,000 people, every `GET /api/people` request loads all 10,000 into memory. This is acceptable for current Gumnut library sizes but will need optimization (e.g., server-side sorting support in the Gumnut API) as libraries grow.
 
@@ -253,7 +253,7 @@ Timeline bucket contents are returned in reverse chronological order by default 
 
 ### Album and asset ordering
 
-Albums and assets use Gumnut's default ordering and are not re-sorted by the adapter.
+Albums use Gumnut's default ordering. Criterion-less asset enumeration forwards the Immich request's ascending/descending order to the Gumnut API and does not re-sort the returned assets in the adapter.
 
 ## Trash and Deletion Semantics
 
