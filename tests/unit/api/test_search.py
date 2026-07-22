@@ -875,10 +875,10 @@ class TestSearchMetadataEnumeration:
         assert timeline.assets.count == 3
 
     @pytest.mark.anyio
-    async def test_order_asc_reverses_newest_first_listing(
+    async def test_order_is_forwarded_to_gumnut_listing(
         self, mock_sync_cursor_page, mock_current_user
     ):
-        """assets.list is newest-first; order=asc must reverse to oldest-first."""
+        """The Gumnut API owns ordering; the adapter must not reorder results."""
         now = datetime(2024, 6, 1, tzinfo=timezone.utc)
         assets = [_make_search_asset(now) for _ in range(3)]
         expected_desc = [safe_uuid_from_asset_id(a.id) for a in assets]
@@ -892,13 +892,19 @@ class TestSearchMetadataEnumeration:
             current_user=mock_current_user,
         )
         assert [item.id for item in desc.assets.items] == expected_desc
+        assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
+            "order": "desc"
+        }
 
         asc = await search_assets(
             request=MetadataSearchDto(order=AssetOrder.asc),
             client=mock_client,
             current_user=mock_current_user,
         )
-        assert [item.id for item in asc.assets.items] == list(reversed(expected_desc))
+        assert [item.id for item in asc.assets.items] == expected_desc
+        assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
+            "order": "asc"
+        }
 
     @pytest.mark.anyio
     async def test_real_criterion_still_uses_search(self, mock_current_user):

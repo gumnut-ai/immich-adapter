@@ -21,7 +21,6 @@ from routers.immich_models import (
     SearchExploreItem,
     SearchExploreResponseDto,
     AssetResponseDto,
-    AssetOrder,
     AssetTypeEnum,
     AssetVisibility,
     SearchResponseDto,
@@ -355,6 +354,9 @@ async def _list_all_assets(
             state=state,
             limit=GUMNUT_API_MAX_PAGE_SIZE,
             include=ASSET_INCLUDE,
+            # The deployed SDK predates the typed `order` parameter. Forward it
+            # through Stainless's escape hatch until the post-deploy regen lands.
+            extra_query={"order": request.order.value},
         )
     ]
 
@@ -373,12 +375,6 @@ async def _list_all_assets(
             if asset.trashed_at is None or asset.trashed_at >= request.trashedAfter
         ]
 
-    # The Gumnut API lists in descending order (capture time for live/all, trash
-    # time for trashed); honor an explicit ascending request by reversing it
-    # (immich-go sends order="asc"). Mirrors the timeline endpoint.
-    if request.order == AssetOrder.asc:
-        all_assets.reverse()
-
     total = len(all_assets)
     # Clamp at the Gumnut API per-page ceiling. The Immich client default is
     # 1000; the adapter pages the client through the library at 200 per page.
@@ -393,7 +389,7 @@ async def _list_all_assets(
     # DTOs are built for at most `size` assets even when the library is large.
     # The listing itself is still fully loaded — offset paging over the Gumnut
     # API's cursor listing needs the full ordered set for `total` and slicing
-    # (native offset/order support is tracked as a follow-up).
+    # (native offset/total support is tracked as a follow-up).
     page_items = [
         convert_gumnut_asset_to_immich(asset, current_user)
         for asset in all_assets[start : start + size]
