@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-19
+last-updated: 2026-07-22
 ---
 
 # Immich Adapter Gap Analysis
@@ -393,15 +393,15 @@ Immich job and queue endpoints manage background processing (thumbnail generatio
 
 Immich API keys allow programmatic access without OAuth.
 
-**Current behavior**: All 6 endpoints return fake data.
+**Current behavior**: The 6 `/api/api-keys` *management* endpoints return fake data (key CRUD is still stubbed). However, **inbound `x-api-key` authentication is now supported**: `AuthMiddleware` reads the `x-api-key` header and forwards its value to the Gumnut API as the caller's credential, so a client such as immich-go can authenticate with a Gumnut API key (`apikey_...`). See `docs/guides/importing-with-immich-go.md`.
 
-**User impact**: **Low** — API keys are a developer/power-user feature. All current access is through OAuth.
+**User impact**: **Low** — API keys are a developer/power-user feature. Interactive access is through OAuth; headless clients can now use a Gumnut API key.
 
-**Dependency**: **Both** — Gumnut would need an API key concept for the Gumnut API.
+**Dependency**: Inbound auth was **Adapter-only** — the Gumnut API already validates `apikey_...` bearer tokens, so the adapter just forwards the header. Key *management* through the Immich UI remains **out of scope**: minting a key is a credential-management operation the Gumnut API only permits from a first-party browser session, and the adapter authenticates with a delegated OAuth token that cannot mint keys. Users mint keys in the Gumnut app instead, so the `/api/api-keys` CRUD stubs stay as-is.
 
-**Effort**: **M** — Backend needs API key generation, storage, and authentication. Adapter translation is S.
+**Effort**: Inbound auth was **S** (done). Wiring the CRUD endpoints is not planned (blocked by the first-party-session requirement above).
 
-**Recommendation**: **Revisit later** — Low priority unless third-party integrations need non-OAuth access.
+**Recommendation**: **Closed** for inbound `x-api-key` auth. The management-endpoint stubs are an intentional gap — key minting lives in the Gumnut app.
 
 ---
 

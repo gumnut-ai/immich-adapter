@@ -21,6 +21,8 @@ Earlier iterations passed the Gumnut JWT directly to clients and derived session
 
 The adapter now generates a stable UUID session token at login and returns that token to clients instead of the raw JWT. The Gumnut JWT is encrypted and stored in Redis, keyed by the session token. On each request, the middleware extracts the session token, looks up the stored JWT, and forwards it to the backend. When the backend refreshes the JWT, the adapter updates the stored value in Redis while keeping the client's session token unchanged. This keeps sessions and checkpoints stable across JWT refresh cycles, enables immediate session revocation, and ensures raw JWTs are never exposed to clients.
 
+**API-key clients are the exception.** The session-token model above governs the interactive web and mobile clients. Headless Immich API-key clients (e.g. the immich-go CLI) instead send an `x-api-key` header carrying a Gumnut API key (`apikey_...`); the middleware forwards that value straight to the backend as the caller credential, with no Redis session and no JWT refresh (the key is long-lived and the backend does not refresh it). Nothing is stored adapter-side for these requests. This branch is checked ahead of the session-token sources and is documented in `docs/guides/importing-with-immich-go.md`; the sections below describe the session-token path.
+
 ## Design Constraints
 
 ### Immich Client Compatibility Requirements
@@ -222,6 +224,8 @@ User → Web Client → Adapter → Backend → OAuth Provider → Clerk
 ```
 User → Web/Mobile Client → Adapter Middleware → Backend → Gumnut API
 ```
+
+> This flow describes the session-token clients (web/mobile). API-key clients skip session lookup and refresh entirely — see "API-key clients are the exception" under *Implemented Architecture*.
 
 **Sequence:**
 

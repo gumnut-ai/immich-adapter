@@ -19,15 +19,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
     Middleware that handles session token extraction and JWT refresh for all requests.
 
     This middleware:
-    1. Detects client type (web vs mobile)
-    2. Extracts session token from cookies (web) or Authorization header (mobile)
-    3. Looks up the session in Redis and decrypts the stored JWT
-    4. Stores the JWT in request.state for dependency injection
+    1. Detects client type (web, mobile, or API-key client)
+    2. Extracts the caller's credential: a Gumnut API key from the `x-api-key`
+       header (immich-go and other Immich API-key clients), or a session token
+       from cookies (web) or the Authorization header (mobile)
+    3. For session tokens, looks up the session in Redis and decrypts the stored
+       JWT; for API keys, forwards the key straight through as the credential
+    4. Stores the resulting credential in request.state for dependency injection
     5. Handles JWT refresh from backend by updating stored JWT in session
+       (session-token clients only; API keys are non-refreshing)
     """
 
     COOKIE_NAME = "immich_access_token"
     AUTH_HEADER = "authorization"
+    API_KEY_HEADER = "x-api-key"
     REFRESH_HEADER = "x-new-access-token"
 
     # Auth middleware ONLY applies to paths starting with these prefixes.
@@ -89,13 +94,25 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path in self.UNAUTHENTICATED_PATHS:
             return await call_next(request)
 
-        # Detect client type and extract session token
+        # Detect client type and extract the caller's credential
         session_token = None
         is_web_client = False
+        jwt_token = None
 
-        # Check for Authorization header (standard Bearer token)
+        # API-key auth (e.g. the immich-go CLI and other Immich API-key clients):
+        # the `x-api-key` header carries a Gumnut API key (`apikey_...`), which is
+        # a self-contained, long-lived backend credential. Forward it directly as
+        # the Gumnut credential — there is no Redis session to look up, because API
+        # keys are minted and validated by the Gumnut backend, not by the adapter.
+        # Checked first because it is unambiguous: Immich web (cookie) and mobile
+        # (Bearer / x-immich-user-token) never send this header, so there is no
+        # precedence conflict with the session-token clients below.
+        api_key = request.headers.get(self.API_KEY_HEADER)
         auth_header = request.headers.get(self.AUTH_HEADER)
-        if auth_header and auth_header.lower().startswith("bearer "):
+        if api_key:
+            jwt_token = api_key
+        # Check for Authorization header (standard Bearer token)
+        elif auth_header and auth_header.lower().startswith("bearer "):
             session_token = auth_header[7:]  # Remove "Bearer " prefix
             is_web_client = False
         # Check for Immich mobile client custom header
@@ -115,8 +132,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # Look up session and decrypt JWT
-        jwt_token = None
+        # Look up session and decrypt JWT. Only session-token clients reach this;
+        # the api-key path above leaves session_token None and skips the lookup.
         if session_token:
             try:
                 session_store = await get_session_store()

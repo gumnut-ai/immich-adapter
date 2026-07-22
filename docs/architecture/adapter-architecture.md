@@ -71,6 +71,8 @@ For mobile, OAuth providers that don't support custom URL schemes (e.g., `app.im
 5. On response, middleware checks for `x-new-access-token` header (backend JWT refresh)
 6. If present, updates the stored JWT in Redis — the client's session token remains unchanged
 
+**API-key clients (e.g. immich-go).** A request carrying an `x-api-key` header takes a separate, sessionless branch. The header value is a Gumnut API key (`apikey_...`) that the backend validates directly, so the middleware forwards it straight through as the SDK credential — it does **not** look up Redis, and there is no session token. Because there is no session, the JWT-refresh step (5–6) is a no-op for these requests: API keys are long-lived and non-refreshing, and the backend does not emit `x-new-access-token` for them. The `x-api-key` header is checked before the session-token sources above; Immich web (cookie) and mobile (Bearer / `x-immich-user-token`) never send it. Key *management* through the Immich API-keys endpoints remains stubbed — minting a Gumnut key requires a first-party browser session that the adapter's delegated OAuth token can't perform (see `docs/guides/importing-with-immich-go.md`).
+
 ### Request observability
 
 `ObservabilityTagsMiddleware` is registered last in `main.py`, so it wraps outermost and can annotate requests even when `AuthMiddleware` returns a 401 before a route handler runs.
