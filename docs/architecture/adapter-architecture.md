@@ -169,11 +169,8 @@ Mobile reads only the `people` array. A third-party client assuming upstream's `
 | `GET /api/albums` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Convert all to list, no pagination exposed |
 | `GET /api/albums/statistics` | `client.albums.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total albums from the full set |
 | `GET /api/assets/statistics` | `client.assets.list(limit=GUMNUT_API_MAX_PAGE_SIZE)` | Count total/images/videos from full set |
-| `POST /api/search/metadata` (criterion-less) | `client.assets.list(state=…, limit=GUMNUT_API_MAX_PAGE_SIZE)` + requested `order` query | Full-library enumeration (immich-go's asset sweep): load in the requested native order → apply any `trashedAfter` lower bound → slice `page`/`size` → real `total` + `nextPage`. A request carrying a real criterion instead uses `client.search.search` (which mandates one). |
 
 **Performance implications:** Memory usage scales with total entity count, not page size. For a library with 10,000 people, every `GET /api/people` request loads all 10,000 into memory. This is acceptable for current Gumnut library sizes but will need optimization (e.g., server-side sorting support in the Gumnut API) as libraries grow.
-
-The criterion-less `POST /api/search/metadata` enumeration is a heavier case of this pattern: unlike the fetch-once endpoints above (each loaded once per client action), a client *pages through* it. immich-go requests `size:1000` (clamped to 200) and follows `nextPage` to the end, so the full library is re-loaded and re-converted on every page — cost scales with `library_size × page_count` for one bulk sweep. It's bounded and one-time (a library import), and the Gumnut API's cursor-only listing offers no stateless offset to page against, so load-all is the pragmatic choice today; cursor-based paging or a short-lived per-sweep cache is the optimization path if bulk-import cost against the Gumnut API becomes a concern.
 
 ### Pattern 2: Server-side cursor pagination
 
@@ -189,10 +186,26 @@ Both support optional time-bound filters (e.g., `local_datetime_before`, `create
 2. Check `response.has_more` for next page
 3. Advance the cursor (last entity ID or returned cursor token) for subsequent pages
 
+**Criterion-less `POST /api/search/metadata`.** immich-go exposes numeric page
+requests while the Gumnut API exposes asset cursors. The adapter bridges them
+without an exact count: it walks the cursor listing from the beginning until the
+requested page, collects that page plus one matching lookahead asset, and stops.
+The lookahead determines numeric-string `nextPage`; `count` and deprecated
+`total` both contain the returned page length, matching Immich's current search
+response. A real `trashedAfter` lower bound is applied before page positions are
+counted.
+
+This translation is stateless, with memory bounded to one SDK page plus the
+requested page. Page N still walks through the preceding N - 1 pages because a
+numeric page cannot encode the Gumnut cursor, but it no longer exhausts the
+remaining library just to compute an exact total. A request carrying a real
+search criterion continues to use `client.search.search`, which mandates one.
+
 **Endpoints using this pattern:**
 
 | Endpoint | SDK call | Cursor + filters |
 |----------|----------|-----------------|
+| `POST /api/search/metadata` (criterion-less) | `client.assets.list(state=…, order=…)` | Rewalk to numeric page, apply `trashedAfter`, collect one lookahead asset |
 | `GET /api/timeline/buckets` | `client.assets.counts(group_by="month")` | `starting_after_id` cursor, `local_datetime_before` filter, paginate until `has_more=false` |
 | Sync stream (internal) | `client.events.get(...)` | `after_cursor` opaque cursor, `created_at_lt` time bound |
 

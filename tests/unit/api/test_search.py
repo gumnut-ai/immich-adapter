@@ -622,9 +622,7 @@ class TestSearchMetadataEnumeration:
     async def test_paginates_with_string_next_page(
         self, mock_sync_cursor_page, mock_current_user
     ):
-        """total counts the full set; nextPage is a string until the last page,
-        then None — the throwaway eval patch returned nextPage=None always and
-        so truncated any library larger than one page."""
+        """Page length supplies deprecated total; nextPage drives traversal."""
         now = datetime(2024, 6, 1, tzinfo=timezone.utc)
         assets = [_make_search_asset(now) for _ in range(5)]
 
@@ -640,23 +638,52 @@ class TestSearchMetadataEnumeration:
 
         page1 = await _search(1)
         assert page1.assets.count == 2
-        assert page1.assets.total == 5
+        assert page1.assets.total == 2
         assert page1.assets.nextPage == "2"
 
         page2 = await _search(2)
         assert page2.assets.count == 2
+        assert page2.assets.total == 2
         assert page2.assets.nextPage == "3"
 
         page3 = await _search(3)
         assert page3.assets.count == 1
+        assert page3.assets.total == 1
         assert page3.assets.nextPage is None
+
+    @pytest.mark.anyio
+    async def test_stops_after_requested_page_lookahead(self, mock_current_user):
+        """Cursor iteration stops after one asset beyond the requested page."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(10)]
+        consumed: list[str] = []
+
+        async def asset_stream():
+            for asset in assets:
+                consumed.append(asset.id)
+                yield asset
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=asset_stream())
+
+        result = await search_assets(
+            request=MetadataSearchDto(size=2, page=2),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert consumed == [asset.id for asset in assets[:5]]
+        assert [item.id for item in result.assets.items] == [
+            safe_uuid_from_asset_id(asset.id) for asset in assets[2:4]
+        ]
+        assert result.assets.total == 2
+        assert result.assets.nextPage == "3"
 
     @pytest.mark.anyio
     async def test_exact_full_final_page_has_no_next_page(
         self, mock_sync_cursor_page, mock_current_user
     ):
-        """When total is an exact multiple of size, the last full page ends the
-        walk — nextPage is None (the `start + size < total` boundary, not `<=`)."""
+        """A full final page has no nextPage when no lookahead asset exists."""
         now = datetime(2024, 6, 1, tzinfo=timezone.utc)
         assets = [_make_search_asset(now) for _ in range(4)]
 
@@ -670,7 +697,7 @@ class TestSearchMetadataEnumeration:
         )
 
         assert result.assets.count == 2
-        assert result.assets.total == 4
+        assert result.assets.total == 2
         assert result.assets.nextPage is None
 
     @pytest.mark.anyio
@@ -692,7 +719,7 @@ class TestSearchMetadataEnumeration:
         )
 
         assert result.assets.count == 0
-        assert result.assets.total == 3
+        assert result.assets.total == 0
         assert result.assets.nextPage is None
 
     @pytest.mark.anyio
@@ -731,7 +758,7 @@ class TestSearchMetadataEnumeration:
         )
 
         assert result.assets.count == 200
-        assert result.assets.total == 201
+        assert result.assets.total == 200
         assert result.assets.nextPage == "2"
 
     @pytest.mark.anyio
@@ -788,6 +815,44 @@ class TestSearchMetadataEnumeration:
         assert result.assets.count == 1
         assert result.assets.total == 1
         assert result.assets.items[0].id == safe_uuid_from_asset_id(recent.id)
+
+    @pytest.mark.anyio
+    async def test_trashed_after_filters_before_page_positions(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """Filtered-out trash does not consume a numeric page position."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        old_1 = _make_search_asset(now)
+        old_1.trashed_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        recent_1 = _make_search_asset(now)
+        recent_1.trashed_at = datetime(2024, 6, 20, tzinfo=timezone.utc)
+        old_2 = _make_search_asset(now)
+        old_2.trashed_at = datetime(2024, 6, 2, tzinfo=timezone.utc)
+        recent_2 = _make_search_asset(now)
+        recent_2.trashed_at = datetime(2024, 6, 21, tzinfo=timezone.utc)
+        recent_3 = _make_search_asset(now)
+        recent_3.trashed_at = datetime(2024, 6, 22, tzinfo=timezone.utc)
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(
+            return_value=mock_sync_cursor_page(
+                [old_1, recent_1, old_2, recent_2, recent_3]
+            )
+        )
+
+        result = await search_assets(
+            request=MetadataSearchDto(
+                size=1,
+                page=2,
+                trashedAfter=datetime(2024, 6, 10, tzinfo=timezone.utc),
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.total == 1
+        assert result.assets.items[0].id == safe_uuid_from_asset_id(recent_2.id)
+        assert result.assets.nextPage == "3"
 
     @pytest.mark.anyio
     async def test_with_deleted_reads_all_state(
