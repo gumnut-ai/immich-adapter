@@ -39,9 +39,9 @@ router = APIRouter(
 # each asset's description: upsert mints a deterministic id and records
 # `id -> value` (see services/tag_store.py), and assignment recovers the value
 # and appends it. The remaining tag endpoints stay informational stubs — they
-# are not on immich-go's import path, and the client-side tags UI is
-# deliberately left disabled (see routers/api/users.py preferences and
-# routers/api/server.py server features) because `GET /api/tags` is still a stub.
+# are not on immich-go's import path, and the client-side tags sidebar is
+# deliberately left disabled (see the `tags` preference in routers/api/users.py)
+# because `GET /api/tags` is still a stub.
 
 
 def _append_tag_to_description(description: str | None, tag_value: str) -> str:
@@ -109,7 +109,12 @@ async def upsert_tags(
     user_id = str(current_user_id)
     now = datetime.now(tz=timezone.utc)
     responses: List[TagResponseDto] = []
-    for value in request.tags:
+    for raw_value in request.tags:
+        # A tag is stored as a single description line, so newlines would break
+        # both the append and its idempotency check. immich-go can't send one
+        # (tags come from CLI args / folder names), but sanitize at this input
+        # boundary so the "one line per tag" invariant holds for any client.
+        value = raw_value.replace("\r", " ").replace("\n", " ")
         tag_id = deterministic_tag_id(user_id, value)
         await remember_tag(user_id, tag_id, value)
         responses.append(
@@ -190,6 +195,11 @@ async def tag_assets(
     ``success=False`` / ``not_found`` for ids the user's scoped read didn't
     return (inaccessible or nonexistent). An unknown tag id — one never recorded
     at upsert time — is a ``400``, matching Immich's tag-not-found behavior.
+
+    The per-asset read-then-write has a small race window (like
+    ``assets.update_assets``): a concurrent description edit between the read and
+    the write can be clobbered. immich-go applies tags sequentially, so this is
+    not a concern on the import path.
     """
     user_id = str(current_user_id)
     tag_value = await lookup_tag_value(user_id, id)

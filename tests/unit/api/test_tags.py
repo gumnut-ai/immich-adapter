@@ -24,7 +24,12 @@ from routers.api.tags import (
 )
 from routers.immich_models import BulkIdErrorReason, BulkIdsDto, TagUpsertDto
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
-from services.tag_store import deterministic_tag_id
+from services.tag_store import (
+    TAG_TTL_SECONDS,
+    deterministic_tag_id,
+    lookup_tag_value,
+    remember_tag,
+)
 
 
 def _mock_asset(uid: UUID, description: str | None) -> Mock:
@@ -141,6 +146,22 @@ class TestUpsertTags:
         assert result[0].name == "Trees"
         assert result[1].name == "Vacation"
 
+    @pytest.mark.anyio
+    async def test_newlines_in_value_are_sanitized(self):
+        """A tag is stored as one description line, so newlines are stripped at
+        the input boundary to keep the append idempotent."""
+        user_id = uuid4()
+        request = TagUpsertDto(tags=["Bad\nTag\r\nName"])
+        with patch("routers.api.tags.remember_tag", new=AsyncMock()) as mock_remember:
+            result = await upsert_tags(request, current_user_id=user_id)
+
+        assert "\n" not in result[0].value
+        assert "\r" not in result[0].value
+        # The sanitized value is what gets recorded for later assignment.
+        mock_remember.assert_awaited_once_with(
+            str(user_id), result[0].id, result[0].value
+        )
+
 
 class TestTagAssets:
     """PUT /api/tags/{id}/assets."""
@@ -256,6 +277,133 @@ class TestTagAssets:
 
         assert result == []
         mock_client.assets.list.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_asset_with_null_metadata_is_tagged(self):
+        """An asset whose metadata object is absent gets the tag as its whole
+        description (the `asset.metadata is None` branch)."""
+        user_id = uuid4()
+        tag_id = uuid4()
+        a1 = uuid4()
+        from tests.conftest import MockSyncCursorPage
+
+        asset = Mock()
+        asset.id = uuid_to_gumnut_asset_id(a1)
+        asset.metadata = None
+        mock_client = Mock()
+        mock_client.assets.list = AsyncMock(return_value=MockSyncCursorPage([asset]))
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        request = BulkIdsDto(ids=[a1])
+
+        with patch(
+            "routers.api.tags.lookup_tag_value",
+            new=AsyncMock(return_value="Vacation"),
+        ):
+            result = await tag_assets(
+                tag_id, request, client=mock_client, current_user_id=user_id
+            )
+
+        assert [(r.id, r.success) for r in result] == [(a1, True)]
+        changes = _change_by_id(mock_client.assets.bulk_update_assets)
+        assert changes[uuid_to_gumnut_asset_id(a1)] == {"description": "#Vacation"}
+
+    @pytest.mark.anyio
+    async def test_multiple_chunks_accumulate_across_batches(self):
+        """Ids spanning more than one chunk each get read + written, and the
+        per-id results accumulate across the batched loop."""
+        from tests.conftest import MockSyncCursorPage
+
+        user_id = uuid4()
+        tag_id = uuid4()
+        a1, a2, a3 = uuid4(), uuid4(), uuid4()
+        mock_client = Mock()
+        # One asset per chunk (a3 is inaccessible: its chunk read returns empty).
+        mock_client.assets.list = AsyncMock(
+            side_effect=[
+                MockSyncCursorPage([_mock_asset(a1, "One")]),
+                MockSyncCursorPage([_mock_asset(a2, None)]),
+                MockSyncCursorPage([]),
+            ]
+        )
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        request = BulkIdsDto(ids=[a1, a2, a3])
+
+        with (
+            patch("routers.api.tags.GUMNUT_API_MAX_BULK_IDS", 1),
+            patch(
+                "routers.api.tags.lookup_tag_value",
+                new=AsyncMock(return_value="Vacation"),
+            ),
+        ):
+            result = await tag_assets(
+                tag_id, request, client=mock_client, current_user_id=user_id
+            )
+
+        # Order preserved across chunks; a3 inaccessible → not_found.
+        assert [(r.id, r.success) for r in result] == [
+            (a1, True),
+            (a2, True),
+            (a3, False),
+        ]
+        assert result[2].error == BulkIdErrorReason.not_found
+        # One read per chunk; one write per chunk that had an accessible asset.
+        assert mock_client.assets.list.await_count == 3
+        assert mock_client.assets.bulk_update_assets.await_count == 2
+
+
+class TestTagStore:
+    """The Redis-backed id -> value store (services/tag_store.py)."""
+
+    @pytest.mark.anyio
+    async def test_remember_tag_sets_scoped_key_with_ttl(self):
+        tag_id = deterministic_tag_id("user-1", "Vacation")
+        redis = Mock()
+        redis.set = AsyncMock(return_value=None)
+        with patch(
+            "services.tag_store.get_redis_client",
+            new=AsyncMock(return_value=redis),
+        ):
+            await remember_tag("user-1", tag_id, "Vacation")
+
+        redis.set.assert_awaited_once_with(
+            f"immich_adapter:tag:user-1:{tag_id}", "Vacation", ex=TAG_TTL_SECONDS
+        )
+
+    @pytest.mark.anyio
+    async def test_lookup_tag_value_round_trips(self):
+        tag_id = deterministic_tag_id("user-1", "Vacation")
+        redis = Mock()
+        redis.get = AsyncMock(return_value="Vacation")
+        with patch(
+            "services.tag_store.get_redis_client",
+            new=AsyncMock(return_value=redis),
+        ):
+            value = await lookup_tag_value("user-1", tag_id)
+
+        assert value == "Vacation"
+        redis.get.assert_awaited_once_with(f"immich_adapter:tag:user-1:{tag_id}")
+
+    @pytest.mark.anyio
+    async def test_lookup_tag_value_missing_returns_none(self):
+        redis = Mock()
+        redis.get = AsyncMock(return_value=None)
+        with patch(
+            "services.tag_store.get_redis_client",
+            new=AsyncMock(return_value=redis),
+        ):
+            assert await lookup_tag_value("user-1", uuid4()) is None
+
+    @pytest.mark.anyio
+    async def test_lookup_tag_value_decodes_bytes(self):
+        """decode_responses is on in production, but narrow the broad redis
+        return type by decoding a bytes value defensively."""
+        redis = Mock()
+        redis.get = AsyncMock(return_value=b"Vacation")
+        with patch(
+            "services.tag_store.get_redis_client",
+            new=AsyncMock(return_value=redis),
+        ):
+            assert await lookup_tag_value("user-1", uuid4()) == "Vacation"
 
 
 class TestMalformedRequests:
