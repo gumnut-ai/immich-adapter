@@ -1,9 +1,10 @@
 import logging
+from itertools import batched
 from typing import Annotated, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from gumnut import AsyncGumnut
+from gumnut import AsyncGumnut, GumnutError
 
 from routers.utils.bulk import (
     BulkChunkError,
@@ -166,17 +167,99 @@ async def create_album(
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> AlbumResponseDto:
     """
-    Create a new album using the Gumnut SDK.
-    Note: albumUsers and assetIds are not supported by the Gumnut SDK.
+    Create a new album and associate any initial assets.
+
+    Album creation and asset association are separate Gumnut API operations.
+    If any association fails, delete the just-created album before surfacing
+    the error so Immich clients never receive a successful partial create.
+    albumUsers remain unsupported.
     """
 
     gumnut_album = await client.albums.create(
         name=request.albumName or "",
         description=request.description,
-        # Note: albumUsers and assetIds are not supported in this adapter
     )
 
-    return convert_gumnut_album_to_immich(gumnut_album, current_user, asset_count=0)
+    asset_count = await _add_initial_assets_to_album(
+        client,
+        gumnut_album.id,
+        request.assetIds or [],
+    )
+
+    return convert_gumnut_album_to_immich(
+        gumnut_album,
+        current_user,
+        asset_count=asset_count,
+    )
+
+
+async def _add_initial_assets_to_album(
+    client: AsyncGumnut,
+    gumnut_album_id: str,
+    asset_uuids: list[UUID],
+) -> int:
+    """Associate initial assets and return the resulting unique membership count."""
+    associated_asset_ids: set[str] = set()
+
+    for asset_uuid_chunk in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
+        gumnut_asset_ids = [
+            uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in asset_uuid_chunk
+        ]
+        requested_asset_ids = set(gumnut_asset_ids)
+
+        try:
+            response = await client.albums.assets_associations.add(
+                gumnut_album_id,
+                asset_ids=gumnut_asset_ids,
+            )
+        except GumnutError:
+            await _rollback_created_album(client, gumnut_album_id)
+            raise
+
+        added_asset_ids = set(response.added_assets)
+        duplicate_asset_ids = set(response.duplicate_assets)
+        not_found_asset_ids = set(response.not_found_assets)
+
+        if not_found_asset_ids:
+            await _rollback_created_album(client, gumnut_album_id)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="One or more initial album assets were not found or are not accessible",
+            )
+
+        reported_asset_ids = added_asset_ids | duplicate_asset_ids
+        if reported_asset_ids != requested_asset_ids:
+            logger.error(
+                "Initial album asset association response did not account for every asset",
+                extra={
+                    "album_id": gumnut_album_id,
+                    "requested_count": len(requested_asset_ids),
+                    "reported_count": len(reported_asset_ids),
+                },
+            )
+            await _rollback_created_album(client, gumnut_album_id)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Upstream did not report membership for every initial album asset",
+            )
+
+        associated_asset_ids.update(requested_asset_ids)
+
+    return len(associated_asset_ids)
+
+
+async def _rollback_created_album(
+    client: AsyncGumnut,
+    gumnut_album_id: str,
+) -> None:
+    """Best-effort cleanup for an album whose initial membership failed."""
+    try:
+        await client.albums.delete(gumnut_album_id)
+    except GumnutError:
+        logger.exception(
+            "Failed to roll back album after initial asset association failure",
+            extra={"album_id": gumnut_album_id},
+        )
 
 
 @router.put("/{id}/assets")
