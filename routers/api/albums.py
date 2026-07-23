@@ -170,8 +170,9 @@ async def create_album(
     Create a new album and associate any initial assets.
 
     Album creation and asset association are separate Gumnut API operations.
-    If any association fails, delete the just-created album before surfacing
-    the error so Immich clients never receive a successful partial create.
+    If any association fails, attempt a best-effort delete of the just-created
+    album before surfacing the error so Immich clients never receive a
+    successful partial create.
     albumUsers remain unsupported.
     """
 
