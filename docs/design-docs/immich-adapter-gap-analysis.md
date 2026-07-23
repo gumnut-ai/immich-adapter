@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-22
+last-updated: 2026-07-23
 ---
 
 # Immich Adapter Gap Analysis
@@ -70,15 +70,15 @@ Immich shared links let users create public URLs to share individual assets or a
 
 Immich tags allow hierarchical labeling of assets (e.g., `vacation/2024/beach`). Tags can be bulk-applied to assets.
 
-**Current behavior**: All 9 endpoints return empty lists or fake single-item responses. Tag operations appear to succeed but nothing persists.
+**Current behavior**: **Partially closed (interim workaround).** The immich-go import path is emulated: `PUT /api/tags` upserts a tag (deterministic synthetic id, recorded `id → value` in Redis via `services/tag_store.py`) and `PUT /api/tags/{id}/assets` "assigns" assets by appending the tag to each asset's **description** (idempotently). This unblocks `immich-go upload from-folder --tag <name>`, which previously panicked when the upsert stub returned `[]`. The remaining 7 endpoints (`GET /api/tags`, `POST /api/tags`, `GET`/`PUT`/`DELETE /api/tags/{id}`, `DELETE /api/tags/{id}/assets`, `PUT /api/tags/assets`) are still stubs, so there is no real tag entity — tags don't round-trip as tags, only as description text.
 
-**User impact**: **Medium** — Power users rely on tags for organization. Most casual users rely on albums instead. The Immich web UI shows the tags sidebar, which is always empty.
+**User impact**: **Medium** — Power users rely on tags for organization. Most casual users rely on albums instead. The Immich web tags sidebar stays intentionally disabled (surfacing it would show a permanently empty list, since `GET /api/tags` returns `[]`); the interim workaround serves only bulk importers.
 
-**Dependency**: **Both** — the Gumnut API needs a tagging model (tag CRUD, asset-tag associations). Adapter work is straightforward translation once the backend exists.
+**Dependency**: **Both** — a real tag feature needs the Gumnut API to model tags (tag CRUD, asset-tag associations). The description-append workaround is adapter-only and does not migrate to real tags automatically when the backend lands.
 
 **Effort**: **L** — Backend needs a new entity type (tags), a many-to-many association with assets, CRUD endpoints, and hierarchical tag support. Adapter translation is M on its own.
 
-**Recommendation**: **Revisit later** — Moderate user value. Consider once Gumnut's data model stabilizes.
+**Recommendation**: **Revisit later** — The interim import workaround is in place; a full tag feature waits on Gumnut's data model. When real tags land, replace the description-append emulation and consider a one-time migration of embedded `#`-tags.
 
 ---
 
@@ -740,7 +740,7 @@ adapter code.
 | ~~#3a Map markers~~ | — | — | Closed — server-side geotag filter via `client.assets.list(bbox=...)`; 2000-marker cap |
 | #34 Performance (pagination) | L | Both | Scaling requirement |
 | #8 Memories (write path) | S | Both | Read path shipped; only save/hide persistence remains |
-| #2 Tags | L | Both | Power-user organization |
+| #2 Tags | L | Both | Power-user organization — immich-go import path emulated via description-append; full tag entity still needs the backend |
 
 ### Tier 3: Revisit Later (high effort or blocked)
 

@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-22
+last-updated: 2026-07-23
 ---
 
 # Immich Adapter Architecture
@@ -418,13 +418,14 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | WebSockets | Real-time upload/trash/restore/delete notifications | Socket.IO with room-based messaging |
 | Memories (read) | Search, get-by-id, statistics for OnThisDay memories | Synthesized from per-day asset queries; mutations still stubbed |
 | Map (markers) | `GET /map/markers` and album-scoped `GET /albums/{id}/map-markers` return GPS-tagged assets | Server-side geotag filter via `client.assets.list(bbox=...)`; the album route also passes the album filter; capped at 2000 markers, with a degraded-path scan bound if the coordinate filter is unavailable; reverse-geocode still stubbed |
+| Tags (upsert + assign) | `PUT /api/tags` upserts a tag; `PUT /api/tags/{id}/assets` assigns assets to it | Gumnut has no tag model; emulated by appending the tag to each asset's **description**. Upsert mints a deterministic synthetic id and records `id → value` in Redis (`services/tag_store.py`); assign recovers the value and appends it. Unblocks immich-go's tagged import. The client-side tags UI stays disabled (see below) |
 
 ### Stub implementations
 
 | Area | Why stubbed |
 |------|-------------|
 | Libraries | Gumnut has a different library model |
-| Tags | Not yet implemented in Gumnut |
+| Tags (read / CRUD / bulk) | Gumnut has no tag model. `GET /api/tags`, `POST /api/tags`, `GET`/`PUT`/`DELETE /api/tags/{id}`, `DELETE /api/tags/{id}/assets`, and `PUT /api/tags/assets` stay stubs; only the immich-go import path (upsert + assign, see above) is emulated. The tags sidebar is left disabled — `GET /api/tags` returns `[]`, so surfacing the UI would show a permanently empty, non-functional tag list |
 | Map (reverse-geocode) | `/map/reverse-geocode` is unused by shipped Immich clients; not wired up |
 | Memories (write) | Synthetic memories have no persistence layer; create/update/delete and asset add/remove are no-ops |
 | Asset metadata (custom) | Gumnut doesn't support arbitrary key-value metadata |

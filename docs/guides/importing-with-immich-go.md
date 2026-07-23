@@ -1,6 +1,6 @@
 ---
 title: "Importing with immich-go"
-last-updated: 2026-07-22
+last-updated: 2026-07-23
 ---
 
 # Importing with immich-go
@@ -61,6 +61,27 @@ For a `upload from-folder` run, immich-go:
    an `x-immich-checksum` header so the server can reject an already-stored file.
 4. Optionally creates albums (`POST /api/albums`) and adds assets to them
    (`PUT /api/albums/{id}/assets`).
+5. If `--tag` is passed, upserts each tag (`PUT /api/tags`, reading the returned
+   tag id) and assigns the uploaded assets to it (`PUT /api/tags/{id}/assets`).
+
+## Tags (`--tag`)
+
+The Gumnut API has no tag concept yet, so the adapter emulates tags to keep a
+tagged import working: `PUT /api/tags` returns a stable synthetic tag id, and
+`PUT /api/tags/{id}/assets` **appends the tag to each asset's description** (as a
+`#<tag>` line) rather than storing a real tag. Re-importing the same tag is
+idempotent — the line isn't duplicated. The tag therefore shows up in the
+asset's description in the web/mobile app, not in the (intentionally disabled)
+tags sidebar. This is an interim workaround; when Gumnut gains real tags the
+embedded `#`-lines won't migrate automatically.
+
+```bash
+immich-go upload from-folder \
+  --server http://localhost:3001 \
+  --api-key apikey_your_key_here \
+  --tag Vacation \
+  /path/to/photos
+```
 
 ## Troubleshooting
 
@@ -70,3 +91,6 @@ For a `upload from-folder` run, immich-go:
 - **"invalid semantic version" at connect time**: `.immich-container-tag` must hold
   a semver value (e.g. `v3.0.3`); immich-go parses `/api/server/about`'s `version`
   and aborts if it can't.
+- **`panic: index out of range [0]` on a `--tag` import**: fixed — the tag upsert
+  now returns a non-empty response. If you still hit it, the adapter is running an
+  old revision where `PUT /api/tags` was a stub returning `[]`.
