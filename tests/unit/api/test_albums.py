@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
-from unittest.mock import AsyncMock, Mock
-from gumnut import NotFoundError
+from unittest.mock import AsyncMock, Mock, call
+from gumnut import APIStatusError, NotFoundError
 from gumnut.types.albums import AssetsAssociationAddResponse
 from uuid import uuid4
 
@@ -490,13 +490,14 @@ class TestCreateAlbum:
 
     @pytest.mark.anyio
     async def test_create_album_success(self, sample_gumnut_album, mock_current_user):
-        """Test successful album creation."""
+        """An empty initial asset list creates an empty album."""
         # Setup - create mock client
         mock_client = Mock()
         # Update the sample to have the name we want to test
         sample_gumnut_album.name = "New Album"
         sample_gumnut_album.description = "New Description"
         mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.assets_associations.add = AsyncMock()
 
         request = CreateAlbumDto(albumName="New Album", description="New Description")
 
@@ -509,26 +510,194 @@ class TestCreateAlbum:
         # Now result is a real AlbumResponseDto, so use attribute access
         assert hasattr(result, "albumName")
         assert result.albumName == "New Album"
+        assert result.assetCount == 0
         mock_client.albums.create.assert_called_once_with(
             name="New Album", description="New Description"
         )
+        mock_client.albums.assets_associations.add.assert_not_awaited()
 
     @pytest.mark.anyio
-    async def test_create_album_propagates_sdk_error(self, mock_current_user):
-        """SDK errors bubble up; the global GumnutError handler maps them."""
-        from gumnut import APIStatusError
+    async def test_create_album_with_single_asset(
+        self, sample_gumnut_album, mock_current_user
+    ):
+        """A supplied asset is associated and reflected in the create response."""
+        asset_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        mock_client = Mock()
+        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.assets_associations.add = AsyncMock(
+            return_value=_add_response(added=[gumnut_asset_id])
+        )
 
+        result = await create_album(
+            CreateAlbumDto(albumName="Single", assetIds=[asset_uuid]),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assetCount == 1
+        mock_client.albums.assets_associations.add.assert_awaited_once_with(
+            sample_gumnut_album.id,
+            asset_ids=[gumnut_asset_id],
+        )
+
+    @pytest.mark.anyio
+    async def test_create_album_with_multiple_assets(
+        self, sample_gumnut_album, mock_current_user
+    ):
+        """Initial assets are chunked at the upstream limit and all counted."""
+        asset_uuids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
+        gumnut_asset_ids = [
+            uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in asset_uuids
+        ]
+        mock_client = Mock()
+        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                _add_response(added=gumnut_asset_ids[:GUMNUT_API_MAX_BULK_IDS]),
+                _add_response(added=gumnut_asset_ids[GUMNUT_API_MAX_BULK_IDS:]),
+            ]
+        )
+
+        result = await create_album(
+            CreateAlbumDto(albumName="Multiple", assetIds=asset_uuids),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assetCount == len(asset_uuids)
+        assert mock_client.albums.assets_associations.add.await_args_list == [
+            call(
+                sample_gumnut_album.id,
+                asset_ids=gumnut_asset_ids[:GUMNUT_API_MAX_BULK_IDS],
+            ),
+            call(
+                sample_gumnut_album.id,
+                asset_ids=gumnut_asset_ids[GUMNUT_API_MAX_BULK_IDS:],
+            ),
+        ]
+
+    @pytest.mark.anyio
+    async def test_create_album_rolls_back_incomplete_asset_response(
+        self, sample_gumnut_album, mock_current_user
+    ):
+        """An unaccounted-for asset fails with 502 and removes the partial album."""
+        asset_uuids = [uuid4(), uuid4()]
+        reported_id = uuid_to_gumnut_asset_id(asset_uuids[0])
+        mock_client = Mock()
+        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.assets_associations.add = AsyncMock(
+            return_value=_add_response(added=[reported_id])
+        )
+        mock_client.albums.delete = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_album(
+                CreateAlbumDto(albumName="Incomplete", assetIds=asset_uuids),
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        assert exc_info.value.status_code == 502
+        mock_client.albums.delete.assert_awaited_once_with(sample_gumnut_album.id)
+
+    @pytest.mark.anyio
+    async def test_create_album_rolls_back_partial_asset_failure(
+        self, sample_gumnut_album, mock_current_user
+    ):
+        """A later-chunk missing asset fails and removes the partial album."""
+        asset_uuids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
+        gumnut_asset_ids = [
+            uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in asset_uuids
+        ]
+        mock_client = Mock()
+        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                _add_response(added=gumnut_asset_ids[:GUMNUT_API_MAX_BULK_IDS]),
+                _add_response(not_found=gumnut_asset_ids[GUMNUT_API_MAX_BULK_IDS:]),
+            ]
+        )
+        mock_client.albums.delete = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_album(
+                CreateAlbumDto(
+                    albumName="Partial",
+                    assetIds=asset_uuids,
+                ),
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        assert exc_info.value.status_code == 404
+        mock_client.albums.delete.assert_awaited_once_with(sample_gumnut_album.id)
+
+    @pytest.mark.anyio
+    async def test_create_album_preserves_error_when_rollback_fails(
+        self, sample_gumnut_album, mock_current_user
+    ):
+        """A cleanup failure does not mask the original association error."""
+        missing_uuid = uuid4()
+        missing_id = uuid_to_gumnut_asset_id(missing_uuid)
+        mock_client = Mock()
+        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.assets_associations.add = AsyncMock(
+            return_value=_add_response(not_found=[missing_id])
+        )
+        mock_client.albums.delete = AsyncMock(
+            side_effect=make_sdk_status_error(500, "cleanup failed")
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_album(
+                CreateAlbumDto(albumName="Rollback", assetIds=[missing_uuid]),
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        assert exc_info.value.status_code == 404
+        mock_client.albums.delete.assert_awaited_once_with(sample_gumnut_album.id)
+
+    @pytest.mark.anyio
+    async def test_create_album_propagates_creation_sdk_error(self, mock_current_user):
+        """Album creation SDK errors bubble to the global handler."""
         mock_client = Mock()
         mock_client.albums.create = AsyncMock(
             side_effect=make_sdk_status_error(500, "boom")
         )
 
-        request = CreateAlbumDto(albumName="Test Album")
+        with pytest.raises(APIStatusError):
+            await create_album(
+                CreateAlbumDto(albumName="Test Album"),
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+    @pytest.mark.anyio
+    async def test_create_album_rolls_back_association_sdk_error(
+        self, mock_current_user
+    ):
+        """Association SDK errors roll back and bubble to the global handler."""
+        mock_client = Mock()
+        sample_album = Mock(
+            id=uuid_to_gumnut_album_id(uuid4()),
+            name="Test Album",
+            description=None,
+        )
+        mock_client.albums.create = AsyncMock(return_value=sample_album)
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=make_sdk_status_error(500, "boom")
+        )
+        mock_client.albums.delete = AsyncMock()
+
+        request = CreateAlbumDto(albumName="Test Album", assetIds=[uuid4()])
 
         with pytest.raises(APIStatusError):
             await create_album(
                 request, client=mock_client, current_user=mock_current_user
             )
+        mock_client.albums.delete.assert_awaited_once_with(sample_album.id)
 
 
 class TestAddAssetsToAlbum:
@@ -708,13 +877,13 @@ class TestAddAssetsToAlbum:
         assert (
             mock_client.albums.assets_associations.add.call_count == expected_call_count
         )
-        for idx, call in enumerate(
+        for idx, add_call in enumerate(
             mock_client.albums.assets_associations.add.call_args_list
         ):
             expected_chunk = gumnut_ids[
                 idx * GUMNUT_API_MAX_BULK_IDS : (idx + 1) * GUMNUT_API_MAX_BULK_IDS
             ]
-            assert call.kwargs["asset_ids"] == expected_chunk
+            assert add_call.kwargs["asset_ids"] == expected_chunk
 
     @pytest.mark.anyio
     async def test_add_assets_duplicate_in_later_chunk_surfaces_in_response(
@@ -1058,13 +1227,13 @@ class TestRemoveAssetFromAlbum:
             mock_client.albums.assets_associations.remove.call_count
             == expected_call_count
         )
-        for idx, call in enumerate(
+        for idx, remove_call in enumerate(
             mock_client.albums.assets_associations.remove.call_args_list
         ):
             expected_chunk = gumnut_ids[
                 idx * GUMNUT_API_MAX_BULK_IDS : (idx + 1) * GUMNUT_API_MAX_BULK_IDS
             ]
-            assert call.kwargs["asset_ids"] == expected_chunk
+            assert remove_call.kwargs["asset_ids"] == expected_chunk
 
     @pytest.mark.anyio
     async def test_remove_assets_empty_request(self, sample_uuid):

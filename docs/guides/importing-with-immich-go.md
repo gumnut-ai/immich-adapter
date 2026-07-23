@@ -1,6 +1,6 @@
 ---
 title: "Importing with immich-go"
-last-updated: 2026-07-22
+last-updated: 2026-07-23
 ---
 
 # Importing with immich-go
@@ -59,8 +59,9 @@ For a `upload from-folder` run, immich-go:
    `/api/assets/bulk-upload-check`.
 3. Uploads each new asset with `POST /api/assets` (multipart `assetData`), sending
    an `x-immich-checksum` header so the server can reject an already-stored file.
-4. Optionally creates albums (`POST /api/albums`) and adds assets to them
-   (`PUT /api/albums/{id}/assets`).
+4. Optionally creates albums with their initial asset membership
+   (`POST /api/albums` with `assetIds`). Other album updates can add assets
+   through `PUT /api/albums/{id}/assets`.
 
 ## Troubleshooting
 
