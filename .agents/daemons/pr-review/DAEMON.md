@@ -23,12 +23,11 @@ PR review protocol: pr-review/v1
 
 ## Review outcomes
 
-- When publishing a formal PR review, use `COMMENT`.
-- When a finding identifies a material risk that should be addressed before merge, say so directly in the finding without changing the review event.
-- Do not use `APPROVE` or `REQUEST_CHANGES`.
-- A clean review means every applicable lane completed with no useful finding and no coverage limitation.
-- For a clean review, ensure Charlie has exactly one `+1` reaction on the pull request body. Leave an existing Charlie `+1` reaction unchanged; otherwise add it once.
-- Do not publish a formal review, top-level comment, empty review, `LGTM`, praise, or summary for a clean outcome.
+- Publish a formal `APPROVE` review when every applicable lane completed with no `🔴 blocking` finding on the current head. A `🔴 blocking` finding is one that should be addressed before merge; `🟠 non-blocking` (advisory) findings do not prevent approval — include any of them as inline comments on the approving review.
+- Keep an approval body to a brief, factual summary. Do not add praise, filler, `LGTM`, or a restatement of the change.
+- Publish a formal `COMMENT` review when any `🔴 blocking` finding exists on the current head. State each finding directly; a `🔴 blocking` finding already signals it should be addressed before merge, so do not change the review event to `REQUEST_CHANGES`.
+- Do not use `REQUEST_CHANGES`.
+- Approval asserts a completed clean read. When a coverage limitation materially narrows the review so that read isn't possible, do not approve — follow the incomplete-review policy and publish a `COMMENT` limitation note instead.
 
 ## Review depth
 
@@ -48,7 +47,7 @@ PR review protocol: pr-review/v1
 - Ask a bounded question only when one missing fact decides whether a plausible material risk exists. State the decisive missing fact and potential consequence; do not replace an unsupported finding with open-ended speculation.
 - Use safe, targeted checks when they can resolve a material uncertainty; do not run broad suites by default. For dependency claims, use the version resolved by the lockfile or build and consult official documentation when the behavior is material.
 - A failed, unavailable, or inconclusive tool is not proof. Publish a static finding only when independent evidence meets this policy, and disclose failed verification when it materially affects confidence.
-- Begin every published inline finding with exactly one of these header-line formats: ``**<short descriptive title>** | `🔴 blocking` | `§ <lane-name>` `` or ``**<short descriptive title>** | `🟠 non-blocking` | `§ <lane-name>` ``. Use red `blocking` only when the finding must be addressed before merge; use orange `non-blocking` for all other findings. Preserve the exact originating lane name so the format continues to work with configurable or future lanes; do not map lanes to a fixed enum. Do not use this header-line format for findings in the review body.
+- Begin every published inline finding with exactly one of these header-line formats: ``**<short descriptive title>** | `🔴 blocking` | `§ <lane-name>` `` or ``**<short descriptive title>** | `🟠 non-blocking` | `§ <lane-name>` ``. Use red `blocking` for any finding that should be addressed before merge — a bug, a security or data-integrity risk, a breaking change, or a meaningful quality gap such as a repository-convention violation, a missing test for core behavior, or an error-handling or performance problem. Use orange `non-blocking` only for advisory, genuinely optional improvements. A `🔴 blocking` finding on the current head is what withholds approval; `🟠 non-blocking` findings do not. Preserve the exact originating lane name so the format continues to work with configurable or future lanes; do not map lanes to a fixed enum. Do not use this header-line format for findings in the review body.
 - Leave a blank line after an inline finding's header. For every finding, use concise prose to state the issue and supporting evidence or trigger, the consequence, and the required action. Do not use numeric severity or confidence scores.
 - Inline comment example:
 
@@ -61,7 +60,7 @@ PR review protocol: pr-review/v1
 ## Incomplete reviews
 
 - Publish each independently supported finding even when another lane or part of the change could not be reviewed.
-- Add at most one limitation note when coverage was materially narrowed. Publish a limitation-only `COMMENT` only when silence could reasonably imply a completed clean review.
+- Add at most one limitation note when coverage was materially narrowed. When the limitation prevents the completed clean read that an approval would assert, publish a limitation-only `COMMENT` instead of approving.
 
 ## Review requests
 
