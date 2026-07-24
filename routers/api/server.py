@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import List
+from uuid import UUID
 from fastapi import APIRouter
 from shortuuid import uuid
 
@@ -87,22 +88,6 @@ def get_fake_config() -> dict:
     }
 
 
-def get_fake_about() -> dict:
-    """Generate fake about data with dynamic version."""
-    version = get_settings().immich_version
-    version_str = f"v{version}"
-    return {
-        "version": version_str,
-        "versionUrl": f"https://github.com/immich-app/immich/releases/tag/{version_str}",
-        "licensed": False,
-        "nodejs": "v20.18.1",
-        "exiftool": "13.00",
-        "ffmpeg": "7.0.2-7",
-        "libvips": "8.15.3",
-        "imagemagick": "7.1.1-40",
-    }
-
-
 fake_storage = {
     "diskSize": "14.6 TiB",
     "diskUse": "11.2 TiB",
@@ -112,18 +97,6 @@ fake_storage = {
     "diskAvailableRaw": 3636053282816,
     "diskUsagePercentage": 77.27,
 }
-
-
-def get_fake_version_history() -> list:
-    """Generate fake version history with dynamic version."""
-    version = get_settings().immich_version
-    return [
-        {
-            "id": "b86ef90c-3973-4aae-8b74-2f24ac71fdd4",
-            "createdAt": "2025-01-13T21:28:34.519+00:00",
-            "version": str(version),
-        }
-    ]
 
 
 fake_media_types = {
@@ -211,7 +184,18 @@ async def get_config() -> ServerConfigDto:
 
 @router.get("/about")
 async def get_about() -> ServerAboutResponseDto:
-    return ServerAboutResponseDto(**get_fake_about())
+    version = get_settings().immich_version
+    version_str = f"v{version}"
+    return ServerAboutResponseDto(
+        version=version_str,
+        versionUrl=f"https://github.com/immich-app/immich/releases/tag/{version_str}",
+        licensed=False,
+        nodejs="v20.18.1",
+        exiftool="13.00",
+        ffmpeg="7.0.2-7",
+        libvips="8.15.3",
+        imagemagick="7.1.1-40",
+    )
 
 
 @router.get("/storage")
@@ -221,13 +205,13 @@ async def get_storage() -> ServerStorageResponseDto:
 
 @router.get("/version-history")
 async def get_version_history() -> List[ServerVersionHistoryResponseDto]:
+    version = get_settings().immich_version
     return [
         ServerVersionHistoryResponseDto(
-            id=item["id"],
-            version=item["version"],
-            createdAt=datetime.fromisoformat(item["createdAt"]),
+            id=UUID("b86ef90c-3973-4aae-8b74-2f24ac71fdd4"),
+            version=str(version),
+            createdAt=datetime.fromisoformat("2025-01-13T21:28:34.519+00:00"),
         )
-        for item in get_fake_version_history()
     ]
 
 
