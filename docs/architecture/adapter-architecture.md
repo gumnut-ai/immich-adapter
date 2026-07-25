@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-22
+last-updated: 2026-07-25
 ---
 
 # Immich Adapter Architecture
@@ -408,7 +408,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 |------|-----------|-------|
 | Assets | Upload, download (original + thumbnail), video playback, delete, bulk delete, statistics, single-asset and bulk metadata edit | Streaming downloads via `StreamingResponse`; video playback streams the `original` variant from CDN with Range/seek support; `DELETE /api/assets` soft-deletes by default and permanently deletes when `force=true`; `PUT /api/assets/{id}` forwards `description`, paired `latitude` + `longitude`, and `dateTimeOriginal` to the Gumnut API and emits `on_asset_update`; `PUT /api/assets` forwards the same in-scope fields via `client.assets.bulk_update_assets`, chunking over `GUMNUT_API_MAX_BULK_IDS`. Capture time uses one of three mutually exclusive datetime modes: absolute `dateTimeOriginal` (optionally localized by `timeZone`) replicated as one homogeneous `change`; per-asset `dateTimeRelative` minute-shift (matching Immich, which applies this field as minutes); or standalone `timeZone` reinterpret. The two per-asset modes read each chunk's current `original_datetime` (`assets.list(state="all", ids=...)`, including trashed assets so they aren't silently skipped, matching the homogeneous path) before writing a heterogeneous per-item change, skipping ids with no existing capture time; conflicting datetime modes are rejected with 422. `isFavorite`/`rating`/`visibility` are silently ignored on both paths; `livePhotoVideoId` on the single-asset path and `duplicateId` on the bulk path are silently ignored; the bulk path skips WebSocket emission |
 | Trash | Restore-by-ids, restore-all, empty-trash | `trashDays` comes from `TRASH_RETENTION_DAYS`; web and mobile clients see real trash state |
-| Albums | CRUD, add/remove assets, statistics | User sharing not supported (returns 501) |
+| Albums | CRUD, add/remove assets, statistics | `POST /api/albums` accepts initial `assetIds`, associates them in chunks of `GUMNUT_API_MAX_BULK_IDS`, returns the resulting `assetCount`, and best-effort rolls back the new album if association fails or the upstream response is incomplete; user sharing is not supported (returns 501) |
 | People | CRUD, list with pagination/sort/filter, thumbnails, statistics, merge | |
 | Faces | List, create, delete, reassign | Create draws a user-specified box on an asset and links it to a person (Immich's "create a face on-the-fly" flow) |
 | Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling, including `isTrashed=true` |
