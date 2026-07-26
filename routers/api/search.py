@@ -418,15 +418,19 @@ async def search_assets(
 
     search_kwargs: dict[str, Any] = {
         "query": request.description,
+        # Immich resolves takenAfter/takenBefore against fileCreatedAt, which
+        # is not the same field as the Gumnut API's local_datetime — this
+        # mapping is a deliberate translation, not an identity.
+        #
         # Web sends these in the keepLocalTime wire format, so its offset is
         # fictitious (see code practices, "Immich web 'today' wire format");
         # mobile converts to real UTC and sends a genuine instant. Forwarded
         # as-is, so the two clients' date filters differ by the user's UTC
         # offset — reconciling them changes user-visible search results, so it
-        # needs a decision about which form the Gumnut API's capture-time
+        # needs a decision about which form the Gumnut API's local_datetime
         # comparison expects rather than a fix here.
-        "captured_after": request.takenAfter,
-        "captured_before": request.takenBefore,
+        "local_datetime_after": request.takenAfter,
+        "local_datetime_before": request.takenBefore,
         "person_ids": person_ids,
         "include": ASSET_INCLUDE,
     }

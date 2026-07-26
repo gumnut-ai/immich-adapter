@@ -233,8 +233,8 @@ class TestSearchMetadata:
 
         mock_client.search.search.assert_called_once_with(
             query="sunset",
-            captured_after=taken_after,
-            captured_before=None,
+            local_datetime_after=taken_after,
+            local_datetime_before=None,
             person_ids=None,
             limit=10,
             page=1,
