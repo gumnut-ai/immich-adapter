@@ -23,6 +23,13 @@ fields used by daemons already in this directory, since the spec may change over
   separate daemons rather than overloading one.
 - Prefer the smallest safe change, and state explicit limits (open-PR caps,
   commits-per-activation, one concern per PR) so activations stay bounded.
+- A shell command in a `DAEMON.md` is the daemon's implementation, not an
+  illustration — run it against this repo exactly as written and check its
+  output before committing. Instrumenting a copy with an extra `echo` tests the
+  copy, not the block; needing one to see the result means the block isn't
+  reporting it. Valid flags are not enough either: a well-formed command can
+  silently answer a different question (`git log -G'pydantic'` is an unanchored
+  regex, so it reports the date `pydantic-settings` changed).
 
 ## Current daemons
 
