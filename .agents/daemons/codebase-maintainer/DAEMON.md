@@ -44,10 +44,10 @@ If any check fails, do not open the PR. Note the failure in an internal log entr
 ## Thresholds
 - Upgrade a dependency only when it is at least two minor versions behind the latest stable that the supply-chain guard allows.
 - Do not bump the same dependency more than once every 30 days. Security-advisory patches are exempt — they keep the 24-hour threshold below. Fast-moving dependencies clear the two-minor-versions bar again within days, so without this cap a daily activation re-proposes the same package every week or two, churning CI and review attention for an upgrade that just landed. Before proposing a non-security bump, run both checks below and skip the dependency if either shows it was bumped in the last 30 days:
-  - **Merged history** — compare the package's locked version against its version 30 days ago:
+  - **Merged history** — compare the package's locked version against its version 30 days ago. Run the block as a script with the package name as its argument:
 
     ```bash
-    pkg=<package-name>
+    pkg=${1:?usage: check-bump-cadence <package-name>}
     base=$(git rev-list -1 --before='30 days ago' HEAD)
     [ -n "$base" ] || { echo "history does not reach back 30 days — run git fetch --unshallow"; exit 1; }
     oldlock=$(git show "${base}:uv.lock") || { echo "no uv.lock at ${base}"; exit 1; }
