@@ -44,7 +44,16 @@ If any check fails, do not open the PR. Note the failure in an internal log entr
 ## Thresholds
 - Upgrade a dependency only when it is at least two minor versions behind the latest stable that the supply-chain guard allows.
 - Do not bump the same dependency more than once every 30 days. Security-advisory patches are exempt and are never blocked by this cap — they keep the 24-hour threshold below. Fast-moving dependencies clear the two-minor-versions bar again within days, so without this cap a daily activation re-proposes the same package every week or two, churning CI and review attention for an upgrade that just landed. Before proposing a non-security bump, run both checks below and skip the dependency if either shows it was bumped in the last 30 days:
-  - **Merged history** — `git log -1 --format=%cs -G'/<pkg>-[0-9]' -- uv.lock`. Check `uv.lock`, not `pyproject.toml`: most bumps here are re-locks of transitive dependencies that `pyproject.toml` never declares, so a manifest-only check silently reports "never bumped" for exactly the packages that churn most. Anchor on the artifact URL as shown — a bare `-G'<pkg>'` is an unanchored regex, so it also matches longer package names containing it: `-G'pydantic'` reports the date `pydantic-settings` was re-locked, freezing `pydantic` itself for a month on a commit that never touched it. In the filenames PyPI normalizes `-` and `.` to `_`, so allow either separator or the pattern silently matches nothing and the cap fails open (`-G'/ua-parser-[0-9]'` finds nothing; `-G'/ua[_-]parser-[0-9]'` finds the bump). Use `-G`, not `-S`: `-S` fires only when the *number* of matching lines changes, which a version bump need not do. No output means no bump on record — proceed.
+  - **Merged history** — compare the package's locked version against its version 30 days ago:
+
+    ```bash
+    base=$(git rev-list -1 --before='30 days ago' HEAD)
+    locked() { grep -A1 "^name = \"$1\"\$" | sed -n 's/^version = "\(.*\)"/\1/p'; }
+    now=$(locked <pkg> < uv.lock)
+    was=$(git show "${base}:uv.lock" | locked <pkg>)
+    ```
+
+    They differ (or `was` is empty, meaning the package was added inside the window) → bumped recently, skip it. Read `uv.lock`, not `pyproject.toml`: most bumps here are re-locks of transitive dependencies that `pyproject.toml` never declares, so a manifest-only check reports "never bumped" for exactly the packages that churn most. Compare versions rather than searching for commits that touched the package's lines: `uv lock` rewrites artifact metadata without changing any version (commit `93d0241` only appended `upload-time=`), so a commit-based check reads that as a bump for every package at once and suppresses the whole dependency set for a month. Reading the `name`/`version` fields also sidesteps PyPI's filename normalization — `<pkg>` substitutes literally. Keep the braces in `"${base}:uv.lock"` — in zsh, `"$base:uv.lock"` parses `:u` as an upcase modifier and silently reads the wrong path. Empty `base` means the checkout's history doesn't reach back 30 days (e.g. a shallow clone); run `git fetch --unshallow` before trusting the comparison.
   - **Open PRs** — this daemon's own unmerged bump PRs, which merged history cannot see: `gh pr list --state open --author 'app/charliecreates' --limit 100` (the same set counted against the 3-PR limit in Limits). Confirm against each candidate's `uv.lock` hunks (`gh pr diff <n>`) rather than trusting the title. A dependency bumped in one of them counts as bumped today — don't re-propose it.
 
 ## Limits
