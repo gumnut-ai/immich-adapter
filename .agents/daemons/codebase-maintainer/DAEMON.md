@@ -49,14 +49,20 @@ If any check fails, do not open the PR. Note the failure in an internal log entr
     ```bash
     pkg=${1:?usage: check-bump-cadence <package-name>}
     base=$(git rev-list -1 --before='30 days ago' HEAD)
-    [ -n "$base" ] || { echo "history does not reach back 30 days — run git fetch --unshallow"; exit 1; }
+    [ -n "$base" ] || { echo "no commit older than 30 days — unshallow the clone, or skip this check if the repo itself is younger"; exit 1; }
     oldlock=$(git show "${base}:uv.lock") || { echo "no uv.lock at ${base}"; exit 1; }
     locked() { grep -A1 "^name = \"$1\"\$" | sed -n 's/^version = "\(.*\)"/\1/p'; }
     now=$(locked "$pkg" < uv.lock)
     was=$(printf '%s\n' "$oldlock" | locked "$pkg")
+    [ -n "$now" ] || { echo "$pkg not in uv.lock — pass the name exactly as the lockfile spells it"; exit 1; }
+    if [ "$now" = "$was" ]; then
+      echo "$pkg unchanged at $now since ${base} — eligible"
+    else
+      echo "$pkg ${was:-absent} -> $now — bumped within 30 days, skip"; exit 2
+    fi
     ```
 
-    The versions differ → bumped inside the window, skip it. `was` empty while `now` is set means the package was added inside the window — also skip. Keep both guards: with an empty `base`, `git show ":uv.lock"` is valid syntax that reads the *index*, so every package would compare equal and the cap would pass everything while looking like it ran. Read `uv.lock`, not `pyproject.toml`: most bumps here are re-locks of transitive dependencies that `pyproject.toml` never declares, so a manifest-only check reports "never bumped" for exactly the packages that churn most. Compare versions rather than searching for commits that touched the package's lines: a `uv lock` run rewrites artifact metadata across the whole file without changing versions (commit `93d0241` appended `upload-time=` to every package's `sdist`/`wheels` lines while changing exactly one real version), so a commit-based check reads that as a bump for every package at once and suppresses the whole dependency set for a month. Reading the `name`/`version` fields also sidesteps PyPI's filename normalization — `$pkg` substitutes literally. Keep the braces in `"${base}:uv.lock"` — in zsh, `"$base:uv.lock"` parses `:u` as an upcase modifier and silently reads the wrong path.
+    Exit 2 means skip, 0 means eligible, 1 means the check could not tell — which is what the three guards buy. Each one covers a path that otherwise returns a plausible answer instead of failing: an empty `base` makes `git show ":uv.lock"` read the *index* (valid syntax), so every package compares equal and the cap passes everything while looking like it ran; and a name absent from `uv.lock` — a non-canonical spelling such as `pydantic_settings` — leaves both versions empty, which also compares equal. Read `uv.lock`, not `pyproject.toml`: most bumps here are re-locks of transitive dependencies that `pyproject.toml` never declares, so a manifest-only check reports "never bumped" for exactly the packages that churn most. Compare versions rather than searching for commits that touched the package's lines: a `uv lock` run rewrites artifact metadata across the whole file without changing versions (commit `93d0241` appended `upload-time=` to every package's `sdist`/`wheels` lines while changing exactly one real version), so a commit-based check reads that as a bump for every package at once and suppresses the whole dependency set for a month. Reading the `name`/`version` fields keeps the lookup on canonical names rather than PyPI's normalized filenames (`ua_parser-`), so pass the name exactly as `uv.lock` spells it. Keep the braces in `"${base}:uv.lock"` — in zsh, `"$base:uv.lock"` parses `:u` as an upcase modifier and silently reads the wrong path.
   - **Open PRs** — this daemon's own unmerged bump PRs, which merged history cannot see: `gh pr list --state open --author 'app/charliecreates' --limit 100`. That author also covers the `librarian` daemon's `docs:` PRs and this daemon's own cleanup PRs, so count only the ones whose diff touches `uv.lock` against the 3-PR dependency limit in Limits. Confirm against each candidate's `uv.lock` hunks (`gh pr diff <n>`) rather than trusting the title. A dependency bumped in one of them counts as bumped today — don't re-propose it.
 - Open a security-patch PR within 24 hours of an advisory affecting this repo.
 
