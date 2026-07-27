@@ -69,7 +69,7 @@ For mobile, OAuth providers that don't support custom URL schemes (e.g., `app.im
 3. Decrypts the JWT and creates a Gumnut SDK client authenticated with it
 4. Route handler uses the SDK client to make API calls
 5. On response, middleware checks for `x-new-access-token` header (backend JWT refresh)
-6. If present, updates the stored JWT in Redis — the client's session token remains unchanged
+6. If present, updates the stored JWT in Redis — the client's session token remains unchanged — and deletes the header from the outbound response, so the refreshed JWT never reaches the client
 
 **API-key clients (e.g. immich-go).** A request carrying an `x-api-key` header takes a separate, sessionless branch. The header value is a Gumnut API key (`apikey_...`) that the backend validates directly, so the middleware forwards it straight through as the SDK credential — it does **not** look up Redis, and there is no session token. Because there is no session, the JWT-refresh step (5–6) is a no-op for these requests: API keys are long-lived and non-refreshing, and the backend does not emit `x-new-access-token` for them. The `x-api-key` header is checked before the session-token sources above; Immich web (cookie) and mobile (Bearer / `x-immich-user-token`) never send it. Key *management* through the Immich API-keys endpoints remains stubbed — minting a Gumnut key requires a first-party browser session that the adapter's delegated OAuth token can't perform (see `docs/guides/importing-with-immich-go.md`).
 
@@ -101,8 +101,8 @@ Session storage is ~3KB per device, enabling horizontal scaling of the adapter.
 - **JWT refresh failure**: If the backend cannot refresh an expired JWT, the next request using that session returns 401. The client must re-authenticate via OAuth.
 
 **Related docs:**
-- `docs/design-docs/auth-design.md` — Full auth architecture and OAuth flow design
 - `docs/architecture/session-checkpoint-implementation.md` — Session and checkpoint storage details
+- `docs/design-docs/auth-design.md` (deprecated) — historical record of the session-token decision and the alternatives considered
 
 ## Data Translation Layer
 
@@ -294,6 +294,15 @@ Immich's trash flow is implemented end to end. The adapter preserves Immich's pu
 - `POST /api/trash/restore/assets`, `POST /api/trash/restore`, and `POST /api/trash/empty` are real implementations backed by the backend trash endpoints.
 - `GET /api/server/config` surfaces `trashDays` from `TRASH_RETENTION_DAYS`, so the web trash page shows the deployed retention period.
 
+### Returned counts are approximate
+
+`TrashResponseDto.count` is not a count of rows the backend actually transitioned — no backend trash endpoint returns one.
+
+- `POST /api/trash/restore/assets` returns `len(request.ids)`: the upstream restore endpoint answers `204` with no per-row count, and already-live ids are silently skipped backend-side.
+- `POST /api/trash/restore` and `POST /api/trash/empty` return the count of ids enumerated *before* mutating. A concurrent request that transitions some of those ids between enumeration and the chunked mutation makes the true count slightly smaller.
+
+**Enumerate before mutate.** Both restore-all and empty-trash call `_list_trashed_ids` to collect the full trashed id list before issuing any mutation (`routers/api/trash.py`). This is load-bearing, not incidental: the enumeration walks a cursor-paginated `state="trashed"` listing, and mutating mid-walk shrinks the result set out from under the cursor, making resumption ill-defined. The approximate count above is the price of that ordering.
+
 ### Trash-aware read paths
 
 - `GET /api/timeline/buckets` and `GET /api/timeline/bucket` pass `state="trashed"` when `isTrashed=true`.
@@ -307,8 +316,14 @@ Trash state travels through both client update channels:
 - The sync stream emits `SyncAssetV1.deletedAt` from `trashed_at`, and asset hydration uses `state="all"` so `asset_trashed` events do not disappear during fetch.
 - Socket.IO emits `on_asset_trash` / `on_asset_restore` with batched id arrays and reserves `on_asset_delete` for permanent deletes.
 
+### Remaining limitations
+
+- The trash router issues its restore and bulk-delete calls through `AsyncGumnut.post()` / `.delete()` rather than the typed SDK. The typed helpers now exist (`assets.trash`, `assets.restore`, `assets.delete_list`, `assets.empty_trash`), so this is an unmigrated leftover rather than an SDK gap — the router and its module docstring still describe the helpers as missing.
+- `trashDays` is a shared deploy-time environment-variable contract (`TRASH_RETENTION_DAYS`, documented in `.env.example` and the README), not a value the adapter discovers from the backend at runtime. Adapter and backend must be configured with the same number or the web trash page misreports the retention window.
+- Trash visibility on the search surface is partial. The criterion-less `POST /api/search/metadata` enumeration path honors `withDeleted` (widen to live + trashed) and `trashedAfter` (trashed-only, with the timestamp bound applied client-side). Criterion-bearing metadata searches route to `client.search.search`, which has no trash selector, and `trashedBefore` is treated as a restricting filter that keeps a request off the enumeration path entirely. `GET /api/search/large-assets` is a full stub, so it surfaces nothing at all.
+
 **Related docs:**
-- `docs/design-docs/trash-soft-delete-adapter.md` — detailed trash implementation record
+- `docs/design-docs/trash-soft-delete-adapter.md` (deprecated) — historical record of the trash decision and the backend capabilities it depended on
 
 ## Sync Protocol
 

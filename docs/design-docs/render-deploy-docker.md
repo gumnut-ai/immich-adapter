@@ -1,13 +1,18 @@
 ---
 title: "Render Deploy with Docker"
-status: completed
+status: deprecated
+superseded-by: ../references/uvicorn-settings.md
 created: 2025-10-23
-last-updated: 2026-07-11
+last-updated: 2026-07-27
 ---
 
 # Multi-Stage Docker Deployment Guide for Render
 
-> **Note —** Pruned 2026-07-11 to its stable historical context: the problem framing, the multi-stage-build rationale, the Render port-handling gotcha, the migration/rollback strategy, the Immich version-pinning trade-offs, and the cost/performance comparison. The full sample Dockerfile / `.dockerignore` / `render.yaml`, the step-by-step build/config/local-test how-tos, the version-bump command sequences, and the troubleshooting catalog were removed because they are now owned by the code and were drifting from the live build. For the current build, see the repository's `Dockerfile` and `.dockerignore`.
+> **Deprecated (2026-07-27):** This doc argued for moving the adapter's Render deploy from a native Python runtime to a multi-stage Docker build, which shipped. It does not describe the current build. The repository's `Dockerfile` (and `.dockerignore`) is the source of truth for how the image is built and what it runs; [`docs/references/code-practices.md`](../references/code-practices.md) § "Bumping the Immich Version" owns Immich version pinning and the CI sync check; and the Render `$PORT` / SSL-termination contract now lives in [`docs/references/uvicorn-settings.md`](../references/uvicorn-settings.md). This doc is retained for the decision rationale — the multi-stage-build reasoning, the native-vs-Docker comparison, and the migration/rollback strategy. It is no longer updated as the system changes.
+>
+> Pruned 2026-07-11 to its stable historical context: the problem framing, the multi-stage-build rationale, the migration/rollback strategy, the Immich version-pinning trade-offs, and the performance comparison. (The Render port-handling gotcha it also retained was extracted and removed in the 2026-07-27 pass below.) The full sample Dockerfile / `.dockerignore` / `render.yaml`, the step-by-step build/config/local-test how-tos, the version-bump command sequences, and the troubleshooting catalog were removed because they are now owned by the code and were drifting from the live build.
+>
+> Pruned again 2026-07-27: the dated Render price list, the "Current State (Native Python Runtime on Render)" description of a configuration that no longer exists, the completed "What Changes in Your Code?" migration how-to, and the Render port-handling section (extracted to `uvicorn-settings.md`). The claim that the Dockerfile tracks the `release` tag was corrected — it pins a version.
 
 ## Overview
 
@@ -42,7 +47,7 @@ Multi-stage builds allow you to use multiple `FROM` statements in a single Docke
 FROM ghcr.io/immich-app/immich-server:release AS immich
 
 # Stage 2: This is our actual app
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Copy ONLY the web files from Stage 1
 COPY --from=immich /build/www ./static/
@@ -50,45 +55,11 @@ COPY --from=immich /build/www ./static/
 
 The `--from=immich` flag tells Docker: "copy from the `immich` stage, not from the build context"
 
-## Important: Render Port Handling
-
-**Key Concept**: Render handles SSL/TLS termination and routing for you.
-
-- **Externally**: Your app is accessed via standard ports (80 for HTTP, 443 for HTTPS)
-- **Internally**: Render sets the `PORT` environment variable (typically `10000`)
-- **Your app**: Should bind to `0.0.0.0:$PORT` (NOT a specific port like 3001)
-
-**Flow:**
-
-```
-Internet → https://your-app.onrender.com:443
-         → Render Load Balancer (SSL termination)
-         → Your container at $PORT (e.g., 10000)
-```
-
-**What this means:**
-
-- Use `--port ${PORT:-8080}` in your CMD (environment variable with fallback)
-- Render sets `PORT` automatically (you don't need to configure it)
-- For local development, set `PORT=8080` or any port you prefer
-- Never hardcode port 3001 or any specific port in production Dockerfile
-
 ## Complete Implementation
 
 The multi-stage `Dockerfile` — three stages: extract Immich web files from `ghcr.io/immich-app/immich-server`, build the Python dependencies with `uv`, then assemble a slim non-root runtime that serves on `${PORT:-8080}` with a `/api/server/ping` health check — and its `.dockerignore` live at the repository root. See the repository's `Dockerfile` and `.dockerignore` for the current build.
 
 ## Migration from Native Runtime
-
-### Current State (Native Python Runtime on Render)
-
-Your current setup likely uses:
-
-- **Runtime**: Python 3.12
-- **Build Command**: `uv sync`
-- **Start Command**: `uv run uvicorn main:app --host 0.0.0.0 --port $PORT` or similar
-- **Static files**: Committed to repository or extracted separately
-
-**Note on Ports**: Render automatically sets the `PORT` environment variable (typically 10000 for web services). Your application should bind to `0.0.0.0:$PORT` and Render handles SSL termination and routing from standard ports (80/443) to your app.
 
 ### Migration Steps
 
@@ -111,27 +82,6 @@ Migrated to Docker deploy: add the `Dockerfile` and `.dockerignore`, test the im
    - Render keeps previous deployment
    - Can rollback via dashboard in seconds
 
-### What Changes in Your Code?
-
-**Good news: MINIMAL code changes required!**
-
-The Dockerfile handles:
-
-- Installing dependencies (via uv)
-- Copying static files (from Immich image)
-- Setting up the runtime environment
-
-Your application code (`main.py`, routers, etc.) requires **NO changes**:
-
-- `SPAStaticFiles(directory="static", html=True)` still works
-- Static files are at `./static/` in the container
-- All imports and paths remain the same
-
-**Only change needed:**
-
-- Remove committed `static/` files from repository (optional, saves space)
-- Update `.gitignore` to exclude `static/` directory
-
 ## Immich Version Management
 
 ### Version Tags
@@ -144,17 +94,7 @@ Immich provides these Docker tags:
 
 ### Pinning to Specific Version
 
-**Current Dockerfile uses `release` tag:**
-
-```docker
-FROM ghcr.io/immich-app/immich-server:release AS immich-source
-```
-
-**To pin to specific version:**
-
-```docker
-FROM ghcr.io/immich-app/immich-server:v1.95.1 AS immich-source
-```
+The pinned-version option is the one that shipped: the `Dockerfile` declares `ARG IMMICH_VERSION`, kept in sync with `.immich-container-tag` and enforced by a CI job. See [`docs/references/code-practices.md`](../references/code-practices.md) § "Bumping the Immich Version" for the current procedure. The trade-off analysis that led there:
 
 **Pros of `release` tag:**
 
@@ -190,28 +130,7 @@ FROM ghcr.io/immich-app/immich-server:release AS immich-source
 
 **Production:** pin to a specific `vX.Y.Z` tag so rebuilds are predictable, and bump it deliberately after testing each new Immich version.
 
-## Cost and Performance
-
-### Render Pricing (as of 2025)
-
-**Build Minutes:**
-
-- Free tier: 750 minutes/month
-- Paid: $0.008/minute
-
-**Estimated Monthly Build Cost:**
-
-- First build: 5 minutes = $0.04
-- 10 subsequent builds: 10 x 1.5 min = 15 min = $0.12
-- **Total: ~$0.15-0.20/month for builds**
-
-**Runtime:**
-
-- Starter plan: $7/month (512MB RAM, shared CPU)
-- Standard plan: $25/month (2GB RAM, shared CPU)
-- Pro plan: $85/month (4GB RAM, dedicated CPU)
-
-**Bandwidth:** Included (100GB/month on free, unlimited on paid)
+## Performance
 
 ### Performance Characteristics
 

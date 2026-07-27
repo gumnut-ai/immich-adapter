@@ -1,11 +1,16 @@
 ---
 title: "Updated Authentication Design"
-status: completed
+status: deprecated
+superseded-by: ../architecture/adapter-architecture.md
 created: 2025-12-06
-last-updated: 2026-06-11
+last-updated: 2026-07-27
 ---
 
 # Updated Authentication Design Document
+
+> **Deprecated (2026-07-27):** This doc proposed the session-token authentication architecture, which shipped. The living description of how adapter auth works today is [`docs/architecture/adapter-architecture.md`](../architecture/adapter-architecture.md) § "Authentication and Session Management", with the Redis-side detail in [`docs/architecture/session-checkpoint-implementation.md`](../architecture/session-checkpoint-implementation.md); this doc is retained for the decision rationale and trade-offs considered. It is no longer updated as the system changes, and the body has already drifted: it names backend endpoints (`/auth/auth-url`, `/auth/exchange`) that do not match the real `/api/oauth/*` paths, knows only two session-token sources where the middleware accepts three (cookie, `Authorization: Bearer`, and `x-immich-user-token`), and omits three OAuth routes that exist today (`/link`, `/unlink`, `/mobile-redirect`).
+>
+> Also pruned 2026-07-27: the "Adapter Architecture / Middleware-Based Token Handling" section (a file-path inventory and a generic benefits list — `adapter-architecture.md` owns the file map and request flow), "Flow 3: Token Refresh" (a restatement of Flow 2; its one novel line was folded into Flow 2's Key Points), and the Conclusion's "Key Benefits" list (a verbatim restatement of "Why Session Tokens").
 
 Date: 2025-12-05
 
@@ -141,7 +146,7 @@ For the complete Redis data model, including:
 - Checkpoint storage (tied to sessions)
 - User session indexes
 
-See the Redis data model documentation.
+See [`docs/references/session-checkpoint-reference.md`](../references/session-checkpoint-reference.md), which holds the field-level schema.
 
 ## Authentication Flows
 
@@ -279,22 +284,7 @@ User → Web/Mobile Client → Adapter Middleware → Backend → Gumnut API
 - All authorization logic in backend
 - **Token refresh is transparent to all clients** - session token is stable
 - Backend controls when to refresh tokens
-
-### Flow 3: Token Refresh (Backend Responsibility)
-
-Token refresh is **handled entirely by the backend** as part of normal API requests (Flow 2 above). The backend determines:
-
-- JWT expiration policy
-- When tokens should be refreshed (e.g., when < 5 minutes until expiration)
-- Whether to include `X-New-Access-Token` header in response
-
-The adapter middleware automatically handles the refresh response:
-
-- Updates stored JWT in Redis
-- Session token remains stable
-- Client is unaware of refresh
-
-No separate refresh endpoint needed - refresh happens during normal API requests.
+- No separate refresh endpoint needed - refresh happens during normal API requests
 
 ### Flow 4: Logout (Session Deletion)
 
@@ -324,64 +314,9 @@ User → Client → Adapter
 - Stored JWT is deleted from Redis
 - Client must re-authenticate to get a new session
 
-## Adapter Architecture
-
-### Middleware-Based Token Handling
-
-The adapter uses **FastAPI middleware** to handle session lookup and JWT management for all endpoints automatically.
-
-**Key Components:**
-
-1. **Auth Middleware** (`routers/middleware/auth_middleware.py`)
-   - Runs on every request/response
-   - Client type detection
-   - Session token extraction from cookies or headers
-   - Session lookup in Redis
-   - JWT retrieval and decryption
-   - Token refresh response handling (update stored JWT)
-
-2. **Session Store** (`services/session_store.py`)
-   - Redis-based session storage
-   - JWT encryption/decryption
-   - Session CRUD operations
-   - User session index management
-
-3. **Endpoint Handlers** (`routers/api/*.py`)
-   - No token handling code
-   - Simple forwarding to backend
-   - Unchanged by auth logic
-
-**Benefits:**
-
-- **Centralized logic**: All token handling in one place
-- **Zero endpoint changes**: Works with all existing and future endpoints
-- **Easy to test**: Test middleware independently
-- **Easy to maintain**: Single point of change for auth logic
-- **Checkpoint stability**: Session IDs are stable across JWT refreshes
-
-**Request Flow:**
-
-```
-Request → Middleware (extract session token, lookup JWT)
-  → Endpoint Handler (forward to backend) → Backend Response
-  → Middleware (handle JWT refresh, update stored JWT) → Response to Client
-```
-
-The middleware intercepts all requests before they reach endpoint handlers and all responses before they reach clients, providing a clean separation of concerns.
-
 ## Conclusion
 
 This design implements a **session token architecture** for OAuth authentication. The Immich Adapter manages session tokens and stores encrypted Gumnut JWTs, while the Gumnut Backend handles all OAuth validation, user management, and JWT operations.
-
-**Key Benefits:**
-
-- **Stable sessions**: Session tokens survive JWT refreshes
-- **Checkpoint support**: Sync checkpoints tied to stable session IDs
-- **Immediate revocation**: Delete session = revoke access instantly
-- **Security**: Raw JWTs never exposed to clients
-- **Immich compatible**: Conforms to Immich API without modification
-- **Transparent refresh**: Clients unaware of JWT refresh cycles
-- **Easy scaling**: Redis enables horizontal scaling
 
 **Trade-offs:**
 

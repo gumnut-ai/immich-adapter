@@ -1,14 +1,14 @@
 ---
 title: "Immich Authentication Architecture"
 status: deprecated
-superseded-by: auth-design.md
+superseded-by: ../architecture/adapter-architecture.md
 created: 2025-10-21
-last-updated: 2026-07-11
+last-updated: 2026-07-27
 ---
 
 # Immich Authentication Architecture
 
-> **Note —** Pruned 2026-07-11. This is a **deprecated** design for an abandoned *stateless-proxy* auth approach; the shipped design is the session-token architecture in [`auth-design.md`](auth-design.md). Retained here for historical context: the problem framing, the stateless-proxy decision, the architecture diagrams and component responsibilities, the authentication flows, the security-design rationale, and the appendix reasoning on OAuth client ownership and mobile Universal Links. Removed because it described an approach that never shipped this way: the per-endpoint request/response specs, the test-name lists, the backend JWT/state/user-provisioning implementation detail, the environment-variable and settings inventories, and the BAD/GOOD code samples — each reduced to its takeaway.
+> **Note —** Pruned 2026-07-11. This is a **deprecated** design for an abandoned *stateless-proxy* auth approach; what shipped instead is the session-token architecture described in [`docs/architecture/adapter-architecture.md`](../architecture/adapter-architecture.md) § "Authentication and Session Management" (its point-in-time decision record is the deprecated [`auth-design.md`](auth-design.md)). Retained here for historical context: the problem framing, the stateless-proxy decision, the architecture diagrams and component responsibilities, the authentication flows, the security-design rationale, and the appendix reasoning on OAuth client ownership and mobile Universal Links. Removed because it described an approach that never shipped this way: the per-endpoint request/response specs, the test-name lists, the backend JWT/state/user-provisioning implementation detail, the environment-variable and settings inventories, and the BAD/GOOD code samples — each reduced to its takeaway.
 
 ## Overview
 

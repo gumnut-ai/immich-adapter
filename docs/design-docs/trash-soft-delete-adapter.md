@@ -1,11 +1,16 @@
 ---
 title: "Trash: Soft-Delete with Retention (Adapter)"
-status: completed
+status: deprecated
+superseded-by: ../architecture/adapter-architecture.md
 created: 2026-04-20
-last-updated: 2026-07-21
+last-updated: 2026-07-27
 ---
 
 # Trash: Soft-Delete with Retention (Adapter)
+
+> **Deprecated (2026-07-27):** This doc proposed and recorded the adapter's trash/soft-delete flow, which shipped. The living description — `force` branching, the three trash routes, `trashDays`, trash-aware reads, sync/Socket.IO propagation, count semantics, the enumerate-before-mutate invariant, and the remaining limitations — is [`docs/architecture/adapter-architecture.md`](../architecture/adapter-architecture.md) § "Trash and Deletion Semantics". This doc is retained for the decision rationale and the backend capabilities the work depended on; it is no longer updated as the system changes. Its "Remaining limitations" list has already drifted: the typed SDK now *does* expose trash helpers (`assets.trash` / `assets.restore` / `assets.delete_list` / `assets.empty_trash`), and criterion-less `POST /api/search/metadata` now honors `withDeleted` and `trashedAfter`.
+>
+> Also pruned 2026-07-27: the § Verification test-file inventory table, which restated what a directory listing already shows.
 
 ## Context
 
@@ -71,14 +76,7 @@ The adapter and backend still need to agree on the same deploy-time `TRASH_RETEN
 
 ## Verification
 
-Key automated coverage for this area lives in:
-
-- `tests/unit/api/test_assets.py` — `DELETE /api/assets` soft-delete vs. hard-delete branching and WebSocket emission shape
-- `tests/unit/api/test_trash.py` — restore-by-ids, restore-all, empty-trash, chunking, and error handling
-- `tests/unit/api/test_timeline.py` — `isTrashed` bucket/count routing and per-asset trash flags
-- `tests/unit/api/sync/test_trash_propagation.py` — sync `deletedAt` propagation and `state="all"` hydration
-- `tests/unit/utils/test_asset_conversion.py` — `AssetResponseDto.isTrashed` and upload-ready `deletedAt`
-- `tests/integration/test_server_config.py` — `trashDays` default and env override
+The trash routes themselves are covered by `tests/unit/api/test_trash.py`. For the surrounding surfaces (delete branching, `isTrashed` reads, sync propagation, `trashDays`), grep the suite for `trashed`.
 
 ## Dependencies
 
