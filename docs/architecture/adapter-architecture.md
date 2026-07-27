@@ -69,7 +69,7 @@ For mobile, OAuth providers that don't support custom URL schemes (e.g., `app.im
 3. Decrypts the JWT and creates a Gumnut SDK client authenticated with it
 4. Route handler uses the SDK client to make API calls
 5. On response, middleware checks for `x-new-access-token` header (backend JWT refresh)
-6. If present, updates the stored JWT in Redis — the client's session token remains unchanged
+6. If present, updates the stored JWT in Redis — the client's session token remains unchanged — and deletes the header from the outbound response, so the refreshed JWT never reaches the client
 
 **API-key clients (e.g. immich-go).** A request carrying an `x-api-key` header takes a separate, sessionless branch. The header value is a Gumnut API key (`apikey_...`) that the backend validates directly, so the middleware forwards it straight through as the SDK credential — it does **not** look up Redis, and there is no session token. Because there is no session, the JWT-refresh step (5–6) is a no-op for these requests: API keys are long-lived and non-refreshing, and the backend does not emit `x-new-access-token` for them. The `x-api-key` header is checked before the session-token sources above; Immich web (cookie) and mobile (Bearer / `x-immich-user-token`) never send it. Key *management* through the Immich API-keys endpoints remains stubbed — minting a Gumnut key requires a first-party browser session that the adapter's delegated OAuth token can't perform (see `docs/guides/importing-with-immich-go.md`).
 
@@ -100,9 +100,54 @@ Session storage is ~3KB per device, enabling horizontal scaling of the adapter.
 - **Logout**: Deletes the Redis session key, clears cookies, emits `on_session_delete` WebSocket event to notify connected clients
 - **JWT refresh failure**: If the backend cannot refresh an expired JWT, the next request using that session returns 401. The client must re-authenticate via OAuth.
 
+### Wire-compatibility constraints
+
+These bind every adapter change, not just auth work. They follow from the adapter's purpose — being indistinguishable from an Immich server to an unmodified Immich client — so they are not expected to relax:
+
+- **The Immich clients cannot be modified.** Web and mobile are the upstream apps or light forks; nothing may require a client-side change to work.
+- **Endpoint signatures cannot change.** Request and response shapes must match Immich's OpenAPI spec, which is why `routers/immich_models.py` is generated from that spec rather than hand-written.
+- **No endpoints can be added.** Any Gumnut-specific need has to be expressed through an endpoint Immich already defines.
+- **Tokens handed to clients must be long-lived.** The Immich client treats its access token as persistent and has no refresh path, which is the reason the adapter mints a stable session token instead of forwarding the short-lived Gumnut JWT.
+
+When a Gumnut capability has no Immich-shaped home, the outcome is a stub or a translation compromise (see "Endpoint Implementation Status" and the search-filter discussion below), never a protocol extension.
+
+### Cookie security properties
+
+All auth cookies are minted in one place — `set_auth_cookies` in `routers/utils/cookies.py` — so the flags below hold for every path that authenticates a browser. Keep new auth endpoints going through that helper rather than calling `response.set_cookie` directly.
+
+- **`HttpOnly`** on `immich_access_token` and `immich_auth_type`. `immich_is_authenticated` is deliberately JS-readable so the web frontend can branch on it; it carries no credential.
+- **`Secure`** is protocol-aware, not hardcoded: the OAuth callback passes `request.url.scheme == "https"`, so deployed HTTPS traffic gets the flag while plain-HTTP local dev still works. It is not a value to "turn on" — it is already on wherever the scheme warrants it.
+- **`SameSite=Lax`**, blocking the cookie on cross-site subrequests.
+- **`Path=/`** comes from Starlette's default; **no `Domain` is set**, so the cookies are host-only to the adapter's own origin. Adding a parent `Domain` (e.g. a `.gumnut.ai` wildcard) to share the session across subdomains would expose the session token to every host under that domain, so it is a deliberate trade, not a convenience toggle.
+- **`Max-Age`** is 400 days (see "Session lifecycle" above). The cookie carries the *session token*, not the Gumnut JWT, so its lifetime is intentionally decoupled from JWT expiry; the Redis session TTL is what tracks the JWT.
+
+### CORS
+
+The adapter registers **no CORS middleware**. It serves the Immich web bundle from its own origin (`static/` mounted at `/` in `main.py`), so browser traffic is same-origin and there is nothing to allow. Any request arriving cross-origin today gets no CORS headers and is blocked by the browser.
+
+If CORS is ever introduced, `allow_credentials=True` must never be paired with `allow_origins=["*"]`. That pairing is not the harmless no-op it looks like: browsers reject a literal `*` alongside credentials, but Starlette's `CORSMiddleware` resolves the combination by echoing the request's own `Origin` back (`allow_all_origins and allow_credentials` → `allow_explicit_origin`), which is a wildcard that actually works. Because the session token rides in a cookie, that would let any origin issue credentialed `fetch()` calls and read authenticated responses. Enumerate exact origins instead.
+
+### Mobile OAuth callback interception (open gap)
+
+The mobile OAuth callback currently lands on `GET /api/oauth/mobile-redirect` — unauthenticated by design, and listed in `AuthMiddleware.UNAUTHENTICATED_PATHS` — which 302s to a **custom URL scheme** (`OAUTH_MOBILE_REDIRECT_URI`, default `app.immich:///oauth-callback`) with the provider's query string, including the authorization `code`, appended.
+
+Custom schemes carry no ownership verification. Registration is first-come-first-served on iOS and ambiguous on Android, where several installed apps may claim the same scheme, so any app on the device can register `app.immich://` and receive the authorization code.
+
+The hardening that removes this is an HTTPS redirect URI covered by **iOS Universal Links / Android App Links**. Their security property is OS-enforced domain verification: iOS honors the link only if an `apple-app-site-association` file naming the app's team ID is served from `/.well-known/` on that domain, and Android only if an `assetlinks.json` there carries the app signing certificate's SHA-256 fingerprint. An attacker who knows the `client_id` still cannot host those files on a domain they do not control, so the OS refuses to route the callback to their app.
+
+**This is not implemented.** The adapter serves no `apple-app-site-association` and no `assetlinks.json` — `routers/well_known.py` exposes only `/.well-known/immich`, and the extracted web bundle's `.well-known/` carries only upstream Immich's `security.txt`. Closing the gap requires publishing the team ID and signing fingerprint of a mobile build, which is a build-and-distribution decision rather than an adapter change: the "clients cannot be modified" constraint above means the adapter cannot vouch for an app whose signing identity it does not own. PKCE reduces the exposure in the meantime — the adapter forwards the client's `codeChallenge` to the backend when requesting the authorization URL — but it does not remove the interception itself.
+
+### OAuth client registration ownership
+
+The Clerk OAuth client credentials live on the **Gumnut API**, not the adapter. The backend holds the client id and secret, builds the authorization URL, and performs the code exchange; the adapter has no client id or secret in `config/settings.py` and reaches those operations through the SDK (`client.oauth.auth_url(...)` and the exchange call in `routers/api/oauth.py`).
+
+There is a standing argument that this is the wrong side of the boundary. `redirect_uri` is the mechanism that ties an authorization code back to a legitimate client, and the adapter's redirect URIs are adapter-specific — the web callback handed to `POST /api/oauth/authorize`, and the `/api/oauth/mobile-redirect` URL that `rewrite_redirect_uri` substitutes for the mobile scheme — while every other Gumnut OAuth client (MCP hosts, dynamically registered clients) has its own id and its own allowlist. Registering Immich as its own OAuth client, owning its id, secret, and redirect-URI allowlist, would make each client's allowlist independently verifiable instead of pooling adapter redirect URIs into a shared backend client. Doing so is a backend-side change; it is recorded here so the reasoning is not rediscovered from scratch.
+
+One product constraint shapes that work: Gumnut's own surfaces (dashboard, photos web, photos mobile) are first-party and should not show an OAuth consent screen — login and you are in — while genuinely third-party integrations should. Immich-on-Gumnut is first-party.
+
 **Related docs:**
-- `docs/design-docs/auth-design.md` — Full auth architecture and OAuth flow design
 - `docs/architecture/session-checkpoint-implementation.md` — Session and checkpoint storage details
+- `docs/design-docs/auth-design.md` (deprecated) — historical record of the session-token decision and the alternatives considered
 
 ## Data Translation Layer
 
@@ -294,6 +339,15 @@ Immich's trash flow is implemented end to end. The adapter preserves Immich's pu
 - `POST /api/trash/restore/assets`, `POST /api/trash/restore`, and `POST /api/trash/empty` are real implementations backed by the backend trash endpoints.
 - `GET /api/server/config` surfaces `trashDays` from `TRASH_RETENTION_DAYS`, so the web trash page shows the deployed retention period.
 
+### Returned counts are approximate
+
+`TrashResponseDto.count` is not a count of rows the backend actually transitioned — no backend trash endpoint returns one.
+
+- `POST /api/trash/restore/assets` returns `len(request.ids)`: the upstream restore endpoint answers `204` with no per-row count, and already-live ids are silently skipped backend-side.
+- `POST /api/trash/restore` and `POST /api/trash/empty` return the count of ids enumerated *before* mutating. A concurrent request that transitions some of those ids between enumeration and the chunked mutation makes the true count slightly smaller.
+
+**Enumerate before mutate.** Both restore-all and empty-trash call `_list_trashed_ids` to collect the full trashed id list before issuing any mutation (`routers/api/trash.py`). This is load-bearing, not incidental: the enumeration walks a cursor-paginated `state="trashed"` listing, and mutating mid-walk shrinks the result set out from under the cursor, making resumption ill-defined. The approximate count above is the price of that ordering.
+
 ### Trash-aware read paths
 
 - `GET /api/timeline/buckets` and `GET /api/timeline/bucket` pass `state="trashed"` when `isTrashed=true`.
@@ -307,8 +361,14 @@ Trash state travels through both client update channels:
 - The sync stream emits `SyncAssetV1.deletedAt` from `trashed_at`, and asset hydration uses `state="all"` so `asset_trashed` events do not disappear during fetch.
 - Socket.IO emits `on_asset_trash` / `on_asset_restore` with batched id arrays and reserves `on_asset_delete` for permanent deletes.
 
+### Remaining limitations
+
+- The trash router issues its restore and bulk-delete calls through `AsyncGumnut.post()` / `.delete()` rather than the typed SDK. The typed helpers now exist (`assets.trash`, `assets.restore`, `assets.delete_list`, `assets.empty_trash`), so this is an unmigrated leftover rather than an SDK gap — the router and its module docstring still describe the helpers as missing.
+- `trashDays` is a shared deploy-time environment-variable contract (`TRASH_RETENTION_DAYS`, documented in `.env.example` and the README), not a value the adapter discovers from the backend at runtime. Adapter and backend must be configured with the same number or the web trash page misreports the retention window.
+- Trash visibility on the search surface is partial. The criterion-less `POST /api/search/metadata` enumeration path honors `withDeleted` (widen to live + trashed) and `trashedAfter` (trashed-only, with the timestamp bound applied client-side). Criterion-bearing metadata searches route to `client.search.search`, which has no trash selector, and `trashedBefore` is treated as a restricting filter that keeps a request off the enumeration path entirely. `GET /api/search/large-assets` is a full stub, so it surfaces nothing at all.
+
 **Related docs:**
-- `docs/design-docs/trash-soft-delete-adapter.md` — detailed trash implementation record
+- `docs/design-docs/trash-soft-delete-adapter.md` (deprecated) — historical record of the trash decision and the backend capabilities it depended on
 
 ## Sync Protocol
 

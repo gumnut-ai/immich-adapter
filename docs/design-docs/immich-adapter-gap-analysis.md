@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-22
+last-updated: 2026-07-27
 ---
 
 # Immich Adapter Gap Analysis
@@ -120,7 +120,7 @@ Immich supports soft-delete with a configurable retention period. Trashed items 
 
 **Effort**: **M** — now shipped across delete flow, trash router, timeline/statistics, sync, WebSocket, and server config.
 
-**Recommendation**: **Closed** — detailed implementation notes now live in `docs/design-docs/trash-soft-delete-adapter.md`.
+**Recommendation**: **Closed** — detailed implementation notes now live in `docs/architecture/adapter-architecture.md` § "Trash and Deletion Semantics".
 
 ---
 
@@ -216,7 +216,7 @@ Immich detects duplicate photos using perceptual hashing and lets users resolve 
 
 **User impact**: **Low** — Duplicate detection is a background optimization feature. Most users don't actively manage duplicates unless prompted.
 
-**Dependency**: **Both** — Gumnut may handle deduplication differently (e.g., at upload time via checksums — see `docs/design-docs/checksum-support.md`). Surfacing duplicate candidates requires perceptual hash comparison in the backend.
+**Dependency**: **Both** — Gumnut may handle deduplication differently (e.g., at upload time via checksums — see `docs/references/code-practices.md` § "Outbound asset checksums"). Surfacing duplicate candidates requires perceptual hash comparison in the backend.
 
 **Effort**: **L** — Backend needs perceptual hashing (e.g., pHash), similarity matching, and a duplicate candidate API. Adapter translation is S.
 

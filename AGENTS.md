@@ -27,7 +27,7 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Adapter architecture | `docs/architecture/adapter-architecture.md` | Overall adapter design, auth, data translation, pagination, sync protocol, error handling, endpoint status |
+| Adapter architecture | `docs/architecture/adapter-architecture.md` | Overall adapter design, auth and session handling, trash/restore semantics, data translation, pagination, sync protocol, error handling, endpoint status |
 | Sync stream architecture | `docs/architecture/sync-stream-architecture.md` | Sync stream event processing, FK ordering, event classification, face/album handling, adding new sync type versions |
 | WebSocket implementation | `docs/architecture/websocket-implementation.md` | WebSocket connections, real-time sync, event handling |
 | Session & checkpoint implementation | `docs/architecture/session-checkpoint-implementation.md` | Session management, checkpoint tracking, sync state |
@@ -36,16 +36,15 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Immich auth architecture | `docs/design-docs/immich-auth-architecture.md` | Legacy auth design (deprecated, see auth-design.md) |
-| Authentication design | `docs/design-docs/auth-design.md` | Current auth architecture, OAuth, token handling |
+| Authentication design | `docs/design-docs/auth-design.md` | Historical: why session tokens replaced raw JWTs, and the constraints that forced it (deprecated — current auth is in `docs/architecture/adapter-architecture.md`) |
 | Static file sharing | `docs/design-docs/static-file-sharing.md` | File sharing proposals, static asset serving |
-| Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Docker deployment, Render configuration |
-| Checksum support | `docs/design-docs/checksum-support.md` | File integrity, checksum validation, deduplication |
+| Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Historical: why the adapter deploys as a multi-stage Docker image, and the pinned-vs-floating base-image trade-off (deprecated) |
+| Checksum support | `docs/design-docs/checksum-support.md` | Historical: why a dedicated SHA-1 column beat a side table (deprecated — current checksum rules are in `docs/references/code-practices.md`) |
 | Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Sync FK integrity, event ordering, face/person deletion issues |
 | Large upload timeout | `docs/design-docs/large-upload-timeout.md` | Streaming upload pipeline, large file upload failures, Immich client timeout limits |
 | Immich adapter gap analysis | `docs/design-docs/immich-adapter-gap-analysis.md` | Prioritizing adapter work, evaluating stub endpoints, assessing feature gaps |
 | Immich v3 API change analysis | `docs/design-docs/immich-v3-api-changes.md` | Planning an Immich 3.0 retarget, reviewing breaking API diffs, and scoping compatibility work |
-| Trash soft-delete (adapter) | `docs/design-docs/trash-soft-delete-adapter.md` | Adapter-side trash/restore/empty semantics, delete `force` mapping, `deletedAt` plumbing, WebSocket trash/restore events |
+| Trash soft-delete (adapter) | `docs/design-docs/trash-soft-delete-adapter.md` | Historical: the original adapter-side trash design record (deprecated — current trash/restore semantics are in `docs/architecture/adapter-architecture.md`) |
 
 ## Guides
 
@@ -59,9 +58,9 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Code practices | `docs/references/code-practices.md` | Python style, project conventions, endpoint patterns, error handling, testing, logging, PR practices |
+| Code practices | `docs/references/code-practices.md` | Python style, project conventions, endpoint patterns, checksum handling and deduplication, error handling, testing, logging, PR practices |
 | WebSocket events reference | `docs/references/websocket-events-reference.md` | WebSocket event types, payload formats |
 | Session & checkpoint reference | `docs/references/session-checkpoint-reference.md` | Session/checkpoint object shapes, field definitions |
 | Immich sync communication | `docs/references/immich-sync-communication.md` | Immich client-server sync protocol, message formats |
-| Uvicorn settings | `docs/references/uvicorn-settings.md` | Server configuration, worker settings, timeouts |
+| Uvicorn settings | `docs/references/uvicorn-settings.md` | Server configuration, worker settings, timeouts, the Render `$PORT` binding contract |
 | Development tools | `docs/references/development-tools.md` | Model generation, API compatibility, OpenAPI spec, Renovate automation |

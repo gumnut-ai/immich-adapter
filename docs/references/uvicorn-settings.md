@@ -1,6 +1,6 @@
 ---
 title: "Uvicorn Server Settings"
-last-updated: 2026-06-05
+last-updated: 2026-07-27
 ---
 
 # Uvicorn Server Settings Explained
@@ -26,6 +26,12 @@ uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level ${LOG_LEVEL} \
   --limit-concurrency ${LIMIT_CONCURRENCY:-200} \
   --backlog ${BACKLOG:-2048}
 ```
+
+### Binding: the Render `$PORT` contract
+
+Render terminates SSL and routes external 80/443 traffic to the container on the port it injects as the `PORT` environment variable. The process must therefore bind `0.0.0.0:$PORT` — hence `--host 0.0.0.0 --port ${PORT:-8080}` above, where the fallback covers local runs (Render always sets `PORT`, so the fallback never applies in production).
+
+**Never hardcode a port** in the CMD, the healthcheck, or `EXPOSE`. The `Dockerfile`'s `EXPOSE 8080` is documentation only and does not bind anything; its `HEALTHCHECK` likewise resolves `${PORT:-8080}` rather than a literal.
 
 ### Settings Summary
 

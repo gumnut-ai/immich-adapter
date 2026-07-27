@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-06-11
+last-updated: 2026-07-27
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -166,4 +166,4 @@ The adapter parses each ack string as `SyncEntityType|cursor|`.
 
 - [`docs/references/session-checkpoint-reference.md`](../references/session-checkpoint-reference.md) — field-level Redis schema reference
 - [`docs/architecture/sync-stream-architecture.md`](./sync-stream-architecture.md) — two-phase event streaming and foreign-key ordering
-- [`docs/design-docs/auth-design.md`](../design-docs/auth-design.md) — broader auth/session design rationale
+- [`docs/design-docs/auth-design.md`](../design-docs/auth-design.md) (deprecated) — broader auth/session design rationale
