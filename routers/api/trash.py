@@ -1,15 +1,21 @@
 """Trash router — restore-by-ids, restore-all, and empty-trash flows.
 
-Backed by the Gumnut API trash primitives:
+Backed by the Gumnut API trash primitives, reached through the SDK's typed
+asset methods:
 
-- ``POST /api/assets/restore`` — bulk restore by ids (idempotent on already-live).
-- ``DELETE /api/assets`` (bulk body) — bulk permanent delete by ids.
-- ``GET /api/assets?state=trashed`` — paginated trashed listing for the
+- ``assets.restore`` — bulk restore by ids (idempotent on already-live).
+- ``assets.delete_list`` — bulk permanent delete by ids.
+- ``assets.list(state="trashed")`` — paginated trashed listing for the
   restore-all and empty-trash flows.
 
-The SDK does not expose typed methods for these endpoints yet, so calls go
-through ``AsyncGumnut.post`` / ``.delete`` directly. Errors propagate to the
-global ``GumnutError`` handler.
+The Gumnut API caps a single bulk request at ``GUMNUT_API_MAX_BULK_IDS`` ids
+(422 over cap), so the flows below chunk their id lists. Errors propagate to
+the global ``GumnutError`` handler.
+
+The SDK's one-shot ``assets.empty_trash`` is deliberately unused: the
+empty-trash flow needs the enumerated id list to emit per-id delete events,
+and enumerating up front is load-bearing for cursor stability (see
+``_list_trashed_ids``).
 """
 
 from itertools import batched
@@ -50,22 +56,18 @@ async def empty_trash(
 ) -> TrashResponseDto:
     """Permanently delete every trashed asset belonging to the caller.
 
-    Enumerates the caller's trashed ids, then issues bulk
-    ``DELETE /api/assets`` calls in chunks. Emits one ``on_asset_delete`` per
-    purged id, matching Immich's wire shape (single-id-per-event for permanent
-    deletes). The returned count reflects the upfront enumerated id list;
-    between enumeration and the chunked deletes a concurrent request could
-    transition some ids, so the count can diverge slightly from rows actually
-    purged in this call. The bulk DELETE is idempotent on already-purged ids.
+    Enumerates the caller's trashed ids, then issues bulk ``assets.delete_list``
+    calls in chunks. Emits one ``on_asset_delete`` per purged id, matching
+    Immich's wire shape (single-id-per-event for permanent deletes). The
+    returned count reflects the upfront enumerated id list; between enumeration
+    and the chunked deletes a concurrent request could transition some ids, so
+    the count can diverge slightly from rows actually purged in this call. The
+    bulk delete is idempotent on already-purged ids.
     """
     user_id = str(current_user_id)
     trashed_gumnut_ids = await _list_trashed_ids(client)
     for chunk in batched(trashed_gumnut_ids, GUMNUT_API_MAX_BULK_IDS):
-        await client.delete(
-            "/api/assets",
-            body={"ids": list(chunk)},
-            cast_to=type(None),
-        )
+        await client.assets.delete_list(ids=list(chunk))
         await emit_user_event_per_id(
             WebSocketEvent.ASSET_DELETE,
             user_id,
@@ -81,22 +83,18 @@ async def restore_trash(
 ) -> TrashResponseDto:
     """Restore every trashed asset belonging to the caller.
 
-    Enumerates the caller's trashed ids, then issues bulk
-    ``POST /api/assets/restore`` calls in chunks. Emits a single batched
-    ``on_asset_restore`` event per chunk carrying the chunk's id array. The
-    returned count reflects the upfront enumerated id list; concurrent
-    transitions between enumeration and the chunked restores can make it
-    diverge slightly from rows actually restored in this call. The backend's
-    restore endpoint is idempotent on already-live ids.
+    Enumerates the caller's trashed ids, then issues bulk ``assets.restore``
+    calls in chunks. Emits a single batched ``on_asset_restore`` event per
+    chunk carrying the chunk's id array. The returned count reflects the
+    upfront enumerated id list; concurrent transitions between enumeration and
+    the chunked restores can make it diverge slightly from rows actually
+    restored in this call. The backend's restore endpoint is idempotent on
+    already-live ids.
     """
     user_id = str(current_user_id)
     trashed_gumnut_ids = await _list_trashed_ids(client)
     for chunk in batched(trashed_gumnut_ids, GUMNUT_API_MAX_BULK_IDS):
-        await client.post(
-            "/api/assets/restore",
-            body={"ids": list(chunk)},
-            cast_to=type(None),
-        )
+        await client.assets.restore(ids=list(chunk))
         chunk_uuid_strs = [str(safe_uuid_from_asset_id(gid)) for gid in chunk]
         await emit_user_event(
             WebSocketEvent.ASSET_RESTORE,
@@ -114,12 +112,12 @@ async def restore_assets(
 ) -> TrashResponseDto:
     """Restore the caller's trashed assets identified by the given ids.
 
-    Issues bulk ``POST /api/assets/restore`` calls in chunks of
+    Issues bulk ``assets.restore`` calls in chunks of
     ``GUMNUT_API_MAX_BULK_IDS``. Emits one batched ``on_asset_restore`` event
     per chunk. Already-live ids are silently skipped on the backend; the
     returned count therefore reflects the request size, not the number of
-    rows that actually transitioned (the backend's restore endpoint returns
-    204 with no count).
+    rows that actually transitioned (the backend's restore endpoint answers
+    with an empty acknowledgment body carrying no count).
     """
     if not request.ids:
         return TrashResponseDto(count=0)
@@ -127,11 +125,7 @@ async def restore_assets(
     user_id = str(current_user_id)
     for chunk in batched(request.ids, GUMNUT_API_MAX_BULK_IDS):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
-        await client.post(
-            "/api/assets/restore",
-            body={"ids": gumnut_ids},
-            cast_to=type(None),
-        )
+        await client.assets.restore(ids=gumnut_ids)
         chunk_uuid_strs = [str(uid) for uid in chunk]
         await emit_user_event(
             WebSocketEvent.ASSET_RESTORE,

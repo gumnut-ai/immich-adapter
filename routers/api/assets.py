@@ -972,12 +972,12 @@ async def delete_assets(
     """
     Delete multiple assets, branching on the Immich `force` flag.
 
-    - ``force=True`` permanently deletes via the backend's bulk
-      ``DELETE /api/assets`` endpoint. Emits one ``on_asset_delete`` per id —
-      Immich's wire shape is single-id-per-event for permanent deletes.
+    - ``force=True`` permanently deletes via the SDK's bulk
+      ``assets.delete_list``. Emits one ``on_asset_delete`` per id — Immich's
+      wire shape is single-id-per-event for permanent deletes.
     - ``force=False`` or absent (Immich's native default) soft-deletes via the
-      backend's ``POST /api/assets/trash`` endpoint. Emits a single batched
-      ``on_asset_trash`` event per chunk carrying the full id array.
+      SDK's bulk ``assets.trash``. Emits a single batched ``on_asset_trash``
+      event per chunk carrying the full id array.
 
     The backend bulk endpoints are idempotent — already-trashed or already-purged
     rows are skipped without erroring — so the previous per-id 404 swallowing
@@ -1003,11 +1003,7 @@ async def _bulk_permanent_delete(
     """Bulk hard-delete; emits one on_asset_delete per id."""
     for chunk in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
-        await client.delete(
-            "/api/assets",
-            body={"ids": gumnut_ids},
-            cast_to=type(None),
-        )
+        await client.assets.delete_list(ids=gumnut_ids)
         await emit_user_event_per_id(
             WebSocketEvent.ASSET_DELETE,
             user_id,
@@ -1023,11 +1019,7 @@ async def _bulk_trash(
     """Bulk soft-delete; emits one batched on_asset_trash per chunk."""
     for chunk in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
-        await client.post(
-            "/api/assets/trash",
-            body={"ids": gumnut_ids},
-            cast_to=type(None),
-        )
+        await client.assets.trash(ids=gumnut_ids)
         chunk_uuid_strs = [str(uid) for uid in chunk]
         await emit_user_event(
             WebSocketEvent.ASSET_TRASH,

@@ -343,10 +343,10 @@ Immich's trash flow is implemented end to end. The adapter preserves Immich's pu
 
 `TrashResponseDto.count` is not a count of rows the backend actually transitioned — no backend trash endpoint returns one.
 
-- `POST /api/trash/restore/assets` returns `len(request.ids)`: the upstream restore endpoint answers `204` with no per-row count, and already-live ids are silently skipped backend-side.
+- `POST /api/trash/restore/assets` returns `len(request.ids)`: the upstream restore endpoint answers with an empty acknowledgment body carrying no per-row count, and already-live ids are silently skipped backend-side.
 - `POST /api/trash/restore` and `POST /api/trash/empty` return the count of ids enumerated *before* mutating. A concurrent request that transitions some of those ids between enumeration and the chunked mutation makes the true count slightly smaller.
 
-**Enumerate before mutate.** Both restore-all and empty-trash call `_list_trashed_ids` to collect the full trashed id list before issuing any mutation (`routers/api/trash.py`). This is load-bearing, not incidental: the enumeration walks a cursor-paginated `state="trashed"` listing, and mutating mid-walk shrinks the result set out from under the cursor, making resumption ill-defined. The approximate count above is the price of that ordering.
+**Enumerate before mutate.** Both restore-all and empty-trash call `_list_trashed_ids` to collect the full trashed id list before issuing any mutation (`routers/api/trash.py`). This is load-bearing, not incidental: the enumeration walks a cursor-paginated `state="trashed"` listing, and mutating mid-walk shrinks the result set out from under the cursor, making resumption ill-defined. The approximate count above is the price of that ordering. The SDK's one-shot `assets.empty_trash` is deliberately unused for the same reason, plus one more — it purges without yielding the id list the flow needs for per-id delete events.
 
 ### Trash-aware read paths
 
@@ -363,7 +363,6 @@ Trash state travels through both client update channels:
 
 ### Remaining limitations
 
-- The trash router issues its restore and bulk-delete calls through `AsyncGumnut.post()` / `.delete()` rather than the typed SDK. The typed helpers now exist (`assets.trash`, `assets.restore`, `assets.delete_list`, `assets.empty_trash`), so this is an unmigrated leftover rather than an SDK gap — the router and its module docstring still describe the helpers as missing.
 - `trashDays` is a shared deploy-time environment-variable contract (`TRASH_RETENTION_DAYS`, documented in `.env.example` and the README), not a value the adapter discovers from the backend at runtime. Adapter and backend must be configured with the same number or the web trash page misreports the retention window.
 - Trash visibility on the search surface is partial. The criterion-less `POST /api/search/metadata` enumeration path honors `withDeleted` (widen to live + trashed) and `trashedAfter` (trashed-only, with the timestamp bound applied client-side). Criterion-bearing metadata searches route to `client.search.search`, which has no trash selector, and `trashedBefore` is treated as a restricting filter that keeps a request off the enumeration path entirely. `GET /api/search/large-assets` is a full stub, so it surfaces nothing at all.
 
