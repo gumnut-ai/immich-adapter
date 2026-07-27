@@ -372,7 +372,7 @@ If you write a *new* fan-out helper instead of using `gather_with_concurrency`, 
 
 ### Bulk-ID Endpoints
 
-For Gumnut API endpoints that accept bulk IDs (e.g., `POST /api/assets/trash`, `POST /api/assets/restore`, bulk `DELETE /api/assets`, and list filters with `ids=...`), chunk the request at `GUMNUT_API_MAX_BULK_IDS`. The constant in `routers/api/constants.py` is the source of truth for the current API cap:
+For Gumnut API endpoints that accept bulk IDs (e.g., `assets.trash`, `assets.restore`, `assets.delete_list`, and list filters with `ids=...`), chunk the request at `GUMNUT_API_MAX_BULK_IDS`. The SDK enforces the cap but does not chunk for you, so the loop is the caller's job. The constant in `routers/api/constants.py` is the source of truth for the current API cap:
 
 ```python
 from itertools import batched
@@ -380,7 +380,7 @@ from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 
 for chunk in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
     gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
-    await client.post("/api/assets/trash", body={"ids": gumnut_ids}, cast_to=type(None))
+    await client.assets.trash(ids=gumnut_ids)
 ```
 
 Backend bulk endpoints are idempotent on already-transitioned rows (e.g., `trash_assets` skips already-trashed ids; `restore_assets` skips already-live ids). **Don't add per-id 404 / NotFoundError swallowing for these flows** — let bulk failures (validation, transport, 5xx) propagate to the global `GumnutError` handler. The per-id-loop-with-NotFoundError pattern shown above under *Gumnut SDK Errors* applies to single-asset endpoints (e.g., `client.assets.delete(asset_id)`), not to the bulk variants.
@@ -395,14 +395,15 @@ Pin the no-swallow contract with a `test_*_propagates_sdk_error` test per bulk f
 
 Pin the chunking math with exact-boundary tests at `total = GUMNUT_API_MAX_BULK_IDS` (one chunk, no split) and `total = GUMNUT_API_MAX_BULK_IDS + 1` (two chunks, second is a single element) — these catch off-by-one regressions a future hand-rolled `if len(ids) > N` split would introduce. See the parametrized cases in `tests/unit/utils/test_bulk.py::test_splits_oversized_input_into_ordered_chunks` and `tests/unit/api/test_albums.py::test_*_chunks_large_request`.
 
-When the SDK doesn't yet expose a typed method for a backend endpoint (Stainless regenerates on a delay after each backend release), call the raw HTTP layer directly via `AsyncGumnut.post()` / `.delete()` with `cast_to=type(None)` for 204-returning endpoints:
+**Prefer typed SDK methods; the raw client is a stopgap.** When the SDK doesn't yet expose a typed method for a backend endpoint (Stainless regenerates on a delay after each backend release), call the raw HTTP layer directly via `AsyncGumnut.post()` / `.delete()` with `cast_to=type(None)` for endpoints that return no useful body:
 
 ```python
-await client.post("/api/assets/trash", body={"ids": gumnut_ids}, cast_to=type(None))
-await client.delete("/api/assets", body={"ids": gumnut_ids}, cast_to=type(None))
+await client.post("/api/some-new-endpoint", body={"ids": gumnut_ids}, cast_to=type(None))
 ```
 
 `AsyncGumnut` extends `AsyncAPIClient`, whose `.post()` / `.delete()` methods are public, route through the same JWT auth, retry, and response-hook plumbing as the typed methods, and surface the same `GumnutError` hierarchy. Don't import from `gumnut._types` — `cast_to=type(None)` works without it.
+
+Treat every such call site as temporary. The gap it works around closes silently on the next SDK bump, and nothing fails to tell you — a raw call keeps working indefinitely, so the workaround outlives its cause and its comment turns into a false claim that discourages the cleanup. When you touch a raw call site, or bump `gumnut-sdk`, check whether the typed method has landed and migrate if so. Don't write the reason as "the SDK doesn't have this *yet*" in a docstring that no one will revisit; if a comment must explain the raw call, point at what to re-check rather than asserting a fact about the SDK that expires.
 
 ### WebSocket Emission
 
