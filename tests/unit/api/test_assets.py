@@ -2463,7 +2463,7 @@ class TestDeleteAssets:
 
     @pytest.mark.anyio
     async def test_delete_assets_force_true_chunks_and_emits_per_id(self):
-        """force=True over the cap chunks bulk DELETE and emits one event per id."""
+        """force=True over the cap chunks the permanent-delete call, one event per id."""
         mock_client = Mock()
         mock_client.assets.delete_list = AsyncMock(return_value=None)
 

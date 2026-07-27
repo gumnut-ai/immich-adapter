@@ -372,7 +372,7 @@ If you write a *new* fan-out helper instead of using `gather_with_concurrency`, 
 
 ### Bulk-ID Endpoints
 
-For Gumnut API endpoints that accept bulk IDs (e.g., `assets.trash`, `assets.restore`, `assets.delete_list`, and list filters with `ids=...`), chunk the request at `GUMNUT_API_MAX_BULK_IDS`. The SDK enforces the cap but does not chunk for you, so the loop is the caller's job. The constant in `routers/api/constants.py` is the source of truth for the current API cap:
+For Gumnut API endpoints that accept bulk IDs (e.g., `assets.trash`, `assets.restore`, `assets.delete_list`, and list filters with `ids=...`), chunk the request at `GUMNUT_API_MAX_BULK_IDS`. The Gumnut API rejects over-cap requests with a 422, and neither the API nor the SDK chunks for you, so the loop is the caller's job. The constant in `routers/api/constants.py` is the source of truth for the current API cap:
 
 ```python
 from itertools import batched
@@ -403,7 +403,7 @@ await client.post("/api/some-new-endpoint", body={"ids": gumnut_ids}, cast_to=ty
 
 `AsyncGumnut` extends `AsyncAPIClient`, whose `.post()` / `.delete()` methods are public, route through the same JWT auth, retry, and response-hook plumbing as the typed methods, and surface the same `GumnutError` hierarchy. Don't import from `gumnut._types` — `cast_to=type(None)` works without it.
 
-Treat every such call site as temporary. The gap it works around closes silently on the next SDK bump, and nothing fails to tell you — a raw call keeps working indefinitely, so the workaround outlives its cause and its comment turns into a false claim that discourages the cleanup. When you touch a raw call site, or bump `gumnut-sdk`, check whether the typed method has landed and migrate if so. Don't write the reason as "the SDK doesn't have this *yet*" in a docstring that no one will revisit; if a comment must explain the raw call, point at what to re-check rather than asserting a fact about the SDK that expires.
+The gap a raw call works around closes silently on the next SDK bump — nothing fails to tell you. So: (1) when you touch a raw call site or bump `gumnut-sdk`, check whether the typed method has landed and migrate if so; (2) if a comment must explain the raw call, point at what to re-check rather than asserting the SDK lacks the method — that claim expires.
 
 ### WebSocket Emission
 

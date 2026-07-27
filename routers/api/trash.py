@@ -8,9 +8,9 @@ asset methods:
 - ``assets.list(state="trashed")`` — paginated trashed listing for the
   restore-all and empty-trash flows.
 
-Each bulk method caps a single request at ``GUMNUT_API_MAX_BULK_IDS`` ids, so
-the flows below chunk their id lists. Errors propagate to the global
-``GumnutError`` handler.
+The Gumnut API caps a single bulk request at ``GUMNUT_API_MAX_BULK_IDS`` ids
+(422 over cap), so the flows below chunk their id lists. Errors propagate to
+the global ``GumnutError`` handler.
 
 The SDK's one-shot ``assets.empty_trash`` is deliberately unused: the
 empty-trash flow needs the enumerated id list to emit per-id delete events,
