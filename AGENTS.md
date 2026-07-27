@@ -21,7 +21,9 @@ Run from the `immich-adapter/` directory:
 
 This file is a concise quick-reference. Detailed content belongs in the appropriate `docs/` subdirectory, not here. Add new topics to the table below and create a corresponding doc file.
 
-Detailed docs live in subdirectories: `docs/architecture/` (system architecture), `docs/design-docs/` (design decisions with status frontmatter), `docs/references/` (coding patterns, conventions), `docs/guides/` (setup and workflow guides). Consult these when working in the relevant areas:
+Detailed docs live in subdirectories: `docs/architecture/` (system architecture), `docs/references/` (coding patterns, conventions), `docs/guides/` (setup and workflow guides), `docs/design-docs/` (design decisions with status frontmatter). Consult these when working in the relevant areas.
+
+The sections below follow that order, with design docs split by their `status:` frontmatter: `proposed` or `active` under Active Design Docs, `completed` or `deprecated` under Historical & Deprecated Design Docs. Reclassifying a design doc moves its row — a retired doc still listed as active sends readers to a frozen answer.
 
 ## Architecture
 
@@ -31,28 +33,6 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 | Sync stream architecture | `docs/architecture/sync-stream-architecture.md` | Sync stream event processing, FK ordering, event classification, face/album handling, adding new sync type versions |
 | WebSocket implementation | `docs/architecture/websocket-implementation.md` | WebSocket connections, real-time sync, event handling |
 | Session & checkpoint implementation | `docs/architecture/session-checkpoint-implementation.md` | Session management, checkpoint tracking, sync state |
-
-## Design Docs
-
-| Topic | Document | Consult when... |
-|-------|----------|-----------------|
-| Authentication design | `docs/design-docs/auth-design.md` | Historical: why session tokens replaced raw JWTs, and the constraints that forced it (deprecated — current auth is in `docs/architecture/adapter-architecture.md`) |
-| Static file sharing | `docs/design-docs/static-file-sharing.md` | File sharing proposals, static asset serving |
-| Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Historical: why the adapter deploys as a multi-stage Docker image, and the pinned-vs-floating base-image trade-off (deprecated) |
-| Checksum support | `docs/design-docs/checksum-support.md` | Historical: why a dedicated SHA-1 column beat a side table (deprecated — current checksum rules are in `docs/references/code-practices.md`) |
-| Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Sync FK integrity, event ordering, face/person deletion issues |
-| Large upload timeout | `docs/design-docs/large-upload-timeout.md` | Streaming upload pipeline, large file upload failures, Immich client timeout limits |
-| Immich adapter gap analysis | `docs/design-docs/immich-adapter-gap-analysis.md` | Prioritizing adapter work, evaluating stub endpoints, assessing feature gaps |
-| Immich v3 API change analysis | `docs/design-docs/immich-v3-api-changes.md` | Planning an Immich 3.0 retarget, reviewing breaking API diffs, and scoping compatibility work |
-| Trash soft-delete (adapter) | `docs/design-docs/trash-soft-delete-adapter.md` | Historical: the original adapter-side trash design record (deprecated — current trash/restore semantics are in `docs/architecture/adapter-architecture.md`) |
-
-## Guides
-
-| Topic | Document | Consult when... |
-|-------|----------|-----------------|
-| Running with Immich Web | `docs/guides/running-with-immich-web.md` | Setting up the full local stack (Immich web + adapter + the Gumnut API + Clerk OAuth) |
-| Running with Immich Mobile | `docs/guides/running-with-immich-mobile.md` | Self-signed certs, HTTPS setup, connecting the Immich mobile app |
-| Importing with immich-go | `docs/guides/importing-with-immich-go.md` | Bulk-importing a library with the immich-go CLI, `x-api-key` auth via a Gumnut API key |
 
 ## References
 
@@ -64,3 +44,32 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 | Immich sync communication | `docs/references/immich-sync-communication.md` | Immich client-server sync protocol, message formats |
 | Uvicorn settings | `docs/references/uvicorn-settings.md` | Server configuration, worker settings, timeouts, the Render `$PORT` binding contract |
 | Development tools | `docs/references/development-tools.md` | Model generation, API compatibility, OpenAPI spec, Renovate automation |
+
+## Guides
+
+| Topic | Document | Consult when... |
+|-------|----------|-----------------|
+| Running with Immich Web | `docs/guides/running-with-immich-web.md` | Setting up the full local stack (Immich web + adapter + the Gumnut API + Clerk OAuth) |
+| Running with Immich Mobile | `docs/guides/running-with-immich-mobile.md` | Self-signed certs, HTTPS setup, connecting the Immich mobile app |
+| Importing with immich-go | `docs/guides/importing-with-immich-go.md` | Bulk-importing a library with the immich-go CLI, `x-api-key` auth via a Gumnut API key |
+
+## Active Design Docs
+
+| Topic | Document | Consult when... |
+|-------|----------|-----------------|
+| Static file sharing | `docs/design-docs/static-file-sharing.md` | File sharing proposals, static asset serving |
+| Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Sync FK integrity, event ordering, face/person deletion issues |
+| Large upload timeout | `docs/design-docs/large-upload-timeout.md` | Streaming upload pipeline, large file upload failures, Immich client timeout limits |
+| Immich adapter gap analysis | `docs/design-docs/immich-adapter-gap-analysis.md` | Prioritizing adapter work, evaluating stub endpoints, assessing feature gaps |
+| Immich v3 API change analysis | `docs/design-docs/immich-v3-api-changes.md` | Planning an Immich 3.0 retarget, reviewing breaking API diffs, and scoping compatibility work |
+
+## Historical & Deprecated Design Docs
+
+Decision records, not descriptions of the running system — consult them for *why* something was chosen, never for how it works today.
+
+| Topic | Document | Consult when... |
+|-------|----------|-----------------|
+| Authentication design | `docs/design-docs/auth-design.md` | Why session tokens replaced raw JWTs, and the constraints that forced it — current auth is in `docs/architecture/adapter-architecture.md` |
+| Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Why the adapter deploys as a multi-stage Docker image, and the pinned-vs-floating base-image trade-off |
+| Checksum support | `docs/design-docs/checksum-support.md` | Why a dedicated SHA-1 column beat a side table — current checksum rules are in `docs/references/code-practices.md` |
+| Trash soft-delete (adapter) | `docs/design-docs/trash-soft-delete-adapter.md` | The original adapter-side trash design record — current trash/restore semantics are in `docs/architecture/adapter-architecture.md` |
