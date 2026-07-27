@@ -1838,7 +1838,11 @@ class TestCameraAndPlaceFilters:
     async def test_blank_and_whitespace_only_values_are_ignored(
         self, mock_current_user
     ):
-        """Immich web sends "" for a cleared filter box, not omitting the key."""
+        """Blanks must drop out rather than contribute a stray separator.
+
+        Immich web itself maps a cleared box to null, but immich-go, scripts,
+        and hand-built `?query={…}` URLs can all carry blanks.
+        """
         client = self._mock_client()
         request = MetadataSearchDto(description="  beach  ", make="", city="   ")
 

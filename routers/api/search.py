@@ -273,11 +273,9 @@ _ENUMERATION_HONORABLE_FIELDS = frozenset(
 )
 
 
-# Immich exposes these as typed filters; the Gumnut API has no equivalent
-# parameter for any of them. All six are indexed in its full-text metadata
-# corpus, so folding their values into the free-text query is what makes them
-# count for anything. Order is stable so a given request always produces the
-# same query string, which keeps tests and cached results deterministic.
+# The Gumnut API has no typed parameter for any of these, but all six are
+# indexed in its full-text metadata corpus — which is the only reason folding
+# them into the query accomplishes anything at all.
 _FREE_TEXT_FILTER_FIELDS = ("make", "model", "lensModel", "city", "state", "country")
 
 
@@ -286,29 +284,44 @@ def _compose_free_text_query(
 ) -> str | None:
     """Fold Immich's camera and place filters into the free-text query.
 
-    **These become ranking signals, not filters.** Immich's UI presents make /
-    model / lens / city / state / country as hard filters, and a caller who
-    picks "Canon" reasonably expects only Canon assets. What they get is a
-    search where "Canon" contributes to relevance, so lower-ranked non-Canon
-    assets still appear. That is a deliberate approximation, and the reason it
-    is worth making is that the alternative is worse in both directions: a
-    request carrying only these fields currently reaches the Gumnut API with no
-    criterion at all and fails with a 400, and one that also carries free text
-    silently drops them.
+    **These become ranking signals, not filters**, and the two request shapes
+    pay for that differently.
+
+    *Filters only, no text.* A strict win. Immich's Explore and Places pages
+    and its asset detail panel all link to searches carrying only these fields;
+    every one of them reaches the Gumnut API with no criterion at all and fails
+    with a 400 today. Folding turns each into a working search.
+
+    *Filters plus text.* A real trade, and it can lose correct matches rather
+    than merely admit wrong ones. The terms are OR-ed against the caller's
+    text, not intersected with it, and retrieval is capped at a fixed candidate
+    count — so searching "beach" with `make=Canon` against a library of
+    thousands of Canon photos and a handful of beach photos lets the camera
+    term crowd the beach matches down or out. Before this fold that request
+    searched "beach" cleanly and ignored the camera filter. Shipping it anyway
+    is a deliberate call: the filters-only shape is the one clients actually
+    generate, since the search modal's camera and location pickers are
+    unusable against this adapter (they populate from `/search/suggestions`,
+    which is a stub).
+
+    The same fold can also change the *question*: `originalFileName`, `ocr`,
+    and `originalPath` are not read here or anywhere, so a filename search
+    combined with a camera filter now returns plausible-looking camera results
+    instead of failing visibly.
 
     Exact filtering needs a typed parameter on the Gumnut API; until that
-    exists, this is the closest honest approximation.
+    exists, this is the closest approximation available.
 
     Returns ``None`` when nothing is populated, preserving the existing
     no-criterion behavior for callers that supply neither text nor filters.
     """
-    values = (
-        text,
-        *(getattr(request, field, None) for field in _FREE_TEXT_FILTER_FIELDS),
-    )
-    # Immich web sends "" for a cleared filter box rather than omitting the
-    # key, so blank and whitespace-only values must drop out rather than
-    # contribute a stray separator.
+    # No getattr default: both DTOs declare all six fields, and these models are
+    # generated from Immich's OpenAPI spec. A rename on a version bump should
+    # fail loudly here rather than silently stop forwarding the term.
+    values = (text, *(getattr(request, field) for field in _FREE_TEXT_FILTER_FIELDS))
+    # Blank and whitespace-only values drop out rather than contribute a stray
+    # separator. Immich web itself maps a cleared box to null, but immich-go,
+    # scripts, and hand-built `?query={…}` URLs can all carry blanks.
     terms = [stripped for value in values if value and (stripped := value.strip())]
     return " ".join(terms) or None
 
