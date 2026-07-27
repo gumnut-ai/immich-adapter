@@ -273,6 +273,46 @@ _ENUMERATION_HONORABLE_FIELDS = frozenset(
 )
 
 
+# Immich exposes these as typed filters; the Gumnut API has no equivalent
+# parameter for any of them. All six are indexed in its full-text metadata
+# corpus, so folding their values into the free-text query is what makes them
+# count for anything. Order is stable so a given request always produces the
+# same query string, which keeps tests and cached results deterministic.
+_FREE_TEXT_FILTER_FIELDS = ("make", "model", "lensModel", "city", "state", "country")
+
+
+def _compose_free_text_query(
+    text: str | None, request: MetadataSearchDto | SmartSearchDto
+) -> str | None:
+    """Fold Immich's camera and place filters into the free-text query.
+
+    **These become ranking signals, not filters.** Immich's UI presents make /
+    model / lens / city / state / country as hard filters, and a caller who
+    picks "Canon" reasonably expects only Canon assets. What they get is a
+    search where "Canon" contributes to relevance, so lower-ranked non-Canon
+    assets still appear. That is a deliberate approximation, and the reason it
+    is worth making is that the alternative is worse in both directions: a
+    request carrying only these fields currently reaches the Gumnut API with no
+    criterion at all and fails with a 400, and one that also carries free text
+    silently drops them.
+
+    Exact filtering needs a typed parameter on the Gumnut API; until that
+    exists, this is the closest honest approximation.
+
+    Returns ``None`` when nothing is populated, preserving the existing
+    no-criterion behavior for callers that supply neither text nor filters.
+    """
+    values = (
+        text,
+        *(getattr(request, field, None) for field in _FREE_TEXT_FILTER_FIELDS),
+    )
+    # Immich web sends "" for a cleared filter box rather than omitting the
+    # key, so blank and whitespace-only values must drop out rather than
+    # contribute a stray separator.
+    terms = [stripped for value in values if value and (stripped := value.strip())]
+    return " ".join(terms) or None
+
+
 def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
     """True when a metadata search is a filter-less asset-listing walk.
 
@@ -408,7 +448,12 @@ async def search_assets(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> SearchResponseDto:
-    """Search for assets by metadata filters."""
+    """Search for assets by metadata filters.
+
+    Camera and place filters (make / model / lens / city / state / country) are
+    folded into the free-text query rather than applied as filters — see
+    `_compose_free_text_query` for what that costs.
+    """
     if _is_criterion_less_enumeration(request):
         return await _list_asset_page(request, client, current_user)
 
@@ -417,7 +462,7 @@ async def search_assets(
         person_ids = [uuid_to_gumnut_person_id(pid) for pid in request.personIds]
 
     search_kwargs: dict[str, Any] = {
-        "query": request.description,
+        "query": _compose_free_text_query(request.description, request),
         # These map to the Gumnut API's local_datetime bounds by deliberate
         # translation, not identity, and web sends them in the keepLocalTime
         # wire format so its offset is fictitious (both: see code practices,
@@ -467,8 +512,15 @@ async def search_smart(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> SearchResponseDto:
-    """Smart search for assets."""
-    search_kwargs: dict[str, Any] = {"query": request.query, "include": ASSET_INCLUDE}
+    """Smart search for assets.
+
+    Camera and place filters are folded into the query alongside the caller's
+    text — see `_compose_free_text_query` for what that costs.
+    """
+    search_kwargs: dict[str, Any] = {
+        "query": _compose_free_text_query(request.query, request),
+        "include": ASSET_INCLUDE,
+    }
     if request.size is not None:
         # Clamp at the Gumnut API per-page ceiling. The Immich client default
         # is 1000; without this, the Gumnut API 422s.

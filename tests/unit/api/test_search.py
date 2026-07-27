@@ -1724,3 +1724,174 @@ class TestSearchRandom:
                 client=mock_client,
                 current_user=mock_current_user,
             )
+
+
+class TestCameraAndPlaceFilters:
+    """Immich's camera/place filters folded into the free-text query.
+
+    The Gumnut API has no typed parameter for make / model / lens / city /
+    state / country, but its full-text metadata corpus indexes all six. These
+    pin the approximation: the terms reach the query, and — importantly — the
+    two failure modes they replace stay fixed.
+    """
+
+    @staticmethod
+    def _mock_client():
+        search_response = Mock()
+        search_response.data = []
+        client = Mock()
+        client.search.search = AsyncMock(return_value=search_response)
+        return client
+
+    def _query_for(self, client) -> str | None:
+        return client.search.search.call_args.kwargs["query"]
+
+    @pytest.mark.anyio
+    async def test_camera_only_search_reaches_the_api_with_a_query(
+        self, mock_current_user
+    ):
+        """Previously a 400: no criterion reached the Gumnut API at all.
+
+        A camera-only request is not a criterion-less enumeration, so it takes
+        the search path — where every argument used to be None.
+        """
+        client = self._mock_client()
+        request = MetadataSearchDto(make="Canon")
+
+        await search_assets(
+            request=request, client=client, current_user=mock_current_user
+        )
+
+        assert self._query_for(client) == "Canon"
+
+    @pytest.mark.anyio
+    async def test_place_only_search_reaches_the_api_with_a_query(
+        self, mock_current_user
+    ):
+        client = self._mock_client()
+        request = MetadataSearchDto(city="Paris", country="France")
+
+        await search_assets(
+            request=request, client=client, current_user=mock_current_user
+        )
+
+        assert self._query_for(client) == "Paris France"
+
+    @pytest.mark.anyio
+    async def test_filters_are_appended_to_caller_text_not_replacing_it(
+        self, mock_current_user
+    ):
+        """Previously the filters were silently dropped and only text searched."""
+        client = self._mock_client()
+        request = MetadataSearchDto(description="beach", make="Canon", city="Paris")
+
+        await search_assets(
+            request=request, client=client, current_user=mock_current_user
+        )
+
+        assert self._query_for(client) == "beach Canon Paris"
+
+    @pytest.mark.anyio
+    async def test_all_six_fields_are_folded_in_declared_order(self, mock_current_user):
+        """Every field in _FREE_TEXT_FILTER_FIELDS must actually be read.
+
+        Asserting the whole string in order means dropping one — or reordering
+        the tuple — fails here rather than silently narrowing what the adapter
+        forwards.
+        """
+        client = self._mock_client()
+        request = MetadataSearchDto(
+            make="Canon",
+            model="EOS 5D",
+            lensModel="EF 24-70mm",
+            city="Paris",
+            state="Ile-de-France",
+            country="France",
+        )
+
+        await search_assets(
+            request=request, client=client, current_user=mock_current_user
+        )
+
+        assert self._query_for(client) == (
+            "Canon EOS 5D EF 24-70mm Paris Ile-de-France France"
+        )
+
+    @pytest.mark.anyio
+    async def test_query_stays_none_when_nothing_is_populated(self, mock_current_user):
+        """A request with only non-text criteria must not gain an empty query.
+
+        Sending "" instead of None would turn "no text criterion" into a
+        full-text search for nothing, which the Gumnut API treats differently.
+        """
+        client = self._mock_client()
+        person_id = uuid4()
+        request = MetadataSearchDto(personIds=[person_id])
+
+        await search_assets(
+            request=request, client=client, current_user=mock_current_user
+        )
+
+        assert self._query_for(client) is None
+
+    @pytest.mark.anyio
+    async def test_blank_and_whitespace_only_values_are_ignored(
+        self, mock_current_user
+    ):
+        """Immich web sends "" for a cleared filter box, not omitting the key."""
+        client = self._mock_client()
+        request = MetadataSearchDto(description="  beach  ", make="", city="   ")
+
+        await search_assets(
+            request=request, client=client, current_user=mock_current_user
+        )
+
+        assert self._query_for(client) == "beach"
+
+    @pytest.mark.anyio
+    async def test_smart_search_folds_filters_alongside_its_query(
+        self, mock_current_user
+    ):
+        client = self._mock_client()
+        request = SmartSearchDto(query="sunset", make="Nikon", country="Japan")
+
+        await search_smart(
+            request=request, client=client, current_user=mock_current_user
+        )
+
+        assert self._query_for(client) == "sunset Nikon Japan"
+
+    @pytest.mark.anyio
+    async def test_smart_search_camera_only_reaches_the_api_with_a_query(
+        self, mock_current_user
+    ):
+        """SmartSearchDto.query is optional, so this was a 400 too."""
+        client = self._mock_client()
+        request = SmartSearchDto(make="Nikon")
+
+        await search_smart(
+            request=request, client=client, current_user=mock_current_user
+        )
+
+        assert self._query_for(client) == "Nikon"
+
+    @pytest.mark.anyio
+    async def test_camera_filter_does_not_become_a_criterion_less_enumeration(
+        self, mock_current_user
+    ):
+        """A camera-only request must keep taking the search path.
+
+        If these fields were ever added to _ENUMERATION_HONORABLE_FIELDS, this
+        request would be treated as an unfiltered library walk and return
+        everything — the failure mode that gate exists to prevent.
+        """
+        client = self._mock_client()
+        client.assets.list = Mock()
+        request = MetadataSearchDto(make="Canon")
+
+        await search_assets(
+            request=request, client=client, current_user=mock_current_user
+        )
+
+        client.search.search.assert_called_once()
+        client.assets.list.assert_not_called()
