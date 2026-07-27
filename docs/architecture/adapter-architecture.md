@@ -346,8 +346,7 @@ Immich's trash flow is implemented end to end. The adapter preserves Immich's pu
 - `POST /api/trash/restore/assets` returns `len(request.ids)`: the upstream restore endpoint answers with an empty acknowledgment body carrying no per-row count, and already-live ids are silently skipped backend-side.
 - `POST /api/trash/restore` and `POST /api/trash/empty` return the count of ids enumerated *before* mutating. A concurrent request that transitions some of those ids between enumeration and the chunked mutation makes the true count slightly smaller.
 
-**Enumerate before mutate.** Both restore-all and empty-trash call `_list_trashed_ids` to collect the full trashed id list before issuing any mutation (`routers/api/trash.py`). This is load-bearing, not incidental: the enumeration walks a cursor-paginated `state="trashed"` listing, and mutating mid-walk shrinks the result set out from under the cursor, making resumption ill-defined. The approximate count above is the price of that ordering.
- The SDK's one-shot `assets.empty_trash` is deliberately unused for the same reason — it purges without yielding the id list (see `empty_trash` in `routers/api/trash.py`).
+**Enumerate before mutate.** Both restore-all and empty-trash call `_list_trashed_ids` to collect the full trashed id list before issuing any mutation (`routers/api/trash.py`). This is load-bearing, not incidental: the enumeration walks a cursor-paginated `state="trashed"` listing, and mutating mid-walk shrinks the result set out from under the cursor, making resumption ill-defined. The approximate count above is the price of that ordering. The SDK's one-shot `assets.empty_trash` is deliberately unused for the same reason, plus one more — it purges without yielding the id list the flow needs for per-id delete events.
 
 ### Trash-aware read paths
 
