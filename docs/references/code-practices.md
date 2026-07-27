@@ -112,6 +112,8 @@ A regen can add newly-required fields to (or retype) the generated DTOs, breakin
 
 The SDK is auto-generated (Stainless), so a version bump can add **newly-required** fields to response models (e.g. `FaceResponse.source` arrived in 0.116). Tests construct these models directly as fixtures, so a bump can break suites unrelated to the endpoint you're touching. Run the **full** `uv run pytest` after a bump (not just the changed endpoint's tests), and when a required field is added, `grep` the tests for `<Model>(` to fix every direct construction.
 
+A bump can also *close* gaps silently: grep for raw `client.post(` / `client.delete(` call sites and migrate any whose typed method has now landed (see the raw-client note under *Bulk-ID Endpoints*). Nothing fails to prompt this — a raw call keeps working forever.
+
 ### Implementing New Endpoints
 
 1. **Generate models**: Use `generate_immich_models.py` to create up-to-date Pydantic models (see [development tools](development-tools.md))
