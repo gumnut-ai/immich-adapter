@@ -273,6 +273,59 @@ _ENUMERATION_HONORABLE_FIELDS = frozenset(
 )
 
 
+# The Gumnut API has no typed parameter for any of these, but all six are
+# indexed in its full-text metadata corpus — which is the only reason folding
+# them into the query accomplishes anything at all.
+_FREE_TEXT_FILTER_FIELDS = ("make", "model", "lensModel", "city", "state", "country")
+
+
+def _compose_free_text_query(
+    text: str | None, request: MetadataSearchDto | SmartSearchDto
+) -> str | None:
+    """Fold Immich's camera and place filters into the free-text query.
+
+    **These become ranking signals, not filters**, and the two request shapes
+    pay for that differently.
+
+    *Filters only, no text.* A strict win. Immich's Explore and Places pages
+    and its asset detail panel all link to searches carrying only these fields;
+    every one of them reaches the Gumnut API with no criterion at all and fails
+    with a 400 today. Folding turns each into a working search.
+
+    *Filters plus text.* A real trade, and it can lose correct matches rather
+    than merely admit wrong ones. The terms are OR-ed against the caller's
+    text, not intersected with it, and retrieval is capped at a fixed candidate
+    count — so searching "beach" with `make=Canon` against a library of
+    thousands of Canon photos and a handful of beach photos lets the camera
+    term crowd the beach matches down or out. Before this fold that request
+    searched "beach" cleanly and ignored the camera filter. Shipping it anyway
+    is a deliberate call: the filters-only shape is the one clients actually
+    generate, since the search modal's camera and location pickers are
+    unusable against this adapter (they populate from `/search/suggestions`,
+    which is a stub).
+
+    The same fold can also change the *question*: `originalFileName`, `ocr`,
+    and `originalPath` are not read here or anywhere, so a filename search
+    combined with a camera filter now returns plausible-looking camera results
+    instead of failing visibly.
+
+    Exact filtering needs a typed parameter on the Gumnut API; until that
+    exists, this is the closest approximation available.
+
+    Returns ``None`` when nothing is populated, preserving the existing
+    no-criterion behavior for callers that supply neither text nor filters.
+    """
+    # No getattr default: both DTOs declare all six fields, and these models are
+    # generated from Immich's OpenAPI spec. A rename on a version bump should
+    # fail loudly here rather than silently stop forwarding the term.
+    values = (text, *(getattr(request, field) for field in _FREE_TEXT_FILTER_FIELDS))
+    # Blank and whitespace-only values drop out rather than contribute a stray
+    # separator. Immich web itself maps a cleared box to null, but immich-go,
+    # scripts, and hand-built `?query={…}` URLs can all carry blanks.
+    terms = [stripped for value in values if value and (stripped := value.strip())]
+    return " ".join(terms) or None
+
+
 def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
     """True when a metadata search is a filter-less asset-listing walk.
 
@@ -408,7 +461,12 @@ async def search_assets(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> SearchResponseDto:
-    """Search for assets by metadata filters."""
+    """Search for assets by metadata filters.
+
+    Camera and place filters (make / model / lens / city / state / country) are
+    folded into the free-text query rather than applied as filters — see
+    `_compose_free_text_query` for what that costs.
+    """
     if _is_criterion_less_enumeration(request):
         return await _list_asset_page(request, client, current_user)
 
@@ -417,7 +475,7 @@ async def search_assets(
         person_ids = [uuid_to_gumnut_person_id(pid) for pid in request.personIds]
 
     search_kwargs: dict[str, Any] = {
-        "query": request.description,
+        "query": _compose_free_text_query(request.description, request),
         # These map to the Gumnut API's local_datetime bounds by deliberate
         # translation, not identity, and web sends them in the keepLocalTime
         # wire format so its offset is fictitious (both: see code practices,
@@ -467,8 +525,15 @@ async def search_smart(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
 ) -> SearchResponseDto:
-    """Smart search for assets."""
-    search_kwargs: dict[str, Any] = {"query": request.query, "include": ASSET_INCLUDE}
+    """Smart search for assets.
+
+    Camera and place filters are folded into the query alongside the caller's
+    text — see `_compose_free_text_query` for what that costs.
+    """
+    search_kwargs: dict[str, Any] = {
+        "query": _compose_free_text_query(request.query, request),
+        "include": ASSET_INCLUDE,
+    }
     if request.size is not None:
         # Clamp at the Gumnut API per-page ceiling. The Immich client default
         # is 1000; without this, the Gumnut API 422s.

@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-22
+last-updated: 2026-07-27
 ---
 
 # Immich Adapter Architecture
@@ -200,6 +200,22 @@ requested page. Page N still walks through the preceding N - 1 pages because a
 numeric page cannot encode the Gumnut cursor, but it no longer exhausts the
 remaining library just to compute an exact total. A request carrying a real
 search criterion continues to use `client.search.search`, which mandates one.
+
+**Camera and place filters are folded into the query, not applied as filters.**
+Immich's `make` / `model` / `lensModel` / `city` / `state` / `country` have no
+typed equivalent on the Gumnut API, but all six are indexed in its full-text
+metadata corpus, so `_compose_free_text_query` appends their values to the
+free-text query on both `/search/metadata` and `/search/smart`. Without this a
+filters-only request reaches the API with no criterion and 400s — which is what
+Immich's Explore and Places pages and its asset detail panel all generate.
+
+The cost is that **query terms are OR-ed, not intersected**, and retrieval is
+capped at a fixed candidate count. Adding a term therefore widens the candidate
+pool rather than narrowing it: searching "beach" with `make=Canon` against a
+library of thousands of Canon photos can crowd the beach matches out. Weigh
+that before folding any further Immich filter into the query string — a filter
+that is common in the library degrades the caller's own search term. Exact
+filtering needs a typed parameter on the Gumnut API.
 
 **Endpoints using this pattern:**
 
@@ -412,7 +428,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | People | CRUD, list with pagination/sort/filter, thumbnails, statistics, merge | |
 | Faces | List, create, delete, reassign | Create draws a user-specified box on an asset and links it to a person (Immich's "create a face on-the-fly" flow) |
 | Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling, including `isTrashed=true` |
-| Search | Smart search, metadata search, person search, statistics, random sampling, explore (cities + recents) | Places, cities, suggestions, and large-assets are stubs |
+| Search | Smart search, metadata search, person search, statistics, random sampling, explore (cities + recents) | Camera/place filters are folded into the query, not filtered on (see above); places, cities, suggestions, and large-assets are stubs |
 | Sync | Stream, ack | Two-phase ordering, checkpoint management |
 | Auth | OAuth login/callback, logout, session management | Clerk OAuth via the Gumnut API |
 | WebSockets | Real-time upload/trash/restore/delete notifications | Socket.IO with room-based messaging |
