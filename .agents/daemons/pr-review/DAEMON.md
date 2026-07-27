@@ -44,6 +44,7 @@ PR review protocol: pr-review/v1
 ## Findings and verification
 
 - A finding needs a concrete issue, a plausible trigger or supporting evidence, and a material consequence. The exact fix need not be known.
+- A lane may define an advisory standard for its `🟠 non-blocking` findings, where the concrete issue is the reviewed implementation itself and the material consequence is the ongoing cost of understanding or maintaining it. Such a finding does not require a defect, a quantified cost, or a fully specified replacement. This carve-out never applies to a `🔴 blocking` finding, which always needs a defect-level issue, trigger, and consequence. A lane may also require that its `🟠 non-blocking` findings be published inline so each carries its lane name, notwithstanding the general placement preference in § Final review.
 - Ask a bounded question only when one missing fact decides whether a plausible material risk exists. State the decisive missing fact and potential consequence; do not replace an unsupported finding with open-ended speculation.
 - Use safe, targeted checks when they can resolve a material uncertainty; do not run broad suites by default. For dependency claims, use the version resolved by the lockfile or build and consult official documentation when the behavior is material.
 - A failed, unavailable, or inconclusive tool is not proof. Publish a static finding only when independent evidence meets this policy, and disclose failed verification when it materially affects confidence.
