@@ -11,6 +11,8 @@ last-updated: 2026-07-27
 > **Deprecated (2026-07-27):** This doc proposed the session-token authentication architecture, which shipped. The living description of how adapter auth works today is [`docs/architecture/adapter-architecture.md`](../architecture/adapter-architecture.md) § "Authentication and Session Management", with the Redis-side detail in [`docs/architecture/session-checkpoint-implementation.md`](../architecture/session-checkpoint-implementation.md); this doc is retained for the decision rationale and trade-offs considered. It is no longer updated as the system changes, and the body has already drifted: it names backend endpoints (`/auth/auth-url`, `/auth/exchange`) that do not match the real `/api/oauth/*` paths, knows only two session-token sources where the middleware accepts three (cookie, `Authorization: Bearer`, and `x-immich-user-token`), and omits three OAuth routes that exist today (`/link`, `/unlink`, `/mobile-redirect`).
 >
 > Also pruned 2026-07-27: the "Adapter Architecture / Middleware-Based Token Handling" section (a file-path inventory and a generic benefits list — `adapter-architecture.md` owns the file map and request flow), "Flow 3: Token Refresh" (a restatement of Flow 2; its one novel line was folded into Flow 2's Key Points), and the Conclusion's "Key Benefits" list (a verbatim restatement of "Why Session Tokens").
+>
+> Pruned 2026-07-27 to its decision record; implementation detail was removed as it is owned by the code. That pass also removed Flow 1's login response-body JSON dump, whose shape is owned by the generated Immich model; the one point it carried that the surrounding prose did not — that the client receives the session token and never the raw Gumnut JWT — was folded into the step above it.
 
 Date: 2025-12-05
 
@@ -199,21 +201,7 @@ User → Web Client → Adapter → Backend → OAuth Provider → Clerk
      - `immich_access_token=<session_token>` (httponly)
      - `immich_auth_type=oauth` (httponly)
      - `immich_is_authenticated=true`
-   - Adapter returns session token and user info in response body:
-
-     ```json
-     {
-       "accessToken": "session_token_uuid",
-       "userId": "user_uuid",
-       "userEmail": "user@example.com",
-       "name": "User Name",
-       "isAdmin": false,
-       "isOnboarded": true,
-       "profileImagePath": "https://...",
-       "shouldChangePassword": false
-     }
-     ```
-
+   - Adapter returns the session token as `accessToken` alongside the Immich login response's user fields (the generated Immich model owns the exact shape) — note the client receives the session token here, never the raw Gumnut JWT
    - Client stores session token
 
 **Key Points:**

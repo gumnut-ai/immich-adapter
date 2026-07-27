@@ -36,7 +36,6 @@ Detailed docs live in subdirectories: `docs/architecture/` (system architecture)
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Immich auth architecture | `docs/design-docs/immich-auth-architecture.md` | Historical: the JWT-hash auth design that preceded session tokens (deprecated) |
 | Authentication design | `docs/design-docs/auth-design.md` | Historical: why session tokens replaced raw JWTs, and the constraints that forced it (deprecated — current auth is in `docs/architecture/adapter-architecture.md`) |
 | Static file sharing | `docs/design-docs/static-file-sharing.md` | File sharing proposals, static asset serving |
 | Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Historical: why the adapter deploys as a multi-stage Docker image, and the pinned-vs-floating base-image trade-off (deprecated) |

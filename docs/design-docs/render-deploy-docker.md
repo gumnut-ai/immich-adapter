@@ -13,6 +13,10 @@ last-updated: 2026-07-27
 > Pruned 2026-07-11 to its stable historical context: the problem framing, the multi-stage-build rationale, the migration/rollback strategy, the Immich version-pinning trade-offs, and the performance comparison. (The Render port-handling gotcha it also retained was extracted and removed in the 2026-07-27 pass below.) The full sample Dockerfile / `.dockerignore` / `render.yaml`, the step-by-step build/config/local-test how-tos, the version-bump command sequences, and the troubleshooting catalog were removed because they are now owned by the code and were drifting from the live build.
 >
 > Pruned again 2026-07-27: the dated Render price list, the "Current State (Native Python Runtime on Render)" description of a configuration that no longer exists, the completed "What Changes in Your Code?" migration how-to, and the Render port-handling section (extracted to `uvicorn-settings.md`). The claim that the Dockerfile tracks the `release` tag was corrected — it pins a version.
+>
+> Pruned 2026-07-27 to its decision record; implementation detail was removed as it is owned by the code. A second pass the same day finished the price removal the clause above had claimed but not completed — the "Recommended Render Plan" tier list and the per-month build-cost figures in "Disadvantages" — and collapsed the completed "Zero-Downtime Migration Strategy" phases to the one-line strategy. The trade-off analysis, the native-vs-Docker comparison table, and the performance characteristics are unchanged.
+>
+> A third pass the same day cut the generic multi-stage-Docker tutorial ("The Concept", the "Key Benefits" list, and the prose around `COPY --from`) — it explained Docker rather than any Gumnut decision, and its benefits list was already restated under "Advantages". What earlier clauses call the retained "multi-stage-build rationale" is now the condensed § "Why Multi-Stage", which keeps the project-specific reason (Immich's web files ship only inside the Immich server image) and the illustrative `COPY --from` snippet. The "Additional Resources" list of unversioned vendor links was also removed.
 
 ## Overview
 
@@ -20,27 +24,9 @@ This guide explains how to deploy immich-adapter to Render using a multi-stage D
 
 **Current Static Files Size**: 29MB (from `static/` directory)
 
-## How Multi-Stage Docker Builds Work
+## Why Multi-Stage
 
-### The Concept
-
-Multi-stage builds allow you to use multiple `FROM` statements in a single Dockerfile. Each `FROM` instruction starts a new build stage. You can selectively copy artifacts from one stage to another, leaving behind everything you don't need.
-
-**For this project:**
-
-- **Stage 1**: Pull the Immich server image (contains web files at `/build/www`)
-- **Stage 2**: Build your Python application
-- **Between stages**: Copy only the web files from Stage 1 to Stage 2
-
-### Key Benefits
-
-1. **Automated Extraction**: No manual script running - happens during Docker build
-2. **Single Source of Truth**: Dockerfile declares exactly which Immich version to use
-3. **Reproducible**: Anyone can rebuild the exact same image
-4. **Clean Final Image**: Stage 1 artifacts don't bloat the final image (only copied files remain)
-5. **Version Control**: Immich version is tracked in Git via Dockerfile
-
-### The Magic: `COPY --from`
+The adapter needs Immich's prebuilt web files, which are only published inside the Immich server image. A multi-stage build lets a throwaway first stage pull that image purely to harvest `/build/www`, and the Python stage copy just those files across — the ~800MB Immich image is left behind and never reaches the final layer:
 
 ```docker
 # Stage 1: This image contains the files we need
@@ -53,7 +39,9 @@ FROM python:3.14-slim
 COPY --from=immich /build/www ./static/
 ```
 
-The `--from=immich` flag tells Docker: "copy from the `immich` stage, not from the build context"
+(Illustrative — the shipped `Dockerfile` pins a version rather than tracking `release`; see "Immich Version Management" below.)
+
+This replaced a manual extraction script plus committed static files. The payoff is that the Immich version becomes a declared, version-controlled build input instead of a step someone has to remember to run, and the resulting image is reproducible from the `Dockerfile` alone.
 
 ## Complete Implementation
 
@@ -67,20 +55,7 @@ Migrated to Docker deploy: add the `Dockerfile` and `.dockerignore`, test the im
 
 ### Zero-Downtime Migration Strategy
 
-1. **Create staging service first**
-   - Deploy Docker version to a new Render service (staging)
-   - Test thoroughly
-   - Compare with production (native runtime)
-
-2. **When ready, switch production**
-   - Update production service to Docker runtime
-   - Render will build new image
-   - Health checks ensure smooth cutover
-   - Old container stays running until new one is healthy
-
-3. **Rollback if needed**
-   - Render keeps previous deployment
-   - Can rollback via dashboard in seconds
+Completed: prove the Docker image on a separate Render service first, then switch the production service's runtime and let Render's health check hold the old container up until the new one is healthy, with the previous deployment kept as a one-click rollback.
 
 ## Immich Version Management
 
@@ -153,12 +128,6 @@ FROM ghcr.io/immich-app/immich-server:release AS immich-source
 - Static file serving: minimal (kernel cache)
 - **Total: ~150-250MB typical**
 
-**Recommended Render Plan:**
-
-- Development/Testing: Free tier (512MB, may be tight)
-- Production (low traffic): Starter ($7/month)
-- Production (medium traffic): Standard ($25/month)
-
 ### Comparison: Native vs Docker Deployment
 
 | Metric | Native Python | Docker Multi-Stage |
@@ -188,7 +157,7 @@ FROM ghcr.io/immich-app/immich-server:release AS immich-source
 - **Longer Build Times**: First build: 4-6 minutes vs 1-2 minutes. Cached builds: 1-2 minutes vs 30 seconds. Large image downloads (800MB Immich image).
 - **Larger Final Image**: Docker image: ~450MB vs ~200MB native. More disk space needed. Slower deployment transfers.
 - **More Complex**: Dockerfile to maintain. Docker knowledge required. More moving parts.
-- **Build Cost**: Uses more Render build minutes. ~$0.15-0.20/month vs ~$0.05/month. May need paid plan for longer builds.
+- **Build Cost**: Uses more Render build minutes than the native runtime. May need a paid plan for longer builds.
 - **Cold Starts**: 10-18 seconds vs 5-8 seconds. Matters if you use Render free tier with spindown.
 
 ## Conclusion
@@ -209,11 +178,3 @@ Multi-stage Docker deployment is the **best long-term solution** for automatical
 - Build time is critical (< 1 minute)
 - You're on Render free tier (build minute limits)
 - Docker complexity isn't worth it for your use case
-
-## Additional Resources
-
-- [Docker Multi-Stage Builds](https://docs.docker.com/build/building/multi-stage/)
-- [Render Docker Deployment](https://render.com/docs/docker)
-- [Immich Docker Images](https://github.com/immich-app/immich/pkgs/container/immich-server)
-- [FastAPI in Docker](https://fastapi.tiangolo.com/deployment/docker/)
-- [uv Docker Best Practices](https://docs.astral.sh/uv/guides/docker/)

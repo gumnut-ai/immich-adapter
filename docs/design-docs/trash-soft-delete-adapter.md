@@ -11,6 +11,8 @@ last-updated: 2026-07-27
 > **Deprecated (2026-07-27):** This doc proposed and recorded the adapter's trash/soft-delete flow, which shipped. The living description — `force` branching, the three trash routes, `trashDays`, trash-aware reads, sync/Socket.IO propagation, count semantics, the enumerate-before-mutate invariant, and the remaining limitations — is [`docs/architecture/adapter-architecture.md`](../architecture/adapter-architecture.md) § "Trash and Deletion Semantics". This doc is retained for the decision rationale and the backend capabilities the work depended on; it is no longer updated as the system changes. Its "Remaining limitations" list has already drifted: the typed SDK now *does* expose trash helpers (`assets.trash` / `assets.restore` / `assets.delete_list` / `assets.empty_trash`), and criterion-less `POST /api/search/metadata` now honors `withDeleted` and `trashedAfter`.
 >
 > Also pruned 2026-07-27: the § Verification test-file inventory table, which restated what a directory listing already shows.
+>
+> Pruned 2026-07-27 to its decision record; implementation detail was removed as it is owned by the code. A second pass the same day removed the remainder of § Verification — a two-line pointer at the test module and a grep suggestion for shipped work, which the suite itself answers more reliably.
 
 ## Context
 
@@ -73,10 +75,6 @@ The adapter and backend still need to agree on the same deploy-time `TRASH_RETEN
 - The typed SDK still does not expose dedicated trash helpers, so the trash router uses `AsyncGumnut.post()` / `.delete()` directly for the restore and bulk-delete endpoints.
 - `search/metadata` and `search/large-assets` still do not surface trashed results through `withDeleted`, `trashedBefore`, or `trashedAfter`; that follow-up remains separate from the shipped trash flow.
 - `trashDays` is accurate at deploy time, but it is still a shared environment-variable contract rather than a backend-discovered runtime setting.
-
-## Verification
-
-The trash routes themselves are covered by `tests/unit/api/test_trash.py`. For the surrounding surfaces (delete branching, `isTrashed` reads, sync propagation, `trashDays`), grep the suite for `trashed`.
 
 ## Dependencies
 
