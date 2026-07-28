@@ -79,7 +79,7 @@ For mobile, OAuth providers that don't support custom URL schemes (e.g., `app.im
 
 - **`interface` tag** — A low-cardinality Sentry tag/span attribute describing the Immich client behind the request: `immich-mobile-ios`, `immich-mobile-android`, or `immich-web`. Classification uses the mobile `deviceType` header first, falls back to `immich-ios` / `immich-android` transfer User-Agents, and treats standard browser User-Agents as web. Unrecognized callers stay unset.
 - **`user_agent.original` span attribute** — The raw `User-Agent` header is attached to the active span following the OpenTelemetry semantic convention. Because it is high-cardinality, it is emitted as a span attribute rather than a tag.
-- **Authenticated user attribution** — When a handler resolves the current user, the adapter sets Sentry `user.id` to the internal `intuser_*` id. No email or other PII is attached, and the dependency is cached per request so attribution happens once.
+- **Authenticated user attribution** — Sentry `user.id` is set to the internal `intuser_*` id; no email or other PII is attached. For session-token clients (Immich web and mobile), `AuthMiddleware` sets it from the session's stored UUID-form id as soon as Redis resolves, so read-heavy routes that never resolve a user DTO (streaming, sync, timeline buckets) are attributed too. `x-api-key` clients (immich-go) carry no session, so they are attributed only when a handler resolves the current user, via the cached `users.me()` response.
 
 ### Session storage (Redis)
 
