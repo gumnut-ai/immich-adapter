@@ -21,6 +21,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_person_id,
+    uuid_to_gumnut_stack_id,
 )
 
 
@@ -90,26 +91,46 @@ def sample_gumnut_album():
     return album
 
 
-@pytest.fixture
-def sample_gumnut_asset():
-    """Create a sample Gumnut asset object with proper date fields."""
+def make_gumnut_asset(
+    *,
+    asset_id: str | None = None,
+    original_file_name: str = "test.jpg",
+    device_asset_id: str = "device-123",
+    device_id: str = "device-456",
+    checksum: str = "abc123",
+    trashed_at: datetime | None = None,
+    stack_id: str | None = None,
+) -> Mock:
+    """Build a Mock Gumnut asset carrying every field the converters read.
+
+    One builder rather than a copy per fixture: an SDK field addition (or a
+    converter that starts reading an existing one) otherwise has to be applied
+    to each copy, and an unset `Mock` attribute is neither `None` nor a real
+    value — it silently flips a branch or fails DTO validation far from the
+    fixture that missed it.
+
+    `trashed_at` is `None` for a live asset, a datetime for a trashed one.
+    `stack_id` is the `asset_stack_` ID of the burst this asset belongs to, or
+    `None` when it is unstacked.
+    """
+    now = datetime.now(timezone.utc)
     asset = Mock()
-    asset.id = uuid_to_gumnut_asset_id(uuid4())
-    asset.local_datetime = datetime.now(timezone.utc)
-    asset.created_at = datetime.now(timezone.utc)
-    asset.updated_at = datetime.now(timezone.utc)
+    asset.id = asset_id or uuid_to_gumnut_asset_id(uuid4())
+    asset.local_datetime = now
+    asset.created_at = now
+    asset.updated_at = now
     asset.mime_type = "image/jpeg"
-    asset.original_file_name = "test.jpg"
+    asset.original_file_name = original_file_name
     asset.duration = None
     asset.library_id = "library-789"
     # File/provenance scalars live on the nested ``file_data`` group
     # (requested via ``include=file_data``); the adapter reads them from there.
     asset.file_data = Mock()
-    asset.file_data.device_asset_id = "device-123"
-    asset.file_data.device_id = "device-456"
-    asset.file_data.file_created_at = datetime.now(timezone.utc)
-    asset.file_data.file_modified_at = datetime.now(timezone.utc)
-    asset.file_data.checksum = "abc123"
+    asset.file_data.device_asset_id = device_asset_id
+    asset.file_data.device_id = device_id
+    asset.file_data.file_created_at = now
+    asset.file_data.file_modified_at = now
+    asset.file_data.checksum = checksum
     # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
     asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
     asset.file_data.file_size_bytes = 1059218
@@ -120,8 +141,67 @@ def sample_gumnut_asset():
     asset.height = 1080
     asset.people = []  # Empty list for people
     asset.metadata = None  # No metadata
-    asset.trashed_at = None  # Live (not trashed); set to a datetime to simulate trashed
+    asset.trashed_at = trashed_at
+    asset.stack_id = stack_id
     return asset
+
+
+def make_gumnut_stack(
+    *,
+    stack_id: str | None = None,
+    primary_asset_id: str | None = None,
+    asset_count: int = 2,
+    origin: str = "auto_burst",
+) -> Mock:
+    """Build a Mock Gumnut stack row (the shape every stacks endpoint returns).
+
+    `primary_asset_id` defaults to `None` — the shape of an auto-detected burst,
+    which has no server-pinned cover until a user picks one. `asset_count` is
+    the Gumnut row's own count, which excludes trashed members, so a test
+    covering trashed members should set it below the member count on purpose.
+    """
+    stack = Mock()
+    stack.id = stack_id or uuid_to_gumnut_stack_id(uuid4())
+    stack.primary_asset_id = primary_asset_id
+    stack.asset_count = asset_count
+    stack.origin = origin
+    now = datetime.now(timezone.utc)
+    stack.created_at = now
+    stack.updated_at = now
+    return stack
+
+
+def make_gumnut_stack_members(
+    count: int,
+    *,
+    stack_id: str,
+    trashed: set[int] | None = None,
+) -> list[Mock]:
+    """Build `count` Mock assets belonging to `stack_id`, in member order.
+
+    `trashed` holds the positional indices to mark trashed, so a test can spell
+    out a mixed live/trashed stack in one call. Filenames are distinct per
+    index to keep failure output readable.
+    """
+    trashed = trashed or set()
+    now = datetime.now(timezone.utc)
+    return [
+        make_gumnut_asset(
+            original_file_name=f"burst-{i}.jpg",
+            device_asset_id=f"device-{i}",
+            device_id=f"device-{i}",
+            checksum=f"checksum-{i}",
+            trashed_at=now if i in trashed else None,
+            stack_id=stack_id,
+        )
+        for i in range(count)
+    ]
+
+
+@pytest.fixture
+def sample_gumnut_asset():
+    """Create a sample Gumnut asset object with proper date fields."""
+    return make_gumnut_asset()
 
 
 @pytest.fixture
@@ -146,39 +226,15 @@ def multiple_gumnut_albums():
 @pytest.fixture
 def multiple_gumnut_assets():
     """Create multiple Gumnut assets for list testing with proper date fields."""
-    assets = []
-    for i in range(3):
-        asset = Mock()
-        asset.id = uuid_to_gumnut_asset_id(uuid4())
-        now = datetime.now(timezone.utc)
-        asset.created_at = now
-        asset.updated_at = now
-        asset.local_datetime = now
-        asset.mime_type = "image/jpeg"
-        asset.original_file_name = f"test{i}.jpg"
-        asset.duration = None
-        asset.library_id = "library-789"
-        asset.width = 1920
-        asset.height = 1080
-        # File/provenance scalars live on the nested ``file_data`` group
-        # (requested via ``include=file_data``); the adapter reads them from there.
-        asset.file_data = Mock()
-        asset.file_data.device_asset_id = f"device-{i}"
-        asset.file_data.device_id = f"device-{i}"
-        asset.file_data.file_created_at = now
-        asset.file_data.file_modified_at = now
-        asset.file_data.checksum = f"checksum-{i}"
-        # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
-        asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
-        asset.file_data.file_size_bytes = 1059218
-        # Default to "not yet generated"; thumbhash tests set an explicit value.
-        # Without this, the Mock would yield a Mock (not None) for asset.thumbhash.
-        asset.thumbhash = None
-        asset.metadata = None
-        asset.people = []
-        asset.trashed_at = None
-        assets.append(asset)
-    return assets
+    return [
+        make_gumnut_asset(
+            original_file_name=f"test{i}.jpg",
+            device_asset_id=f"device-{i}",
+            device_id=f"device-{i}",
+            checksum=f"checksum-{i}",
+        )
+        for i in range(3)
+    ]
 
 
 def make_mock_streaming_context(

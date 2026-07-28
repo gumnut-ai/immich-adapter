@@ -17,6 +17,8 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_person_id,
     safe_uuid_from_face_id,
     uuid_to_gumnut_face_id,
+    safe_uuid_from_stack_id,
+    uuid_to_gumnut_stack_id,
     safe_uuid_from_user_id,
     uuid_to_gumnut_user_id,
 )
@@ -151,6 +153,33 @@ class TestConvenienceFunctions:
         recovered_uuid = safe_uuid_from_face_id(face_id)
         assert recovered_uuid == test_uuid
 
+    def test_stack_convenience_functions(self):
+        """Test burst-stack-specific convenience functions."""
+        test_uuid = uuid4()
+
+        # UUID to stack ID
+        stack_id = uuid_to_gumnut_stack_id(test_uuid)
+        assert stack_id.startswith("asset_stack_")
+
+        # Stack ID back to UUID
+        recovered_uuid = safe_uuid_from_stack_id(stack_id)
+        assert recovered_uuid == test_uuid
+
+    def test_stack_and_asset_ids_do_not_cross_decode(self):
+        """A stack ID and an asset ID must never decode as each other.
+
+        `asset_` is a strict prefix of `asset_stack_`, so a naive prefix check
+        would let `safe_uuid_from_asset_id` accept a stack ID and hand back a
+        UUID for an asset that doesn't exist. Both directions must raise.
+        """
+        test_uuid = uuid4()
+
+        with pytest.raises(ValueError):
+            safe_uuid_from_asset_id(uuid_to_gumnut_stack_id(test_uuid))
+
+        with pytest.raises(ValueError):
+            safe_uuid_from_stack_id(uuid_to_gumnut_asset_id(test_uuid))
+
     def test_user_convenience_functions(self):
         """Test user-specific convenience functions."""
         test_uuid = uuid4()
@@ -203,6 +232,16 @@ class TestConvenienceFunctions:
         face_id = f"face_{shortuuid.encode(test_uuid)}"
         assert safe_uuid_from_face_id(face_id) == safe_uuid_from_gumnut_id(
             face_id, "face"
+        )
+
+        # Stack functions
+        assert uuid_to_gumnut_stack_id(test_uuid) == uuid_to_gumnut_id(
+            test_uuid, "asset_stack"
+        )
+
+        stack_id = f"asset_stack_{shortuuid.encode(test_uuid)}"
+        assert safe_uuid_from_stack_id(stack_id) == safe_uuid_from_gumnut_id(
+            stack_id, "asset_stack"
         )
 
         # User functions

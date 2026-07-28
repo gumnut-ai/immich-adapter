@@ -76,6 +76,24 @@ def uuid_to_gumnut_asset_id(uuid_obj: UUID) -> str:
     return uuid_to_gumnut_id(uuid_obj, "asset")
 
 
+def safe_uuid_from_stack_id(stack_id: str) -> UUID:
+    """Convert a burst-stack ID to UUID.
+
+    The prefix is the compound ``asset_stack`` (yielding ``asset_stack_``), not
+    ``asset``. Because an asset ID's ``asset_`` prefix is a strict prefix of it,
+    the two are mutually exclusive rather than merely different: feeding a stack
+    ID to ``safe_uuid_from_asset_id`` leaves ``stack_<short>``, whose underscore
+    is outside shortuuid's alphabet, so it raises rather than silently decoding
+    to some other entity's UUID.
+    """
+    return safe_uuid_from_gumnut_id(stack_id, "asset_stack")
+
+
+def uuid_to_gumnut_stack_id(uuid_obj: UUID) -> str:
+    """Convert UUID to burst-stack ID."""
+    return uuid_to_gumnut_id(uuid_obj, "asset_stack")
+
+
 def safe_uuid_from_person_id(person_id: str) -> UUID:
     """Convert person ID to UUID."""
     return safe_uuid_from_gumnut_id(person_id, "person")
