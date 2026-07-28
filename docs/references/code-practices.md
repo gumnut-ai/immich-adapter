@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-07-27
+last-updated: 2026-07-28
 ---
 
 # Code Practices
@@ -113,6 +113,8 @@ A regen can add newly-required fields to (or retype) the generated DTOs, breakin
 The SDK is auto-generated (Stainless), so a version bump can add **newly-required** fields to response models (e.g. `FaceResponse.source` arrived in 0.116). Tests construct these models directly as fixtures, so a bump can break suites unrelated to the endpoint you're touching. Run the **full** `uv run pytest` after a bump (not just the changed endpoint's tests), and when a required field is added, `grep` the tests for `<Model>(` to fix every direct construction.
 
 A bump can also *close* gaps silently: grep for raw `client.post(` / `client.delete(` call sites and migrate any whose typed method has now landed (see the raw-client note under *Bulk-ID Endpoints*). Nothing fails to prompt this — a raw call keeps working forever.
+
+Some SDK contracts are already pinned by committed tests, so a bump that breaks them fails the suite rather than waiting to be caught by hand. `tests/unit/utils/test_stack_conversion.py` does this for the stack resource — asserting each method still accepts the parameters the (still-stubbed) stack routes are being built to pass, and that each stack response class still carries the fields `GumnutStackRow` reads. Note what that guard does and doesn't cover: it catches a **renamed or dropped** parameter, not a newly-**required** one, so the full-suite run above is still what surfaces those. Extend the pattern when adding a surface whose SDK contract pyright can't check.
 
 ### Implementing New Endpoints
 
@@ -342,7 +344,7 @@ for year, result in zip(years, results):
 
 #### Bounded fan-out for per-item SDK calls
 
-For bulk endpoints that have to call a single-item SDK method per input (no bulk SDK variant exists — e.g., `client.people.update`, `client.people.delete`, or per-album SDK calls inside a multi-album fan-out), use `gather_with_concurrency` from `routers/utils/concurrency.py` instead of a sequential `for` loop. It runs coroutines in parallel under a `BULK_FANOUT_CONCURRENCY_LIMIT` semaphore, preserves input order in the result list, and propagates the first exception (cancelling siblings). The same helper applies when the parallelizable unit is a multi-step coroutine rather than a single SDK call (e.g. `reassign_faces` parallelizes per-`(asset, sourcePerson)` pairs whose dominant cost is a `client.faces.list` call; the inner per-face `client.faces.update` loop stays sequential because pairs almost always yield 0–1 faces).
+For bulk endpoints that have to call a single-item SDK method per input (no bulk SDK variant exists — e.g., `client.people.update`, `client.people.delete`, or per-album SDK calls inside a multi-album fan-out), use `gather_with_concurrency` from `routers/utils/concurrency.py` instead of a sequential `for` loop. It runs coroutines in parallel under a `BULK_FANOUT_CONCURRENCY_LIMIT` semaphore, preserves input order in the result list, and propagates the first exception. Propagating is **not** stopping: `asyncio.gather` without `return_exceptions` leaves the siblings running, and the helper's `finally` release lets queued ones start, so an aborted batch still costs its full fan-out upstream. Reach for a TaskGroup if the work must actually stop. The same helper applies when the parallelizable unit is a multi-step coroutine rather than a single SDK call (e.g. `reassign_faces` parallelizes per-`(asset, sourcePerson)` pairs whose dominant cost is a `client.faces.list` call; the inner per-face `client.faces.update` loop stays sequential because pairs almost always yield 0–1 faces).
 
 ```python
 from routers.utils.concurrency import gather_with_concurrency
@@ -352,7 +354,7 @@ results = await gather_with_concurrency(
 )
 ```
 
-When the endpoint returns `List[BulkIdResponseDto]`, catch per-item errors **inside** the per-item coroutine and return a typed result — don't rely on the helper to surface them, since `asyncio.gather` (default) cancels pending siblings on the first exception. When the endpoint contract is "abort the batch on first error" (e.g. `delete_people` returning 204), the default propagation is exactly right; let the global `GumnutError` handler take over.
+When the endpoint returns `List[BulkIdResponseDto]`, catch per-item errors **inside** the per-item coroutine and return a typed result — don't rely on the helper to surface them, since `asyncio.gather` (default) abandons the whole batch's results on the first exception. When the endpoint contract is "fail the response on first error" (e.g. `delete_people` returning 204), the default propagation is exactly right; let the global `GumnutError` handler take over. Just don't read that as the siblings being called off — per above, they still run.
 
 For the error-classification half of the per-item coroutine, use `classify_bulk_item_call` from `routers/utils/bulk.py` instead of re-rolling the `APIStatusError` / `GumnutError` try/except. It mirrors the per-chunk policy in `chunked_per_item_bulk` (`classify_bulk_item_error` for `APIStatusError`, `log_bulk_transport_error` + `unknown` for transport failures) and returns `None` on success or a classified enum value (`BulkIdErrorReason`). Wrap the entire SDK-touching segment in one call — including any helper that itself issues SDK calls (e.g. `_resolve_thumbnail_face_id`'s `client.faces.list`) — so the helper catches errors from every SDK round-trip on the path. Endpoint-specific non-SDK exceptions (UUID parse `ValueError`, `HTTPException` from a logical 4xx branch) stay at the call site:
 
@@ -370,7 +372,7 @@ See `routers/api/people.py::_update_one_person` for the canonical multi-step sha
 
 Pin the contract with a concurrency-counter test: an `asyncio.Lock`-guarded `active` / `peak` counter inside the per-item side_effect, asserting `peak > 1` (parallel) and `peak <= BULK_FANOUT_CONCURRENCY_LIMIT` (bounded). See `tests/unit/utils/test_concurrency.py::test_caps_concurrent_in_flight_calls` and the per-endpoint variants in `tests/unit/api/test_people.py` / `test_albums.py`.
 
-If you write a *new* fan-out helper instead of using `gather_with_concurrency`, watch for unawaited-coroutine leaks on cancellation: when callers pass eagerly-constructed coroutines (`[some_coro(x) for x in xs]`) and your wrapper task awaits something *before* `await coro` (a semaphore acquire, a queue, etc.), the first exception in any sibling makes `asyncio.gather` cancel waiting wrappers — the inner `coro` is never awaited and is GC'd later as `RuntimeWarning: coroutine was never awaited` (noisy precisely on the error path). Either build the inner coroutine lazily inside the wrapper, or `coro.close()` it explicitly when the pre-`await coro` cancellation hits. See `gather_with_concurrency`'s `_run` for the canonical shape and `tests/unit/utils/test_concurrency.py::test_cancellation_does_not_warn_unawaited_coroutines` for the regression test pattern.
+If you write a *new* fan-out helper instead of using `gather_with_concurrency`, watch for unawaited-coroutine leaks on cancellation: when callers pass eagerly-constructed coroutines (`[some_coro(x) for x in xs]`) and your wrapper task awaits something *before* `await coro` (a semaphore acquire, a queue, etc.), cancelling the gather itself (an aborted request, an enclosing timeout) cancels those waiting wrappers — the inner `coro` is never awaited and is GC'd later as `RuntimeWarning: coroutine was never awaited` (noisy precisely on the error path). Either build the inner coroutine lazily inside the wrapper, or `coro.close()` it explicitly when the pre-`await coro` cancellation hits. See `gather_with_concurrency`'s `_run` for the canonical shape and `tests/unit/utils/test_concurrency.py::test_cancellation_does_not_warn_unawaited_coroutines` for the regression test pattern.
 
 ### Bulk-ID Endpoints
 

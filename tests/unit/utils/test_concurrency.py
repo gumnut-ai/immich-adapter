@@ -1,6 +1,7 @@
 """Tests for routers/utils/concurrency.py."""
 
 import asyncio
+import gc
 
 import pytest
 
@@ -75,7 +76,8 @@ class TestGatherWithConcurrency:
 
     @pytest.mark.anyio
     async def test_propagates_exception(self):
-        """First exception bubbles up; pending siblings are cancelled."""
+        """First exception bubbles up (siblings are not cancelled — see
+        `gather_with_concurrency`)."""
 
         async def boom() -> int:
             raise RuntimeError("boom")
@@ -95,23 +97,39 @@ class TestGatherWithConcurrency:
 
         With more inputs than the limit, the over-limit coroutines are
         constructed eagerly but their `_run` tasks block on
-        `semaphore.acquire()` until a slot frees. If a running task raises
-        first, `asyncio.gather` cancels the waiters mid-acquire — the inner
-        coroutines were never awaited and would otherwise trigger
-        `RuntimeWarning: coroutine was never awaited` when GC'd.
+        `semaphore.acquire()` until a slot frees. Cancelling the *gather*
+        — an aborted request, an enclosing timeout — cancels those waiters
+        mid-acquire, so their inner coroutines are never awaited and would
+        trigger `RuntimeWarning: coroutine was never awaited` when GC'd
+        without `_run`'s explicit `close()`.
+
+        Cancelling the gather is the trigger, not a sibling raising: a sibling
+        exception propagates without cancelling anything, so every queued
+        coroutine still acquires the semaphore and runs. Written that way this
+        test passes with the `close()` guard deleted — it has to cancel to
+        exercise it.
         """
 
-        async def boom() -> int:
-            raise RuntimeError("boom")
-
-        async def never_runs() -> int:  # pragma: no cover — cancelled before entry
+        async def slow() -> int:
+            await asyncio.sleep(5)
             return 1
 
-        with pytest.raises(RuntimeError, match="boom"):
-            await gather_with_concurrency(
-                [boom()] + [never_runs() for _ in range(5)],
-                limit=1,
-            )
+        task = asyncio.create_task(
+            gather_with_concurrency([slow() for _ in range(6)], limit=1)
+        )
+        # Let the first `_run` acquire the semaphore so the rest are parked
+        # mid-`acquire()` — the state the guard exists for.
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # The warning fires when an un-awaited coroutine is *finalized*, not
+        # when it is orphaned. Yield once so the loop drops its references to
+        # the cancelled tasks, then collect — without both steps the orphaned
+        # coroutines outlive the assertion and it passes either way.
+        await asyncio.sleep(0)
+        gc.collect()
 
         unawaited = [
             w

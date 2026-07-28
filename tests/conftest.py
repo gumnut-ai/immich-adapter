@@ -7,6 +7,9 @@ import os
 
 os.environ["TESTING"] = "1"
 
+import base64
+import hashlib
+
 import pytest
 from unittest.mock import AsyncMock, Mock
 from datetime import datetime, timezone
@@ -98,6 +101,7 @@ def make_gumnut_asset(
     device_asset_id: str = "device-123",
     device_id: str = "device-456",
     checksum: str = "abc123",
+    checksum_sha1: str = "PaDX6+c+Lhjpm5/ciXUROL1ryaU=",
     trashed_at: datetime | None = None,
     stack_id: str | None = None,
 ) -> Mock:
@@ -109,9 +113,12 @@ def make_gumnut_asset(
     value — it silently flips a branch or fails DTO validation far from the
     fixture that missed it.
 
-    `trashed_at` is `None` for a live asset, a datetime for a trashed one.
-    `stack_id` is the `asset_stack_` ID of the burst this asset belongs to, or
-    `None` when it is unstacked.
+    `checksum_sha1` is the base64 SHA-1 that reaches Immich (`checksum` is the
+    SHA-256, which never does), so vary it — via `fake_sha1_checksum` — whenever
+    a test builds several assets whose identities must stay distinguishable;
+    otherwise a dedup-aware assertion passes because every asset carries the
+    same value. `stack_id` takes an `asset_stack_`-prefixed Gumnut ID, not a
+    UUID, and is `None` for an unstacked asset.
     """
     now = datetime.now(timezone.utc)
     asset = Mock()
@@ -132,7 +139,7 @@ def make_gumnut_asset(
     asset.file_data.file_modified_at = now
     asset.file_data.checksum = checksum
     # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
-    asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+    asset.file_data.checksum_sha1 = checksum_sha1
     asset.file_data.file_size_bytes = 1059218
     # Default to "not yet generated"; thumbhash tests set an explicit value.
     # Without this, the Mock would yield a Mock (not None) for asset.thumbhash.
@@ -146,6 +153,11 @@ def make_gumnut_asset(
     return asset
 
 
+def fake_sha1_checksum(seed: str) -> str:
+    """A distinct but well-formed Immich checksum (base64 SHA-1, 28 chars)."""
+    return base64.b64encode(hashlib.sha1(seed.encode()).digest()).decode()
+
+
 def make_gumnut_stack(
     *,
     stack_id: str | None = None,
@@ -155,10 +167,11 @@ def make_gumnut_stack(
 ) -> Mock:
     """Build a Mock Gumnut stack row (the shape every stacks endpoint returns).
 
-    `primary_asset_id` defaults to `None` — the shape of an auto-detected burst,
-    which has no server-pinned cover until a user picks one. `asset_count` is
-    the Gumnut row's own count, which excludes trashed members, so a test
-    covering trashed members should set it below the member count on purpose.
+    Defaults to an unpinned `auto_burst`. Set `asset_count` below the member
+    count to model trashed members. Both live in `routers/utils/stack_conversion.py`:
+    `resolve_effective_primary` for how the pin is used, and
+    `HydratedStack.live_asset_count` for why the count can sit below the member
+    count.
     """
     stack = Mock()
     stack.id = stack_id or uuid_to_gumnut_stack_id(uuid4())
@@ -180,8 +193,10 @@ def make_gumnut_stack_members(
     """Build `count` Mock assets belonging to `stack_id`, in member order.
 
     `trashed` holds the positional indices to mark trashed, so a test can spell
-    out a mixed live/trashed stack in one call. Filenames are distinct per
-    index to keep failure output readable.
+    out a mixed live/trashed stack in one call. Every per-asset identity field —
+    filename, device IDs, and both checksums — varies by index, so a member
+    that leaks into the wrong position is visible in failure output rather than
+    matching its neighbours.
     """
     trashed = trashed or set()
     now = datetime.now(timezone.utc)
@@ -191,6 +206,7 @@ def make_gumnut_stack_members(
             device_asset_id=f"device-{i}",
             device_id=f"device-{i}",
             checksum=f"checksum-{i}",
+            checksum_sha1=fake_sha1_checksum(f"burst-{i}"),
             trashed_at=now if i in trashed else None,
             stack_id=stack_id,
         )
@@ -232,6 +248,7 @@ def multiple_gumnut_assets():
             device_asset_id=f"device-{i}",
             device_id=f"device-{i}",
             checksum=f"checksum-{i}",
+            checksum_sha1=fake_sha1_checksum(f"test{i}"),
         )
         for i in range(3)
     ]

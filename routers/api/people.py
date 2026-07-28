@@ -290,8 +290,10 @@ async def delete_people(
     Delete multiple people by their ids.
 
     Per-item errors propagate to the global ``GumnutError`` handler — the
-    endpoint contract is 204-on-all-success, with the first failure aborting
-    the batch (gather cancels pending siblings).
+    endpoint contract is 204-on-all-success, so the first failure fails the
+    whole response. It does **not** stop the work: ``gather`` doesn't cancel
+    the siblings, so the remaining deletes still go through even though the
+    caller sees an error.
     """
     await gather_with_concurrency(
         [

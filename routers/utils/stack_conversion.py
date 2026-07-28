@@ -13,6 +13,14 @@ upstream reads are confined to `hydrate_stack` / `hydrate_stacks` so that
 `convert_gumnut_asset_to_immich` stays an I/O-free pure conversion. Routes
 resolve their stack context first and pass it into conversion, rather than the
 converter growing a hidden round-trip for all of its existing callers.
+
+Hydration is sized for the surfaces that must return the members themselves —
+`StackResponseDto` carries the full `assets` array. Surfaces that need only an
+ID, a count, and a cover (the timeline's `[stackId, assetCount]` tuples, an
+asset's own `stack` block) should not reach for `hydrate_stack` reflexively: it
+pulls every member with `ASSET_INCLUDE`, so on a timeline bucket spanning many
+bursts they would pay metadata and people joins per frame and then discard all
+but two values. Those surfaces want a leaner read, added when one has a caller.
 """
 
 import logging
@@ -126,9 +134,10 @@ def resolve_effective_primary(
     fallbacks — the asset left the stack between the two reads, and a cover
     pointing outside the stack is not a legal Immich response.
 
-    "First" means first in the Gumnut API's own `state="all"` ordering (capture
-    time, newest first, with an asset-ID tie-break). That ordering is stable, so
-    two reads of an unchanged stack resolve to the same cover.
+    "First" means first in whatever order the Gumnut API returns `state="all"`
+    members; the adapter does not re-sort. The only property relied on is that
+    the order is deterministic, so two reads of an unchanged stack resolve to
+    the same cover.
 
     Returns `None` only when the stack has no members at all.
     """
@@ -162,10 +171,16 @@ async def hydrate_stack(
     members = await fetch_stack_members(client, stack.id)
     primary = resolve_effective_primary(stack, members)
     if primary is None:
+        # The row's own count makes the disagreement queryable: `asset_count`
+        # above zero means the row and the member read contradict each other —
+        # a backend inconsistency, or a `stack_id` filter matching nothing. Zero
+        # is ambiguous rather than reassuring, since the count excludes trashed
+        # members: a dissolved stack and an all-trashed one whose member read
+        # came back empty look identical here.
         logger.warning(
             "Stack %s has no members; omitting it from Immich responses",
             stack.id,
-            extra={"stack_id": stack.id},
+            extra={"stack_id": stack.id, "stack_asset_count": stack.asset_count},
         )
         return None
 
@@ -187,6 +202,16 @@ async def hydrate_stacks(
     `gather_with_concurrency` bounds the in-flight calls and preserves input
     order, so the result zips back to `stacks` positionally — including the
     `None` entries for member-less stacks.
+
+    An upstream failure on any one stack aborts the whole batch: the exception
+    propagates and the partial results are discarded. The siblings are *not*
+    cancelled — `asyncio.gather` lets them run to completion — so an aborted
+    batch still costs its full member fan-out. Only a route knows whether its
+    endpoint should fail or degrade, so a caller wanting to drop just the failed
+    stack (say, one deleted between the listing page and its hydration) should
+    catch per stack rather than change this for everyone. Note the asymmetry
+    with a member-less stack, which is *not* an upstream failure and yields
+    `None`.
     """
     return await gather_with_concurrency(
         [hydrate_stack(client, stack) for stack in stacks]

@@ -2,11 +2,21 @@
 
 import asyncio
 import inspect
+import logging
 from datetime import datetime, timezone
 from unittest.mock import Mock
 
 import pytest
+from gumnut import APIStatusError
 from gumnut.resources.stacks import AsyncStacksResource
+from gumnut.types import (
+    StackAddAssetsToStackResponse,
+    StackCreateStackResponse,
+    StackListStacksResponse,
+    StackRetrieveStackResponse,
+    StackSetCoverResponse,
+)
+from pydantic import BaseModel
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.utils.asset_conversion import ASSET_INCLUDE
@@ -16,6 +26,7 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_stack_id,
 )
 from routers.utils.stack_conversion import (
+    GumnutStackRow,
     build_stack_response,
     fetch_stack_members,
     hydrate_stack,
@@ -26,6 +37,7 @@ from tests.conftest import (
     MockSyncCursorPage,
     make_gumnut_stack,
     make_gumnut_stack_members,
+    make_sdk_status_error,
 )
 
 
@@ -57,15 +69,13 @@ class TestResolveEffectivePrimary:
         assert resolve_effective_primary(stack, members) is members[2]
 
     def test_unpinned_falls_back_to_first_live_member(self):
-        """An auto-detected burst has no pinned cover, so the adapter picks the
-        first member in the Gumnut API's own ordering."""
         stack, members = _stack_with_members(count=3, primary_asset_id=None)
 
         assert resolve_effective_primary(stack, members) is members[0]
 
     def test_unpinned_skips_trashed_members(self):
-        """Trashed members are in the response but must not become the cover
-        while a live frame exists — Immich would render a trashed thumbnail."""
+        """A live frame outranks a trashed one, so Immich never renders a
+        trashed thumbnail for a stack that still has live members."""
         stack, members = _stack_with_members(
             count=3, trashed={0, 1}, primary_asset_id=None
         )
@@ -73,18 +83,14 @@ class TestResolveEffectivePrimary:
         assert resolve_effective_primary(stack, members) is members[2]
 
     def test_trashed_pin_is_preserved(self):
-        """The Gumnut API keeps a trashed cover's ID until permanent deletion.
-
-        Silently re-covering the stack the moment a user trashes their chosen
-        frame would override an explicit choice they can still undo.
-        """
+        """A pinned cover stays the cover after being trashed."""
         stack, members = _stack_with_members(count=3, trashed={2})
         stack.primary_asset_id = members[2].id
 
         assert resolve_effective_primary(stack, members) is members[2]
 
     def test_all_trashed_falls_back_to_first_member(self):
-        """A fully-trashed stack still has to name a cover to be representable."""
+        """A fully-trashed stack still names a cover rather than dropping out."""
         stack, members = _stack_with_members(
             count=3, trashed={0, 1, 2}, primary_asset_id=None
         )
@@ -92,8 +98,8 @@ class TestResolveEffectivePrimary:
         assert resolve_effective_primary(stack, members) is members[0]
 
     def test_pin_absent_from_members_falls_back(self):
-        """A cover that left the stack between the two reads can't be returned —
-        Immich requires `primaryAssetId` to name one of `assets`."""
+        """A cover that left the stack can't be named — `primaryAssetId` has to
+        be one of `assets`."""
         stack, members = _stack_with_members(count=2)
         stack.primary_asset_id = make_gumnut_stack_members(1, stack_id=stack.id)[0].id
 
@@ -108,14 +114,8 @@ class TestResolveEffectivePrimary:
 class TestFetchStackMembers:
     @pytest.mark.anyio
     async def test_requests_all_states_with_full_include(self):
-        """Pins the three arguments a stack read can't be correct without.
-
-        `state="all"` because a trashed pinned cover must still arrive;
-        `stack_id` because that is what scopes the read to one burst; and
-        `ASSET_INCLUDE` because every member is converted by
-        `convert_gumnut_asset_to_immich`, which reads `metadata`, `people`, and
-        the `file_data` scalars.
-        """
+        """Pins the arguments a stack read can't be correct without — see
+        `fetch_stack_members` for why each is required."""
         stack, members = _stack_with_members(count=2)
         client = _client_returning(members)
 
@@ -130,33 +130,38 @@ class TestFetchStackMembers:
 
     @pytest.mark.anyio
     async def test_pages_past_one_full_page_of_members(self):
-        """`limit` is the per-page size, not a result cap.
+        """A stack larger than one page must come back whole.
 
-        A flat in-memory listing can't tell the two apart, so this uses a mock
-        that counts page boundaries: a stack larger than one page must return
-        every member and visibly fetch more than one page.
+        `len(result)` is the real pin — an early break or a `[:limit]` slice
+        fails it. The page count only adds that consumption actually crossed a
+        page boundary, so the walk is exercised rather than incidentally
+        satisfied by a single oversized page.
         """
-        stack = make_gumnut_stack(asset_count=GUMNUT_API_MAX_PAGE_SIZE + 50)
-        members = make_gumnut_stack_members(
-            GUMNUT_API_MAX_PAGE_SIZE + 50, stack_id=stack.id
-        )
-        listing = _PaginatedListing(members, page_size=GUMNUT_API_MAX_PAGE_SIZE)
+        total = GUMNUT_API_MAX_PAGE_SIZE + 50
+        stack = make_gumnut_stack(asset_count=total)
+        members = make_gumnut_stack_members(total, stack_id=stack.id)
+        listings: list[_PaginatedListing] = []
+
+        def _list(**kwargs):
+            listings.append(_PaginatedListing(members, page_size=kwargs["limit"]))
+            return listings[-1]
+
         client = Mock()
-        client.assets.list = Mock(return_value=listing)
+        client.assets.list = Mock(side_effect=_list)
 
         result = await fetch_stack_members(client, stack.id)
 
-        assert len(result) == GUMNUT_API_MAX_PAGE_SIZE + 50
-        assert listing.pages_fetched == 2
+        assert len(result) == total
+        assert listings[0].pages_fetched == 2
 
 
 class _PaginatedListing:
     """Async iterator that fakes the SDK's auto-pagination contract.
 
     The real cursor paginator yields page-sized batches and transparently
-    fetches the next page until it is exhausted. Counting page boundaries here
-    is what makes "walked every page" distinguishable from "stopped at the
-    first page and happened to have enough items".
+    fetches the next page until it is exhausted. `page_size` comes from the
+    `limit` the call actually sent rather than from the test, so the page count
+    tracks the code's own paging rather than a number the test chose.
     """
 
     def __init__(self, items, page_size: int):
@@ -190,8 +195,8 @@ class TestHydrateStack:
 
     @pytest.mark.anyio
     async def test_carries_the_gumnut_live_count(self):
-        """The row's count excludes trashed members, so it can sit below the
-        hydrated member count. Callers choose between them deliberately."""
+        """The row's count reaches callers unchanged, so it can sit below the
+        hydrated member count rather than being recomputed from it."""
         stack, members = _stack_with_members(count=3, trashed={2}, asset_count=2)
         client = _client_returning(members)
 
@@ -209,6 +214,39 @@ class TestHydrateStack:
         client = _client_returning([])
 
         assert await hydrate_stack(client, stack) is None
+
+    @pytest.mark.anyio
+    async def test_member_less_stack_logs_the_disagreeing_count(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """The dropped stack is only visible to an operator through this log.
+
+        `stack_asset_count` is the field that makes the interesting case
+        queryable — a row claiming members while the member read comes back
+        empty — so pin it alongside the stack ID, using a non-zero count so the
+        assertion exercises that disagreement rather than the ambiguous zero.
+        """
+        stack = make_gumnut_stack(asset_count=4)
+        client = _client_returning([])
+
+        with caplog.at_level(logging.WARNING, logger="routers.utils.stack_conversion"):
+            assert await hydrate_stack(client, stack) is None
+
+        records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(records) == 1
+        assert getattr(records[0], "stack_id", None) == stack.id
+        assert getattr(records[0], "stack_asset_count", None) == 4
+
+    @pytest.mark.anyio
+    async def test_hydrated_stack_logs_nothing(self, caplog: pytest.LogCaptureFixture):
+        """The happy path must stay silent, or the warning above is just noise."""
+        stack, members = _stack_with_members(count=2)
+        client = _client_returning(members)
+
+        with caplog.at_level(logging.WARNING, logger="routers.utils.stack_conversion"):
+            assert await hydrate_stack(client, stack) is not None
+
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
 class TestHydrateStacks:
@@ -275,6 +313,38 @@ class TestHydrateStacks:
 
         assert tracker.peak > 1, "expected concurrent member reads"
         assert tracker.peak <= BULK_FANOUT_CONCURRENCY_LIMIT
+
+    @pytest.mark.anyio
+    async def test_upstream_failure_aborts_the_batch(self):
+        """Pins the deliberate asymmetry with the member-less case.
+
+        A member-less stack yields `None` so one bad row can't sink the
+        response, but an upstream *failure* propagates and takes the batch with
+        it. A route that would rather drop the single failed stack has to catch
+        per stack — changing it here would change it for every caller.
+
+        The call count records that every stack's read was issued rather than
+        skipped once one failed. It does not by itself prove the siblings run
+        to completion — these mocks resolve without awaiting — so treat
+        `gather_with_concurrency`'s docstring as the statement of that.
+        """
+        stacks = [make_gumnut_stack() for _ in range(3)]
+        failing_id = stacks[1].id
+
+        def _list(**kwargs):
+            if kwargs["stack_id"] == failing_id:
+                raise make_sdk_status_error(500, "upstream boom")
+            return MockSyncCursorPage(
+                make_gumnut_stack_members(1, stack_id=kwargs["stack_id"])
+            )
+
+        client = Mock()
+        client.assets.list = Mock(side_effect=_list)
+
+        with pytest.raises(APIStatusError):
+            await hydrate_stacks(client, stacks)
+
+        assert client.assets.list.call_count == len(stacks)
 
     @pytest.mark.anyio
     async def test_empty_input(self):
@@ -397,6 +467,37 @@ def test_sdk_stack_method_signature(method_name: str, expected_params: set[str])
     actual_params = set(inspect.signature(method).parameters)
     missing = expected_params - actual_params
     assert not missing, f"stacks.{method_name} no longer accepts {sorted(missing)}"
+
+
+# The row classes `GumnutStackRow` claims are interchangeable. Nothing else
+# checks that claim: every test builds rows with a `Mock`, which satisfies any
+# Protocol by answering to any attribute, and while `routers/api/stacks.py` is
+# stubbed there is no production call site passing a real row.
+#
+# The annotation is the actual guard — pyright rejects the list if any of these
+# classes stops satisfying the Protocol. The test below re-checks it at runtime
+# so an SDK bump that only runs the suite still gets a legible failure naming
+# the dropped field.
+STACK_ROW_CLASSES: list[type[GumnutStackRow]] = [
+    StackListStacksResponse,
+    StackRetrieveStackResponse,
+    StackCreateStackResponse,
+    StackAddAssetsToStackResponse,
+    StackSetCoverResponse,
+]
+
+# Kept in step with `GumnutStackRow`'s members by the annotation above: adding a
+# field there without adding it here leaves the runtime half checking less than
+# the static half, but cannot let a non-conforming class through.
+STACK_ROW_FIELDS = {"id", "asset_count", "primary_asset_id"}
+
+
+@pytest.mark.parametrize(
+    "row_cls", STACK_ROW_CLASSES, ids=lambda cls: cls.__name__.removeprefix("Stack")
+)
+def test_sdk_stack_rows_satisfy_protocol(row_cls: type[BaseModel]):
+    missing = STACK_ROW_FIELDS - set(row_cls.model_fields)
+    assert not missing, f"{row_cls.__name__} no longer carries {sorted(missing)}"
 
 
 def test_asset_list_accepts_stack_id_filter():
