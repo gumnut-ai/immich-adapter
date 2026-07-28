@@ -104,6 +104,7 @@ This invokes `uvicorn` directly because the `fastapi` CLI doesn't expose `--ws`,
 
 - [Running with Immich Web](docs/guides/running-with-immich-web.md) — static files or dev server
 - [Running with Immich Mobile](docs/guides/running-with-immich-mobile.md) — HTTPS setup with mkcert
+- [Importing with immich-go](docs/guides/importing-with-immich-go.md) — bulk-importing a library with `x-api-key` auth via a Gumnut API key
 
 ## References
 
