@@ -168,9 +168,8 @@ class TestConvenienceFunctions:
     def test_stack_and_asset_ids_do_not_cross_decode(self):
         """A stack ID and an asset ID must never decode as each other.
 
-        `asset_` is a strict prefix of `asset_stack_`, so a naive prefix check
-        would let `safe_uuid_from_asset_id` accept a stack ID and hand back a
-        UUID for an asset that doesn't exist. Both directions must raise.
+        Both directions must raise rather than hand back a UUID for an entity
+        that doesn't exist — see `safe_uuid_from_stack_id` for the mechanism.
         """
         test_uuid = uuid4()
 

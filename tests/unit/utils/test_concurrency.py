@@ -77,7 +77,7 @@ class TestGatherWithConcurrency:
     @pytest.mark.anyio
     async def test_propagates_exception(self):
         """First exception bubbles up (siblings are not cancelled — see
-        `gather_with_concurrency`)."""
+        `test_siblings_run_to_completion_after_a_failure`)."""
 
         async def boom() -> int:
             raise RuntimeError("boom")
@@ -88,6 +88,43 @@ class TestGatherWithConcurrency:
 
         with pytest.raises(RuntimeError, match="boom"):
             await gather_with_concurrency([slow(), boom(), slow()])
+
+    @pytest.mark.anyio
+    async def test_siblings_run_to_completion_after_a_failure(self):
+        """An aborted batch still costs its full fan-out.
+
+        This is the assertion behind the "propagating is not stopping" contract
+        that `gather_with_concurrency`'s docstring states and that
+        `hydrate_stacks` and `delete_people` rely on. `test_propagates_exception`
+        above cannot carry it: `pytest.raises` passes identically under a
+        cancelling primitive, so only observing the siblings' side effects
+        distinguishes the two. Swapping the helper for a TaskGroup fails this.
+
+        Index 2 is the load-bearing half. With `limit=2` it is still queued when
+        the exception propagates, and it starts *only* because `_run`'s
+        `finally: semaphore.release()` hands it a slot on the way out — the most
+        surprising part of the documented behavior.
+        """
+        completed: list[int] = []
+
+        async def work(idx: int) -> int:
+            await asyncio.sleep(0)
+            completed.append(idx)
+            return idx
+
+        async def boom() -> int:
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await gather_with_concurrency([work(0), boom(), work(1), work(2)], limit=2)
+
+        # Only index 2's absence is contractual here; whether 0 and 1 have
+        # already appended depends on how many times `work` yields, so don't
+        # assert on them.
+        assert 2 not in completed, "index 2 should still be queued"
+        for _ in range(5):  # drain deterministically, not on wall-clock
+            await asyncio.sleep(0)
+        assert sorted(completed) == [0, 1, 2]
 
     @pytest.mark.anyio
     async def test_cancellation_does_not_warn_unawaited_coroutines(
@@ -125,9 +162,10 @@ class TestGatherWithConcurrency:
             await task
 
         # The warning fires when an un-awaited coroutine is *finalized*, not
-        # when it is orphaned. Yield once so the loop drops its references to
-        # the cancelled tasks, then collect — without both steps the orphaned
-        # coroutines outlive the assertion and it passes either way.
+        # when it is orphaned. The yield is the load-bearing step: it lets the
+        # loop drop its references to the cancelled tasks, and CPython's
+        # refcounting finalizes them there. `gc.collect()` alone surfaces
+        # nothing — it's insurance for cycles the refcount can't reach.
         await asyncio.sleep(0)
         gc.collect()
 

@@ -203,8 +203,9 @@ def make_gumnut_stack_members(
     return [
         make_gumnut_asset(
             original_file_name=f"burst-{i}.jpg",
-            device_asset_id=f"device-{i}",
-            device_id=f"device-{i}",
+            # Distinct series, so an assertion reading both can catch a swap.
+            device_asset_id=f"device-asset-{i}",
+            device_id=f"device-id-{i}",
             checksum=f"checksum-{i}",
             checksum_sha1=fake_sha1_checksum(f"burst-{i}"),
             trashed_at=now if i in trashed else None,
@@ -313,6 +314,39 @@ class MockSyncCursorPage:
 
     async def _await_impl(self):
         return self
+
+
+class MockPaginatedListing:
+    """Mock paginator that fakes the SDK's auto-pagination contract.
+
+    ``MockSyncCursorPage`` yields a flat list, so it can't distinguish "the
+    SDK's ``limit`` is a result cap" from "the SDK's ``limit`` is per-page" —
+    both behaviors return the same thing. This one yields one item at a time
+    across pages of ``page_size`` and counts the boundaries it crosses, so a
+    regression that drops an explicit ``break`` out of ``async for`` visibly
+    walks extra pages, and a walk that must consume every page can assert it
+    crossed more than one.
+
+    ``page_size`` must equal the ``limit`` the code actually sends, or
+    ``pages_fetched`` counts boundaries that never occur. Either read it off the
+    call (a ``side_effect`` capturing ``kwargs["limit"]``) or pin it with a
+    separate ``call_args.kwargs["limit"] == page_size`` assertion — a
+    test-picked number with neither is what lets the two silently drift.
+    """
+
+    def __init__(self, items: List[Any], page_size: int):
+        self._items = items
+        self._page_size = page_size
+        self.pages_fetched = 0
+
+    def __aiter__(self):
+        return self._iter()
+
+    async def _iter(self):
+        for i, item in enumerate(self._items):
+            if i % self._page_size == 0:
+                self.pages_fetched += 1
+            yield item
 
 
 @pytest.fixture

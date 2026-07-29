@@ -291,9 +291,8 @@ async def delete_people(
 
     Per-item errors propagate to the global ``GumnutError`` handler — the
     endpoint contract is 204-on-all-success, so the first failure fails the
-    whole response. It does **not** stop the work: ``gather`` doesn't cancel
-    the siblings, so the remaining deletes still go through even though the
-    caller sees an error.
+    whole response while the remaining deletes still go through. See
+    ``gather_with_concurrency``.
     """
     await gather_with_concurrency(
         [

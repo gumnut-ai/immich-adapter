@@ -39,6 +39,15 @@ async def gather_with_concurrency[T](
     upstream. Callers that need per-item errors must catch inside the coroutine
     and return a result object; callers that need the work to actually *stop*
     need a different primitive (e.g. a TaskGroup), not this one.
+
+    Only the first exception **to occur** is ever visible — completion order,
+    not input order, so which of several failures a caller sees is not
+    determined by its position in ``coros``. ``asyncio.gather`` retrieves and
+    discards every later sibling exception (suppressing ``Task exception was
+    never retrieved``), so a batch where several items fail surfaces exactly one
+    error and logs nothing for the rest: no propagation, no loop exception
+    handler, no warning. If knowing *which* items failed matters, catch inside
+    the coroutine.
     """
     semaphore = asyncio.Semaphore(limit)
 
