@@ -557,22 +557,79 @@ def test_plural_documentation_maps_heading_is_not_a_map(repo: FixtureRepo) -> No
     assert result.returncode == 0, result.stderr
 
 
-def test_link_resolving_outside_the_repo_counts_as_broken(repo: FixtureRepo) -> None:
-    """A `../..` escape onto a sibling clone must not pass.
+def test_dev_root_relative_cross_repo_link_is_skipped(repo: FixtureRepo) -> None:
+    """A path climbing out of the repo names another repo, so it is unverifiable.
 
-    It would resolve on a dev box that has the sibling repo cloned and fail for
-    anyone who cloned only this one.
+    `gumnut-dev-setup`'s conventions prescribe exactly this form for a cross-repo
+    `superseded-by:`. CI clones only one repo, so demanding resolution would fail
+    every such reference no matter how it were written.
     """
-    sibling = repo.path.parent / "sibling-repo"
-    sibling.mkdir(parents=True, exist_ok=True)
-    (sibling / "README.md").write_text("outside\n", encoding="utf-8")
     repo.write_doc(
-        "docs/references/a.md", TODAY, "See [x](../../sibling-repo/README.md)."
+        "docs/design-docs/a.md",
+        TODAY,
+        "Live answer: [x](../../../photos/docs/architecture/authentication.md).",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_org_qualified_cross_repo_link_is_skipped(repo: FixtureRepo) -> None:
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "See [x](gumnut-ai/photos/docs/architecture/authentication.md).",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_cross_repo_verdict_does_not_depend_on_a_sibling_clone(
+    repo: FixtureRepo,
+) -> None:
+    """The escape test is path arithmetic, not a filesystem probe.
+
+    Otherwise the same doc would pass on a dev box that happens to have the
+    sibling repo cloned and fail in CI, which clones only this one.
+    """
+    sibling = repo.path.parent / "photos" / "docs" / "architecture"
+    sibling.mkdir(parents=True, exist_ok=True)
+    (sibling / "authentication.md").write_text("outside\n", encoding="utf-8")
+    repo.write_doc(
+        "docs/design-docs/a.md",
+        TODAY,
+        "See [x](../../../photos/docs/architecture/authentication.md).",
+    )
+    repo.commit_all()
+    # Same verdict as the test above, where the sibling does not exist.
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_cross_repo_superseded_by_is_skipped(repo: FixtureRepo) -> None:
+    repo.write(
+        "docs/design-docs/a.md",
+        f"---\ntitle: A\nstatus: deprecated\ncreated: 2020-01-01\n"
+        f"last-updated: {TODAY}\n"
+        f"superseded-by: ../../../photos/docs/architecture/authentication.md\n"
+        f"---\n\nbody\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
+
+
+def test_in_repo_broken_link_still_fails_alongside_cross_repo_ones(
+    repo: FixtureRepo,
+) -> None:
+    """The cross-repo skip must not become a blanket amnesty."""
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "Fine: [x](gumnut-ai/photos/docs/a.md). Broken: [y](./gone.md).",
     )
     repo.commit_all()
     result = repo.lint("--check", "links")
     assert result.returncode == 1
-    assert "sibling-repo/README.md" in result.stderr
+    assert "gone.md" in result.stderr
+    assert "gumnut-ai" not in result.stderr
 
 
 def test_repo_root_prefix_is_stripped(repo: FixtureRepo) -> None:

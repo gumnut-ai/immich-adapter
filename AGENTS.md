@@ -34,6 +34,8 @@ Run from the `immich-adapter/` directory:
 
 Only `freshness` is diff-scoped. The rest run repo-wide, deliberately: renaming a doc breaks inbound links and map rows in files the change never touched. Checks are individually switchable in `scripts/lint_docs.toml`, and `--check <name>` overrides that so a disabled rule can be swept before being switched on.
 
+Citations naming another repo are skipped rather than resolved — both the org-qualified form this repo's conventions require (`gumnut-ai/<repo>/...`) and a path that climbs out of the repo. CI clones one repo, so no such path can resolve there; the linter decides this by path arithmetic alone, so its verdict doesn't change on a machine that happens to have the sibling cloned.
+
 The file is kept byte-identical to the copy in the Gumnut Photos repo — repo differences belong in `lint_docs.toml`, not the script. A green run is not a full review: the linter buys reachability and structural consistency, never correctness.
 
 # Documentation Map

@@ -85,6 +85,12 @@ class Config:
     # the dev root cites through the repo name, which doesn't resolve from inside
     # the repo.
     self_prefixes: tuple[str, ...] = ()
+    # Prefixes marking a citation of a *different* Gumnut repo. The conventions
+    # qualify those with the org (`gumnut-ai/photos/docs/...`) precisely because
+    # they cannot resolve from inside this repo, so they are skipped rather than
+    # reported. Paths that escape the repo root are treated the same way — see
+    # Repo.is_cross_repo.
+    cross_repo_prefixes: tuple[str, ...] = ("gumnut-ai/",)
     enabled: frozenset[str] = frozenset()
     consult_cell_chars: int = 250
     ignores: tuple[Ignore, ...] = ()
@@ -129,6 +135,7 @@ def load_config(path: Path, all_checks: tuple[str, ...]) -> Config:
     return Config(
         strip_prefixes=tuple(raw.get("strip_prefixes", ("repo-root ",))),
         self_prefixes=tuple(raw.get("self_prefixes", ())),
+        cross_repo_prefixes=tuple(raw.get("cross_repo_prefixes", ("gumnut-ai/",))),
         enabled=enabled,
         consult_cell_chars=int(limits.get("consult_cell_chars", 250)),
         ignores=ignores,
@@ -302,6 +309,33 @@ class Repo:
             text=True,
             check=check,
         )
+
+    def is_cross_repo(self, cite: str, relative_to: str) -> bool:
+        """Whether a citation deliberately names a different repo.
+
+        Such a path cannot be verified from inside this one, so it is skipped
+        rather than reported. Two documented forms qualify:
+
+        * the org-qualified form the conventions prescribe for prose citations
+          (`gumnut-ai/photos/docs/...`), matched by `cross_repo_prefixes`;
+        * a dev-root-relative path that climbs out of the repo
+          (`../../../photos/docs/architecture/authentication.md`), which
+          `gumnut-dev-setup`'s conventions prescribe for a cross-repo
+          `superseded-by:`.
+
+        The escape test is **pure path arithmetic with no filesystem access**, so
+        the verdict is identical on a dev box where the sibling repo happens to be
+        cloned and in CI where it never is. Deciding this by existence instead
+        would make the check environment-dependent — and since CI clones only this
+        repo, every such path would fail there regardless of how it is written.
+        """
+        cite = self.config.strip_citation(cite)
+        if not cite:
+            return False
+        if any(cite.startswith(p) for p in self.config.cross_repo_prefixes):
+            return True
+        joined = os.path.join(str(Path(relative_to).parent), cite)
+        return os.path.normpath(joined).startswith("..")
 
     def resolve(self, cite: str, relative_to: str) -> str | None:
         """Resolve a cited path to a repo-relative path, or None.
@@ -690,6 +724,10 @@ def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violati
                     )
                 continue
 
+            if repo.is_cross_repo(path_part, rel):
+                # Names another repo; unverifiable from here, by convention.
+                continue
+
             resolved = repo.resolve(path_part, rel)
             if resolved is None:
                 if "links" in enabled and not repo.config.ignored(rel, "links"):
@@ -833,7 +871,7 @@ def check_maps(repo: Repo, enabled: frozenset[str]) -> tuple[list[Violation], se
                 violations.extend(check_map_cell(repo, row))
 
             cite = row_cited_path(row)
-            if cite is None:
+            if cite is None or repo.is_cross_repo(cite, map_rel):
                 continue
             resolved = repo.resolve(cite, map_rel)
             if resolved is None:
@@ -1017,7 +1055,9 @@ def check_superseded_by(repo: Repo) -> list[Violation]:
         target = repo.frontmatter(rel).get("superseded-by", "")
         if not target:
             continue
-        if EXTERNAL_RE.match(target):
+        if EXTERNAL_RE.match(target) or repo.is_cross_repo(target, rel):
+            # A successor in another repo is the documented case for a doc
+            # deprecated because the live answer moved out of this tree.
             continue
         if repo.resolve(target, rel) is None:
             violations.append(
