@@ -1,0 +1,1176 @@
+#!/usr/bin/env python3
+"""scripts/lint_docs.py
+
+Documentation linter. Enforces the machine-checkable half of
+`docs/references/documentation-conventions.md`.
+
+Checks (each independently switchable in `lint_docs.toml`, so a new rule can
+land dark and be enabled once its sweep is done):
+
+  freshness           `last-updated:` is bumped on an edited doc, and current on
+                      a doc added on this branch
+  links               inline markdown link targets resolve
+  anchors             `#fragment` targets resolve to a real heading or <a id>
+  map_paths           every Documentation Map row's path resolves, as does every
+                      `superseded-by:` frontmatter target
+  map_status_section  a design doc's map section matches its `status:`
+  map_cells           the "Consult when..." cell stays one short line
+  frontmatter         per-directory required frontmatter fields
+
+`freshness` is diff-scoped — it needs a merge-base to compare against. Every
+other check runs repo-wide, which is the point: renaming a doc breaks inbound
+links from files the PR never touched, and a diff-scoped check stays green while
+it happens.
+
+Stdlib only, so it runs anywhere `python3` does (>=3.11 for `tomllib`). Repo
+layout differences live in `lint_docs.toml`, which keeps this file identical
+across the Gumnut repos that use it.
+
+Usage (runnable from anywhere inside the repo):
+  scripts/lint_docs.py                        # check; non-zero exit on violations
+  scripts/lint_docs.py --fix                  # bump last-updated on offenders
+  scripts/lint_docs.py --base origin/main
+  scripts/lint_docs.py --check freshness --check links
+  scripts/lint_docs.py --list-checks
+"""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import os
+import re
+import subprocess
+import sys
+import time
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import NoReturn
+
+DEFAULT_BASE = "origin/main"
+ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+DOC_SUFFIXES = (".md", ".mdx")
+
+# At any instant, current local calendar dates range from UTC-12 through UTC+14.
+# Accepting the dates at those boundaries (and UTC itself) lets contributors and
+# CI runners in different timezones agree that a doc was updated today (GUM-1454).
+TZ_WINDOW_EARLIEST_SECONDS = 43_200
+TZ_WINDOW_LATEST_SECONDS = 50_400
+
+# `docs/design-docs/TEMPLATE.md` carries placeholder frontmatter — `status: active`
+# is boilerplate rather than a live plan, and its dates are literally `YYYY-MM-DD`.
+# Every check that reads those values has to special-case it.
+TEMPLATE_BASENAME = "TEMPLATE.md"
+
+
+# --------------------------------------------------------------------------
+# Config
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Ignore:
+    path: str
+    checks: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True)
+class Config:
+    # Citation prefixes stripped before a path is resolved. `repo-root ` marks a
+    # repo-level doc cited from a project that has a same-named file of its own.
+    strip_prefixes: tuple[str, ...] = ("repo-root ",)
+    # Prefixes a map uses to cite *this* repo's own files. A map symlinked into
+    # the dev root cites through the repo name, which doesn't resolve from inside
+    # the repo.
+    self_prefixes: tuple[str, ...] = ()
+    enabled: frozenset[str] = frozenset()
+    consult_cell_chars: int = 250
+    ignores: tuple[Ignore, ...] = ()
+
+    def ignored(self, rel_path: str, check: str) -> bool:
+        for ig in self.ignores:
+            if check not in ig.checks and "*" not in ig.checks:
+                continue
+            if rel_path == ig.path or fnmatch.fnmatch(rel_path, ig.path):
+                return True
+        return False
+
+    def strip_citation(self, cite: str) -> str:
+        out = cite.strip()
+        for prefix in (*self.strip_prefixes, *self.self_prefixes):
+            if out.startswith(prefix):
+                out = out[len(prefix) :].strip()
+        return out
+
+
+def load_config(path: Path, all_checks: tuple[str, ...]) -> Config:
+    raw: dict = {}
+    if path.exists():
+        with path.open("rb") as fh:
+            raw = tomllib.load(fh)
+
+    checks = raw.get("checks", {})
+    # A check absent from config defaults to on, so adding a check to this file
+    # doesn't silently do nothing in a repo whose config predates it.
+    enabled = frozenset(name for name in all_checks if checks.get(name, True))
+
+    ignores = tuple(
+        Ignore(
+            path=entry["path"],
+            checks=tuple(entry.get("checks", ("*",))),
+            reason=entry.get("reason", ""),
+        )
+        for entry in raw.get("ignore", [])
+    )
+
+    limits = raw.get("limits", {})
+    return Config(
+        strip_prefixes=tuple(raw.get("strip_prefixes", ("repo-root ",))),
+        self_prefixes=tuple(raw.get("self_prefixes", ())),
+        enabled=enabled,
+        consult_cell_chars=int(limits.get("consult_cell_chars", 250)),
+        ignores=ignores,
+    )
+
+
+# --------------------------------------------------------------------------
+# Violations
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class Violation:
+    check: str
+    path: str
+    message: str
+    line: int | None = None
+    warning: bool = False
+
+    def render(self) -> str:
+        where = f"{self.path}:{self.line}" if self.line else self.path
+        return f"  {where}: {self.message} [{self.check}]"
+
+
+# --------------------------------------------------------------------------
+# Markdown helpers
+# --------------------------------------------------------------------------
+
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
+HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+CODESPAN_RE = re.compile(r"`[^`\n]*`")
+LINK_RE = re.compile(r"(?<!!)\[([^\]\[]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+HTML_ANCHOR_RE = re.compile(r"<a\s+(?:id|name)=[\"']([^\"']+)[\"']")
+TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
+# Anchored, and rejecting a trailing lowercase letter, so the plural section
+# heading `## Documentation Maps` is not read as a map. See is_map_heading.
+MAP_HEADING_RE = re.compile(r"^Documentation Map(?![a-z])")
+
+
+def blank_fenced_blocks(text: str) -> str:
+    """Replace fenced-code lines with empty ones, preserving line numbering.
+
+    Documentation about markdown syntax lives in fenced blocks; treating those
+    examples as real links is the main source of false positives.
+    """
+    out: list[str] = []
+    in_fence = False
+    for line in text.split("\n"):
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            out.append("")
+            continue
+        out.append("" if in_fence else line)
+    return "\n".join(out)
+
+
+def blank_code_spans(text: str) -> str:
+    """Neutralize inline code spans, preserving offsets and line numbering.
+
+    Same-length filler means a link *inside* a span stops parsing (its brackets
+    are gone) while a link with a backticked *label* still parses with its target
+    intact: [`foo.md`](foo.md) -> [xxxxxxxxx](foo.md).
+    """
+    return CODESPAN_RE.sub(lambda m: "x" * len(m.group(0)), text)
+
+
+def slugify_heading(heading: str) -> str:
+    """GitHub's heading-anchor slug.
+
+    Two details matter, and getting either wrong produces confident false
+    positives (both were caught by running this over the real tree):
+
+    * runs of whitespace do NOT collapse. `## Migration & Rollout Plan` becomes
+      `migration--rollout-plan`, because the `&` is dropped and each surrounding
+      space still becomes a hyphen.
+    * `_` survives. It is a word character, and inside a code span it is literal
+      text, so `asset_metadata.raw_width` keeps both underscores.
+    """
+    s = heading.strip()
+    # Link syntax in a heading contributes only its label.
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)
+    # Inline-formatting markup is not part of the rendered text. `_` is excluded
+    # deliberately — see the docstring.
+    s = re.sub(r"[`*~]", "", s)
+    s = s.lower()
+    s = re.sub(r"[^\w\s-]", "", s, flags=re.UNICODE)
+    return s.strip().replace(" ", "-")
+
+
+def collect_anchors(text: str) -> set[str]:
+    """Every fragment a `#...` link in this file could target."""
+    body = blank_fenced_blocks(text)
+    anchors: set[str] = set(HTML_ANCHOR_RE.findall(body))
+    seen: dict[str, int] = {}
+    for line in body.split("\n"):
+        m = HEADING_RE.match(line)
+        if not m:
+            continue
+        base = slugify_heading(m.group(2))
+        if not base:
+            continue
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        # GitHub disambiguates repeats with -1, -2, ... leaving the first bare.
+        anchors.add(base if n == 0 else f"{base}-{n}")
+    return anchors
+
+
+def parse_frontmatter(text: str) -> dict[str, str]:
+    """Parse the leading YAML frontmatter block.
+
+    Only the subset the conventions use: flat `key: value` pairs. A body mention
+    of a key (e.g. a doc documenting the convention) is not frontmatter and is
+    ignored, which is why parsing stops at the closing delimiter.
+    """
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return {}
+    fields: dict[str, str] = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        m = re.match(r"^\s*([A-Za-z0-9_-]+)\s*:(.*)$", line)
+        if m:
+            fields[m.group(1)] = unquote(m.group(2))
+    return fields
+
+
+def unquote(value: str) -> str:
+    v = value.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        return v[1:-1]
+    return v
+
+
+# --------------------------------------------------------------------------
+# Repo context
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class Repo:
+    root: Path
+    config: Config
+    docs: tuple[str, ...] = ()
+    doc_roots: tuple[str, ...] = ()
+    project_roots: tuple[str, ...] = ()
+    _text: dict[str, str] = field(default_factory=dict)
+    _anchors: dict[str, set[str]] = field(default_factory=dict)
+
+    def text(self, rel: str) -> str:
+        if rel not in self._text:
+            try:
+                self._text[rel] = (self.root / rel).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                self._text[rel] = ""
+        return self._text[rel]
+
+    def anchors(self, rel: str) -> set[str]:
+        if rel not in self._anchors:
+            self._anchors[rel] = collect_anchors(self.text(rel))
+        return self._anchors[rel]
+
+    def frontmatter(self, rel: str) -> dict[str, str]:
+        return parse_frontmatter(self.text(rel))
+
+    def git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(self.root), *args],
+            capture_output=True,
+            text=True,
+            check=check,
+        )
+
+    def resolve(self, cite: str, relative_to: str) -> str | None:
+        """Resolve a cited path to a repo-relative path, or None.
+
+        Tries, in order: relative to the citing file's directory, then each
+        project root above it, then the repo root. The project-root rung is what
+        makes an `mcp-app/docs/` doc citing `docs/architecture/foo.md` resolve —
+        the conventions permit that form, and a resolver that only tries the
+        citing directory and the repo root reports it as broken.
+        """
+        cite = self.config.strip_citation(cite)
+        if not cite or cite.startswith("/"):
+            return None
+        bases = [Path(relative_to).parent]
+        bases.extend(
+            Path(proj)
+            for proj in self.project_roots
+            if relative_to.startswith(proj + "/")
+        )
+        bases.append(Path("."))
+        for base in bases:
+            candidate = (self.root / base / cite).resolve()
+            if not candidate.exists():
+                continue
+            try:
+                return str(candidate.relative_to(self.root))
+            except ValueError:
+                # Exists, but outside the repo — a `../..` escape that happens to
+                # land on a sibling clone in someone's dev root. Treating that as
+                # resolved would pass here and fail for anyone who cloned only
+                # this repo, so it counts as unresolved. Cross-repo citations are
+                # qualified with the repo name by convention and never resolve.
+                return None
+        return None
+
+    def invalidate(self, rel: str) -> None:
+        """Drop cached content for a file this process just rewrote."""
+        self._text.pop(rel, None)
+        self._anchors.pop(rel, None)
+
+
+def discover_repo(config: Config) -> Repo:
+    try:
+        root_out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        fail("not inside a git repository")
+    root = Path(root_out.stdout.strip()).resolve()
+
+    tracked = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split("\0")
+    tracked = [p for p in tracked if p]
+
+    docs = tuple(p for p in tracked if p.endswith(DOC_SUFFIXES))
+
+    # Doc roots and project roots are discovered, not configured: any tracked
+    # directory named `docs` is a doc root, and its parent is a project root.
+    doc_roots: set[str] = set()
+    project_roots: set[str] = set()
+    for p in tracked:
+        parts = Path(p).parts
+        for i, part in enumerate(parts[:-1]):
+            if part != "docs":
+                continue
+            doc_roots.add("/".join(parts[: i + 1]))
+            project_roots.add("/".join(parts[:i]))
+    project_roots.discard("")
+
+    return Repo(
+        root=root,
+        config=config,
+        docs=docs,
+        doc_roots=tuple(sorted(doc_roots)),
+        # Longest first, so `app/web` is tried before `app`.
+        project_roots=tuple(sorted(project_roots, key=lambda s: (-len(s), s))),
+    )
+
+
+def fail(message: str) -> NoReturn:
+    print(f"lint_docs: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+# --------------------------------------------------------------------------
+# Clock
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Clock:
+    today: str
+    current_dates: frozenset[str]
+
+    @classmethod
+    def build(cls) -> Clock:
+        # Tests pin the clock so a fixture and this process cannot straddle a
+        # date boundary. Normal invocations use the system clock.
+        now = int(os.environ.get("LINT_DOCS_NOW_EPOCH") or time.time())
+        today = os.environ.get("LINT_DOCS_TODAY") or time.strftime(
+            "%Y-%m-%d", time.localtime(now)
+        )
+        return cls(
+            today=today,
+            current_dates=frozenset(
+                time.strftime("%Y-%m-%d", time.gmtime(now + delta))
+                for delta in (
+                    -TZ_WINDOW_EARLIEST_SECONDS,
+                    0,
+                    TZ_WINDOW_LATEST_SECONDS,
+                )
+            ),
+        )
+
+    def is_current(self, date: str) -> bool:
+        return date in self.current_dates
+
+
+# --------------------------------------------------------------------------
+# freshness
+# --------------------------------------------------------------------------
+
+
+def strip_date_line(text: str) -> str:
+    """Echo a doc with its frontmatter `last-updated` line removed.
+
+    Lets two revisions be compared for changes *other than* the date.
+    """
+    out: list[str] = []
+    in_fm = False
+    for i, line in enumerate(text.split("\n")):
+        if i == 0 and line.strip() == "---":
+            in_fm = True
+            out.append(line)
+            continue
+        if in_fm and line.strip() == "---":
+            in_fm = False
+            out.append(line)
+            continue
+        if in_fm and re.match(r"^\s*last-updated\s*:", line):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def bump_date_line(text: str, today: str) -> str:
+    """Rewrite the frontmatter `last-updated` value, preserving indentation."""
+    out: list[str] = []
+    in_fm = False
+    done = False
+    for i, line in enumerate(text.split("\n")):
+        if i == 0 and line.strip() == "---":
+            in_fm = True
+            out.append(line)
+            continue
+        if in_fm and not done and line.strip() == "---":
+            in_fm = False
+            out.append(line)
+            continue
+        if in_fm and not done:
+            m = re.match(r"^(\s*)last-updated\s*:", line)
+            if m:
+                out.append(f"{m.group(1)}last-updated: {today}")
+                done = True
+                continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def has_last_updated_key(text: str) -> bool:
+    """Whether the leading frontmatter carries the key, whatever its value.
+
+    Scoped on key *presence* so a blanked-out date stays in scope and fails the
+    value check, rather than being mistaken for an unmarked doc.
+    """
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return False
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return False
+        if re.match(r"^\s*last-updated\s*:", line):
+            return True
+    return False
+
+
+def resolve_merge_base(repo: Repo, base: str) -> str:
+    """The merge-base of `base` with HEAD, with fallbacks.
+
+    Some ephemeral CI/agent worktrees are handed over without remotes or local
+    base refs. Falling back to `main` and then `HEAD^` lets the linter still
+    evaluate the branch's doc edits instead of failing before it scans.
+    """
+    got = repo.git("merge-base", base, "HEAD", check=False)
+    if got.returncode == 0:
+        return got.stdout.strip()
+    if base == DEFAULT_BASE:
+        got = repo.git("merge-base", "main", "HEAD", check=False)
+        if got.returncode == 0:
+            return got.stdout.strip()
+        got = repo.git("rev-parse", "--verify", "HEAD^", check=False)
+        if got.returncode == 0:
+            print(
+                f"lint_docs: warning: could not compute merge-base against "
+                f"'{base}' or 'main'; falling back to HEAD^",
+                file=sys.stderr,
+            )
+            return got.stdout.strip()
+    fail(
+        f"could not compute merge-base against '{base}'; "
+        f"fetch the base branch or pass --base"
+    )
+
+
+def rename_sources(repo: Repo, merge_base: str) -> dict[str, str]:
+    """Map each renamed doc's new path to the path it had at the merge-base.
+
+    Rename detection is on by default, so a renamed doc reaches the changed-file
+    list under its *new* path, which does not exist at the merge-base. Without
+    this map a relocated doc looks brand-new, and the "an added doc's date must be
+    current" rule would demand a bump for a pure move that edited nothing — a
+    false positive on exactly the doc-reorganization work this linter exists to
+    protect. Resolving the base blob through the old path makes a rename behave
+    like an edit of a pre-existing file: content-preserving moves pass, and a
+    move that also rewrites the body still has to bump.
+    """
+    fields = [
+        f
+        for f in repo.git(
+            "diff",
+            "-M",
+            "--name-status",
+            "-z",
+            "--diff-filter=R",
+            merge_base,
+            "--",
+            "*.md",
+            "*.mdx",
+        ).stdout.split("\0")
+        if f
+    ]
+    # `--name-status -z` emits status, old path, new path as three NUL-separated
+    # fields per rename (e.g. `R100`, `a.md`, `b.md`).
+    renames: dict[str, str] = {}
+    i = 0
+    while i + 2 < len(fields):
+        if not fields[i].startswith("R"):
+            break
+        renames[fields[i + 2]] = fields[i + 1]
+        i += 3
+    return renames
+
+
+def check_freshness(
+    repo: Repo, clock: Clock, base: str, fix: bool
+) -> tuple[list[Violation], list[str]]:
+    """Enforce `last-updated:` on docs changed versus the merge-base.
+
+    Returns (violations, fixed_paths). With `fix`, offenders are bumped and no
+    violations are reported.
+    """
+    merge_base = resolve_merge_base(repo, base)
+    renames = rename_sources(repo, merge_base)
+    changed = repo.git(
+        "diff",
+        "--name-only",
+        "-z",
+        "--diff-filter=d",
+        merge_base,
+        "--",
+        "*.md",
+        "*.mdx",
+    ).stdout.split("\0")
+
+    violations: list[Violation] = []
+    fixed: list[str] = []
+
+    for rel in (p for p in changed if p):
+        if repo.config.ignored(rel, "freshness"):
+            continue
+        # A template's date is placeholder text (`YYYY-MM-DD`); bumping it to a
+        # real date would corrupt the template for the next doc copied from it.
+        if Path(rel).name == TEMPLATE_BASENAME:
+            continue
+        text = repo.text(rel)
+        if not has_last_updated_key(text):
+            continue
+
+        head_val = repo.frontmatter(rel).get("last-updated", "")
+        # A renamed doc's base blob lives under its old path. See rename_sources.
+        base_path = renames.get(rel, rel)
+        at_base = repo.git("cat-file", "-e", f"{merge_base}:{base_path}", check=False)
+        exists_at_base = at_base.returncode == 0
+
+        message: str | None = None
+        if not ISO_RE.match(head_val):
+            # Checked before the body-change short-circuit below, so a date-only
+            # edit to a junk or blank value still fails closed.
+            message = (
+                f"last-updated is not a valid ISO YYYY-MM-DD date "
+                f"(got '{head_val}'); set it to {clock.today}"
+            )
+        elif exists_at_base:
+            base_text = repo.git("show", f"{merge_base}:{base_path}").stdout
+            if strip_date_line(base_text) == strip_date_line(text):
+                # Only the date changed, and it is valid. Nothing to enforce.
+                continue
+            base_val = parse_frontmatter(base_text).get("last-updated", "")
+            if head_val == base_val and not clock.is_current(head_val):
+                message = (
+                    f"body changed but last-updated is still {head_val} "
+                    f"(unchanged from base); bump it to {clock.today}"
+                )
+        elif not clock.is_current(head_val):
+            # Added on this branch, so there is no base value to compare — but
+            # "is this date current" still applies. Without this, a doc created
+            # on day 1 and edited on day 2 keeps its day-1 date and every run,
+            # including --fix, reports clean.
+            message = (
+                f"doc was added on this branch but last-updated is {head_val}, "
+                f"not current; set it to {clock.today}"
+            )
+
+        if message is None:
+            continue
+        if fix:
+            (repo.root / rel).write_text(
+                bump_date_line(text, clock.today), encoding="utf-8"
+            )
+            repo.invalidate(rel)
+            fixed.append(rel)
+        else:
+            violations.append(Violation("freshness", rel, message))
+
+    return violations, fixed
+
+
+# --------------------------------------------------------------------------
+# links / anchors
+# --------------------------------------------------------------------------
+
+EXTERNAL_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
+
+
+def iter_links(text: str):
+    """Yield (line_number, target) for inline links worth resolving.
+
+    The label is discarded — comparing a link's label to its target is a separate
+    check, deliberately out of scope here.
+    """
+    body = blank_code_spans(blank_fenced_blocks(text))
+    for lineno, line in enumerate(body.split("\n"), 1):
+        for match in LINK_RE.finditer(line):
+            yield lineno, match.group(2)
+
+
+def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violation]:
+    violations: list[Violation] = []
+    for rel in repo.docs:
+        text = repo.text(rel)
+        for lineno, target in iter_links(text):
+            if EXTERNAL_RE.match(target):
+                continue
+            path_part, _, frag = target.partition("#")
+
+            if not path_part:
+                # Same-file fragment.
+                if "anchors" not in enabled or repo.config.ignored(rel, "anchors"):
+                    continue
+                if frag and frag not in repo.anchors(rel):
+                    violations.append(
+                        Violation(
+                            "anchors",
+                            rel,
+                            f"link `{target}` has no matching heading or anchor "
+                            f"in this file",
+                            lineno,
+                        )
+                    )
+                continue
+
+            resolved = repo.resolve(path_part, rel)
+            if resolved is None:
+                if "links" in enabled and not repo.config.ignored(rel, "links"):
+                    violations.append(
+                        Violation(
+                            "links",
+                            rel,
+                            f"link target `{path_part}` does not resolve",
+                            lineno,
+                        )
+                    )
+                continue
+
+            if (
+                frag
+                and "anchors" in enabled
+                and not repo.config.ignored(rel, "anchors")
+                and resolved.endswith(DOC_SUFFIXES)
+                and frag not in repo.anchors(resolved)
+            ):
+                violations.append(
+                    Violation(
+                        "anchors",
+                        rel,
+                        f"link `{target}` resolves to {resolved}, which has no "
+                        f"`#{frag}` heading or anchor",
+                        lineno,
+                    )
+                )
+    return violations
+
+
+# --------------------------------------------------------------------------
+# Documentation Maps
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class MapRow:
+    map_path: str
+    line: int
+    section: str
+    topic: str
+    doc_cell: str
+    consult_cell: str
+
+
+def is_map_heading(heading: str) -> bool:
+    """Whether a heading opens a Documentation Map.
+
+    Anchored, and excluding a following lowercase letter, so the *plural* section
+    heading `## Documentation Maps` in `documentation-conventions.md` — which
+    documents the convention rather than carrying a map — is not mistaken for one.
+    A substring test picks it up, and any three-column table added under it would
+    then be silently validated as map rows.
+    """
+    return MAP_HEADING_RE.match(heading) is not None
+
+
+def find_map_files(repo: Repo) -> list[str]:
+    """Docs carrying a Documentation Map.
+
+    Discovered by heading *text*, not filename: `gumnut-dev-setup`'s map lives in
+    `root-agents.md` (symlinked into the dev root), not in its `AGENTS.md`.
+    """
+    out: list[str] = []
+    for rel in repo.docs:
+        for line in blank_fenced_blocks(repo.text(rel)).split("\n"):
+            m = HEADING_RE.match(line)
+            if m and is_map_heading(m.group(2)):
+                out.append(rel)
+                break
+    return out
+
+
+def parse_map_rows(repo: Repo, map_rel: str) -> list[MapRow]:
+    """Rows of every Documentation Map table in a file.
+
+    The map's heading level varies between files — the root `photos/AGENTS.md`
+    uses `## Documentation Map` with `###` sections while `photos-api/AGENTS.md`
+    uses `#` with `##`. So the map is located by heading text and its sections by
+    "any deeper heading", never by a fixed level. Keying on level reported 81
+    phantom unmapped docs.
+    """
+    rows: list[MapRow] = []
+    in_map = False
+    map_level = 0
+    section = ""
+    for lineno, line in enumerate(
+        blank_fenced_blocks(repo.text(map_rel)).split("\n"), 1
+    ):
+        m = HEADING_RE.match(line)
+        if m:
+            level, heading = len(m.group(1)), m.group(2)
+            if is_map_heading(heading):
+                in_map, map_level, section = True, level, ""
+            elif in_map and level <= map_level:
+                in_map = False
+            elif in_map:
+                section = heading
+            continue
+        if not in_map:
+            continue
+        rm = TABLE_ROW_RE.match(line)
+        if not rm:
+            continue
+        cells = [c.strip() for c in rm.group(1).split("|")]
+        if len(cells) != 3:
+            continue
+        topic, doc_cell, consult = cells
+        # Skip the header row and the `|---|---|---|` separator.
+        if not topic or topic == "Topic" or set(doc_cell) <= set("-: "):
+            continue
+        rows.append(MapRow(map_rel, lineno, section, topic, doc_cell, consult))
+    return rows
+
+
+def row_cited_path(row: MapRow) -> str | None:
+    m = re.search(r"`([^`]+)`", row.doc_cell)
+    return m.group(1) if m else None
+
+
+def is_active_section(section: str) -> bool:
+    return "Active" in section and "Design Doc" in section
+
+
+def is_historical_section(section: str) -> bool:
+    return "Historical" in section or "Deprecated" in section
+
+
+def check_maps(repo: Repo, enabled: frozenset[str]) -> tuple[list[Violation], set[str]]:
+    """Run the map checks. Returns (violations, set of mapped doc paths)."""
+    violations: list[Violation] = []
+    mapped: set[str] = set()
+
+    for map_rel in find_map_files(repo):
+        # A map section may legitimately hold no table: `gumnut-dev-setup`'s
+        # AGENTS.md has the heading and a pointer to where the real map lives.
+        for row in parse_map_rows(repo, map_rel):
+            if "map_cells" in enabled and not repo.config.ignored(map_rel, "map_cells"):
+                violations.extend(check_map_cell(repo, row))
+
+            cite = row_cited_path(row)
+            if cite is None:
+                continue
+            resolved = repo.resolve(cite, map_rel)
+            if resolved is None:
+                if "map_paths" in enabled and not repo.config.ignored(
+                    map_rel, "map_paths"
+                ):
+                    violations.append(
+                        Violation(
+                            "map_paths",
+                            map_rel,
+                            f"map row '{row.topic}' cites `{cite}`, which does "
+                            f"not resolve",
+                            row.line,
+                        )
+                    )
+                continue
+            mapped.add(resolved)
+
+            if "map_status_section" in enabled and not repo.config.ignored(
+                map_rel, "map_status_section"
+            ):
+                violations.extend(check_row_status_section(repo, row, resolved))
+
+    return violations, mapped
+
+
+def check_map_cell(repo: Repo, row: MapRow) -> list[Violation]:
+    """The "Consult when..." cell is a routing trigger, not a summary."""
+    cap = repo.config.consult_cell_chars
+    if "<br" in row.consult_cell.lower():
+        return [
+            Violation(
+                "map_cells",
+                row.map_path,
+                f"map row '{row.topic}' has a multi-line Consult-when cell "
+                f"(contains <br>); keep it to one line and put detail in the doc",
+                row.line,
+            )
+        ]
+    if len(row.consult_cell) > cap:
+        return [
+            Violation(
+                "map_cells",
+                row.map_path,
+                f"map row '{row.topic}' has a {len(row.consult_cell)}-char "
+                f"Consult-when cell (limit {cap}); it decides whether to open "
+                f"the doc — move detail into the doc",
+                row.line,
+            )
+        ]
+    return []
+
+
+def check_row_status_section(repo: Repo, row: MapRow, resolved: str) -> list[Violation]:
+    """A design doc's map section follows its `status:` frontmatter."""
+    if "/design-docs/" not in f"/{resolved}":
+        return []
+    if Path(resolved).name == TEMPLATE_BASENAME:
+        # `status: active` here is placeholder text, not a live plan.
+        return []
+    status = repo.frontmatter(resolved).get("status", "")
+    if not status:
+        return [
+            Violation(
+                "map_status_section",
+                resolved,
+                "design doc has no `status:` frontmatter, so its map section "
+                "cannot be checked",
+            )
+        ]
+    if status in ("proposed", "active") and not is_active_section(row.section):
+        return [
+            Violation(
+                "map_status_section",
+                row.map_path,
+                f"`{resolved}` is status={status} but is mapped under "
+                f"'{row.section}'; it belongs under Active Design Docs",
+                row.line,
+            )
+        ]
+    if status in ("completed", "deprecated") and not is_historical_section(row.section):
+        return [
+            Violation(
+                "map_status_section",
+                row.map_path,
+                f"`{resolved}` is status={status} but is mapped under "
+                f"'{row.section}'; it belongs under Historical & Deprecated "
+                f"Design Docs",
+                row.line,
+            )
+        ]
+    return []
+
+
+def check_unmapped(repo: Repo, mapped: set[str]) -> list[Violation]:
+    """Warn on a design doc no map routes to.
+
+    A warning rather than an error: the map is the only route to a doc, but a
+    doc can legitimately be mid-flight, and this is the check most likely to
+    misfire on an unusual map layout.
+    """
+    out: list[Violation] = []
+    for rel in repo.docs:
+        if "/design-docs/" not in f"/{rel}":
+            continue
+        if Path(rel).name == TEMPLATE_BASENAME or rel in mapped:
+            continue
+        if repo.config.ignored(rel, "map_paths"):
+            continue
+        out.append(
+            Violation(
+                "map_paths",
+                rel,
+                "design doc has no Documentation Map row; agents surface docs "
+                "only through the maps",
+                warning=True,
+            )
+        )
+    return out
+
+
+# --------------------------------------------------------------------------
+# frontmatter
+# --------------------------------------------------------------------------
+
+
+def required_fields(rel: str, fm: dict[str, str]) -> tuple[str, ...]:
+    slashed = f"/{rel}"
+    if "/generated/" in slashed:
+        return ("generated",)
+    if "/design-docs/" in slashed:
+        base = ("title", "status", "created", "last-updated")
+        if fm.get("status") == "deprecated":
+            return (*base, "superseded-by")
+        return base
+    return ("title", "last-updated")
+
+
+def under_doc_root(repo: Repo, rel: str) -> bool:
+    return any(rel.startswith(root + "/") for root in repo.doc_roots)
+
+
+def check_frontmatter(repo: Repo) -> list[Violation]:
+    violations: list[Violation] = []
+    for rel in repo.docs:
+        if not under_doc_root(repo, rel):
+            # `AGENTS.md` / `README.md` carry no frontmatter by convention.
+            continue
+        if repo.config.ignored(rel, "frontmatter"):
+            continue
+        fm = repo.frontmatter(rel)
+        missing = [k for k in required_fields(rel, fm) if k not in fm]
+        if missing:
+            violations.append(
+                Violation(
+                    "frontmatter",
+                    rel,
+                    f"frontmatter is missing required field(s): {', '.join(missing)}",
+                )
+            )
+        if "/generated/" in f"/{rel}" and fm.get("generated") not in (None, "true"):
+            violations.append(
+                Violation(
+                    "frontmatter",
+                    rel,
+                    f"generated doc must declare `generated: true` "
+                    f"(got '{fm.get('generated')}')",
+                )
+            )
+    return violations
+
+
+def check_superseded_by(repo: Repo) -> list[Violation]:
+    """`superseded-by:` names where the live answer moved — it has to resolve."""
+    violations: list[Violation] = []
+    for rel in repo.docs:
+        if not under_doc_root(repo, rel):
+            continue
+        if repo.config.ignored(rel, "map_paths"):
+            continue
+        target = repo.frontmatter(rel).get("superseded-by", "")
+        if not target:
+            continue
+        if EXTERNAL_RE.match(target):
+            continue
+        if repo.resolve(target, rel) is None:
+            violations.append(
+                Violation(
+                    "map_paths",
+                    rel,
+                    f"`superseded-by: {target}` does not resolve",
+                )
+            )
+    return violations
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+ALL_CHECKS = (
+    "freshness",
+    "links",
+    "anchors",
+    "map_paths",
+    "map_status_section",
+    "map_cells",
+    "frontmatter",
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="scripts/lint_docs.py",
+        description=(
+            "Documentation linter — link/anchor resolution, Documentation Map "
+            "rows, frontmatter, and `last-updated:` freshness. Runnable from "
+            "anywhere inside the repo."
+        ),
+    )
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="bump last-updated on offenders (applies to the freshness check only)",
+    )
+    parser.add_argument(
+        "--base",
+        default=DEFAULT_BASE,
+        metavar="REF",
+        help=f"base ref for the freshness merge-base (default: {DEFAULT_BASE})",
+    )
+    parser.add_argument(
+        "--check",
+        action="append",
+        dest="checks",
+        metavar="NAME",
+        choices=ALL_CHECKS,
+        help="run only this check; repeatable",
+    )
+    parser.add_argument(
+        "--list-checks",
+        action="store_true",
+        help="list check names and whether config enables them, then exit",
+    )
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help=(
+            "config file (default: lint_docs.toml beside this script). Lets the "
+            "test suite drive a fixture repo without inheriting this repo's config"
+        ),
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    config_path = (
+        Path(args.config)
+        if args.config
+        else Path(__file__).resolve().parent / "lint_docs.toml"
+    )
+    if args.config and not config_path.exists():
+        fail(f"config file not found: {config_path}")
+    config = load_config(config_path, ALL_CHECKS)
+
+    if args.list_checks:
+        for name in ALL_CHECKS:
+            state = "enabled" if name in config.enabled else "disabled"
+            print(f"{name}: {state}")
+        return 0
+
+    enabled = config.enabled
+    if args.checks:
+        requested = frozenset(args.checks)
+        # An explicit --check overrides config, so a disabled check can still be
+        # exercised deliberately (which is how a new rule gets swept).
+        enabled = requested
+    if not enabled:
+        print("lint_docs: no checks enabled; nothing to do.", file=sys.stderr)
+        return 0
+
+    repo = discover_repo(config)
+    clock = Clock.build()
+
+    violations: list[Violation] = []
+    fixed: list[str] = []
+
+    if "freshness" in enabled:
+        fresh_violations, fixed = check_freshness(repo, clock, args.base, args.fix)
+        violations.extend(fresh_violations)
+
+    if enabled & {"links", "anchors"}:
+        violations.extend(check_links_and_anchors(repo, enabled))
+
+    if enabled & {"map_paths", "map_status_section", "map_cells"}:
+        map_violations, mapped = check_maps(repo, enabled)
+        violations.extend(map_violations)
+        if "map_paths" in enabled:
+            violations.extend(check_unmapped(repo, mapped))
+            violations.extend(check_superseded_by(repo))
+
+    if "frontmatter" in enabled:
+        violations.extend(check_frontmatter(repo))
+
+    if args.fix:
+        if fixed:
+            print(
+                f"lint_docs: bumped last-updated on {len(fixed)} doc(s):",
+                file=sys.stderr,
+            )
+            for rel in fixed:
+                print(f"  {rel}", file=sys.stderr)
+        else:
+            print("lint_docs: no docs needed a last-updated bump.", file=sys.stderr)
+
+    warnings = [v for v in violations if v.warning]
+    errors = [v for v in violations if not v.warning]
+
+    if warnings:
+        print(f"lint_docs: {len(warnings)} warning(s):", file=sys.stderr)
+        for v in sorted(warnings, key=lambda v: (v.path, v.line or 0)):
+            print(v.render(), file=sys.stderr)
+
+    if errors:
+        print(f"lint_docs: {len(errors)} violation(s):", file=sys.stderr)
+        for v in sorted(errors, key=lambda v: (v.path, v.line or 0)):
+            print(v.render(), file=sys.stderr)
+        if any(v.check == "freshness" for v in errors):
+            print("Bump the date, or run scripts/lint_docs.py --fix.", file=sys.stderr)
+        return 1
+
+    if not args.fix:
+        print("lint_docs: all documentation checks passed.", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -16,6 +16,25 @@ Run from the `immich-adapter/` directory:
 - **Lint**: `uv run ruff check`
 - **Type check**: `uv run pyright`
 - **Test**: `uv run pytest`
+- **Docs**: `python3 scripts/lint_docs.py` (`--fix` bumps stale `last-updated:` dates) — see § Documentation Checks below
+
+# Documentation Checks
+
+`scripts/lint_docs.py` enforces the mechanically checkable half of the conventions below, and runs on every PR (the `lint-docs` job in `.github/workflows/ci.yml`). It is stdlib-only, so it needs no install step and runs anywhere `python3` does.
+
+| Check | Enforces |
+|-------|----------|
+| `freshness` | `last-updated:` bumped on an edited doc, and current on a doc added on the branch |
+| `links` | Every inline markdown link target resolves |
+| `anchors` | Every `#fragment` resolves to a real heading or `<a id>` |
+| `map_paths` | Every Documentation Map row's path resolves, as does every `superseded-by:`; warns on a design doc with no row |
+| `map_status_section` | A design doc's map section matches its `status:` frontmatter |
+| `map_cells` | The Consult-when cell stays one line, under 250 characters |
+| `frontmatter` | `docs/design-docs/` needs `title`/`status`/`created`/`last-updated`, plus `superseded-by` when deprecated; other `docs/` need `title`/`last-updated` |
+
+Only `freshness` is diff-scoped. The rest run repo-wide, deliberately: renaming a doc breaks inbound links and map rows in files the change never touched. Checks are individually switchable in `scripts/lint_docs.toml`, and `--check <name>` overrides that so a disabled rule can be swept before being switched on.
+
+The file is kept byte-identical to the copy in the Gumnut Photos repo — repo differences belong in `lint_docs.toml`, not the script. A green run is not a full review: the linter buys reachability and structural consistency, never correctness.
 
 # Documentation Map
 

@@ -82,3 +82,47 @@ jobs:
             echo "::error::Mismatch: .immich-container-tag=$TAG but Dockerfile ARG IMMICH_VERSION=$DOCKERFILE_VERSION. See docs/references/code-practices.md § 'Bumping the Immich Version'."
             exit 1
           fi
+
+  lint-docs:
+    name: Lint documentation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.0
+        with:
+          # The freshness check compares each changed doc against the merge-base,
+          # so it needs history rather than a depth-1 snapshot.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version-file: ".python-version"
+
+      # No install step: the linter is stdlib-only so it runs anywhere python3
+      # does, which is the point of keeping it dependency-free. Its test suite
+      # runs in the `test` job above, via the ordinary pytest collection.
+      #
+      # Both steps run *every* enabled check rather than naming a subset, so
+      # adding a check to lint_docs.py can't leave it silently unrun here. They
+      # differ only in `--base`, which is all the freshness check reads.
+      - name: Check documentation
+        if: github.event_name == 'pull_request'
+        env:
+          # Passed through env rather than interpolated into the run body. The
+          # event payload's base SHA is more reliable than relying on checkout to
+          # materialize an `origin/main` ref, and on a pull_request the checked-out
+          # ref is the merge commit, so this diff is exactly the PR's net change.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/lint_docs.py --base "$BASE_SHA"
+
+      - name: Check documentation
+        if: github.event_name != 'pull_request'
+        env:
+          # A push has no PR base to diff against. Basing on the pushed commit
+          # makes the merge-base HEAD itself, so freshness finds no changed docs
+          # and no-ops, while the repo-wide structural checks still run.
+          BASE_SHA: ${{ github.sha }}
+        run: python3 scripts/lint_docs.py --base "$BASE_SHA"

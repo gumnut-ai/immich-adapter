@@ -1,0 +1,32 @@
+# Configuration for scripts/lint_docs.py.
+#
+# `lint_docs.py` is byte-identical to the copy in the Gumnut Photos repo;
+# everything repo-specific lives here. Doc roots and project roots are discovered
+# from the tree (any tracked directory named `docs`), so they are not listed.
+
+# Citation prefixes stripped before a path is resolved. `repo-root ` marks a
+# repo-level doc cited from a project that has a same-named file of its own. This
+# repo has a single flat `docs/` tree with no such collisions, but the prefix is
+# accepted so the convention reads the same everywhere.
+strip_prefixes = ["repo-root "]
+
+# Prefixes a map uses to cite this repo's own files through the repo name. Only
+# needed where a map file is symlinked outside the repo; not the case here.
+self_prefixes = []
+
+# Each check is independently switchable so a new rule can land dark and be
+# switched on once its sweep is done. A check missing from this table defaults to
+# enabled, so adding one to lint_docs.py is never a silent no-op.
+[checks]
+freshness = true
+links = true
+anchors = true
+map_paths = true
+map_status_section = true
+map_cells = true
+frontmatter = true
+
+[limits]
+# A "Consult when..." cell decides whether to open a doc. The longest here is 210
+# characters; the limit matches the Photos repo so the rule doesn't differ by repo.
+consult_cell_chars = 250
