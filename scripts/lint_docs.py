@@ -275,7 +275,7 @@ class Violation:
 # whitespace after the run, so a same-length language-tagged line (```` ````python ````
 # inside a ```` block) is an opener, not a closer — treating it as one ended the block
 # early and exposed the rest to the link parser.
-FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 # Up to three leading spaces, which CommonMark permits on an ATX heading. Anchored at
 # column 0, an indented heading contributed no anchor and a valid link to it was
 # reported broken. Four or more spaces is an indented code block, not a heading, so the
@@ -419,6 +419,20 @@ def _find_closing_run(text: str, run: str, start: int) -> int:
         i = at + 1
 
 
+def _starts_a_line(text: str, i: int) -> bool:
+    """Whether `i` is at a line start, allowing CommonMark's ≤3 columns of indent.
+
+    This is what separates an HTML *block* comment from an inline one, and the two behave
+    differently in ways that each caused a bug: a block runs to the end of the line
+    holding `-->` (so later text on that line is raw HTML, not markdown) and persists
+    across blank lines when unclosed, while an inline comment ends at the delimiter and,
+    unclosed, is merely literal text.
+    """
+    start = text.rfind("\n", 0, i) + 1
+    prefix = text[start:i]
+    return not prefix.strip() and len(prefix.expandtabs(4)) <= 3
+
+
 def _blank_keeping_newlines(text: str, char: str) -> str:
     """Same-length filler that leaves line breaks alone, so line numbers survive."""
     return "".join("\n" if c == "\n" else char for c in text)
@@ -439,8 +453,12 @@ def _scan_chunk(
             if close == -1:
                 out.append(_blank_keeping_newlines(text[i:], " "))
                 return "".join(out), True
-            out.append(_blank_keeping_newlines(text[i : close + 3], " "))
-            i = close + 3
+            # Only a block comment can be open across chunks, and a block runs to the end
+            # of its closing line.
+            line_end = text.find("\n", close + 3)
+            end = len(text) if line_end == -1 else line_end
+            out.append(_blank_keeping_newlines(text[i:end], " "))
+            i = end
             in_comment = False
             continue
         char = text[i]
@@ -471,17 +489,33 @@ def _scan_chunk(
             i = end
             continue
         if text.startswith("<!--", i):
+            block = _starts_a_line(text, i)
             close = text.find("-->", i + 4)
             if close == -1:
+                if not block:
+                    # An *inline* raw-HTML comment must be complete to be one. Unclosed,
+                    # it is literal text — so it must not carry across the paragraph, or
+                    # a later `-->` would blank every live link in between.
+                    out.append(text[i : i + 4])
+                    i += 4
+                    continue
                 out.append(_blank_keeping_newlines(text[i:], " "))
                 return "".join(out), True
+            # A comment that starts a line is an HTML *block*, and the block runs to the
+            # end of the line holding `-->` — so markdown-looking text later on that line
+            # is raw HTML, not a link. An inline comment ends at the delimiter, and the
+            # rest of its line really is markdown.
+            end = close + 3
+            if block:
+                line_end = text.find("\n", end)
+                end = len(text) if line_end == -1 else line_end
             # Spaces, not removal: a comment is a token boundary. Concatenating what
             # surrounds it invented syntax that does not render — `[x]<!--c-->(./y)`
             # became a link, and `<!--c--> ## H` became a heading. Callers that need the
             # heading *text* pass drop_comments and get the comment elided instead.
             if not drop_comments:
-                out.append(_blank_keeping_newlines(text[i : close + 3], " "))
-            i = close + 3
+                out.append(_blank_keeping_newlines(text[i:end], " "))
+            i = end
             continue
         out.append(char)
         i += 1

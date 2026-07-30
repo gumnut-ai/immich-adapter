@@ -1317,9 +1317,38 @@ def test_commented_out_anchor_and_heading_define_nothing(repo: FixtureRepo) -> N
     assert "fake" in result.stderr
 
 
-def test_link_after_a_comment_is_still_checked(repo: FixtureRepo) -> None:
-    """Blanking must end at `-->`, not run to the end of the file."""
+def test_block_comment_closing_line_is_raw_html(repo: FixtureRepo) -> None:
+    """A comment starting a line is an HTML *block*, running to that line's end.
+
+    So markdown-looking text after `-->` on the same line renders as raw HTML, not a
+    link. An earlier version of this test asserted the opposite and was wrong.
+    """
     repo.write_doc("docs/references/a.md", TODAY, "<!-- note --> then [x](./gone.md).")
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_inline_comment_leaves_the_rest_of_its_line_live(repo: FixtureRepo) -> None:
+    """A comment *not* starting a line is inline HTML, so its line stays markdown.
+
+    Same delimiters, different position, and the surrounding text is real markdown here.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "Prose <!-- note --> then [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_link_after_a_block_comment_on_a_later_line_is_checked(
+    repo: FixtureRepo,
+) -> None:
+    """Blanking must end with the closing line, not run to the end of the file."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<!-- note -->\n\nThen [x](./gone.md)."
+    )
     repo.commit_all()
     result = repo.lint("--check", "links")
     assert result.returncode == 1
@@ -1334,12 +1363,32 @@ def test_unterminated_comment_is_reported(repo: FixtureRepo) -> None:
     slip that hides content from readers should not also hide it from the linter.
     """
     repo.write_doc(
-        "docs/references/a.md", TODAY, "A stray <!-- marker\n\nThen [x](./gone.md)."
+        "docs/references/a.md", TODAY, "<!-- stray marker\n\nThen [x](./gone.md)."
     )
     repo.commit_all()
     result = repo.lint("--check", "links")
     assert result.returncode == 1
     assert "never closed" in result.stderr
+
+
+def test_unclosed_inline_comment_marker_is_literal_text(repo: FixtureRepo) -> None:
+    """Only a line-start opener can begin an HTML block.
+
+    A mid-prose `<!--` with no close is an incomplete *inline* candidate, which
+    CommonMark renders literally. Carrying it across paragraphs meant a later `-->`
+    blanked every live link in between, and without one the linter rejected valid
+    markdown as an unterminated comment.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "A stray <!-- marker\n\nThen [x](./gone.md) and later -->.",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+    assert "never closed" not in result.stderr
 
 
 def test_comment_between_link_tokens_is_a_boundary(repo: FixtureRepo) -> None:
@@ -1389,9 +1438,11 @@ def test_indented_code_is_not_special_cased(repo: FixtureRepo) -> None:
         "An example:\n\n    <!-- shown as indented code\n\nBack to prose.",
     )
     repo.commit_all()
-    result = repo.lint("--check", "links")
-    assert result.returncode == 1
-    assert "never closed" in result.stderr
+    # Not reported — but for a better reason than indented-code detection. Four columns
+    # of indent means this is no line-start HTML-block opener, and an unclosed *inline*
+    # candidate is literal text. The block/inline distinction subsumes what the removed
+    # detection was for.
+    assert repo.lint("--check", "links").returncode == 0
 
 
 def test_fenced_example_is_the_supported_form_for_delimiters(
