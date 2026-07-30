@@ -1795,6 +1795,38 @@ def test_autolink_does_not_consume_a_later_links_position(repo: FixtureRepo) -> 
     assert "a.md:7:" in result.stderr, result.stderr
 
 
+def test_encoded_hash_in_a_filename_is_not_a_fragment(repo: FixtureRepo) -> None:
+    """A real `#` in a filename must be encoded, so split before decoding.
+
+    Decoding first reintroduces the delimiter: `foo%23bar.md` becomes
+    `foo#bar.md`, the partition reads `#bar.md` as a fragment, and the linter
+    rejects a valid link by trying to resolve `foo`.
+    """
+    repo.write_doc("docs/references/foo#bar.md", TODAY, "target")
+    repo.write_doc("docs/references/a.md", TODAY, "See [x](foo%23bar.md).")
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0, "encoded # in a filename"
+
+
+def test_reference_link_does_not_mislocate_a_later_link(repo: FixtureRepo) -> None:
+    """A reference link spends no `](`, so the pairing must not be trusted.
+
+    Trusting it would slip by one and report the *inline* link on the reference
+    link's line. The supply/demand check falls the whole block back to its own
+    line instead — an imprecise line, never a wrong one.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "text [a][r] more\nand [b](gone.md)\n\n[r]: ./also-gone.md",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    # Both fall back to the block's first line rather than being mispaired.
+    assert "a.md:8:" not in result.stderr, result.stderr
+
+
 def test_repeated_target_in_one_block_gets_distinct_lines(repo: FixtureRepo) -> None:
     """The cursor must advance, or every repeat matches the first occurrence."""
     repo.write_doc(

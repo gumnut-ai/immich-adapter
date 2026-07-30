@@ -1133,7 +1133,7 @@ def _iter_links_in(tokens):
             if token.map:
                 line = token.map[0] + 1
             if token.type == "inline":
-                block = BlockPositions(token.content)
+                block = BlockPositions(token.content, token.children or [])
             # An image spends one `](` of the block's supply. Skipping it here
             # handed its position to the *next* link, which then reported on the
             # image's line.
@@ -1149,7 +1149,7 @@ def _iter_links_in(tokens):
             if token.children:
                 yield from walk(token.children, line, block)
 
-    yield from walk(tokens, 1, BlockPositions(""))
+    yield from walk(tokens, 1, BlockPositions("", []))
 
 
 class BlockPositions:
@@ -1165,19 +1165,29 @@ class BlockPositions:
     (`<missing file.md>` arrives percent-encoded) so the search misses the real one
     anyway. Anchoring on the syntax avoids both.
 
-    Known limit: a reference link (`[a][r]`) carries no `](`, so in the rare block
-    that mixes one with an inline link the pairing slips by one. Reference links do
-    not appear in these repos, and the cost is a line number rather than a missed
-    violation.
+    **The pairing validates itself before it is trusted.** Not every link token
+    spends a `](`: a reference link (`[a][r]`) and a shortcut link (`[a]`) carry
+    none, so a block containing one would slip the pairing by one and report every
+    later link on the wrong line — worse than not looking. So the offsets are used
+    only when their count matches demand exactly; otherwise every link in the block
+    falls back to the block's own line, which is where they were before any of this.
+    That trades an exact line in rare blocks for never reporting a wrong one.
     """
 
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, children) -> None:
         self.content = content
-        self._offsets = [m.start() for m in re.finditer(r"\]\(", content)]
+        offsets = [m.start() for m in re.finditer(r"\]\(", content)]
+        # An image spends one `](`; an autolink (`<https://x>`) spends none.
+        demand = sum(
+            1
+            for c in children
+            if c.type == "image" or (c.type == "link_open" and c.markup != "autolink")
+        )
+        self._offsets = offsets if len(offsets) == demand else []
         self._next = 0
 
     def take(self) -> int | None:
-        """The next `](` offset, or None once the block's supply is spent."""
+        """The next `](` offset, or None when the pairing is not trustworthy."""
         if self._next >= len(self._offsets):
             return None
         offset = self._offsets[self._next]
@@ -1224,10 +1234,14 @@ def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violati
         for lineno, target in links:
             if EXTERNAL_RE.match(target):
                 continue
-            # Decoded only now that the target is known to be repo-local — see
-            # local_target for why decoding external URLs is wrong.
-            target = local_target(target)
-            path_part, _, frag = target.partition("#")
+            # Split *before* decoding, and decode each half separately. A real
+            # filename containing `#` must be encoded in Markdown (`foo%23bar.md`),
+            # so decoding first reintroduces the delimiter: the partition then
+            # reads `#bar.md` as a fragment and tries to resolve `foo`, rejecting a
+            # valid link. Decoding is repo-local only — see local_target.
+            raw_path, _, raw_frag = target.partition("#")
+            path_part, frag = local_target(raw_path), local_target(raw_frag)
+            target = f"{path_part}#{frag}" if raw_frag else path_part
 
             if not path_part:
                 # Same-file fragment.
