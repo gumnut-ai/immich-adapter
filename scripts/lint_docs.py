@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """scripts/lint_docs.py
 
-Documentation linter. Enforces the machine-checkable half of
-`docs/references/documentation-conventions.md`.
+Documentation linter. Enforces the machine-checkable half of this repo's
+documentation conventions; its `AGENTS.md` names where they live and which checks
+run here. Deliberately no path to that doc: this file is byte-identical across
+repos, so any repo-specific path in it is wrong in at least one of them.
 
 Checks (each independently switchable in `lint_docs.toml`, so a new rule can
 land dark and be enabled once its sweep is done):
@@ -54,6 +56,18 @@ ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DOC_SUFFIXES = (".md", ".mdx")
 
 
+def is_in_hidden_dir(rel: str) -> bool:
+    """Whether any directory component is dot-prefixed.
+
+    Untracked files are in scope so a new doc is checked before it is staged, but
+    that also exposes tooling scratch space that no `.gitignore` happens to cover
+    — agent worktrees under `.claude/`, `.ruff_cache/`, framework caches. A
+    checkout parked in one of those would be linted as part of this repo. No
+    convention puts docs in a dotted directory, so excluding them costs nothing.
+    """
+    return any(part.startswith(".") for part in Path(rel).parts[:-1])
+
+
 def is_iso_date(value: str) -> bool:
     """Whether a value is a real YYYY-MM-DD calendar date.
 
@@ -77,9 +91,10 @@ def is_iso_date(value: str) -> bool:
 TZ_WINDOW_EARLIEST_SECONDS = 43_200
 TZ_WINDOW_LATEST_SECONDS = 50_400
 
-# `docs/design-docs/TEMPLATE.md` carries placeholder frontmatter — `status: active`
-# is boilerplate rather than a live plan, and its dates are literally `YYYY-MM-DD`.
-# Every check that reads those values has to special-case it.
+# A `TEMPLATE.md` under `design-docs/` carries placeholder frontmatter — its
+# `status: active` is boilerplate rather than a live plan, and its dates are
+# literally `YYYY-MM-DD`. Every check reading those values special-cases it. Named
+# by basename, not path: not every repo using this linter has one.
 TEMPLATE_BASENAME = "TEMPLATE.md"
 
 
@@ -198,7 +213,12 @@ class Violation:
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 CODESPAN_RE = re.compile(r"`[^`\n]*`")
-LINK_RE = re.compile(r"(?<!!)\[([^\]\[]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+# Two destination forms: bare, and the angle-bracket form CommonMark requires
+# for a destination containing spaces. Matching only the bare form meant an
+# angle-bracket link yielded no target at all, so a broken one passed unseen.
+LINK_RE = re.compile(
+    r"(?<!!)\[([^\]\[]*)\]\(\s*(?:<([^>]*)>|([^)\s]+))(?:\s+\"[^\"]*\")?\s*\)"
+)
 HTML_ANCHOR_RE = re.compile(r"<a\s+(?:id|name)=[\"']([^\"']+)[\"']")
 TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 # Exact match, so a heading that merely *starts* with the phrase is not read as a
@@ -384,7 +404,9 @@ class Repo:
         joined = os.path.join(str(Path(relative_to).parent), cite)
         return os.path.normpath(joined).startswith("..")
 
-    def resolve(self, cite: str, relative_to: str) -> str | None:
+    def resolve(
+        self, cite: str, relative_to: str, *, require_file: bool = False
+    ) -> str | None:
         """Resolve a cited path to a repo-relative path, or None.
 
         Tries, in order: relative to the citing file's directory, then each
@@ -416,6 +438,13 @@ class Repo:
             bases.append(Path("."))
         for base in bases:
             candidate = (self.root / base / cite).resolve()
+            # `require_file` for citations that must name a *document*: a map row
+            # or `superseded-by:` pointing at `docs/references/` satisfied a bare
+            # `exists()` while routing a reader to no document at all, and outside
+            # `design-docs/` nothing else would notice. Prose links stay lenient —
+            # a README linking to `docs/` is deliberate and renders fine.
+            if require_file and not candidate.is_file():
+                continue
             if not candidate.exists():
                 continue
             try:
@@ -447,15 +476,32 @@ def discover_repo(config: Config) -> Repo:
         fail("not inside a git repository")
     root = Path(root_out.stdout.strip()).resolve()
 
-    tracked = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z"],
+    # The *working tree*, not the index. `ls-files` alone describes the index, so
+    # running this before staging skipped a newly created doc entirely and still
+    # listed an unstaged deletion — which then linted as an empty file. Either way
+    # the local pre-commit run disagreed with CI, which is the one thing a
+    # pre-commit check must not do. `--others --exclude-standard` adds untracked,
+    # non-ignored files; the existence filter below drops deleted ones.
+    listed = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
         capture_output=True,
         text=True,
         check=True,
     ).stdout.split("\0")
-    tracked = [p for p in tracked if p]
+    tracked = sorted({p for p in listed if p and (root / p).is_file()})
 
-    docs = tuple(p for p in tracked if p.endswith(DOC_SUFFIXES))
+    docs = tuple(
+        p for p in tracked if p.endswith(DOC_SUFFIXES) and not is_in_hidden_dir(p)
+    )
 
     # Doc roots and project roots are discovered, not configured: any tracked
     # directory named `docs` is a doc root, and its parent is a project root.
@@ -675,10 +721,21 @@ def check_freshness(
         "*.mdx",
     ).stdout.split("\0")
 
+    # An untracked doc is in no diff, so without this a brand-new doc's date went
+    # unchecked locally and only failed once committed. It has no base blob, so it
+    # takes the added-on-this-branch path below and must carry a current date.
+    untracked = {
+        rel
+        for rel in repo.docs
+        if repo.git("ls-files", "--error-unmatch", "--", rel, check=False).returncode
+        != 0
+    }
+    scope = sorted({p for p in changed if p} | untracked)
+
     violations: list[Violation] = []
     fixed: list[str] = []
 
-    for rel in (p for p in changed if p):
+    for rel in scope:
         if repo.config.ignored(rel, "freshness"):
             continue
         # A template's date is placeholder text (`YYYY-MM-DD`); bumping it to a
@@ -749,7 +806,8 @@ def iter_links(text: str):
     body = blank_code_spans(blank_fenced_blocks(text))
     for lineno, line in enumerate(body.split("\n"), 1):
         for match in LINK_RE.finditer(line):
-            yield lineno, match.group(2)
+            # group 2 is the angle-bracket destination, group 3 the bare one.
+            yield lineno, (match.group(2) or match.group(3) or "").strip()
 
 
 def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violation]:
@@ -1012,7 +1070,7 @@ def check_maps(repo: Repo, enabled: frozenset[str]) -> tuple[list[Violation], se
                 continue
             if repo.is_cross_repo(cite, map_rel):
                 continue
-            resolved = repo.resolve(cite, map_rel)
+            resolved = repo.resolve(cite, map_rel, require_file=True)
             if resolved is None:
                 if "map_paths" in enabled and not repo.config.ignored(
                     map_rel, "map_paths"
@@ -1223,6 +1281,23 @@ def check_frontmatter(repo: Repo) -> list[Violation]:
                     f"frontmatter field(s) present but empty: {', '.join(blank)}",
                 )
             )
+        # The tables define these as ISO dates, and checking only that they are
+        # populated accepted `created: yesterday`. `freshness` validates
+        # `last-updated` too, but only for docs in this branch's diff — a doc
+        # nobody touched keeps whatever it has, so the value is checked here as
+        # well.
+        is_template = Path(rel).name == TEMPLATE_BASENAME
+        for key in ("created", "last-updated"):
+            value = fm.get(key, "").strip()
+            if not is_template and value and not is_iso_date(value):
+                violations.append(
+                    Violation(
+                        "frontmatter",
+                        rel,
+                        f"`{key}` is not a valid ISO YYYY-MM-DD date (got '{value}')",
+                    )
+                )
+
         status = fm.get("status", "").strip()
         if (
             "/design-docs/" in f"/{rel}"
@@ -1278,7 +1353,7 @@ def check_superseded_by(repo: Repo) -> list[Violation]:
             # A successor in another repo is the documented case for a doc
             # deprecated because the live answer moved out of this tree.
             continue
-        if repo.resolve(target, rel) is None:
+        if repo.resolve(target, rel, require_file=True) is None:
             violations.append(
                 Violation(
                     "map_paths",

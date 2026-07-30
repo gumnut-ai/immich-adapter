@@ -670,6 +670,110 @@ def test_unclosed_frontmatter_yields_no_fields() -> None:
     assert parse_frontmatter("---\ntitle: A\n---\nbody\n") == {"title": "A"}
 
 
+def test_untracked_doc_is_discovered(repo: FixtureRepo) -> None:
+    """A new doc must be checked before it is staged.
+
+    `git ls-files` describes the index, so an unstaged new doc was omitted from
+    every check — the documented pre-commit run green-lit a malformed doc that CI
+    then rejected.
+    """
+    repo.write("AGENTS.md", "# A\n")
+    repo.commit_all()
+    # Never staged.
+    repo.write("docs/references/new.md", "---\ntitle: N\n---\n\nbody\n")
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "new.md" in result.stderr
+    assert "last-updated" in result.stderr
+
+
+def test_untracked_doc_needs_a_current_date(repo: FixtureRepo) -> None:
+    """Freshness covers it too: an untracked doc has no base blob to compare."""
+    repo.write("AGENTS.md", "# A\n")
+    repo.commit_all()
+    repo.write_doc("docs/references/new.md", "2020-01-01", "body")
+    result = repo.lint("--check", "freshness", "--base", "main")
+    assert result.returncode == 1
+    assert "new.md" in result.stderr
+
+
+def test_unstaged_deletion_is_not_linted_as_empty(repo: FixtureRepo) -> None:
+    """A deleted-but-unstaged doc must leave scope, not lint as an empty file."""
+    repo.write("AGENTS.md", "# A\n")
+    repo.write_doc("docs/references/gone.md", TODAY, "body")
+    repo.commit_all()
+    (repo.path / "docs/references/gone.md").unlink()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 0, result.stderr
+
+
+def test_docs_in_hidden_directories_are_ignored(repo: FixtureRepo) -> None:
+    """Untracked scope must not sweep in tooling scratch space.
+
+    An agent worktree parked under `.claude/` would otherwise be linted as part of
+    this repo, and no `.gitignore` necessarily covers it.
+    """
+    repo.write("AGENTS.md", "# A\n")
+    repo.commit_all()
+    repo.write(".claude/worktrees/copy/docs/references/x.md", "no frontmatter\n")
+    assert repo.lint("--check", "frontmatter").returncode == 0
+
+
+def test_non_iso_created_is_flagged(repo: FixtureRepo) -> None:
+    """The tables define these as ISO dates; populated is not the same as valid."""
+    repo.write(
+        "docs/design-docs/a.md",
+        f"---\ntitle: A\nstatus: active\ncreated: yesterday\n"
+        f"last-updated: {TODAY}\n---\n\nbody\n",
+    )
+    repo.write(
+        "AGENTS.md",
+        _map("Active Design Docs", "| T | `docs/design-docs/a.md` | why |\n"),
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "created" in result.stderr
+
+
+def test_template_placeholder_dates_are_exempt(repo: FixtureRepo) -> None:
+    """`YYYY-MM-DD` is the template's placeholder, not a malformed date."""
+    repo.write(
+        "docs/design-docs/TEMPLATE.md",
+        "---\ntitle: T\nstatus: active\ncreated: YYYY-MM-DD\n"
+        "last-updated: YYYY-MM-DD\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "frontmatter").returncode == 0
+
+
+def test_map_row_citing_a_directory_is_flagged(repo: FixtureRepo) -> None:
+    """A directory satisfies `exists()` while routing a reader to no document."""
+    repo.write("AGENTS.md", _map("References", "| T | `docs/references/` | why |\n"))
+    repo.write_doc("docs/references/real.md", TODAY, "body")
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "docs/references/" in result.stderr
+
+
+def test_prose_link_to_a_directory_still_resolves(repo: FixtureRepo) -> None:
+    """The file requirement is scoped to map rows; a README linking `docs/` is fine."""
+    repo.write("README.md", "See [the docs](docs/).\n")
+    repo.write_doc("docs/references/real.md", TODAY, "body")
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_angle_bracket_link_destination_is_checked(repo: FixtureRepo) -> None:
+    """CommonMark's form for destinations with spaces must not skip validation."""
+    repo.write_doc("docs/references/a.md", TODAY, "See [x](<missing file.md>).")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "missing file.md" in result.stderr
+
+
 def test_map_row_with_wrong_column_count_is_flagged(repo: FixtureRepo) -> None:
     """A malformed row must fail, not be skipped.
 
