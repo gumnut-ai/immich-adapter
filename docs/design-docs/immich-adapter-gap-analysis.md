@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-29
+last-updated: 2026-07-30
 ---
 
 # Immich Adapter Gap Analysis
@@ -144,15 +144,15 @@ Immich allows batch downloading multiple assets as a zip archive.
 
 Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pairs) with a primary asset representing the group.
 
-**Current behavior**: All 7 endpoints return empty/fake responses. No stacking UI is functional.
+**Current behavior**: **Partially closed.** The two read endpoints (`GET /stacks`, `GET /stacks/{id}`) return real stacks with their live members. The other 5 — create, update-cover, delete, bulk-delete, remove-asset — still return empty/fake responses, so the stacking UI can display a stack but not edit one.
 
-**User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently.
+**User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently. The read path is not yet reachable from a shipped client either: nothing in Immich v3.0.3's web or mobile client calls `searchStacks`, and the web asset viewer reaches `getStack` only through `asset.stack`, so the timeline and asset-detail stack fields are what make the landed reads visible.
 
 **Dependency**: **Adapter-only** — the backend grouping concept this gap was originally blocked on now exists. The Gumnut API's stack resource covers create, add/remove assets, list, retrieve, set cover, and delete, with `list_stacks` exposing an `origin` filter (auto-detected bursts vs. user-grouped) and `primary_asset_id`; members are reachable through the `stack_id` filter on the asset list.
 
-**Effort**: **M** — the shared translation layer (member hydration, effective-cover resolution, DTO building) is already implemented in `routers/utils/stack_conversion.py`; what remains is wiring the 7 routes plus the stack fields on the timeline and asset-detail surfaces.
+**Effort**: **S remaining** — the shared translation layer (`routers/utils/stack_conversion.py`) and the read routes have landed; the 5 write routes plus the stack fields on the timeline and asset-detail surfaces are what's left.
 
-**Recommendation**: **Revisit later** — unblocked and cheaper than this section originally assumed, but still low user impact relative to the Tier-1 and Tier-2 gaps.
+**Recommendation**: **Revisit later** — the expensive half (translation, cover policy, read routes) is done, but the remaining work is still low user demand relative to the Tier-1 and Tier-2 gaps.
 
 ---
 
@@ -750,7 +750,7 @@ adapter code.
 | #1 Shared links | XL | Both | High value but major backend work |
 | #9 Partners | XL | Both | Family use case, deep auth changes |
 | #23 Album sharing | XL | Both | Blocked by sharing infrastructure |
-| #6 Stacks | M | Adapter-only | Low user demand; backend support landed, translation layer already built |
+| #6 Stacks (write path) | S | Adapter-only | Low user demand; reads and the translation layer shipped, leaving the 5 write routes |
 | #20 API keys | M | Both | Developer feature |
 | #24 Custom metadata | M | Both | Integration feature |
 | #25 Asset edits | M | Both | Low user demand |

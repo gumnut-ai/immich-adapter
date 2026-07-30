@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-29
+last-updated: 2026-07-30
 ---
 
 # Immich Adapter Architecture
@@ -497,6 +497,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | WebSockets | Real-time upload/trash/restore/delete notifications | Socket.IO with room-based messaging |
 | Memories (read) | Search, get-by-id, statistics for OnThisDay memories | Synthesized from per-day asset queries; mutations still stubbed |
 | Map (markers) | `GET /map/markers` and album-scoped `GET /albums/{id}/map-markers` return GPS-tagged assets | Server-side geotag filter via `client.assets.list(bbox=...)`; the album route also passes the album filter; capped at 2000 markers, with a degraded-path scan bound if the coordinate filter is unavailable; reverse-geocode still stubbed |
+| Stacks (read) | `GET /stacks` and `GET /stacks/{id}` return real burst stacks with their live members | Both go through `routers/utils/stack_conversion.py` for member hydration and cover resolution. The list walks the Gumnut API's whole stack cursor, since Immich's `searchStacks` has no pagination; `primaryAssetId` is answered by resolving the asset's own stack and comparing effective covers, not by forwarding the backend's pinned-cover filter, and an unmatched or unknown ID yields `[]` rather than a 404. Member-less rows are omitted from the list and 404 from the detail route. Writes still stubbed |
 
 ### Stub implementations
 
@@ -510,7 +511,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | Notifications | Push notifications not implemented |
 | Partners | User sharing not implemented |
 | Duplicates | Duplicate detection handled differently in Gumnut |
-| Stacks | Routes not wired up yet; the translation layer (`routers/utils/stack_conversion.py`) exists and the Gumnut API's stack resource is complete |
+| Stacks (write) | Create, update-cover, delete, bulk-delete, and remove-asset still return fake or empty responses; the Gumnut API's stack resource covers all of them, so this is remaining adapter work rather than a backend gap |
 
 ## Key Files
 

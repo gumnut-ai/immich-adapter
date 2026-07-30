@@ -524,9 +524,10 @@ def test_sdk_stack_method_signature(method_name: str, expected_params: set[str])
 
 
 # The row classes `GumnutStackRow` claims are interchangeable. Nothing else
-# checks that claim: every test builds rows with a `Mock`, which satisfies any
-# Protocol by answering to any attribute, and while `routers/api/stacks.py` is
-# stubbed there is no production call site passing a real row.
+# checks that claim at runtime: every test builds rows with a `Mock`, which
+# satisfies any Protocol by answering to any attribute. The stack read routes do
+# pass real rows, so pyright checks the classes they use — but only those, and
+# only for the calls those routes happen to make.
 #
 # The annotation is the actual guard — pyright rejects the list if any of these
 # classes stops satisfying the Protocol. The test below re-checks it at runtime
