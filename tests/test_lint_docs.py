@@ -285,7 +285,7 @@ def test_fix_reports_when_nothing_needs_a_bump(repo: FixtureRepo) -> None:
 #
 # The bash predecessor skipped any doc absent at the merge-base, so a doc created
 # on day 1 and edited on day 2 kept its day-1 date and every run — including --fix
-# — reported clean. Caught in the wild on photos#1480.
+# — reported clean. Observed on a real branch before this was fixed.
 
 
 def _branch_with_added_doc(repo: FixtureRepo, date: str) -> None:
@@ -913,6 +913,9 @@ def test_unknown_check_name_in_config_is_rejected(repo: FixtureRepo) -> None:
         ("[a](<missing file.md>)", True),
         ("[a](real_(paren).md)", False),
         ("[a](real_(paren).md 'title')", False),
+        ("[a](missing_(one(two)).md)", True),
+        ("[a](missing_((v2)).md)", True),
+        ("[a](real_(a(b)).md)", False),
     ],
     ids=[
         "single-quoted",
@@ -921,6 +924,9 @@ def test_unknown_check_name_in_config_is_rejected(repo: FixtureRepo) -> None:
         "angle",
         "balanced-parens",
         "balanced-parens-titled",
+        "nested-parens",
+        "doubled-parens",
+        "nested-parens-resolving",
     ],
 )
 def test_inline_link_forms_are_parsed(
@@ -934,6 +940,7 @@ def test_inline_link_forms_are_parsed(
     """
     repo.write_doc("docs/references/a.md", TODAY, f"See {link}.")
     repo.write_doc("docs/references/real_(paren).md", TODAY, "body")
+    repo.write_doc("docs/references/real_(a(b)).md", TODAY, "body")
     repo.commit_all()
     result = repo.lint("--check", "links")
     assert result.returncode == (1 if should_fail else 0), result.stderr
@@ -1166,7 +1173,53 @@ def test_doc_mapped_only_from_another_project_is_flagged(repo: FixtureRepo) -> N
     repo.commit_all()
     result = repo.lint("--check", "map_paths")
     assert result.returncode == 1
-    assert "mapped only from outside" in result.stderr
+    assert "a map inside `subproj/`" in result.stderr
+
+
+def test_repo_level_doc_mapped_only_from_a_project_is_flagged(
+    repo: FixtureRepo,
+) -> None:
+    """Ownership is symmetric: a repo-level doc needs a repo-level map row.
+
+    Project maps legitimately mirror repo-level rows, so being cited by one is not
+    evidence the owning root map still lists it — deleting the root row left the doc
+    undiscoverable from the map responsible for it.
+    """
+    repo.write("AGENTS.md", "# Root, with no map row for the repo-level doc\n")
+    repo.write(
+        "subproj/AGENTS.md",
+        _map(
+            "References",
+            "| Mirror | `repo-root docs/references/a.md` | why |\n"
+            "| Own | `docs/references/own.md` | why |\n",
+        ),
+    )
+    # A docs/ dir is what makes `subproj` a project root.
+    repo.write_doc("subproj/docs/references/own.md", TODAY, "body")
+    repo.write_doc("docs/references/a.md", TODAY, "body")
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "repo-level map" in result.stderr
+
+
+def test_project_map_may_mirror_a_repo_level_row(repo: FixtureRepo) -> None:
+    """With the root row present, a mirrored project row is legitimate."""
+    repo.write(
+        "AGENTS.md",
+        _map(
+            "References",
+            "| Own | `docs/references/a.md` | why |\n"
+            "| Sub | `subproj/AGENTS.md` | why |\n",
+        ),
+    )
+    repo.write(
+        "subproj/AGENTS.md",
+        _map("References", "| Mirror | `repo-root docs/references/a.md` | why |\n"),
+    )
+    repo.write_doc("docs/references/a.md", TODAY, "body")
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
 
 
 def test_cross_reference_alongside_an_owning_row_is_fine(repo: FixtureRepo) -> None:
@@ -1335,6 +1388,10 @@ def test_repo_root_prefix_wins_over_a_nearer_same_named_file(
     citing-directory-first sends it to the project copy instead — validating the
     wrong file, and still passing after the intended root target is deleted.
     """
+    # The root copy is repo-level, so it needs a row in a repo-level map as well.
+    repo.write(
+        "AGENTS.md", _map("References", "| Root | `docs/references/a.md` | why |\n")
+    )
     # Both forms in one map, which is the disambiguation the marker exists for:
     # the prefixed citation must reach the root copy, the bare one the project copy.
     repo.write(

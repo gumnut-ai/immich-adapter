@@ -87,7 +87,7 @@ def is_iso_date(value: str) -> bool:
 
 # At any instant, current local calendar dates range from UTC-12 through UTC+14.
 # Accepting the dates at those boundaries (and UTC itself) lets contributors and
-# CI runners in different timezones agree that a doc was updated today (GUM-1454).
+# CI runners in different timezones agree that a doc was updated today.
 TZ_WINDOW_EARLIEST_SECONDS = 43_200
 TZ_WINDOW_LATEST_SECONDS = 50_400
 
@@ -278,29 +278,13 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 # so a link written inside one as an example was parsed as a real link and reported
 # broken — a false positive on correct content.
 CODESPAN_RE = re.compile(r"(`+)(?:(?!\1)[^\n])*?\1")
-# Two destination forms: bare, and the angle-bracket form CommonMark requires
-# for a destination containing spaces. Matching only the bare form meant an
-# angle-bracket link yielded no target at all, so a broken one passed unseen.
-# Inline links, covering the destination and title forms CommonMark allows. Each
-# omission was a silent miss or a false positive, not a cosmetic gap:
-#   * `<...>` — the required form when a destination contains spaces. Unmatched, the
-#     link yielded no target at all, so a broken one was never seen.
-#   * `'...'` and `(...)` titles — a link carrying one did not match, so its target
-#     went unchecked.
-#   * balanced parens in a bare destination (`foo_(bar).md`) — truncating at the
-#     first `)` reported a *false* break on a file that exists.
-#   * a backslash-escaped `\[` — prose showing literal markdown outside a code span
-#     renders no link, but matching it reported the example target as broken.
-LINK_RE = re.compile(
-    r"(?<![!\\])\[([^\]\[]*)\]\(\s*"
-    r"(?:<([^>]*)>|((?:[^()\s]|\((?:[^()\s]*)\))+))"
-    r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^()]*\)))?\s*\)"
-)
-# Two steps rather than one pattern: find each opening `<a ...>` tag, then take its
-# `id`/`name` from anywhere inside it. Requiring the attribute to come *first* meant
-# `<a class="permalink" id="target">` contributed no anchor, so a valid
-# `[link](#target)` was reported broken — a false positive that blocks CI, which is
-# worse than a miss.
+# Only the `[label](` prefix is matched here. The destination is scanned, not matched:
+# a regex cannot balance arbitrary nesting, and each fixed-depth attempt left a real
+# form unparsed — `foo_(bar).md` truncated at the first `)` (a *false* break on a file
+# that exists), then one nesting level was accepted but `foo_(a(b)).md` matched nothing
+# at all (a broken target never looked at). `(?<![!\\])` skips images and prose showing
+# literal markdown, both of which render no link.
+LINK_LABEL_RE = re.compile(r"(?<![!\\])\[([^\]\[]*)\]\(")
 HTML_ANCHOR_TAG_RE = re.compile(r"<a\s[^>]*>", re.IGNORECASE | re.DOTALL)
 # `(?<![\w-])`, not `\b`: a hyphen is a non-word character, so `\b` matched the tail
 # of `data-id` / `aria-name` and recorded their values as fragment anchors — making a
@@ -932,6 +916,55 @@ def check_freshness(
 EXTERNAL_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
 
 
+def parse_link_destination(line: str, i: int) -> tuple[str, int] | None:
+    """Read a link destination starting just after `(`.
+
+    Returns (target, index after the closing `)`), or None if this is not a complete
+    inline link. Handles the `<...>` form, arbitrarily nested balanced parentheses in a
+    bare destination, backslash escapes, and all three title delimiters.
+    """
+    n = len(line)
+    while i < n and line[i] in " \t":
+        i += 1
+    if i < n and line[i] == "<":
+        close = line.find(">", i + 1)
+        if close == -1:
+            return None
+        target, i = line[i + 1 : close], close + 1
+    else:
+        start, depth = i, 0
+        while i < n:
+            char = line[i]
+            if char == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif char in " \t":
+                break
+            i += 1
+        target = line[start:i]
+        if not target:
+            return None
+    while i < n and line[i] in " \t":
+        i += 1
+    if i < n and line[i] in "\"'(":
+        closer = {'"': '"', "'": "'", "(": ")"}[line[i]]
+        close = line.find(closer, i + 1)
+        if close == -1:
+            return None
+        i = close + 1
+        while i < n and line[i] in " \t":
+            i += 1
+    if i < n and line[i] == ")":
+        return target, i + 1
+    return None
+
+
 def iter_links(text: str):
     """Yield (line_number, target) for inline links worth resolving.
 
@@ -940,9 +973,19 @@ def iter_links(text: str):
     """
     body = blank_code_spans(blank_fenced_blocks(text))
     for lineno, line in enumerate(body.split("\n"), 1):
-        for match in LINK_RE.finditer(line):
-            # group 2 is the angle-bracket destination, group 3 the bare one.
-            yield lineno, (match.group(2) or match.group(3) or "").strip()
+        pos = 0
+        while True:
+            match = LINK_LABEL_RE.search(line, pos)
+            if match is None:
+                break
+            parsed = parse_link_destination(line, match.end())
+            if parsed is None:
+                # Not a complete link; resume after the label so a real one later on
+                # the same line is still found.
+                pos = match.end()
+                continue
+            target, pos = parsed
+            yield lineno, target.strip()
 
 
 def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violation]:
@@ -1387,19 +1430,26 @@ def check_unmapped(repo: Repo, mapped: dict[str, set[str]]) -> list[Violation]:
                 )
             )
             continue
-        # Being cited *somewhere* is not enough. Each project's docs are mapped from
-        # that project's own map, so a doc listed only in another project's map is
-        # undiscoverable to an agent consulting the one responsible for it. Extra
-        # cross-references from other maps are fine and common.
+        # Being cited *somewhere* is not enough. A doc is owned by the map at its own
+        # level — a project's docs by a map inside that project, repo-level docs by a
+        # repo-level map — so one listed only at the other level is undiscoverable to
+        # an agent consulting the map responsible for it. Extra cross-references are
+        # fine and common in both directions: project maps legitimately mirror
+        # repo-level rows, and the root map cross-references project docs.
         project = owning_project(rel, repo.project_roots)
-        if project and not any(m.startswith(project + "/") for m in citing):
+        if project:
+            owned = any(m.startswith(project + "/") for m in citing)
+            where = f"a map inside `{project}/`"
+        else:
+            owned = any(not owning_project(m, repo.project_roots) for m in citing)
+            where = "a repo-level map"
+        if not owned:
             out.append(
                 Violation(
                     "map_paths",
                     rel,
-                    f"{kind} is mapped only from outside `{project}/` "
-                    f"({', '.join(sorted(citing))}); it needs a row in a map "
-                    f"inside `{project}/`",
+                    f"{kind} is mapped only from {', '.join(sorted(citing))}; "
+                    f"it needs a row in {where}",
                 )
             )
     return out
