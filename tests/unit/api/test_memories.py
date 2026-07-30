@@ -21,7 +21,7 @@ from routers.api.memories import (
 )
 from routers.immich_models import MemoryType
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
-from tests.conftest import MockSyncCursorPage
+from tests.conftest import MockPaginatedListing, MockSyncCursorPage
 
 
 def _call_search(
@@ -427,33 +427,6 @@ class TestSearchMemories:
             assert call.kwargs["local_datetime_before"].endswith("-07-16T00:00:00")
 
 
-class _PaginatedListing:
-    """Async iterator that fakes the SDK's auto-pagination contract.
-
-    The real `SyncCursorPage` yields page-sized batches and transparently
-    fetches the next page until `has_more` is false. A flat in-memory list
-    can't distinguish "the SDK's `limit` is a result cap" from "the SDK's
-    `limit` is per-page" — both behaviors return the same thing. This mock
-    yields one item at a time across `total_pages` pages so a regression
-    that drops `_fetch_assets_for_day`'s explicit break would visibly walk
-    past `limit`.
-    """
-
-    def __init__(self, items, page_size: int):
-        self._items = items
-        self._page_size = page_size
-        self.pages_fetched = 0
-
-    def __aiter__(self):
-        return self._iter()
-
-    async def _iter(self):
-        for i, item in enumerate(self._items):
-            if i % self._page_size == 0:
-                self.pages_fetched += 1
-            yield item
-
-
 class TestFetchAssetsForDay:
     @pytest.mark.anyio
     async def test_caps_at_limit_across_pages(self):
@@ -465,7 +438,7 @@ class TestFetchAssetsForDay:
         would cause the iterator to walk every page and fail this test."""
         captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
         many_assets = [_make_asset(uuid4(), captured) for _ in range(5)]
-        listing = _PaginatedListing(many_assets, page_size=2)
+        listing = MockPaginatedListing(many_assets, page_size=2)
 
         client = Mock()
         client.assets.list = Mock(return_value=listing)

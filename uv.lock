@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "2026-07-16T05:50:15.876231Z"
+exclude-newer = "2026-07-16T17:05:23.393164Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
@@ -302,7 +302,7 @@ wheels = [
 
 [[package]]
 name = "gumnut-sdk"
-version = "0.137.0"
+version = "0.140.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -312,9 +312,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/30/67/05b5a7b7b4f26c5a4a74329f482a7aeb7ac95b979cb51ab1f290f250b0ad/gumnut_sdk-0.137.0.tar.gz", hash = "sha256:28fefc3814989454dadf2aebfe7453ea8a70147488db7140408a31a7f85da445", size = 319506, upload-time = "2026-07-26T04:55:09.335Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4f/0e/b1c32c40ddc3f2dcdba34e126316c9f3ef57edb2660f6391949ee91d60b5/gumnut_sdk-0.140.0.tar.gz", hash = "sha256:8fa76ca5082b0c221adc12bfcd096e234b551bd98617ac28b54e3518a1596c1c", size = 321030, upload-time = "2026-07-27T22:46:22.66Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/29/4c56873841e0a9a972ba76fe5c22a3865a8907b30a3dd3a77a47906c93c5/gumnut_sdk-0.137.0-py3-none-any.whl", hash = "sha256:320797c7552d47964620eac6396424b30392c76acc478bc17f4e4181947548e4", size = 205501, upload-time = "2026-07-26T04:55:08.041Z" },
+    { url = "https://files.pythonhosted.org/packages/12/62/d118bfa908f6b94c68cfd0340d20f6dfa52b736fc9e2389791035eb1df91/gumnut_sdk-0.140.0-py3-none-any.whl", hash = "sha256:b33632cecdf3448b5ea3075f4e361f25c5d78372304a87f083f95a744135a6d8", size = 209386, upload-time = "2026-07-27T22:46:24.002Z" },
 ]
 
 [[package]]
@@ -415,7 +415,7 @@ dev = [
 requires-dist = [
     { name = "cryptography", specifier = ">=46.0.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.138.1" },
-    { name = "gumnut-sdk", specifier = ">=0.137.0" },
+    { name = "gumnut-sdk", specifier = ">=0.140.0" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "python-socketio", specifier = ">=5.13.0" },

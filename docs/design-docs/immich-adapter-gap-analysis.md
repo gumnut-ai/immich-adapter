@@ -148,11 +148,11 @@ Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pair
 
 **User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently.
 
-**Dependency**: **Both** — the Gumnut API would need a grouping/stacking concept. The adapter translation is straightforward.
+**Dependency**: **Adapter-only** — the backend grouping concept this gap was originally blocked on now exists. The Gumnut API's stack resource covers create, add/remove assets, list, retrieve, set cover, and delete, with `list_stacks` exposing an `origin` filter (auto-detected bursts vs. user-grouped) and `primary_asset_id`; members are reachable through the `stack_id` filter on the asset list.
 
-**Effort**: **L** — Backend needs a parent-child asset relationship model, group CRUD, and primary asset designation logic.
+**Effort**: **M** — the shared translation layer (member hydration, effective-cover resolution, DTO building) is already implemented in `routers/utils/stack_conversion.py`; what remains is wiring the 7 routes plus the stack fields on the timeline and asset-detail surfaces.
 
-**Recommendation**: **Revisit later** — Low user impact. Consider when burst/HDR detection is added to Gumnut.
+**Recommendation**: **Revisit later** — unblocked and cheaper than this section originally assumed, but still low user impact relative to the Tier-1 and Tier-2 gaps.
 
 ---
 
@@ -750,7 +750,7 @@ adapter code.
 | #1 Shared links | XL | Both | High value but major backend work |
 | #9 Partners | XL | Both | Family use case, deep auth changes |
 | #23 Album sharing | XL | Both | Blocked by sharing infrastructure |
-| #6 Stacks | L | Both | Low user demand |
+| #6 Stacks | M | Adapter-only | Low user demand; backend support landed, translation layer already built |
 | #20 API keys | M | Both | Developer feature |
 | #24 Custom metadata | M | Both | Integration feature |
 | #25 Asset edits | M | Both | Low user demand |

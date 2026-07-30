@@ -7,6 +7,9 @@ import os
 
 os.environ["TESTING"] = "1"
 
+import base64
+import hashlib
+
 import pytest
 from unittest.mock import AsyncMock, Mock
 from datetime import datetime, timezone
@@ -21,6 +24,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_person_id,
+    uuid_to_gumnut_stack_id,
 )
 
 
@@ -90,28 +94,52 @@ def sample_gumnut_album():
     return album
 
 
-@pytest.fixture
-def sample_gumnut_asset():
-    """Create a sample Gumnut asset object with proper date fields."""
+def make_gumnut_asset(
+    *,
+    asset_id: str | None = None,
+    original_file_name: str = "test.jpg",
+    device_asset_id: str = "device-123",
+    device_id: str = "device-456",
+    checksum: str = "abc123",
+    checksum_sha1: str = "PaDX6+c+Lhjpm5/ciXUROL1ryaU=",
+    trashed_at: datetime | None = None,
+    stack_id: str | None = None,
+) -> Mock:
+    """Build a Mock Gumnut asset carrying every field the converters read.
+
+    One builder rather than a copy per fixture: an SDK field addition (or a
+    converter that starts reading an existing one) otherwise has to be applied
+    to each copy, and an unset `Mock` attribute is neither `None` nor a real
+    value — it silently flips a branch or fails DTO validation far from the
+    fixture that missed it.
+
+    `checksum_sha1` is the base64 SHA-1 that reaches Immich (`checksum` is the
+    SHA-256, which never does), so vary it — via `fake_sha1_checksum` — whenever
+    a test builds several assets whose identities must stay distinguishable;
+    otherwise a dedup-aware assertion passes because every asset carries the
+    same value. `stack_id` takes an `asset_stack_`-prefixed Gumnut ID, not a
+    UUID, and is `None` for an unstacked asset.
+    """
+    now = datetime.now(timezone.utc)
     asset = Mock()
-    asset.id = uuid_to_gumnut_asset_id(uuid4())
-    asset.local_datetime = datetime.now(timezone.utc)
-    asset.created_at = datetime.now(timezone.utc)
-    asset.updated_at = datetime.now(timezone.utc)
+    asset.id = asset_id or uuid_to_gumnut_asset_id(uuid4())
+    asset.local_datetime = now
+    asset.created_at = now
+    asset.updated_at = now
     asset.mime_type = "image/jpeg"
-    asset.original_file_name = "test.jpg"
+    asset.original_file_name = original_file_name
     asset.duration = None
     asset.library_id = "library-789"
     # File/provenance scalars live on the nested ``file_data`` group
     # (requested via ``include=file_data``); the adapter reads them from there.
     asset.file_data = Mock()
-    asset.file_data.device_asset_id = "device-123"
-    asset.file_data.device_id = "device-456"
-    asset.file_data.file_created_at = datetime.now(timezone.utc)
-    asset.file_data.file_modified_at = datetime.now(timezone.utc)
-    asset.file_data.checksum = "abc123"
+    asset.file_data.device_asset_id = device_asset_id
+    asset.file_data.device_id = device_id
+    asset.file_data.file_created_at = now
+    asset.file_data.file_modified_at = now
+    asset.file_data.checksum = checksum
     # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
-    asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
+    asset.file_data.checksum_sha1 = checksum_sha1
     asset.file_data.file_size_bytes = 1059218
     # Default to "not yet generated"; thumbhash tests set an explicit value.
     # Without this, the Mock would yield a Mock (not None) for asset.thumbhash.
@@ -120,8 +148,77 @@ def sample_gumnut_asset():
     asset.height = 1080
     asset.people = []  # Empty list for people
     asset.metadata = None  # No metadata
-    asset.trashed_at = None  # Live (not trashed); set to a datetime to simulate trashed
+    asset.trashed_at = trashed_at
+    asset.stack_id = stack_id
     return asset
+
+
+def fake_sha1_checksum(seed: str) -> str:
+    """A distinct but well-formed Immich checksum (base64 SHA-1, 28 chars)."""
+    return base64.b64encode(hashlib.sha1(seed.encode()).digest()).decode()
+
+
+def make_gumnut_stack(
+    *,
+    stack_id: str | None = None,
+    primary_asset_id: str | None = None,
+    asset_count: int = 2,
+    origin: str = "auto_burst",
+) -> Mock:
+    """Build a Mock Gumnut stack row (the shape every stacks endpoint returns).
+
+    Defaults to an unpinned `auto_burst`. Set `asset_count` below the member
+    count to model trashed members. Both live in `routers/utils/stack_conversion.py`:
+    `resolve_effective_primary` for how the pin is used, and
+    `HydratedStack.live_asset_count` for why the count can sit below the member
+    count.
+    """
+    stack = Mock()
+    stack.id = stack_id or uuid_to_gumnut_stack_id(uuid4())
+    stack.primary_asset_id = primary_asset_id
+    stack.asset_count = asset_count
+    stack.origin = origin
+    now = datetime.now(timezone.utc)
+    stack.created_at = now
+    stack.updated_at = now
+    return stack
+
+
+def make_gumnut_stack_members(
+    count: int,
+    *,
+    stack_id: str,
+    trashed: set[int] | None = None,
+) -> list[Mock]:
+    """Build `count` Mock assets belonging to `stack_id`, in member order.
+
+    `trashed` holds the positional indices to mark trashed, so a test can spell
+    out a mixed live/trashed stack in one call. Every per-asset identity field —
+    filename, device IDs, and both checksums — varies by index, so a member
+    that leaks into the wrong position is visible in failure output rather than
+    matching its neighbours.
+    """
+    trashed = trashed or set()
+    now = datetime.now(timezone.utc)
+    return [
+        make_gumnut_asset(
+            original_file_name=f"burst-{i}.jpg",
+            # Distinct series, so an assertion reading both can catch a swap.
+            device_asset_id=f"device-asset-{i}",
+            device_id=f"device-id-{i}",
+            checksum=f"checksum-{i}",
+            checksum_sha1=fake_sha1_checksum(f"burst-{i}"),
+            trashed_at=now if i in trashed else None,
+            stack_id=stack_id,
+        )
+        for i in range(count)
+    ]
+
+
+@pytest.fixture
+def sample_gumnut_asset():
+    """Create a sample Gumnut asset object with proper date fields."""
+    return make_gumnut_asset()
 
 
 @pytest.fixture
@@ -146,39 +243,16 @@ def multiple_gumnut_albums():
 @pytest.fixture
 def multiple_gumnut_assets():
     """Create multiple Gumnut assets for list testing with proper date fields."""
-    assets = []
-    for i in range(3):
-        asset = Mock()
-        asset.id = uuid_to_gumnut_asset_id(uuid4())
-        now = datetime.now(timezone.utc)
-        asset.created_at = now
-        asset.updated_at = now
-        asset.local_datetime = now
-        asset.mime_type = "image/jpeg"
-        asset.original_file_name = f"test{i}.jpg"
-        asset.duration = None
-        asset.library_id = "library-789"
-        asset.width = 1920
-        asset.height = 1080
-        # File/provenance scalars live on the nested ``file_data`` group
-        # (requested via ``include=file_data``); the adapter reads them from there.
-        asset.file_data = Mock()
-        asset.file_data.device_asset_id = f"device-{i}"
-        asset.file_data.device_id = f"device-{i}"
-        asset.file_data.file_created_at = now
-        asset.file_data.file_modified_at = now
-        asset.file_data.checksum = f"checksum-{i}"
-        # Base64-encoded SHA-1 (28 chars), the Immich-facing checksum format.
-        asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
-        asset.file_data.file_size_bytes = 1059218
-        # Default to "not yet generated"; thumbhash tests set an explicit value.
-        # Without this, the Mock would yield a Mock (not None) for asset.thumbhash.
-        asset.thumbhash = None
-        asset.metadata = None
-        asset.people = []
-        asset.trashed_at = None
-        assets.append(asset)
-    return assets
+    return [
+        make_gumnut_asset(
+            original_file_name=f"test{i}.jpg",
+            device_asset_id=f"device-{i}",
+            device_id=f"device-{i}",
+            checksum=f"checksum-{i}",
+            checksum_sha1=fake_sha1_checksum(f"test{i}"),
+        )
+        for i in range(3)
+    ]
 
 
 def make_mock_streaming_context(
@@ -240,6 +314,39 @@ class MockSyncCursorPage:
 
     async def _await_impl(self):
         return self
+
+
+class MockPaginatedListing:
+    """Mock paginator that fakes the SDK's auto-pagination contract.
+
+    ``MockSyncCursorPage`` yields a flat list, so it can't distinguish "the
+    SDK's ``limit`` is a result cap" from "the SDK's ``limit`` is per-page" —
+    both behaviors return the same thing. This one yields one item at a time
+    across pages of ``page_size`` and counts the boundaries it crosses, so a
+    regression that drops an explicit ``break`` out of ``async for`` visibly
+    walks extra pages, and a walk that must consume every page can assert it
+    crossed more than one.
+
+    ``page_size`` must equal the ``limit`` the code actually sends, or
+    ``pages_fetched`` counts boundaries that never occur. Either read it off the
+    call (a ``side_effect`` capturing ``kwargs["limit"]``) or pin it with a
+    separate ``call_args.kwargs["limit"] == page_size`` assertion — a
+    test-picked number with neither is what lets the two silently drift.
+    """
+
+    def __init__(self, items: List[Any], page_size: int):
+        self._items = items
+        self._page_size = page_size
+        self.pages_fetched = 0
+
+    def __aiter__(self):
+        return self._iter()
+
+    async def _iter(self):
+        for i, item in enumerate(self._items):
+            if i % self._page_size == 0:
+                self.pages_fetched += 1
+            yield item
 
 
 @pytest.fixture
