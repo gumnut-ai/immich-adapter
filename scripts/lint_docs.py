@@ -335,17 +335,6 @@ def blank_noncontent(
     return "\n".join(_blank_scan(text, blank_spans, drop_comments)[0])
 
 
-def has_unterminated_comment(text: str) -> bool:
-    """Whether the doc opens an HTML comment it never closes.
-
-    Per CommonMark an unterminated `<!--` block "continues until the end of the
-    document", so everything after it renders as nothing — and therefore drops out of
-    every check. That is spec-correct but silent, so it is reported: an unclosed comment
-    is almost always an authoring slip, and it hides content from readers too.
-    """
-    return _blank_scan(text, True, False)[1]
-
-
 def _blank_scan(
     text: str, blank_spans: bool, drop_comments: bool
 ) -> tuple[list[str], bool]:
@@ -1147,13 +1136,33 @@ def parse_link_destination(line: str, i: int) -> tuple[str, int] | None:
     return None
 
 
+def scan_links(text: str) -> tuple[list[tuple[int, str]], bool]:
+    """One scan, two answers: (links worth resolving, unterminated comment found).
+
+    Both come from the same state machine, so the caller takes them together rather than
+    scanning every doc twice.
+
+    The unterminated-comment flag is worth reporting rather than tolerating: per
+    CommonMark an unclosed `<!--` block "continues until the end of the document", so
+    everything after it renders as nothing and drops out of every check. That is
+    spec-correct but silent, and an unclosed comment is almost always an authoring slip
+    that hides content from readers too.
+    """
+    lines, unterminated = _blank_scan(text, True, False)
+    return list(_iter_links_in("\n".join(lines))), unterminated
+
+
 def iter_links(text: str):
-    """Yield (line_number, target) for inline links worth resolving.
+    """Yield (line_number, target) for inline links worth resolving."""
+    return iter(scan_links(text)[0])
+
+
+def _iter_links_in(body: str):
+    """Links in already-blanked text.
 
     The label is discarded — comparing a link's label to its target is a separate
     check, deliberately out of scope here.
     """
-    body = blank_noncontent(text)
     for lineno, line in enumerate(body.split("\n"), 1):
         pos = 0
         while True:
@@ -1174,10 +1183,11 @@ def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violati
     violations: list[Violation] = []
     for rel in repo.docs:
         text = repo.text(rel)
+        links, unterminated_comment = scan_links(text)
         if (
             "links" in enabled
             and not repo.config.ignored(rel, "links")
-            and has_unterminated_comment(text)
+            and unterminated_comment
         ):
             # Reported rather than tolerated: everything after the marker renders as
             # nothing and so drops silently out of every check below.
@@ -1189,7 +1199,7 @@ def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violati
                     "`<!--` renders as nothing and is skipped by every check",
                 )
             )
-        for lineno, target in iter_links(text):
+        for lineno, target in links:
             if EXTERNAL_RE.match(target):
                 continue
             path_part, _, frag = target.partition("#")
