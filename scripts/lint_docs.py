@@ -271,13 +271,22 @@ class Violation:
 
 # The whole delimiter run, not just its first three characters: a fence closes only
 # on the same marker at least as long, so the run length has to be known.
-FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
-HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+# The delimiter run plus whatever follows it. A *closing* fence may carry only
+# whitespace after the run, so a same-length language-tagged line (```` ````python ````
+# inside a ```` block) is an opener, not a closer — treating it as one ended the block
+# early and exposed the rest to the link parser.
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+# Up to three leading spaces, which CommonMark permits on an ATX heading. Anchored at
+# column 0, an indented heading contributed no anchor and a valid link to it was
+# reported broken. Four or more spaces is an indented code block, not a heading, so the
+# bound matters.
+HEADING_RE = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
+# A complete HTML comment, possibly spanning lines. Only complete ones: blanking from an
+# unterminated `<!--` would silently swallow the rest of the file.
 # A code span is delimited by a *run* of backticks and closed by a run of the same
 # length. Matching only single backticks left a ``double-backtick`` span unblanked,
 # so a link written inside one as an example was parsed as a real link and reported
 # broken — a false positive on correct content.
-CODESPAN_RE = re.compile(r"(`+)(?:(?!\1)[^\n])*?\1")
 # Only the `[label](` prefix is matched here. The destination is scanned, not matched:
 # a regex cannot balance arbitrary nesting, and each fixed-depth attempt left a real
 # form unparsed — `foo_(bar).md` truncated at the first `)` (a *false* break on a file
@@ -301,44 +310,236 @@ TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 MAP_HEADING_RE = re.compile(r"^Documentation Map$")
 
 
-def blank_fenced_blocks(text: str) -> str:
-    """Replace fenced-code lines with empty ones, preserving line numbering.
+def blank_noncontent(
+    text: str, *, blank_spans: bool = True, drop_comments: bool = False
+) -> str:
+    """Blank fenced blocks, HTML comments, and optionally inline code spans.
 
-    Documentation about markdown syntax lives in fenced blocks; treating those
-    examples as real links is the main source of false positives.
+    **One pass, because these three contexts nest and no ordering of separate passes is
+    correct.** Blanking comments first let a `<!--` shown as code pair with a later real
+    `-->` and erase the live links between them (a silent miss); blanking fences first
+    let a ``` inside a genuine comment open a spurious fence (also a silent miss). Here
+    whichever construct opens first wins, which is what a Markdown renderer does.
 
-    The opening run is tracked rather than toggled on every fence-shaped line. A
-    block opened with ```` contains ``` lines as *content* — toggling on those
-    turned blanking off mid-block and exposed the rest to the link parser, so an
-    example link inside a longer fence was reported as a real broken link. A tilde
-    fence likewise cannot close a backtick one.
+    Line count is always preserved so reported line numbers stay right.
+
+    `blank_spans` controls only whether a code span's *content* is replaced; spans are
+    recognized either way, since that recognition is what stops a code literal from
+    being read as a comment. Callers that slug headings pass False, because
+    `slugify_heading` strips backticks itself and filler would corrupt the slug.
+
+    Comments are **removed** rather than filled, so a heading sharing a line with one
+    (`## Setup <!-- old -->`) slugs from `Setup` as it renders. Filling would leave the
+    comment's width behind as hyphens, since GitHub does not collapse whitespace runs.
+    """
+    return "\n".join(_blank_scan(text, blank_spans, drop_comments)[0])
+
+
+def _blank_scan(
+    text: str, blank_spans: bool, drop_comments: bool
+) -> tuple[list[str], bool]:
+    """The scan itself. Returns (blanked lines, ended inside an open comment).
+
+    Fenced blocks are line-oriented, so they are handled per line. Everything else is
+    scanned a **paragraph at a time**, because a code span may contain line endings but
+    cannot cross a paragraph break. Scanning the whole paragraph means a closing run is
+    searched for across it, so an *unmatched* run needs no special case — no closer is
+    found, it is literal text, and scanning simply continues past it. Carrying a
+    tentative span line by line instead blanked the rest of the paragraph permanently,
+    silently dropping every link after a stray backtick.
+
+    Comment state is the one thing that persists across paragraphs: an HTML comment
+    block runs to `-->` regardless of blank lines.
     """
     out: list[str] = []
     fence: str | None = None
+    in_comment = False
+    chunk: list[str] = []
+
+    def flush() -> None:
+        nonlocal chunk, in_comment
+        if not chunk:
+            return
+        scanned, in_comment = _scan_chunk(
+            "\n".join(chunk), blank_spans, drop_comments, in_comment
+        )
+        out.extend(scanned.split("\n"))
+        chunk = []
+
     for line in text.split("\n"):
         match = FENCE_RE.match(line)
-        if match:
-            run = match.group(1)
-            if fence is None:
-                fence = run
-            elif run[0] == fence[0] and len(run) >= len(fence):
+        if fence is not None:
+            if (
+                match
+                and match.group(1)[0] == fence[0]
+                and len(match.group(1)) >= len(fence)
+                and not match.group(2).strip()
+            ):
                 fence = None
-            # Otherwise a shorter or differently-marked run inside a block: content,
-            # blanked like the rest of it.
             out.append("")
             continue
-        out.append("" if fence is not None else line)
-    return "\n".join(out)
+        if match or not line.strip():
+            # Flush first: comment state is only settled by scanning the buffered
+            # paragraph, and a fence-shaped line *inside* an open comment is comment
+            # content, not a fence.
+            flush()
+            if in_comment:
+                chunk.append(line)
+                continue
+            if match:
+                fence = match.group(1)
+                out.append("")
+                continue
+            # Paragraph break: a tentative span ends here, unmatched and so literal.
+            out.append(line)
+            continue
+        if HEADING_RE.match(line):
+            # A heading is its own block, so inline constructs cannot span it. Grouped
+            # with the following line, an unmatched backtick in each paired up and
+            # blanked the live link between them.
+            flush()
+            chunk.append(line)
+            flush()
+            continue
+        chunk.append(line)
+    flush()
+    return out, in_comment
 
 
-def blank_code_spans(text: str) -> str:
-    """Neutralize inline code spans, preserving offsets and line numbering.
+def _find_closing_run(text: str, run: str, start: int) -> int:
+    """Index of a backtick run of *exactly* `len(run)`, at or after `start`.
 
-    Same-length filler means a link *inside* a span stops parsing (its brackets
-    are gone) while a link with a backticked *label* still parses with its target
-    intact: [`foo.md`](foo.md) -> [xxxxxxxxx](foo.md).
+    Both sides are checked. Looking only at the character after the candidate accepted
+    a suffix of a longer run — in `` `foo`` x` `` the double run cannot close a single
+    backtick span, but the second of its two backticks passed the one-sided test, so the
+    span was closed early and the code content after it was scanned as live markdown.
     """
-    return CODESPAN_RE.sub(lambda m: "x" * len(m.group(0)), text)
+    width, n = len(run), len(text)
+    i = start
+    while True:
+        at = text.find(run, i)
+        if at == -1:
+            return -1
+        if (at == 0 or text[at - 1] != "`") and (
+            at + width >= n or text[at + width] != "`"
+        ):
+            return at
+        i = at + 1
+
+
+def _starts_a_line(text: str, i: int) -> bool:
+    """Whether `i` is at a line start, allowing CommonMark's ≤3 columns of indent.
+
+    This is what separates an HTML *block* comment from an inline one, and the two behave
+    differently in ways that each caused a bug: a block runs to the end of the line
+    holding `-->` (so later text on that line is raw HTML, not markdown) and persists
+    across blank lines when unclosed, while an inline comment ends at the delimiter and,
+    unclosed, is merely literal text.
+    """
+    start = text.rfind("\n", 0, i) + 1
+    prefix = text[start:i]
+    return not prefix.strip() and len(prefix.expandtabs(4)) <= 3
+
+
+def _blank_keeping_newlines(text: str, char: str) -> str:
+    """Same-length filler that leaves line breaks alone, so line numbers survive."""
+    return "".join("\n" if c == "\n" else char for c in text)
+
+
+def _scan_chunk(
+    text: str, blank_spans: bool, drop_comments: bool, in_comment: bool
+) -> tuple[str, bool]:
+    """Blank code spans and HTML comments across one paragraph.
+
+    Returns (blanked text, comment left open).
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if in_comment:
+            close = text.find("-->", i)
+            if close == -1:
+                out.append(_blank_keeping_newlines(text[i:], " "))
+                return "".join(out), True
+            # Only a block comment can be open across chunks, and a block runs to the end
+            # of its closing line.
+            line_end = text.find("\n", close + 3)
+            end = len(text) if line_end == -1 else line_end
+            out.append(_blank_keeping_newlines(text[i:end], " "))
+            i = end
+            in_comment = False
+            continue
+        char = text[i]
+        # A backslash escape makes the next punctuation character literal, so `\<!--`
+        # opens no comment and ``\` `` opens no span.
+        if char == "\\" and i + 1 < n and not text[i + 1].isalnum():
+            out.append(text[i : i + 2])
+            i += 2
+            continue
+        if char == "`":
+            j = i
+            while j < n and text[j] == "`":
+                j += 1
+            run = text[i:j]
+            close = _find_closing_run(text, run, j)
+            if close == -1:
+                # No closer in this paragraph, so the run is literal text. Emit it and
+                # keep scanning what follows — it is ordinary prose.
+                out.append(run)
+                i = j
+                continue
+            end = close + len(run)
+            out.append(
+                _blank_keeping_newlines(text[i:end], "x")
+                if blank_spans
+                else text[i:end]
+            )
+            i = end
+            continue
+        if text.startswith("<!--", i):
+            block = _starts_a_line(text, i)
+            # `<!-->` and `<!--->` are complete empty comments, and their terminator
+            # overlaps the opener — searching for `-->` past the fourth character finds
+            # neither, so both were read as unterminated.
+            short = next(
+                (f for f in ("<!--->", "<!-->") if text.startswith(f, i)), None
+            )
+            close = i + len(short) - 3 if short else text.find("-->", i + 4)
+            if close == -1:
+                if not block:
+                    # An *inline* raw-HTML comment must be complete to be one. Unclosed,
+                    # it is literal text — so it must not carry across the paragraph, or
+                    # a later `-->` would blank every live link in between.
+                    out.append(text[i : i + 4])
+                    i += 4
+                    continue
+                out.append(_blank_keeping_newlines(text[i:], " "))
+                return "".join(out), True
+            # A comment that starts a line is an HTML *block*, and the block runs to the
+            # end of the line holding `-->` — so markdown-looking text later on that line
+            # is raw HTML, not a link. An inline comment ends at the delimiter, and the
+            # rest of its line really is markdown.
+            end = close + 3
+            if block:
+                line_end = text.find("\n", end)
+                end = len(text) if line_end == -1 else line_end
+            # Spaces, not removal: a comment is a token boundary. Concatenating what
+            # surrounds it invented syntax that does not render — `[x]<!--c-->(./y)`
+            # became a link, and `<!--c--> ## H` became a heading. Callers that need the
+            # heading *text* pass drop_comments and get the comment elided instead.
+            if drop_comments:
+                # Elide the comment's characters but keep its line breaks: the caller
+                # indexes this rendering by line number against the space-filled one, and
+                # dropping newlines desynced them — a heading then took its text from a
+                # later line, producing wrong slugs and invented duplicate suffixes.
+                out.append("\n" * text.count("\n", i, end))
+            else:
+                out.append(_blank_keeping_newlines(text[i:end], " "))
+            i = end
+            continue
+        out.append(char)
+        i += 1
+    return "".join(out), in_comment
 
 
 def slugify_heading(heading: str) -> str:
@@ -366,7 +567,16 @@ def slugify_heading(heading: str) -> str:
 
 def collect_anchors(text: str) -> set[str]:
     """Every fragment a `#...` link in this file could target."""
-    body = blank_fenced_blocks(text)
+    # Comments blanked for both scans below: a commented-out `<a id>` *or* heading
+    # renders nothing, so neither defines a fragment.
+    # Two renderings of the same text, same line count, used for different questions.
+    # `body` has comments as spaces, which answers *is this line a heading* — a leading
+    # comment pushes the `#` run past the three-space bound, and CommonMark agrees that
+    # is no heading. `texts` has them elided, which answers *what is the heading text* —
+    # spaces there would land in the slug as hyphens, since GitHub does not collapse
+    # whitespace runs.
+    body = blank_noncontent(text, blank_spans=False)
+    texts = blank_noncontent(text, blank_spans=False, drop_comments=True).split("\n")
     anchors: set[str] = set()
     # Code spans are blanked for the *tag* scan only: an `<a id="fake">` shown as an
     # inline-code example renders no anchor, so counting it let `[x](#fake)` pass. The
@@ -374,22 +584,31 @@ def collect_anchors(text: str) -> set[str]:
     # `slugify_heading` strips the backticks itself — slugging blanked text would turn
     # `## The \`foo\` helper` into `the-xxxxx-helper` and break every heading anchor
     # containing inline code.
-    for tag in HTML_ANCHOR_TAG_RE.findall(blank_code_spans(body)):
+    for tag in HTML_ANCHOR_TAG_RE.findall(blank_noncontent(text)):
         # Every id/name in the tag: `<a name="old" id="new">` defines both.
         for attr in HTML_ANCHOR_ATTR_RE.finditer(tag):
             anchors.add(attr.group(1))
-    seen: dict[str, int] = {}
-    for line in body.split("\n"):
+    # GitHub disambiguates a repeated slug with -1, -2, ... leaving the first bare, and
+    # the suffix must land on an id nothing else already has. Counting per base instead
+    # collides with a *literal* heading of the suffixed name: headings `Foo`, `Foo`,
+    # `Foo-1` are `foo`, `foo-1`, `foo-1-1`, but per-base counting emitted `foo-1` twice
+    # and never `foo-1-1`, so a valid link to it was reported broken. Slugs are ids, so
+    # they cannot repeat — dedupe against the whole set.
+    used: set[str] = set()
+    for lineno, line in enumerate(body.split("\n")):
         m = HEADING_RE.match(line)
         if not m:
             continue
-        base = slugify_heading(m.group(2))
+        elided = HEADING_RE.match(texts[lineno]) if lineno < len(texts) else None
+        base = slugify_heading((elided or m).group(2))
         if not base:
             continue
-        n = seen.get(base, 0)
-        seen[base] = n + 1
-        # GitHub disambiguates repeats with -1, -2, ... leaving the first bare.
-        anchors.add(base if n == 0 else f"{base}-{n}")
+        slug, n = base, 0
+        while slug in used:
+            n += 1
+            slug = f"{base}-{n}"
+        used.add(slug)
+        anchors.add(slug)
     return anchors
 
 
@@ -971,13 +1190,33 @@ def parse_link_destination(line: str, i: int) -> tuple[str, int] | None:
     return None
 
 
+def scan_links(text: str) -> tuple[list[tuple[int, str]], bool]:
+    """One scan, two answers: (links worth resolving, unterminated comment found).
+
+    Both come from the same state machine, so the caller takes them together rather than
+    scanning every doc twice.
+
+    The unterminated-comment flag is worth reporting rather than tolerating: per
+    CommonMark an unclosed `<!--` block "continues until the end of the document", so
+    everything after it renders as nothing and drops out of every check. That is
+    spec-correct but silent, and an unclosed comment is almost always an authoring slip
+    that hides content from readers too.
+    """
+    lines, unterminated = _blank_scan(text, True, False)
+    return list(_iter_links_in("\n".join(lines))), unterminated
+
+
 def iter_links(text: str):
-    """Yield (line_number, target) for inline links worth resolving.
+    """Yield (line_number, target) for inline links worth resolving."""
+    return iter(scan_links(text)[0])
+
+
+def _iter_links_in(body: str):
+    """Links in already-blanked text.
 
     The label is discarded — comparing a link's label to its target is a separate
     check, deliberately out of scope here.
     """
-    body = blank_code_spans(blank_fenced_blocks(text))
     for lineno, line in enumerate(body.split("\n"), 1):
         pos = 0
         while True:
@@ -998,7 +1237,23 @@ def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violati
     violations: list[Violation] = []
     for rel in repo.docs:
         text = repo.text(rel)
-        for lineno, target in iter_links(text):
+        links, unterminated_comment = scan_links(text)
+        if (
+            "links" in enabled
+            and not repo.config.ignored(rel, "links")
+            and unterminated_comment
+        ):
+            # Reported rather than tolerated: everything after the marker renders as
+            # nothing and so drops silently out of every check below.
+            violations.append(
+                Violation(
+                    "links",
+                    rel,
+                    "an HTML comment is opened but never closed; everything after "
+                    "`<!--` renders as nothing and is skipped by every check",
+                )
+            )
+        for lineno, target in links:
             if EXTERNAL_RE.match(target):
                 continue
             path_part, _, frag = target.partition("#")
@@ -1100,7 +1355,7 @@ def find_map_files(repo: Repo) -> list[str]:
     """
     out: list[str] = []
     for rel in repo.docs:
-        for line in blank_fenced_blocks(repo.text(rel)).split("\n"):
+        for line in blank_noncontent(repo.text(rel), blank_spans=False).split("\n"):
             m = HEADING_RE.match(line)
             if m and is_map_heading(m.group(2)):
                 out.append(rel)
@@ -1161,7 +1416,7 @@ def parse_map_rows(repo: Repo, map_rel: str) -> list[MapRow]:
     map_level = 0
     section = ""
     for lineno, line in enumerate(
-        blank_fenced_blocks(repo.text(map_rel)).split("\n"), 1
+        blank_noncontent(repo.text(map_rel), blank_spans=False).split("\n"), 1
     ):
         m = HEADING_RE.match(line)
         if m:

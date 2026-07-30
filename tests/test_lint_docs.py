@@ -22,8 +22,7 @@ from pathlib import Path
 import pytest
 
 from lint_docs import (
-    blank_code_spans,
-    blank_fenced_blocks,
+    blank_noncontent,
     bump_date_line,
     collect_anchors,
     has_last_updated_key,
@@ -1267,6 +1266,521 @@ def test_cross_reference_alongside_an_owning_row_is_fine(repo: FixtureRepo) -> N
     assert repo.lint("--check", "map_paths").returncode == 0
 
 
+def test_language_tagged_fence_does_not_close_a_same_length_block(
+    repo: FixtureRepo,
+) -> None:
+    """A closing fence carries no info string.
+
+    Accepting any suffix meant `````python`` closed a same-length ```` block, ending it
+    early and exposing the rest to the link parser — so documentation demonstrating a
+    language-tagged fence failed a now-required check.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "````\nouter\n````python\n[x](./gone.md)\n````\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_untagged_same_length_fence_still_closes(repo: FixtureRepo) -> None:
+    """The whitespace rule must not stop a real closer from closing."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "````\nin code\n````   \n\nReal [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_commented_out_link_is_ignored(repo: FixtureRepo) -> None:
+    """An HTML-commented link renders nothing, so its target is unreachable anyway."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<!-- [draft](./missing.md) -->\n\nText."
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_commented_out_anchor_and_heading_define_nothing(repo: FixtureRepo) -> None:
+    """Neither a commented `<a id>` nor a commented heading is rendered."""
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        '<!-- <a id="fake"></a>\n## Hidden -->\n\n[x](#fake)',
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "fake" in result.stderr
+
+
+def test_block_comment_closing_line_is_raw_html(repo: FixtureRepo) -> None:
+    """A comment starting a line is an HTML *block*, running to that line's end.
+
+    So markdown-looking text after `-->` on the same line renders as raw HTML, not a
+    link. An earlier version of this test asserted the opposite and was wrong.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "<!-- note --> then [x](./gone.md).")
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_inline_comment_leaves_the_rest_of_its_line_live(repo: FixtureRepo) -> None:
+    """A comment *not* starting a line is inline HTML, so its line stays markdown.
+
+    Same delimiters, different position, and the surrounding text is real markdown here.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "Prose <!-- note --> then [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_link_after_a_block_comment_on_a_later_line_is_checked(
+    repo: FixtureRepo,
+) -> None:
+    """Blanking must end with the closing line, not run to the end of the file."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<!-- note -->\n\nThen [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_unterminated_comment_is_reported(repo: FixtureRepo) -> None:
+    """Per CommonMark an unclosed `<!--` block runs to the end of the document.
+
+    So everything after it renders as nothing and drops out of every check. That is
+    spec-correct but silent, so the unclosed marker itself is reported — an authoring
+    slip that hides content from readers should not also hide it from the linter.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<!-- stray marker\n\nThen [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "never closed" in result.stderr
+
+
+def test_unclosed_inline_comment_marker_is_literal_text(repo: FixtureRepo) -> None:
+    """Only a line-start opener can begin an HTML block.
+
+    A mid-prose `<!--` with no close is an incomplete *inline* candidate, which
+    CommonMark renders literally. Carrying it across paragraphs meant a later `-->`
+    blanked every live link in between, and without one the linter rejected valid
+    markdown as an unterminated comment.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "A stray <!-- marker\n\nThen [x](./gone.md) and later -->.",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+    assert "never closed" not in result.stderr
+
+
+def test_comment_between_link_tokens_is_a_boundary(repo: FixtureRepo) -> None:
+    """A comment separates tokens; eliding it invented link syntax.
+
+    `[x]<!-- c -->(./y)` is not a link — `]` and `(` are not adjacent in the source — so
+    reporting its target rejected valid markdown.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "See [x]<!-- note -->(./missing.md) here."
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_comment_before_a_hash_run_is_not_a_heading(repo: FixtureRepo) -> None:
+    """A line starting with raw HTML is not a heading, whatever follows.
+
+    Eliding the comment made `<!-- c --> ## Hidden` look like one, so a broken
+    `#hidden` fragment would have passed — a silent miss.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<!-- note --> ## Hidden\n\n[x](#hidden)"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "hidden" in result.stderr
+
+
+def test_indented_code_is_not_special_cased(repo: FixtureRepo) -> None:
+    """Indented code blocks are deliberately *not* detected.
+
+    Detecting them needs list-container tracking — indentation is relative to the
+    enclosing list marker, so a four-space line inside a list item is a paragraph, not
+    code. Getting that wrong blanks live prose and silently drops its links, which is
+    worse than what the detection bought: across all three repos, zero indented-code
+    lines contain a comment delimiter, and zero contain links. So a delimiter shown in an
+    *indented* example is read as markup, and a fenced example is the supported form.
+
+    This test pins the trade rather than the ideal, so a future change that adds
+    detection has to confront the list-indentation problem rather than rediscover it.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "An example:\n\n    <!-- shown as indented code\n\nBack to prose.",
+    )
+    repo.commit_all()
+    # Not reported — but for a better reason than indented-code detection. Four columns
+    # of indent means this is no line-start HTML-block opener, and an unclosed *inline*
+    # candidate is literal text. The block/inline distinction subsumes what the removed
+    # detection was for.
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_fenced_example_is_the_supported_form_for_delimiters(
+    repo: FixtureRepo,
+) -> None:
+    """The form documentation should use, and the one that works."""
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "An example:\n\n```\n<!-- shown in a fence\n```\n\nBack to prose.",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_list_item_paragraph_keeps_its_links(repo: FixtureRepo) -> None:
+    """Four-space indent inside a list item is list content, not code.
+
+    This is what indented-code detection got wrong, and why it was removed rather than
+    extended: the link here is live and its broken target must be reported.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "- item\n\n    see [x](./gone.md) here"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_multiline_comment_keeps_heading_lines_aligned(repo: FixtureRepo) -> None:
+    """The two renderings are indexed by line number, so both must keep line count.
+
+    Eliding a multi-line comment's newlines desynced them, so a heading took its text
+    from a later line — wrong slugs plus invented duplicate suffixes. Here `#a` resolved
+    to nothing and a phantom `c-1` appeared.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "<!--\nnote\n-->\n\n## A\n\n## B\n\n## C\n\n[x](#a) [y](#b) [z](#c)",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0
+
+
+@pytest.mark.parametrize("form", ["<!-->", "<!--->"], ids=["3-dash", "4-dash"])
+def test_short_empty_comment_forms_are_complete(repo: FixtureRepo, form: str) -> None:
+    """`<!-->` and `<!--->` are complete comments whose terminator overlaps the opener.
+
+    Searching for `-->` past the fourth character found neither, so both read as
+    unterminated: a spurious violation, and the links after them skipped.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, f"Prose {form} then [x](./gone.md).")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+    assert "never closed" not in result.stderr
+
+
+def test_heading_is_its_own_block_for_inline_scanning(repo: FixtureRepo) -> None:
+    """Inline constructs cannot span a heading boundary.
+
+    Grouped with the following line, an unmatched backtick in each paired up and blanked
+    the live link between them — a silent miss on valid markdown.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "## Heading `\n\nsee [x](./gone.md) `"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_heading_with_a_real_code_span_still_slugs(repo: FixtureRepo) -> None:
+    """Flushing at headings must not disturb a span *within* one."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "## The `foo` helper\n\n[x](#the-foo-helper)"
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0
+
+
+def test_unmatched_backtick_leaves_following_links_live(repo: FixtureRepo) -> None:
+    """An unclosed run is literal text, so the links after it still render.
+
+    Carrying a tentative span line by line blanked the rest of the paragraph
+    permanently, so one stray backtick silently dropped every link after it.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "Before ` typo then [x](./gone.md) here."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_unmatched_backtick_across_lines_leaves_links_live(
+    repo: FixtureRepo,
+) -> None:
+    """Same, where the stray run and the link are on different lines."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "Before ` typo\nthen [x](./gone.md) here."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_three_space_indent_is_still_prose(repo: FixtureRepo) -> None:
+    """Under four columns is not code, so its links stay in scope."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "Prose:\n\n   see [x](./gone.md) here"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_list_continuation_is_not_treated_as_indented_code(
+    repo: FixtureRepo,
+) -> None:
+    """Indented code cannot interrupt a paragraph, so a continuation keeps its links.
+
+    Without the after-a-blank-line bound this would be blanked and its broken link
+    missed — trading a false positive for a silent miss.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "- item\n    see [x](./gone.md) here")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_escaped_comment_opener_is_not_a_comment(repo: FixtureRepo) -> None:
+    r"""`\<!--` renders the delimiter as text, so the links after it stay live.
+
+    Treating it as an opener swallowed them — a silent miss.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        r"Write \<!-- then [x](./gone.md) and --> to comment out.",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_escaped_backtick_does_not_open_a_span(repo: FixtureRepo) -> None:
+    r"""Same rule for ``\```: an escaped delimiter is literal text."""
+    repo.write_doc("docs/references/a.md", TODAY, r"\`not a span [x](./gone.md)")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_code_span_may_cross_a_line_break(repo: FixtureRepo) -> None:
+    """CommonMark spans may contain line endings.
+
+    Scanning each line independently made a span opened on one line and closed on the
+    next look like literal backticks, so a `<!--` inside it opened a comment: a spurious
+    unterminated-comment error *and* the links after the span swallowed.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "Write `example\n<!-- draft\ntext` and it is code.",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_link_after_a_multiline_span_is_still_checked(repo: FixtureRepo) -> None:
+    """Carrying span state must not blank past the span's close."""
+    repo.write_doc("docs/references/a.md", TODAY, "`a\nb` then [x](./gone.md).")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_blank_line_ends_an_unclosed_span(repo: FixtureRepo) -> None:
+    """A span cannot cross a paragraph break, so the backtick was literal.
+
+    Without this bound, one stray backtick would blank the rest of the file.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "`unclosed\n\nThen [x](./gone.md).")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_longer_backtick_run_cannot_close_a_shorter_span(
+    repo: FixtureRepo,
+) -> None:
+    """A closing run must be exactly the opener's length, checked on both sides.
+
+    Testing only the character *after* a candidate accepted a suffix of a longer run, so
+    the span closed early and its code content was scanned as live markdown — failing a
+    required check on valid input.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "`foo`` [x](./gone.md)`")
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_commented_out_map_row_is_not_validated(repo: FixtureRepo) -> None:
+    """A row inside an HTML comment renders nothing, so it routes no one.
+
+    Map parsing previously blanked only fenced blocks.
+    """
+    repo.write(
+        "AGENTS.md",
+        _map("References", "| T | `docs/references/a.md` | why |\n")
+        + "<!-- | Old | `docs/references/gone.md` | why | -->\n",
+    )
+    repo.write_doc("docs/references/a.md", TODAY, "body")
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
+
+
+def test_comment_delimiter_shown_as_code_is_not_a_comment(repo: FixtureRepo) -> None:
+    """A `<!--` displayed as code must not pair with a later real `-->`.
+
+    Blanking comments as a separate earlier pass let it do exactly that, erasing the
+    live links in between — a silent miss, and the worst outcome available.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "Write `<!--` then [x](./gone.md) and `-->` to comment out.",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_comment_delimiter_in_a_fence_does_not_reach_outside(
+    repo: FixtureRepo,
+) -> None:
+    """Same defect across a fenced example rather than an inline span."""
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "```\n<!--\n```\n\nThen [x](./gone.md).\n\n-->\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_fence_inside_a_real_comment_does_not_open_a_fence(
+    repo: FixtureRepo,
+) -> None:
+    """The other ordering has the mirror bug, which is why this is one pass.
+
+    Blanking fences first would let a ``` inside a genuine comment open a block and
+    swallow the real prose after it.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<!--\n```\n-->\n\nThen [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("heading", "fragment"),
+    [
+        ("## Setup <!-- old -->", "#setup"),
+        ("## Foo <!-- n --> Bar", "#foo--bar"),
+    ],
+    ids=["trailing", "mid-heading"],
+)
+def test_heading_sharing_a_line_with_a_comment_slugs_as_rendered(
+    repo: FixtureRepo, heading: str, fragment: str
+) -> None:
+    """The comment is removed, not filled.
+
+    Offset-preserving filler left the comment's width in the heading text, so the slug
+    carried filler characters (or, with spaces, its width in hyphens — GitHub does not
+    collapse whitespace runs). Either way a link to the rendered id was rejected.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, f"{heading}\n\n[x]({fragment})")
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0, heading
+
+
+@pytest.mark.parametrize("indent", ["", " ", "  ", "   "], ids=["0", "1", "2", "3"])
+def test_indented_heading_still_defines_its_anchor(
+    repo: FixtureRepo, indent: str
+) -> None:
+    """CommonMark permits up to three spaces before an ATX heading."""
+    repo.write_doc("docs/references/a.md", TODAY, f"{indent}## Setup\n\n[x](#setup)")
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0, f"indent={len(indent)}"
+
+
+def test_four_space_indent_is_a_code_block_not_a_heading(repo: FixtureRepo) -> None:
+    """Four spaces is an indented code block, so it defines no anchor."""
+    repo.write_doc("docs/references/a.md", TODAY, "    ## Setup\n\n[x](#setup)")
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "setup" in result.stderr
+
+
+def test_slug_suffix_avoids_a_literal_heading_of_that_name(
+    repo: FixtureRepo,
+) -> None:
+    """A generated suffix must not collide with a heading that already slugs to it.
+
+    Headings `Foo`, `Foo`, `Foo-1` render as `foo`, `foo-1`, `foo-1-1`. Counting per
+    base emitted `foo-1` twice — impossible for HTML ids — and never `foo-1-1`, so a
+    valid link to the third heading was reported broken.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "# Foo\n\n# Foo\n\n# Foo-1\n\n[a](#foo) [b](#foo-1) [c](#foo-1-1)",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0
+
+
 def test_multi_backtick_code_span_is_blanked(repo: FixtureRepo) -> None:
     """A code span is closed by a run of the same length as its opener.
 
@@ -1832,13 +2346,13 @@ def test_bump_date_line_preserves_indentation() -> None:
     assert "  last-updated: 2026-01-01" in bump_date_line(text, "2026-01-01")
 
 
-def test_blank_fenced_blocks_preserves_line_count() -> None:
+def test_blanking_preserves_line_count() -> None:
     text = "a\n```\nb\n```\nc\n"
-    assert len(blank_fenced_blocks(text).split("\n")) == len(text.split("\n"))
+    assert len(blank_noncontent(text).split("\n")) == len(text.split("\n"))
 
 
-def test_blank_code_spans_preserves_offsets() -> None:
+def test_blanking_preserves_offsets() -> None:
     text = "see `[x](y.md)` here"
-    blanked = blank_code_spans(text)
+    blanked = blank_noncontent(text)
     assert len(blanked) == len(text)
     assert "[x](y.md)" not in blanked
