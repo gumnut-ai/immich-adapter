@@ -1327,13 +1327,12 @@ def test_link_after_a_comment_is_still_checked(repo: FixtureRepo) -> None:
     assert "gone.md" in result.stderr
 
 
-def test_unterminated_comment_marker_does_not_swallow_the_file(
-    repo: FixtureRepo,
-) -> None:
-    """Only complete comments are blanked.
+def test_unterminated_comment_is_reported(repo: FixtureRepo) -> None:
+    """Per CommonMark an unclosed `<!--` block runs to the end of the document.
 
-    Blanking from a bare `<!--` to EOF would silently drop every later link from the
-    scan — trading a false positive for a silent miss.
+    So everything after it renders as nothing and drops out of every check. That is
+    spec-correct but silent, so the unclosed marker itself is reported — an authoring
+    slip that hides content from readers should not also hide it from the linter.
     """
     repo.write_doc(
         "docs/references/a.md", TODAY, "A stray <!-- marker\n\nThen [x](./gone.md)."
@@ -1341,7 +1340,78 @@ def test_unterminated_comment_marker_does_not_swallow_the_file(
     repo.commit_all()
     result = repo.lint("--check", "links")
     assert result.returncode == 1
+    assert "never closed" in result.stderr
+
+
+def test_comment_delimiter_shown_as_code_is_not_a_comment(repo: FixtureRepo) -> None:
+    """A `<!--` displayed as code must not pair with a later real `-->`.
+
+    Blanking comments as a separate earlier pass let it do exactly that, erasing the
+    live links in between — a silent miss, and the worst outcome available.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "Write `<!--` then [x](./gone.md) and `-->` to comment out.",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
     assert "gone.md" in result.stderr
+
+
+def test_comment_delimiter_in_a_fence_does_not_reach_outside(
+    repo: FixtureRepo,
+) -> None:
+    """Same defect across a fenced example rather than an inline span."""
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "```\n<!--\n```\n\nThen [x](./gone.md).\n\n-->\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_fence_inside_a_real_comment_does_not_open_a_fence(
+    repo: FixtureRepo,
+) -> None:
+    """The other ordering has the mirror bug, which is why this is one pass.
+
+    Blanking fences first would let a ``` inside a genuine comment open a block and
+    swallow the real prose after it.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<!--\n```\n-->\n\nThen [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("heading", "fragment"),
+    [
+        ("## Setup <!-- old -->", "#setup"),
+        ("## Foo <!-- n --> Bar", "#foo--bar"),
+    ],
+    ids=["trailing", "mid-heading"],
+)
+def test_heading_sharing_a_line_with_a_comment_slugs_as_rendered(
+    repo: FixtureRepo, heading: str, fragment: str
+) -> None:
+    """The comment is removed, not filled.
+
+    Offset-preserving filler left the comment's width in the heading text, so the slug
+    carried filler characters (or, with spaces, its width in hyphens — GitHub does not
+    collapse whitespace runs). Either way a link to the rendered id was rejected.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, f"{heading}\n\n[x]({fragment})")
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0, heading
 
 
 @pytest.mark.parametrize("indent", ["", " ", "  ", "   "], ids=["0", "1", "2", "3"])
