@@ -498,7 +498,13 @@ def _scan_chunk(
             continue
         if text.startswith("<!--", i):
             block = _starts_a_line(text, i)
-            close = text.find("-->", i + 4)
+            # `<!-->` and `<!--->` are complete empty comments, and their terminator
+            # overlaps the opener — searching for `-->` past the fourth character finds
+            # neither, so both were read as unterminated.
+            short = next(
+                (f for f in ("<!--->", "<!-->") if text.startswith(f, i)), None
+            )
+            close = i + len(short) - 3 if short else text.find("-->", i + 4)
             if close == -1:
                 if not block:
                     # An *inline* raw-HTML comment must be complete to be one. Unclosed,
@@ -521,7 +527,13 @@ def _scan_chunk(
             # surrounds it invented syntax that does not render — `[x]<!--c-->(./y)`
             # became a link, and `<!--c--> ## H` became a heading. Callers that need the
             # heading *text* pass drop_comments and get the comment elided instead.
-            if not drop_comments:
+            if drop_comments:
+                # Elide the comment's characters but keep its line breaks: the caller
+                # indexes this rendering by line number against the space-filled one, and
+                # dropping newlines desynced them — a heading then took its text from a
+                # later line, producing wrong slugs and invented duplicate suffixes.
+                out.append("\n" * text.count("\n", i, end))
+            else:
                 out.append(_blank_keeping_newlines(text[i:end], " "))
             i = end
             continue

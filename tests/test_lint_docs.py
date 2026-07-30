@@ -1473,6 +1473,37 @@ def test_list_item_paragraph_keeps_its_links(repo: FixtureRepo) -> None:
     assert "gone.md" in result.stderr
 
 
+def test_multiline_comment_keeps_heading_lines_aligned(repo: FixtureRepo) -> None:
+    """The two renderings are indexed by line number, so both must keep line count.
+
+    Eliding a multi-line comment's newlines desynced them, so a heading took its text
+    from a later line — wrong slugs plus invented duplicate suffixes. Here `#a` resolved
+    to nothing and a phantom `c-1` appeared.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "<!--\nnote\n-->\n\n## A\n\n## B\n\n## C\n\n[x](#a) [y](#b) [z](#c)",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0
+
+
+@pytest.mark.parametrize("form", ["<!-->", "<!--->"], ids=["3-dash", "4-dash"])
+def test_short_empty_comment_forms_are_complete(repo: FixtureRepo, form: str) -> None:
+    """`<!-->` and `<!--->` are complete comments whose terminator overlaps the opener.
+
+    Searching for `-->` past the fourth character found neither, so both read as
+    unterminated: a spurious violation, and the links after them skipped.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, f"Prose {form} then [x](./gone.md).")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+    assert "never closed" not in result.stderr
+
+
 def test_heading_is_its_own_block_for_inline_scanning(repo: FixtureRepo) -> None:
     """Inline constructs cannot span a heading boundary.
 
