@@ -20,23 +20,7 @@ Run from the `immich-adapter/` directory:
 
 # Documentation Checks
 
-`scripts/lint_docs.py` enforces the mechanically checkable half of the conventions below, and runs on every PR (the `lint-docs` job in `.github/workflows/ci.yml`). It is stdlib-only, so it needs no install step and runs anywhere `python3` does.
-
-| Check | Enforces |
-|-------|----------|
-| `freshness` | `last-updated:` is a real calendar date, and current whenever the body changed |
-| `links` | Every inline markdown link target resolves |
-| `anchors` | Every `#fragment` resolves to a real heading or `<a id>` |
-| `map_paths` | Every Documentation Map row's path resolves, as does every `superseded-by:`; a design doc with no row fails |
-| `map_status_section` | A design doc's map section matches its `status:` frontmatter |
-| `map_cells` | The Consult-when cell stays one line, under 250 characters |
-| `frontmatter` | `docs/design-docs/` needs `title`/`status`/`created`/`last-updated`, with `status` one of the four values; other `docs/` need `title`/`last-updated`. No required field may be present-but-empty, and `superseded-by` is validated when present rather than required |
-
-Only `freshness` is diff-scoped. The rest run repo-wide, deliberately: renaming a doc breaks inbound links and map rows in files the change never touched. Checks are individually switchable in `scripts/lint_docs.toml`, and `--check <name>` overrides that so a disabled rule can be swept before being switched on.
-
-Citations naming another repo are skipped rather than resolved — both the org-qualified form this repo's conventions require (`gumnut-ai/<repo>/...`) and a path that climbs out of the repo. CI clones one repo, so no such path can resolve there; the linter decides this by path arithmetic alone, so its verdict doesn't change on a machine that happens to have the sibling cloned.
-
-The file is kept byte-identical to the copy in the Gumnut Photos repo — repo differences belong in `lint_docs.toml`, not the script. A green run is not a full review: the linter buys reachability and structural consistency, never correctness.
+`scripts/lint_docs.py` runs on every PR in `.github/workflows/ci.yml`; use `--fix` to bump missed dates. The complete frontmatter, map, lifecycle, path, and review contract is local in `docs/references/documentation-conventions.md`. The linter is kept byte-identical to the Gumnut Photos copy, with repo differences in `scripts/lint_docs.toml`.
 
 # Documentation Map
 
@@ -60,6 +44,8 @@ The sections below follow that order, with design docs split by their `status:` 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
 | Code practices | `docs/references/code-practices.md` | Python style, project conventions, endpoint patterns, checksum handling and deduplication, error handling, testing, logging, PR practices |
+| Documentation conventions | `docs/references/documentation-conventions.md` | Writing or maintaining docs — frontmatter, map rows, lifecycle, freshness, path citations |
+| GitHub Actions best practices | `docs/references/github-actions-best-practices.md` | Writing or reviewing workflows — action pins, permissions, untrusted triggers, shell interpolation, zizmor |
 | WebSocket events reference | `docs/references/websocket-events-reference.md` | WebSocket event types, payload formats |
 | Session & checkpoint reference | `docs/references/session-checkpoint-reference.md` | Session/checkpoint object shapes, field definitions |
 | Immich sync communication | `docs/references/immich-sync-communication.md` | Immich client-server sync protocol, message formats |

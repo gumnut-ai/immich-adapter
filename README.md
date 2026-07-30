@@ -109,5 +109,7 @@ This invokes `uvicorn` directly because the `fastapi` CLI doesn't expose `--ws`,
 
 - [Architecture](docs/architecture/adapter-architecture.md) — how the adapter works: auth, data translation, pagination, sync, error handling
 - [Code Practices](docs/references/code-practices.md) — Python style, endpoint patterns, testing, logging
+- [Documentation Conventions](docs/references/documentation-conventions.md) — frontmatter, maps, lifecycle, paths, and freshness
 - [Development Tools](docs/references/development-tools.md) — model generator, API compatibility, OpenAPI spec, dependency automation
+- [GitHub Actions Best Practices](docs/references/github-actions-best-practices.md) — workflow security and review rules
 - See [docs/](docs/) for design docs and more
