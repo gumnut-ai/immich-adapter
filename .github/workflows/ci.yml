@@ -119,16 +119,37 @@ jobs:
         env:
           # Passed through env rather than interpolated into the run body.
           #
-          # On a pull_request, the event payload's base SHA is more reliable than
-          # relying on checkout to materialize an `origin/main` ref, and since the
-          # checked-out ref is the merge commit, this diff is exactly the PR's net
-          # change. A push has no PR base, so it uses the pushed commit: the
-          # merge-base becomes HEAD itself, freshness finds no changed docs and
-          # no-ops, and the repo-wide structural checks still run.
+          # On a pull_request this is the base *branch*, not the event payload's
+          # `base.sha`. That sha is frozen when the PR is opened and never
+          # advances, so on any PR older than the base branch's latest doc edit
+          # the diff swept in main's own commits: their docs read as "changed by
+          # this PR", and the freshness rule then demanded today's date on files
+          # the PR never touched. Resolving the branch instead makes the
+          # merge-base track main, which is what this step always meant to
+          # compare against — and it stays correct when main advances after the
+          # merge ref was built, since merge-base finds the common ancestor
+          # rather than assuming one side is reachable from the other.
+          #
+          # A push has no PR base, so it uses the pushed commit: the merge-base
+          # becomes HEAD itself, freshness finds no changed docs and no-ops, and
+          # the repo-wide structural checks still run.
           #
           # Branching on `event_name` rather than leaning on
-          # `pull_request.base.sha || github.sha` to null-propagate: an empty
+          # `pull_request.base.ref || github.sha` to null-propagate: an empty
           # `--base` is a hard exit 1, and the push path can't be exercised until
           # this is on main, so the failure would land there.
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
-        run: uv run scripts/lint_docs.py --base "$BASE_SHA"
+          LINT_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.event.pull_request.base.ref) || github.sha }}
+        # `origin/<base>` comes from the checkout above: `fetch-depth: 0` fetches
+        # `+refs/heads/*:refs/remotes/origin/*`, so every branch is already a
+        # remote-tracking ref here. Deliberately no `git fetch` step to
+        # materialize it — `persist-credentials: false` leaves no usable
+        # credential behind for one.
+        #
+        # The ref is verified rather than assumed because an absent one fails
+        # *quietly*: `resolve_merge_base` would fall back to `HEAD^`, scan a
+        # one-commit diff, find nothing, and report success. A missing base
+        # should stop the run, not silently empty it.
+        run: |
+          git rev-parse --verify --quiet "$LINT_BASE^{commit}" > /dev/null \
+            || { echo "lint-docs: base '$LINT_BASE' did not resolve" >&2; exit 1; }
+          uv run scripts/lint_docs.py --base "$LINT_BASE"
