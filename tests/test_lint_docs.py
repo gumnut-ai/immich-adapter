@@ -584,6 +584,51 @@ def test_plural_documentation_maps_heading_is_not_a_map(repo: FixtureRepo) -> No
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize(
+    "heading",
+    ["Documentation Maps", "Documentation Map Sections"],
+    ids=["plural", "suffixed"],
+)
+def test_headings_that_only_start_with_the_phrase_are_not_maps(
+    repo: FixtureRepo, heading: str
+) -> None:
+    """Prose *about* the convention shares the phrase but carries no map.
+
+    A prefix match takes both, and then the non-map tables beneath them are parsed
+    as rows — a two-column table's rows are the wrong shape, and a three-column
+    one has its cells resolved as document paths.
+    """
+    repo.write(
+        "docs/references/documentation-conventions.md",
+        f"---\ntitle: C\nlast-updated: {TODAY}\n---\n\n"
+        f"## {heading}\n\n"
+        "| Section | Holds |\n"
+        "|---------|-------|\n"
+        "| `Architecture` | `docs/architecture/` |\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 0, result.stderr
+
+
+def test_map_row_with_wrong_column_count_is_flagged(repo: FixtureRepo) -> None:
+    """A malformed row must fail, not be skipped.
+
+    Discarding it silently means its cited path is never resolved, so one stray
+    unescaped `|` turns a row citing a nonexistent doc into a passing one. Outside
+    `design-docs/` nothing else would catch it — there is no unmapped-doc backstop
+    for an `architecture/` or `references/` doc.
+    """
+    repo.write(
+        "AGENTS.md",
+        _map("References", "| Broken | `docs/references/missing.md` | A | B |\n"),
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "4 columns" in result.stderr
+
+
 def test_dev_root_relative_cross_repo_link_is_skipped(repo: FixtureRepo) -> None:
     """A path climbing out of the repo names another repo, so it is unverifiable.
 

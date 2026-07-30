@@ -201,9 +201,11 @@ CODESPAN_RE = re.compile(r"`[^`\n]*`")
 LINK_RE = re.compile(r"(?<!!)\[([^\]\[]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 HTML_ANCHOR_RE = re.compile(r"<a\s+(?:id|name)=[\"']([^\"']+)[\"']")
 TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
-# Anchored, and rejecting a trailing lowercase letter, so the plural section
-# heading `## Documentation Maps` is not read as a map. See is_map_heading.
-MAP_HEADING_RE = re.compile(r"^Documentation Map(?![a-z])")
+# Exact match, so a heading that merely *starts* with the phrase is not read as a
+# map. Prose sections about the convention do (`Documentation Maps`,
+# `Documentation Map Sections`), and their non-map tables would be parsed as rows.
+# See is_map_heading.
+MAP_HEADING_RE = re.compile(r"^Documentation Map$")
 
 
 def blank_fenced_blocks(text: str) -> str:
@@ -809,16 +811,24 @@ class MapRow:
     topic: str
     doc_cell: str
     consult_cell: str
+    # Cell count when it wasn't the expected 3; None for a well-formed row.
+    bad_cell_count: int | None = None
 
 
 def is_map_heading(heading: str) -> bool:
     """Whether a heading opens a Documentation Map.
 
-    Anchored, and excluding a following lowercase letter, so the *plural* section
-    heading `## Documentation Maps` in `documentation-conventions.md` — which
-    documents the convention rather than carrying a map — is not mistaken for one.
-    A substring test picks it up, and any three-column table added under it would
-    then be silently validated as map rows.
+    Matched exactly. Sections that *document* the convention rather than carry a
+    map begin with the same phrase and must not be mistaken for one — both
+    `Documentation Maps` and `Documentation Map Sections` exist in the team
+    conventions. A prefix test picks those up, and then the non-map tables beneath
+    them are parsed as rows: a two-column table's rows are the wrong shape, and a
+    three-column one would have its cells resolved as document paths.
+
+    Every real map heading is exactly this phrase, at whatever level the file
+    nests it. If one later needs a suffix, this fails loudly — the map is not
+    found, so its design docs report as unmapped — rather than silently matching
+    prose.
     """
     return MAP_HEADING_RE.match(heading) is not None
 
@@ -903,6 +913,11 @@ def parse_map_rows(repo: Repo, map_rel: str) -> list[MapRow]:
             continue
         cells = split_row_cells(rm.group(1))
         if len(cells) != 3:
+            # Reported, not skipped. Discarding the row silently means its cited
+            # path is never resolved, so a stray unescaped `|` turns a broken row
+            # into a passing one — and outside `design-docs/` there is no
+            # unmapped-doc backstop to catch the document another way.
+            rows.append(MapRow(map_rel, lineno, section, "", "", "", len(cells)))
             continue
         topic, doc_cell, consult = cells
         # Skip the header row and the `|---|---|---|` separator.
@@ -935,6 +950,22 @@ def check_maps(repo: Repo, enabled: frozenset[str]) -> tuple[list[Violation], se
         # lives elsewhere keeps the heading plus a pointer to it — so finding zero
         # rows here is not an error.
         for row in parse_map_rows(repo, map_rel):
+            if row.bad_cell_count is not None:
+                if "map_paths" in enabled and not repo.config.ignored(
+                    map_rel, "map_paths"
+                ):
+                    violations.append(
+                        Violation(
+                            "map_paths",
+                            map_rel,
+                            f"map row has {row.bad_cell_count} columns, expected 3 "
+                            f"(Topic | Document | Consult when...); escape any "
+                            f"literal `|` in a cell as `\\|`",
+                            row.line,
+                        )
+                    )
+                continue
+
             if "map_cells" in enabled and not repo.config.ignored(map_rel, "map_cells"):
                 violations.extend(check_map_cell(repo, row))
 
