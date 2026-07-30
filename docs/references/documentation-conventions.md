@@ -1,11 +1,11 @@
 ---
 title: Documentation Conventions
-last-updated: 2026-07-29
+last-updated: 2026-07-30
 ---
 
 # Documentation Conventions
 
-How to write and maintain documentation in this repository. This file is self-contained: a contributor or cloud agent working from this checkout must not need access to a private sibling repository or issue tracker to understand the contract.
+How to write and maintain documentation in this repository.
 
 ## Doc Types
 

@@ -1,6 +1,6 @@
 ---
 title: GitHub Actions Best Practices
-last-updated: 2026-07-29
+last-updated: 2026-07-30
 ---
 
 # GitHub Actions Best Practices
@@ -17,7 +17,7 @@ Pin every third-party action—anything outside `actions/*`—to a full 40-chara
 
 Tags and branches are mutable. The comment keeps the intended release legible and lets dependency automation update the SHA and version together.
 
-GitHub-owned `actions/*` actions are tag-pinned for readability under the checked-in `.github/zizmor.yml` policy. When bumping any action, update its version comment in the same edit.
+Use version tags for GitHub-owned `actions/*` actions. The checked-in `.github/zizmor.yml` uses `ref-pin` for this exemption, which mechanically permits tags or branches; the written convention is narrower, so reject branch refs in review. When bumping any action, update its version comment in the same edit.
 
 ## Declare Token Permissions
 
