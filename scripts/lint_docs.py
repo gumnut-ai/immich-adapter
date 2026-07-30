@@ -924,6 +924,16 @@ def find_map_files(repo: Repo) -> list[str]:
     return out
 
 
+def is_separator_row(cells: list[str]) -> bool:
+    """Whether every cell is a `---` / `:---:` alignment marker.
+
+    Requires at least one dash per cell, so an empty cell is not mistaken for a
+    separator — that mistake dropped malformed rows before their paths were ever
+    checked.
+    """
+    return all(re.fullmatch(r":?-+:?", c.strip()) is not None for c in cells)
+
+
 def split_row_cells(row_body: str) -> list[str]:
     r"""Split a table row on unescaped pipes only.
 
@@ -993,8 +1003,12 @@ def parse_map_rows(repo: Repo, map_rel: str) -> list[MapRow]:
             rows.append(MapRow(map_rel, lineno, section, "", "", "", len(cells)))
             continue
         topic, doc_cell, consult = cells
-        # Skip the header row and the `|---|---|---|` separator.
-        if not topic or topic == "Topic" or set(doc_cell) <= set("-: "):
+        # Skip the header row and the `|---|---|---|` separator — and no more than
+        # those. Testing the document cell with `set(cell) <= set("-: ")` also
+        # matched an *empty* cell, so `| Broken |  | why |` was dropped as though it
+        # were the separator and its missing path went unreported. A row with an
+        # empty document cell now falls through to the citation check below.
+        if topic == "Topic" or is_separator_row(cells):
             continue
         rows.append(MapRow(map_rel, lineno, section, topic, doc_cell, consult))
     return rows

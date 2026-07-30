@@ -1,8 +1,9 @@
 """Tests for scripts/lint_docs.py.
 
-The freshness tests are integration tests, ported from the `lint_docs_test.sh`
-harness this file replaces: each builds a throwaway git repo with a `main`
-branch, makes working-tree edits, and asserts the linter's report. Running the
+The freshness tests are integration tests, ported from the bash harness this file
+replaces (`scripts/lint_docs_test.sh`, since removed as spent): each builds a
+throwaway git repo with a `main` branch, makes working-tree edits, and asserts the
+linter's report. Running the
 real script against a real repo is what pins the git-plumbing behavior (merge
 base, `--diff-filter`, `git show <rev>:<path>`) that a unit test of the pure
 helpers would miss.
@@ -156,7 +157,7 @@ def repo(tmp_path: Path) -> FixtureRepo:
 
 @pytest.fixture
 def freshness_repo(repo: FixtureRepo) -> FixtureRepo:
-    """The `lint_docs_test.sh` baseline and working-tree edits, ported verbatim."""
+    """The replaced harness's baseline and working-tree edits, ported verbatim."""
     repo.write_doc("clean.md", "2020-01-01", "untouched body")
     repo.write_doc("no_bump.md", "2020-01-01", "original body")
     repo.write_doc("bumped.md", "2020-01-01", "original body")
@@ -282,9 +283,9 @@ def test_fix_reports_when_nothing_needs_a_bump(repo: FixtureRepo) -> None:
 # freshness — the new-file blind spot the bash version had
 # --------------------------------------------------------------------------
 #
-# `lint_docs.sh` skipped any doc absent at the merge-base, so a doc created on
-# day 1 and edited on day 2 kept its day-1 date and every run — including --fix —
-# reported clean. Caught in the wild on photos#1480.
+# The bash predecessor skipped any doc absent at the merge-base, so a doc created
+# on day 1 and edited on day 2 kept its day-1 date and every run — including --fix
+# — reported clean. Caught in the wild on photos#1480.
 
 
 def _branch_with_added_doc(repo: FixtureRepo, date: str) -> None:
@@ -772,6 +773,34 @@ def test_angle_bracket_link_destination_is_checked(repo: FixtureRepo) -> None:
     result = repo.lint("--check", "links")
     assert result.returncode == 1
     assert "missing file.md" in result.stderr
+
+
+def test_map_row_with_an_empty_document_cell_is_flagged(repo: FixtureRepo) -> None:
+    """An empty cell is not the table separator.
+
+    Testing the document cell with `set(cell) <= set("-: ")` matched an empty cell
+    too, so `| Broken |  | why |` was dropped as though it were the `|---|` row and
+    its missing path was never reported.
+    """
+    repo.write("AGENTS.md", _map("References", "| Broken |  | why |\n"))
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "Broken" in result.stderr
+
+
+def test_real_separator_rows_are_still_skipped(repo: FixtureRepo) -> None:
+    """Alignment markers must not become violations."""
+    repo.write(
+        "AGENTS.md",
+        "## Documentation Map\n\n### References\n\n"
+        "| Topic | Document | Consult when... |\n"
+        "|:------|:--------:|----------------:|\n"
+        "| T | `docs/references/a.md` | why |\n",
+    )
+    repo.write_doc("docs/references/a.md", TODAY, "body")
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
 
 
 def test_map_row_with_wrong_column_count_is_flagged(repo: FixtureRepo) -> None:
