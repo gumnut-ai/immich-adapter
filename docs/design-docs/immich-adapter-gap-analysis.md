@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-29
+last-updated: 2026-07-30
 ---
 
 # Immich Adapter Gap Analysis
@@ -144,13 +144,15 @@ Immich allows batch downloading multiple assets as a zip archive.
 
 Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pairs) with a primary asset representing the group.
 
-**Current behavior**: All 7 endpoints return empty/fake responses. No stacking UI is functional.
+**Current behavior**: All 7 `/api/stacks` endpoints return empty/fake responses, so the stack detail and editing UI is non-functional. The timeline is no longer part of this gap: `GET /api/timeline/bucket` collapses a burst to one tile and emits Immich's `[stackId, count]` tuples under `withStacked`, so a burst renders as a single badged tile in the month views that request it. Opening one still finds no stack, since `GET /api/stacks/{id}` is a stub — the client drops the stack rather than erroring.
 
 **User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently.
 
 **Dependency**: **Adapter-only** — the backend grouping concept this gap was originally blocked on now exists. The Gumnut API's stack resource covers create, add/remove assets, list, retrieve, set cover, and delete, with `list_stacks` exposing an `origin` filter (auto-detected bursts vs. user-grouped) and `primary_asset_id`; members are reachable through the `stack_id` filter on the asset list.
 
-**Effort**: **M** — the shared translation layer (member hydration, effective-cover resolution, DTO building) is already implemented in `routers/utils/stack_conversion.py`; what remains is wiring the 7 routes plus the stack fields on the timeline and asset-detail surfaces.
+One piece of the timeline surface *is* backend-blocked: `GET /api/timeline/buckets` counts every frame, because `assets.counts` has no stack-aware filter, so a month containing bursts reports a count higher than the collapsed contents. Upstream keeps the two symmetric by applying the same predicate to both queries. The effect is cosmetic — see "Timeline stack collapse" in `docs/architecture/adapter-architecture.md` — and the fix is a stack-collapse option on `assets.counts` and `assets.list`.
+
+**Effort**: **M** — the shared translation layer (member hydration, effective-cover resolution, DTO building, timeline collapse) is already implemented in `routers/utils/stack_conversion.py`; what remains is wiring the 7 routes plus the stack block on the asset-detail surface.
 
 **Recommendation**: **Revisit later** — unblocked and cheaper than this section originally assumed, but still low user impact relative to the Tier-1 and Tier-2 gaps.
 
@@ -750,7 +752,7 @@ adapter code.
 | #1 Shared links | XL | Both | High value but major backend work |
 | #9 Partners | XL | Both | Family use case, deep auth changes |
 | #23 Album sharing | XL | Both | Blocked by sharing infrastructure |
-| #6 Stacks | M | Adapter-only | Low user demand; backend support landed, translation layer already built |
+| #6 Stacks | M | Adapter-only | Low user demand; backend support landed, translation layer already built, timeline surface already shipped |
 | #20 API keys | M | Both | Developer feature |
 | #24 Custom metadata | M | Both | Integration feature |
 | #25 Asset edits | M | Both | Low user demand |

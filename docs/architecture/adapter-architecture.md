@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-29
+last-updated: 2026-07-30
 ---
 
 # Immich Adapter Architecture
@@ -176,7 +176,7 @@ Each entity type has a dedicated conversion module in `routers/utils/`:
 |--------|------------|-------------|--------------|
 | `asset_conversion.py` | `AssetResponse` | `AssetResponseDto` | `local_datetime` → `fileCreatedAt`, `mime_type` → `type` (IMAGE/VIDEO/AUDIO/OTHER), EXIF extraction |
 | `album_conversion.py` | `AlbumResponse` | `AlbumResponseDto` | `name` → `albumName`, `album_cover_asset_id` → `albumThumbnailAssetId`, album date range normalization |
-| `stack_conversion.py` | stack row + member `AssetResponse`s | `StackResponseDto` | member hydration via the `stack_id` asset filter, effective-cover resolution (Immich requires a non-null `primaryAssetId`; an auto-detected burst has no pinned cover), live-only `assets` with the cover first |
+| `stack_conversion.py` | stack row + member `AssetResponse`s | `StackResponseDto`, time-bucket `stack` tuples | member hydration via the `stack_id` asset filter, effective-cover resolution (Immich requires a non-null `primaryAssetId`; an auto-detected burst has no pinned cover), live-only `assets` with the cover first, plus the lean collapsed-timeline path (see [Timeline stack collapse](#timeline-stack-collapse)) |
 | `person_conversion.py` | `PersonResponse` | `PersonResponseDto` | `is_favorite` → `isFavorite`, `thumbnail_face_url` → `thumbnailPath`, null name → "Unknown Person" |
 
 `album_conversion.py` also routes `start_date` / `end_date` through `to_immich_local_datetime()` before emitting `AlbumResponseDto.startDate` / `endDate`. Album date ranges are derived from assets' `local_datetime`, so they intentionally share the same keep-local-time normalization as each asset's `localDateTime`: naive values are labeled `UTC` without shifting the wall-clock, and `None` passes through unchanged. This keeps the album range aligned with the dates shown on its assets and avoids list-response DTO validation failures when a local capture timezone is unknown.
@@ -328,6 +328,37 @@ The adapter applies this sort in memory before pagination slicing (see `_immich_
 ### Timeline ordering
 
 Timeline bucket contents are returned in reverse chronological order by default (`local_datetime` descending). The `order` query parameter can reverse this to ascending.
+
+### Timeline stack collapse
+
+Immich renders a burst as a single tile carrying a frame-count badge, and it is the **server** that produces that shape. Under `withStacked`, upstream's bucket query keeps an asset only when the asset is loose or is its stack's primary, and attaches a `[stackId, liveCount]` tuple to the survivor. The web client collapses nothing itself — it reads the tuple, renders the badge, and treats whichever asset carries the tuple as the stack's primary. So the tuple alone is not enough: emitting it without collapsing badges every frame of a burst instead of showing one tile.
+
+`GET /api/timeline/bucket` therefore does both, in `routers/api/timeline.py` over the helpers in `routers/utils/stack_conversion.py`:
+
+1. Collect the distinct `stack_id`s of the bucket's assets and read their rows through `client.stacks.list_stacks(ids=…)`, chunked at `GUMNUT_API_MAX_BULK_IDS`.
+2. Resolve each stack's **timeline cover** — the one frame that represents it in the grid.
+3. Drop every other member, then build the columnar arrays over the survivors so all of them stay index-aligned.
+4. Emit `[stack UUID, live count]` per surviving stacked asset, both elements as strings (upstream emits `count(…)::text` and the client parses element 1 with `Number.parseInt`).
+
+**Both halves are gated on `withStacked`**, matching upstream, which puts its per-asset select and its aggregate inside the same conditional — when the flag is falsy the `stack` key is absent from the response entirely. The gate is load-bearing rather than cosmetic: Immich web's album month view requests buckets *without* `withStacked` while still passing `showStackedIcon` to the thumbnail, so upstream albums are badge-free only because the field is missing. Collapsing or badging unconditionally would drop burst frames from albums and badge them where upstream never does.
+
+**Trash opts out**, diverging from upstream deliberately. Upstream's predicate keys on the live primary, so a trashed non-primary frame is filtered out of the trash view — the one place it must stay visible, since trash is the only route back to restoring it. The Gumnut API's `asset_count` is a live count that would misdescribe a trash-only view besides. No Immich client requests `withStacked` on the trash view, so the divergence costs nothing in practice.
+
+#### Timeline cover vs. effective primary
+
+The timeline cover is the pinned cover when the pin is **live**, otherwise the earliest live frame. This is intentionally not `resolve_effective_primary`, which keeps a *trashed* pin so `StackResponseDto.primaryAssetId` stays non-null. A timeline cover cannot: the collapse drops every frame that is not the cover, so naming a trashed asset removes the whole burst from the grid. Upstream has the same hole — it promotes a new primary only on permanent deletion — but the Gumnut API also preserves a trashed pin until permanent deletion, which turns a transient upstream glitch into a state that can last the whole retention window.
+
+The two surfaces can therefore disagree about a trashed pin: `/stacks` reports the user's pin, the timeline shows a frame that exists. The disagreement is invisible on the wire, because the bucket tuple carries no asset ID.
+
+#### Cost, and the bucket-count divergence
+
+Resolution usually costs nothing beyond the row read. When the bucket already holds `asset_count` live members of a stack it holds that stack's complete live member set, so the cover resolves from assets already in hand; a whole burst lands in one month, so this is the common case. The fallback — one lean `assets.list(stack_id=…, state="live", order="asc")` per stack, under the shared fan-out bound — covers a burst straddling a month boundary, or an album/person-filtered bucket that also asked for `withStacked`.
+
+**`GET /api/timeline/buckets` counts are not collapsed.** Upstream applies the identical predicate to its count query so counts and contents agree by construction; the adapter cannot, because `assets.counts` has no stack-aware filter and `assets.list` exposes only a single-stack `stack_id` filter — there is no "belongs to any stack" filter to walk. Computing the per-month deduction would mean paginating every stack in the library plus a member read each, on a hot endpoint.
+
+Counts therefore overstate a month containing bursts. This is cosmetic: the client uses the count only for a pre-load month height estimate, which the real layout replaces once the bucket loads, and nothing compares the two numbers. The lasting artifact is the scrubber, which snapshots the count and refreshes only on a viewport resize. The clean fix is a backend stack-collapse option on both `assets.counts` and `assets.list`, which would return the adapter to a pass-through.
+
+A stack whose row is missing from the `list_stacks` response — dissolved between the two reads — is left unresolved rather than guessed at: its frames stay in the bucket uncollapsed with a null tuple, and the adapter logs once per stack. Degrading to the pre-stack timeline is always preferable to hiding photos behind a cover that no longer exists.
 
 ### Album and asset ordering
 
@@ -490,7 +521,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | Albums | CRUD, add/remove assets, statistics | User sharing not supported (returns 501) |
 | People | CRUD, list with pagination/sort/filter, thumbnails, statistics, merge | |
 | Faces | List, create, delete, reassign | Create draws a user-specified box on an asset and links it to a person (Immich's "create a face on-the-fly" flow) |
-| Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling, including `isTrashed=true` |
+| Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling, including `isTrashed=true`; bucket contents collapse bursts and emit `[stackId, count]` tuples under `withStacked` (see [Timeline stack collapse](#timeline-stack-collapse)) |
 | Search | Smart search, metadata search, person search, statistics, random sampling, explore (cities + recents) | Camera/place filters are folded into the query, not filtered on (see above); places, cities, suggestions, and large-assets are stubs |
 | Sync | Stream, ack | Two-phase ordering, checkpoint management |
 | Auth | OAuth login/callback, logout, session management | Clerk OAuth via the Gumnut API |
@@ -510,7 +541,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | Notifications | Push notifications not implemented |
 | Partners | User sharing not implemented |
 | Duplicates | Duplicate detection handled differently in Gumnut |
-| Stacks | Routes not wired up yet; the translation layer (`routers/utils/stack_conversion.py`) exists and the Gumnut API's stack resource is complete |
+| Stacks | The `/api/stacks` routes are not wired up yet; the translation layer (`routers/utils/stack_conversion.py`) exists and the Gumnut API's stack resource is complete. The timeline surface is not stubbed — bucket contents already collapse bursts and carry stack tuples |
 
 ## Key Files
 
@@ -525,7 +556,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | `routers/utils/asset_conversion.py` | Asset model translation and EXIF extraction |
 | `routers/utils/album_conversion.py` | Album model translation |
 | `routers/utils/person_conversion.py` | Person model translation |
-| `routers/utils/stack_conversion.py` | Burst-stack member hydration, cover resolution, and stack DTO building |
+| `routers/utils/stack_conversion.py` | Burst-stack member hydration, cover resolution, stack DTO building, and collapsed-timeline stack tuples |
 | `routers/utils/error_mapping.py` | Gumnut SDK exceptions → HTTPException mapping |
 | `routers/immich_models.py` | Pydantic models matching Immich's OpenAPI spec |
 | `config/` | Settings, Redis, Sentry configuration |

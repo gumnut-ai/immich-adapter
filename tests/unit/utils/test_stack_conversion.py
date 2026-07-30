@@ -18,7 +18,7 @@ from gumnut.types import (
 )
 from pydantic import BaseModel
 
-from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.utils.asset_conversion import ASSET_INCLUDE
 from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.utils.gumnut_id_conversion import (
@@ -27,15 +27,20 @@ from routers.utils.gumnut_id_conversion import (
 )
 from routers.utils.stack_conversion import (
     GumnutStackRow,
+    TimelineStacks,
     build_stack_response,
     fetch_stack_members,
+    fetch_stack_rows,
     hydrate_stack,
     hydrate_stacks,
     resolve_effective_primary,
+    resolve_timeline_stacks,
+    select_timeline_cover,
 )
 from tests.conftest import (
     MockPaginatedListing,
     MockSyncCursorPage,
+    make_gumnut_asset,
     make_gumnut_stack,
     make_gumnut_stack_members,
     make_sdk_status_error,
@@ -57,6 +62,34 @@ def _client_returning(members):
     """
     client = Mock()
     client.assets.list = Mock(return_value=MockSyncCursorPage(members))
+    return client
+
+
+def _timeline_client(rows, *, members_by_stack: dict[str, list] | None = None):
+    """A Mock client for `resolve_timeline_stacks`.
+
+    `rows` is what `list_stacks` returns for the requested IDs — omit a stack to
+    model a row that vanished between the two reads. `members_by_stack` backs the
+    fallback member read; leaving it empty is how a test asserts the fast path
+    made no such read.
+    """
+    members_by_stack = members_by_stack or {}
+    rows_by_id = {row.id: row for row in rows}
+    client = Mock()
+    client.stacks.list_stacks = Mock(
+        side_effect=lambda **kwargs: MockSyncCursorPage(
+            [
+                rows_by_id[stack_id]
+                for stack_id in kwargs["ids"]
+                if stack_id in rows_by_id
+            ]
+        )
+    )
+    client.assets.list = Mock(
+        side_effect=lambda **kwargs: MockSyncCursorPage(
+            members_by_stack.get(kwargs["stack_id"], [])
+        )
+    )
     return client
 
 
@@ -575,3 +608,240 @@ def test_trashed_member_fixture_is_actually_trashed():
     assert isinstance(members[1].trashed_at, datetime)
     assert members[1].trashed_at.tzinfo is timezone.utc
     assert all(member.stack_id == stack.id for member in members)
+
+
+def test_stack_member_fixture_captures_in_ascending_order():
+    """Guards the other half of the builder: the cover rules below assert which
+    frame is *earliest*, which means nothing if every member shares a
+    timestamp."""
+    _, members = _stack_with_members(count=3)
+
+    captured = [member.local_datetime for member in members]
+    assert captured == sorted(captured)
+    assert len(set(captured)) == 3
+
+
+class TestFetchStackRows:
+    @pytest.mark.anyio
+    async def test_reads_rows_by_id_in_one_request(self):
+        stack_ids = [make_gumnut_stack().id for _ in range(3)]
+        rows = [make_gumnut_stack(stack_id=stack_id) for stack_id in stack_ids]
+        client = Mock()
+        client.stacks.list_stacks = Mock(return_value=MockSyncCursorPage(rows))
+
+        result = await fetch_stack_rows(client, stack_ids)
+
+        assert result == rows
+        client.stacks.list_stacks.assert_called_once()
+        kwargs = client.stacks.list_stacks.call_args.kwargs
+        assert kwargs["ids"] == stack_ids
+        assert kwargs["limit"] == GUMNUT_API_MAX_PAGE_SIZE
+
+    @pytest.mark.anyio
+    async def test_chunks_past_the_bulk_id_cap(self):
+        """`ids` 422s above the cap, so a bucket referencing more distinct
+        stacks than that must split across requests — and lose none of them."""
+        total = GUMNUT_API_MAX_BULK_IDS + 25
+        rows = [make_gumnut_stack() for _ in range(total)]
+        rows_by_id = {row.id: row for row in rows}
+        client = Mock()
+        client.stacks.list_stacks = Mock(
+            side_effect=lambda **kwargs: MockSyncCursorPage(
+                [rows_by_id[stack_id] for stack_id in kwargs["ids"]]
+            )
+        )
+
+        result = await fetch_stack_rows(client, list(rows_by_id))
+
+        assert len(result) == total
+        assert {row.id for row in result} == set(rows_by_id)
+        chunk_sizes = [
+            len(call.kwargs["ids"]) for call in client.stacks.list_stacks.call_args_list
+        ]
+        assert chunk_sizes == [GUMNUT_API_MAX_BULK_IDS, 25]
+
+    @pytest.mark.anyio
+    async def test_walks_every_page_of_a_chunk(self):
+        """A chunk can't exceed the page ceiling while both constants are 200,
+        but the walk must not depend on that — a `[:limit]` slice or an early
+        break fails this."""
+        total = GUMNUT_API_MAX_PAGE_SIZE + 30
+        rows = [make_gumnut_stack() for _ in range(total)]
+        listings: list[MockPaginatedListing] = []
+
+        def _list(**kwargs):
+            listings.append(MockPaginatedListing(rows, page_size=kwargs["limit"]))
+            return listings[-1]
+
+        client = Mock()
+        client.stacks.list_stacks = Mock(side_effect=_list)
+
+        result = await fetch_stack_rows(client, [row.id for row in rows[:5]])
+
+        assert len(result) == total
+        assert listings[0].pages_fetched == 2
+
+    @pytest.mark.anyio
+    async def test_no_ids_makes_no_request(self):
+        client = Mock()
+        client.stacks.list_stacks = Mock()
+
+        assert await fetch_stack_rows(client, []) == []
+        client.stacks.list_stacks.assert_not_called()
+
+
+class TestSelectTimelineCover:
+    """The timeline's cover rule — see `select_timeline_cover` for why it is not
+    `resolve_effective_primary`."""
+
+    def test_live_pin_wins(self):
+        stack, members = _stack_with_members(count=3)
+        stack.primary_asset_id = members[2].id
+
+        assert select_timeline_cover(stack, members) == members[2].id
+
+    def test_unpinned_falls_back_to_earliest_frame(self):
+        stack, members = _stack_with_members(count=3, primary_asset_id=None)
+
+        assert select_timeline_cover(stack, members) == members[0].id
+
+    def test_trashed_pin_falls_back_instead_of_hiding_the_burst(self):
+        """The deliberate divergence from `resolve_effective_primary`: a trashed
+        pin is absent from the live members, and naming it would collapse every
+        live frame away against a cover that isn't in the bucket."""
+        stack, members = _stack_with_members(count=3, primary_asset_id=None)
+        stack.primary_asset_id = make_gumnut_asset().id
+
+        assert resolve_effective_primary(stack, members) is members[0]
+        assert select_timeline_cover(stack, members) == members[0].id
+
+    def test_stack_with_no_live_members_has_no_cover(self):
+        assert select_timeline_cover(make_gumnut_stack(), []) is None
+
+
+class TestResolveTimelineStacks:
+    @pytest.mark.anyio
+    async def test_loose_assets_make_no_stack_requests(self):
+        client = Mock()
+        client.stacks.list_stacks = Mock()
+        client.assets.list = Mock()
+
+        resolved = await resolve_timeline_stacks(
+            client, [make_gumnut_asset() for _ in range(3)]
+        )
+
+        assert resolved.covers == {}
+        assert resolved.tuples == {}
+        client.stacks.list_stacks.assert_not_called()
+        client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_complete_stack_resolves_without_a_member_read(self):
+        """The fast path: a bucket holding `asset_count` live members holds the
+        stack's whole live set, so the cover needs no extra round-trip."""
+        stack, members = _stack_with_members(count=3, primary_asset_id=None)
+        stack.asset_count = 3
+        client = _timeline_client([stack])
+
+        resolved = await resolve_timeline_stacks(client, members)
+
+        assert resolved.covers == {stack.id: members[0].id}
+        assert resolved.tuples == {
+            stack.id: [str(safe_uuid_from_stack_id(stack.id)), "3"]
+        }
+        client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_bucket_order_does_not_decide_the_cover(self):
+        """Buckets arrive newest-first by default, so a rule reading position
+        instead of capture time would pick the burst's last frame."""
+        stack, members = _stack_with_members(count=3, primary_asset_id=None)
+        stack.asset_count = 3
+        client = _timeline_client([stack])
+
+        resolved = await resolve_timeline_stacks(client, list(reversed(members)))
+
+        assert resolved.covers == {stack.id: members[0].id}
+
+    @pytest.mark.anyio
+    async def test_partial_stack_falls_back_to_a_member_read(self):
+        """A burst straddling a month boundary leaves the bucket short of the
+        row's count; the true cover may not be in the bucket at all."""
+        stack, members = _stack_with_members(count=3, primary_asset_id=None)
+        stack.asset_count = 3
+        client = _timeline_client([stack], members_by_stack={stack.id: members})
+
+        resolved = await resolve_timeline_stacks(client, members[1:])
+
+        assert resolved.covers == {stack.id: members[0].id}
+        kwargs = client.assets.list.call_args.kwargs
+        assert kwargs["stack_id"] == stack.id
+        assert kwargs["state"] == "live"
+        assert kwargs["order"] == "asc"
+
+    @pytest.mark.anyio
+    async def test_several_stacks_batch_into_one_row_request(self):
+        first, first_members = _stack_with_members(count=2, primary_asset_id=None)
+        second, second_members = _stack_with_members(count=2, primary_asset_id=None)
+        first.asset_count = 2
+        second.asset_count = 2
+        client = _timeline_client([first, second])
+
+        resolved = await resolve_timeline_stacks(
+            client, [*first_members, *second_members]
+        )
+
+        assert resolved.covers == {
+            first.id: first_members[0].id,
+            second.id: second_members[0].id,
+        }
+        client.stacks.list_stacks.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_dangling_stack_row_stays_unresolved(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """A stack dissolved between the asset read and the stack read must not
+        collapse its former members away — they are real photos."""
+        stack, members = _stack_with_members(count=3)
+        client = _timeline_client([])
+
+        with caplog.at_level(logging.WARNING):
+            resolved = await resolve_timeline_stacks(client, members)
+
+        assert resolved.covers == {}
+        assert resolved.tuples == {}
+        assert all(not resolved.is_collapsed_away(member) for member in members)
+        assert all(resolved.tuple_for(member) is None for member in members)
+        assert stack.id in caplog.text
+
+    @pytest.mark.anyio
+    async def test_stack_with_no_live_members_stays_unresolved(self):
+        """`asset_count` is a live count, so zero means nothing to collapse to."""
+        stack, members = _stack_with_members(count=2, trashed={0, 1})
+        stack.asset_count = 0
+        client = _timeline_client([stack], members_by_stack={stack.id: []})
+
+        resolved = await resolve_timeline_stacks(client, members)
+
+        assert resolved.covers == {}
+        assert all(not resolved.is_collapsed_away(member) for member in members)
+
+
+class TestTimelineStacks:
+    def test_only_non_cover_members_are_collapsed_away(self):
+        stack, members = _stack_with_members(count=3)
+        resolved = TimelineStacks(
+            covers={stack.id: members[1].id}, tuples={stack.id: ["uuid", "3"]}
+        )
+
+        assert not resolved.is_collapsed_away(members[1])
+        assert resolved.is_collapsed_away(members[0])
+        assert resolved.is_collapsed_away(members[2])
+
+    def test_loose_asset_is_never_collapsed_and_has_no_tuple(self):
+        resolved = TimelineStacks(covers={"asset_stack_x": "asset_y"}, tuples={})
+        loose = make_gumnut_asset()
+
+        assert not resolved.is_collapsed_away(loose)
+        assert resolved.tuple_for(loose) is None

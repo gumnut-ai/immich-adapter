@@ -26,6 +26,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_person_id,
 )
+from routers.utils.stack_conversion import TimelineStacks, resolve_timeline_stacks
 
 router = APIRouter(
     prefix="/api/timeline",
@@ -205,6 +206,34 @@ async def get_time_bucket(
 
     filtered_assets = [a async for a in client.assets.list(**list_kwargs)]
 
+    # Immich collapses a burst to a single tile *server-side*: under
+    # `withStacked` its bucket query keeps an asset only when the asset is loose
+    # or is its stack's primary, and attaches a `[stackId, liveCount]` tuple to
+    # the survivor. The client renders that tuple as a burst badge and collapses
+    # nothing itself, so emitting tuples without collapsing would badge every
+    # frame of a burst instead of showing one tile.
+    #
+    # Both halves are gated on `withStacked`, as upstream gates them: when it is
+    # falsy the `stack` key is absent from the response entirely. That gate is
+    # load-bearing rather than cosmetic — Immich web's album view asks for
+    # buckets *without* `withStacked` while still passing `showStackedIcon` to
+    # the thumbnail, so collapsing or badging unconditionally would drop burst
+    # frames from album months and badge them where upstream never does.
+    #
+    # Trash opts out on purpose, and diverges from upstream to do so. Upstream's
+    # predicate keys on the live primary, so a trashed non-primary frame would
+    # be filtered out of the trash view — the one place it must stay visible,
+    # since trash is the only route back to restoring it. The Gumnut API's
+    # `asset_count` is a live count that would misdescribe a trash-only view
+    # besides. No Immich client requests `withStacked` on the trash view, so
+    # this costs nothing in practice.
+    stacks: TimelineStacks | None = None
+    if withStacked and not isTrashed:
+        stacks = await resolve_timeline_stacks(client, filtered_assets)
+        filtered_assets = [
+            asset for asset in filtered_assets if not stacks.is_collapsed_away(asset)
+        ]
+
     asset_count = len(filtered_assets)
 
     asset_ids = []
@@ -221,6 +250,7 @@ async def get_time_bucket(
     is_trashed_list = []
     duration_list: list[int | None] = []
     thumbhash_list: list[str | None] = []
+    stack_list: list[list[str] | None] = []
 
     for asset in filtered_assets:
         asset_id = asset.id
@@ -265,9 +295,14 @@ async def get_time_bucket(
         # it. Previously every tile shipped one shared hardcoded constant.
         thumbhash_list.append(asset.thumbhash)
 
+        # None for a loose asset, and also for a stack the adapter could not
+        # resolve — see `TimelineStacks`. Appended in the same loop as every
+        # other column so the parallel arrays stay index-aligned.
+        stack_list.append(stacks.tuple_for(asset) if stacks else None)
+
     # Return as dict to bypass Pydantic validation issues with None in List[str]
     # XXX revisit this issue later
-    return {
+    response: dict[str, Any] = {
         "city": [None] * asset_count,
         "country": [None] * asset_count,
         "createdAt": created_at_list,
@@ -284,7 +319,15 @@ async def get_time_bucket(
         "ownerId": [str(current_user_id)] * asset_count,
         "projectionType": [None] * asset_count,
         "ratio": ratio_list,
-        "stack": [None] * asset_count,
         "thumbhash": thumbhash_list,
         "visibility": visibility_list,
     }
+
+    # Omit the key rather than shipping all-nulls when stacks weren't requested,
+    # matching upstream — both its per-asset select and its aggregate sit inside
+    # the same `withStacked` conditional. The client reads `stack?.at(i)`, so
+    # absence and a null entry behave identically for a loose asset.
+    if stacks is not None:
+        response["stack"] = stack_list
+
+    return response
