@@ -45,12 +45,31 @@ import sys
 import time
 import tomllib
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import NoReturn
 
 DEFAULT_BASE = "origin/main"
 ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DOC_SUFFIXES = (".md", ".mdx")
+
+
+def is_iso_date(value: str) -> bool:
+    """Whether a value is a real YYYY-MM-DD calendar date.
+
+    Shape and calendar validity are both required. The regex alone accepts
+    impossible dates such as `2026-02-31`, which would then be reported as valid;
+    `date.fromisoformat` alone accepts forms the convention doesn't use (a full
+    datetime, or an unpadded `2026-2-8`).
+    """
+    if not ISO_RE.match(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
 
 # At any instant, current local calendar dates range from UTC-12 through UTC+14.
 # Accepting the dates at those boundaries (and UTC itself) lets contributors and
@@ -85,10 +104,10 @@ class Config:
     # the dev root cites through the repo name, which doesn't resolve from inside
     # the repo.
     self_prefixes: tuple[str, ...] = ()
-    # Prefixes marking a citation of a *different* Gumnut repo. The conventions
-    # qualify those with the org (`gumnut-ai/photos/docs/...`) precisely because
-    # they cannot resolve from inside this repo, so they are skipped rather than
-    # reported. Paths that escape the repo root are treated the same way — see
+    # Prefixes marking a citation of a *different* repo. The conventions qualify
+    # those with the org (`<org>/<repo>/docs/...`) precisely because they cannot
+    # resolve from inside this repo, so they are skipped rather than reported.
+    # Paths that escape the repo root are treated the same way — see
     # Repo.is_cross_repo.
     cross_repo_prefixes: tuple[str, ...] = ("gumnut-ai/",)
     enabled: frozenset[str] = frozenset()
@@ -103,12 +122,24 @@ class Config:
                 return True
         return False
 
-    def strip_citation(self, cite: str) -> str:
+    def strip_citation(self, cite: str) -> tuple[str, bool]:
+        """Strip any anchoring prefix, reporting whether one applied.
+
+        A stripped prefix means the citation was **deliberately anchored to the
+        repo root**, so the caller must resolve it there and nowhere else. Both
+        prefix families say that: `repo-root ` marks a root-level doc cited from a
+        project holding a same-named file, and a `self_prefixes` entry is a map
+        citing this repo through its own name. Dropping the marker and then
+        resolving relative-first would send the citation to the very same-named
+        file the marker exists to disambiguate from.
+        """
         out = cite.strip()
+        anchored = False
         for prefix in (*self.strip_prefixes, *self.self_prefixes):
             if out.startswith(prefix):
                 out = out[len(prefix) :].strip()
-        return out
+                anchored = True
+        return out, anchored
 
 
 def load_config(path: Path, all_checks: tuple[str, ...]) -> Config:
@@ -317,11 +348,10 @@ class Repo:
         rather than reported. Two documented forms qualify:
 
         * the org-qualified form the conventions prescribe for prose citations
-          (`gumnut-ai/photos/docs/...`), matched by `cross_repo_prefixes`;
-        * a dev-root-relative path that climbs out of the repo
-          (`../../../photos/docs/architecture/authentication.md`), which
-          `gumnut-dev-setup`'s conventions prescribe for a cross-repo
-          `superseded-by:`.
+          (`<org>/<repo>/docs/...`), matched by `cross_repo_prefixes`;
+        * a path that climbs out of the repo to a sibling checkout
+          (`../../../<sibling-repo>/docs/...`), which the team conventions
+          prescribe for a cross-repo `superseded-by:`.
 
         The escape test is **pure path arithmetic with no filesystem access**, so
         the verdict is identical on a dev box where the sibling repo happens to be
@@ -329,7 +359,7 @@ class Repo:
         would make the check environment-dependent — and since CI clones only this
         repo, every such path would fail there regardless of how it is written.
         """
-        cite = self.config.strip_citation(cite)
+        cite, _ = self.config.strip_citation(cite)
         if not cite:
             return False
         if any(cite.startswith(p) for p in self.config.cross_repo_prefixes):
@@ -342,20 +372,31 @@ class Repo:
 
         Tries, in order: relative to the citing file's directory, then each
         project root above it, then the repo root. The project-root rung is what
-        makes an `mcp-app/docs/` doc citing `docs/architecture/foo.md` resolve —
-        the conventions permit that form, and a resolver that only tries the
-        citing directory and the repo root reports it as broken.
+        makes a doc inside a nested project (`<project>/docs/`) citing
+        `docs/architecture/foo.md` resolve — the conventions permit that form, and
+        a resolver that only tries the citing directory and the repo root reports
+        it as broken.
+
+        A citation carrying an anchoring prefix skips that ladder entirely and
+        resolves **only** at the repo root. The prefix exists precisely because a
+        same-named file sits nearer the citing doc, so trying the nearer bases
+        first would resolve to the file the author marked the citation to avoid —
+        validating the wrong doc, and still passing after the intended target is
+        deleted.
         """
-        cite = self.config.strip_citation(cite)
+        cite, root_anchored = self.config.strip_citation(cite)
         if not cite or cite.startswith("/"):
             return None
-        bases = [Path(relative_to).parent]
-        bases.extend(
-            Path(proj)
-            for proj in self.project_roots
-            if relative_to.startswith(proj + "/")
-        )
-        bases.append(Path("."))
+        if root_anchored:
+            bases = [Path(".")]
+        else:
+            bases = [Path(relative_to).parent]
+            bases.extend(
+                Path(proj)
+                for proj in self.project_roots
+                if relative_to.startswith(proj + "/")
+            )
+            bases.append(Path("."))
         for base in bases:
             candidate = (self.root / base / cite).resolve()
             if not candidate.exists():
@@ -638,32 +679,27 @@ def check_freshness(
         exists_at_base = at_base.returncode == 0
 
         message: str | None = None
-        if not ISO_RE.match(head_val):
+        if not is_iso_date(head_val):
             # Checked before the body-change short-circuit below, so a date-only
-            # edit to a junk or blank value still fails closed.
+            # edit to a junk, blank, or impossible value still fails closed.
             message = (
                 f"last-updated is not a valid ISO YYYY-MM-DD date "
                 f"(got '{head_val}'); set it to {clock.today}"
             )
-        elif exists_at_base:
-            base_text = repo.git("show", f"{merge_base}:{base_path}").stdout
-            if strip_date_line(base_text) == strip_date_line(text):
-                # Only the date changed, and it is valid. Nothing to enforce.
-                continue
-            base_val = parse_frontmatter(base_text).get("last-updated", "")
-            if head_val == base_val and not clock.is_current(head_val):
-                message = (
-                    f"body changed but last-updated is still {head_val} "
-                    f"(unchanged from base); bump it to {clock.today}"
-                )
+        elif exists_at_base and strip_date_line(
+            repo.git("show", f"{merge_base}:{base_path}").stdout
+        ) == strip_date_line(text):
+            # Only the date changed, and it is valid. Nothing to enforce — this is
+            # the deliberate escape hatch for a pure freshness touch-up.
+            continue
         elif not clock.is_current(head_val):
-            # Added on this branch, so there is no base value to compare — but
-            # "is this date current" still applies. Without this, a doc created
-            # on day 1 and edited on day 2 keeps its day-1 date and every run,
-            # including --fix, reports clean.
+            # The body changed (or the doc is new), so the date must be current.
+            # Keying on "differs from the base value" instead would accept any
+            # change at all, including a bump *backwards* to another stale date.
+            what = "body changed" if exists_at_base else "doc was added on this branch"
             message = (
-                f"doc was added on this branch but last-updated is {head_val}, "
-                f"not current; set it to {clock.today}"
+                f"{what} but last-updated is {head_val}, not current; "
+                f"set it to {clock.today}"
             )
 
         if message is None:
@@ -790,8 +826,10 @@ def is_map_heading(heading: str) -> bool:
 def find_map_files(repo: Repo) -> list[str]:
     """Docs carrying a Documentation Map.
 
-    Discovered by heading *text*, not filename: `gumnut-dev-setup`'s map lives in
-    `root-agents.md` (symlinked into the dev root), not in its `AGENTS.md`.
+    Discovered by heading *text*, not filename. A map does not always live in
+    `AGENTS.md`: a repo may keep it in a differently-named file (for instance one
+    symlinked into a parent directory under another name), so hardcoding the
+    filename would miss that repo's map entirely.
     """
     out: list[str] = []
     for rel in repo.docs:
@@ -803,14 +841,43 @@ def find_map_files(repo: Repo) -> list[str]:
     return out
 
 
+def split_row_cells(row_body: str) -> list[str]:
+    r"""Split a table row on unescaped pipes only.
+
+    A `\|` inside a cell is a literal pipe, not a delimiter. Splitting naively
+    yields an extra cell, and since a row whose cell count is unexpected is
+    skipped, the row's cited path would go unvalidated — the row silently opts out
+    of the check rather than failing it.
+    """
+    cells: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for ch in row_body:
+        if escaped:
+            current.append(ch)
+            escaped = False
+        elif ch == "\\":
+            # Keep the backslash: cells are compared as written (a separator row
+            # is detected by its character set) and only the split is at issue.
+            current.append(ch)
+            escaped = True
+        elif ch == "|":
+            cells.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    cells.append("".join(current).strip())
+    return cells
+
+
 def parse_map_rows(repo: Repo, map_rel: str) -> list[MapRow]:
     """Rows of every Documentation Map table in a file.
 
-    The map's heading level varies between files — the root `photos/AGENTS.md`
-    uses `## Documentation Map` with `###` sections while `photos-api/AGENTS.md`
-    uses `#` with `##`. So the map is located by heading text and its sections by
-    "any deeper heading", never by a fixed level. Keying on level reported 81
-    phantom unmapped docs.
+    A map's heading level is not fixed and both nestings are correct: one file
+    puts `## Documentation Map` above `###` sections, another `#` above `##`. So a
+    map is located by heading *text*, and its sections by "any deeper heading" —
+    never by an absolute level. Keying on level instead drops every section of a
+    differently-nested map, which measured as 81 docs falsely reported unmapped.
     """
     rows: list[MapRow] = []
     in_map = False
@@ -834,7 +901,7 @@ def parse_map_rows(repo: Repo, map_rel: str) -> list[MapRow]:
         rm = TABLE_ROW_RE.match(line)
         if not rm:
             continue
-        cells = [c.strip() for c in rm.group(1).split("|")]
+        cells = split_row_cells(rm.group(1))
         if len(cells) != 3:
             continue
         topic, doc_cell, consult = cells
@@ -864,8 +931,9 @@ def check_maps(repo: Repo, enabled: frozenset[str]) -> tuple[list[Violation], se
     mapped: set[str] = set()
 
     for map_rel in find_map_files(repo):
-        # A map section may legitimately hold no table: `gumnut-dev-setup`'s
-        # AGENTS.md has the heading and a pointer to where the real map lives.
+        # A map section may legitimately hold no table — a repo whose real map
+        # lives elsewhere keeps the heading plus a pointer to it — so finding zero
+        # rows here is not an error.
         for row in parse_map_rows(repo, map_rel):
             if "map_cells" in enabled and not repo.config.ignored(map_rel, "map_cells"):
                 violations.extend(check_map_cell(repo, row))
@@ -932,7 +1000,7 @@ def check_row_status_section(repo: Repo, row: MapRow, resolved: str) -> list[Vio
     if Path(resolved).name == TEMPLATE_BASENAME:
         # `status: active` here is placeholder text, not a live plan.
         return []
-    status = repo.frontmatter(resolved).get("status", "")
+    status = repo.frontmatter(resolved).get("status", "").strip()
     if not status:
         return [
             Violation(
@@ -940,6 +1008,20 @@ def check_row_status_section(repo: Repo, row: MapRow, resolved: str) -> list[Vio
                 resolved,
                 "design doc has no `status:` frontmatter, so its map section "
                 "cannot be checked",
+            )
+        ]
+    if status not in DESIGN_DOC_STATUSES:
+        # Reported here as well as by `frontmatter`, deliberately: this check
+        # routes on the value, so if an unrecognized one fell through to the
+        # returns below it would report success for every section. Each check has
+        # to fail closed on its own, since either can be disabled independently.
+        return [
+            Violation(
+                "map_status_section",
+                resolved,
+                f"design doc status '{status}' is not one of "
+                f"{', '.join(DESIGN_DOC_STATUSES)}, so its map section cannot "
+                f"be checked",
             )
         ]
     if status in ("proposed", "active") and not is_active_section(row.section):
@@ -967,11 +1049,16 @@ def check_row_status_section(repo: Repo, row: MapRow, resolved: str) -> list[Vio
 
 
 def check_unmapped(repo: Repo, mapped: set[str]) -> list[Violation]:
-    """Warn on a design doc no map routes to.
+    """Fail on a design doc no map routes to.
 
-    A warning rather than an error: the map is the only route to a doc, but a
-    doc can legitimately be mid-flight, and this is the check most likely to
-    misfire on an unusual map layout.
+    The conventions require a row for every design doc whatever its `status:` —
+    the map is the only route to a doc, and `status:` sorts a historical doc into
+    the Historical section rather than out of the table. So an unmapped design doc
+    is unreachable, and reporting it as a warning let one merge that way, since a
+    warnings-only run still exits 0.
+
+    The template is the sole documented exception; its `status:` is placeholder
+    text rather than a live plan.
     """
     out: list[Violation] = []
     for rel in repo.docs:
@@ -987,7 +1074,6 @@ def check_unmapped(repo: Repo, mapped: set[str]) -> list[Violation]:
                 rel,
                 "design doc has no Documentation Map row; agents surface docs "
                 "only through the maps",
-                warning=True,
             )
         )
     return out
@@ -998,15 +1084,24 @@ def check_unmapped(repo: Repo, mapped: set[str]) -> list[Violation]:
 # --------------------------------------------------------------------------
 
 
-def required_fields(rel: str, fm: dict[str, str]) -> tuple[str, ...]:
+DESIGN_DOC_STATUSES = ("proposed", "active", "completed", "deprecated")
+
+
+def required_fields(rel: str) -> tuple[str, ...]:
+    """Fields the per-directory frontmatter tables require.
+
+    `superseded-by` is deliberately absent for a deprecated design doc: the
+    conventions require it only when a replacement actually exists, and explicitly
+    allow a pure decision record to be deprecated without a destination. Demanding
+    it unconditionally would fail that supported case on every run, pushing authors
+    to invent a successor or bypass the check. Its value is still validated when
+    present — see check_superseded_by.
+    """
     slashed = f"/{rel}"
     if "/generated/" in slashed:
-        return ("generated",)
+        return ("title", "last-updated", "generated")
     if "/design-docs/" in slashed:
-        base = ("title", "status", "created", "last-updated")
-        if fm.get("status") == "deprecated":
-            return (*base, "superseded-by")
-        return base
+        return ("title", "status", "created", "last-updated")
     return ("title", "last-updated")
 
 
@@ -1023,13 +1118,39 @@ def check_frontmatter(repo: Repo) -> list[Violation]:
         if repo.config.ignored(rel, "frontmatter"):
             continue
         fm = repo.frontmatter(rel)
-        missing = [k for k in required_fields(rel, fm) if k not in fm]
+        required = required_fields(rel)
+        missing = [k for k in required if k not in fm]
         if missing:
             violations.append(
                 Violation(
                     "frontmatter",
                     rel,
                     f"frontmatter is missing required field(s): {', '.join(missing)}",
+                )
+            )
+        # A required key present with an empty value satisfies nothing the field
+        # exists for, so it is a violation rather than a pass.
+        blank = [k for k in required if k in fm and not fm[k].strip()]
+        if blank:
+            violations.append(
+                Violation(
+                    "frontmatter",
+                    rel,
+                    f"frontmatter field(s) present but empty: {', '.join(blank)}",
+                )
+            )
+        status = fm.get("status", "").strip()
+        if (
+            "/design-docs/" in f"/{rel}"
+            and status
+            and status not in DESIGN_DOC_STATUSES
+        ):
+            violations.append(
+                Violation(
+                    "frontmatter",
+                    rel,
+                    f"design doc status must be one of "
+                    f"{', '.join(DESIGN_DOC_STATUSES)} (got '{status}')",
                 )
             )
         if "/generated/" in f"/{rel}" and fm.get("generated") not in (None, "true"):
@@ -1052,8 +1173,22 @@ def check_superseded_by(repo: Repo) -> list[Violation]:
             continue
         if repo.config.ignored(rel, "map_paths"):
             continue
-        target = repo.frontmatter(rel).get("superseded-by", "")
+        fm = repo.frontmatter(rel)
+        if "superseded-by" not in fm:
+            # Omitting it is legitimate — a doc deprecated with no successor.
+            continue
+        target = fm["superseded-by"].strip()
         if not target:
+            # Present but blank claims a successor exists and then names none, so
+            # it routes the reader nowhere. Omit the field or give it a target.
+            violations.append(
+                Violation(
+                    "map_paths",
+                    rel,
+                    "`superseded-by:` is present but empty; give it the "
+                    "replacement doc's path or omit the field",
+                )
+            )
             continue
         if EXTERNAL_RE.match(target) or repo.is_cross_repo(target, rel):
             # A successor in another repo is the documented case for a doc

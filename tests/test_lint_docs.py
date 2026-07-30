@@ -168,6 +168,8 @@ def freshness_repo(repo: FixtureRepo) -> FixtureRepo:
     repo.write_doc("timezone_behind.md", EARLIEST_CURRENT_DATE, "original body")
     repo.write_doc("timezone_ahead.md", LATEST_CURRENT_DATE, "original body")
     repo.write_doc("stale_unchanged.md", OUTSIDE_TIMEZONE_WINDOW, "original body")
+    repo.write_doc("backward_bump.md", "2020-01-01", "original body")
+    repo.write_doc("impossible_date.md", "2020-01-01", "stable body")
     # A doc that documents the convention: no frontmatter field, but the body
     # mentions `last-updated:`. Must be out of scope.
     repo.write(
@@ -191,6 +193,11 @@ def freshness_repo(repo: FixtureRepo) -> FixtureRepo:
     repo.write_doc("timezone_behind.md", EARLIEST_CURRENT_DATE, "EDITED body")
     repo.write_doc("timezone_ahead.md", LATEST_CURRENT_DATE, "EDITED body")
     repo.write_doc("stale_unchanged.md", OUTSIDE_TIMEZONE_WINDOW, "EDITED body")
+    # Body edited and the date *did* change from its base value — but backwards, to
+    # another stale date. Keying on "differs from base" would accept this.
+    repo.write_doc("backward_bump.md", "2019-12-31", "EDITED body")
+    # Date-only edit to a value that is ISO-*shaped* but not a real calendar date.
+    repo.write_doc("impossible_date.md", "2026-02-31", "stable body")
     repo.write(
         "conventions.md",
         "---\ntitle: Conventions\n---\n\n"
@@ -207,6 +214,8 @@ def freshness_repo(repo: FixtureRepo) -> FixtureRepo:
         ("date_only_bad.md", "date-only edit to a junk value"),
         ("blank_value.md", "date value blanked out"),
         ("stale_unchanged.md", "date is outside the timezone window"),
+        ("backward_bump.md", "date changed from base, but backwards to a stale date"),
+        ("impossible_date.md", "ISO-shaped but not a real calendar date"),
     ],
 )
 def test_freshness_flags(freshness_repo: FixtureRepo, doc: str, reason: str) -> None:
@@ -244,6 +253,8 @@ def test_freshness_fix_bumps_offenders_and_preserves_bodies(
         "date_only_bad.md",
         "blank_value.md",
         "stale_unchanged.md",
+        "backward_bump.md",
+        "impossible_date.md",
     ):
         assert f"last-updated: {TODAY}" in freshness_repo.read(doc)
 
@@ -407,12 +418,12 @@ def test_links_inside_code_spans_are_ignored(repo: FixtureRepo) -> None:
 def test_link_resolves_through_a_project_root(repo: FixtureRepo) -> None:
     """The convention permits a project doc citing its own project-relative path.
 
-    From `mcp-app/docs/design-docs/`, `../architecture/x.md` is the project copy.
+    From `subproj/docs/design-docs/`, `../architecture/x.md` is the project copy.
     """
     repo.write_doc(
-        "mcp-app/docs/design-docs/a.md", TODAY, "See [x](../architecture/x.md)."
+        "subproj/docs/design-docs/a.md", TODAY, "See [x](../architecture/x.md)."
     )
-    repo.write_doc("mcp-app/docs/architecture/x.md", TODAY, "body")
+    repo.write_doc("subproj/docs/architecture/x.md", TODAY, "body")
     repo.commit_all()
     assert repo.lint("--check", "links").returncode == 0
 
@@ -514,12 +525,12 @@ def test_resolvable_map_row_passes(repo: FixtureRepo) -> None:
 
 
 def test_map_is_found_at_any_heading_level(repo: FixtureRepo) -> None:
-    """photos-api/AGENTS.md uses `#` + `##`; the root map uses `##` + `###`.
+    """A nested map may use `#` + `##` where the root map uses `##` + `###`.
 
     Keying section detection on a fixed level reported 81 phantom unmapped docs.
     """
     repo.write(
-        "photos-api/AGENTS.md",
+        "subproj/AGENTS.md",
         _map("References", "| Thing | `docs/references/gone.md` | why |\n", level=1),
     )
     repo.commit_all()
@@ -528,8 +539,24 @@ def test_map_is_found_at_any_heading_level(repo: FixtureRepo) -> None:
     assert "gone.md" in result.stderr
 
 
+def test_escaped_pipe_in_a_cell_still_validates_the_row(repo: FixtureRepo) -> None:
+    r"""A `\|` is cell content, not a delimiter.
+
+    Splitting on it yields four cells, and an unexpected cell count skips the row —
+    so the row would silently opt out of path validation rather than fail.
+    """
+    repo.write(
+        "AGENTS.md",
+        _map("References", r"| Thing | `docs/references/gone.md` | A \| B |" + "\n"),
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
 def test_map_section_without_a_table_is_tolerated(repo: FixtureRepo) -> None:
-    """gumnut-dev-setup's AGENTS.md has the heading and a pointer, no table."""
+    """A repo whose real map lives elsewhere keeps the heading and a pointer."""
     repo.write(
         "AGENTS.md",
         "## Documentation Map\n\nThis repo's docs are mapped from root-agents.md.\n",
@@ -560,14 +587,14 @@ def test_plural_documentation_maps_heading_is_not_a_map(repo: FixtureRepo) -> No
 def test_dev_root_relative_cross_repo_link_is_skipped(repo: FixtureRepo) -> None:
     """A path climbing out of the repo names another repo, so it is unverifiable.
 
-    `gumnut-dev-setup`'s conventions prescribe exactly this form for a cross-repo
+    The team conventions prescribe exactly this form for a cross-repo
     `superseded-by:`. CI clones only one repo, so demanding resolution would fail
     every such reference no matter how it were written.
     """
     repo.write_doc(
         "docs/design-docs/a.md",
         TODAY,
-        "Live answer: [x](../../../photos/docs/architecture/authentication.md).",
+        "Live answer: [x](../../../sibling/docs/architecture/successor.md).",
     )
     repo.commit_all()
     assert repo.lint("--check", "links").returncode == 0
@@ -577,7 +604,7 @@ def test_org_qualified_cross_repo_link_is_skipped(repo: FixtureRepo) -> None:
     repo.write_doc(
         "docs/references/a.md",
         TODAY,
-        "See [x](gumnut-ai/photos/docs/architecture/authentication.md).",
+        "See [x](gumnut-ai/sibling/docs/architecture/successor.md).",
     )
     repo.commit_all()
     assert repo.lint("--check", "links").returncode == 0
@@ -591,13 +618,13 @@ def test_cross_repo_verdict_does_not_depend_on_a_sibling_clone(
     Otherwise the same doc would pass on a dev box that happens to have the
     sibling repo cloned and fail in CI, which clones only this one.
     """
-    sibling = repo.path.parent / "photos" / "docs" / "architecture"
+    sibling = repo.path.parent / "sibling" / "docs" / "architecture"
     sibling.mkdir(parents=True, exist_ok=True)
-    (sibling / "authentication.md").write_text("outside\n", encoding="utf-8")
+    (sibling / "successor.md").write_text("outside\n", encoding="utf-8")
     repo.write_doc(
         "docs/design-docs/a.md",
         TODAY,
-        "See [x](../../../photos/docs/architecture/authentication.md).",
+        "See [x](../../../sibling/docs/architecture/successor.md).",
     )
     repo.commit_all()
     # Same verdict as the test above, where the sibling does not exist.
@@ -606,10 +633,17 @@ def test_cross_repo_verdict_does_not_depend_on_a_sibling_clone(
 
 def test_cross_repo_superseded_by_is_skipped(repo: FixtureRepo) -> None:
     repo.write(
+        "AGENTS.md",
+        _map(
+            "Historical & Deprecated Design Docs",
+            "| Thing | `docs/design-docs/a.md` | why |\n",
+        ),
+    )
+    repo.write(
         "docs/design-docs/a.md",
         f"---\ntitle: A\nstatus: deprecated\ncreated: 2020-01-01\n"
         f"last-updated: {TODAY}\n"
-        f"superseded-by: ../../../photos/docs/architecture/authentication.md\n"
+        f"superseded-by: ../../../sibling/docs/architecture/successor.md\n"
         f"---\n\nbody\n",
     )
     repo.commit_all()
@@ -623,7 +657,7 @@ def test_in_repo_broken_link_still_fails_alongside_cross_repo_ones(
     repo.write_doc(
         "docs/references/a.md",
         TODAY,
-        "Fine: [x](gumnut-ai/photos/docs/a.md). Broken: [y](./gone.md).",
+        "Fine: [x](gumnut-ai/sibling/docs/a.md). Broken: [y](./gone.md).",
     )
     repo.commit_all()
     result = repo.lint("--check", "links")
@@ -634,7 +668,7 @@ def test_in_repo_broken_link_still_fails_alongside_cross_repo_ones(
 
 def test_repo_root_prefix_is_stripped(repo: FixtureRepo) -> None:
     repo.write(
-        "photos-api/AGENTS.md",
+        "subproj/AGENTS.md",
         _map(
             "References",
             "| Thing | `repo-root docs/references/a.md` | why |\n",
@@ -643,6 +677,38 @@ def test_repo_root_prefix_is_stripped(repo: FixtureRepo) -> None:
     repo.write_doc("docs/references/a.md", TODAY, "body")
     repo.commit_all()
     assert repo.lint("--check", "map_paths").returncode == 0
+
+
+def test_repo_root_prefix_wins_over_a_nearer_same_named_file(
+    repo: FixtureRepo,
+) -> None:
+    """The collision the marker exists for: same filename at two levels.
+
+    `repo-root ` means the root copy. Stripping the marker and then resolving
+    citing-directory-first sends it to the project copy instead — validating the
+    wrong file, and still passing after the intended root target is deleted.
+    """
+    repo.write(
+        "subproj/AGENTS.md",
+        _map("References", "| Thing | `repo-root docs/references/a.md` | why |\n"),
+    )
+    # Both exist, so a wrong base still resolves — the bug is silent.
+    repo.write_doc("subproj/docs/references/a.md", TODAY, "project copy")
+    repo.write_doc("docs/references/a.md", TODAY, "root copy")
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
+
+    # Delete only the root copy. The row must now fail: if it resolved to the
+    # project copy it would keep passing, which is exactly the defect.
+    (repo.path / "docs/references/a.md").unlink()
+    repo.write(
+        "AGENTS.md",
+        _map("References", "| P | `subproj/docs/references/a.md` | why |\n"),
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "docs/references/a.md" in result.stderr
 
 
 def test_active_design_doc_under_historical_section_is_flagged(
@@ -730,7 +796,12 @@ def test_template_is_exempt_from_status_section(repo: FixtureRepo) -> None:
     assert repo.lint("--check", "map_status_section").returncode == 0
 
 
-def test_unmapped_design_doc_warns_without_failing(repo: FixtureRepo) -> None:
+def test_unmapped_design_doc_fails(repo: FixtureRepo) -> None:
+    """The conventions require a row for every design doc, whatever its status.
+
+    Reported as a warning this would exit 0, letting an unreachable doc merge —
+    the map is the only route agents have to it.
+    """
     repo.write(
         "docs/design-docs/orphan.md",
         f"---\ntitle: O\nstatus: active\ncreated: 2020-01-01\n"
@@ -738,9 +809,19 @@ def test_unmapped_design_doc_warns_without_failing(repo: FixtureRepo) -> None:
     )
     repo.commit_all()
     result = repo.lint("--check", "map_paths")
-    assert result.returncode == 0
-    assert "warning" in result.stderr
+    assert result.returncode == 1
     assert "orphan.md" in result.stderr
+
+
+def test_unmapped_template_is_exempt(repo: FixtureRepo) -> None:
+    """The template is the sole documented exception; its status is placeholder."""
+    repo.write(
+        "docs/design-docs/TEMPLATE.md",
+        "---\ntitle: T\nstatus: active\ncreated: 2020-01-01\n"
+        "last-updated: YYYY-MM-DD\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
 
 
 def test_overlong_consult_cell_is_flagged(repo: FixtureRepo) -> None:
@@ -801,14 +882,30 @@ def test_design_doc_missing_created_is_flagged(repo: FixtureRepo) -> None:
     assert "created" in result.stderr
 
 
-def test_deprecated_design_doc_needs_superseded_by(repo: FixtureRepo) -> None:
+def test_deprecated_design_doc_may_omit_superseded_by(repo: FixtureRepo) -> None:
+    """The conventions require it only when a replacement exists.
+
+    A pure decision record is deprecated without a destination, so demanding the
+    field unconditionally would fail a supported case on every run.
+    """
     repo.write(
         "docs/design-docs/a.md",
         f"---\ntitle: A\nstatus: deprecated\ncreated: 2020-01-01\n"
         f"last-updated: {TODAY}\n---\n\nbody\n",
     )
     repo.commit_all()
-    result = repo.lint("--check", "frontmatter")
+    assert repo.lint("--check", "frontmatter").returncode == 0
+
+
+def test_blank_superseded_by_is_rejected(repo: FixtureRepo) -> None:
+    """Present-but-empty claims a successor and names none, routing nowhere."""
+    repo.write(
+        "docs/design-docs/a.md",
+        f"---\ntitle: A\nstatus: deprecated\ncreated: 2020-01-01\n"
+        f"last-updated: {TODAY}\nsuperseded-by:\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
     assert result.returncode == 1
     assert "superseded-by" in result.stderr
 
@@ -819,6 +916,61 @@ def test_generated_doc_needs_generated_flag(repo: FixtureRepo) -> None:
     result = repo.lint("--check", "frontmatter")
     assert result.returncode == 1
     assert "generated" in result.stderr
+
+
+def test_generated_doc_needs_title_and_last_updated(repo: FixtureRepo) -> None:
+    """The generated-docs table requires all three fields, not just the flag.
+
+    Requiring only `generated` let a doc carrying nothing else pass — and
+    `freshness` skips it too, since it has no `last-updated` key to check.
+    """
+    repo.write("docs/generated/a.md", "---\ngenerated: true\n---\n\nbody\n")
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "title" in result.stderr
+    assert "last-updated" in result.stderr
+
+
+def test_unknown_design_doc_status_is_rejected(repo: FixtureRepo) -> None:
+    """A typo matches no recognized branch, so section routing goes unchecked."""
+    repo.write(
+        "docs/design-docs/a.md",
+        f"---\ntitle: A\nstatus: complete\ncreated: 2020-01-01\n"
+        f"last-updated: {TODAY}\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "complete" in result.stderr
+
+
+def test_unknown_status_also_fails_the_section_check(repo: FixtureRepo) -> None:
+    """Each check fails closed on its own; either can be disabled independently."""
+    repo.write(
+        "AGENTS.md",
+        _map("Active Design Docs", "| T | `docs/design-docs/a.md` | why |\n"),
+    )
+    repo.write(
+        "docs/design-docs/a.md",
+        f"---\ntitle: A\nstatus: actve\ncreated: 2020-01-01\n"
+        f"last-updated: {TODAY}\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "map_status_section")
+    assert result.returncode == 1
+    assert "actve" in result.stderr
+
+
+def test_blank_required_field_is_rejected(repo: FixtureRepo) -> None:
+    """A key present with an empty value satisfies nothing the field exists for."""
+    repo.write(
+        "docs/references/a.md", f"---\ntitle:\nlast-updated: {TODAY}\n---\n\nx\n"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "empty" in result.stderr
 
 
 def test_agents_md_is_skipped_by_frontmatter(repo: FixtureRepo) -> None:

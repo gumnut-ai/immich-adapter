@@ -24,13 +24,13 @@ Run from the `immich-adapter/` directory:
 
 | Check | Enforces |
 |-------|----------|
-| `freshness` | `last-updated:` bumped on an edited doc, and current on a doc added on the branch |
+| `freshness` | `last-updated:` is a real calendar date, and current whenever the body changed |
 | `links` | Every inline markdown link target resolves |
 | `anchors` | Every `#fragment` resolves to a real heading or `<a id>` |
-| `map_paths` | Every Documentation Map row's path resolves, as does every `superseded-by:`; warns on a design doc with no row |
+| `map_paths` | Every Documentation Map row's path resolves, as does every `superseded-by:`; a design doc with no row fails |
 | `map_status_section` | A design doc's map section matches its `status:` frontmatter |
 | `map_cells` | The Consult-when cell stays one line, under 250 characters |
-| `frontmatter` | `docs/design-docs/` needs `title`/`status`/`created`/`last-updated`, plus `superseded-by` when deprecated; other `docs/` need `title`/`last-updated` |
+| `frontmatter` | `docs/design-docs/` needs `title`/`status`/`created`/`last-updated`, with `status` one of the four values; other `docs/` need `title`/`last-updated`. No required field may be present-but-empty, and `superseded-by` is validated when present rather than required |
 
 Only `freshness` is diff-scoped. The rest run repo-wide, deliberately: renaming a doc breaks inbound links and map rows in files the change never touched. Checks are individually switchable in `scripts/lint_docs.toml`, and `--check <name>` overrides that so a disabled rule can be swept before being switched on.
 
