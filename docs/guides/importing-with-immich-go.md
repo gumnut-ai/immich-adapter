@@ -1,6 +1,6 @@
 ---
 title: "Importing with immich-go"
-last-updated: 2026-07-23
+last-updated: 2026-07-29
 ---
 
 # Importing with immich-go
@@ -69,5 +69,5 @@ For a `upload from-folder` run, immich-go:
   valid Gumnut API key, or it lacks write scope. The unauthenticated ping/version
   endpoints answer without a key, so a bad key first surfaces at `GET /api/users/me`.
 - **"invalid semantic version" at connect time**: `.immich-container-tag` must hold
-  a semver value (e.g. `v3.0.3`); immich-go parses `/api/server/about`'s `version`
+  a semver value (e.g. `v3.1.0`); immich-go parses `/api/server/about`'s `version`
   and aborts if it can't.

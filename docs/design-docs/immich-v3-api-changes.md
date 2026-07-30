@@ -2,14 +2,14 @@
 title: "Immich v2.7.5 → v3.0 API Change Analysis"
 status: active
 created: 2026-06-16
-last-updated: 2026-07-16
+last-updated: 2026-07-29
 ---
 
 # Immich v2.7.5 → v3.0 API Change Analysis
 
 ## Context
 
-The immich-adapter now targets Immich **v3.0.3** (pinned in
+The immich-adapter now targets Immich **v3.1.0** (pinned in
 `.immich-container-tag`). Immich **3.0** shipped as **v3.0.0** GA on 2026-06-30,
 and the adapter retarget is complete. This document is a structural diff of the
 two OpenAPI specs — 2.7.5 against **v3.0.0-rc.0**, re-validated against the GA
@@ -59,11 +59,15 @@ Both specs are OpenAPI 3.0.0. The diff was produced by comparing
 >
 > The rc.0-based behavioral analysis below therefore stands unchanged for GA.
 
-> **Current target (v3.0.3).** The v3.0.3 spec retains the v3.0.0 GA endpoint
+> **Current target (v3.1.0).** The v3.0.3 spec retains the v3.0.0 GA endpoint
 > surface: 173 paths and 254 operations. It adds three schemas —
 > `HlsVideoResolution`, `RecentlyAddedResponse`, and `RecentlyAddedUpdate` —
 > which are reflected in the regenerated models and the adapter's hand-built
-> responses.
+> responses. The v3.1.0 spec is structurally identical to v3.0.3: its only
+> changes are documentation annotations on `PUT`/`DELETE
+> /albums/{id}/user/{userId}` (parameter descriptions plus an
+> `x-immich-history` entry deprecating `"me"` as a `userId` value, slated for
+> removal in Immich v4). No paths, operations, or schemas changed.
 
 ### Reproducing the diff
 
@@ -220,7 +224,7 @@ below-client version merely sets a "server out of date" UI banner
 the lever: report `< 3.0.0` and the client requests the V1 surface the adapter
 already serves; report `3.0.x` and it requests V2.
 
-The adapter now reports v3.0.3 (from `.immich-container-tag`), so current clients
+The adapter now reports v3.1.0 (from `.immich-container-tag`), so current clients
 request the V2 sync surface. `routers/api/sync/` carries
 `gumnut_face_to_sync_face_v2`, the `AssetFacesV2` → `AssetFaceV2` stream mapping,
 the `AssetsV2` and `AlbumsV2` converters, the owner link on the separate
@@ -278,7 +282,7 @@ RC** (no methods were added) — likely pre-announcing a future PATCH migration:
    `immich_models.py`) — applied to asset, timeline, upload, and sync responses.
 2. **Completed — `AlbumResponseDto`** — derives the owner from `albumUsers[0]`
    and drops `owner`/`ownerId`/inline `assets` from the v3 response shape.
-3. **Completed — Sync v2** — reports `v3.0.3`, emits the V2 entity mappings, and
+3. **Completed — Sync v2** — reports the pinned v3 tag, emits the V2 entity mappings, and
    supplies the separate owner link required by v3 clients.
 4. **Remaining gap — Shared links** — token/key/slug access model rework is not
    part of the retarget and remains a separate feature gap.
@@ -327,7 +331,7 @@ compatibility validation.
 - ~~Are 3.0 mobile clients hard-requiring Sync v2, or do they fall back to V1
   entity types?~~ **Resolved: incremental, not blocking.** The client picks V1
   vs V2 by the adapter's reported version, and the V2 payload deltas are small
-  (§5). The adapter now reports `v3.0.3` and ships the thin V2 layer that reuses
+  (§5). The adapter now reports the pinned v3 tag (`v3.1.0`) and ships the thin V2 layer that reuses
   the §2 duration converter.
 - ~~Which new feature areas (if any) are in scope vs. permanent intentional
   gaps?~~ **Resolved: mostly intentional gaps.** Of the six new areas, four are

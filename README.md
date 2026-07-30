@@ -69,7 +69,7 @@ docker run --rm -p 8080:8080 \
 
 **Build with a specific Immich version:**
 ```bash
-docker build --build-arg IMMICH_VERSION=v3.0.3 -t immich-adapter .
+docker build --build-arg IMMICH_VERSION=v3.1.0 -t immich-adapter .
 ```
 
 ### Production Mode
