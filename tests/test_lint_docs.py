@@ -1885,6 +1885,22 @@ def test_setext_heading_defines_an_anchor(repo: FixtureRepo) -> None:
     assert repo.lint("--check", "anchors").returncode == 0
 
 
+def test_image_in_a_heading_contributes_no_slug_text() -> None:
+    """Alt text is an attribute, not text, so GitHub's anchor ignores it.
+
+    Verified against GitHub's own renderer: `# ![Setup](icon.png)` becomes
+    `<h1><a ...><img alt="Setup"></a></h1>`, whose *text content* — what the anchor
+    is slugged from — is empty. Including alt text would invent a `#setup` anchor
+    GitHub does not have, letting a broken link pass and shifting the `-1` dedup
+    suffix of any later real `Setup` heading.
+
+    The mixed case keeps the two spaces that flanked the image, so the slug carries
+    a double hyphen — whitespace runs do not collapse.
+    """
+    assert collect_anchors("# ![Setup](icon.png)") == set()
+    assert collect_anchors("# Mixed ![icon](i.png) Heading") == {"mixed--heading"}
+
+
 def test_heading_that_renders_no_text_defines_no_anchor(repo: FixtureRepo) -> None:
     """`# <Title>` is raw inline HTML, so GitHub gives it no usable anchor.
 
@@ -2356,12 +2372,23 @@ def test_list_valued_field_is_not_treated_as_empty(repo: FixtureRepo) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_list_valued_date_is_still_rejected(repo: FixtureRepo) -> None:
-    """Populated is not the same as valid — a list is no ISO date."""
-    repo.write(
-        "docs/references/a.md",
-        "---\ntitle: A\nlast-updated:\n  - 2026-01-01\n  - 2026-01-02\n---\n\nbody\n",
-    )
+@pytest.mark.parametrize(
+    "block",
+    [
+        # The single-item case is the one that matters: joining items bare made it
+        # indistinguishable from a scalar, so malformed frontmatter linted clean.
+        "last-updated:\n  - 2026-01-01\n",
+        "last-updated:\n  - 2026-01-01\n  - 2026-01-02\n",
+    ],
+    ids=["single-item", "multi-item"],
+)
+def test_list_valued_date_is_still_rejected(repo: FixtureRepo, block: str) -> None:
+    """Populated is not the same as valid — a sequence is no ISO date.
+
+    Every required field is scalar by convention, so the *shape* has to survive
+    parsing rather than be flattened away.
+    """
+    repo.write("docs/references/a.md", f"---\ntitle: A\n{block}---\n\nbody\n")
     repo.commit_all()
     result = repo.lint("--check", "frontmatter")
     assert result.returncode == 1

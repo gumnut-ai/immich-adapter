@@ -566,6 +566,7 @@ def parse_frontmatter(text: str) -> dict[str, str]:
     if not lines or lines[0].strip() != "---":
         return {}
     fields: dict[str, str] = {}
+    sequence_items: dict[str, list[str]] = {}
     last_key: str | None = None
     for line in lines[1:]:
         if line.strip() == "---":
@@ -579,14 +580,21 @@ def parse_frontmatter(text: str) -> dict[str, str]:
         # A block-sequence item continues the preceding key. Without this a
         # list-valued field read as the empty string, so a *required* field written
         # as a list would be reported "present but empty" — a real doc failing on a
-        # shape YAML allows. Items are joined rather than modelled as a list because
-        # every caller wants either "is this populated" or "is this an ISO date",
-        # and a joined value answers both correctly.
+        # shape YAML allows.
+        #
+        # Rendered as a YAML **flow sequence** (`[a, b]`) rather than joined bare,
+        # because the shape has to survive: every required field is scalar by
+        # convention, so a sequence must fail the scalar validators. Joining bare
+        # made a *single-item* sequence indistinguishable from a scalar —
+        # `last-updated:\n  - 2026-07-30` became `2026-07-30` and passed the date
+        # check, so malformed frontmatter linted clean. The brackets keep the value
+        # non-empty (so presence still holds) while no scalar check can accept it,
+        # and they read correctly in the violation message.
         item = re.match(r"^\s*-\s+(.*)$", line)
         if item and last_key is not None:
-            existing = fields.get(last_key, "")
-            value = unquote(item.group(1))
-            fields[last_key] = f"{existing}, {value}" if existing else value
+            existing = sequence_items.setdefault(last_key, [])
+            existing.append(unquote(item.group(1)))
+            fields[last_key] = "[" + ", ".join(existing) + "]"
     return {}
 
 
