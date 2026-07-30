@@ -1753,6 +1753,48 @@ def test_link_line_number_is_the_link_s_own_line(repo: FixtureRepo) -> None:
     assert "a.md:8:" in result.stderr, result.stderr
 
 
+def test_image_before_a_link_does_not_steal_its_line(repo: FixtureRepo) -> None:
+    """An image spends one `](`, so it must consume one from the block's supply.
+
+    Otherwise its position is handed to the next link and the violation is
+    reported on the image's line. markdown-it also percent-encodes an
+    angle-bracket destination, so matching the href text cannot rescue it.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "![img](ok.png)\n[x](<missing file.md>)"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:7:" in result.stderr, result.stderr
+
+
+def test_prose_mention_of_a_target_does_not_steal_its_line(repo: FixtureRepo) -> None:
+    """Anchoring on link *syntax*, not the destination text.
+
+    An unrestricted search for the destination finds a prose mention of the same
+    path earlier in the block and reports the violation there.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "gone.md is stale\nand [doc](gone.md) too"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:7:" in result.stderr, result.stderr
+
+
+def test_autolink_does_not_consume_a_later_links_position(repo: FixtureRepo) -> None:
+    """An autolink has no `](`, so consuming one would steal a real link's line."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<https://example.com> then\n[x](gone.md)"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:7:" in result.stderr, result.stderr
+
+
 def test_repeated_target_in_one_block_gets_distinct_lines(repo: FixtureRepo) -> None:
     """The cursor must advance, or every repeat matches the first occurrence."""
     repo.write_doc(

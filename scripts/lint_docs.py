@@ -1128,48 +1128,64 @@ def _iter_links_in(tokens):
     line is the fallback, which is exactly the old behavior.
     """
 
-    def walk(items, line: int, block_content: str, cursor: list[int]):
+    def walk(items, line: int, block: BlockPositions):
         for token in items:
             if token.map:
                 line = token.map[0] + 1
             if token.type == "inline":
-                block_content, cursor = token.content, [0]
+                block = BlockPositions(token.content)
+            # An image spends one `](` of the block's supply. Skipping it here
+            # handed its position to the *next* link, which then reported on the
+            # image's line.
+            if token.type == "image":
+                block.take()
             if token.type == "link_open":
                 raw = token.attrGet("href") or ""
-                offset = locate_in_block(block_content, raw, cursor)
-                found = (
-                    line
-                    if offset is None
-                    else line + block_content.count("\n", 0, offset)
-                )
+                # An autolink (`<https://x>`) has no `](` at all, so it must not
+                # consume one — doing so would steal a later link's position.
+                offset = None if token.markup == "autolink" else block.take()
+                found = line if offset is None else line + block.newlines_before(offset)
                 yield found, raw.strip()
             if token.children:
-                yield from walk(token.children, line, block_content, cursor)
+                yield from walk(token.children, line, block)
 
-    yield from walk(tokens, 1, "", [0])
+    yield from walk(tokens, 1, BlockPositions(""))
 
 
-def locate_in_block(content: str, href: str, cursor: list[int]) -> int | None:
-    """Offset of the next link in a block's raw inline source, or None.
+class BlockPositions:
+    """The `](` offsets in one block's raw inline source, handed out in order.
 
-    Two probes, in order of precision. The destination usually appears verbatim,
-    which pins the exact link even when a block holds several. It does not when
-    markdown-it normalized it (the `<a b.md>` form arrives percent-encoded), so
-    the fallback is the next `](` — links are visited in source order, and the
-    shared cursor keeps repeated targets from all matching the first occurrence.
+    Inline children carry no source position, so a link's line is recovered by
+    pairing tokens with the link syntax in the block, in document order.
 
-    Returning None rather than guessing leaves the caller on the block's start
-    line, which is no worse than not looking.
+    Matching the destination text instead was the obvious approach and is wrong:
+    an unrestricted search finds a *prose* mention of the same path earlier in the
+    block (`gone.md is stale` … `[doc](gone.md)`) and reports the violation on that
+    line, and markdown-it normalizes an angle-bracket destination
+    (`<missing file.md>` arrives percent-encoded) so the search misses the real one
+    anyway. Anchoring on the syntax avoids both.
+
+    Known limit: a reference link (`[a][r]`) carries no `](`, so in the rare block
+    that mixes one with an inline link the pairing slips by one. Reference links do
+    not appear in these repos, and the cost is a line number rather than a missed
+    violation.
     """
-    start = cursor[0]
-    for needle in (href, "]("):
-        if not needle:
-            continue
-        found = content.find(needle, start)
-        if found != -1:
-            cursor[0] = found + len(needle)
-            return found
-    return None
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self._offsets = [m.start() for m in re.finditer(r"\]\(", content)]
+        self._next = 0
+
+    def take(self) -> int | None:
+        """The next `](` offset, or None once the block's supply is spent."""
+        if self._next >= len(self._offsets):
+            return None
+        offset = self._offsets[self._next]
+        self._next += 1
+        return offset
+
+    def newlines_before(self, offset: int) -> int:
+        return self.content.count("\n", 0, offset)
 
 
 def local_target(target: str) -> str:
