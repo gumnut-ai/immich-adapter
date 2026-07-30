@@ -1769,6 +1769,20 @@ def test_image_before_a_link_does_not_steal_its_line(repo: FixtureRepo) -> None:
     assert "a.md:7:" in result.stderr, result.stderr
 
 
+def test_link_syntax_inside_image_alt_text_is_not_a_link(repo: FixtureRepo) -> None:
+    """Alt text renders as `<img alt="...">`, with no hyperlink to resolve.
+
+    markdown-it still tokenizes link syntax inside an image's children, so
+    recursing into them reported the destination as broken — a false positive on
+    something that is not a link.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "![alt [text][ref]](image.png)\n\n[ref]: gone.md"
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0, "link inside image alt text"
+
+
 def test_linked_image_reports_the_links_own_line(repo: FixtureRepo) -> None:
     """Offsets are spent in *source* order, which is not token order.
 

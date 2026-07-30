@@ -1151,7 +1151,12 @@ def _iter_links_in(tokens):
                 offset = None if markup == "autolink" else block.take()
                 found = line if offset is None else line + block.newlines_before(offset)
                 yield found, raw.strip()
-            if token.children:
+            # Not into an image's children. Those are its *alt text*, and markdown-it
+            # still tokenizes link syntax there — `![alt [x][ref]](i.png)` carries a
+            # `link_open` — but the render is `<img alt="alt x">` with no hyperlink at
+            # all. Recursing reported that destination as a broken link: a false
+            # positive, on a target that is not a link.
+            if token.children and token.type != "image":
                 yield from walk(token.children, line, block, open_links)
 
     yield from walk(tokens, 1, BlockPositions("", []), [])
