@@ -150,7 +150,7 @@ Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pair
 
 **Dependency**: **Adapter-only** — the backend grouping concept this gap was originally blocked on now exists. The Gumnut API's stack resource covers create, add/remove assets, list, retrieve, set cover, and delete, with `list_stacks` exposing an `origin` filter (auto-detected bursts vs. user-grouped) and `primary_asset_id`; members are reachable through the `stack_id` filter on the asset list.
 
-One piece of the timeline surface *is* backend-blocked: `GET /api/timeline/buckets` counts every frame, because `assets.counts` has no stack-aware filter, so a month containing bursts reports a count higher than the collapsed contents. Upstream keeps the two symmetric by applying the same predicate to both queries. The effect is cosmetic — see "Timeline stack collapse" in `docs/architecture/adapter-architecture.md` — and the fix is a stack-collapse option on `assets.counts` and `assets.list`.
+One piece of the timeline surface *is* backend-blocked: `GET /api/timeline/buckets` cannot collapse its counts, because `assets.counts` has no stack-aware filter. The effect is cosmetic and the fix is a backend one — see "Timeline stack collapse" in `docs/architecture/adapter-architecture.md`.
 
 **Effort**: **M** — the shared translation layer (member hydration, effective-cover resolution, DTO building, timeline collapse) is already implemented in `routers/utils/stack_conversion.py`; what remains is wiring the 7 routes plus the stack block on the asset-detail surface.
 

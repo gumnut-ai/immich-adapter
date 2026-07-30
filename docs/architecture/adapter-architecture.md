@@ -352,13 +352,18 @@ The two surfaces can therefore disagree about a trashed pin: `/stacks` reports t
 
 #### Cost, and the bucket-count divergence
 
-Resolution usually costs nothing beyond the row read. When the bucket already holds `asset_count` live members of a stack it holds that stack's complete live member set, so the cover resolves from assets already in hand; a whole burst lands in one month, so this is the common case. The fallback — one lean `assets.list(stack_id=…, state="live", order="asc")` per stack, under the shared fan-out bound — covers a burst straddling a month boundary, or an album/person-filtered bucket that also asked for `withStacked`.
+Resolution usually costs nothing beyond the row read. When the bucket already holds `asset_count` live members of a stack it holds that stack's complete live member set, so the cover resolves from assets already in hand; a whole burst lands in one month, so this is the common case. The fallback is one lean `assets.list(stack_id=…, state="live", order="asc")` per stack, under the shared fan-out bound and additionally capped per request by `MAX_TIMELINE_STACK_MEMBER_READS`.
+
+Two shapes reach that fallback, and they behave differently:
+
+- **A burst straddling a month boundary.** The resolved cover surfaces in the adjacent bucket of the same view, so the burst still renders exactly one tile overall.
+- **An album or person-filtered bucket that also asked for `withStacked`.** The cover is resolved library-wide and may fall outside the filter, in which case the burst is absent from that view entirely. Upstream behaves the same way — its predicate is likewise unconditional on `albumId`/`personId` — and no Immich client sends `withStacked` with either. Any other client may, which is also why the read count is capped: a person-filtered month can leave hundreds of stacks partial, and the bound keeps one inbound request from fanning out into hundreds of upstream ones.
 
 **`GET /api/timeline/buckets` counts are not collapsed.** Upstream applies the identical predicate to its count query so counts and contents agree by construction; the adapter cannot, because `assets.counts` has no stack-aware filter and `assets.list` exposes only a single-stack `stack_id` filter — there is no "belongs to any stack" filter to walk. Computing the per-month deduction would mean paginating every stack in the library plus a member read each, on a hot endpoint.
 
 Counts therefore overstate a month containing bursts. This is cosmetic: the client uses the count only for a pre-load month height estimate, which the real layout replaces once the bucket loads, and nothing compares the two numbers. The lasting artifact is the scrubber, which snapshots the count and refreshes only on a viewport resize. The clean fix is a backend stack-collapse option on both `assets.counts` and `assets.list`, which would return the adapter to a pass-through.
 
-A stack whose row is missing from the `list_stacks` response — dissolved between the two reads — is left unresolved rather than guessed at: its frames stay in the bucket uncollapsed with a null tuple, and the adapter logs once per stack. Degrading to the pre-stack timeline is always preferable to hiding photos behind a cover that no longer exists.
+Every failure mode degrades the same way, because degrading to the pre-stack timeline always beats hiding photos behind a cover that may not exist. A stack is left unresolved — frames uncollapsed, tuple null — when its row is missing from the `list_stacks` response (dissolved between the two reads), when its member read fails, when it falls past the read cap, or when it has no live members. A failure of the stacks resource as a whole is caught at the route and degrades the entire bucket the same way: every frame, no `stack` key contents, rather than a 5xx on the app's primary view. Each case logs once, and the missing-row case logs one aggregate record per request rather than one per stack, so a systemic cause stays distinguishable from a single-stack race without flooding the log.
 
 ### Album and asset ordering
 

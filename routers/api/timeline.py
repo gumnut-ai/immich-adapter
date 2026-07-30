@@ -1,9 +1,10 @@
+import logging
 from datetime import datetime, timedelta
 from typing import Any, List, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from gumnut import AsyncGumnut
+from gumnut import AsyncGumnut, GumnutError
 from gumnut.types.asset_count_response import AssetCountResponse, Data
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
@@ -27,6 +28,8 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_person_id,
 )
 from routers.utils.stack_conversion import TimelineStacks, resolve_timeline_stacks
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/timeline",
@@ -206,30 +209,26 @@ async def get_time_bucket(
 
     filtered_assets = [a async for a in client.assets.list(**list_kwargs)]
 
-    # Immich collapses a burst to a single tile *server-side*: under
-    # `withStacked` its bucket query keeps an asset only when the asset is loose
-    # or is its stack's primary, and attaches a `[stackId, liveCount]` tuple to
-    # the survivor. The client renders that tuple as a burst badge and collapses
-    # nothing itself, so emitting tuples without collapsing would badge every
-    # frame of a burst instead of showing one tile.
-    #
-    # Both halves are gated on `withStacked`, as upstream gates them: when it is
-    # falsy the `stack` key is absent from the response entirely. That gate is
-    # load-bearing rather than cosmetic — Immich web's album view asks for
-    # buckets *without* `withStacked` while still passing `showStackedIcon` to
-    # the thumbnail, so collapsing or badging unconditionally would drop burst
-    # frames from album months and badge them where upstream never does.
-    #
-    # Trash opts out on purpose, and diverges from upstream to do so. Upstream's
-    # predicate keys on the live primary, so a trashed non-primary frame would
-    # be filtered out of the trash view — the one place it must stay visible,
-    # since trash is the only route back to restoring it. The Gumnut API's
-    # `asset_count` is a live count that would misdescribe a trash-only view
-    # besides. No Immich client requests `withStacked` on the trash view, so
-    # this costs nothing in practice.
+    # Immich collapses a burst to one tile server-side and badges the survivor
+    # with a `[stackId, liveCount]` tuple; its client collapses nothing, so the
+    # tuple alone would badge every frame instead of showing one tile. Both
+    # halves are gated on `withStacked` and skipped for trash — see "Timeline
+    # stack collapse" in docs/architecture/adapter-architecture.md for why each
+    # of those is load-bearing.
     stacks: TimelineStacks | None = None
     if withStacked and not isTrashed:
-        stacks = await resolve_timeline_stacks(client, filtered_assets)
+        try:
+            stacks = await resolve_timeline_stacks(client, filtered_assets)
+        except GumnutError:
+            # The assets already came back fine; a stacks-resource failure
+            # should cost the badges, not the month. Falling back to an empty
+            # resolution reproduces the pre-stack response — every frame, all
+            # tuples null — on the app's primary view.
+            logger.warning(
+                "Failed to resolve timeline stacks; returning the bucket uncollapsed",
+                exc_info=True,
+            )
+            stacks = TimelineStacks(covers={}, tuples={})
         filtered_assets = [
             asset for asset in filtered_assets if not stacks.is_collapsed_away(asset)
         ]
@@ -323,10 +322,9 @@ async def get_time_bucket(
         "visibility": visibility_list,
     }
 
-    # Omit the key rather than shipping all-nulls when stacks weren't requested,
-    # matching upstream — both its per-asset select and its aggregate sit inside
-    # the same `withStacked` conditional. The client reads `stack?.at(i)`, so
-    # absence and a null entry behave identically for a loose asset.
+    # Omitted rather than all-nulls when stacks weren't requested, matching
+    # upstream. The client reads `stack?.at(i)`, so absence and a null entry
+    # behave identically for a loose asset.
     if stacks is not None:
         response["stack"] = stack_list
 
