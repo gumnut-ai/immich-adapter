@@ -101,9 +101,17 @@ jobs:
         with:
           python-version-file: ".python-version"
 
-      # No install step: the linter is stdlib-only so it runs anywhere python3
-      # does, which is the point of keeping it dependency-free. Its test suite
-      # runs in the `test` job above, via the ordinary pytest collection.
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
+      # `uv run` rather than `python3`: the linter declares markdown-it-py in its
+      # own PEP 723 header, so uv resolves it with no project to install. No
+      # `uv sync` here — this job deliberately does not build the adapter's
+      # environment, so the linter is invoked exactly the way a human or agent
+      # invokes it. Its test suite runs in the `test` job above, via the ordinary
+      # pytest collection.
       #
       # Runs *every* enabled check rather than naming a subset, so adding a check
       # to lint_docs.py can't leave it silently unrun here.
@@ -123,4 +131,4 @@ jobs:
           # `--base` is a hard exit 1, and the push path can't be exercised until
           # this is on main, so the failure would land there.
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
-        run: python3 scripts/lint_docs.py --base "$BASE_SHA"
+        run: uv run scripts/lint_docs.py --base "$BASE_SHA"

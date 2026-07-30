@@ -14,6 +14,7 @@ and the assertions cannot straddle a date boundary.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -22,11 +23,12 @@ from pathlib import Path
 import pytest
 
 from lint_docs import (
-    blank_noncontent,
+    blank_frontmatter,
     bump_date_line,
     collect_anchors,
     has_last_updated_key,
     parse_frontmatter,
+    raw_cell_count,
     slugify_heading,
     strip_date_line,
 )
@@ -891,6 +893,70 @@ def test_config_key_stranded_in_a_table_is_rejected(repo: FixtureRepo) -> None:
     assert "template_paths" in result.stderr
 
 
+def test_bare_string_where_a_list_belongs_is_rejected(repo: FixtureRepo) -> None:
+    """A quoted scalar is iterable, so it silently became ten one-char prefixes.
+
+    `strip_prefixes = "repo-root "` mangled every citation the linter resolved,
+    with no error anywhere. Quoting a single value instead of bracketing it reads
+    perfectly natural in TOML, which is what made this reachable.
+    """
+    repo.config_path.write_text(
+        FIXTURE_CONFIG.replace(
+            'strip_prefixes = ["repo-root "]', 'strip_prefixes = "repo-root "'
+        ),
+        encoding="utf-8",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "strip_prefixes" in result.stderr
+    # The message has to name the fix, since the value itself is not wrong.
+    assert "brackets" in result.stderr
+
+
+def test_list_containing_a_non_string_is_rejected(repo: FixtureRepo) -> None:
+    repo.config_path.write_text(
+        FIXTURE_CONFIG.replace(
+            'strip_prefixes = ["repo-root "]', "strip_prefixes = [42]"
+        ),
+        encoding="utf-8",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "strip_prefixes" in result.stderr
+
+
+def test_valid_list_config_still_loads(repo: FixtureRepo) -> None:
+    """The other direction: the guard must not reject the correct form."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "See `repo-root docs/references/a.md`."
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+@pytest.mark.parametrize("value", ['"wide"', "true", "0", "-5", "1.5"])
+def test_non_positive_int_limit_is_rejected(repo: FixtureRepo, value: str) -> None:
+    """A mistyped limit raised a bare ValueError traceback out of `int()`.
+
+    A traceback reads as the linter being broken rather than the config being
+    wrong. `true` is in the list because `bool` is an `int` subclass, so it would
+    otherwise silently mean a 1-character cell limit.
+    """
+    repo.config_path.write_text(
+        FIXTURE_CONFIG.replace(
+            "consult_cell_chars = 250", f"consult_cell_chars = {value}"
+        ),
+        encoding="utf-8",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "map_cells")
+    assert result.returncode == 1
+    assert "consult_cell_chars" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_unknown_check_name_in_config_is_rejected(repo: FixtureRepo) -> None:
     """A typo'd check name would otherwise silently configure nothing."""
     repo.config_path.write_text(
@@ -1608,11 +1674,44 @@ def test_escaped_backtick_does_not_open_a_span(repo: FixtureRepo) -> None:
 
 
 def test_code_span_may_cross_a_line_break(repo: FixtureRepo) -> None:
-    """CommonMark spans may contain line endings.
+    """CommonMark spans may contain line endings, so a link inside one is not real.
 
-    Scanning each line independently made a span opened on one line and closed on the
-    next look like literal backticks, so a `<!--` inside it opened a comment: a spurious
-    unterminated-comment error *and* the links after the span swallowed.
+    This is the shape 66 docs in the real corpus rely on — a `{ a,\\nb }` literal
+    wrapped across lines in prose.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "Write `example\ntext [x](./gone.md)` and it is code.",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_mid_line_comment_marker_does_not_break_a_multiline_span(
+    repo: FixtureRepo,
+) -> None:
+    """Only a *line-initial* `<!--` can begin an HTML block.
+
+    Mid-prose it cannot interrupt the paragraph, so the span still closes and the
+    marker is literal text inside it.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "Write `example\nx <!-- draft\ntext` and it is code.",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_line_initial_comment_interrupts_a_paragraph(repo: FixtureRepo) -> None:
+    """An HTML block interrupts a paragraph, so it can cut a code span in half.
+
+    `<!--` at the start of a line is an HTML block start condition, and blocks of
+    that type may interrupt a paragraph — so the span opened on the line before
+    never closes, and the comment runs to the end of the document. Reporting the
+    unterminated marker is correct: everything after it renders as nothing.
     """
     repo.write_doc(
         "docs/references/a.md",
@@ -1620,7 +1719,9 @@ def test_code_span_may_cross_a_line_break(repo: FixtureRepo) -> None:
         "Write `example\n<!-- draft\ntext` and it is code.",
     )
     repo.commit_all()
-    assert repo.lint("--check", "links").returncode == 0
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "never closed" in result.stderr
 
 
 def test_link_after_a_multiline_span_is_still_checked(repo: FixtureRepo) -> None:
@@ -1630,6 +1731,40 @@ def test_link_after_a_multiline_span_is_still_checked(repo: FixtureRepo) -> None
     result = repo.lint("--check", "links")
     assert result.returncode == 1
     assert "gone.md" in result.stderr
+
+
+def test_link_line_number_is_the_link_s_own_line(repo: FixtureRepo) -> None:
+    """Inline tokens carry no position, so the line must be found within the block.
+
+    Reporting the enclosing paragraph's first line instead measured as 24% of the
+    corpus's links wrong, one of them 33 lines adrift — far enough that the
+    violation points at unrelated prose.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "prose line one\nprose line two\nprose line three [x](./gone.md) here",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    # Body starts at line 6: three frontmatter lines, its closing `---`, then a
+    # blank. So the link on the body's third line is line 8, not the block's 6.
+    assert "a.md:8:" in result.stderr, result.stderr
+
+
+def test_repeated_target_in_one_block_gets_distinct_lines(repo: FixtureRepo) -> None:
+    """The cursor must advance, or every repeat matches the first occurrence."""
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "one [x](./gone.md)\ntwo\nthree [y](./gone.md)",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:6:" in result.stderr, result.stderr
+    assert "a.md:8:" in result.stderr, result.stderr
 
 
 def test_blank_line_ends_an_unclosed_span(repo: FixtureRepo) -> None:
@@ -1703,6 +1838,64 @@ def test_comment_delimiter_in_a_fence_does_not_reach_outside(
     result = repo.lint("--check", "links")
     assert result.returncode == 1
     assert "gone.md" in result.stderr
+
+
+def test_frontmatter_is_not_a_setext_heading(repo: FixtureRepo) -> None:
+    """Frontmatter is YAML, and its closing `---` must not underline it.
+
+    Read as Markdown, a `---` after text makes the block above it a setext H2 — which
+    invented an anchor like `title-a-last-updated-...` on 215 of the 293 docs in the
+    real corpus. A link to that phantom fragment must not resolve.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "[x](#title-a-last-updated-2026-01-01)"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "no matching heading" in result.stderr
+
+
+def test_hash_comment_in_frontmatter_is_not_a_heading(repo: FixtureRepo) -> None:
+    """A `#` line inside the YAML block is a comment, not an H1.
+
+    Parsing one as a heading is how six phantom anchors per daemon file appeared.
+    """
+    repo.write(
+        "docs/references/a.md",
+        f"---\ntitle: A\n# Daily, not every 6h\nlast-updated: {TODAY}\n---\n\n"
+        "[x](#daily-not-every-6h)\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "no matching heading" in result.stderr
+
+
+def test_setext_heading_defines_an_anchor(repo: FixtureRepo) -> None:
+    """GitHub renders setext headings and gives them anchors.
+
+    The previous ATX-only scan missed them, so a valid link to one was reported
+    broken.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "Real Heading\n===\n\n[x](#real-heading)"
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0
+
+
+def test_heading_that_renders_no_text_defines_no_anchor(repo: FixtureRepo) -> None:
+    """`# <Title>` is raw inline HTML, so GitHub gives it no usable anchor.
+
+    Adding the empty slug would both invent a fragment and consume a dedup slot,
+    shifting the `-1` suffix of every later duplicate.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "# <Title>\n\n[x](#title)")
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "no matching heading" in result.stderr
 
 
 def test_fence_inside_a_real_comment_does_not_open_a_fence(
@@ -1826,6 +2019,32 @@ def test_map_row_with_wrong_column_count_is_flagged(repo: FixtureRepo) -> None:
     result = repo.lint("--check", "map_paths")
     assert result.returncode == 1
     assert "4 columns" in result.stderr
+
+
+def test_map_row_with_too_few_columns_is_flagged(repo: FixtureRepo) -> None:
+    """The parser pads a short row, so the source line is the only authority.
+
+    Against a three-column header a two-cell row arrives as `['a', 'b', '']` —
+    indistinguishable from a deliberately empty third cell.
+    """
+    repo.write("AGENTS.md", _map("References", "| Broken | `docs/references/a.md` |\n"))
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "2 columns" in result.stderr
+
+
+def test_map_row_with_an_escaped_pipe_is_well_formed(repo: FixtureRepo) -> None:
+    """The other direction: `\\|` is a literal pipe, not a fourth column."""
+    repo.write_doc("docs/references/a.md", TODAY, "body")
+    repo.write(
+        "AGENTS.md",
+        _map(
+            "References", r"| Topic A | `docs/references/a.md` | why \| really |" + "\n"
+        ),
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
 
 
 def test_dev_root_relative_cross_repo_link_is_skipped(repo: FixtureRepo) -> None:
@@ -2121,6 +2340,34 @@ def test_reference_doc_missing_title_is_flagged(repo: FixtureRepo) -> None:
     assert "title" in result.stderr
 
 
+def test_list_valued_field_is_not_treated_as_empty(repo: FixtureRepo) -> None:
+    """A YAML block sequence is a populated value, not a blank one.
+
+    The scalar-only parse read `title:` followed by `- items` as the empty string,
+    so a required field written as a list would be reported "present but empty" —
+    a real doc failing on a shape YAML allows.
+    """
+    repo.write(
+        "docs/references/a.md",
+        f"---\ntitle:\n  - First\n  - Second\nlast-updated: {TODAY}\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 0, result.stderr
+
+
+def test_list_valued_date_is_still_rejected(repo: FixtureRepo) -> None:
+    """Populated is not the same as valid — a list is no ISO date."""
+    repo.write(
+        "docs/references/a.md",
+        "---\ntitle: A\nlast-updated:\n  - 2026-01-01\n  - 2026-01-02\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "last-updated" in result.stderr
+
+
 def test_design_doc_missing_created_is_flagged(repo: FixtureRepo) -> None:
     repo.write(
         "docs/design-docs/a.md",
@@ -2346,13 +2593,76 @@ def test_bump_date_line_preserves_indentation() -> None:
     assert "  last-updated: 2026-01-01" in bump_date_line(text, "2026-01-01")
 
 
-def test_blanking_preserves_line_count() -> None:
-    text = "a\n```\nb\n```\nc\n"
-    assert len(blank_noncontent(text).split("\n")) == len(text.split("\n"))
+def test_pep723_dependency_matches_test_environment() -> None:
+    """The dependency is declared twice, so pin the two together.
+
+    The PEP 723 header serves `uv run`; the test environment serves this suite,
+    which imports `lint_docs` as a module rather than shelling out. Nothing else
+    would notice if they drifted until a version-specific behavior diverged.
+    """
+    import tomllib
+
+    from markdown_it import __version__ as installed
+
+    source = SCRIPT.read_text(encoding="utf-8")
+    block = re.search(r"^# /// script$(.*?)^# ///$", source, re.M | re.S)
+    assert block is not None, "lint_docs.py must carry a PEP 723 script block"
+    meta = tomllib.loads(
+        "\n".join(
+            line.removeprefix("# ").removeprefix("#")
+            for line in block.group(1).strip().split("\n")
+        )
+    )
+    specs = [d for d in meta["dependencies"] if d.startswith("markdown-it-py")]
+    assert len(specs) == 1, meta["dependencies"]
+
+    bounds = re.search(r">=(\d+),<(\d+)", specs[0])
+    assert bounds is not None, specs[0]
+    lower, upper = bounds.groups()
+    major = int(installed.split(".")[0])
+    assert int(lower) <= major < int(upper), (
+        f"installed markdown-it-py {installed} is outside the script's "
+        f"declared range {specs[0]}"
+    )
 
 
-def test_blanking_preserves_offsets() -> None:
-    text = "see `[x](y.md)` here"
-    blanked = blank_noncontent(text)
-    assert len(blanked) == len(text)
-    assert "[x](y.md)" not in blanked
+def test_blank_frontmatter_preserves_line_count() -> None:
+    """Token line numbers are file line numbers, so the blanking cannot shift them."""
+    text = "---\ntitle: A\nlast-updated: 2026-01-01\n---\n\n# Heading\n\nbody\n"
+    blanked = blank_frontmatter(text)
+    assert len(blanked.split("\n")) == len(text.split("\n"))
+    assert blanked.split("\n")[5] == "# Heading"
+
+
+def test_blank_frontmatter_leaves_a_doc_without_frontmatter_alone() -> None:
+    text = "# Heading\n\nbody\n"
+    assert blank_frontmatter(text) == text
+
+
+def test_blank_frontmatter_leaves_an_unterminated_block_alone() -> None:
+    """Blanking to EOF would hide the whole doc from every other check.
+
+    `check_frontmatter` reports the missing delimiter as its own violation.
+    """
+    text = "---\ntitle: A\n\n# Heading\n"
+    assert blank_frontmatter(text) == text
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("| a | b | c |", 3),
+        ("| a | b |", 2),
+        ("| a | b | c | d |", 4),
+        (r"| a | b \| c | d |", 3),
+        (r"| a | `x \| y` | c |", 3),
+        ("| a | x | y | c |", 4),
+    ],
+)
+def test_raw_cell_count_counts_unescaped_delimiters(line: str, expected: int) -> None:
+    """The parser normalizes column counts away, so the source line is the authority.
+
+    A three-column table pads a short row and *truncates* a long one, so without
+    this both shapes would pass.
+    """
+    assert raw_cell_count(line) == expected

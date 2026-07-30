@@ -16,11 +16,11 @@ Run from the `immich-adapter/` directory:
 - **Lint**: `uv run ruff check`
 - **Type check**: `uv run pyright`
 - **Test**: `uv run pytest`
-- **Docs**: `python3 scripts/lint_docs.py` (`--fix` bumps stale `last-updated:` dates) — see § Documentation Checks below
+- **Docs**: `uv run scripts/lint_docs.py` (`--fix` bumps stale `last-updated:` dates) — see § Documentation Checks below
 
 # Documentation Checks
 
-`scripts/lint_docs.py` enforces the mechanically checkable half of the conventions below, and runs on every PR (the `lint-docs` job in `.github/workflows/ci.yml`). It is stdlib-only, so it needs no install step and runs anywhere `python3` does.
+`scripts/lint_docs.py` enforces the mechanically checkable half of the conventions below, and runs on every PR (the `lint-docs` job in `.github/workflows/ci.yml`). It parses Markdown with `markdown-it-py`, declared in the script's own PEP 723 header, so `uv run` resolves the dependency and there is no project to install — the same command works locally and in CI.
 
 | Check | Enforces |
 |-------|----------|
