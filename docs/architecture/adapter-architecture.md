@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-27
+last-updated: 2026-07-29
 ---
 
 # Immich Adapter Architecture
@@ -162,8 +162,11 @@ Gumnut uses prefixed short UUIDs (e.g., `asset_BM3nUmJ6fkBqBADyz5FEiu`), while I
 | Person | `person_` | `person_J5wEn1lMpQrStUxY2zA3bC` |
 | Face | `face_` | `face_H4vDm0kLoOnRtTwX1yA2bB` |
 | User | `intuser_` | `intuser_G3uCl9jKnNmQsSvW0xZ1aA` |
+| Stack (burst) | `asset_stack_` | `asset_stack_F2tBk8iJmMlPrRuV9wY0zZ` |
 
 All Gumnut IDs are encoded using the `shortuuid` library and are deterministically convertible to/from standard UUIDs (e.g., `asset_BM3nUmJ6fkBqBADyz5FEiu` ↔ `550e8400-e29b-41d4-a716-446655440000`). Immich clients always see standard UUIDs.
+
+`asset_` is a strict prefix of `asset_stack_`, so use the `stack` conversion pair for stacks and the `asset` pair for assets — never route one through the other. Crossing them raises rather than silently decoding; see `safe_uuid_from_stack_id` for why.
 
 ### Model mapping
 
@@ -173,6 +176,7 @@ Each entity type has a dedicated conversion module in `routers/utils/`:
 |--------|------------|-------------|--------------|
 | `asset_conversion.py` | `AssetResponse` | `AssetResponseDto` | `local_datetime` → `fileCreatedAt`, `mime_type` → `type` (IMAGE/VIDEO/AUDIO/OTHER), EXIF extraction |
 | `album_conversion.py` | `AlbumResponse` | `AlbumResponseDto` | `name` → `albumName`, `album_cover_asset_id` → `albumThumbnailAssetId`, album date range normalization |
+| `stack_conversion.py` | stack row + member `AssetResponse`s | `StackResponseDto` | member hydration via the `stack_id` asset filter, effective-cover resolution (Immich requires a non-null `primaryAssetId`; an auto-detected burst has no pinned cover), live-only `assets` with the cover first |
 | `person_conversion.py` | `PersonResponse` | `PersonResponseDto` | `is_favorite` → `isFavorite`, `thumbnail_face_url` → `thumbnailPath`, null name → "Unknown Person" |
 
 `album_conversion.py` also routes `start_date` / `end_date` through `to_immich_local_datetime()` before emitting `AlbumResponseDto.startDate` / `endDate`. Album date ranges are derived from assets' `local_datetime`, so they intentionally share the same keep-local-time normalization as each asset's `localDateTime`: naive values are labeled `UTC` without shifting the wall-clock, and `None` passes through unchanged. This keeps the album range aligned with the dates shown on its assets and avoids list-response DTO validation failures when a local capture timezone is unknown.
@@ -506,6 +510,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | Notifications | Push notifications not implemented |
 | Partners | User sharing not implemented |
 | Duplicates | Duplicate detection handled differently in Gumnut |
+| Stacks | Routes not wired up yet; the translation layer (`routers/utils/stack_conversion.py`) exists and the Gumnut API's stack resource is complete |
 
 ## Key Files
 
@@ -520,6 +525,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | `routers/utils/asset_conversion.py` | Asset model translation and EXIF extraction |
 | `routers/utils/album_conversion.py` | Album model translation |
 | `routers/utils/person_conversion.py` | Person model translation |
+| `routers/utils/stack_conversion.py` | Burst-stack member hydration, cover resolution, and stack DTO building |
 | `routers/utils/error_mapping.py` | Gumnut SDK exceptions → HTTPException mapping |
 | `routers/immich_models.py` | Pydantic models matching Immich's OpenAPI spec |
 | `config/` | Settings, Redis, Sentry configuration |

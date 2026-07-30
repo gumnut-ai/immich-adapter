@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.map import get_map_markers
 from routers.utils.map_markers import (
     GEOTAGGED_WORLD_BBOX,
@@ -16,7 +17,7 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     uuid_to_gumnut_asset_id,
 )
-from tests.conftest import MockSyncCursorPage
+from tests.conftest import MockPaginatedListing, MockSyncCursorPage
 
 
 def _make_asset(
@@ -64,29 +65,6 @@ async def _call_markers(
         withSharedAlbums=withSharedAlbums,
         client=client,
     )
-
-
-class _PaginatedListing:
-    """Async iterator that simulates the SDK's per-page pagination.
-
-    Yields one item at a time across pages of `page_size`, tracking how many
-    pages were "fetched". Dropping the explicit `break` in `get_map_markers`
-    would visibly walk extra pages and fail tests that pin `pages_fetched`.
-    """
-
-    def __init__(self, items, page_size: int):
-        self._items = items
-        self._page_size = page_size
-        self.pages_fetched = 0
-
-    def __aiter__(self):
-        return self._iter()
-
-    async def _iter(self):
-        for i, item in enumerate(self._items):
-            if i % self._page_size == 0:
-                self.pages_fetched += 1
-            yield item
 
 
 class TestGetMapMarkers:
@@ -287,10 +265,10 @@ class TestGetMapMarkers:
         Uses a paginating mock so removing the `break` would walk every page
         past the cap (the assertion on `pages_fetched` would then go up).
         """
-        page_size = 50
+        page_size = GUMNUT_API_MAX_PAGE_SIZE  # the limit the code actually sends
         total_assets = MAP_MARKERS_CAP + page_size  # one extra page beyond the cap
         assets = [_make_asset(lat=1.0, lon=2.0) for _ in range(total_assets)]
-        listing = _PaginatedListing(assets, page_size=page_size)
+        listing = MockPaginatedListing(assets, page_size=page_size)
 
         client = Mock()
         client.assets.list = Mock(return_value=listing)
@@ -298,10 +276,13 @@ class TestGetMapMarkers:
         result = await _call_markers(client=client)
 
         assert len(result) == MAP_MARKERS_CAP
-        # Cap is a multiple of page_size, so iteration stops at the last
-        # item of page MAP_MARKERS_CAP/page_size; we must NOT have started
-        # the next page.
-        assert listing.pages_fetched == MAP_MARKERS_CAP // page_size
+        # The mock only models real paging if it pages at the limit the code
+        # sends; assert that rather than trusting the two constants to agree.
+        assert client.assets.list.call_args.kwargs["limit"] == page_size
+        # Iteration stops on the page holding item MAP_MARKERS_CAP-1; we must
+        # NOT have started the next one. Ceiling division so the assertion
+        # stays correct if the page size stops dividing the cap evenly.
+        assert listing.pages_fetched == -(-MAP_MARKERS_CAP // page_size)
 
     @pytest.mark.anyio
     async def test_scan_cap_bounds_work_when_bbox_not_applied(self):
@@ -310,13 +291,13 @@ class TestGetMapMarkers:
         assets too. `MAX_ASSETS_SCANNED` must still bound the walk so a
         low-GPS-density library can't degrade into a full-library scan.
         """
-        page_size = 200
+        page_size = GUMNUT_API_MAX_PAGE_SIZE  # the limit the code actually sends
         # Twice the scan cap, all metadata-less (simulating the unfiltered
         # response) so they never feed the marker cap. Without the bound the
         # loop would walk every asset.
         total_assets = MAX_ASSETS_SCANNED * 2
         assets = [_make_asset(metadata_missing=True) for _ in range(total_assets)]
-        listing = _PaginatedListing(assets, page_size=page_size)
+        listing = MockPaginatedListing(assets, page_size=page_size)
 
         client = Mock()
         client.assets.list = Mock(return_value=listing)
@@ -325,4 +306,5 @@ class TestGetMapMarkers:
 
         # No markers (none had GPS) and iteration stopped at the scan cap.
         assert result == []
-        assert listing.pages_fetched == MAX_ASSETS_SCANNED // page_size
+        assert client.assets.list.call_args.kwargs["limit"] == page_size
+        assert listing.pages_fetched == -(-MAX_ASSETS_SCANNED // page_size)
