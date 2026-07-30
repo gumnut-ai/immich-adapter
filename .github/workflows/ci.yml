@@ -125,6 +125,13 @@ jobs:
       # release the test suite never saw, and skip the 14-day resolver cooldown
       # that the lock and the script's own `[tool.uv]` block exist to enforce.
       #
+      # `--no-project` keeps that resolution independent of whatever project sits
+      # around the script. Without it a newer uv folds the surrounding project's
+      # `[tool.uv]` settings into the script's resolution and then rejects the
+      # script lock as stale — which is how this failed in the adapter repo, whose
+      # root `pyproject.toml` carries an `exclude-newer-package` entry. The script
+      # is byte-identical across repos, so its resolution must be too.
+      #
       # Runs *every* enabled check rather than naming a subset, so adding a check
       # to lint_docs.py can't leave it silently unrun here.
       - name: Check documentation
@@ -164,4 +171,4 @@ jobs:
         run: |
           git rev-parse --verify --quiet "$LINT_BASE^{commit}" > /dev/null \
             || { echo "lint-docs: base '$LINT_BASE' did not resolve" >&2; exit 1; }
-          uv run --locked --script scripts/lint_docs.py --base "$LINT_BASE"
+          uv run --no-project --locked --script scripts/lint_docs.py --base "$LINT_BASE"
