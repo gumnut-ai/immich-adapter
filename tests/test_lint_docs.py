@@ -1988,6 +1988,19 @@ def test_setext_heading_defines_an_anchor(repo: FixtureRepo) -> None:
     assert repo.lint("--check", "anchors").returncode == 0
 
 
+def test_literal_link_syntax_in_a_heading_keeps_both_words() -> None:
+    """`slugify_heading` receives *rendered text*, so it must not re-strip markup.
+
+    Verified against GitHub's renderer: `# \\[foo\\]\\(bar\\)` renders as the text
+    `[foo](bar)`, which slugs to `foobar`. A link-stripping regex reduced it to
+    `foo`, so a valid `#foobar` link was reported broken.
+    """
+    assert slugify_heading("[foo](bar)") == "foobar"
+    # A real link still contributes only its label, because heading_text already
+    # dropped the destination before slugging.
+    assert collect_anchors("# See [the docs](x.md) now") == {"see-the-docs-now"}
+
+
 def test_image_in_a_heading_contributes_no_slug_text() -> None:
     """Alt text is an attribute, not text, so GitHub's anchor ignores it.
 
@@ -2674,7 +2687,10 @@ def test_missing_config_file_fails_loudly(repo: FixtureRepo) -> None:
         ),
         ("Layer 1: `AsyncGumnut` + 429 retry", "layer-1-asyncgumnut--429-retry"),
         ("**Bold** and *italic*", "bold-and-italic"),
-        ("A [linked](http://x) word", "a-linked-word"),
+        # Link syntax reaching this function is *literal* text — `heading_text`
+        # already reduced a real link to its label — so both words survive, which
+        # is what GitHub renders for `# A \[linked\]\(http://x\) word`.
+        ("A [linked](http://x) word", "a-linkedhttpx-word"),
         ("Trailing punctuation!", "trailing-punctuation"),
     ],
 )
@@ -2825,6 +2841,13 @@ def test_blank_frontmatter_leaves_an_unterminated_block_alone() -> None:
         (r"| a | b \| c | d |", 3),
         (r"| a | `x \| y` | c |", 3),
         ("| a | x | y | c |", 4),
+        # Trailing-pipe escaping is decided by backslash *parity*. An even run
+        # means the pipe is the row delimiter: a final cell ending in a literal
+        # backslash counted four cells for a valid three-column row.
+        ("| a | b | c" + "\\" * 2 + "|", 3),
+        # An odd run escapes it, so there is no closing delimiter and the last
+        # cell is `c|`.
+        ("| a | b | c" + "\\" + "|", 3),
     ],
 )
 def test_raw_cell_count_counts_unescaped_delimiters(line: str, expected: int) -> None:

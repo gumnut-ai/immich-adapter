@@ -488,7 +488,15 @@ def has_unterminated_comment(tokens) -> bool:
 
 
 def slugify_heading(heading: str) -> str:
-    """GitHub's heading-anchor slug.
+    """GitHub's heading-anchor slug, given a heading's *rendered text*.
+
+    The input is what `heading_text` extracted from the token stream, so markup is
+    already gone: a link contributes its label, a code span its content without
+    backticks, emphasis its text without markers. This must not try to undo markup
+    a second time. Doing so was wrong in exactly the way that matters — a heading
+    showing link syntax *literally* (`# \\[foo\\]\\(bar\\)`) arrives as the text
+    `[foo](bar)`, and a link-stripping regex reduced it to `foo` when GitHub keeps
+    both words and renders `foobar`.
 
     Two details matter, and getting either wrong produces confident false
     positives (both were caught by running this over the real tree):
@@ -499,13 +507,9 @@ def slugify_heading(heading: str) -> str:
     * `_` survives. It is a word character, and inside a code span it is literal
       text, so `asset_metadata.raw_width` keeps both underscores.
     """
-    s = heading.strip()
-    # Link syntax in a heading contributes only its label.
-    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)
-    # Inline-formatting markup is not part of the rendered text. `_` is excluded
-    # deliberately — see the docstring.
-    s = re.sub(r"[`*~]", "", s)
-    s = s.lower()
+    s = heading.strip().lower()
+    # Everything outside word characters, whitespace, and hyphens goes — which
+    # already covers stray `*`, backtick, and `~` left as literal text.
     s = re.sub(r"[^\w\s-]", "", s, flags=re.UNICODE)
     return s.strip().replace(" ", "-")
 
@@ -1378,12 +1382,20 @@ def raw_cell_count(line: str) -> int:
 
     A `\|` is a literal pipe, not a delimiter. An unescaped pipe splits the cell
     even inside a code span, which is why GFM requires escaping it there too.
+
+    Whether the *trailing* pipe is escaped is decided by the **parity** of the
+    backslash run before it, not by a `\|` suffix test. A final cell ending in a
+    literal backslash (`… | c\\|`) has an even run, so the pipe is the row
+    delimiter — the suffix test read it as escaped, kept it in the body, and
+    counted four cells for a valid three-column row, rejecting it.
     """
     body = line.strip()
     if body.startswith("|"):
         body = body[1:]
-    if body.endswith("|") and not body.endswith(r"\|"):
-        body = body[:-1]
+    if body.endswith("|"):
+        run = len(body) - 1 - len(body[:-1].rstrip("\\"))
+        if run % 2 == 0:
+            body = body[:-1]
     cells, escaped = 1, False
     for ch in body:
         if escaped:
