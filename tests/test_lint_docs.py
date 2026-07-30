@@ -967,6 +967,36 @@ def test_hyphenated_attributes_do_not_define_anchors(
     assert "target" in result.stderr
 
 
+def test_inline_code_anchor_example_is_not_a_real_anchor(repo: FixtureRepo) -> None:
+    """An `<a id>` shown as an inline-code example renders no anchor.
+
+    Counting it let a link to a nonexistent fragment pass — a false negative, the
+    mirror of the code-span handling the link check already had.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, 'Write `<a id="fake"></a>` then [x](#fake).'
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "fake" in result.stderr
+
+
+def test_heading_with_inline_code_keeps_its_slug(repo: FixtureRepo) -> None:
+    """Blanking spans before slugging would break every such heading.
+
+    `slugify_heading` strips backticks itself, so the heading scan must read the text
+    with its code spans intact — otherwise `## The `foo` helper` slugs as
+    `the-xxxxx-helper` and every link to it breaks. This is the regression the scoped
+    fix above avoids.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "## The `foo` helper\n\n[x](#the-foo-helper)"
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0
+
+
 def test_both_id_and_name_on_one_tag_are_collected(repo: FixtureRepo) -> None:
     """`<a name="old" id="new">` defines two fragments; taking the first missed one."""
     repo.write_doc(

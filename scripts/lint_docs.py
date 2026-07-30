@@ -368,7 +368,13 @@ def collect_anchors(text: str) -> set[str]:
     """Every fragment a `#...` link in this file could target."""
     body = blank_fenced_blocks(text)
     anchors: set[str] = set()
-    for tag in HTML_ANCHOR_TAG_RE.findall(body):
+    # Code spans are blanked for the *tag* scan only: an `<a id="fake">` shown as an
+    # inline-code example renders no anchor, so counting it let `[x](#fake)` pass. The
+    # heading scan below deliberately reads `body` with its spans intact, because
+    # `slugify_heading` strips the backticks itself — slugging blanked text would turn
+    # `## The \`foo\` helper` into `the-xxxxx-helper` and break every heading anchor
+    # containing inline code.
+    for tag in HTML_ANCHOR_TAG_RE.findall(blank_code_spans(body)):
         # Every id/name in the tag: `<a name="old" id="new">` defines both.
         for attr in HTML_ANCHOR_ATTR_RE.finditer(tag):
             anchors.add(attr.group(1))
