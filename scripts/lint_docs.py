@@ -2,6 +2,13 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = ["markdown-it-py>=3,<5"]
+#
+# [tool.uv]
+# # Same resolver-layer supply-chain cooldown the test project carries. Without it
+# # `uv run` resolves this dependency in a fresh ephemeral environment on every CI
+# # run, which both bypasses the cooldown and executes a version the test suite
+# # never saw. `lint_docs.py.lock` pins the exact resolution; CI runs `--locked`.
+# exclude-newer = "14 days"
 # ///
 """scripts/lint_docs.py
 

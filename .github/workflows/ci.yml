@@ -119,6 +119,12 @@ jobs:
       # invokes it. Its test suite runs in the `test` job above, via the ordinary
       # pytest collection.
       #
+      # `--locked --script` resolves from the adjacent `lint_docs.py.lock` and
+      # fails if it is stale. Without it uv resolves the `>=3,<5` range fresh in an
+      # ephemeral environment on every run, so this gate would execute a parser
+      # release the test suite never saw, and skip the 14-day resolver cooldown
+      # that the lock and the script's own `[tool.uv]` block exist to enforce.
+      #
       # Runs *every* enabled check rather than naming a subset, so adding a check
       # to lint_docs.py can't leave it silently unrun here.
       - name: Check documentation
@@ -158,4 +164,4 @@ jobs:
         run: |
           git rev-parse --verify --quiet "$LINT_BASE^{commit}" > /dev/null \
             || { echo "lint-docs: base '$LINT_BASE' did not resolve" >&2; exit 1; }
-          uv run scripts/lint_docs.py --base "$LINT_BASE"
+          uv run --locked --script scripts/lint_docs.py --base "$LINT_BASE"

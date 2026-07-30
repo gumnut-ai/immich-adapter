@@ -2723,6 +2723,24 @@ def test_bump_date_line_preserves_indentation() -> None:
     assert "  last-updated: 2026-01-01" in bump_date_line(text, "2026-01-01")
 
 
+def _script_metadata() -> dict:
+    """The script's PEP 723 block, parsed."""
+    import tomllib
+
+    source = SCRIPT.read_text(encoding="utf-8")
+    block = re.search(r"^# /// script$(.*?)^# ///$", source, re.M | re.S)
+    assert block is not None, "lint_docs.py must carry a PEP 723 script block"
+    # Exactly one comment level, per PEP 723's reference algorithm. Stripping two
+    # (`removeprefix("# ").removeprefix("#")`) mangles a TOML comment *inside* the
+    # block into bare text, which then fails to parse.
+    return tomllib.loads(
+        "\n".join(
+            line[2:] if line.startswith("# ") else line[1:]
+            for line in block.group(1).strip().split("\n")
+        )
+    )
+
+
 def test_pep723_dependency_matches_test_environment() -> None:
     """The dependency is declared twice, so pin the two together.
 
@@ -2730,19 +2748,9 @@ def test_pep723_dependency_matches_test_environment() -> None:
     which imports `lint_docs` as a module rather than shelling out. Nothing else
     would notice if they drifted until a version-specific behavior diverged.
     """
-    import tomllib
-
     from markdown_it import __version__ as installed
 
-    source = SCRIPT.read_text(encoding="utf-8")
-    block = re.search(r"^# /// script$(.*?)^# ///$", source, re.M | re.S)
-    assert block is not None, "lint_docs.py must carry a PEP 723 script block"
-    meta = tomllib.loads(
-        "\n".join(
-            line.removeprefix("# ").removeprefix("#")
-            for line in block.group(1).strip().split("\n")
-        )
-    )
+    meta = _script_metadata()
     specs = [d for d in meta["dependencies"] if d.startswith("markdown-it-py")]
     assert len(specs) == 1, meta["dependencies"]
 
@@ -2754,6 +2762,36 @@ def test_pep723_dependency_matches_test_environment() -> None:
         f"installed markdown-it-py {installed} is outside the script's "
         f"declared range {specs[0]}"
     )
+
+
+def test_script_lock_pins_the_tested_version() -> None:
+    """CI must run the parser the suite actually exercised.
+
+    Without the adjacent lockfile, `uv run` resolves the range in a fresh
+    ephemeral environment on every run, so the repo-wide check could execute a
+    release no test ever saw — and skip the resolver cooldown while doing it.
+    This asserts the lock and the test environment agree on the exact version.
+    """
+    import tomllib
+
+    from markdown_it import __version__ as installed
+
+    lock_path = SCRIPT.with_name(SCRIPT.name + ".lock")
+    assert lock_path.is_file(), (
+        f"{lock_path.name} is missing — regenerate with "
+        f"`uv lock --script scripts/lint_docs.py`"
+    )
+    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    pinned = {p["name"]: p["version"] for p in lock["package"]}
+    assert pinned.get("markdown-it-py") == installed, (
+        f"lockfile pins markdown-it-py {pinned.get('markdown-it-py')} but the test "
+        f"environment has {installed}; re-lock both so CI runs what the suite tested"
+    )
+
+
+def test_script_declares_the_supply_chain_cooldown() -> None:
+    """The ephemeral resolve would otherwise bypass the repo's cooldown policy."""
+    assert _script_metadata()["tool"]["uv"]["exclude-newer"] == "14 days"
 
 
 def test_blank_frontmatter_preserves_line_count() -> None:
