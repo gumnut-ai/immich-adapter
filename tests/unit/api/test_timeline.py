@@ -26,6 +26,7 @@ from routers.utils.gumnut_id_conversion import (
 from tests.conftest import (
     MockSyncCursorPage,
     make_gumnut_asset,
+    mock_list_stacks,
     make_gumnut_stack,
     make_gumnut_stack_members,
     make_sdk_status_error,
@@ -1298,7 +1299,6 @@ def _stack_client(bucket_assets, stack_rows=(), *, live_members=None):
     a stack from `stack_rows` models a row that vanished between the two reads.
     """
     live_members = live_members or {}
-    rows_by_id = {row.id: row for row in stack_rows}
 
     def _list_assets(**kwargs):
         if "stack_id" in kwargs:
@@ -1307,15 +1307,7 @@ def _stack_client(bucket_assets, stack_rows=(), *, live_members=None):
 
     client = Mock()
     client.assets.list = Mock(side_effect=_list_assets)
-    client.stacks.list_stacks = Mock(
-        side_effect=lambda **kwargs: MockSyncCursorPage(
-            [
-                rows_by_id[stack_id]
-                for stack_id in kwargs["ids"]
-                if stack_id in rows_by_id
-            ]
-        )
-    )
+    client.stacks.list_stacks = mock_list_stacks(stack_rows)
     return client
 
 
@@ -1381,6 +1373,10 @@ class TestTimeBucketStacks:
 
     @pytest.mark.anyio
     async def test_collapses_a_burst_to_its_cover(self):
+        """Both tuple elements are strings on the wire: upstream emits
+        `count(…)::text` against a `z.array(z.string()).length(2)` schema, and
+        the client parses element 1 with `Number.parseInt`. The equality below
+        fails for an int count or a `UUID` object."""
         stack, members = _stacked_bucket(count=3)
         client = _stack_client(members, [stack])
 
@@ -1392,22 +1388,6 @@ class TestTimeBucketStacks:
 
         assert result["id"] == [str(safe_uuid_from_asset_id(members[0].id))]
         assert result["stack"] == [[str(safe_uuid_from_stack_id(stack.id)), "3"]]
-
-    @pytest.mark.anyio
-    async def test_count_is_a_string_on_the_wire(self):
-        """The client does `Number.parseInt(stack[i][1])` against a schema of
-        `z.array(z.string()).length(2)`."""
-        stack, members = _stacked_bucket(count=2)
-        client = _stack_client(members, [stack])
-
-        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
-            mock_user_id.return_value = uuid4()
-            result = await call_get_time_bucket(
-                timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
-            )
-
-        assert result["stack"] == [[str(safe_uuid_from_stack_id(stack.id)), "2"]]
-        assert all(isinstance(part, str) for part in result["stack"][0])
 
     @pytest.mark.anyio
     async def test_pinned_cover_is_the_surviving_frame(self):
@@ -1424,9 +1404,15 @@ class TestTimeBucketStacks:
         assert result["id"] == [str(safe_uuid_from_asset_id(members[2].id))]
 
     @pytest.mark.anyio
-    async def test_trashed_pin_falls_back_instead_of_emptying_the_burst(self):
-        """A pin the Gumnut API keeps after the asset is trashed names no frame
-        in a live bucket; collapsing against it would erase the whole burst."""
+    async def test_pin_naming_no_live_frame_falls_back(self):
+        """A pin naming no frame in the live bucket — a cover the user trashed,
+        or one that left the stack — must promote a frame that exists, or
+        collapsing against it would erase the whole burst from the month.
+
+        The trashed-pin *divergence* from `resolve_effective_primary` is not
+        observable here: the route only ever hands live members to the selector.
+        `TestSelectTimelineCover` pins that one directly.
+        """
         stack, members = _stacked_bucket(count=3)
         stack.primary_asset_id = make_gumnut_asset().id
         client = _stack_client(members, [stack])

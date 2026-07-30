@@ -43,6 +43,7 @@ from tests.conftest import (
     MockPaginatedListing,
     MockSyncCursorPage,
     make_gumnut_asset,
+    mock_list_stacks,
     make_gumnut_stack,
     make_gumnut_stack_members,
     make_sdk_status_error,
@@ -76,17 +77,8 @@ def _timeline_client(rows, *, members_by_stack: dict[str, list] | None = None):
     made no such read.
     """
     members_by_stack = members_by_stack or {}
-    rows_by_id = {row.id: row for row in rows}
     client = Mock()
-    client.stacks.list_stacks = Mock(
-        side_effect=lambda **kwargs: MockSyncCursorPage(
-            [
-                rows_by_id[stack_id]
-                for stack_id in kwargs["ids"]
-                if stack_id in rows_by_id
-            ]
-        )
-    )
+    client.stacks.list_stacks = mock_list_stacks(rows)
     client.assets.list = Mock(
         side_effect=lambda **kwargs: MockSyncCursorPage(
             members_by_stack.get(kwargs["stack_id"], [])
@@ -748,13 +740,33 @@ class TestSelectTimelineCover:
         assert select_timeline_cover(stack, members) == members[0].id
 
     def test_trashed_pin_falls_back_instead_of_hiding_the_burst(self):
-        """The deliberate divergence from `resolve_effective_primary`: a trashed
-        pin is absent from the live members, and naming it would collapse every
-        live frame away against a cover that isn't in the bucket."""
+        """The deliberate divergence from `resolve_effective_primary`.
+
+        The pinned frame must be genuinely trashed *and* present in the member
+        list for the two rules to part company: that is the branch where
+        `resolve_effective_primary` keeps the pin — so `primaryAssetId` stays
+        non-null — while the timeline must promote a frame the grid can show, or
+        collapse erases the burst. A pin naming some asset that was never a
+        member exercises neither rule's first clause, and both fall through to
+        the earliest frame in agreement.
+
+        Each function gets the input it really receives: the hydrated path sees
+        every member, the timeline path only the live ones.
+        """
+        stack, members = _stack_with_members(
+            count=3, trashed={0}, primary_asset_id=None
+        )
+        stack.primary_asset_id = members[0].id
+
+        assert resolve_effective_primary(stack, members) is members[0]
+        assert select_timeline_cover(stack, members[1:]) == members[1].id
+
+    def test_pin_naming_no_live_frame_falls_back(self):
+        """A pin that left the stack entirely — no clause-1 match for either
+        rule, so both promote the earliest live frame."""
         stack, members = _stack_with_members(count=3, primary_asset_id=None)
         stack.primary_asset_id = make_gumnut_asset().id
 
-        assert resolve_effective_primary(stack, members) is members[0]
         assert select_timeline_cover(stack, members) == members[0].id
 
     def test_stack_with_no_live_members_has_no_cover(self):
@@ -781,8 +793,9 @@ class TestResolveTimelineStacks:
     async def test_complete_stack_resolves_without_a_member_read(self):
         """The fast path: a bucket holding `asset_count` live members holds the
         stack's whole live set, so the cover needs no extra round-trip."""
-        stack, members = _stack_with_members(count=3, primary_asset_id=None)
-        stack.asset_count = 3
+        stack, members = _stack_with_members(
+            count=3, asset_count=3, primary_asset_id=None
+        )
         client = _timeline_client([stack])
 
         resolved = await resolve_timeline_stacks(client, members)
@@ -797,8 +810,9 @@ class TestResolveTimelineStacks:
     async def test_bucket_order_does_not_decide_the_cover(self):
         """Buckets arrive newest-first by default, so a rule reading position
         instead of capture time would pick the burst's last frame."""
-        stack, members = _stack_with_members(count=3, primary_asset_id=None)
-        stack.asset_count = 3
+        stack, members = _stack_with_members(
+            count=3, asset_count=3, primary_asset_id=None
+        )
         client = _timeline_client([stack])
 
         resolved = await resolve_timeline_stacks(client, list(reversed(members)))
@@ -809,8 +823,9 @@ class TestResolveTimelineStacks:
     async def test_partial_stack_falls_back_to_a_member_read(self):
         """A burst straddling a month boundary leaves the bucket short of the
         row's count; the true cover may not be in the bucket at all."""
-        stack, members = _stack_with_members(count=3, primary_asset_id=None)
-        stack.asset_count = 3
+        stack, members = _stack_with_members(
+            count=3, asset_count=3, primary_asset_id=None
+        )
         client = _timeline_client([stack], members_by_stack={stack.id: members})
 
         resolved = await resolve_timeline_stacks(client, members[1:])
@@ -862,8 +877,9 @@ class TestResolveTimelineStacks:
         """The badge reports the stack's live size, not how many of its frames
         this bucket happens to hold — the two differ for any straddling burst,
         and every other test has them equal."""
-        stack, members = _stack_with_members(count=3, primary_asset_id=None)
-        stack.asset_count = 3
+        stack, members = _stack_with_members(
+            count=3, asset_count=3, primary_asset_id=None
+        )
         client = _timeline_client([stack], members_by_stack={stack.id: members})
 
         resolved = await resolve_timeline_stacks(client, members[:2])
@@ -898,8 +914,9 @@ class TestResolveTimelineStacks:
         """`local_datetime` can arrive naive or aware, and comparing the two
         raises — which would 500 a whole month. Without the UTC normalization in
         the sort key this raises instead of resolving."""
-        stack, members = _stack_with_members(count=3, primary_asset_id=None)
-        stack.asset_count = 3
+        stack, members = _stack_with_members(
+            count=3, asset_count=3, primary_asset_id=None
+        )
         members[1].local_datetime = members[1].local_datetime.replace(tzinfo=None)
         client = _timeline_client([stack])
 
@@ -908,7 +925,9 @@ class TestResolveTimelineStacks:
         assert resolved.covers[stack.id] == members[0].id
 
     @pytest.mark.anyio
-    async def test_failed_member_read_leaves_only_that_stack_uncollapsed(self):
+    async def test_failed_member_read_leaves_only_that_stack_uncollapsed(
+        self, caplog: pytest.LogCaptureFixture
+    ):
         """One flaky read should cost that stack its collapse, not the batch —
         `gather_with_concurrency` would otherwise propagate and lose the month."""
         healthy, healthy_members = _stack_with_members(count=3, primary_asset_id=None)
@@ -924,31 +943,50 @@ class TestResolveTimelineStacks:
         client = _timeline_client([healthy, broken])
         client.assets.list = Mock(side_effect=_list_assets)
 
-        resolved = await resolve_timeline_stacks(
-            client, [healthy_members[1], broken_members[1]]
-        )
+        with caplog.at_level(logging.WARNING):
+            resolved = await resolve_timeline_stacks(
+                client, [healthy_members[1], broken_members[1]]
+            )
 
         assert resolved.covers == {healthy.id: healthy_members[0].id}
         assert broken.id not in resolved.tuples
+        # The degradation is invisible to the user by construction, so the
+        # record is the only signal an operator gets. Keyed on `extra` rather
+        # than message text so a reword doesn't break it.
+        (record,) = [r for r in caplog.records if hasattr(r, "failed_stack_count")]
+        assert getattr(record, "failed_stack_count") == 1
+        assert getattr(record, "attempted_stack_count") == 2
 
     @pytest.mark.anyio
-    async def test_member_reads_are_capped_per_request(self):
+    async def test_member_reads_are_capped_per_request(
+        self, caplog: pytest.LogCaptureFixture
+    ):
         """A person-filtered bucket can leave every stack partial, so the total
         read count — not just the in-flight count — needs a bound."""
         total = MAX_TIMELINE_STACK_MEMBER_READS + 5
         stacks, bucket, members_by_stack = [], [], {}
         for _ in range(total):
-            stack, members = _stack_with_members(count=3, primary_asset_id=None)
-            stack.asset_count = 3
+            stack, members = _stack_with_members(
+                count=3, asset_count=3, primary_asset_id=None
+            )
             stacks.append(stack)
             members_by_stack[stack.id] = members
             bucket.append(members[1])
         client = _timeline_client(stacks, members_by_stack=members_by_stack)
 
-        resolved = await resolve_timeline_stacks(client, bucket)
+        with caplog.at_level(logging.WARNING):
+            resolved = await resolve_timeline_stacks(client, bucket)
 
         assert client.assets.list.call_count == MAX_TIMELINE_STACK_MEMBER_READS
-        assert len(resolved.covers) == MAX_TIMELINE_STACK_MEMBER_READS
+        # Capped in bucket order, so the resolved set is the front of the month
+        # rather than an arbitrary slice of whatever order the rows arrived in.
+        assert (
+            list(resolved.covers)
+            == [stack.id for stack in stacks][:MAX_TIMELINE_STACK_MEMBER_READS]
+        )
+        (record,) = [r for r in caplog.records if hasattr(r, "member_read_cap")]
+        assert getattr(record, "partial_stack_count") == total
+        assert getattr(record, "member_read_cap") == MAX_TIMELINE_STACK_MEMBER_READS
 
     @pytest.mark.anyio
     async def test_trashed_bucket_member_cannot_be_named_cover(self):
@@ -963,9 +1001,8 @@ class TestResolveTimelineStacks:
         routing the stack to the member read that resolves it correctly.
         """
         stack, members = _stack_with_members(
-            count=2, trashed={0}, primary_asset_id=None
+            count=2, asset_count=2, trashed={0}, primary_asset_id=None
         )
-        stack.asset_count = 2
         client = _timeline_client([stack], members_by_stack={stack.id: [members[1]]})
 
         resolved = await resolve_timeline_stacks(client, members)
@@ -976,8 +1013,7 @@ class TestResolveTimelineStacks:
     @pytest.mark.anyio
     async def test_stack_with_no_live_members_stays_unresolved(self):
         """`asset_count` is a live count, so zero means nothing to collapse to."""
-        stack, members = _stack_with_members(count=2, trashed={0, 1})
-        stack.asset_count = 0
+        stack, members = _stack_with_members(count=2, asset_count=0, trashed={0, 1})
         client = _timeline_client([stack], members_by_stack={stack.id: []})
 
         resolved = await resolve_timeline_stacks(client, members)

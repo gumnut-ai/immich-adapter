@@ -227,6 +227,26 @@ def make_gumnut_stack_members(
     ]
 
 
+def mock_list_stacks(rows):
+    """A `client.stacks.list_stacks` mock returning the requested subset of `rows`.
+
+    Filters by the `ids` each call asks for rather than replaying `rows`
+    wholesale, so chunked reads get their own chunk back — and so a test can
+    model a row that vanished between the asset read and the stack read simply
+    by leaving that stack out of `rows`.
+    """
+    rows_by_id = {row.id: row for row in rows}
+    return Mock(
+        side_effect=lambda **kwargs: MockSyncCursorPage(
+            [
+                rows_by_id[stack_id]
+                for stack_id in kwargs["ids"]
+                if stack_id in rows_by_id
+            ]
+        )
+    )
+
+
 @pytest.fixture
 def sample_gumnut_asset():
     """Create a sample Gumnut asset object with proper date fields."""

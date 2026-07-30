@@ -451,16 +451,13 @@ async def _live_members_or_none(
     hottest endpoint: the assets have already been read successfully, and one
     failed member read should cost that stack its collapse, not the whole month.
     An unresolved stack is inert — see `TimelineStacks`.
+
+    Silent on purpose; the caller logs one aggregate record for the batch, for
+    the same reason it aggregates the missing-row case.
     """
     try:
         return await fetch_live_stack_members(client, gumnut_stack_id)
     except GumnutError:
-        logger.warning(
-            "Failed to read members of stack %s; leaving its frames uncollapsed",
-            gumnut_stack_id,
-            exc_info=True,
-            extra={"stack_id": gumnut_stack_id},
-        )
         return None
 
 
@@ -527,9 +524,18 @@ async def resolve_timeline_stacks(
 
     bucket_members = _bucket_members_by_stack(assets)
 
+    # Classified by walking `stack_ids`, not `rows_by_id`: rows come back in the
+    # Gumnut API's own order, so slicing the cap off a list built from them
+    # would resolve an arbitrary subset — and, if that order is ever unstable,
+    # a *different* subset per request, making tiles appear and disappear across
+    # reloads. `stack_ids` is bucket order, so the cap keeps the frames nearest
+    # the top of the month.
     complete_ids: list[str] = []
     partial_ids: list[str] = []
-    for stack_id, row in rows_by_id.items():
+    for stack_id in stack_ids:
+        row = rows_by_id.get(stack_id)
+        if row is None:
+            continue
         if len(bucket_members.get(stack_id, [])) == row.asset_count:
             complete_ids.append(stack_id)
         else:
@@ -562,18 +568,38 @@ async def resolve_timeline_stacks(
     # in input order, so a length mismatch would silently pair one stack's
     # members with another's row — and a cover that is not a member collapses
     # away every frame the stack really has.
-    live_members.update(
-        (stack_id, members)
-        for stack_id, members in zip(read_ids, fetched_members, strict=True)
-        if members is not None
-    )
+    failed_ids: list[str] = []
+    for stack_id, members in zip(read_ids, fetched_members, strict=True):
+        if members is None:
+            failed_ids.append(stack_id)
+        else:
+            live_members[stack_id] = members
+
+    if failed_ids:
+        # Aggregated for the same reason as the missing-row record above, and
+        # more urgently: a degraded assets resource that leaves `list_stacks`
+        # healthy never trips the route-level guard, so a per-stack record here
+        # would emit up to `MAX_TIMELINE_STACK_MEMBER_READS` of them per request.
+        logger.warning(
+            "%d of %d timeline stack member reads failed; leaving those frames "
+            "uncollapsed (sample: %s)",
+            len(failed_ids),
+            len(read_ids),
+            failed_ids[:10],
+            extra={
+                "failed_stack_count": len(failed_ids),
+                "attempted_stack_count": len(read_ids),
+                "sample_stack_ids": failed_ids[:10],
+            },
+        )
 
     covers: dict[str, str] = {}
     tuples: dict[str, list[str]] = {}
-    for stack_id, row in rows_by_id.items():
+    for stack_id in stack_ids:
+        row = rows_by_id.get(stack_id)
         members = live_members.get(stack_id)
-        if members is None:
-            # Unresolved: past the read cap, or its member read failed.
+        if row is None or members is None:
+            # Unresolved: no row, past the read cap, or its member read failed.
             continue
         cover_id = select_timeline_cover(row, members)
         if cover_id is None:
@@ -582,10 +608,21 @@ async def resolve_timeline_stacks(
             # are none to keep, so this is a no-op that avoids collapsing
             # against a cover that does not exist.
             continue
+        try:
+            stack_uuid = safe_uuid_from_stack_id(stack_id)
+        except ValueError:
+            # The timeline is the first production consumer of the
+            # `asset_stack_` prefix contract, so a backend prefix change would
+            # otherwise turn a feature designed to degrade into a 500 on the
+            # app's primary view. Unresolved is the honest answer here too.
+            logger.warning(
+                "Stack ID %s is not decodable to an Immich UUID; leaving its "
+                "frames uncollapsed",
+                stack_id,
+                extra={"stack_id": stack_id},
+            )
+            continue
         covers[stack_id] = cover_id
-        tuples[stack_id] = [
-            str(safe_uuid_from_stack_id(stack_id)),
-            str(row.asset_count),
-        ]
+        tuples[stack_id] = [str(stack_uuid), str(row.asset_count)]
 
     return TimelineStacks(covers=covers, tuples=tuples)

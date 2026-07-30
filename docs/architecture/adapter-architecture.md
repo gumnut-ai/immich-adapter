@@ -346,18 +346,13 @@ Immich renders a burst as a single tile carrying a frame-count badge, and it is 
 
 #### Timeline cover vs. effective primary
 
-The timeline cover is the pinned cover when the pin is **live**, otherwise the earliest live frame. This is intentionally not `resolve_effective_primary`, which keeps a *trashed* pin so `StackResponseDto.primaryAssetId` stays non-null. A timeline cover cannot: the collapse drops every frame that is not the cover, so naming a trashed asset removes the whole burst from the grid. Upstream has the same hole — it promotes a new primary only on permanent deletion — but the Gumnut API also preserves a trashed pin until permanent deletion, which turns a transient upstream glitch into a state that can last the whole retention window.
+The cover rule itself lives on `select_timeline_cover` in `routers/utils/stack_conversion.py`; what it does not say is why the divergence from `resolve_effective_primary` is worth having. Upstream Immich has the same hole — a trashed pin hides its stack's live frames — but it promotes a new primary on permanent deletion, so the state is transient. The Gumnut API preserves a trashed pin until permanent deletion too, which stretches that window to the whole retention period and makes matching upstream here a standing way to lose photos from the grid.
 
-The two surfaces can therefore disagree about a trashed pin: `/stacks` reports the user's pin, the timeline shows a frame that exists. The disagreement is invisible on the wire, because the bucket tuple carries no asset ID.
+The consequence is that the two surfaces disagree about a trashed pin: `/stacks` reports the user's pin, the timeline shows a frame that exists. Nothing on the wire can tell, because the bucket tuple carries no asset ID.
 
 #### Cost, and the bucket-count divergence
 
-Resolution usually costs nothing beyond the row read. When the bucket already holds `asset_count` live members of a stack it holds that stack's complete live member set, so the cover resolves from assets already in hand; a whole burst lands in one month, so this is the common case. The fallback is one lean `assets.list(stack_id=…, state="live", order="asc")` per stack, under the shared fan-out bound and additionally capped per request by `MAX_TIMELINE_STACK_MEMBER_READS`.
-
-Two shapes reach that fallback, and they behave differently:
-
-- **A burst straddling a month boundary.** The resolved cover surfaces in the adjacent bucket of the same view, so the burst still renders exactly one tile overall.
-- **An album or person-filtered bucket that also asked for `withStacked`.** The cover is resolved library-wide and may fall outside the filter, in which case the burst is absent from that view entirely. Upstream behaves the same way — its predicate is likewise unconditional on `albumId`/`personId` — and no Immich client sends `withStacked` with either. Any other client may, which is also why the read count is capped: a person-filtered month can leave hundreds of stacks partial, and the bound keeps one inbound request from fanning out into hundreds of upstream ones.
+Resolution usually costs nothing beyond the row read; `resolve_timeline_stacks` documents the fast path, the two shapes that reach the fallback member read, and the per-request cap on it.
 
 **`GET /api/timeline/buckets` counts are not collapsed.** Upstream applies the identical predicate to its count query so counts and contents agree by construction; the adapter cannot, because `assets.counts` has no stack-aware filter and `assets.list` exposes only a single-stack `stack_id` filter — there is no "belongs to any stack" filter to walk. Computing the per-month deduction would mean paginating every stack in the library plus a member read each, on a hot endpoint.
 

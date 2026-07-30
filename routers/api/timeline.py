@@ -297,7 +297,7 @@ async def get_time_bucket(
         # None for a loose asset, and also for a stack the adapter could not
         # resolve — see `TimelineStacks`. Appended in the same loop as every
         # other column so the parallel arrays stay index-aligned.
-        stack_list.append(stacks.tuple_for(asset) if stacks else None)
+        stack_list.append(stacks.tuple_for(asset) if stacks is not None else None)
 
     # Return as dict to bypass Pydantic validation issues with None in List[str]
     # XXX revisit this issue later
