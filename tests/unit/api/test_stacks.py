@@ -8,6 +8,7 @@ become a 404 rather than a response.
 """
 
 import inspect
+import logging
 import math
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
@@ -165,7 +166,23 @@ class TestSearchStacks:
         assert [stack.id for stack in result] == [safe_uuid_from_stack_id(populated.id)]
 
     @pytest.mark.anyio
-    async def test_stops_walking_at_the_cap(self, mock_current_user):
+    async def test_all_trashed_stack_is_omitted(self, mock_current_user):
+        """It hydrates fine but converts to `assets: []` with a cover the client
+        can't fetch, so it is dropped alongside the member-less case."""
+        trashed, trashed_members = make_gumnut_stack_with_members(
+            count=2, trashed={0, 1}, asset_count=0
+        )
+        live, live_members = make_gumnut_stack_with_members(count=2)
+        client = _client((trashed, trashed_members), (live, live_members))
+
+        result = await _search(client, mock_current_user)
+
+        assert [stack.id for stack in result] == [safe_uuid_from_stack_id(live.id)]
+
+    @pytest.mark.anyio
+    async def test_stops_walking_at_the_cap(
+        self, mock_current_user, caplog: pytest.LogCaptureFixture
+    ):
         """Without the break, the walk's cost has no ceiling — every stack past
         the cap is another full member read.
 
@@ -181,7 +198,8 @@ class TestSearchStacks:
         )
         client.stacks.list_stacks = Mock(return_value=listing)
 
-        result = await _search(client, mock_current_user)
+        with caplog.at_level(logging.INFO, logger="routers.api.stacks"):
+            result = await _search(client, mock_current_user)
 
         assert len(result) == SEARCH_STACKS_CAP
         assert listing.pages_fetched == math.ceil(
@@ -189,6 +207,11 @@ class TestSearchStacks:
         )
         # Only the walked stacks cost a member read; the rest were never touched.
         assert client.assets.list.call_count == SEARCH_STACKS_CAP
+        # The truncation is otherwise invisible — this log is the only signal a
+        # library has outgrown the endpoint, so the flag is a contract.
+        record = next(r for r in caplog.records if r.name == "routers.api.stacks")
+        assert getattr(record, "stack_cap_hit") is True
+        assert getattr(record, "stacks_walked") == SEARCH_STACKS_CAP
 
     @pytest.mark.anyio
     async def test_upstream_failure_reaches_the_global_handler(self, mock_current_user):
@@ -401,6 +424,20 @@ class TestGetStack:
     async def test_member_less_stack_is_404(self, mock_current_user):
         stack, _ = make_gumnut_stack_with_members(count=0, asset_count=0)
         client = _client((stack, []))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _get(client, mock_current_user, safe_uuid_from_stack_id(stack.id))
+
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_all_trashed_stack_is_404(self, mock_current_user):
+        """The detail route drops on the same rule the list does, rather than
+        serving an empty `assets` array with an unfetchable cover."""
+        stack, members = make_gumnut_stack_with_members(
+            count=2, trashed={0, 1}, asset_count=0
+        )
+        client = _client((stack, members))
 
         with pytest.raises(HTTPException) as exc_info:
             await _get(client, mock_current_user, safe_uuid_from_stack_id(stack.id))

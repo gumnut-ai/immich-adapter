@@ -216,8 +216,8 @@ def make_gumnut_stack_members(
 
 
 def make_gumnut_stack_with_members(
-    *, count: int, trashed: set[int] | None = None, **stack_kwargs
-):
+    *, count: int, trashed: set[int] | None = None, **stack_kwargs: Any
+) -> tuple[Mock, list[Mock]]:
     """Build a (stack, members) pair whose members all point at the stack.
 
     The pairing is the point: `make_gumnut_stack_members` needs a stack ID, and

@@ -21,6 +21,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_stack_id,
 )
 from routers.utils.stack_conversion import (
+    HydratedStack,
     build_stack_response,
     hydrate_stack,
     hydrate_stacks,
@@ -36,20 +37,37 @@ router = APIRouter(
 
 # Hard cap on stacks returned by an unfiltered `searchStacks`. Immich gives the
 # client no way to ask for a second page, so the endpoint must either answer
-# with the whole library or truncate — and untruncated it is the one request
-# here whose cost has no ceiling. Every stack costs its own member walk, so N
-# stacks means N upstream reads of full `ASSET_INCLUDE` payloads, all resident
-# at once; `hydrate_stacks` bounds how many run concurrently but not how many
-# run. This cap is what makes that finite: 500 member walks at the shared
-# fan-out bound is 50 sequential waves, and the response still carries every
-# member of all 500.
-#
-# `list_stacks` orders by stack ID — stable but arbitrary — so a truncated
-# answer drops a consistent but meaningless subset rather than "the oldest".
-# A library that routinely trips this wants the transpose `hydrate_stacks`
-# describes (one asset walk grouped by `stack_id`) instead of a bigger cap; the
-# log below is what tells you it is happening.
+# with the whole library or truncate; every stack costs its own member walk, and
+# `hydrate_stacks` explains why that total is the part nothing else bounds. A
+# library that routinely trips this wants the transpose described there rather
+# than a bigger number here — the cap-hit log below is what surfaces that.
 SEARCH_STACKS_CAP = 500
+
+
+def _build_representable_response(
+    hydrated: HydratedStack | None, current_user: UserResponseDto
+) -> StackResponseDto | None:
+    """Build a stack's Immich DTO, or `None` when it can't form a valid one.
+
+    Both routes need the same notion of "not representable", and it is wider
+    than `hydrate_stack`'s member-less case: a stack whose members are *all*
+    trashed hydrates fine (`resolve_effective_primary` deliberately keeps naming
+    a cover) but converts to `assets: []` with a `primaryAssetId` no client can
+    fetch — breaking both contracts `build_stack_response` documents, since
+    clients read `assets.length` as the stack's size and `assets[0]` as the
+    cover. Upstream Immich never emits that DTO: it deletes a stack once it
+    falls below two assets, so nothing is written to handle it.
+
+    Trashing every frame of a burst is ordinary user action rather than a
+    backend inconsistency, so unlike the member-less case this one is not
+    logged — `hydrate_stack` already logs that one.
+    """
+    if hydrated is None:
+        return None
+    response = build_stack_response(hydrated, current_user)
+    if not response.assets:
+        return None
+    return response
 
 
 async def _search_by_primary_asset(
@@ -80,11 +98,21 @@ async def _search_by_primary_asset(
         stack = await client.stacks.retrieve_stack(asset.stack_id)
         hydrated = await hydrate_stack(client, stack)
     except NotFoundError:
+        # The only branch here that reaches the client as an ordinary "no
+        # match" while actually being an upstream 404 — every other upstream
+        # failure propagates. Logged so a genuine fault on the asset or stack
+        # read is distinguishable from the races this guard exists for.
+        logger.info(
+            "Stack search for primary asset %s hit an upstream 404; no match",
+            primary_asset_id,
+            extra={"primary_asset_id": str(primary_asset_id)},
+        )
         return []
 
     if hydrated is None or hydrated.primary_asset_id != primary_asset_id:
         return []
-    return [build_stack_response(hydrated, current_user)]
+    response = _build_representable_response(hydrated, current_user)
+    return [response] if response is not None else []
 
 
 @router.get("")
@@ -103,11 +131,11 @@ async def search_stacks(
     neither chronological nor otherwise meaningful). Upstream imposes no order
     either.
 
-    Member-less stacks are dropped rather than represented — `hydrate_stack`
-    logs each one. An upstream failure on any single stack fails the whole
-    request, which `hydrate_stacks` leaves to callers to choose: a partial list
-    that silently omits stacks a backend hiccup touched is worse here than a
-    loud failure, since the client can't tell the two apart.
+    Stacks with nothing to show are dropped — see
+    `_build_representable_response`. An upstream failure on any single stack
+    fails the whole request, which `hydrate_stacks` leaves to callers to choose:
+    a partial list that silently omits stacks a backend hiccup touched is worse
+    here than a loud failure, since the client can't tell the two apart.
     """
     if primaryAssetId is not None:
         return await _search_by_primary_asset(client, primaryAssetId, current_user)
@@ -117,22 +145,25 @@ async def search_stacks(
         stacks.append(stack)
         if len(stacks) >= SEARCH_STACKS_CAP:
             break
+    cap_hit = len(stacks) >= SEARCH_STACKS_CAP
 
     hydrated = await hydrate_stacks(client, stacks)
     responses = [
-        build_stack_response(stack, current_user)
-        for stack in hydrated
-        if stack is not None
+        response
+        for response in (
+            _build_representable_response(stack, current_user) for stack in hydrated
+        )
+        if response is not None
     ]
     logger.info(
-        "stack search: walked %d stacks, returned %d (cap_hit=%s)",
+        "stack search: walked %d stacks, returned %d (stack_cap_hit=%s)",
         len(stacks),
         len(responses),
-        len(stacks) >= SEARCH_STACKS_CAP,
+        cap_hit,
         extra={
             "stacks_walked": len(stacks),
             "stacks_returned": len(responses),
-            "stack_cap_hit": len(stacks) >= SEARCH_STACKS_CAP,
+            "stack_cap_hit": cap_hit,
         },
     )
     return responses
@@ -166,16 +197,17 @@ async def get_stack(
 
     A stack that doesn't exist — or belongs to another user, which the Gumnut
     API answers identically — surfaces as a 404 through the global `GumnutError`
-    handler. A member-less row 404s here instead, since `hydrate_stack` can't
-    render one.
+    handler. A stack with nothing to show 404s here instead, on the same rule
+    the list uses to drop one (see `_build_representable_response`).
     """
     stack = await client.stacks.retrieve_stack(uuid_to_gumnut_stack_id(id))
     hydrated = await hydrate_stack(client, stack)
-    if hydrated is None:
+    response = _build_representable_response(hydrated, current_user)
+    if response is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Stack not found"
         )
-    return build_stack_response(hydrated, current_user)
+    return response
 
 
 @router.put("/{id}")
