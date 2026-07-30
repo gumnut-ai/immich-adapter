@@ -684,9 +684,12 @@ def test_untracked_doc_is_discovered(repo: FixtureRepo) -> None:
     every check — the documented pre-commit run green-lit a malformed doc that CI
     then rejected.
     """
-    repo.write("AGENTS.md", "# A\n")
+    repo.write(
+        "AGENTS.md", _map("References", "| T | `docs/references/x.md` | why |\n")
+    )
+    repo.write_doc("docs/references/x.md", TODAY, "an existing tracked doc")
     repo.commit_all()
-    # Never staged.
+    # Never staged. In scope because `docs/references/` is already a doc root.
     repo.write("docs/references/new.md", "---\ntitle: N\n---\n\nbody\n")
     result = repo.lint("--check", "frontmatter")
     assert result.returncode == 1
@@ -696,7 +699,10 @@ def test_untracked_doc_is_discovered(repo: FixtureRepo) -> None:
 
 def test_untracked_doc_needs_a_current_date(repo: FixtureRepo) -> None:
     """Freshness covers it too: an untracked doc has no base blob to compare."""
-    repo.write("AGENTS.md", "# A\n")
+    repo.write(
+        "AGENTS.md", _map("References", "| T | `docs/references/x.md` | why |\n")
+    )
+    repo.write_doc("docs/references/x.md", TODAY, "an existing tracked doc")
     repo.commit_all()
     repo.write_doc("docs/references/new.md", "2020-01-01", "body")
     result = repo.lint("--check", "freshness", "--base", "main")
@@ -819,14 +825,14 @@ def test_template_exemption_is_scoped_to_the_configured_path(
     and evade the map.
     """
     repo.write(
-        "photos-api/docs/design-docs/TEMPLATE.md",
+        "example-service/docs/design-docs/TEMPLATE.md",
         "---\ntitle: T\nstatus: active\ncreated: YYYY-MM-DD\n"
         "last-updated: YYYY-MM-DD\n---\n\nbody\n",
     )
     repo.commit_all()
     result = repo.lint("--check", "frontmatter")
     assert result.returncode == 1
-    assert "photos-api/docs/design-docs/TEMPLATE.md" in result.stderr
+    assert "example-service/docs/design-docs/TEMPLATE.md" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -1013,6 +1019,139 @@ def test_escaped_bracket_does_not_mask_a_later_real_link(
     assert "ignored.md" not in result.stderr
 
 
+def test_longer_fence_swallows_a_shorter_one(repo: FixtureRepo) -> None:
+    """A ``` line inside a ```` block is content, not a closing fence.
+
+    Toggling on every fence-shaped line turned blanking off mid-block and exposed the
+    rest to the link parser, so an example link inside a longer fence was reported as
+    a real broken link. There is a live instance of this nesting in the shared skills
+    docs.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "````\nouter\n\n```suggestion\n[x](./gone.md)\n```\n````\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_tilde_fence_does_not_close_a_backtick_fence(repo: FixtureRepo) -> None:
+    """Different markers cannot close each other."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "```\n~~~\n[x](./gone.md)\n~~~\n```\n"
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_fences_still_close_normally(repo: FixtureRepo) -> None:
+    """Tracking the opener must not leave the rest of a file blanked.
+
+    A link *after* a closed block has to be checked, or the fix would trade a false
+    positive for a silent miss.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "```\nin code\n```\n\nReal [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_map_row_citing_a_non_doc_file_is_flagged(repo: FixtureRepo) -> None:
+    """A real file is not enough; a map row must route to a document."""
+    repo.write("scripts/tool.py", "x = 1\n")
+    repo.write(
+        "AGENTS.md",
+        _map(
+            "References",
+            "| T | `docs/references/a.md` | why |\n| Bad | `scripts/tool.py` | why |\n",
+        ),
+    )
+    repo.write_doc("docs/references/a.md", TODAY, "body")
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "tool.py" in result.stderr
+
+
+def test_superseded_by_may_name_a_non_markdown_successor(repo: FixtureRepo) -> None:
+    """A deprecated doc's canonical text can be a rendered page.
+
+    So the doc-suffix requirement is scoped to map rows; applying it here broke real
+    `superseded-by` targets pointing at `.astro` pages.
+    """
+    repo.write(
+        "AGENTS.md",
+        _map(
+            "Historical & Deprecated Design Docs",
+            "| T | `docs/design-docs/a.md` | why |\n",
+        ),
+    )
+    repo.write("src/pages/privacy.astro", "<html></html>\n")
+    repo.write(
+        "docs/design-docs/a.md",
+        f"---\ntitle: A\nstatus: deprecated\ncreated: 2020-01-01\n"
+        f"last-updated: {TODAY}\nsuperseded-by: ../../src/pages/privacy.astro\n"
+        f"---\n\nbody\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
+
+
+def test_untracked_tree_cannot_introduce_a_doc_root(repo: FixtureRepo) -> None:
+    """Vendored or scratch trees must not pull unrelated files into scope.
+
+    A deleted `.gitignore` can leave a `node_modules` tree untracked-but-visible; if
+    its packages' `docs/` directories became doc roots, the local lint would fail on
+    thousands of unrelated files.
+    """
+    repo.write(
+        "AGENTS.md", _map("References", "| T | `docs/references/x.md` | why |\n")
+    )
+    repo.write_doc("docs/references/x.md", TODAY, "body")
+    repo.commit_all()
+    repo.write("vendored/pkg/docs/README.md", "# Vendored\n\n[x](./gone.md)\n")
+    assert repo.lint().returncode == 0
+
+
+def test_doc_mapped_only_from_another_project_is_flagged(repo: FixtureRepo) -> None:
+    """Each project's docs are mapped from that project's own map.
+
+    Listed only elsewhere, the doc is undiscoverable to an agent consulting the map
+    responsible for it. Extra cross-references from other maps stay fine.
+    """
+    repo.write(
+        "AGENTS.md",
+        _map("References", "| Cross | `subproj/docs/references/a.md` | why |\n"),
+    )
+    repo.write(
+        "subproj/AGENTS.md", _map("References", "| none | `AGENTS.md` | why |\n")
+    )
+    repo.write_doc("subproj/docs/references/a.md", TODAY, "body")
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "mapped only from outside" in result.stderr
+
+
+def test_cross_reference_alongside_an_owning_row_is_fine(repo: FixtureRepo) -> None:
+    """The rule is per-doc, not per-row: extra cross-project rows are legitimate."""
+    repo.write(
+        "AGENTS.md",
+        _map("References", "| Cross | `subproj/docs/references/a.md` | why |\n"),
+    )
+    repo.write(
+        "subproj/AGENTS.md",
+        _map("References", "| Own | `docs/references/a.md` | why |\n"),
+    )
+    repo.write_doc("subproj/docs/references/a.md", TODAY, "body")
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
+
+
 def test_multi_backtick_code_span_is_blanked(repo: FixtureRepo) -> None:
     """A code span is closed by a run of the same length as its opener.
 
@@ -1164,15 +1303,15 @@ def test_repo_root_prefix_wins_over_a_nearer_same_named_file(
     citing-directory-first sends it to the project copy instead — validating the
     wrong file, and still passing after the intended root target is deleted.
     """
+    # Both forms in one map, which is the disambiguation the marker exists for:
+    # the prefixed citation must reach the root copy, the bare one the project copy.
     repo.write(
         "subproj/AGENTS.md",
-        _map("References", "| Thing | `repo-root docs/references/a.md` | why |\n"),
-    )
-    # Both copies mapped, so the only thing under test is which one the prefixed
-    # citation resolves to.
-    repo.write(
-        "AGENTS.md",
-        _map("References", "| P | `subproj/docs/references/a.md` | why |\n"),
+        _map(
+            "References",
+            "| Root | `repo-root docs/references/a.md` | why |\n"
+            "| Project | `docs/references/a.md` | why |\n",
+        ),
     )
     # Both exist, so a wrong base still resolves — the bug is silent.
     repo.write_doc("subproj/docs/references/a.md", TODAY, "project copy")
@@ -1183,10 +1322,6 @@ def test_repo_root_prefix_wins_over_a_nearer_same_named_file(
     # Delete only the root copy. The row must now fail: if it resolved to the
     # project copy it would keep passing, which is exactly the defect.
     (repo.path / "docs/references/a.md").unlink()
-    repo.write(
-        "AGENTS.md",
-        _map("References", "| P | `subproj/docs/references/a.md` | why |\n"),
-    )
     repo.commit_all()
     result = repo.lint("--check", "map_paths")
     assert result.returncode == 1

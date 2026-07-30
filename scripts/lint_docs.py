@@ -269,7 +269,9 @@ class Violation:
 # Markdown helpers
 # --------------------------------------------------------------------------
 
-FENCE_RE = re.compile(r"^\s*(```|~~~)")
+# The whole delimiter run, not just its first three characters: a fence closes only
+# on the same marker at least as long, so the run length has to be known.
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 # A code span is delimited by a *run* of backticks and closed by a run of the same
 # length. Matching only single backticks left a ``double-backtick`` span unblanked,
@@ -316,15 +318,28 @@ def blank_fenced_blocks(text: str) -> str:
 
     Documentation about markdown syntax lives in fenced blocks; treating those
     examples as real links is the main source of false positives.
+
+    The opening run is tracked rather than toggled on every fence-shaped line. A
+    block opened with ```` contains ``` lines as *content* — toggling on those
+    turned blanking off mid-block and exposed the rest to the link parser, so an
+    example link inside a longer fence was reported as a real broken link. A tilde
+    fence likewise cannot close a backtick one.
     """
     out: list[str] = []
-    in_fence = False
+    fence: str | None = None
     for line in text.split("\n"):
-        if FENCE_RE.match(line):
-            in_fence = not in_fence
+        match = FENCE_RE.match(line)
+        if match:
+            run = match.group(1)
+            if fence is None:
+                fence = run
+            elif run[0] == fence[0] and len(run) >= len(fence):
+                fence = None
+            # Otherwise a shorter or differently-marked run inside a block: content,
+            # blanked like the rest of it.
             out.append("")
             continue
-        out.append("" if in_fence else line)
+        out.append("" if fence is not None else line)
     return "\n".join(out)
 
 
@@ -492,7 +507,12 @@ class Repo:
         return os.path.normpath(joined).startswith("..")
 
     def resolve(
-        self, cite: str, relative_to: str, *, require_file: bool = False
+        self,
+        cite: str,
+        relative_to: str,
+        *,
+        require_file: bool = False,
+        require_doc: bool = False,
     ) -> str | None:
         """Resolve a cited path to a repo-relative path, or None.
 
@@ -530,7 +550,14 @@ class Repo:
             # `exists()` while routing a reader to no document at all, and outside
             # `design-docs/` nothing else would notice. Prose links stay lenient —
             # a README linking to `docs/` is deliberate and renders fine.
-            if require_file and not candidate.is_file():
+            if (require_file or require_doc) and not candidate.is_file():
+                continue
+            # `require_doc` additionally demands a documentation suffix, for a citation
+            # whose whole purpose is to route a reader to a *doc*: a map row citing
+            # `scripts/lint_docs.py` resolves to a real file and still routes nowhere.
+            # Not applied to `superseded-by`, which legitimately names a non-markdown
+            # successor — a deprecated doc whose canonical text is now a rendered page.
+            if require_doc and not candidate.name.endswith(DOC_SUFFIXES):
                 continue
             if not candidate.exists():
                 continue
@@ -584,14 +611,23 @@ def discover_repo(config: Config) -> Repo:
         text=True,
         check=True,
     ).stdout.split("\0")
-    tracked = sorted({p for p in listed if p and (root / p).is_file()})
-
-    docs = tuple(
-        p for p in tracked if p.endswith(DOC_SUFFIXES) and not is_in_hidden_dir(p)
-    )
+    present = sorted({p for p in listed if p and (root / p).is_file()})
+    tracked_only = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split("\0")
+    tracked = [p for p in tracked_only if p and (root / p).is_file()]
 
     # Doc roots and project roots are discovered, not configured: any tracked
     # directory named `docs` is a doc root, and its parent is a project root.
+    #
+    # Discovered from *tracked* paths only. An untracked tree must not be able to
+    # introduce a doc root — vendored packages a deleted `.gitignore` stopped
+    # covering, or a checkout parked inside the repo, would otherwise pull thousands
+    # of unrelated files into scope. Untracked docs are still linted, but only inside
+    # a root the repo already has, so `.gitignore` completeness is not load-bearing.
     doc_roots: set[str] = set()
     project_roots: set[str] = set()
     for p in tracked:
@@ -602,6 +638,14 @@ def discover_repo(config: Config) -> Repo:
             doc_roots.add("/".join(parts[: i + 1]))
             project_roots.add("/".join(parts[:i]))
     project_roots.discard("")
+
+    docs = tuple(
+        p
+        for p in present
+        if p.endswith(DOC_SUFFIXES)
+        and not is_in_hidden_dir(p)
+        and (p in set(tracked) or any(p.startswith(dr + "/") for dr in doc_roots))
+    )
 
     return Repo(
         root=root,
@@ -1126,10 +1170,17 @@ def is_historical_section(section: str) -> bool:
     return normalize_section(section) == HISTORICAL_SECTION
 
 
-def check_maps(repo: Repo, enabled: frozenset[str]) -> tuple[list[Violation], set[str]]:
-    """Run the map checks. Returns (violations, set of mapped doc paths)."""
+def check_maps(
+    repo: Repo, enabled: frozenset[str]
+) -> tuple[list[Violation], dict[str, set[str]]]:
+    """Run the map checks.
+
+    Returns (violations, {doc path: the map files citing it}). The citing maps are
+    kept, not just the fact of being cited, so `check_unmapped` can tell a doc mapped
+    by its *own* project from one only cross-referenced from elsewhere.
+    """
     violations: list[Violation] = []
-    mapped: set[str] = set()
+    mapped: dict[str, set[str]] = {}
 
     for map_rel in find_map_files(repo):
         # A map section may legitimately hold no table — a repo whose real map
@@ -1177,7 +1228,7 @@ def check_maps(repo: Repo, enabled: frozenset[str]) -> tuple[list[Violation], se
                 continue
             if repo.is_cross_repo(cite, map_rel):
                 continue
-            resolved = repo.resolve(cite, map_rel, require_file=True)
+            resolved = repo.resolve(cite, map_rel, require_doc=True)
             if resolved is None:
                 if "map_paths" in enabled and not repo.config.ignored(
                     map_rel, "map_paths"
@@ -1192,7 +1243,7 @@ def check_maps(repo: Repo, enabled: frozenset[str]) -> tuple[list[Violation], se
                         )
                     )
                 continue
-            mapped.add(resolved)
+            mapped.setdefault(resolved, set()).add(map_rel)
 
             if "map_status_section" in enabled and not repo.config.ignored(
                 map_rel, "map_status_section"
@@ -1284,7 +1335,16 @@ def check_row_status_section(repo: Repo, row: MapRow, resolved: str) -> list[Vio
     return []
 
 
-def check_unmapped(repo: Repo, mapped: set[str]) -> list[Violation]:
+def owning_project(rel: str, project_roots: tuple[str, ...]) -> str:
+    """The deepest project root containing `rel`, or "" for a repo-level path."""
+    best = ""
+    for root in project_roots:
+        if rel.startswith(root + "/") and len(root) > len(best):
+            best = root
+    return best
+
+
+def check_unmapped(repo: Repo, mapped: dict[str, set[str]]) -> list[Violation]:
     """Fail on any doc under a doc root that no map routes to.
 
     Adding a doc means adding its map row in the same change: the map is the only
@@ -1307,19 +1367,37 @@ def check_unmapped(repo: Repo, mapped: set[str]) -> list[Violation]:
             continue
         if "/generated/" in f"/{rel}":
             continue
-        if repo.config.is_template(rel) or rel in mapped:
+        if repo.config.is_template(rel):
             continue
         if repo.config.ignored(rel, "map_paths"):
             continue
         kind = "design doc" if "/design-docs/" in f"/{rel}" else "doc"
-        out.append(
-            Violation(
-                "map_paths",
-                rel,
-                f"{kind} has no Documentation Map row; agents surface docs "
-                f"only through the maps",
+        citing = mapped.get(rel, set())
+        if not citing:
+            out.append(
+                Violation(
+                    "map_paths",
+                    rel,
+                    f"{kind} has no Documentation Map row; agents surface docs "
+                    f"only through the maps",
+                )
             )
-        )
+            continue
+        # Being cited *somewhere* is not enough. Each project's docs are mapped from
+        # that project's own map, so a doc listed only in another project's map is
+        # undiscoverable to an agent consulting the one responsible for it. Extra
+        # cross-references from other maps are fine and common.
+        project = owning_project(rel, repo.project_roots)
+        if project and not any(m.startswith(project + "/") for m in citing):
+            out.append(
+                Violation(
+                    "map_paths",
+                    rel,
+                    f"{kind} is mapped only from outside `{project}/` "
+                    f"({', '.join(sorted(citing))}); it needs a row in a map "
+                    f"inside `{project}/`",
+                )
+            )
     return out
 
 
