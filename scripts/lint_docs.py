@@ -312,42 +312,6 @@ TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 MAP_HEADING_RE = re.compile(r"^Documentation Map$")
 
 
-def blank_fenced_blocks(text: str) -> str:
-    """Replace fenced-code lines with empty ones, preserving line numbering.
-
-    Documentation about markdown syntax lives in fenced blocks; treating those
-    examples as real links is the main source of false positives.
-
-    The opening run is tracked rather than toggled on every fence-shaped line. A
-    block opened with ```` contains ``` lines as *content* — toggling on those
-    turned blanking off mid-block and exposed the rest to the link parser, so an
-    example link inside a longer fence was reported as a real broken link. A tilde
-    fence likewise cannot close a backtick one.
-    """
-    out: list[str] = []
-    fence: str | None = None
-    for line in text.split("\n"):
-        match = FENCE_RE.match(line)
-        if match:
-            run, rest = match.group(1), match.group(2)
-            if fence is None:
-                fence = run
-            elif (
-                run[0] == fence[0]
-                and len(run) >= len(fence)
-                # A closing fence carries no info string, so a same-length
-                # language-tagged line inside the block is content, not the closer.
-                and not rest.strip()
-            ):
-                fence = None
-            # Otherwise a shorter, differently-marked, or tagged run inside a block:
-            # content, blanked like the rest of it.
-            out.append("")
-            continue
-        out.append("" if fence is not None else line)
-    return "\n".join(out)
-
-
 def blank_noncontent(text: str, *, blank_spans: bool = True) -> str:
     """Blank fenced blocks, HTML comments, and optionally inline code spans.
 
@@ -383,20 +347,33 @@ def has_unterminated_comment(text: str) -> bool:
 
 
 def _blank_scan(text: str, blank_spans: bool) -> tuple[list[str], bool]:
-    """The scan itself. Returns (blanked lines, ended inside an open comment)."""
+    """The scan itself. Returns (blanked lines, ended inside an open comment).
+
+    Three states persist across lines, each for a reason CommonMark dictates:
+
+    * **fence** — a fenced block runs until a matching closing fence.
+    * **comment** — an HTML comment block runs to `-->`, across blank lines.
+    * **code span** — a span may contain line endings, but only within a paragraph, so
+      a blank line ends the paragraph and an unclosed span was literal text after all.
+      Fences are block constructs parsed before inlines, so a fence line also ends it.
+
+    Carrying none of these was a real defect rather than a nicety: a span opened on one
+    line and closed on the next left a `<!--` inside it looking like a live comment
+    opener, which both reported a spurious unterminated-comment error and swallowed the
+    links after the span.
+    """
     out: list[str] = []
     fence: str | None = None
     in_comment = False
+    span: str | None = None
     for line in text.split("\n"):
         if in_comment:
             end = line.find("-->")
             if end == -1:
                 out.append("")
                 continue
-            rest, in_comment = line[end + 3 :], False
-            scanned, opened = _scan_inline(rest, blank_spans)
-            out.append(scanned)
-            in_comment = opened
+            scanned, span, in_comment = _scan_inline(line[end + 3 :], blank_spans, None)
+            out.append(" " * (end + 3) + scanned)
             continue
         match = FENCE_RE.match(line)
         if fence is not None:
@@ -408,37 +385,78 @@ def _blank_scan(text: str, blank_spans: bool) -> tuple[list[str], bool]:
             ):
                 fence = None
             out.append("")
+            span = None
             continue
         if match:
             fence = match.group(1)
             out.append("")
+            span = None
             continue
-        scanned, in_comment = _scan_inline(line, blank_spans)
+        if not line.strip():
+            span = None
+            out.append(line)
+            continue
+        scanned, span, in_comment = _scan_inline(line, blank_spans, span)
         out.append(scanned)
     return out, in_comment
 
 
-def _scan_inline(line: str, blank_spans: bool) -> tuple[str, bool]:
-    """Blank code spans and comments in one line. Returns (line, comment left open)."""
+def _find_closing_run(line: str, run: str, start: int) -> int:
+    """Index of a backtick run of *exactly* `len(run)`, at or after `start`.
+
+    Both sides are checked. Looking only at the character after the candidate accepted
+    a suffix of a longer run — in `` `foo`` x` `` the double run cannot close a single
+    backtick span, but the second of its two backticks passed the one-sided test, so the
+    span was closed early and the code content after it was scanned as live markdown.
+    """
+    width, n = len(run), len(line)
+    i = start
+    while True:
+        at = line.find(run, i)
+        if at == -1:
+            return -1
+        if (at == 0 or line[at - 1] != "`") and (
+            at + width >= n or line[at + width] != "`"
+        ):
+            return at
+        i = at + 1
+
+
+def _scan_inline(
+    line: str, blank_spans: bool, span: str | None
+) -> tuple[str, str | None, bool]:
+    """Blank code spans and comments in one line.
+
+    Returns (line, code-span run still open, comment left open).
+    """
     out: list[str] = []
     i, n = 0, len(line)
+    if span is not None:
+        close = _find_closing_run(line, span, 0)
+        if close == -1:
+            return ("x" * n if blank_spans else line), span, False
+        end = close + len(span)
+        out.append("x" * end if blank_spans else line[:end])
+        i = end
     while i < n:
-        if line[i] == "`":
+        char = line[i]
+        # A backslash escape makes the next punctuation character literal, so `\<!--`
+        # opens no comment and ``\` `` opens no span. Both were being read as markup,
+        # each swallowing the live links after it.
+        if char == "\\" and i + 1 < n and not line[i + 1].isalnum():
+            out.append(line[i : i + 2])
+            i += 2
+            continue
+        if char == "`":
             j = i
             while j < n and line[j] == "`":
                 j += 1
             run = line[i:j]
-            close = line.find(run, j)
-            # A closing run must be exactly this long, not part of a longer one.
-            while (
-                close != -1 and close + len(run) < n and line[close + len(run)] == "`"
-            ):
-                close = line.find(run, close + 1)
+            close = _find_closing_run(line, run, j)
             if close == -1:
-                # Unterminated: not a span, so the backticks are literal text.
-                out.append(run)
-                i = j
-                continue
+                # Unclosed on this line: it may continue into the next one.
+                out.append("x" * (n - i) if blank_spans else line[i:])
+                return "".join(out), run, False
             end = close + len(run)
             out.append("x" * (end - i) if blank_spans else line[i:end])
             i = end
@@ -446,22 +464,12 @@ def _scan_inline(line: str, blank_spans: bool) -> tuple[str, bool]:
         if line.startswith("<!--", i):
             close = line.find("-->", i + 4)
             if close == -1:
-                return "".join(out), True
+                return "".join(out) + " " * (n - i), None, True
             i = close + 3
             continue
-        out.append(line[i])
+        out.append(char)
         i += 1
-    return "".join(out), False
-
-
-def blank_code_spans(text: str) -> str:
-    """Neutralize inline code spans, preserving offsets and line numbering.
-
-    Same-length filler means a link *inside* a span stops parsing (its brackets
-    are gone) while a link with a backticked *label* still parses with its target
-    intact: [`foo.md`](foo.md) -> [xxxxxxxxx](foo.md).
-    """
-    return CODESPAN_RE.sub(lambda m: "x" * len(m.group(0)), text)
+    return "".join(out), None, False
 
 
 def slugify_heading(heading: str) -> str:
@@ -1248,7 +1256,7 @@ def find_map_files(repo: Repo) -> list[str]:
     """
     out: list[str] = []
     for rel in repo.docs:
-        for line in blank_fenced_blocks(repo.text(rel)).split("\n"):
+        for line in blank_noncontent(repo.text(rel), blank_spans=False).split("\n"):
             m = HEADING_RE.match(line)
             if m and is_map_heading(m.group(2)):
                 out.append(rel)
@@ -1309,7 +1317,7 @@ def parse_map_rows(repo: Repo, map_rel: str) -> list[MapRow]:
     map_level = 0
     section = ""
     for lineno, line in enumerate(
-        blank_fenced_blocks(repo.text(map_rel)).split("\n"), 1
+        blank_noncontent(repo.text(map_rel), blank_spans=False).split("\n"), 1
     ):
         m = HEADING_RE.match(line)
         if m:

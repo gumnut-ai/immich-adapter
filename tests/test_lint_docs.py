@@ -22,8 +22,7 @@ from pathlib import Path
 import pytest
 
 from lint_docs import (
-    blank_code_spans,
-    blank_fenced_blocks,
+    blank_noncontent,
     bump_date_line,
     collect_anchors,
     has_last_updated_key,
@@ -1343,6 +1342,97 @@ def test_unterminated_comment_is_reported(repo: FixtureRepo) -> None:
     assert "never closed" in result.stderr
 
 
+def test_escaped_comment_opener_is_not_a_comment(repo: FixtureRepo) -> None:
+    r"""`\<!--` renders the delimiter as text, so the links after it stay live.
+
+    Treating it as an opener swallowed them — a silent miss.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        r"Write \<!-- then [x](./gone.md) and --> to comment out.",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_escaped_backtick_does_not_open_a_span(repo: FixtureRepo) -> None:
+    r"""Same rule for ``\```: an escaped delimiter is literal text."""
+    repo.write_doc("docs/references/a.md", TODAY, r"\`not a span [x](./gone.md)")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_code_span_may_cross_a_line_break(repo: FixtureRepo) -> None:
+    """CommonMark spans may contain line endings.
+
+    Scanning each line independently made a span opened on one line and closed on the
+    next look like literal backticks, so a `<!--` inside it opened a comment: a spurious
+    unterminated-comment error *and* the links after the span swallowed.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "Write `example\n<!-- draft\ntext` and it is code.",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_link_after_a_multiline_span_is_still_checked(repo: FixtureRepo) -> None:
+    """Carrying span state must not blank past the span's close."""
+    repo.write_doc("docs/references/a.md", TODAY, "`a\nb` then [x](./gone.md).")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_blank_line_ends_an_unclosed_span(repo: FixtureRepo) -> None:
+    """A span cannot cross a paragraph break, so the backtick was literal.
+
+    Without this bound, one stray backtick would blank the rest of the file.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "`unclosed\n\nThen [x](./gone.md).")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_longer_backtick_run_cannot_close_a_shorter_span(
+    repo: FixtureRepo,
+) -> None:
+    """A closing run must be exactly the opener's length, checked on both sides.
+
+    Testing only the character *after* a candidate accepted a suffix of a longer run, so
+    the span closed early and its code content was scanned as live markdown — failing a
+    required check on valid input.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "`foo`` [x](./gone.md)`")
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_commented_out_map_row_is_not_validated(repo: FixtureRepo) -> None:
+    """A row inside an HTML comment renders nothing, so it routes no one.
+
+    Map parsing previously blanked only fenced blocks.
+    """
+    repo.write(
+        "AGENTS.md",
+        _map("References", "| T | `docs/references/a.md` | why |\n")
+        + "<!-- | Old | `docs/references/gone.md` | why | -->\n",
+    )
+    repo.write_doc("docs/references/a.md", TODAY, "body")
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
+
+
 def test_comment_delimiter_shown_as_code_is_not_a_comment(repo: FixtureRepo) -> None:
     """A `<!--` displayed as code must not pair with a later real `-->`.
 
@@ -2016,13 +2106,13 @@ def test_bump_date_line_preserves_indentation() -> None:
     assert "  last-updated: 2026-01-01" in bump_date_line(text, "2026-01-01")
 
 
-def test_blank_fenced_blocks_preserves_line_count() -> None:
+def test_blanking_preserves_line_count() -> None:
     text = "a\n```\nb\n```\nc\n"
-    assert len(blank_fenced_blocks(text).split("\n")) == len(text.split("\n"))
+    assert len(blank_noncontent(text).split("\n")) == len(text.split("\n"))
 
 
-def test_blank_code_spans_preserves_offsets() -> None:
+def test_blanking_preserves_offsets() -> None:
     text = "see `[x](y.md)` here"
-    blanked = blank_code_spans(text)
+    blanked = blank_noncontent(text)
     assert len(blanked) == len(text)
     assert "[x](y.md)" not in blanked
