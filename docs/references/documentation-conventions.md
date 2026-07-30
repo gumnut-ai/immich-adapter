@@ -20,11 +20,11 @@ How to write and maintain documentation in this repository.
 
 ## Documentation Checks
 
-`scripts/lint_docs.py` runs in CI and locally from anywhere in the repo:
+`scripts/lint_docs.py` runs in CI and locally from anywhere in the repo. It parses Markdown with `markdown-it-py`, declared in the script's own PEP 723 header, so `uv` resolves the dependency and there is no project to install:
 
 ```bash
-python3 scripts/lint_docs.py
-python3 scripts/lint_docs.py --fix
+uv run scripts/lint_docs.py
+uv run scripts/lint_docs.py --fix
 ```
 
 It checks:
@@ -131,7 +131,7 @@ Retire a completed doc when an evergreen doc owns the live subject, the body wou
 
 ## Freshness
 
-Bump `last-updated:` whenever a doc body changes meaningfully. Run `python3 scripts/lint_docs.py --fix` to update missed dates. A content-preserving rename does not require a bump; a renamed-and-edited doc does.
+Bump `last-updated:` whenever a doc body changes meaningfully. Run `uv run scripts/lint_docs.py --fix` to update missed dates. A content-preserving rename does not require a bump; a renamed-and-edited doc does.
 
 Do not leave a date-only bump after reverting the body edit that prompted it. Compare the final file against `main`.
 

@@ -16,11 +16,11 @@ Run from the `immich-adapter/` directory:
 - **Lint**: `uv run ruff check`
 - **Type check**: `uv run pyright`
 - **Test**: `uv run pytest`
-- **Docs**: `python3 scripts/lint_docs.py` (`--fix` bumps stale `last-updated:` dates) — see § Documentation Checks below
+- **Docs**: `uv run scripts/lint_docs.py` (`--fix` bumps stale `last-updated:` dates) — see § Documentation Checks below
 
 # Documentation Checks
 
-`scripts/lint_docs.py` runs on every PR in `.github/workflows/ci.yml`; use `--fix` to bump missed dates. The complete frontmatter, map, lifecycle, path, and review contract is local in `docs/references/documentation-conventions.md`. The linter is kept byte-identical to the Gumnut Photos copy, with repo differences in `scripts/lint_docs.toml`.
+`scripts/lint_docs.py` runs on every PR in `.github/workflows/ci.yml`; use `uv run scripts/lint_docs.py --fix` to bump missed dates. The complete frontmatter, map, lifecycle, path, and review contract is local in `docs/references/documentation-conventions.md`. The linter is kept byte-identical to the Gumnut Photos copy, with repo differences in `scripts/lint_docs.toml`.
 
 # Documentation Map
 
