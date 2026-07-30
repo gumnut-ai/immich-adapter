@@ -275,10 +275,28 @@ CODESPAN_RE = re.compile(r"`[^`\n]*`")
 # Two destination forms: bare, and the angle-bracket form CommonMark requires
 # for a destination containing spaces. Matching only the bare form meant an
 # angle-bracket link yielded no target at all, so a broken one passed unseen.
+# Inline links, covering the destination and title forms CommonMark allows. Each
+# omission was a silent miss or a false positive, not a cosmetic gap:
+#   * `<...>` — the required form when a destination contains spaces. Unmatched, the
+#     link yielded no target at all, so a broken one was never seen.
+#   * `'...'` and `(...)` titles — a link carrying one did not match, so its target
+#     went unchecked.
+#   * balanced parens in a bare destination (`foo_(bar).md`) — truncating at the
+#     first `)` reported a *false* break on a file that exists.
 LINK_RE = re.compile(
-    r"(?<!!)\[([^\]\[]*)\]\(\s*(?:<([^>]*)>|([^)\s]+))(?:\s+\"[^\"]*\")?\s*\)"
+    r"(?<!!)\[([^\]\[]*)\]\(\s*"
+    r"(?:<([^>]*)>|((?:[^()\s]|\((?:[^()\s]*)\))+))"
+    r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^()]*\)))?\s*\)"
 )
-HTML_ANCHOR_RE = re.compile(r"<a\s+(?:id|name)=[\"']([^\"']+)[\"']")
+# Two steps rather than one pattern: find each opening `<a ...>` tag, then take its
+# `id`/`name` from anywhere inside it. Requiring the attribute to come *first* meant
+# `<a class="permalink" id="target">` contributed no anchor, so a valid
+# `[link](#target)` was reported broken — a false positive that blocks CI, which is
+# worse than a miss.
+HTML_ANCHOR_TAG_RE = re.compile(r"<a\s[^>]*>", re.IGNORECASE | re.DOTALL)
+HTML_ANCHOR_ATTR_RE = re.compile(
+    r"\b(?:id|name)\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE
+)
 TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 # Exact match, so a heading that merely *starts* with the phrase is not read as a
 # map. Prose sections about the convention do (`Documentation Maps`,
@@ -340,7 +358,11 @@ def slugify_heading(heading: str) -> str:
 def collect_anchors(text: str) -> set[str]:
     """Every fragment a `#...` link in this file could target."""
     body = blank_fenced_blocks(text)
-    anchors: set[str] = set(HTML_ANCHOR_RE.findall(body))
+    anchors: set[str] = set()
+    for tag in HTML_ANCHOR_TAG_RE.findall(body):
+        attr = HTML_ANCHOR_ATTR_RE.search(tag)
+        if attr:
+            anchors.add(attr.group(1))
     seen: dict[str, int] = {}
     for line in body.split("\n"):
         m = HEADING_RE.match(line)
@@ -1257,31 +1279,39 @@ def check_row_status_section(repo: Repo, row: MapRow, resolved: str) -> list[Vio
 
 
 def check_unmapped(repo: Repo, mapped: set[str]) -> list[Violation]:
-    """Fail on a design doc no map routes to.
+    """Fail on any doc under a doc root that no map routes to.
 
-    The conventions require a row for every design doc whatever its `status:` —
-    the map is the only route to a doc, and `status:` sorts a historical doc into
-    the Historical section rather than out of the table. So an unmapped design doc
-    is unreachable, and reporting it as a warning let one merge that way, since a
-    warnings-only run still exits 0.
+    Adding a doc means adding its map row in the same change: the map is the only
+    route agents have to it, and for a design doc `status:` sorts it into the
+    Historical section rather than out of the table. An unmapped doc is unreachable,
+    and reporting that as a warning let one merge anyway, since a warnings-only run
+    still exits 0.
 
-    The template is the sole documented exception; its `status:` is placeholder
-    text rather than a live plan.
+    Scoped to design docs, this missed a new `architecture/`, `references/`, or
+    `guides/` doc entirely — those have no other backstop at all, whereas a design
+    doc at least also goes through the status/section check.
+
+    Two exemptions: `generated/`, which the conventions explicitly do not map since
+    it is regenerated rather than authored, and a configured template, whose
+    frontmatter is placeholder text.
     """
     out: list[Violation] = []
     for rel in repo.docs:
-        if "/design-docs/" not in f"/{rel}":
+        if not under_doc_root(repo, rel):
+            continue
+        if "/generated/" in f"/{rel}":
             continue
         if repo.config.is_template(rel) or rel in mapped:
             continue
         if repo.config.ignored(rel, "map_paths"):
             continue
+        kind = "design doc" if "/design-docs/" in f"/{rel}" else "doc"
         out.append(
             Violation(
                 "map_paths",
                 rel,
-                "design doc has no Documentation Map row; agents surface docs "
-                "only through the maps",
+                f"{kind} has no Documentation Map row; agents surface docs "
+                f"only through the maps",
             )
         )
     return out

@@ -583,7 +583,9 @@ def test_plural_documentation_maps_heading_is_not_a_map(repo: FixtureRepo) -> No
     )
     repo.commit_all()
     result = repo.lint("--check", "map_paths")
-    assert result.returncode == 0, result.stderr
+    # The doc itself is unmapped (no map exists here), which is a separate rule.
+    # What matters is that the illustrative path was not validated as a map row.
+    assert "not-a-real-doc.md" not in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -610,7 +612,11 @@ def test_headings_that_only_start_with_the_phrase_are_not_maps(
     )
     repo.commit_all()
     result = repo.lint("--check", "map_paths")
-    assert result.returncode == 0, result.stderr
+    # The doc is unmapped here (no map exists), which is a separate rule with its
+    # own test. What matters is that the two-column prose table was not parsed as
+    # map rows — which would report a wrong column count and a directory target.
+    assert "columns" not in result.stderr
+    assert "docs/architecture/" not in result.stderr
 
 
 def test_map_row_without_a_backticked_path_is_flagged(repo: FixtureRepo) -> None:
@@ -893,6 +899,92 @@ def test_unknown_check_name_in_config_is_rejected(repo: FixtureRepo) -> None:
     assert "map_cell" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("link", "should_fail"),
+    [
+        ("[a](missing.md 'title')", True),
+        ('[a](missing.md "title")', True),
+        ("[a](missing.md (title))", True),
+        ("[a](<missing file.md>)", True),
+        ("[a](real_(paren).md)", False),
+        ("[a](real_(paren).md 'title')", False),
+    ],
+    ids=[
+        "single-quoted",
+        "double-quoted",
+        "paren-title",
+        "angle",
+        "balanced-parens",
+        "balanced-parens-titled",
+    ],
+)
+def test_inline_link_forms_are_parsed(
+    repo: FixtureRepo, link: str, should_fail: bool
+) -> None:
+    """Every destination and title form CommonMark allows must be resolved.
+
+    An unmatched form is not judged valid, it is never seen — so a broken target
+    passed. Truncating a bare destination at the first `)` did the opposite and
+    reported a false break on a file that exists.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, f"See {link}.")
+    repo.write_doc("docs/references/real_(paren).md", TODAY, "body")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == (1 if should_fail else 0), result.stderr
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        '<a id="target">',
+        '<a name="target">',
+        '<a class="permalink" id="target">',
+        "<a id = 'target'>",
+        '<a class="c" href="#other" name="target">',
+    ],
+    ids=["id", "name", "id-after-class", "spaced-equals", "name-last"],
+)
+def test_explicit_anchor_is_found_regardless_of_attribute_order(
+    repo: FixtureRepo, tag: str
+) -> None:
+    """Requiring the attribute first made a valid link report broken.
+
+    A false positive blocks CI, which is worse than a miss.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, f"{tag}Heading</a>\n\n[x](#target)")
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0, tag
+
+
+def test_unmapped_non_design_doc_is_flagged(repo: FixtureRepo) -> None:
+    """Scoped to design docs, this missed architecture/reference/guide docs.
+
+    Those have no other backstop at all — a design doc at least also goes through
+    the status/section check.
+    """
+    repo.write(
+        "AGENTS.md", _map("References", "| T | `docs/references/a.md` | why |\n")
+    )
+    repo.write_doc("docs/references/a.md", TODAY, "mapped")
+    repo.write_doc("docs/architecture/orphan.md", TODAY, "not mapped")
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "orphan.md" in result.stderr
+
+
+def test_generated_docs_are_not_required_to_be_mapped(repo: FixtureRepo) -> None:
+    """The conventions explicitly do not map `generated/`."""
+    repo.write("AGENTS.md", "# A\n")
+    repo.write(
+        "docs/generated/schema.md",
+        f"---\ntitle: S\nlast-updated: {TODAY}\ngenerated: true\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
+
+
 def test_map_row_with_wrong_column_count_is_flagged(repo: FixtureRepo) -> None:
     """A malformed row must fail, not be skipped.
 
@@ -1018,6 +1110,12 @@ def test_repo_root_prefix_wins_over_a_nearer_same_named_file(
     repo.write(
         "subproj/AGENTS.md",
         _map("References", "| Thing | `repo-root docs/references/a.md` | why |\n"),
+    )
+    # Both copies mapped, so the only thing under test is which one the prefixed
+    # citation resolves to.
+    repo.write(
+        "AGENTS.md",
+        _map("References", "| P | `subproj/docs/references/a.md` | why |\n"),
     )
     # Both exist, so a wrong base still resolves — the bug is silent.
     repo.write_doc("subproj/docs/references/a.md", TODAY, "project copy")
