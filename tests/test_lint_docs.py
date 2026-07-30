@@ -1826,6 +1826,35 @@ def test_linked_image_reports_the_links_own_line(repo: FixtureRepo) -> None:
     assert "a.md:7:" in result.stderr, result.stderr
 
 
+def test_escaped_delimiter_does_not_steal_a_links_line(repo: FixtureRepo) -> None:
+    r"""An escaped `\](` opens no link, so it must not be counted as one.
+
+    Counting it both inflates the supply the pairing validates against and hands
+    its position to a real link on a later line.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "text \\](  here\nand [x](gone.md) there"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:7:" in result.stderr, result.stderr
+
+
+def test_nul_in_a_link_target_is_a_violation_not_a_crash(repo: FixtureRepo) -> None:
+    """`%00` decodes to an embedded NUL, which `Path.resolve()` refuses.
+
+    One malformed link took down the whole run with a traceback instead of
+    reporting itself.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "See [x](foo%00bar.md).")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "does not resolve" in result.stderr
+    assert "Traceback" not in result.stderr, result.stderr
+
+
 def test_prose_mention_of_a_target_does_not_steal_its_line(repo: FixtureRepo) -> None:
     """Anchoring on link *syntax*, not the destination text.
 
@@ -2536,6 +2565,33 @@ def test_sequence_is_rejected_for_a_field_with_no_value_validator(
     assert result.returncode == 1
     assert "not a list" in result.stderr, result.stderr
     assert "title" in result.stderr
+
+
+def test_flow_sequence_is_rejected_for_a_scalar_field(repo: FixtureRepo) -> None:
+    """`title: [First]` is the same shape violation as the block form.
+
+    The block form serializes to exactly this syntax, so the two are
+    indistinguishable by value — which is why the shape is tracked, and why the
+    flow form has to be tracked too.
+    """
+    repo.write(
+        "docs/references/a.md",
+        f"---\ntitle: [First, Second]\nlast-updated: {TODAY}\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "not a list" in result.stderr, result.stderr
+
+
+def test_quoted_string_that_looks_like_a_list_is_a_scalar(repo: FixtureRepo) -> None:
+    """The other direction: `"[literal]"` is a string that merely looks like one."""
+    repo.write(
+        "docs/references/a.md",
+        f'---\ntitle: "[literal]"\nlast-updated: {TODAY}\n---\n\nbody\n',
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "frontmatter").returncode == 0
 
 
 def test_quoted_map_example_is_not_a_real_map(repo: FixtureRepo) -> None:

@@ -616,7 +616,15 @@ def parse_frontmatter_full(text: str) -> tuple[dict[str, str], frozenset[str]]:
         if m:
             key = m.group(1)
             last_key = key
+            raw = m.group(2).strip()
             fields[key] = unquote(m.group(2))
+            # A YAML **flow** sequence is the same shape violation as a block one,
+            # and the block form's serialization is literally this syntax — so
+            # without this they were indistinguishable by value, and only the block
+            # form was caught. Tested on the raw value, since a *quoted* `"[x]"` is
+            # a string that merely looks like a list.
+            if raw.startswith("[") and raw.endswith("]"):
+                sequence_items.setdefault(key, [])
             continue
         # A block-sequence item continues the preceding key. Without this a
         # list-valued field read as the empty string, so a *required* field written
@@ -757,7 +765,15 @@ class Repo:
             )
             bases.append(Path("."))
         for base in bases:
-            candidate = (self.root / base / cite).resolve()
+            try:
+                candidate = (self.root / base / cite).resolve()
+            except (ValueError, OSError):
+                # A path the filesystem cannot even be asked about is unresolvable,
+                # not a crash. `[x](foo%00bar.md)` decodes to an embedded NUL and
+                # `resolve()` raises `ValueError`, which took down the whole run
+                # with a traceback instead of reporting one broken link.
+                return None
+
             # `require_file` for citations that must name a *document*: a map row
             # or `superseded-by:` pointing at `docs/references/` satisfied a bare
             # `exists()` while routing a reader to no document at all, and outside
@@ -1227,7 +1243,15 @@ class BlockPositions:
 
     def __init__(self, content: str, children) -> None:
         self.content = content
-        offsets = [m.start() for m in re.finditer(r"\]\(", content)]
+        offsets = [
+            m.start()
+            for m in re.finditer(r"\]\(", content)
+            # An escaped `\](` opens no link, so counting it both inflates supply
+            # and hands its position to a real link. Parity again: `\\](` is an
+            # escaped *backslash* followed by a live delimiter.
+            if (len(content[: m.start()]) - len(content[: m.start()].rstrip("\\"))) % 2
+            == 0
+        ]
         # An image spends one `](`; an autolink (`<https://x>`) spends none.
         demand = sum(
             1
