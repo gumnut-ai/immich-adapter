@@ -3,10 +3,9 @@
 The freshness tests are integration tests, ported from the bash harness this file
 replaces (`scripts/lint_docs_test.sh`, since removed as spent): each builds a
 throwaway git repo with a `main` branch, makes working-tree edits, and asserts the
-linter's report. Running the
-real script against a real repo is what pins the git-plumbing behavior (merge
-base, `--diff-filter`, `git show <rev>:<path>`) that a unit test of the pure
-helpers would miss.
+linter's report. Running the real script against a real repo is what pins the
+git-plumbing behavior (merge base, `--diff-filter`, `git show <rev>:<path>`) that a
+unit test of the pure helpers would miss.
 
 The clock is pinned via `LINT_DOCS_TODAY` / `LINT_DOCS_NOW_EPOCH` so a fixture
 and the assertions cannot straddle a date boundary.
@@ -983,6 +982,35 @@ def test_generated_docs_are_not_required_to_be_mapped(repo: FixtureRepo) -> None
     )
     repo.commit_all()
     assert repo.lint("--check", "map_paths").returncode == 0
+
+
+def test_multi_backtick_code_span_is_blanked(repo: FixtureRepo) -> None:
+    """A code span is closed by a run of the same length as its opener.
+
+    Matching only single backticks left a double-backtick span unblanked, so a link
+    written inside one as an example was parsed as a real link and reported broken —
+    a false positive on correct content.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "Write a link as ``[example](./gone.md)`` in prose.",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0, "double-backtick span"
+
+
+def test_backticked_label_still_parses_its_target(repo: FixtureRepo) -> None:
+    """The offset-preserving blank must not hide a real target.
+
+    `[`foo.md`](gone.md)` has a code span in its *label*; the target is real and must
+    still be resolved, so widening the span pattern cannot regress this.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "See [`gone.md`](./gone.md).")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
 
 
 def test_map_row_with_wrong_column_count_is_flagged(repo: FixtureRepo) -> None:

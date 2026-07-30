@@ -271,7 +271,11 @@ class Violation:
 
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-CODESPAN_RE = re.compile(r"`[^`\n]*`")
+# A code span is delimited by a *run* of backticks and closed by a run of the same
+# length. Matching only single backticks left a ``double-backtick`` span unblanked,
+# so a link written inside one as an example was parsed as a real link and reported
+# broken — a false positive on correct content.
+CODESPAN_RE = re.compile(r"(`+)(?:(?!\1)[^\n])*?\1")
 # Two destination forms: bare, and the angle-bracket form CommonMark requires
 # for a destination containing spaces. Matching only the bare form meant an
 # angle-bracket link yielded no target at all, so a broken one passed unseen.
