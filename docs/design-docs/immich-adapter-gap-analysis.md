@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-27
+last-updated: 2026-07-29
 ---
 
 # Immich Adapter Gap Analysis
@@ -796,7 +796,7 @@ The `GET /server/features` fix (gap #14) is the primary mechanism for hiding uns
 
 ## Version target and future considerations
 
-The adapter targets Immich v3.0.3. References to v2.7.5 elsewhere in this document are the historical baseline used for the v2-to-v3 comparison. Future Immich releases may introduce:
+The adapter targets Immich v3.1.0. The inventory in this document was performed against the v3.0.3 spec, whose endpoint surface is identical to v3.1.0's (the v3.1.0 spec delta is documentation-only annotations). References to v2.7.5 elsewhere in this document are the historical baseline used for the v2-to-v3 comparison. Future Immich releases may introduce:
 
 - **New API endpoints** not present in v3.0.3 — these would require new stubs at minimum
 - **Changed request/response schemas** — the model generator (`tools/generate_immich_models.py`) and API compatibility validator (`tools/validate_api_compatibility.py`) can detect these
