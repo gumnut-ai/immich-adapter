@@ -984,6 +984,35 @@ def test_generated_docs_are_not_required_to_be_mapped(repo: FixtureRepo) -> None
     assert repo.lint("--check", "map_paths").returncode == 0
 
 
+def test_escaped_bracket_is_not_a_link(repo: FixtureRepo) -> None:
+    r"""Prose showing literal markdown outside a code span renders no link.
+
+    Matching at the `[` regardless reported the example's destination as broken —
+    a false positive on correct explanatory prose.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, r"Write it as \[example](missing.md) in prose."
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_escaped_bracket_does_not_mask_a_later_real_link(
+    repo: FixtureRepo,
+) -> None:
+    """The escape must suppress only its own match, not the rest of the line."""
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        r"Literal \[a](ignored.md) then real [c](./gone.md).",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+    assert "ignored.md" not in result.stderr
+
+
 def test_multi_backtick_code_span_is_blanked(repo: FixtureRepo) -> None:
     """A code span is closed by a run of the same length as its opener.
 

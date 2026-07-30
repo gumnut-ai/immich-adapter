@@ -287,8 +287,10 @@ CODESPAN_RE = re.compile(r"(`+)(?:(?!\1)[^\n])*?\1")
 #     went unchecked.
 #   * balanced parens in a bare destination (`foo_(bar).md`) — truncating at the
 #     first `)` reported a *false* break on a file that exists.
+#   * a backslash-escaped `\[` — prose showing literal markdown outside a code span
+#     renders no link, but matching it reported the example target as broken.
 LINK_RE = re.compile(
-    r"(?<!!)\[([^\]\[]*)\]\(\s*"
+    r"(?<![!\\])\[([^\]\[]*)\]\(\s*"
     r"(?:<([^>]*)>|((?:[^()\s]|\((?:[^()\s]*)\))+))"
     r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^()]*\)))?\s*\)"
 )
