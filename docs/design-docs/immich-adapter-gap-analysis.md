@@ -144,7 +144,7 @@ Immich allows batch downloading multiple assets as a zip archive.
 
 Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pairs) with a primary asset representing the group.
 
-**Current behavior**: **Partially closed.** The two read endpoints (`GET /stacks`, `GET /stacks/{id}`) return real stacks with their live members, the list capped at 500 stacks since Immich's `searchStacks` offers no pagination. The other 5 — create, update-cover, delete, bulk-delete, remove-asset — still return empty/fake responses, so the stacking UI can display a stack but not edit one.
+**Current behavior**: **Partially closed.** The two read endpoints (`GET /stacks`, `GET /stacks/{id}`) return real stacks with their live members, the list bounded by a 500-stack cap and a 5000-member hydration budget (whichever binds first) since Immich's `searchStacks` offers no pagination. The other 5 — create, update-cover, delete, bulk-delete, remove-asset — still return empty/fake responses, so the stacking UI can display a stack but not edit one.
 
 **User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently. The landed reads are also not yet reachable from a shipped client: clients discover a stack from the stack fields on an asset, which the adapter does not populate yet, so wiring those surfaces is what makes the reads visible.
 

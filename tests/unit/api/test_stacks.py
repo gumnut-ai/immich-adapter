@@ -18,7 +18,12 @@ from fastapi import HTTPException
 from gumnut import NotFoundError
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
-from routers.api.stacks import SEARCH_STACKS_CAP, get_stack, search_stacks
+from routers.api.stacks import (
+    SEARCH_STACKS_CAP,
+    SEARCH_STACKS_MEMBER_BUDGET,
+    get_stack,
+    search_stacks,
+)
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
@@ -59,6 +64,21 @@ def _client(*stacks_with_members) -> Mock:
         )
     )
     return client
+
+
+def _search_log(caplog: pytest.LogCaptureFixture) -> logging.LogRecord:
+    """The route's one per-request INFO summary.
+
+    Filtered by level as well as logger name so an added WARNING (an oversized
+    stack, a member-less one) can't be mistaken for the summary and silently
+    turn every `stack_search_truncated` assertion into a lookup for an
+    attribute the warning doesn't carry.
+    """
+    return next(
+        record
+        for record in caplog.records
+        if record.name == "routers.api.stacks" and record.levelno == logging.INFO
+    )
 
 
 async def _search(client, current_user, primary_asset_id=None):
@@ -157,7 +177,7 @@ class TestSearchStacks:
     async def test_member_less_stack_is_omitted(self, mock_current_user):
         """A member-less row can't form a valid DTO, and dropping it must not
         drop its neighbours."""
-        empty, _ = make_gumnut_stack_with_members(count=0, asset_count=0)
+        empty, _ = make_gumnut_stack_with_members(count=0)
         populated, members = make_gumnut_stack_with_members(count=2)
         client = _client((empty, []), (populated, members))
 
@@ -170,7 +190,7 @@ class TestSearchStacks:
         """It hydrates fine but converts to `assets: []` with a cover the client
         can't fetch, so it is dropped alongside the member-less case."""
         trashed, trashed_members = make_gumnut_stack_with_members(
-            count=2, trashed={0, 1}, asset_count=0
+            count=2, trashed={0, 1}
         )
         live, live_members = make_gumnut_stack_with_members(count=2)
         client = _client((trashed, trashed_members), (live, live_members))
@@ -209,9 +229,166 @@ class TestSearchStacks:
         assert client.assets.list.call_count == SEARCH_STACKS_CAP
         # The truncation is otherwise invisible — this log is the only signal a
         # library has outgrown the endpoint, so the flag is a contract.
-        record = next(r for r in caplog.records if r.name == "routers.api.stacks")
-        assert getattr(record, "stack_cap_hit") is True
+        record = _search_log(caplog)
+        assert getattr(record, "stack_search_truncated") is True
+        assert getattr(record, "stack_truncated_by") == "stack_cap"
         assert getattr(record, "stacks_walked") == SEARCH_STACKS_CAP
+
+    @pytest.mark.anyio
+    async def test_exact_cap_is_not_reported_as_truncation(
+        self, mock_current_user, caplog: pytest.LogCaptureFixture
+    ):
+        """The boundary the truncation flag has to get right.
+
+        A library of exactly `SEARCH_STACKS_CAP` stacks is returned whole, so
+        flagging it would tell an operator to reshape a read that answered in
+        full — and the flag only earns its "this library outgrew the endpoint"
+        meaning if it never fires when nothing was left out. Deriving it from
+        `len(stacks) >= SEARCH_STACKS_CAP` after the walk is what breaks this.
+        """
+        pairs = [
+            make_gumnut_stack_with_members(count=1) for _ in range(SEARCH_STACKS_CAP)
+        ]
+        client = _client(*pairs)
+
+        with caplog.at_level(logging.INFO, logger="routers.api.stacks"):
+            result = await _search(client, mock_current_user)
+
+        assert len(result) == SEARCH_STACKS_CAP
+        record = _search_log(caplog)
+        assert getattr(record, "stack_search_truncated") is False
+        assert getattr(record, "stack_truncated_by") is None
+
+    @pytest.mark.anyio
+    async def test_member_budget_stops_the_walk_before_the_stack_cap(
+        self, mock_current_user, caplog: pytest.LogCaptureFixture
+    ):
+        """The bound the stack cap alone doesn't provide.
+
+        These stacks are far below `SEARCH_STACKS_CAP` in number but carry
+        enough members between them to blow the budget, so a walk bounded only
+        by row count would hydrate every one. `asset_count` is set independently
+        of the fixture's real member count on purpose: the budget is spent from
+        the *listing row*, before anything is fetched, which is the whole reason
+        it can bound work rather than measure it afterwards.
+        """
+        per_stack = SEARCH_STACKS_MEMBER_BUDGET // 5
+        pairs = [
+            make_gumnut_stack_with_members(count=2, asset_count=per_stack)
+            for _ in range(20)
+        ]
+        client = _client(*pairs)
+
+        with caplog.at_level(logging.INFO, logger="routers.api.stacks"):
+            result = await _search(client, mock_current_user)
+
+        assert len(result) == 5
+        # The cap never came near binding — the budget is what stopped it.
+        assert len(result) < SEARCH_STACKS_CAP
+        assert client.assets.list.call_count == 5
+        record = _search_log(caplog)
+        assert getattr(record, "stack_search_truncated") is True
+        assert getattr(record, "stack_truncated_by") == "member_budget"
+        assert getattr(record, "stack_members_budgeted") == SEARCH_STACKS_MEMBER_BUDGET
+
+    @pytest.mark.anyio
+    async def test_exact_member_budget_is_not_reported_as_truncation(
+        self, mock_current_user, caplog: pytest.LogCaptureFixture
+    ):
+        """The budget's half of the boundary that `stack_search_truncated` owes.
+
+        Sibling of `test_exact_cap_is_not_reported_as_truncation`, and the
+        assertion the budget test above cannot make: every one of its assertions
+        also holds if the budget is spent *after* admitting, so only a library
+        that lands exactly on the budget with the cursor exhausted separates the
+        two orderings.
+        """
+        per_stack = SEARCH_STACKS_MEMBER_BUDGET // 5
+        pairs = [
+            make_gumnut_stack_with_members(count=2, asset_count=per_stack)
+            for _ in range(5)
+        ]
+        client = _client(*pairs)
+
+        with caplog.at_level(logging.INFO, logger="routers.api.stacks"):
+            result = await _search(client, mock_current_user)
+
+        assert len(result) == 5
+        record = _search_log(caplog)
+        assert getattr(record, "stack_members_budgeted") == SEARCH_STACKS_MEMBER_BUDGET
+        assert getattr(record, "stack_search_truncated") is False
+        assert getattr(record, "stack_truncated_by") is None
+
+    @pytest.mark.anyio
+    async def test_budgeted_and_hydrated_member_counts_diverge_on_trashed_members(
+        self, mock_current_user, caplog: pytest.LogCaptureFixture
+    ):
+        """The one asymmetry the budget can't express, made observable.
+
+        The budget is spent from the row's live `asset_count`, but
+        `fetch_stack_members` reads `state="all"` — so trashed frames are
+        hydrated and converted without ever being budgeted. That gap is why the
+        summary reports both numbers; with only the budgeted figure, a library
+        of heavily-trashed bursts would read as well inside its ceiling while
+        costing a multiple of it.
+        """
+        stack, members = make_gumnut_stack_with_members(count=4, trashed={2, 3})
+        assert stack.asset_count == 2, "the row counts live members only"
+        client = _client((stack, members))
+
+        with caplog.at_level(logging.INFO, logger="routers.api.stacks"):
+            result = await _search(client, mock_current_user)
+
+        # Only the live members reach the response — see `build_stack_response`.
+        assert len(result[0].assets) == 2
+        record = _search_log(caplog)
+        assert getattr(record, "stack_members_budgeted") == 2
+        assert getattr(record, "stack_members_hydrated") == 4
+
+    @pytest.mark.anyio
+    async def test_ordinary_library_logs_no_warning(
+        self, mock_current_user, caplog: pytest.LogCaptureFixture
+    ):
+        """The happy path stays silent, or the oversized warning is just noise.
+
+        Every other test in this class reads the summary through `_search_log`,
+        which filters to INFO — so an `oversized` comparison flipped to `<`
+        would warn on every request without failing anything here.
+        """
+        pairs = [make_gumnut_stack_with_members(count=3) for _ in range(3)]
+        client = _client(*pairs)
+
+        with caplog.at_level(logging.WARNING, logger="routers.api.stacks"):
+            result = await _search(client, mock_current_user)
+
+        assert len(result) == 3
+        assert caplog.records == []
+
+    @pytest.mark.anyio
+    async def test_stack_larger_than_the_whole_budget_is_served_and_logged(
+        self, mock_current_user, caplog: pytest.LogCaptureFixture
+    ):
+        """Admission is all-or-nothing, so one huge stack still hydrates whole.
+
+        Truncating its members is the one thing the budget must not do —
+        clients read `assets.length` as the stack's size — and dropping the
+        user's largest stack would be a worse answer than a slow one. So the
+        budget can be exceeded by up to one stack, and that case is surfaced by
+        a warning rather than absorbed silently.
+        """
+        huge, huge_members = make_gumnut_stack_with_members(
+            count=3, asset_count=SEARCH_STACKS_MEMBER_BUDGET + 1
+        )
+        client = _client((huge, huge_members))
+
+        with caplog.at_level(logging.WARNING, logger="routers.api.stacks"):
+            result = await _search(client, mock_current_user)
+
+        assert [stack.id for stack in result] == [safe_uuid_from_stack_id(huge.id)]
+        assert len(result[0].assets) == 3
+        warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
+        assert getattr(warning, "stack_id") == huge.id
+        assert getattr(warning, "stack_members") == SEARCH_STACKS_MEMBER_BUDGET + 1
 
     @pytest.mark.anyio
     async def test_upstream_failure_reaches_the_global_handler(self, mock_current_user):
@@ -358,9 +535,7 @@ class TestSearchStacksByPrimaryAsset:
     async def test_all_trashed_stack_matches_nothing(self, mock_current_user):
         """The same drop rule the list and detail routes apply — a cover the
         client can't fetch is not a match — on the third path through it."""
-        stack, members = make_gumnut_stack_with_members(
-            count=2, trashed={0, 1}, asset_count=0
-        )
+        stack, members = make_gumnut_stack_with_members(count=2, trashed={0, 1})
         client = _client((stack, members))
         client.assets.retrieve = AsyncMock(return_value=members[0])
 
@@ -440,7 +615,7 @@ class TestGetStack:
 
     @pytest.mark.anyio
     async def test_member_less_stack_is_404(self, mock_current_user):
-        stack, _ = make_gumnut_stack_with_members(count=0, asset_count=0)
+        stack, _ = make_gumnut_stack_with_members(count=0)
         client = _client((stack, []))
 
         with pytest.raises(HTTPException) as exc_info:
@@ -452,9 +627,7 @@ class TestGetStack:
     async def test_all_trashed_stack_is_404(self, mock_current_user):
         """The detail route drops on the same rule the list does, rather than
         serving an empty `assets` array with an unfetchable cover."""
-        stack, members = make_gumnut_stack_with_members(
-            count=2, trashed={0, 1}, asset_count=0
-        )
+        stack, members = make_gumnut_stack_with_members(count=2, trashed={0, 1})
         client = _client((stack, members))
 
         with pytest.raises(HTTPException) as exc_info:

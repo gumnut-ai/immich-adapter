@@ -37,11 +37,22 @@ router = APIRouter(
 
 # Hard cap on stacks returned by an unfiltered `searchStacks`. Immich gives the
 # client no way to ask for a second page, so the endpoint must either answer
-# with the whole library or truncate; every stack costs its own member walk, and
-# `hydrate_stacks` explains why that total is the part nothing else bounds. A
-# library that routinely trips this wants the transpose described there rather
-# than a bigger number here — the cap-hit log below is what surfaces that.
+# with the whole library or truncate. A library that routinely trips this wants
+# the transpose `hydrate_stacks` describes rather than a bigger number here —
+# the truncation log below is what surfaces that.
 SEARCH_STACKS_CAP = 500
+
+# Companion bound on the *members* the walk commits to hydrating. The stack cap
+# alone bounds rows, not work: 500 stacks of 3 frames and 500 stacks of 10,000
+# each satisfy it, while costing two wildly different numbers of upstream pages
+# and two wildly different peak footprints. Budgeting the members up front is
+# possible because a listing row carries its own `asset_count` — the size is
+# known before anything is fetched.
+#
+# 500 stacks × ~10 frames is a generous ceiling for the bursts this endpoint
+# actually serves, so a library that trips this is already past the shape the
+# read is built for.
+SEARCH_STACKS_MEMBER_BUDGET = 5000
 
 
 def _build_representable_response(
@@ -125,7 +136,8 @@ async def search_stacks(
 
     Immich's `searchStacks` takes no pagination parameters, so the walk below
     exhausts the Gumnut API's cursor rather than answering with its first page,
-    bounded only by `SEARCH_STACKS_CAP`.
+    bounded by `SEARCH_STACKS_CAP` on rows and `SEARCH_STACKS_MEMBER_BUDGET` on
+    the members those rows commit to hydrating.
 
     Stacks come back in the Gumnut API's own order (by stack ID: stable, but
     neither chronological nor otherwise meaningful). Upstream imposes no order
@@ -141,13 +153,52 @@ async def search_stacks(
         return await _search_by_primary_asset(client, primaryAssetId, current_user)
 
     stacks = []
+    budgeted_members = 0
+    truncated_by: str | None = None
     async for stack in client.stacks.list_stacks(limit=GUMNUT_API_MAX_PAGE_SIZE):
-        stacks.append(stack)
+        # Tested before admitting, so the flag below means "a row was left out",
+        # not "a limit was reached" — a library of exactly SEARCH_STACKS_CAP
+        # stacks exhausts the cursor and never sets it. Since the flag is the
+        # only signal that a library has outgrown the endpoint, a false positive
+        # on the boundary would cost it its meaning.
         if len(stacks) >= SEARCH_STACKS_CAP:
+            truncated_by = "stack_cap"
             break
-    cap_hit = len(stacks) >= SEARCH_STACKS_CAP
+        if budgeted_members >= SEARCH_STACKS_MEMBER_BUDGET:
+            truncated_by = "member_budget"
+            break
+        stacks.append(stack)
+        # The row's live count, which undercounts what hydration actually
+        # fetches: `fetch_stack_members` reads `state="all"`, so trashed members
+        # ride along unbudgeted. Budgeting the live count keeps the bound
+        # expressed in the same units as the response; the log below records the
+        # realized total alongside it so the gap is visible rather than assumed.
+        budgeted_members += stack.asset_count
+        # Admission is all-or-nothing per stack (never a truncated member array
+        # — see `build_stack_response`), so the stack that crosses the budget
+        # still hydrates whole and the real bound is the budget plus one stack.
+        # Warned about only when that one stack outweighs the entire budget:
+        # dropping a user's largest stack would be a worse answer than a slow
+        # one, so the cost is paid, but not silently. At most one such stack can
+        # be admitted — the next iteration always breaks on the budget.
+        if stack.asset_count > SEARCH_STACKS_MEMBER_BUDGET:
+            logger.warning(
+                "stack search hydrating stack %s whole: %d members exceeds the "
+                "entire %d-member budget",
+                stack.id,
+                stack.asset_count,
+                SEARCH_STACKS_MEMBER_BUDGET,
+                extra={
+                    "stack_id": stack.id,
+                    "stack_members": stack.asset_count,
+                    "stack_member_budget": SEARCH_STACKS_MEMBER_BUDGET,
+                },
+            )
 
     hydrated = await hydrate_stacks(client, stacks)
+    hydrated_members = sum(
+        len(stack.members) for stack in hydrated if stack is not None
+    )
     responses = [
         response
         for response in (
@@ -155,15 +206,28 @@ async def search_stacks(
         )
         if response is not None
     ]
+    # `stack_search_truncated` is the queryable "this library was cut short"
+    # flag, deliberately not named after either bound since both set it;
+    # `stack_truncated_by` says which one did, because the remedies differ —
+    # more stacks than the endpoint shape supports, versus a few stacks big
+    # enough to blow the member budget on their own. `stack_members_hydrated` is
+    # what was actually read, against the live count that was budgeted.
     logger.info(
-        "stack search: walked %d stacks, returned %d (stack_cap_hit=%s)",
+        "stack search: walked %d stacks (%d members budgeted, %d hydrated), "
+        "returned %d (stack_search_truncated=%s, stack_truncated_by=%s)",
         len(stacks),
+        budgeted_members,
+        hydrated_members,
         len(responses),
-        cap_hit,
+        truncated_by is not None,
+        truncated_by,
         extra={
             "stacks_walked": len(stacks),
+            "stack_members_budgeted": budgeted_members,
+            "stack_members_hydrated": hydrated_members,
             "stacks_returned": len(responses),
-            "stack_cap_hit": cap_hit,
+            "stack_search_truncated": truncated_by is not None,
+            "stack_truncated_by": truncated_by,
         },
     )
     return responses

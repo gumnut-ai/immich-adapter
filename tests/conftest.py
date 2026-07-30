@@ -223,7 +223,15 @@ def make_gumnut_stack_with_members(
     The pairing is the point: `make_gumnut_stack_members` needs a stack ID, and
     a member list built against the wrong one produces a stack that hydrates
     empty — a failure that reads as a routing bug rather than a fixture typo.
+
+    `asset_count` is paired too, defaulting to the live member count rather than
+    `make_gumnut_stack`'s standalone default. It stopped being cosmetic once
+    `search_stacks` began spending it against `SEARCH_STACKS_MEMBER_BUDGET`: a
+    row that claims two members while carrying eight would budget a number the
+    response contradicts, and the test would pass for the wrong reason. Pass it
+    explicitly to model the row and the member read disagreeing on purpose.
     """
+    stack_kwargs.setdefault("asset_count", count - len(trashed or ()))
     stack = make_gumnut_stack(**stack_kwargs)
     members = make_gumnut_stack_members(count, stack_id=stack.id, trashed=trashed)
     return stack, members

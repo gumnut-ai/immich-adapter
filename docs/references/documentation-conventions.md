@@ -101,7 +101,7 @@ Keep codebase-specific facts and traps that a capable contributor could reasonab
 - Explain a non-obvious rationale once and point to it elsewhere.
 - Scope absolute claims by checking the full repository for counterexamples.
 - Do not restate call-site counts, tunable constants, dependency inventories, or line numbers; point to the owning file, symbol, or grep.
-- Keep implementation mechanics in code. A reference doc states the durable pattern and cites the implementation.
+- Keep implementation mechanics in code. A reference doc states the durable pattern and cites the implementation — and when the rule is newer than the code, re-check every cited implementation still obeys it, or name the one that predates it. A citation that violates the rule stated beside it teaches the antipattern.
 - Verify third-party and upstream-Immich behavior from primary sources or the checked-out upstream source.
 - Everything committed here must stand on its own for a public reader. Describe the contract and rationale instead of relying on a private ticket or sibling path; follow `code-practices.md` § Project Conventions.
 
