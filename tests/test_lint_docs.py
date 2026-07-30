@@ -1473,6 +1473,30 @@ def test_list_item_paragraph_keeps_its_links(repo: FixtureRepo) -> None:
     assert "gone.md" in result.stderr
 
 
+def test_heading_is_its_own_block_for_inline_scanning(repo: FixtureRepo) -> None:
+    """Inline constructs cannot span a heading boundary.
+
+    Grouped with the following line, an unmatched backtick in each paired up and blanked
+    the live link between them — a silent miss on valid markdown.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "## Heading `\n\nsee [x](./gone.md) `"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_heading_with_a_real_code_span_still_slugs(repo: FixtureRepo) -> None:
+    """Flushing at headings must not disturb a span *within* one."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "## The `foo` helper\n\n[x](#the-foo-helper)"
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0
+
+
 def test_unmatched_backtick_leaves_following_links_live(repo: FixtureRepo) -> None:
     """An unclosed run is literal text, so the links after it still render.
 

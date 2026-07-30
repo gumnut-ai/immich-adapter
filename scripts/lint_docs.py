@@ -393,6 +393,14 @@ def _blank_scan(
             # Paragraph break: a tentative span ends here, unmatched and so literal.
             out.append(line)
             continue
+        if HEADING_RE.match(line):
+            # A heading is its own block, so inline constructs cannot span it. Grouped
+            # with the following line, an unmatched backtick in each paired up and
+            # blanked the live link between them.
+            flush()
+            chunk.append(line)
+            flush()
+            continue
         chunk.append(line)
     flush()
     return out, in_comment
