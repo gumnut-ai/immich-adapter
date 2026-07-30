@@ -355,6 +355,24 @@ class TestSearchStacksByPrimaryAsset:
         assert result == []
 
     @pytest.mark.anyio
+    async def test_all_trashed_stack_matches_nothing(self, mock_current_user):
+        """The same drop rule the list and detail routes apply — a cover the
+        client can't fetch is not a match — on the third path through it."""
+        stack, members = make_gumnut_stack_with_members(
+            count=2, trashed={0, 1}, asset_count=0
+        )
+        client = _client((stack, members))
+        client.assets.retrieve = AsyncMock(return_value=members[0])
+
+        result = await _search(
+            client,
+            mock_current_user,
+            primary_asset_id=safe_uuid_from_asset_id(members[0].id),
+        )
+
+        assert result == []
+
+    @pytest.mark.anyio
     async def test_stack_emptied_before_the_member_read_is_empty(
         self, mock_current_user
     ):
