@@ -31,7 +31,7 @@ It checks:
 
 | Check | Enforces |
 |-------|----------|
-| `freshness` | A changed doc's `last-updated:` is a real current date |
+| `freshness` | A changed doc's `last-updated:` is a real date within the configured tolerance |
 | `links` | Inline markdown link targets resolve |
 | `anchors` | `#fragment` targets resolve |
 | `map_paths` | Documentation Map paths and `superseded-by:` targets resolve; design docs are mapped |
@@ -131,7 +131,7 @@ Retire a completed doc when an evergreen doc owns the live subject, the body wou
 
 ## Freshness
 
-Bump `last-updated:` whenever a doc body changes meaningfully. Run `uv run scripts/lint_docs.py --fix` to update missed dates. A content-preserving rename does not require a bump; a renamed-and-edited doc does.
+Bump `last-updated:` to the current date whenever a doc body changes meaningfully. The linter allows the `freshness_window_days` tolerance in `scripts/lint_docs.toml` so a recently bumped doc does not need a churn-only re-bump on every later push to the same branch; dates older than that window and dates beyond the existing timezone upper boundary fail. Run `uv run scripts/lint_docs.py --fix` to update offenders to today. A content-preserving rename does not require a bump; a renamed-and-edited doc does.
 
 Do not leave a date-only bump after reverting the body edit that prompted it. Compare the final file against `main`.
 

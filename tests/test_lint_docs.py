@@ -18,6 +18,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -47,25 +48,23 @@ def utc_date(offset_seconds: int = 0) -> str:
 
 
 TODAY = time.strftime("%Y-%m-%d", time.localtime(NOW_EPOCH))
-UTC_TODAY = utc_date()
 EARLIEST_CURRENT_DATE = utc_date(-43_200)
 LATEST_CURRENT_DATE = utc_date(50_400)
+FRESHNESS_WINDOW_DAYS = 7
 
 
-def _outside_timezone_window() -> str:
-    """A date no timezone currently considers "today".
-
-    Adjacent UTC dates are usually outside the window, but during the short
-    interval where all three are current somewhere, two days ago still isn't.
-    """
-    current = {EARLIEST_CURRENT_DATE, UTC_TODAY, LATEST_CURRENT_DATE}
-    for candidate in (utc_date(-86_400), utc_date(86_400)):
-        if candidate not in current:
-            return candidate
-    return utc_date(-172_800)
-
-
-OUTSIDE_TIMEZONE_WINDOW = _outside_timezone_window()
+EARLIEST_FRESH_DATE = (
+    date.fromisoformat(EARLIEST_CURRENT_DATE) - timedelta(days=FRESHNESS_WINDOW_DAYS)
+).isoformat()
+INSIDE_FRESHNESS_WINDOW = (
+    date.fromisoformat(EARLIEST_CURRENT_DATE)
+    - timedelta(days=FRESHNESS_WINDOW_DAYS - 1)
+).isoformat()
+OUTSIDE_FRESHNESS_WINDOW = (
+    date.fromisoformat(EARLIEST_CURRENT_DATE)
+    - timedelta(days=FRESHNESS_WINDOW_DAYS + 1)
+).isoformat()
+FUTURE_DATE = (date.fromisoformat(LATEST_CURRENT_DATE) + timedelta(days=1)).isoformat()
 
 # Every check on, no exemptions — the fixture repos are built to exercise one
 # check at a time, so inheriting this repo's config would only add noise.
@@ -85,6 +84,7 @@ frontmatter = true
 
 [limits]
 consult_cell_chars = 250
+freshness_window_days = 7
 """
 
 
@@ -169,7 +169,9 @@ def freshness_repo(repo: FixtureRepo) -> FixtureRepo:
     repo.write_doc("same_day.md", TODAY, "original body")
     repo.write_doc("timezone_behind.md", EARLIEST_CURRENT_DATE, "original body")
     repo.write_doc("timezone_ahead.md", LATEST_CURRENT_DATE, "original body")
-    repo.write_doc("stale_unchanged.md", OUTSIDE_TIMEZONE_WINDOW, "original body")
+    repo.write_doc("within_window.md", EARLIEST_FRESH_DATE, "original body")
+    repo.write_doc("stale_unchanged.md", OUTSIDE_FRESHNESS_WINDOW, "original body")
+    repo.write_doc("future_date.md", FUTURE_DATE, "original body")
     repo.write_doc("backward_bump.md", "2020-01-01", "original body")
     repo.write_doc("impossible_date.md", "2020-01-01", "stable body")
     # A doc that documents the convention: no frontmatter field, but the body
@@ -194,7 +196,9 @@ def freshness_repo(repo: FixtureRepo) -> FixtureRepo:
     repo.write_doc("same_day.md", TODAY, "EDITED body")
     repo.write_doc("timezone_behind.md", EARLIEST_CURRENT_DATE, "EDITED body")
     repo.write_doc("timezone_ahead.md", LATEST_CURRENT_DATE, "EDITED body")
-    repo.write_doc("stale_unchanged.md", OUTSIDE_TIMEZONE_WINDOW, "EDITED body")
+    repo.write_doc("within_window.md", EARLIEST_FRESH_DATE, "EDITED body")
+    repo.write_doc("stale_unchanged.md", OUTSIDE_FRESHNESS_WINDOW, "EDITED body")
+    repo.write_doc("future_date.md", FUTURE_DATE, "EDITED body")
     # Body edited and the date *did* change from its base value — but backwards, to
     # another stale date. Keying on "differs from base" would accept this.
     repo.write_doc("backward_bump.md", "2019-12-31", "EDITED body")
@@ -215,7 +219,8 @@ def freshness_repo(repo: FixtureRepo) -> FixtureRepo:
         ("bad_date.md", "body changed and the date is junk"),
         ("date_only_bad.md", "date-only edit to a junk value"),
         ("blank_value.md", "date value blanked out"),
-        ("stale_unchanged.md", "date is outside the timezone window"),
+        ("stale_unchanged.md", "date is older than the freshness window"),
+        ("future_date.md", "date is beyond the timezone upper bound"),
         ("backward_bump.md", "date changed from base, but backwards to a stale date"),
         ("impossible_date.md", "ISO-shaped but not a real calendar date"),
     ],
@@ -226,6 +231,16 @@ def test_freshness_flags(freshness_repo: FixtureRepo, doc: str, reason: str) -> 
     assert doc in result.stderr, f"{doc} should be flagged: {reason}"
 
 
+def test_freshness_explains_stale_and_future_dates(
+    freshness_repo: FixtureRepo,
+) -> None:
+    result = freshness_repo.lint("--check", "freshness", "--base", "main")
+    assert f"older than the {FRESHNESS_WINDOW_DAYS}-day freshness window" in (
+        result.stderr
+    )
+    assert "post-dated beyond the timezone window" in result.stderr
+
+
 @pytest.mark.parametrize(
     ("doc", "reason"),
     [
@@ -234,6 +249,7 @@ def test_freshness_flags(freshness_repo: FixtureRepo, doc: str, reason: str) -> 
         ("same_day.md", "same-day re-edit escape hatch"),
         ("timezone_behind.md", "UTC-12 boundary is current"),
         ("timezone_ahead.md", "UTC+14 boundary is current"),
+        ("within_window.md", "lower freshness boundary is accepted"),
         ("conventions.md", "no frontmatter field, only a body mention"),
         ("clean.md", "not edited"),
     ],
@@ -255,6 +271,7 @@ def test_freshness_fix_bumps_offenders_and_preserves_bodies(
         "date_only_bad.md",
         "blank_value.md",
         "stale_unchanged.md",
+        "future_date.md",
         "backward_bump.md",
         "impossible_date.md",
     ):
@@ -285,8 +302,8 @@ def test_fix_reports_when_nothing_needs_a_bump(repo: FixtureRepo) -> None:
 # --------------------------------------------------------------------------
 #
 # The bash predecessor skipped any doc absent at the merge-base, so a doc created
-# on day 1 and edited on day 2 kept its day-1 date and every run — including --fix
-# — reported clean. Observed on a real branch before this was fixed.
+# on the branch could age past the tolerance window and every run — including
+# --fix — still reported clean. Observed on a real branch before this was fixed.
 
 
 def _branch_with_added_doc(repo: FixtureRepo, date: str) -> None:
@@ -303,23 +320,29 @@ def test_new_doc_added_and_edited_same_day_passes(repo: FixtureRepo) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_new_doc_edited_next_day_without_bump_fails(repo: FixtureRepo) -> None:
-    _branch_with_added_doc(repo, OUTSIDE_TIMEZONE_WINDOW)
+def test_new_doc_with_date_inside_window_passes(repo: FixtureRepo) -> None:
+    _branch_with_added_doc(repo, INSIDE_FRESHNESS_WINDOW)
+    result = repo.lint("--check", "freshness", "--base", "main")
+    assert result.returncode == 0, result.stderr
+
+
+def test_new_doc_with_date_outside_window_fails(repo: FixtureRepo) -> None:
+    _branch_with_added_doc(repo, OUTSIDE_FRESHNESS_WINDOW)
     result = repo.lint("--check", "freshness", "--base", "main")
     assert result.returncode == 1
     assert "added.md" in result.stderr
     assert "added on this branch" in result.stderr
 
 
-def test_new_doc_edited_next_day_with_bump_passes(repo: FixtureRepo) -> None:
-    _branch_with_added_doc(repo, OUTSIDE_TIMEZONE_WINDOW)
+def test_new_doc_with_stale_date_then_current_bump_passes(repo: FixtureRepo) -> None:
+    _branch_with_added_doc(repo, OUTSIDE_FRESHNESS_WINDOW)
     repo.write_doc("added.md", TODAY, "brand new doc, edited")
     result = repo.lint("--check", "freshness", "--base", "main")
     assert result.returncode == 0, result.stderr
 
 
 def test_new_doc_stale_date_is_fixable(repo: FixtureRepo) -> None:
-    _branch_with_added_doc(repo, OUTSIDE_TIMEZONE_WINDOW)
+    _branch_with_added_doc(repo, OUTSIDE_FRESHNESS_WINDOW)
     result = repo.lint("--check", "freshness", "--base", "main", "--fix")
     assert result.returncode == 0
     assert f"last-updated: {TODAY}" in repo.read("added.md")
@@ -328,7 +351,7 @@ def test_new_doc_stale_date_is_fixable(repo: FixtureRepo) -> None:
 def test_preexisting_doc_with_unchanged_body_and_stale_date_passes(
     repo: FixtureRepo,
 ) -> None:
-    repo.write_doc("stale.md", OUTSIDE_TIMEZONE_WINDOW, "body")
+    repo.write_doc("stale.md", OUTSIDE_FRESHNESS_WINDOW, "body")
     repo.commit_all()
     result = repo.lint("--check", "freshness", "--base", "main")
     assert result.returncode == 0, result.stderr
@@ -341,7 +364,7 @@ def test_pure_rename_does_not_require_a_bump(repo: FixtureRepo) -> None:
     absent at the merge-base. Treating that as "added" would fail every
     content-preserving move — exactly what a docs reorganization is made of.
     """
-    repo.write_doc("docs/references/a.md", OUTSIDE_TIMEZONE_WINDOW, "body")
+    repo.write_doc("docs/references/a.md", OUTSIDE_FRESHNESS_WINDOW, "body")
     repo.commit_all()
     repo.git("checkout", "-q", "-b", "feature")
     repo.git("mv", "docs/references/a.md", "docs/references/b.md")
@@ -350,11 +373,11 @@ def test_pure_rename_does_not_require_a_bump(repo: FixtureRepo) -> None:
 
 
 def test_rename_with_a_body_edit_still_requires_a_bump(repo: FixtureRepo) -> None:
-    repo.write_doc("docs/references/a.md", OUTSIDE_TIMEZONE_WINDOW, "body")
+    repo.write_doc("docs/references/a.md", OUTSIDE_FRESHNESS_WINDOW, "body")
     repo.commit_all()
     repo.git("checkout", "-q", "-b", "feature")
     repo.git("mv", "docs/references/a.md", "docs/references/b.md")
-    repo.write_doc("docs/references/b.md", OUTSIDE_TIMEZONE_WINDOW, "EDITED body")
+    repo.write_doc("docs/references/b.md", OUTSIDE_FRESHNESS_WINDOW, "EDITED body")
     result = repo.lint("--check", "freshness", "--base", "main")
     assert result.returncode == 1
     assert "docs/references/b.md" in result.stderr
@@ -934,6 +957,33 @@ def test_valid_list_config_still_loads(repo: FixtureRepo) -> None:
     )
     repo.commit_all()
     assert repo.lint("--check", "links").returncode == 0
+
+
+def test_configured_freshness_window_is_applied(repo: FixtureRepo) -> None:
+    repo.config_path.write_text(
+        FIXTURE_CONFIG.replace(
+            "freshness_window_days = 7", "freshness_window_days = 1"
+        ),
+        encoding="utf-8",
+    )
+    repo.write_doc("a.md", "2020-01-01", "original body")
+    repo.commit_all()
+    repo.write_doc("a.md", INSIDE_FRESHNESS_WINDOW, "EDITED body")
+    result = repo.lint("--check", "freshness", "--base", "main")
+    assert result.returncode == 1
+    assert "older than the 1-day freshness window" in result.stderr
+
+
+def test_missing_freshness_window_uses_default(repo: FixtureRepo) -> None:
+    repo.config_path.write_text(
+        FIXTURE_CONFIG.replace("freshness_window_days = 7\n", ""),
+        encoding="utf-8",
+    )
+    repo.write_doc("a.md", "2020-01-01", "original body")
+    repo.commit_all()
+    repo.write_doc("a.md", EARLIEST_FRESH_DATE, "EDITED body")
+    result = repo.lint("--check", "freshness", "--base", "main")
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("value", ['"wide"', "true", "0", "-5", "1.5"])

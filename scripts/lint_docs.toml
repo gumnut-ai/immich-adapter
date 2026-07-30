@@ -27,6 +27,10 @@ map_cells = true
 frontmatter = true
 
 [limits]
+# A recently bumped date stays valid across later pushes to the same branch.
+# Future dates beyond the existing UTC+14 boundary remain invalid.
+freshness_window_days = 7
+
 # A "Consult when..." cell decides whether to open a doc. The longest here is 210
 # characters; the limit matches the Photos repo so the rule doesn't differ by repo.
 consult_cell_chars = 250

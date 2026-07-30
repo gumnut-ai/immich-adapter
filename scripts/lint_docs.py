@@ -19,8 +19,8 @@ repos, so any repo-specific path in it is wrong in at least one of them.
 Checks (each independently switchable in `lint_docs.toml`, so a new rule can
 land dark and be enabled once its sweep is done):
 
-  freshness           `last-updated:` is bumped on an edited doc, and current on
-                      a doc added on this branch
+  freshness           `last-updated:` is recent on an edited doc or a doc added
+                      on this branch
   links               inline markdown link targets resolve
   anchors             `#fragment` targets resolve to a real heading or <a id>
   map_paths           every Documentation Map row's path resolves, as does every
@@ -63,7 +63,7 @@ import sys
 import time
 import tomllib
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import NoReturn
 from urllib.parse import unquote as percent_decode
@@ -84,6 +84,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by running without u
     raise SystemExit(1) from None
 
 DEFAULT_BASE = "origin/main"
+DEFAULT_FRESHNESS_WINDOW_DAYS = 7
 ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DOC_SUFFIXES = (".md", ".mdx")
 
@@ -166,6 +167,7 @@ class Config:
     template_paths: tuple[str, ...] = ()
     enabled: frozenset[str] = frozenset()
     consult_cell_chars: int = 250
+    freshness_window_days: int = DEFAULT_FRESHNESS_WINDOW_DAYS
     ignores: tuple[Ignore, ...] = ()
 
     def ignored(self, rel_path: str, check: str) -> bool:
@@ -211,7 +213,7 @@ CONFIG_TOP_KEYS = frozenset(
         "ignore",
     }
 )
-CONFIG_LIMIT_KEYS = frozenset({"consult_cell_chars"})
+CONFIG_LIMIT_KEYS = frozenset({"consult_cell_chars", "freshness_window_days"})
 CONFIG_IGNORE_KEYS = frozenset({"path", "checks", "reason"})
 
 
@@ -322,6 +324,12 @@ def load_config(path: Path, all_checks: tuple[str, ...]) -> Config:
         template_paths=config_str_list(path, raw, "template_paths", ()),
         enabled=enabled,
         consult_cell_chars=config_positive_int(path, limits, "consult_cell_chars", 250),
+        freshness_window_days=config_positive_int(
+            path,
+            limits,
+            "freshness_window_days",
+            DEFAULT_FRESHNESS_WINDOW_DAYS,
+        ),
         ignores=ignores,
     )
 
@@ -905,30 +913,34 @@ def fail(message: str) -> NoReturn:
 @dataclass(frozen=True)
 class Clock:
     today: str
-    current_dates: frozenset[str]
+    earliest_fresh_date: date
+    latest_fresh_date: date
+    freshness_window_days: int
 
     @classmethod
-    def build(cls) -> Clock:
+    def build(cls, freshness_window_days: int) -> Clock:
         # Tests pin the clock so a fixture and this process cannot straddle a
         # date boundary. Normal invocations use the system clock.
         now = int(os.environ.get("LINT_DOCS_NOW_EPOCH") or time.time())
         today = os.environ.get("LINT_DOCS_TODAY") or time.strftime(
             "%Y-%m-%d", time.localtime(now)
         )
+        earliest_current_date = date.fromisoformat(
+            time.strftime("%Y-%m-%d", time.gmtime(now - TZ_WINDOW_EARLIEST_SECONDS))
+        )
         return cls(
             today=today,
-            current_dates=frozenset(
-                time.strftime("%Y-%m-%d", time.gmtime(now + delta))
-                for delta in (
-                    -TZ_WINDOW_EARLIEST_SECONDS,
-                    0,
-                    TZ_WINDOW_LATEST_SECONDS,
-                )
+            earliest_fresh_date=earliest_current_date
+            - timedelta(days=freshness_window_days),
+            latest_fresh_date=date.fromisoformat(
+                time.strftime("%Y-%m-%d", time.gmtime(now + TZ_WINDOW_LATEST_SECONDS))
             ),
+            freshness_window_days=freshness_window_days,
         )
 
-    def is_current(self, date: str) -> bool:
-        return date in self.current_dates
+    def is_fresh(self, value: str) -> bool:
+        parsed = date.fromisoformat(value)
+        return self.earliest_fresh_date <= parsed <= self.latest_fresh_date
 
 
 # --------------------------------------------------------------------------
@@ -1089,7 +1101,7 @@ def check_freshness(
 
     # An untracked doc is in no diff, so without this a brand-new doc's date went
     # unchecked locally and only failed once committed. It has no base blob, so it
-    # takes the added-on-this-branch path below and must carry a current date.
+    # takes the added-on-this-branch path below and must carry a recent date.
     untracked = {rel for rel in repo.docs if rel not in repo.tracked}
     scope = sorted({p for p in changed if p} | untracked)
 
@@ -1127,13 +1139,21 @@ def check_freshness(
             # Only the date changed, and it is valid. Nothing to enforce — this is
             # the deliberate escape hatch for a pure freshness touch-up.
             continue
-        elif not clock.is_current(head_val):
-            # The body changed (or the doc is new), so the date must be current.
-            # Keying on "differs from the base value" instead would accept any
-            # change at all, including a bump *backwards* to another stale date.
+        elif not clock.is_fresh(head_val):
+            # The body changed (or the doc is new), so the date must be within
+            # the tolerance window. Keying on "differs from the base value"
+            # instead would accept any change at all, including a bump backwards
+            # to another stale date.
             what = "body changed" if exists_at_base else "doc was added on this branch"
+            parsed = date.fromisoformat(head_val)
+            if parsed > clock.latest_fresh_date:
+                reason = "post-dated beyond the timezone window"
+            else:
+                reason = (
+                    f"older than the {clock.freshness_window_days}-day freshness window"
+                )
             message = (
-                f"{what} but last-updated is {head_val}, not current; "
+                f"{what} but last-updated is {head_val}, {reason}; "
                 f"set it to {clock.today}"
             )
 
@@ -1927,7 +1947,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     repo = discover_repo(config)
-    clock = Clock.build()
+    clock = Clock.build(config.freshness_window_days)
 
     violations: list[Violation] = []
     fixed: list[str] = []
