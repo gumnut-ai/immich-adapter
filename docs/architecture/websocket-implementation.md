@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation Documentation for immich-adapter"
-last-updated: 2026-07-15
+last-updated: 2026-07-30
 ---
 
 # WebSocket Implementation Documentation for immich-adapter
@@ -185,7 +185,7 @@ These events require features that don't exist in the Gumnut API:
 
 | Event | Reason |
 |---|---|
-| `on_asset_stack_update` | Stacks not implemented |
+| `on_asset_stack_update` | Stack writes not implemented — no adapter code path mutates a stack, so nothing has an event to emit |
 | `on_asset_hidden` | Asset visibility not supported |
 | `on_notification` | Album sharing & job failures not implemented |
 | `on_config_update` | Config management not implemented |

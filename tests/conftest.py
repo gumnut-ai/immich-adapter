@@ -215,6 +215,20 @@ def make_gumnut_stack_members(
     ]
 
 
+def make_gumnut_stack_with_members(
+    *, count: int, trashed: set[int] | None = None, **stack_kwargs
+):
+    """Build a (stack, members) pair whose members all point at the stack.
+
+    The pairing is the point: `make_gumnut_stack_members` needs a stack ID, and
+    a member list built against the wrong one produces a stack that hydrates
+    empty — a failure that reads as a routing bug rather than a fixture typo.
+    """
+    stack = make_gumnut_stack(**stack_kwargs)
+    members = make_gumnut_stack_members(count, stack_id=stack.id, trashed=trashed)
+    return stack, members
+
+
 @pytest.fixture
 def sample_gumnut_asset():
     """Create a sample Gumnut asset object with proper date fields."""

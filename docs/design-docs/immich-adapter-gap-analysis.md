@@ -146,7 +146,7 @@ Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pair
 
 **Current behavior**: **Partially closed.** The two read endpoints (`GET /stacks`, `GET /stacks/{id}`) return real stacks with their live members. The other 5 — create, update-cover, delete, bulk-delete, remove-asset — still return empty/fake responses, so the stacking UI can display a stack but not edit one.
 
-**User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently. The read path is not yet reachable from a shipped client either: nothing in Immich v3.0.3's web or mobile client calls `searchStacks`, and the web asset viewer reaches `getStack` only through `asset.stack`, so the timeline and asset-detail stack fields are what make the landed reads visible.
+**User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently. The landed reads are also not yet reachable from a shipped client: clients discover a stack from the stack fields on an asset, which the adapter does not populate yet, so wiring those surfaces is what makes the reads visible.
 
 **Dependency**: **Adapter-only** — the backend grouping concept this gap was originally blocked on now exists. The Gumnut API's stack resource covers create, add/remove assets, list, retrieve, set cover, and delete, with `list_stacks` exposing an `origin` filter (auto-detected bursts vs. user-grouped) and `primary_asset_id`; members are reachable through the `stack_id` filter on the asset list.
 

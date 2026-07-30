@@ -8,6 +8,7 @@ become a 404 rather than a response.
 """
 
 import inspect
+import math
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
@@ -16,7 +17,7 @@ from fastapi import HTTPException
 from gumnut import NotFoundError
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
-from routers.api.stacks import get_stack, search_stacks
+from routers.api.stacks import SEARCH_STACKS_CAP, get_stack, search_stacks
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
@@ -29,17 +30,9 @@ from tests.conftest import (
     MockPaginatedListing,
     MockSyncCursorPage,
     make_gumnut_asset,
-    make_gumnut_stack,
-    make_gumnut_stack_members,
+    make_gumnut_stack_with_members,
     make_sdk_status_error,
 )
-
-
-def _stack_with_members(*, count: int, trashed: set[int] | None = None, **stack_kwargs):
-    """Build a (stack, members) pair whose members all point at the stack."""
-    stack = make_gumnut_stack(**stack_kwargs)
-    members = make_gumnut_stack_members(count, stack_id=stack.id, trashed=trashed)
-    return stack, members
 
 
 def _client(*stacks_with_members) -> Mock:
@@ -48,10 +41,6 @@ def _client(*stacks_with_members) -> Mock:
     `assets.list` routes on the `stack_id` filter so a multi-stack response
     can't pass by accident with one shared member list — a route that hydrated
     the wrong stack would get an empty member list and be dropped.
-
-    `Mock(return_value=...)` for the paginated calls and `AsyncMock` for the
-    awaited ones: `AsyncMock` wraps its return in a coroutine, which `async for`
-    can't consume.
     """
     members_by_stack = {stack.id: members for stack, members in stacks_with_members}
     stacks_by_id = {stack.id: stack for stack, _ in stacks_with_members}
@@ -96,8 +85,8 @@ class TestSearchStacks:
 
     @pytest.mark.anyio
     async def test_returns_every_stack_with_hydrated_members(self, mock_current_user):
-        first, first_members = _stack_with_members(count=2)
-        second, second_members = _stack_with_members(count=3)
+        first, first_members = make_gumnut_stack_with_members(count=2)
+        second, second_members = make_gumnut_stack_with_members(count=3)
         client = _client((first, first_members), (second, second_members))
 
         result = await _search(client, mock_current_user)
@@ -113,15 +102,12 @@ class TestSearchStacks:
 
     @pytest.mark.anyio
     async def test_walks_past_one_page_of_stacks(self, mock_current_user):
-        """Immich's `searchStacks` has no pagination, so one backend page is a
-        wrong answer rather than a partial one.
-
-        `len(result)` is the real pin; the page count only shows the walk
+        """`len(result)` is the real pin; the page count only shows the walk
         actually crossed a boundary instead of being satisfied by one oversized
         page.
         """
         total = GUMNUT_API_MAX_PAGE_SIZE + 5
-        pairs = [_stack_with_members(count=1) for _ in range(total)]
+        pairs = [make_gumnut_stack_with_members(count=1) for _ in range(total)]
         client = _client(*pairs)
         listings: list[MockPaginatedListing] = []
 
@@ -146,7 +132,7 @@ class TestSearchStacks:
 
     @pytest.mark.anyio
     async def test_pinned_cover_becomes_the_primary(self, mock_current_user):
-        stack, members = _stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3)
         stack.primary_asset_id = members[2].id
         client = _client((stack, members))
 
@@ -159,7 +145,7 @@ class TestSearchStacks:
     async def test_unpinned_burst_gets_a_synthesized_primary(self, mock_current_user):
         """An auto-detected burst has no pinned cover, but Immich's
         `primaryAssetId` is non-null — the first live member stands in."""
-        stack, members = _stack_with_members(count=3, primary_asset_id=None)
+        stack, members = make_gumnut_stack_with_members(count=3, primary_asset_id=None)
         client = _client((stack, members))
 
         result = await _search(client, mock_current_user)
@@ -170,13 +156,39 @@ class TestSearchStacks:
     async def test_member_less_stack_is_omitted(self, mock_current_user):
         """A member-less row can't form a valid DTO, and dropping it must not
         drop its neighbours."""
-        empty, _ = _stack_with_members(count=0, asset_count=0)
-        populated, members = _stack_with_members(count=2)
+        empty, _ = make_gumnut_stack_with_members(count=0, asset_count=0)
+        populated, members = make_gumnut_stack_with_members(count=2)
         client = _client((empty, []), (populated, members))
 
         result = await _search(client, mock_current_user)
 
         assert [stack.id for stack in result] == [safe_uuid_from_stack_id(populated.id)]
+
+    @pytest.mark.anyio
+    async def test_stops_walking_at_the_cap(self, mock_current_user):
+        """Without the break, the walk's cost has no ceiling — every stack past
+        the cap is another full member read.
+
+        `pages_fetched` is what distinguishes a real stop from a truncated
+        result: slicing the walk's output to the cap would satisfy the length
+        assertion while still having paid for the whole library.
+        """
+        oversized = SEARCH_STACKS_CAP + GUMNUT_API_MAX_PAGE_SIZE
+        pairs = [make_gumnut_stack_with_members(count=1) for _ in range(oversized)]
+        client = _client(*pairs)
+        listing = MockPaginatedListing(
+            [stack for stack, _ in pairs], page_size=GUMNUT_API_MAX_PAGE_SIZE
+        )
+        client.stacks.list_stacks = Mock(return_value=listing)
+
+        result = await _search(client, mock_current_user)
+
+        assert len(result) == SEARCH_STACKS_CAP
+        assert listing.pages_fetched == math.ceil(
+            SEARCH_STACKS_CAP / GUMNUT_API_MAX_PAGE_SIZE
+        )
+        # Only the walked stacks cost a member read; the rest were never touched.
+        assert client.assets.list.call_count == SEARCH_STACKS_CAP
 
     @pytest.mark.anyio
     async def test_upstream_failure_reaches_the_global_handler(self, mock_current_user):
@@ -189,11 +201,33 @@ class TestSearchStacks:
         with pytest.raises(type(error)):
             await _search(client, mock_current_user)
 
+    @pytest.mark.anyio
+    async def test_one_stack_failing_hydration_fails_the_request(
+        self, mock_current_user
+    ):
+        """The deliberate choice `hydrate_stacks` leaves to its callers: a list
+        that silently omits stacks a backend hiccup touched is indistinguishable
+        from one where the user has fewer stacks."""
+        failing, failing_members = make_gumnut_stack_with_members(count=1)
+        healthy, healthy_members = make_gumnut_stack_with_members(count=1)
+        client = _client((failing, failing_members), (healthy, healthy_members))
+        error = make_sdk_status_error(503, "backend down")
+
+        def _list(**kwargs):
+            if kwargs["stack_id"] == failing.id:
+                raise error
+            return MockSyncCursorPage(healthy_members)
+
+        client.assets.list = Mock(side_effect=_list)
+
+        with pytest.raises(type(error)):
+            await _search(client, mock_current_user)
+
 
 class TestSearchStacksByPrimaryAsset:
     @pytest.mark.anyio
     async def test_finds_a_stack_by_its_pinned_cover(self, mock_current_user):
-        stack, members = _stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3)
         stack.primary_asset_id = members[1].id
         client = _client((stack, members))
         client.assets.retrieve = AsyncMock(return_value=members[1])
@@ -209,7 +243,7 @@ class TestSearchStacksByPrimaryAsset:
         """The Gumnut API's own `primary_asset_id` filter matches only pinned
         covers, so forwarding it would miss every unpinned burst — the case this
         pins."""
-        stack, members = _stack_with_members(count=3, primary_asset_id=None)
+        stack, members = make_gumnut_stack_with_members(count=3, primary_asset_id=None)
         client = _client((stack, members))
         client.assets.retrieve = AsyncMock(return_value=members[0])
         requested = safe_uuid_from_asset_id(members[0].id)
@@ -222,7 +256,7 @@ class TestSearchStacksByPrimaryAsset:
     @pytest.mark.anyio
     async def test_non_primary_member_matches_nothing(self, mock_current_user):
         """The asset is in a stack, but isn't the frame Immich shows for it."""
-        stack, members = _stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3)
         stack.primary_asset_id = members[0].id
         client = _client((stack, members))
         client.assets.retrieve = AsyncMock(return_value=members[2])
@@ -258,10 +292,10 @@ class TestSearchStacksByPrimaryAsset:
         assert await _search(client, mock_current_user, primary_asset_id=uuid4()) == []
 
     @pytest.mark.anyio
-    async def test_stack_deleted_between_the_two_reads_is_empty(
+    async def test_stack_deleted_before_the_stack_read_is_empty(
         self, mock_current_user
     ):
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         client = _client((stack, members))
         client.assets.retrieve = AsyncMock(return_value=members[0])
         client.stacks.retrieve_stack = AsyncMock(
@@ -277,8 +311,48 @@ class TestSearchStacksByPrimaryAsset:
         assert result == []
 
     @pytest.mark.anyio
+    async def test_stack_deleted_before_the_member_read_is_empty(
+        self, mock_current_user
+    ):
+        """The member read has the widest window of the three, so it is the one
+        most likely to lose the race — and it is inside the same guard."""
+        stack, members = make_gumnut_stack_with_members(count=2)
+        client = _client((stack, members))
+        client.assets.retrieve = AsyncMock(return_value=members[0])
+        client.assets.list = Mock(
+            side_effect=make_sdk_status_error(404, "stack not found", cls=NotFoundError)
+        )
+
+        result = await _search(
+            client,
+            mock_current_user,
+            primary_asset_id=safe_uuid_from_asset_id(members[0].id),
+        )
+
+        assert result == []
+
+    @pytest.mark.anyio
+    async def test_stack_emptied_before_the_member_read_is_empty(
+        self, mock_current_user
+    ):
+        """The same race with the opposite backend answer: the stack row is
+        still there, but every member has left it, so there is no cover to
+        compare against."""
+        stack, members = make_gumnut_stack_with_members(count=2)
+        client = _client((stack, []))
+        client.assets.retrieve = AsyncMock(return_value=members[0])
+
+        result = await _search(
+            client,
+            mock_current_user,
+            primary_asset_id=safe_uuid_from_asset_id(members[0].id),
+        )
+
+        assert result == []
+
+    @pytest.mark.anyio
     async def test_asset_lookup_uses_the_asset_prefix(self, mock_current_user):
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         client = _client((stack, members))
         client.assets.retrieve = AsyncMock(return_value=members[0])
         requested = safe_uuid_from_asset_id(members[0].id)
@@ -294,7 +368,7 @@ class TestSearchStacksByPrimaryAsset:
 class TestGetStack:
     @pytest.mark.anyio
     async def test_returns_the_stack_with_its_cover_first(self, mock_current_user):
-        stack, members = _stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3)
         stack.primary_asset_id = members[2].id
         client = _client((stack, members))
         stack_uuid = safe_uuid_from_stack_id(stack.id)
@@ -313,7 +387,7 @@ class TestGetStack:
     async def test_converts_the_uuid_with_the_stack_prefix(self, mock_current_user):
         """`asset_` is a strict prefix of `asset_stack_`; the wrong pair here
         would decode to a different entity's ID."""
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         client = _client((stack, members))
         stack_uuid = safe_uuid_from_stack_id(stack.id)
 
@@ -325,7 +399,7 @@ class TestGetStack:
 
     @pytest.mark.anyio
     async def test_member_less_stack_is_404(self, mock_current_user):
-        stack, _ = _stack_with_members(count=0, asset_count=0)
+        stack, _ = make_gumnut_stack_with_members(count=0, asset_count=0)
         client = _client((stack, []))
 
         with pytest.raises(HTTPException) as exc_info:

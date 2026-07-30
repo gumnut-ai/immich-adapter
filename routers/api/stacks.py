@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated, List
 from uuid import UUID, uuid4
 
@@ -25,11 +26,30 @@ from routers.utils.stack_conversion import (
     hydrate_stacks,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(
     prefix="/api/stacks",
     tags=["stacks"],
     responses={404: {"description": "Not found"}},
 )
+
+# Hard cap on stacks returned by an unfiltered `searchStacks`. Immich gives the
+# client no way to ask for a second page, so the endpoint must either answer
+# with the whole library or truncate — and untruncated it is the one request
+# here whose cost has no ceiling. Every stack costs its own member walk, so N
+# stacks means N upstream reads of full `ASSET_INCLUDE` payloads, all resident
+# at once; `hydrate_stacks` bounds how many run concurrently but not how many
+# run. This cap is what makes that finite: 500 member walks at the shared
+# fan-out bound is 50 sequential waves, and the response still carries every
+# member of all 500.
+#
+# `list_stacks` orders by stack ID — stable but arbitrary — so a truncated
+# answer drops a consistent but meaningless subset rather than "the oldest".
+# A library that routinely trips this wants the transpose `hydrate_stacks`
+# describes (one asset walk grouped by `stack_id`) instead of a bigger cap; the
+# log below is what tells you it is happening.
+SEARCH_STACKS_CAP = 500
 
 
 async def _search_by_primary_asset(
@@ -45,21 +65,23 @@ async def _search_by_primary_asset(
     displaying. So resolve the asset's own stack instead, and compare against
     the cover the adapter actually reports.
 
-    A `NotFoundError` from either read yields an empty result rather than a 404.
-    Upstream's search is a plain equality filter that matches nothing for an
-    unknown ID; the two lookups here are an adapter implementation detail, and
-    letting them turn a *search* into a not-found would also fail the whole
-    request for a stack that was deleted between them.
+    A `NotFoundError` from any of the three reads yields an empty result rather
+    than a 404. Upstream's search is a plain equality filter that matches
+    nothing for an unknown ID; these lookups are an adapter implementation
+    detail, and letting them turn a *search* into a not-found would also fail
+    the whole request for a stack deleted while it was being resolved. The
+    member read is inside the guard for that reason — it has the widest window
+    of the three.
     """
     try:
         asset = await client.assets.retrieve(uuid_to_gumnut_asset_id(primary_asset_id))
         if asset.stack_id is None:
             return []
         stack = await client.stacks.retrieve_stack(asset.stack_id)
+        hydrated = await hydrate_stack(client, stack)
     except NotFoundError:
         return []
 
-    hydrated = await hydrate_stack(client, stack)
     if hydrated is None or hydrated.primary_asset_id != primary_asset_id:
         return []
     return [build_stack_response(hydrated, current_user)]
@@ -73,33 +95,47 @@ async def search_stacks(
 ) -> List[StackResponseDto]:
     """List the caller's stacks, optionally narrowed to one by its cover asset.
 
-    Immich's `searchStacks` takes no pagination parameters, so the unfiltered
-    answer is *every* stack the user has — the walk below exhausts the Gumnut
-    API's cursor rather than answering with its first page. Cost therefore
-    scales with the library's stack count times each stack's members; see
-    `hydrate_stacks` for the shape to reach for if that becomes a hot path.
+    Immich's `searchStacks` takes no pagination parameters, so the walk below
+    exhausts the Gumnut API's cursor rather than answering with its first page,
+    bounded only by `SEARCH_STACKS_CAP`.
 
     Stacks come back in the Gumnut API's own order (by stack ID: stable, but
-    neither chronological nor otherwise meaningful). Upstream Immich imposes no
-    order either, and `StackResponseDto` carries no field to sort on that the
-    adapter wouldn't have to hydrate the whole library to compute.
+    neither chronological nor otherwise meaningful). Upstream imposes no order
+    either.
 
     Member-less stacks are dropped rather than represented — `hydrate_stack`
-    logs each one.
+    logs each one. An upstream failure on any single stack fails the whole
+    request, which `hydrate_stacks` leaves to callers to choose: a partial list
+    that silently omits stacks a backend hiccup touched is worse here than a
+    loud failure, since the client can't tell the two apart.
     """
     if primaryAssetId is not None:
         return await _search_by_primary_asset(client, primaryAssetId, current_user)
 
-    stacks = [
-        stack
-        async for stack in client.stacks.list_stacks(limit=GUMNUT_API_MAX_PAGE_SIZE)
-    ]
+    stacks = []
+    async for stack in client.stacks.list_stacks(limit=GUMNUT_API_MAX_PAGE_SIZE):
+        stacks.append(stack)
+        if len(stacks) >= SEARCH_STACKS_CAP:
+            break
+
     hydrated = await hydrate_stacks(client, stacks)
-    return [
+    responses = [
         build_stack_response(stack, current_user)
         for stack in hydrated
         if stack is not None
     ]
+    logger.info(
+        "stack search: walked %d stacks, returned %d (cap_hit=%s)",
+        len(stacks),
+        len(responses),
+        len(stacks) >= SEARCH_STACKS_CAP,
+        extra={
+            "stacks_walked": len(stacks),
+            "stacks_returned": len(responses),
+            "stack_cap_hit": len(stacks) >= SEARCH_STACKS_CAP,
+        },
+    )
+    return responses
 
 
 @router.delete("", status_code=204)
@@ -130,9 +166,8 @@ async def get_stack(
 
     A stack that doesn't exist — or belongs to another user, which the Gumnut
     API answers identically — surfaces as a 404 through the global `GumnutError`
-    handler. A member-less row 404s here instead: it can't form a valid
-    `StackResponseDto` (see `hydrate_stack`), and "not found" is the honest
-    answer for a stack with nothing to show.
+    handler. A member-less row 404s here instead, since `hydrate_stack` can't
+    render one.
     """
     stack = await client.stacks.retrieve_stack(uuid_to_gumnut_stack_id(id))
     hydrated = await hydrate_stack(client, stack)
