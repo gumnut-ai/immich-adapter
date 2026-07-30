@@ -139,7 +139,7 @@ Some SDK contracts are already pinned by committed tests, so a bump that breaks 
 
    Skipping either leaves future readers (and gap-prioritization passes) reasoning from stale data — the gap-analysis doc explicitly carries `status: active`, so consistency with the implementation is part of its contract.
 
-   After updating the dedicated sections and tables, also grep each touched doc for **other paragraphs that summarize the prior state** — design-decision notes, recommendations, server-feature flag rollups, etc. The gap-analysis doc in particular has a `GET /server/features` design-decision paragraph that enumerates which client UI flags are on/off; flipping a server-feature flag in the code without updating that paragraph leaves it contradicting both the code and the gap section you just updated. Search for the feature name (e.g., `map`, `trash`, `duplicateDetection`) across the doc before considering the update done.
+   After updating the dedicated sections and tables, grep for **other paragraphs that summarize the prior state** — design-decision notes, recommendations, server-feature flag rollups, and lines asserting the *capability* is absent rather than naming the endpoint. Two distinct traps: within a touched doc, the gap analysis has a `GET /server/features` paragraph enumerating which client UI flags are on/off, so flipping a flag without updating it leaves the doc contradicting the section you just edited; and across **untouched** docs, a promotion can falsify a claim in a file the change never opens — promoting stacks left `websocket-implementation.md` filing the stack event under "features that don't exist in the Gumnut API" and `sync-stream-architecture.md` asserting the backend has "no ... stacks". Search the feature name (e.g., `map`, `trash`, `stacks`) across all of `docs/`, not just the two status docs, before considering the update done.
 
    If the new endpoint also emits a WebSocket event (existing one or new), also update **both** websocket docs and bump their `last-updated`:
    - `docs/architecture/websocket-implementation.md` — move the event out of the "Not Applicable" table into the Phase 1 supported table (or add a new row), with the payload, Web/Mobile columns, and a Notes value that names the emit site.
@@ -293,6 +293,12 @@ gumnut_results = await client.search.search(**search_kwargs)
 Substituting an adapter-side default (e.g., `limit = int(request.size) if request.size else 50`) fragments the source of truth — the Gumnut API's `DEFAULT_PAGE_SIZE = 20` and an adapter-hardcoded 50 silently disagree, and a future change to the Gumnut API's default won't propagate. Same principle for any optional kwarg passed through the adapter: preserve the optionality, don't normalize.
 
 Generated Immich DTO constraints can exceed the backend's per-page cap — e.g., `MetadataSearchDto.size` allows `le=1000.0` while the Gumnut API enforces `GUMNUT_API_MAX_PAGE_SIZE`, and the Immich mobile client uses these high values by default. Clamp at the adapter site against `GUMNUT_API_MAX_PAGE_SIZE` (defined in `routers/api/constants.py`); without it the Gumnut API 422s and the user sees a generic "Failed to ..." surface. **Don't shortcut by tightening the generated DTO** (e.g., dropping `Field(le=1000.0)` to `le=200.0`) — `routers/immich_models.py` is overwritten on every Immich version bump, which restores upstream's constraint and silently reintroduces the bug.
+
+### Unpaginated Immich endpoints — cap the walk and log it
+
+A few Immich endpoints take no pagination parameters at all (`GET /map/markers`, `GET /stacks`), so the client cannot ask for a second page and the adapter must either answer with the whole library or truncate. Truncate: pick a cap, `break` out of the walk, and log the counts plus a cap-hit flag — that log is the only signal a library has outgrown the endpoint, and the input to deciding the read needs a different shape. See `MAP_MARKERS_CAP` (`routers/utils/map_markers.py`) and `SEARCH_STACKS_CAP` (`routers/api/stacks.py`).
+
+Bounding *concurrency* is not bounding cost: `gather_with_concurrency` caps in-flight calls, not total round-trips or peak memory. An endpoint that fans out one upstream read per item therefore needs a cap on the item count too — the concurrency bound alone leaves it scaling with the library.
 
 ### Mobile-client null-aware string parsing
 
