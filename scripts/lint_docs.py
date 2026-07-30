@@ -4,10 +4,9 @@
 # dependencies = ["markdown-it-py>=3,<5"]
 #
 # [tool.uv]
-# # Same resolver-layer supply-chain cooldown the test project carries. Without it
-# # `uv run` resolves this dependency in a fresh ephemeral environment on every CI
-# # run, which both bypasses the cooldown and executes a version the test suite
-# # never saw. `lint_docs.py.lock` pins the exact resolution; CI runs `--locked`.
+# # The same supply-chain cooldown the test project carries: without it `uv run`
+# # resolves fresh on every CI run, skipping the cooldown and executing a version
+# # the suite never saw. `lint_docs.py.lock` pins it; CI runs `--locked`.
 # exclude-newer = "14 days"
 # ///
 """scripts/lint_docs.py
@@ -218,11 +217,9 @@ CONFIG_IGNORE_KEYS = frozenset({"path", "checks", "reason"})
 def config_str_list(path: Path, raw: dict, key: str, default: tuple[str, ...]) -> tuple:
     """Read a list-of-strings setting, rejecting anything else.
 
-    A bare string is the trap this exists for: `strip_prefixes = "repo-root "` is
-    iterable, so it silently became **ten one-character prefixes** and mangled
-    every citation the linter resolved, with no error anywhere. TOML's own types
-    make the mistake easy — quoting a single value instead of wrapping it in a list
-    reads perfectly natural.
+    A bare string is the trap: `strip_prefixes = "repo-root "` is iterable, so it
+    silently became ten one-character prefixes and mangled every citation, with no
+    error. Quoting a single value instead of bracketing it reads natural in TOML.
     """
     if key not in raw:
         return default
@@ -245,11 +242,9 @@ def config_str_list(path: Path, raw: dict, key: str, default: tuple[str, ...]) -
 def config_positive_int(path: Path, raw: dict, key: str, default: int) -> int:
     """Read an integer limit, rejecting anything else.
 
-    Without this a mistyped value raised a bare `ValueError` traceback out of
-    `int()` instead of a `lint_docs:` message — the one failure mode a linter must
-    not have, since a traceback reads as the tool being broken rather than the
-    config being wrong. `bool` is rejected explicitly because it is an `int`
-    subclass, so `consult_cell_chars = true` would otherwise mean 1.
+    A mistyped value otherwise raised a bare `ValueError` out of `int()` — a
+    traceback reads as the tool being broken rather than the config being wrong.
+    `bool` is rejected explicitly, being an `int` subclass, so `= true` would mean 1.
     """
     if key not in raw:
         return default
@@ -379,18 +374,12 @@ def blank_frontmatter(text: str) -> str:
     """Replace a leading frontmatter block with blank lines, keeping the line count.
 
     Frontmatter is YAML, not Markdown, and must not reach the parser: its closing
-    `---` turns the whole block into a **setext heading**, which invented a bogus
-    anchor (`title-authentication-last-updated-2026-07-27`) on 215 of the 293 docs
-    in this corpus. A `#` comment inside the block is likewise not a heading —
-    parsing one as an H1 is how the previous scanner produced six phantom anchors
-    per daemon file.
+    `---` makes the block a **setext heading** (a phantom anchor on 215 of 295
+    docs here), and a `#` line inside it is a comment, not an H1.
 
-    Blanking rather than dropping, so every token line number still matches the
-    real file and violations point at the right line.
-
-    An unterminated block is left alone: `check_frontmatter` reports that as its
-    own violation, and blanking to EOF here would hide the document from every
-    other check.
+    Blanking rather than dropping keeps token line numbers equal to file line
+    numbers. An unterminated block is left alone — `check_frontmatter` reports
+    that, and blanking to EOF would hide the doc from every other check.
     """
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
@@ -409,23 +398,19 @@ def parse_markdown(text: str):
 def heading_text(inline_token) -> str:
     """The visible text of a heading, as GitHub would slug it.
 
-    Built from the inline token's children rather than the raw source, which is
-    what makes the delimiters disappear for free: emphasis and link markup are
-    separate tokens, and a code span contributes its content without its
-    backticks.
-
-    `html_inline` is skipped, so `## Setup <!-- old -->` slugs from `Setup` as it
-    renders. That also means a heading whose entire text is raw HTML
-    (`# <Title>` in the design-doc template) contributes no slug — GitHub gives
-    it no usable anchor either, which is why `collect_anchors` drops empties.
+    Built from the children, not the raw source, so markup disappears for free:
+    emphasis and links are separate tokens and a code span yields its content
+    without backticks. `html_inline` and `image` contribute nothing, matching
+    GitHub, which slugs an element's text content — alt text is an attribute.
+    A heading that is entirely raw HTML therefore yields "", which
+    `collect_anchors` drops.
     """
     parts: list[str] = []
     for child in inline_token.children or []:
         if child.type in ("text", "code_inline"):
             parts.append(child.content)
         elif child.type == "softbreak":
-            # A heading cannot contain a hard break, but a table cell reusing this
-            # helper can wrap; a space keeps word boundaries intact.
+            # Headings take no hard break, but a wrapped table cell reuses this.
             parts.append(" ")
     return "".join(parts)
 
@@ -434,18 +419,12 @@ def split_html_comments(chunk: str) -> tuple[str, bool]:
     """(chunk without its comment spans, whether one is left open).
 
     A comment is itself an HTML block, so `<!-- <a id="x"></a> -->` arrives as one
-    `html_block` whose content contains the tag. Scanning it as-is registered a
-    commented-out anchor as real, which let a link to a nonexistent fragment pass.
+    `html_block` containing the tag; scanning it raw made a commented-out anchor
+    real. An unterminated `<!--` is dropped to the end of the chunk, since per
+    CommonMark it runs to the end of the document.
 
-    An unterminated `<!--` is dropped to the end of the chunk: per CommonMark the
-    block runs to the end of the document, so nothing after the marker renders.
-
-    The open-comment flag is a full scan rather than a prefix test, because the
-    opener need not start the block: `<div>` then `<!-- draft` is a single
-    `html_block` beginning with `<div>`, and a prefix test declared it closed. That
-    lost the unterminated-comment violation *and* let the links after the block's
-    blank line be resolved, even though the rendered HTML leaves them inside the
-    still-open comment.
+    Both answers need a full scan, not a prefix test: the opener need not start
+    the block (`<div>` then `<!-- draft` is one block beginning with `<div>`).
     """
     out: list[str] = []
     i = 0
@@ -461,37 +440,25 @@ def split_html_comments(chunk: str) -> tuple[str, bool]:
         i = end + 3
 
 
-def strip_html_comments(chunk: str) -> str:
-    """The chunk with its comment spans removed."""
-    return split_html_comments(chunk)[0]
-
-
 def iter_html_chunks(tokens):
-    """Every rendered raw-HTML run in the document, block-level and inline.
-
-    Comment spans are stripped, so only HTML that actually renders is yielded.
-    """
+    """Every rendered raw-HTML run, block-level and inline, comment spans removed."""
     for token in tokens:
         if token.type == "html_block":
-            yield strip_html_comments(token.content)
+            yield split_html_comments(token.content)[0]
         elif token.type == "inline":
             for child in token.children or []:
                 if child.type == "html_inline":
-                    yield strip_html_comments(child.content)
+                    yield split_html_comments(child.content)[0]
 
 
 def has_unterminated_comment(tokens) -> bool:
     """Whether a block-level `<!--` opens a comment that never closes.
 
-    Per CommonMark such a block runs to the end of the document, so everything
-    after it renders as nothing and drops out of every check — spec-correct but
-    silent, which is why the marker itself is reported.
+    Such a block runs to the end of the document, so everything after it renders
+    as nothing and silently leaves every check — hence reporting the marker.
 
-    Only the block form qualifies. An unterminated `<!--` mid-prose is an
-    incomplete *inline* candidate that renders literally and hides nothing, so it
-    is not a violation.
-
-    The opener need not begin the block — see split_html_comments.
+    Block form only: an unterminated `<!--` mid-prose is an incomplete *inline*
+    candidate that renders literally and hides nothing.
     """
     return any(
         token.type == "html_block" and split_html_comments(token.content)[1]
@@ -502,26 +469,19 @@ def has_unterminated_comment(tokens) -> bool:
 def slugify_heading(heading: str) -> str:
     """GitHub's heading-anchor slug, given a heading's *rendered text*.
 
-    The input is what `heading_text` extracted from the token stream, so markup is
-    already gone: a link contributes its label, a code span its content without
-    backticks, emphasis its text without markers. This must not try to undo markup
-    a second time. Doing so was wrong in exactly the way that matters — a heading
-    showing link syntax *literally* (`# \\[foo\\]\\(bar\\)`) arrives as the text
-    `[foo](bar)`, and a link-stripping regex reduced it to `foo` when GitHub keeps
-    both words and renders `foobar`.
+    Takes `heading_text` output, where markup is already gone, and must not undo
+    markup a second time: link syntax reaching here is *literal*, and stripping it
+    turned `# \\[foo\\]\\(bar\\)` into `foo` where GitHub renders `foobar`.
 
-    Two details matter, and getting either wrong produces confident false
-    positives (both were caught by running this over the real tree):
+    Two details produce confident false positives if missed, both found by running
+    over the real tree:
 
-    * runs of whitespace do NOT collapse. `## Migration & Rollout Plan` becomes
-      `migration--rollout-plan`, because the `&` is dropped and each surrounding
-      space still becomes a hyphen.
-    * `_` survives. It is a word character, and inside a code span it is literal
-      text, so `asset_metadata.raw_width` keeps both underscores.
+    * whitespace runs do NOT collapse — `## Migration & Rollout Plan` becomes
+      `migration--rollout-plan`, the `&` dropped and both spaces kept.
+    * `_` survives, being a word character (`asset_metadata.raw_width`).
     """
     s = heading.strip().lower()
-    # Everything outside word characters, whitespace, and hyphens goes — which
-    # already covers stray `*`, backtick, and `~` left as literal text.
+    # This also covers any stray `*`, backtick, or `~` left as literal text.
     s = re.sub(r"[^\w\s-]", "", s, flags=re.UNICODE)
     return s.strip().replace(" ", "-")
 
@@ -536,31 +496,26 @@ def collect_anchors(text: str) -> set[str]:
     tokens = parse_markdown(text)
     anchors: set[str] = set()
 
-    # Explicit anchors, from raw-HTML tokens only. An `<a id="fake">` shown as an
-    # inline-code example or inside a comment renders no anchor, so counting it
-    # would let `[x](#fake)` pass; reading only html_block / html_inline content
-    # excludes both by construction.
+    # Explicit anchors, from raw-HTML tokens only, so an `<a id="fake">` shown as
+    # a code example or inside a comment defines nothing.
     for chunk in iter_html_chunks(tokens):
         for tag in HTML_ANCHOR_TAG_RE.findall(chunk):
             # Every id/name in the tag: `<a name="old" id="new">` defines both.
             for attr in HTML_ANCHOR_ATTR_RE.finditer(tag):
                 anchors.add(attr.group(1))
 
-    # GitHub disambiguates a repeated slug with -1, -2, ... leaving the first bare, and
-    # the suffix must land on an id nothing else already has. Counting per base instead
-    # collides with a *literal* heading of the suffixed name: headings `Foo`, `Foo`,
-    # `Foo-1` are `foo`, `foo-1`, `foo-1-1`, but per-base counting emitted `foo-1` twice
-    # and never `foo-1-1`, so a valid link to it was reported broken. Slugs are ids, so
-    # they cannot repeat — dedupe against the whole set.
+    # GitHub disambiguates a repeated slug with -1, -2, ..., and the suffix must land
+    # on an id nothing else holds. Counting per base collides with a *literal* heading
+    # of the suffixed name: `Foo`, `Foo`, `Foo-1` are `foo`, `foo-1`, `foo-1-1`, but
+    # per-base counting emits `foo-1` twice. Slugs are ids — dedupe against the set.
     used: set[str] = set()
     for i, token in enumerate(tokens):
         if token.type != "heading_open":
             continue
         base = slugify_heading(heading_text(tokens[i + 1]))
         if not base:
-            # A heading that renders no sluggable text (e.g. `# <Title>`, all raw
-            # HTML) gets no anchor on GitHub either. Adding "" would both invent a
-            # fragment and consume a dedup slot.
+            # No sluggable text (`# <Title>`) means no anchor on GitHub either, and
+            # adding "" would also consume a dedup slot.
             continue
         slug, n = base, 0
         while slug in used:
@@ -577,14 +532,13 @@ def parse_frontmatter(text: str) -> dict[str, str]:
 
 
 def frontmatter_sequences(text: str) -> frozenset[str]:
-    """Keys whose frontmatter value is a YAML block sequence.
+    """Keys whose frontmatter value is a YAML sequence, block or flow.
 
-    Carried separately because the serialized value cannot be trusted to reveal
-    it: a scalar may legitimately be the literal text `[First]`. Every field the
-    conventions define is a scalar, so `check_frontmatter` rejects a sequence for
-    any of them — the string form alone caught only the fields that happen to have
-    a value validator (the dates, `status`), and let a sequence-valued `title`
-    through as merely non-empty.
+    Carried separately because the value cannot reveal it — a scalar may
+    legitimately be the literal text `[First]`. Every field the conventions define
+    is a scalar, so `check_frontmatter` rejects a sequence for any of them;
+    inferring shape from a value check instead only covered the fields that happen
+    to have one.
     """
     return parse_frontmatter_full(text)[1]
 
@@ -596,12 +550,9 @@ def parse_frontmatter_full(text: str) -> tuple[dict[str, str], frozenset[str]]:
     of a key (e.g. a doc documenting the convention) is not frontmatter and is
     ignored, which is why parsing stops at the closing delimiter.
 
-    An **unterminated** block yields no fields. Returning what was collected
-    before EOF would treat a truncated doc — whose whole body is swallowed into an
-    unclosed block, and which no renderer reads as frontmatter — as having valid
-    frontmatter. `has_unclosed_frontmatter` reports that case as its own
-    violation, so it fails with a message about the delimiter rather than only
-    about the fields it appears to be missing.
+    An **unterminated** block yields no fields: no renderer reads a truncated doc
+    as having frontmatter, and `has_unclosed_frontmatter` reports the missing
+    delimiter as its own violation rather than a pile of missing fields.
     """
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
@@ -618,27 +569,17 @@ def parse_frontmatter_full(text: str) -> tuple[dict[str, str], frozenset[str]]:
             last_key = key
             raw = m.group(2).strip()
             fields[key] = unquote(m.group(2))
-            # A YAML **flow** sequence is the same shape violation as a block one,
-            # and the block form's serialization is literally this syntax — so
-            # without this they were indistinguishable by value, and only the block
-            # form was caught. Tested on the raw value, since a *quoted* `"[x]"` is
-            # a string that merely looks like a list.
+            # A flow sequence is the same shape violation as a block one. Tested on
+            # the raw value, since a *quoted* `"[x]"` is a string that looks like one.
             if raw.startswith("[") and raw.endswith("]"):
                 sequence_items.setdefault(key, [])
             continue
-        # A block-sequence item continues the preceding key. Without this a
-        # list-valued field read as the empty string, so a *required* field written
-        # as a list would be reported "present but empty" — a real doc failing on a
-        # shape YAML allows.
-        #
-        # Rendered as a YAML **flow sequence** (`[a, b]`) rather than joined bare,
-        # because the shape has to survive: every required field is scalar by
-        # convention, so a sequence must fail the scalar validators. Joining bare
-        # made a *single-item* sequence indistinguishable from a scalar —
-        # `last-updated:\n  - 2026-07-30` became `2026-07-30` and passed the date
-        # check, so malformed frontmatter linted clean. The brackets keep the value
-        # non-empty (so presence still holds) while no scalar check can accept it,
-        # and they read correctly in the violation message.
+        # A block-sequence item continues the preceding key; without this a
+        # list-valued field read as empty, failing a doc on a shape YAML allows.
+        # Serialized as a flow sequence so the value stays non-empty (presence
+        # holds) while no scalar check accepts it, and reads well in the message.
+        # Joining bare instead made a *single-item* sequence indistinguishable from
+        # a scalar, which is why `frontmatter_sequences` carries the shape too.
         item = re.match(r"^\s*-\s+(.*)$", line)
         if item and last_key is not None:
             existing = sequence_items.setdefault(last_key, [])
@@ -1171,26 +1112,18 @@ def iter_links(text: str):
 def _iter_links_in(tokens):
     """Every link destination in the token stream, with its line number.
 
-    The label is discarded — comparing a link's label to its target is a separate
-    check, deliberately out of scope here.
+    The label is discarded; comparing it to the target is a separate check. Only
+    `link_open` counts — `image` is a distinct token type, so `![](...)` needs no
+    lookbehind, and a link inside a code span, fence, or comment emits no token.
 
-    Only `link_open` is collected. `image` is a distinct token type, so `![](...)`
-    is excluded without a lookbehind, and a link written inside a code span, a
-    fenced block, or a comment produces no token at all.
-
-    Inline children carry no `map`, so a link's line is located *within* the
-    enclosing block: without this, every link in a paragraph reported the
-    paragraph's first line, which measured as 24% of links wrong and one 33 lines
-    adrift. `locate_in_block` does the search; when it cannot, the block's start
-    line is the fallback, which is exactly the old behavior.
+    Inline children carry no `map`, so `BlockPositions` locates the line within
+    the enclosing block; using the block's own line measured 24% of links wrong.
     """
 
-    # Offsets are consumed in *source* order, which is not token order. An image
-    # spends its `](` where the image token sits, but a link spends its own at the
-    # **close** — everything nested inside the label comes first in the source. So
-    # `[![alt](img.png)](dest.md)` is emitted link_open, image, link_close while the
-    # source runs image-first; consuming at link_open handed the link its image's
-    # position and reported it on the image's line.
+    # Offsets are spent in *source* order, not token order: an image spends its `](`
+    # where its token sits, but a link spends its own at the **close**, since
+    # everything nested in the label precedes it. `[![alt](i.png)](d.md)` is emitted
+    # link_open, image, link_close while the source runs image-first.
     def walk(items, line: int, block: BlockPositions, open_links: list):
         for token in items:
             if token.map:
@@ -1222,23 +1155,17 @@ def _iter_links_in(tokens):
 class BlockPositions:
     """The `](` offsets in one block's raw inline source, handed out in order.
 
-    Inline children carry no source position, so a link's line is recovered by
-    pairing tokens with the link syntax in the block, in document order.
+    Anchored on the syntax, not the destination text: searching for the
+    destination finds a *prose* mention of the same path earlier in the block, and
+    markdown-it percent-encodes an angle-bracket destination so the search misses
+    the real one anyway.
 
-    Matching the destination text instead was the obvious approach and is wrong:
-    an unrestricted search finds a *prose* mention of the same path earlier in the
-    block (`gone.md is stale` … `[doc](gone.md)`) and reports the violation on that
-    line, and markdown-it normalizes an angle-bracket destination
-    (`<missing file.md>` arrives percent-encoded) so the search misses the real one
-    anyway. Anchoring on the syntax avoids both.
-
-    **The pairing validates itself before it is trusted.** Not every link token
-    spends a `](`: a reference link (`[a][r]`) and a shortcut link (`[a]`) carry
-    none, so a block containing one would slip the pairing by one and report every
-    later link on the wrong line — worse than not looking. So the offsets are used
-    only when their count matches demand exactly; otherwise every link in the block
-    falls back to the block's own line, which is where they were before any of this.
-    That trades an exact line in rare blocks for never reporting a wrong one.
+    **The pairing validates itself before it is trusted.** A reference link
+    (`[a][r]`) or shortcut link (`[a]`) spends no `](`, so one in the block would
+    slip the pairing and report every later link on the wrong line — worse than
+    not looking. Offsets are used only when their count matches demand exactly;
+    otherwise the whole block falls back to its own line. An imprecise line in
+    rare blocks, never a wrong one.
     """
 
     def __init__(self, content: str, children) -> None:
@@ -1246,9 +1173,9 @@ class BlockPositions:
         offsets = [
             m.start()
             for m in re.finditer(r"\]\(", content)
-            # An escaped `\](` opens no link, so counting it both inflates supply
-            # and hands its position to a real link. Parity again: `\\](` is an
-            # escaped *backslash* followed by a live delimiter.
+            # An escaped `\](` opens no link, so counting it inflates supply and
+            # steals a real link's position. Parity: `\\](` is an escaped
+            # backslash followed by a live delimiter.
             if (len(content[: m.start()]) - len(content[: m.start()].rstrip("\\"))) % 2
             == 0
         ]
@@ -1271,19 +1198,6 @@ class BlockPositions:
 
     def newlines_before(self, offset: int) -> int:
         return self.content.count("\n", 0, offset)
-
-
-def local_target(target: str) -> str:
-    """Percent-decode a repo-local link target.
-
-    markdown-it normalizes destinations, so the `<b c.md>` form arrives as
-    `b%20c.md` and would not resolve against a file literally named `b c.md`.
-
-    Applied only *after* the external-scheme test, deliberately: decoding
-    everything also rewrote six external `#:~:text=` fragment URLs in this corpus,
-    changing targets the linter does not even resolve.
-    """
-    return percent_decode(target)
 
 
 def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violation]:
@@ -1309,13 +1223,15 @@ def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violati
         for lineno, target in links:
             if EXTERNAL_RE.match(target):
                 continue
-            # Split *before* decoding, and decode each half separately. A real
-            # filename containing `#` must be encoded in Markdown (`foo%23bar.md`),
-            # so decoding first reintroduces the delimiter: the partition then
-            # reads `#bar.md` as a fragment and tries to resolve `foo`, rejecting a
-            # valid link. Decoding is repo-local only — see local_target.
+            # Decoded only now that the target is known repo-local: decoding
+            # external URLs rewrote six `#:~:text=` links this never resolves.
+            # And split *before* decoding — a filename containing `#` must be
+            # encoded (`foo%23bar.md`), so decoding first reintroduces the
+            # delimiter and the partition resolves `foo` against a `#bar.md`
+            # fragment, rejecting a valid link. markdown-it also normalizes
+            # `<b c.md>` to `b%20c.md`, which is why decoding happens at all.
             raw_path, _, raw_frag = target.partition("#")
-            path_part, frag = local_target(raw_path), local_target(raw_frag)
+            path_part, frag = percent_decode(raw_path), percent_decode(raw_frag)
             target = f"{path_part}#{frag}" if raw_frag else path_part
 
             if not path_part:
@@ -1426,12 +1342,10 @@ def find_map_files(repo: Repo) -> list[str]:
 def is_top_level_map_heading(tokens, i: int, token) -> bool:
     """Whether this token opens a real Documentation Map heading.
 
-    `level` gates out containers. A doc that *quotes* a map as an example —
-    `> # Documentation Map` above a quoted table — emits ordinary heading and row
-    tokens, so without this the example reads as a live map: its rows get resolved
-    as real citations, and a quoted row either satisfies the unmapped-doc check or
-    fails the column-count one. A map is a navigational structure at the top level
-    of a document, never inside a blockquote or a list item.
+    `level` gates out containers: a map *quoted* as an example emits ordinary
+    heading and row tokens, so its rows would be resolved as real citations. A map
+    is a navigational structure at a document's top level, never in a blockquote
+    or list item.
     """
     return (
         token.type == "heading_open"
@@ -1443,21 +1357,16 @@ def is_top_level_map_heading(tokens, i: int, token) -> bool:
 def raw_cell_count(line: str) -> int:
     r"""How many cells a table row's source line actually declares.
 
-    Needed because the parser **normalizes column counts away**: against a
-    three-column header, a two-cell row is padded with an empty cell and a
-    four-cell row is silently truncated. Both would then pass, and the four-cell
-    case is the one that matters — an unescaped `|` in a Consult-when cell splits
-    the row, and the truncated remainder would satisfy the cell-length check while
-    the real content went unchecked.
+    The parser **normalizes column counts away** — a short row is padded, a long
+    one truncated — so both would pass. The long case is the one that matters: an
+    unescaped `|` splits a Consult-when cell, and the truncated remainder would
+    satisfy the cell-length check while the real content went unchecked.
 
-    A `\|` is a literal pipe, not a delimiter. An unescaped pipe splits the cell
-    even inside a code span, which is why GFM requires escaping it there too.
-
-    Whether the *trailing* pipe is escaped is decided by the **parity** of the
-    backslash run before it, not by a `\|` suffix test. A final cell ending in a
-    literal backslash (`… | c\\|`) has an even run, so the pipe is the row
-    delimiter — the suffix test read it as escaped, kept it in the body, and
-    counted four cells for a valid three-column row, rejecting it.
+    A `\|` is a literal pipe, not a delimiter, even inside a code span. Whether
+    the *trailing* pipe is escaped is decided by the **parity** of the backslash
+    run before it: a final cell ending in a literal backslash (`… | c\\|`) has an
+    even run, so that pipe is the delimiter and a `\|` suffix test rejects a valid
+    row as having four cells.
     """
     body = line.strip()
     if body.startswith("|"):
@@ -1480,15 +1389,13 @@ def raw_cell_count(line: str) -> int:
 def parse_map_rows(repo: Repo, map_rel: str) -> list[MapRow]:
     """Rows of every Documentation Map table in a file.
 
-    A map's heading level is not fixed and both nestings are correct: one file
-    puts `## Documentation Map` above `###` sections, another `#` above `##`. So a
-    map is located by heading *text*, and its sections by "any deeper heading" —
-    never by an absolute level. Keying on level instead drops every section of a
-    differently-nested map, which measured as 81 docs falsely reported unmapped.
+    A map's heading level is not fixed and both nestings are correct — one file
+    puts `## Documentation Map` above `###` sections, another `#` above `##` — so
+    a map is found by heading *text* and its sections by "any deeper heading",
+    never an absolute level. Keying on level reported 81 docs falsely unmapped.
 
-    Header and separator rows need no special handling: the parser puts the header
-    in `thead` and consumes the `|---|` delimiter as table structure, so neither
-    reaches the body loop.
+    Header and separator rows need no handling: the parser puts the header in
+    `thead` and consumes `|---|` as structure, so neither reaches the body loop.
     """
     text = repo.text(map_rel)
     source_lines = text.split("\n")
