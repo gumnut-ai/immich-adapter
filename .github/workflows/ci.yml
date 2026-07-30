@@ -105,24 +105,22 @@ jobs:
       # does, which is the point of keeping it dependency-free. Its test suite
       # runs in the `test` job above, via the ordinary pytest collection.
       #
-      # Both steps run *every* enabled check rather than naming a subset, so
-      # adding a check to lint_docs.py can't leave it silently unrun here. They
-      # differ only in `--base`, which is all the freshness check reads.
+      # Runs *every* enabled check rather than naming a subset, so adding a check
+      # to lint_docs.py can't leave it silently unrun here.
       - name: Check documentation
-        if: github.event_name == 'pull_request'
         env:
-          # Passed through env rather than interpolated into the run body. The
-          # event payload's base SHA is more reliable than relying on checkout to
-          # materialize an `origin/main` ref, and on a pull_request the checked-out
-          # ref is the merge commit, so this diff is exactly the PR's net change.
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 scripts/lint_docs.py --base "$BASE_SHA"
-
-      - name: Check documentation
-        if: github.event_name != 'pull_request'
-        env:
-          # A push has no PR base to diff against. Basing on the pushed commit
-          # makes the merge-base HEAD itself, so freshness finds no changed docs
-          # and no-ops, while the repo-wide structural checks still run.
-          BASE_SHA: ${{ github.sha }}
+          # Passed through env rather than interpolated into the run body.
+          #
+          # On a pull_request, the event payload's base SHA is more reliable than
+          # relying on checkout to materialize an `origin/main` ref, and since the
+          # checked-out ref is the merge commit, this diff is exactly the PR's net
+          # change. A push has no PR base, so it uses the pushed commit: the
+          # merge-base becomes HEAD itself, freshness finds no changed docs and
+          # no-ops, and the repo-wide structural checks still run.
+          #
+          # Branching on `event_name` rather than leaning on
+          # `pull_request.base.sha || github.sha` to null-propagate: an empty
+          # `--base` is a hard exit 1, and the push path can't be exercised until
+          # this is on main, so the failure would land there.
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
         run: python3 scripts/lint_docs.py --base "$BASE_SHA"
