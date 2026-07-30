@@ -271,8 +271,19 @@ class Violation:
 
 # The whole delimiter run, not just its first three characters: a fence closes only
 # on the same marker at least as long, so the run length has to be known.
-FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
-HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+# The delimiter run plus whatever follows it. A *closing* fence may carry only
+# whitespace after the run, so a same-length language-tagged line (```` ````python ````
+# inside a ```` block) is an opener, not a closer — treating it as one ended the block
+# early and exposed the rest to the link parser.
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+# Up to three leading spaces, which CommonMark permits on an ATX heading. Anchored at
+# column 0, an indented heading contributed no anchor and a valid link to it was
+# reported broken. Four or more spaces is an indented code block, not a heading, so the
+# bound matters.
+HEADING_RE = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
+# A complete HTML comment, possibly spanning lines. Only complete ones: blanking from an
+# unterminated `<!--` would silently swallow the rest of the file.
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 # A code span is delimited by a *run* of backticks and closed by a run of the same
 # length. Matching only single backticks left a ``double-backtick`` span unblanked,
 # so a link written inside one as an example was parsed as a real link and reported
@@ -318,17 +329,35 @@ def blank_fenced_blocks(text: str) -> str:
     for line in text.split("\n"):
         match = FENCE_RE.match(line)
         if match:
-            run = match.group(1)
+            run, rest = match.group(1), match.group(2)
             if fence is None:
                 fence = run
-            elif run[0] == fence[0] and len(run) >= len(fence):
+            elif (
+                run[0] == fence[0]
+                and len(run) >= len(fence)
+                # A closing fence carries no info string, so a same-length
+                # language-tagged line inside the block is content, not the closer.
+                and not rest.strip()
+            ):
                 fence = None
-            # Otherwise a shorter or differently-marked run inside a block: content,
-            # blanked like the rest of it.
+            # Otherwise a shorter, differently-marked, or tagged run inside a block:
+            # content, blanked like the rest of it.
             out.append("")
             continue
         out.append("" if fence is not None else line)
     return "\n".join(out)
+
+
+def blank_html_comments(text: str) -> str:
+    """Neutralize HTML comments, preserving offsets and line numbering.
+
+    A commented-out link or heading renders nothing, so scanning it reported a target
+    that no reader can reach — a false positive on valid markdown. Newlines survive so
+    reported line numbers stay right; everything else becomes filler.
+    """
+    return HTML_COMMENT_RE.sub(
+        lambda m: "".join("\n" if c == "\n" else "x" for c in m.group(0)), text
+    )
 
 
 def blank_code_spans(text: str) -> str:
@@ -366,7 +395,9 @@ def slugify_heading(heading: str) -> str:
 
 def collect_anchors(text: str) -> set[str]:
     """Every fragment a `#...` link in this file could target."""
-    body = blank_fenced_blocks(text)
+    # Comments blanked for both scans below: a commented-out `<a id>` *or* heading
+    # renders nothing, so neither defines a fragment.
+    body = blank_fenced_blocks(blank_html_comments(text))
     anchors: set[str] = set()
     # Code spans are blanked for the *tag* scan only: an `<a id="fake">` shown as an
     # inline-code example renders no anchor, so counting it let `[x](#fake)` pass. The
@@ -378,7 +409,13 @@ def collect_anchors(text: str) -> set[str]:
         # Every id/name in the tag: `<a name="old" id="new">` defines both.
         for attr in HTML_ANCHOR_ATTR_RE.finditer(tag):
             anchors.add(attr.group(1))
-    seen: dict[str, int] = {}
+    # GitHub disambiguates a repeated slug with -1, -2, ... leaving the first bare, and
+    # the suffix must land on an id nothing else already has. Counting per base instead
+    # collides with a *literal* heading of the suffixed name: headings `Foo`, `Foo`,
+    # `Foo-1` are `foo`, `foo-1`, `foo-1-1`, but per-base counting emitted `foo-1` twice
+    # and never `foo-1-1`, so a valid link to it was reported broken. Slugs are ids, so
+    # they cannot repeat — dedupe against the whole set.
+    used: set[str] = set()
     for line in body.split("\n"):
         m = HEADING_RE.match(line)
         if not m:
@@ -386,10 +423,12 @@ def collect_anchors(text: str) -> set[str]:
         base = slugify_heading(m.group(2))
         if not base:
             continue
-        n = seen.get(base, 0)
-        seen[base] = n + 1
-        # GitHub disambiguates repeats with -1, -2, ... leaving the first bare.
-        anchors.add(base if n == 0 else f"{base}-{n}")
+        slug, n = base, 0
+        while slug in used:
+            n += 1
+            slug = f"{base}-{n}"
+        used.add(slug)
+        anchors.add(slug)
     return anchors
 
 
@@ -977,7 +1016,7 @@ def iter_links(text: str):
     The label is discarded — comparing a link's label to its target is a separate
     check, deliberately out of scope here.
     """
-    body = blank_code_spans(blank_fenced_blocks(text))
+    body = blank_code_spans(blank_fenced_blocks(blank_html_comments(text)))
     for lineno, line in enumerate(body.split("\n"), 1):
         pos = 0
         while True:

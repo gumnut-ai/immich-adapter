@@ -1267,6 +1267,120 @@ def test_cross_reference_alongside_an_owning_row_is_fine(repo: FixtureRepo) -> N
     assert repo.lint("--check", "map_paths").returncode == 0
 
 
+def test_language_tagged_fence_does_not_close_a_same_length_block(
+    repo: FixtureRepo,
+) -> None:
+    """A closing fence carries no info string.
+
+    Accepting any suffix meant `````python`` closed a same-length ```` block, ending it
+    early and exposing the rest to the link parser — so documentation demonstrating a
+    language-tagged fence failed a now-required check.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "````\nouter\n````python\n[x](./gone.md)\n````\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_untagged_same_length_fence_still_closes(repo: FixtureRepo) -> None:
+    """The whitespace rule must not stop a real closer from closing."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "````\nin code\n````   \n\nReal [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_commented_out_link_is_ignored(repo: FixtureRepo) -> None:
+    """An HTML-commented link renders nothing, so its target is unreachable anyway."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<!-- [draft](./missing.md) -->\n\nText."
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_commented_out_anchor_and_heading_define_nothing(repo: FixtureRepo) -> None:
+    """Neither a commented `<a id>` nor a commented heading is rendered."""
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        '<!-- <a id="fake"></a>\n## Hidden -->\n\n[x](#fake)',
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "fake" in result.stderr
+
+
+def test_link_after_a_comment_is_still_checked(repo: FixtureRepo) -> None:
+    """Blanking must end at `-->`, not run to the end of the file."""
+    repo.write_doc("docs/references/a.md", TODAY, "<!-- note --> then [x](./gone.md).")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_unterminated_comment_marker_does_not_swallow_the_file(
+    repo: FixtureRepo,
+) -> None:
+    """Only complete comments are blanked.
+
+    Blanking from a bare `<!--` to EOF would silently drop every later link from the
+    scan — trading a false positive for a silent miss.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "A stray <!-- marker\n\nThen [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+@pytest.mark.parametrize("indent", ["", " ", "  ", "   "], ids=["0", "1", "2", "3"])
+def test_indented_heading_still_defines_its_anchor(
+    repo: FixtureRepo, indent: str
+) -> None:
+    """CommonMark permits up to three spaces before an ATX heading."""
+    repo.write_doc("docs/references/a.md", TODAY, f"{indent}## Setup\n\n[x](#setup)")
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0, f"indent={len(indent)}"
+
+
+def test_four_space_indent_is_a_code_block_not_a_heading(repo: FixtureRepo) -> None:
+    """Four spaces is an indented code block, so it defines no anchor."""
+    repo.write_doc("docs/references/a.md", TODAY, "    ## Setup\n\n[x](#setup)")
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "setup" in result.stderr
+
+
+def test_slug_suffix_avoids_a_literal_heading_of_that_name(
+    repo: FixtureRepo,
+) -> None:
+    """A generated suffix must not collide with a heading that already slugs to it.
+
+    Headings `Foo`, `Foo`, `Foo-1` render as `foo`, `foo-1`, `foo-1-1`. Counting per
+    base emitted `foo-1` twice — impossible for HTML ids — and never `foo-1-1`, so a
+    valid link to the third heading was reported broken.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "# Foo\n\n# Foo\n\n# Foo-1\n\n[a](#foo) [b](#foo-1) [c](#foo-1-1)",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0
+
+
 def test_multi_backtick_code_span_is_blanked(repo: FixtureRepo) -> None:
     """A code span is closed by a run of the same length as its opener.
 
