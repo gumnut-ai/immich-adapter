@@ -1437,6 +1437,34 @@ def test_unterminated_comment_is_reported(repo: FixtureRepo) -> None:
     assert "never closed" in result.stderr
 
 
+def test_comment_opened_partway_into_an_html_block_is_reported(
+    repo: FixtureRepo,
+) -> None:
+    """The opener need not begin the block.
+
+    `<div>` then `<!-- draft` is a single `html_block` starting with `<div>`, so a
+    prefix test declared it closed — losing the violation, and letting the links
+    after the block's blank line be resolved even though the rendered HTML leaves
+    them inside the still-open comment.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<div>\n<!-- unclosed\n\nThen [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "never closed" in result.stderr
+
+
+def test_closed_comment_inside_an_html_block_is_not_reported(
+    repo: FixtureRepo,
+) -> None:
+    """The other direction: a matched pair mid-block leaves nothing open."""
+    repo.write_doc("docs/references/a.md", TODAY, "<div>\n<!-- fine -->\n\nText.")
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
 def test_unclosed_inline_comment_marker_is_literal_text(repo: FixtureRepo) -> None:
     """Only a line-start opener can begin an HTML block.
 

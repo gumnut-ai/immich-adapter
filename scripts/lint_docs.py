@@ -430,8 +430,8 @@ def heading_text(inline_token) -> str:
     return "".join(parts)
 
 
-def strip_html_comments(chunk: str) -> str:
-    """Drop comment spans from a raw-HTML run.
+def split_html_comments(chunk: str) -> tuple[str, bool]:
+    """(chunk without its comment spans, whether one is left open).
 
     A comment is itself an HTML block, so `<!-- <a id="x"></a> -->` arrives as one
     `html_block` whose content contains the tag. Scanning it as-is registered a
@@ -439,6 +439,13 @@ def strip_html_comments(chunk: str) -> str:
 
     An unterminated `<!--` is dropped to the end of the chunk: per CommonMark the
     block runs to the end of the document, so nothing after the marker renders.
+
+    The open-comment flag is a full scan rather than a prefix test, because the
+    opener need not start the block: `<div>` then `<!-- draft` is a single
+    `html_block` beginning with `<div>`, and a prefix test declared it closed. That
+    lost the unterminated-comment violation *and* let the links after the block's
+    blank line be resolved, even though the rendered HTML leaves them inside the
+    still-open comment.
     """
     out: list[str] = []
     i = 0
@@ -446,12 +453,17 @@ def strip_html_comments(chunk: str) -> str:
         start = chunk.find("<!--", i)
         if start == -1:
             out.append(chunk[i:])
-            return "".join(out)
+            return "".join(out), False
         out.append(chunk[i:start])
         end = chunk.find("-->", start + 4)
         if end == -1:
-            return "".join(out)
+            return "".join(out), True
         i = end + 3
+
+
+def strip_html_comments(chunk: str) -> str:
+    """The chunk with its comment spans removed."""
+    return split_html_comments(chunk)[0]
 
 
 def iter_html_chunks(tokens):
@@ -478,11 +490,11 @@ def has_unterminated_comment(tokens) -> bool:
     Only the block form qualifies. An unterminated `<!--` mid-prose is an
     incomplete *inline* candidate that renders literally and hides nothing, so it
     is not a violation.
+
+    The opener need not begin the block — see split_html_comments.
     """
     return any(
-        token.type == "html_block"
-        and token.content.lstrip().startswith("<!--")
-        and "-->" not in token.content
+        token.type == "html_block" and split_html_comments(token.content)[1]
         for token in tokens
     )
 
