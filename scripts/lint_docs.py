@@ -283,12 +283,10 @@ FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 HEADING_RE = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
 # A complete HTML comment, possibly spanning lines. Only complete ones: blanking from an
 # unterminated `<!--` would silently swallow the rest of the file.
-HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 # A code span is delimited by a *run* of backticks and closed by a run of the same
 # length. Matching only single backticks left a ``double-backtick`` span unblanked,
 # so a link written inside one as an example was parsed as a real link and reported
 # broken — a false positive on correct content.
-CODESPAN_RE = re.compile(r"(`+)(?:(?!\1)[^\n])*?\1")
 # Only the `[label](` prefix is matched here. The destination is scanned, not matched:
 # a regex cannot balance arbitrary nesting, and each fixed-depth attempt left a real
 # form unparsed — `foo_(bar).md` truncated at the first `)` (a *false* break on a file
@@ -312,7 +310,9 @@ TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 MAP_HEADING_RE = re.compile(r"^Documentation Map$")
 
 
-def blank_noncontent(text: str, *, blank_spans: bool = True) -> str:
+def blank_noncontent(
+    text: str, *, blank_spans: bool = True, drop_comments: bool = False
+) -> str:
     """Blank fenced blocks, HTML comments, and optionally inline code spans.
 
     **One pass, because these three contexts nest and no ordering of separate passes is
@@ -332,7 +332,7 @@ def blank_noncontent(text: str, *, blank_spans: bool = True) -> str:
     (`## Setup <!-- old -->`) slugs from `Setup` as it renders. Filling would leave the
     comment's width behind as hyphens, since GitHub does not collapse whitespace runs.
     """
-    return "\n".join(_blank_scan(text, blank_spans)[0])
+    return "\n".join(_blank_scan(text, blank_spans, drop_comments)[0])
 
 
 def has_unterminated_comment(text: str) -> bool:
@@ -343,10 +343,12 @@ def has_unterminated_comment(text: str) -> bool:
     every check. That is spec-correct but silent, so it is reported: an unclosed comment
     is almost always an authoring slip, and it hides content from readers too.
     """
-    return _blank_scan(text, True)[1]
+    return _blank_scan(text, True, False)[1]
 
 
-def _blank_scan(text: str, blank_spans: bool) -> tuple[list[str], bool]:
+def _blank_scan(
+    text: str, blank_spans: bool, drop_comments: bool
+) -> tuple[list[str], bool]:
     """The scan itself. Returns (blanked lines, ended inside an open comment).
 
     Three states persist across lines, each for a reason CommonMark dictates:
@@ -366,13 +368,17 @@ def _blank_scan(text: str, blank_spans: bool) -> tuple[list[str], bool]:
     fence: str | None = None
     in_comment = False
     span: str | None = None
+    prev_blank = True
+    in_indented_code = False
     for line in text.split("\n"):
         if in_comment:
             end = line.find("-->")
             if end == -1:
                 out.append("")
                 continue
-            scanned, span, in_comment = _scan_inline(line[end + 3 :], blank_spans, None)
+            scanned, span, in_comment = _scan_inline(
+                line[end + 3 :], blank_spans, drop_comments, None
+            )
             out.append(" " * (end + 3) + scanned)
             continue
         match = FENCE_RE.match(line)
@@ -394,9 +400,22 @@ def _blank_scan(text: str, blank_spans: bool) -> tuple[list[str], bool]:
             continue
         if not line.strip():
             span = None
+            prev_blank = True
             out.append(line)
             continue
-        scanned, span, in_comment = _scan_inline(line, blank_spans, span)
+        # An indented code block (four spaces, opening after a blank line) is code, so a
+        # literal `<!--` in it opened no comment. Bounded by the blank line because
+        # indented code cannot interrupt a paragraph — without that, a four-space list
+        # continuation would be blanked and its real links lost.
+        if (prev_blank or in_indented_code) and line.startswith("    "):
+            in_indented_code = True
+            prev_blank = False
+            span = None
+            out.append("")
+            continue
+        in_indented_code = False
+        prev_blank = False
+        scanned, span, in_comment = _scan_inline(line, blank_spans, drop_comments, span)
         out.append(scanned)
     return out, in_comment
 
@@ -423,7 +442,7 @@ def _find_closing_run(line: str, run: str, start: int) -> int:
 
 
 def _scan_inline(
-    line: str, blank_spans: bool, span: str | None
+    line: str, blank_spans: bool, drop_comments: bool, span: str | None
 ) -> tuple[str, str | None, bool]:
     """Blank code spans and comments in one line.
 
@@ -465,6 +484,12 @@ def _scan_inline(
             close = line.find("-->", i + 4)
             if close == -1:
                 return "".join(out) + " " * (n - i), None, True
+            # Spaces, not removal: a comment is a token boundary. Concatenating what
+            # surrounds it invented syntax that does not render — `[x]<!--c-->(./y)`
+            # became a link, and `<!--c--> ## H` became a heading. Callers that need the
+            # heading *text* pass drop_comments and get the comment elided instead.
+            if not drop_comments:
+                out.append(" " * (close + 3 - i))
             i = close + 3
             continue
         out.append(char)
@@ -499,7 +524,14 @@ def collect_anchors(text: str) -> set[str]:
     """Every fragment a `#...` link in this file could target."""
     # Comments blanked for both scans below: a commented-out `<a id>` *or* heading
     # renders nothing, so neither defines a fragment.
+    # Two renderings of the same text, same line count, used for different questions.
+    # `body` has comments as spaces, which answers *is this line a heading* — a leading
+    # comment pushes the `#` run past the three-space bound, and CommonMark agrees that
+    # is no heading. `texts` has them elided, which answers *what is the heading text* —
+    # spaces there would land in the slug as hyphens, since GitHub does not collapse
+    # whitespace runs.
     body = blank_noncontent(text, blank_spans=False)
+    texts = blank_noncontent(text, blank_spans=False, drop_comments=True).split("\n")
     anchors: set[str] = set()
     # Code spans are blanked for the *tag* scan only: an `<a id="fake">` shown as an
     # inline-code example renders no anchor, so counting it let `[x](#fake)` pass. The
@@ -518,11 +550,12 @@ def collect_anchors(text: str) -> set[str]:
     # and never `foo-1-1`, so a valid link to it was reported broken. Slugs are ids, so
     # they cannot repeat — dedupe against the whole set.
     used: set[str] = set()
-    for line in body.split("\n"):
+    for lineno, line in enumerate(body.split("\n")):
         m = HEADING_RE.match(line)
         if not m:
             continue
-        base = slugify_heading(m.group(2))
+        elided = HEADING_RE.match(texts[lineno]) if lineno < len(texts) else None
+        base = slugify_heading((elided or m).group(2))
         if not base:
             continue
         slug, n = base, 0

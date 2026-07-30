@@ -1342,6 +1342,63 @@ def test_unterminated_comment_is_reported(repo: FixtureRepo) -> None:
     assert "never closed" in result.stderr
 
 
+def test_comment_between_link_tokens_is_a_boundary(repo: FixtureRepo) -> None:
+    """A comment separates tokens; eliding it invented link syntax.
+
+    `[x]<!-- c -->(./y)` is not a link — `]` and `(` are not adjacent in the source — so
+    reporting its target rejected valid markdown.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "See [x]<!-- note -->(./missing.md) here."
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_comment_before_a_hash_run_is_not_a_heading(repo: FixtureRepo) -> None:
+    """A line starting with raw HTML is not a heading, whatever follows.
+
+    Eliding the comment made `<!-- c --> ## Hidden` look like one, so a broken
+    `#hidden` fragment would have passed — a silent miss.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<!-- note --> ## Hidden\n\n[x](#hidden)"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "hidden" in result.stderr
+
+
+def test_indented_code_block_is_not_scanned_for_comments(repo: FixtureRepo) -> None:
+    """Four-space indented code showing a literal `<!--` opens no comment.
+
+    Otherwise documentation demonstrating the delimiter failed the required check.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "An example:\n\n    <!--\n    commented out\n\nBack to prose.",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_list_continuation_is_not_treated_as_indented_code(
+    repo: FixtureRepo,
+) -> None:
+    """Indented code cannot interrupt a paragraph, so a continuation keeps its links.
+
+    Without the after-a-blank-line bound this would be blanked and its broken link
+    missed — trading a false positive for a silent miss.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "- item\n    see [x](./gone.md) here")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
 def test_escaped_comment_opener_is_not_a_comment(repo: FixtureRepo) -> None:
     r"""`\<!--` renders the delimiter as text, so the links after it stay live.
 
