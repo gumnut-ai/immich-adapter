@@ -302,8 +302,12 @@ LINK_RE = re.compile(
 # `[link](#target)` was reported broken — a false positive that blocks CI, which is
 # worse than a miss.
 HTML_ANCHOR_TAG_RE = re.compile(r"<a\s[^>]*>", re.IGNORECASE | re.DOTALL)
+# `(?<![\w-])`, not `\b`: a hyphen is a non-word character, so `\b` matched the tail
+# of `data-id` / `aria-name` and recorded their values as fragment anchors — making a
+# link to a nonexistent fragment pass. Worse, in `<a data-id="x" id="t">` the first
+# match was `x`, so the *real* anchor was missed too.
 HTML_ANCHOR_ATTR_RE = re.compile(
-    r"\b(?:id|name)\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE
+    r"(?<![\w-])(?:id|name)\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE
 )
 TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 # Exact match, so a heading that merely *starts* with the phrase is not read as a
@@ -381,8 +385,8 @@ def collect_anchors(text: str) -> set[str]:
     body = blank_fenced_blocks(text)
     anchors: set[str] = set()
     for tag in HTML_ANCHOR_TAG_RE.findall(body):
-        attr = HTML_ANCHOR_ATTR_RE.search(tag)
-        if attr:
+        # Every id/name in the tag: `<a name="old" id="new">` defines both.
+        for attr in HTML_ANCHOR_ATTR_RE.finditer(tag):
             anchors.add(attr.group(1))
     seen: dict[str, int] = {}
     for line in body.split("\n"):

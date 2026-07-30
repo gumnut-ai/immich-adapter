@@ -941,6 +941,38 @@ def test_inline_link_forms_are_parsed(
 
 @pytest.mark.parametrize(
     "tag",
+    ['<a data-id="target">', '<a data-name="target">', '<a aria-name="target">'],
+    ids=["data-id", "data-name", "aria-name"],
+)
+def test_hyphenated_attributes_do_not_define_anchors(
+    repo: FixtureRepo, tag: str
+) -> None:
+    """`\\b` matched the tail of `data-id`, so its value became a fragment anchor.
+
+    A link to a fragment the rendered doc does not have then passed. In
+    `<a data-id="x" id="t">` the first match was even `x`, so the real anchor was
+    missed as well.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, f"{tag}</a>\n\n[x](#target)")
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1, tag
+    assert "target" in result.stderr
+
+
+def test_both_id_and_name_on_one_tag_are_collected(repo: FixtureRepo) -> None:
+    """`<a name="old" id="new">` defines two fragments; taking the first missed one."""
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        '<a name="old" id="new"></a>\n\n[a](#old) and [b](#new)',
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0
+
+
+@pytest.mark.parametrize(
+    "tag",
     [
         '<a id="target">',
         '<a name="target">',
