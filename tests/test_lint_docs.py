@@ -611,6 +611,65 @@ def test_headings_that_only_start_with_the_phrase_are_not_maps(
     assert result.returncode == 0, result.stderr
 
 
+def test_map_row_without_a_backticked_path_is_flagged(repo: FixtureRepo) -> None:
+    """A Document cell with no citation must fail, not be skipped.
+
+    Skipping meant the row's target was never resolved, so a row that lost its
+    backticks could point at a nonexistent doc and still pass.
+    """
+    repo.write(
+        "AGENTS.md",
+        _map("References", "| Broken | docs/references/missing.md | why |\n"),
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "no backticked document path" in result.stderr
+
+
+def test_historical_section_must_identify_design_docs(repo: FixtureRepo) -> None:
+    """`Deprecated APIs` is not the historical *design-doc* section.
+
+    Matching "Historical" or "Deprecated" alone let an unrelated section satisfy
+    the routing check — the opposite of routing.
+    """
+    repo.write(
+        "AGENTS.md",
+        _map("Deprecated APIs", "| T | `docs/design-docs/a.md` | why |\n"),
+    )
+    repo.write(
+        "docs/design-docs/a.md",
+        f"---\ntitle: A\nstatus: deprecated\ncreated: 2020-01-01\n"
+        f"last-updated: {TODAY}\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "map_status_section")
+    assert result.returncode == 1
+    assert "Historical" in result.stderr
+
+
+def test_unclosed_frontmatter_is_flagged(repo: FixtureRepo) -> None:
+    """An unterminated block swallows the body and is not frontmatter at all.
+
+    Returning the fields collected before EOF let a truncated doc carrying the
+    required keys pass the frontmatter check.
+    """
+    repo.write(
+        "docs/references/a.md",
+        f"---\ntitle: A\nlast-updated: {TODAY}\n\nbody with no closing delimiter\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "never closed" in result.stderr
+
+
+def test_unclosed_frontmatter_yields_no_fields() -> None:
+    """The parser must not hand back a half-parsed block for others to trust."""
+    assert parse_frontmatter("---\ntitle: A\nbody\n") == {}
+    assert parse_frontmatter("---\ntitle: A\n---\nbody\n") == {"title": "A"}
+
+
 def test_map_row_with_wrong_column_count_is_flagged(repo: FixtureRepo) -> None:
     """A malformed row must fail, not be skipped.
 

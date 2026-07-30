@@ -283,6 +283,13 @@ def parse_frontmatter(text: str) -> dict[str, str]:
     Only the subset the conventions use: flat `key: value` pairs. A body mention
     of a key (e.g. a doc documenting the convention) is not frontmatter and is
     ignored, which is why parsing stops at the closing delimiter.
+
+    An **unterminated** block yields no fields. Returning what was collected
+    before EOF would treat a truncated doc — whose whole body is swallowed into an
+    unclosed block, and which no renderer reads as frontmatter — as having valid
+    frontmatter. `has_unclosed_frontmatter` reports that case as its own
+    violation, so it fails with a message about the delimiter rather than only
+    about the fields it appears to be missing.
     """
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
@@ -290,11 +297,19 @@ def parse_frontmatter(text: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for line in lines[1:]:
         if line.strip() == "---":
-            break
+            return fields
         m = re.match(r"^\s*([A-Za-z0-9_-]+)\s*:(.*)$", line)
         if m:
             fields[m.group(1)] = unquote(m.group(2))
-    return fields
+    return {}
+
+
+def has_unclosed_frontmatter(text: str) -> bool:
+    """Whether a doc opens a frontmatter block and never closes it."""
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return False
+    return not any(line.strip() == "---" for line in lines[1:])
 
 
 def unquote(value: str) -> str:
@@ -937,7 +952,13 @@ def is_active_section(section: str) -> bool:
 
 
 def is_historical_section(section: str) -> bool:
-    return "Historical" in section or "Deprecated" in section
+    # Mirrors is_active_section in also requiring the section to identify design
+    # docs. Matching "Historical" or "Deprecated" alone accepted an unrelated
+    # section — `Deprecated APIs` would satisfy the routing check for a completed
+    # or deprecated doc parked under it, which is the opposite of routing.
+    return ("Historical" in section or "Deprecated" in section) and (
+        "Design Doc" in section
+    )
 
 
 def check_maps(repo: Repo, enabled: frozenset[str]) -> tuple[list[Violation], set[str]]:
@@ -970,7 +991,26 @@ def check_maps(repo: Repo, enabled: frozenset[str]) -> tuple[list[Violation], se
                 violations.extend(check_map_cell(repo, row))
 
             cite = row_cited_path(row)
-            if cite is None or repo.is_cross_repo(cite, map_rel):
+            if cite is None:
+                # Reported, not skipped. A Document cell that lost its backticks
+                # (or uses a link instead) yields no citation, and skipping meant
+                # the row's target was never resolved — so a row pointing at a
+                # nonexistent doc passed. One canonical form keeps that
+                # unambiguous; a row needing another is a convention change.
+                if "map_paths" in enabled and not repo.config.ignored(
+                    map_rel, "map_paths"
+                ):
+                    violations.append(
+                        Violation(
+                            "map_paths",
+                            map_rel,
+                            f"map row '{row.topic}' has no backticked document "
+                            f"path in its Document cell",
+                            row.line,
+                        )
+                    )
+                continue
+            if repo.is_cross_repo(cite, map_rel):
                 continue
             resolved = repo.resolve(cite, map_rel)
             if resolved is None:
@@ -1148,6 +1188,19 @@ def check_frontmatter(repo: Repo) -> list[Violation]:
             continue
         if repo.config.ignored(rel, "frontmatter"):
             continue
+        if has_unclosed_frontmatter(repo.text(rel)):
+            violations.append(
+                Violation(
+                    "frontmatter",
+                    rel,
+                    "frontmatter block is opened but never closed; add the "
+                    "closing `---`",
+                )
+            )
+            # Every field check below reads a block that parsed to nothing, so
+            # they would pile "missing title" onto the real cause.
+            continue
+
         fm = repo.frontmatter(rel)
         required = required_fields(rel)
         missing = [k for k in required if k not in fm]
