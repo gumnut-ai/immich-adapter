@@ -351,36 +351,33 @@ def _blank_scan(
 ) -> tuple[list[str], bool]:
     """The scan itself. Returns (blanked lines, ended inside an open comment).
 
-    Three states persist across lines, each for a reason CommonMark dictates:
+    Fenced blocks are line-oriented, so they are handled per line. Everything else is
+    scanned a **paragraph at a time**, because a code span may contain line endings but
+    cannot cross a paragraph break. Scanning the whole paragraph means a closing run is
+    searched for across it, so an *unmatched* run needs no special case — no closer is
+    found, it is literal text, and scanning simply continues past it. Carrying a
+    tentative span line by line instead blanked the rest of the paragraph permanently,
+    silently dropping every link after a stray backtick.
 
-    * **fence** — a fenced block runs until a matching closing fence.
-    * **comment** — an HTML comment block runs to `-->`, across blank lines.
-    * **code span** — a span may contain line endings, but only within a paragraph, so
-      a blank line ends the paragraph and an unclosed span was literal text after all.
-      Fences are block constructs parsed before inlines, so a fence line also ends it.
-
-    Carrying none of these was a real defect rather than a nicety: a span opened on one
-    line and closed on the next left a `<!--` inside it looking like a live comment
-    opener, which both reported a spurious unterminated-comment error and swallowed the
-    links after the span.
+    Comment state is the one thing that persists across paragraphs: an HTML comment
+    block runs to `-->` regardless of blank lines.
     """
     out: list[str] = []
     fence: str | None = None
     in_comment = False
-    span: str | None = None
-    prev_blank = True
-    in_indented_code = False
+    chunk: list[str] = []
+
+    def flush() -> None:
+        nonlocal chunk, in_comment
+        if not chunk:
+            return
+        scanned, in_comment = _scan_chunk(
+            "\n".join(chunk), blank_spans, drop_comments, in_comment
+        )
+        out.extend(scanned.split("\n"))
+        chunk = []
+
     for line in text.split("\n"):
-        if in_comment:
-            end = line.find("-->")
-            if end == -1:
-                out.append("")
-                continue
-            scanned, span, in_comment = _scan_inline(
-                line[end + 3 :], blank_spans, drop_comments, None
-            )
-            out.append(" " * (end + 3) + scanned)
-            continue
         match = FENCE_RE.match(line)
         if fence is not None:
             if (
@@ -391,36 +388,28 @@ def _blank_scan(
             ):
                 fence = None
             out.append("")
-            span = None
             continue
-        if match:
-            fence = match.group(1)
-            out.append("")
-            span = None
-            continue
-        if not line.strip():
-            span = None
-            prev_blank = True
+        if match or not line.strip():
+            # Flush first: comment state is only settled by scanning the buffered
+            # paragraph, and a fence-shaped line *inside* an open comment is comment
+            # content, not a fence.
+            flush()
+            if in_comment:
+                chunk.append(line)
+                continue
+            if match:
+                fence = match.group(1)
+                out.append("")
+                continue
+            # Paragraph break: a tentative span ends here, unmatched and so literal.
             out.append(line)
             continue
-        # An indented code block (four spaces, opening after a blank line) is code, so a
-        # literal `<!--` in it opened no comment. Bounded by the blank line because
-        # indented code cannot interrupt a paragraph — without that, a four-space list
-        # continuation would be blanked and its real links lost.
-        if (prev_blank or in_indented_code) and line.startswith("    "):
-            in_indented_code = True
-            prev_blank = False
-            span = None
-            out.append("")
-            continue
-        in_indented_code = False
-        prev_blank = False
-        scanned, span, in_comment = _scan_inline(line, blank_spans, drop_comments, span)
-        out.append(scanned)
+        chunk.append(line)
+    flush()
     return out, in_comment
 
 
-def _find_closing_run(line: str, run: str, start: int) -> int:
+def _find_closing_run(text: str, run: str, start: int) -> int:
     """Index of a backtick run of *exactly* `len(run)`, at or after `start`.
 
     Both sides are checked. Looking only at the character after the candidate accepted
@@ -428,73 +417,86 @@ def _find_closing_run(line: str, run: str, start: int) -> int:
     backtick span, but the second of its two backticks passed the one-sided test, so the
     span was closed early and the code content after it was scanned as live markdown.
     """
-    width, n = len(run), len(line)
+    width, n = len(run), len(text)
     i = start
     while True:
-        at = line.find(run, i)
+        at = text.find(run, i)
         if at == -1:
             return -1
-        if (at == 0 or line[at - 1] != "`") and (
-            at + width >= n or line[at + width] != "`"
+        if (at == 0 or text[at - 1] != "`") and (
+            at + width >= n or text[at + width] != "`"
         ):
             return at
         i = at + 1
 
 
-def _scan_inline(
-    line: str, blank_spans: bool, drop_comments: bool, span: str | None
-) -> tuple[str, str | None, bool]:
-    """Blank code spans and comments in one line.
+def _blank_keeping_newlines(text: str, char: str) -> str:
+    """Same-length filler that leaves line breaks alone, so line numbers survive."""
+    return "".join("\n" if c == "\n" else char for c in text)
 
-    Returns (line, code-span run still open, comment left open).
+
+def _scan_chunk(
+    text: str, blank_spans: bool, drop_comments: bool, in_comment: bool
+) -> tuple[str, bool]:
+    """Blank code spans and HTML comments across one paragraph.
+
+    Returns (blanked text, comment left open).
     """
     out: list[str] = []
-    i, n = 0, len(line)
-    if span is not None:
-        close = _find_closing_run(line, span, 0)
-        if close == -1:
-            return ("x" * n if blank_spans else line), span, False
-        end = close + len(span)
-        out.append("x" * end if blank_spans else line[:end])
-        i = end
+    i, n = 0, len(text)
     while i < n:
-        char = line[i]
+        if in_comment:
+            close = text.find("-->", i)
+            if close == -1:
+                out.append(_blank_keeping_newlines(text[i:], " "))
+                return "".join(out), True
+            out.append(_blank_keeping_newlines(text[i : close + 3], " "))
+            i = close + 3
+            in_comment = False
+            continue
+        char = text[i]
         # A backslash escape makes the next punctuation character literal, so `\<!--`
-        # opens no comment and ``\` `` opens no span. Both were being read as markup,
-        # each swallowing the live links after it.
-        if char == "\\" and i + 1 < n and not line[i + 1].isalnum():
-            out.append(line[i : i + 2])
+        # opens no comment and ``\` `` opens no span.
+        if char == "\\" and i + 1 < n and not text[i + 1].isalnum():
+            out.append(text[i : i + 2])
             i += 2
             continue
         if char == "`":
             j = i
-            while j < n and line[j] == "`":
+            while j < n and text[j] == "`":
                 j += 1
-            run = line[i:j]
-            close = _find_closing_run(line, run, j)
+            run = text[i:j]
+            close = _find_closing_run(text, run, j)
             if close == -1:
-                # Unclosed on this line: it may continue into the next one.
-                out.append("x" * (n - i) if blank_spans else line[i:])
-                return "".join(out), run, False
+                # No closer in this paragraph, so the run is literal text. Emit it and
+                # keep scanning what follows — it is ordinary prose.
+                out.append(run)
+                i = j
+                continue
             end = close + len(run)
-            out.append("x" * (end - i) if blank_spans else line[i:end])
+            out.append(
+                _blank_keeping_newlines(text[i:end], "x")
+                if blank_spans
+                else text[i:end]
+            )
             i = end
             continue
-        if line.startswith("<!--", i):
-            close = line.find("-->", i + 4)
+        if text.startswith("<!--", i):
+            close = text.find("-->", i + 4)
             if close == -1:
-                return "".join(out) + " " * (n - i), None, True
+                out.append(_blank_keeping_newlines(text[i:], " "))
+                return "".join(out), True
             # Spaces, not removal: a comment is a token boundary. Concatenating what
             # surrounds it invented syntax that does not render — `[x]<!--c-->(./y)`
             # became a link, and `<!--c--> ## H` became a heading. Callers that need the
             # heading *text* pass drop_comments and get the comment elided instead.
             if not drop_comments:
-                out.append(" " * (close + 3 - i))
+                out.append(_blank_keeping_newlines(text[i : close + 3], " "))
             i = close + 3
             continue
         out.append(char)
         i += 1
-    return "".join(out), None, False
+    return "".join(out), in_comment
 
 
 def slugify_heading(heading: str) -> str:

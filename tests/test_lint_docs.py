@@ -1370,18 +1370,95 @@ def test_comment_before_a_hash_run_is_not_a_heading(repo: FixtureRepo) -> None:
     assert "hidden" in result.stderr
 
 
-def test_indented_code_block_is_not_scanned_for_comments(repo: FixtureRepo) -> None:
-    """Four-space indented code showing a literal `<!--` opens no comment.
+def test_indented_code_is_not_special_cased(repo: FixtureRepo) -> None:
+    """Indented code blocks are deliberately *not* detected.
 
-    Otherwise documentation demonstrating the delimiter failed the required check.
+    Detecting them needs list-container tracking — indentation is relative to the
+    enclosing list marker, so a four-space line inside a list item is a paragraph, not
+    code. Getting that wrong blanks live prose and silently drops its links, which is
+    worse than what the detection bought: across all three repos, zero indented-code
+    lines contain a comment delimiter, and zero contain links. So a delimiter shown in an
+    *indented* example is read as markup, and a fenced example is the supported form.
+
+    This test pins the trade rather than the ideal, so a future change that adds
+    detection has to confront the list-indentation problem rather than rediscover it.
     """
     repo.write_doc(
         "docs/references/a.md",
         TODAY,
-        "An example:\n\n    <!--\n    commented out\n\nBack to prose.",
+        "An example:\n\n    <!-- shown as indented code\n\nBack to prose.",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "never closed" in result.stderr
+
+
+def test_fenced_example_is_the_supported_form_for_delimiters(
+    repo: FixtureRepo,
+) -> None:
+    """The form documentation should use, and the one that works."""
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "An example:\n\n```\n<!-- shown in a fence\n```\n\nBack to prose.",
     )
     repo.commit_all()
     assert repo.lint("--check", "links").returncode == 0
+
+
+def test_list_item_paragraph_keeps_its_links(repo: FixtureRepo) -> None:
+    """Four-space indent inside a list item is list content, not code.
+
+    This is what indented-code detection got wrong, and why it was removed rather than
+    extended: the link here is live and its broken target must be reported.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "- item\n\n    see [x](./gone.md) here"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_unmatched_backtick_leaves_following_links_live(repo: FixtureRepo) -> None:
+    """An unclosed run is literal text, so the links after it still render.
+
+    Carrying a tentative span line by line blanked the rest of the paragraph
+    permanently, so one stray backtick silently dropped every link after it.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "Before ` typo then [x](./gone.md) here."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_unmatched_backtick_across_lines_leaves_links_live(
+    repo: FixtureRepo,
+) -> None:
+    """Same, where the stray run and the link are on different lines."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "Before ` typo\nthen [x](./gone.md) here."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
+
+
+def test_three_space_indent_is_still_prose(repo: FixtureRepo) -> None:
+    """Under four columns is not code, so its links stay in scope."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "Prose:\n\n   see [x](./gone.md) here"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "gone.md" in result.stderr
 
 
 def test_list_continuation_is_not_treated_as_indented_code(
