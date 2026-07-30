@@ -72,6 +72,7 @@ OUTSIDE_TIMEZONE_WINDOW = _outside_timezone_window()
 FIXTURE_CONFIG = """
 strip_prefixes = ["repo-root "]
 self_prefixes = []
+template_paths = ["docs/design-docs/TEMPLATE.md"]
 
 [checks]
 freshness = true
@@ -801,6 +802,95 @@ def test_real_separator_rows_are_still_skipped(repo: FixtureRepo) -> None:
     repo.write_doc("docs/references/a.md", TODAY, "body")
     repo.commit_all()
     assert repo.lint("--check", "map_paths").returncode == 0
+
+
+def test_template_exemption_is_scoped_to_the_configured_path(
+    repo: FixtureRepo,
+) -> None:
+    """A `TEMPLATE.md` elsewhere must not inherit the exemption.
+
+    Keyed on basename, any future template anywhere in the tree was exempt from
+    date, status, and map enforcement — so a real doc could keep placeholder dates
+    and evade the map.
+    """
+    repo.write(
+        "photos-api/docs/design-docs/TEMPLATE.md",
+        "---\ntitle: T\nstatus: active\ncreated: YYYY-MM-DD\n"
+        "last-updated: YYYY-MM-DD\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "photos-api/docs/design-docs/TEMPLATE.md" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "section",
+    ["Not Active Design Docs", "Not Historical Design Docs", "Deprecated APIs"],
+)
+def test_map_sections_are_matched_exactly(repo: FixtureRepo, section: str) -> None:
+    """A containment test accepted negated and unrelated headings.
+
+    `Not Active Design Docs` contains both `Active` and `Design Doc`, so a doc
+    mapped under it satisfied status routing — the opposite of routing.
+    """
+    repo.write("AGENTS.md", _map(section, "| T | `docs/design-docs/a.md` | why |\n"))
+    repo.write(
+        "docs/design-docs/a.md",
+        f"---\ntitle: A\nstatus: active\ncreated: 2020-01-01\n"
+        f"last-updated: {TODAY}\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "map_status_section").returncode == 1
+
+
+def test_canonical_map_sections_are_accepted(repo: FixtureRepo) -> None:
+    """The exact names must still pass, including the `&` in the historical one."""
+    repo.write(
+        "AGENTS.md",
+        _map(
+            "Historical & Deprecated Design Docs",
+            "| T | `docs/design-docs/a.md` | why |\n",
+        ),
+    )
+    repo.write(
+        "docs/design-docs/a.md",
+        f"---\ntitle: A\nstatus: deprecated\ncreated: 2020-01-01\n"
+        f"last-updated: {TODAY}\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "map_status_section").returncode == 0
+
+
+def test_config_key_stranded_in_a_table_is_rejected(repo: FixtureRepo) -> None:
+    """TOML scopes bare keys to the table above them.
+
+    A top-level setting appended after an `[[ignore]]` header becomes a key of that
+    entry and silently does nothing — the config reads as written while having no
+    effect. Found by making this mistake with `template_paths`.
+    """
+    repo.config_path.write_text(
+        FIXTURE_CONFIG
+        + '\n[[ignore]]\npath = "docs/x.md"\nchecks = ["links"]\n'
+        + 'reason = "r"\ntemplate_paths = ["docs/design-docs/TEMPLATE.md"]\n',
+        encoding="utf-8",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "template_paths" in result.stderr
+
+
+def test_unknown_check_name_in_config_is_rejected(repo: FixtureRepo) -> None:
+    """A typo'd check name would otherwise silently configure nothing."""
+    repo.config_path.write_text(
+        FIXTURE_CONFIG.replace("map_cells = true", "map_cell = true"),
+        encoding="utf-8",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "map_cell" in result.stderr
 
 
 def test_map_row_with_wrong_column_count_is_flagged(repo: FixtureRepo) -> None:

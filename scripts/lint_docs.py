@@ -91,11 +91,15 @@ def is_iso_date(value: str) -> bool:
 TZ_WINDOW_EARLIEST_SECONDS = 43_200
 TZ_WINDOW_LATEST_SECONDS = 50_400
 
-# A `TEMPLATE.md` under `design-docs/` carries placeholder frontmatter — its
-# `status: active` is boilerplate rather than a live plan, and its dates are
-# literally `YYYY-MM-DD`. Every check reading those values special-cases it. Named
-# by basename, not path: not every repo using this linter has one.
-TEMPLATE_BASENAME = "TEMPLATE.md"
+# A design-doc template carries placeholder frontmatter — its `status: active` is
+# boilerplate rather than a live plan, and its dates are literally `YYYY-MM-DD` — so
+# every check that reads those values must exempt it.
+#
+# Exempt paths are configured per repo (`template_paths` in `lint_docs.toml`) and
+# default to none. Matching on basename alone would exempt any future `TEMPLATE.md`
+# anywhere in the tree, letting a real doc keep placeholder dates and evade map
+# enforcement; hardcoding one path here would name a file two of the three repos
+# sharing this script do not have.
 
 
 # --------------------------------------------------------------------------
@@ -125,6 +129,9 @@ class Config:
     # Paths that escape the repo root are treated the same way — see
     # Repo.is_cross_repo.
     cross_repo_prefixes: tuple[str, ...] = ("gumnut-ai/",)
+    # Repo-relative paths of design-doc templates, whose frontmatter is placeholder
+    # text. Empty by default: a repo that has one declares it.
+    template_paths: tuple[str, ...] = ()
     enabled: frozenset[str] = frozenset()
     consult_cell_chars: int = 250
     ignores: tuple[Ignore, ...] = ()
@@ -136,6 +143,10 @@ class Config:
             if rel_path == ig.path or fnmatch.fnmatch(rel_path, ig.path):
                 return True
         return False
+
+    def is_template(self, rel: str) -> bool:
+        """Whether this exact path is a configured design-doc template."""
+        return rel in self.template_paths
 
     def strip_citation(self, cite: str) -> tuple[str, bool]:
         """Strip any anchoring prefix, reporting whether one applied.
@@ -157,11 +168,58 @@ class Config:
         return out, anchored
 
 
+CONFIG_TOP_KEYS = frozenset(
+    {
+        "strip_prefixes",
+        "self_prefixes",
+        "cross_repo_prefixes",
+        "template_paths",
+        "checks",
+        "limits",
+        "ignore",
+    }
+)
+CONFIG_LIMIT_KEYS = frozenset({"consult_cell_chars"})
+CONFIG_IGNORE_KEYS = frozenset({"path", "checks", "reason"})
+
+
 def load_config(path: Path, all_checks: tuple[str, ...]) -> Config:
     raw: dict = {}
     if path.exists():
         with path.open("rb") as fh:
             raw = tomllib.load(fh)
+
+    # An unrecognized key is an error, not something to ignore. TOML scopes bare
+    # keys to the table above them, so a top-level setting appended after a
+    # `[limits]` or `[[ignore]]` header silently becomes a key of that table and
+    # does nothing — the exemption or setting reads as configured while having no
+    # effect. A typo'd name fails the same silent way. (Written after doing exactly
+    # this with `template_paths`.)
+    unknown = sorted(set(raw) - CONFIG_TOP_KEYS)
+    if unknown:
+        fail(
+            f"{path}: unknown top-level key(s): {', '.join(unknown)}. "
+            f"A key placed after a `[table]` header belongs to that table — "
+            f"top-level settings must come before the first one."
+        )
+    unknown_limits = sorted(set(raw.get("limits", {})) - CONFIG_LIMIT_KEYS)
+    if unknown_limits:
+        fail(f"{path}: unknown key(s) in [limits]: {', '.join(unknown_limits)}")
+    unknown_checks = sorted(set(raw.get("checks", {})) - set(all_checks))
+    if unknown_checks:
+        fail(f"{path}: unknown check name(s) in [checks]: {', '.join(unknown_checks)}")
+    # Where a stray top-level key most often lands, since `[[ignore]]` tends to be
+    # last in the file — so this is the case that actually catches the mistake.
+    for i, entry in enumerate(raw.get("ignore", [])):
+        stray = sorted(set(entry) - CONFIG_IGNORE_KEYS)
+        if stray:
+            fail(
+                f"{path}: unknown key(s) in [[ignore]] #{i + 1}: "
+                f"{', '.join(stray)}. A top-level setting written after an "
+                f"`[[ignore]]` header becomes a key of that entry and has no effect."
+            )
+        if "path" not in entry:
+            fail(f"{path}: [[ignore]] #{i + 1} has no `path`")
 
     checks = raw.get("checks", {})
     # A check absent from config defaults to on, so adding a check to this file
@@ -182,6 +240,7 @@ def load_config(path: Path, all_checks: tuple[str, ...]) -> Config:
         strip_prefixes=tuple(raw.get("strip_prefixes", ("repo-root ",))),
         self_prefixes=tuple(raw.get("self_prefixes", ())),
         cross_repo_prefixes=tuple(raw.get("cross_repo_prefixes", ("gumnut-ai/",))),
+        template_paths=tuple(raw.get("template_paths", ())),
         enabled=enabled,
         consult_cell_chars=int(limits.get("consult_cell_chars", 250)),
         ignores=ignores,
@@ -740,7 +799,7 @@ def check_freshness(
             continue
         # A template's date is placeholder text (`YYYY-MM-DD`); bumping it to a
         # real date would corrupt the template for the next doc copied from it.
-        if Path(rel).name == TEMPLATE_BASENAME:
+        if repo.config.is_template(rel):
             continue
         text = repo.text(rel)
         if not has_last_updated_key(text):
@@ -1019,18 +1078,24 @@ def row_cited_path(row: MapRow) -> str | None:
     return m.group(1) if m else None
 
 
+# The canonical map section names. Compared exactly (after whitespace
+# normalization) rather than by substring: a containment test accepted
+# `Not Active Design Docs` and `Not Historical Design Docs`, so a malformed heading
+# satisfied status routing and a doc mapped there passed.
+ACTIVE_SECTION = "Active Design Docs"
+HISTORICAL_SECTION = "Historical & Deprecated Design Docs"
+
+
+def normalize_section(section: str) -> str:
+    return " ".join(section.split())
+
+
 def is_active_section(section: str) -> bool:
-    return "Active" in section and "Design Doc" in section
+    return normalize_section(section) == ACTIVE_SECTION
 
 
 def is_historical_section(section: str) -> bool:
-    # Mirrors is_active_section in also requiring the section to identify design
-    # docs. Matching "Historical" or "Deprecated" alone accepted an unrelated
-    # section — `Deprecated APIs` would satisfy the routing check for a completed
-    # or deprecated doc parked under it, which is the opposite of routing.
-    return ("Historical" in section or "Deprecated" in section) and (
-        "Design Doc" in section
-    )
+    return normalize_section(section) == HISTORICAL_SECTION
 
 
 def check_maps(repo: Repo, enabled: frozenset[str]) -> tuple[list[Violation], set[str]]:
@@ -1140,7 +1205,7 @@ def check_row_status_section(repo: Repo, row: MapRow, resolved: str) -> list[Vio
     """A design doc's map section follows its `status:` frontmatter."""
     if "/design-docs/" not in f"/{resolved}":
         return []
-    if Path(resolved).name == TEMPLATE_BASENAME:
+    if repo.config.is_template(resolved):
         # `status: active` here is placeholder text, not a live plan.
         return []
     status = repo.frontmatter(resolved).get("status", "").strip()
@@ -1207,7 +1272,7 @@ def check_unmapped(repo: Repo, mapped: set[str]) -> list[Violation]:
     for rel in repo.docs:
         if "/design-docs/" not in f"/{rel}":
             continue
-        if Path(rel).name == TEMPLATE_BASENAME or rel in mapped:
+        if repo.config.is_template(rel) or rel in mapped:
             continue
         if repo.config.ignored(rel, "map_paths"):
             continue
@@ -1300,7 +1365,7 @@ def check_frontmatter(repo: Repo) -> list[Violation]:
         # `last-updated` too, but only for docs in this branch's diff — a doc
         # nobody touched keeps whatever it has, so the value is checked here as
         # well.
-        is_template = Path(rel).name == TEMPLATE_BASENAME
+        is_template = repo.config.is_template(rel)
         for key in ("created", "last-updated"):
             value = fm.get(key, "").strip()
             if not is_template and value and not is_iso_date(value):
