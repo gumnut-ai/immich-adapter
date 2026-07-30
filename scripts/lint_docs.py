@@ -560,6 +560,24 @@ def collect_anchors(text: str) -> set[str]:
 
 
 def parse_frontmatter(text: str) -> dict[str, str]:
+    """The frontmatter block's fields. See `parse_frontmatter_full`."""
+    return parse_frontmatter_full(text)[0]
+
+
+def frontmatter_sequences(text: str) -> frozenset[str]:
+    """Keys whose frontmatter value is a YAML block sequence.
+
+    Carried separately because the serialized value cannot be trusted to reveal
+    it: a scalar may legitimately be the literal text `[First]`. Every field the
+    conventions define is a scalar, so `check_frontmatter` rejects a sequence for
+    any of them — the string form alone caught only the fields that happen to have
+    a value validator (the dates, `status`), and let a sequence-valued `title`
+    through as merely non-empty.
+    """
+    return parse_frontmatter_full(text)[1]
+
+
+def parse_frontmatter_full(text: str) -> tuple[dict[str, str], frozenset[str]]:
     """Parse the leading YAML frontmatter block.
 
     Only the subset the conventions use: flat `key: value` pairs. A body mention
@@ -575,13 +593,13 @@ def parse_frontmatter(text: str) -> dict[str, str]:
     """
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
-        return {}
+        return {}, frozenset()
     fields: dict[str, str] = {}
     sequence_items: dict[str, list[str]] = {}
     last_key: str | None = None
     for line in lines[1:]:
         if line.strip() == "---":
-            return fields
+            return fields, frozenset(sequence_items)
         m = re.match(r"^\s*([A-Za-z0-9_-]+)\s*:(.*)$", line)
         if m:
             key = m.group(1)
@@ -606,7 +624,7 @@ def parse_frontmatter(text: str) -> dict[str, str]:
             existing = sequence_items.setdefault(last_key, [])
             existing.append(unquote(item.group(1)))
             fields[last_key] = "[" + ", ".join(existing) + "]"
-    return {}
+    return {}, frozenset()
 
 
 def has_unclosed_frontmatter(text: str) -> bool:
@@ -1363,11 +1381,27 @@ def find_map_files(repo: Repo) -> list[str]:
     for rel in repo.docs:
         tokens = parse_markdown(repo.text(rel))
         if any(
-            token.type == "heading_open" and is_map_heading(heading_text(tokens[i + 1]))
-            for i, token in enumerate(tokens)
+            is_top_level_map_heading(tokens, i, token) for i, token in enumerate(tokens)
         ):
             out.append(rel)
     return out
+
+
+def is_top_level_map_heading(tokens, i: int, token) -> bool:
+    """Whether this token opens a real Documentation Map heading.
+
+    `level` gates out containers. A doc that *quotes* a map as an example —
+    `> # Documentation Map` above a quoted table — emits ordinary heading and row
+    tokens, so without this the example reads as a live map: its rows get resolved
+    as real citations, and a quoted row either satisfies the unmapped-doc check or
+    fails the column-count one. A map is a navigational structure at the top level
+    of a document, never inside a blockquote or a list item.
+    """
+    return (
+        token.type == "heading_open"
+        and token.level == 0
+        and is_map_heading(heading_text(tokens[i + 1]))
+    )
 
 
 def raw_cell_count(line: str) -> int:
@@ -1427,12 +1461,16 @@ def parse_map_rows(repo: Repo, map_rel: str) -> list[MapRow]:
     map_level = 0
     section = ""
     in_thead = False
+    in_top_table = False
     row_line: int | None = None
     cells: list[str] = []
 
     tokens = parse_markdown(text)
     for i, token in enumerate(tokens):
-        if token.type == "heading_open":
+        # `token.level` gates out containers throughout: a quoted or list-nested
+        # heading or table is an *example* of a map, not one. See
+        # is_top_level_map_heading.
+        if token.type == "heading_open" and token.level == 0:
             level, heading = int(token.tag[1:]), heading_text(tokens[i + 1])
             if is_map_heading(heading):
                 in_map, map_level, section = True, level, ""
@@ -1440,11 +1478,15 @@ def parse_map_rows(repo: Repo, map_rel: str) -> list[MapRow]:
                 in_map = False
             elif in_map:
                 section = heading
+        elif token.type == "table_open":
+            in_top_table = token.level == 0
+        elif token.type == "table_close":
+            in_top_table = False
         elif token.type == "thead_open":
             in_thead = True
         elif token.type == "thead_close":
             in_thead = False
-        elif token.type == "tr_open" and in_map and not in_thead:
+        elif token.type == "tr_open" and in_map and in_top_table and not in_thead:
             row_line = (token.map[0] + 1) if token.map else None
             cells = []
         elif token.type == "td_open" and row_line is not None:
@@ -1737,6 +1779,14 @@ def check_unmapped(repo: Repo, mapped: dict[str, set[str]]) -> list[Violation]:
 
 DESIGN_DOC_STATUSES = ("proposed", "active", "completed", "deprecated")
 
+# Every field the conventions define holds a single value, so a YAML sequence is
+# malformed wherever one of these appears. Checked by shape rather than by value:
+# leaning on the value validators caught only the fields that happen to have one
+# (the dates, `status`) and let a sequence-valued `title` pass as merely non-empty.
+SCALAR_FIELDS = frozenset(
+    {"title", "status", "created", "last-updated", "generated", "superseded-by"}
+)
+
 
 def required_fields(rel: str) -> tuple[str, ...]:
     """Fields the per-directory frontmatter tables require.
@@ -1801,6 +1851,18 @@ def check_frontmatter(repo: Repo) -> list[Violation]:
                     "frontmatter",
                     rel,
                     f"frontmatter field(s) present but empty: {', '.join(blank)}",
+                )
+            )
+        # Shape, not value: a sequence is malformed for any field the conventions
+        # define, whether or not that field has a value validator to trip over.
+        sequences = sorted(frontmatter_sequences(repo.text(rel)) & SCALAR_FIELDS)
+        if sequences:
+            violations.append(
+                Violation(
+                    "frontmatter",
+                    rel,
+                    f"frontmatter field(s) must hold a single value, not a list: "
+                    f"{', '.join(sequences)}",
                 )
             )
         # The tables define these as ISO dates, and checking only that they are

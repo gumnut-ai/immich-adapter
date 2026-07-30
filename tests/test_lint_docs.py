@@ -2475,17 +2475,57 @@ def test_reference_doc_missing_title_is_flagged(repo: FixtureRepo) -> None:
 def test_list_valued_field_is_not_treated_as_empty(repo: FixtureRepo) -> None:
     """A YAML block sequence is a populated value, not a blank one.
 
-    The scalar-only parse read `title:` followed by `- items` as the empty string,
-    so a required field written as a list would be reported "present but empty" —
-    a real doc failing on a shape YAML allows.
+    The scalar-only parse read a key followed by `- items` as the empty string.
+    This is the case that motivated it: a key the conventions do not define, like
+    the daemon docs' `routines:`, is free to be a list and must not trip the
+    present-but-empty rule.
     """
     repo.write(
         "docs/references/a.md",
-        f"---\ntitle:\n  - First\n  - Second\nlast-updated: {TODAY}\n---\n\nbody\n",
+        f"---\ntitle: A\nlast-updated: {TODAY}\nroutines:\n  - First\n  - Second\n"
+        f"---\n\nbody\n",
     )
     repo.commit_all()
     result = repo.lint("--check", "frontmatter")
     assert result.returncode == 0, result.stderr
+
+
+def test_sequence_is_rejected_for_a_field_with_no_value_validator(
+    repo: FixtureRepo,
+) -> None:
+    """Shape is checked directly, not inferred from a value check failing.
+
+    `title` has no format validator, so leaning on the value alone let
+    `title:\\n  - First` pass as merely non-empty. Every field the conventions
+    define holds a single value.
+    """
+    repo.write(
+        "docs/references/a.md",
+        f"---\ntitle:\n  - First\nlast-updated: {TODAY}\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "not a list" in result.stderr, result.stderr
+    assert "title" in result.stderr
+
+
+def test_quoted_map_example_is_not_a_real_map(repo: FixtureRepo) -> None:
+    """A map inside a blockquote is an *example*, not a navigational structure.
+
+    Its rows would otherwise be resolved as real citations — either satisfying the
+    unmapped-doc check with a quoted row or failing the column-count check.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "body")
+    repo.write(
+        "AGENTS.md",
+        _map("References", "| Topic A | `docs/references/a.md` | why |\n")
+        + "\nAn example of the shape:\n\n"
+        + "> # Documentation Map\n>\n> | Topic | Document | Consult when... |\n"
+        + "> |---|---|---|\n> | Q | `docs/references/nonexistent.md` | example |\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0, "quoted map example"
 
 
 @pytest.mark.parametrize(
