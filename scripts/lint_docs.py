@@ -70,6 +70,7 @@ from urllib.parse import unquote as percent_decode
 
 try:
     from markdown_it import MarkdownIt
+    from markdown_it.rules_inline import autolink, image, link
 except ModuleNotFoundError:  # pragma: no cover - exercised by running without uv
     # Inlined rather than routed through `fail()`, which is not defined yet at
     # import time. Same output shape, so the message reads like every other one.
@@ -355,6 +356,33 @@ class Violation:
 # comment-related check silently inverts.
 MD = MarkdownIt("js-default", {"html": True})
 
+# Inline tokens carry no source position, which is the one thing a linter needs
+# most — a violation has to name a line. Rather than reconstruct it by counting
+# `](` delimiters in the block source (which needs a separate rule for images,
+# autolinks, escaped delimiters, and reference links, each wrong in its own way),
+# ask the parser: an inline rule runs with `state.pos` at the construct's start,
+# so wrapping the three rules that emit link-ish tokens records it directly.
+SRC_POS = "src_pos"
+
+
+def stamp_source_position(rule):
+    """Wrap an inline rule so the tokens it emits carry their source offset."""
+
+    def wrapped(state, silent):
+        start = state.pos
+        first_new = len(state.tokens)
+        matched = rule(state, silent)
+        if matched and not silent:
+            for token in state.tokens[first_new:]:
+                token.meta.setdefault(SRC_POS, start)
+        return matched
+
+    return wrapped
+
+
+for _rule_name, _rule in (("link", link), ("image", image), ("autolink", autolink)):
+    MD.inline.ruler.at(_rule_name, stamp_source_position(_rule))
+
 HTML_ANCHOR_TAG_RE = re.compile(r"<a\s[^>]*>", re.IGNORECASE | re.DOTALL)
 # `(?<![\w-])`, not `\b`: a hyphen is a non-word character, so `\b` matched the tail
 # of `data-id` / `aria-name` and recorded their values as fragment anchors — making a
@@ -486,14 +514,18 @@ def slugify_heading(heading: str) -> str:
     return s.strip().replace(" ", "-")
 
 
-def collect_anchors(text: str) -> set[str]:
+def anchors_in(text: str) -> set[str]:
+    """Anchors for a document's source. Convenience over parse + collect."""
+    return collect_anchors(parse_markdown(text))
+
+
+def collect_anchors(tokens) -> set[str]:
     """Every fragment a `#...` link in this file could target.
 
     Headings come from the token stream, so a `#` inside a fenced block, a code
     span, or a comment is not one — that distinction was the previous scanner's
     entire job, and the reason it needed two parallel renderings of the same text.
     """
-    tokens = parse_markdown(text)
     anchors: set[str] = set()
 
     # Explicit anchors, from raw-HTML tokens only, so an `<a id="fake">` shown as
@@ -526,74 +558,81 @@ def collect_anchors(text: str) -> set[str]:
     return anchors
 
 
-def parse_frontmatter(text: str) -> dict[str, str]:
-    """The frontmatter block's fields. See `parse_frontmatter_full`."""
-    return parse_frontmatter_full(text)[0]
+def frontmatter_end(lines: list[str]) -> int | None:
+    """Index of the frontmatter block's closing `---`, or None if there is none.
 
-
-def frontmatter_sequences(text: str) -> frozenset[str]:
-    """Keys whose frontmatter value is a YAML sequence, block or flow.
-
-    Carried separately because the value cannot reveal it — a scalar may
-    legitimately be the literal text `[First]`. Every field the conventions define
-    is a scalar, so `check_frontmatter` rejects a sequence for any of them;
-    inferring shape from a value check instead only covered the fields that happen
-    to have one.
+    The one place the delimiter rule lives, so "what counts as frontmatter" cannot
+    drift between the parser and the checks that rewrite dates inside it.
     """
-    return parse_frontmatter_full(text)[1]
+    if not lines or lines[0].strip() != "---":
+        return None
+    for i, line in enumerate(lines[1:], 1):
+        if line.strip() == "---":
+            return i
+    return None
 
 
-def parse_frontmatter_full(text: str) -> tuple[dict[str, str], frozenset[str]]:
+def parse_frontmatter(text: str) -> dict[str, str | list[str]]:
     """Parse the leading YAML frontmatter block.
 
-    Only the subset the conventions use: flat `key: value` pairs. A body mention
-    of a key (e.g. a doc documenting the convention) is not frontmatter and is
-    ignored, which is why parsing stops at the closing delimiter.
+    Only the subset the conventions use: `key: value`, plus block and flow
+    sequences. A body mention of a key (e.g. a doc documenting the convention) is
+    not frontmatter, which is why parsing stops at the closing delimiter.
+
+    A sequence value stays a `list`, so its **shape** survives. Every field the
+    conventions define holds a single value, so `check_frontmatter` rejects a list
+    for any of them — inferring that from a *value* check instead only covered the
+    fields that happen to have one, letting a list-valued `title` pass, and
+    flattening a one-item sequence to a string made it indistinguishable from a
+    scalar. A key the conventions do not define is free to be a list.
 
     An **unterminated** block yields no fields: no renderer reads a truncated doc
     as having frontmatter, and `has_unclosed_frontmatter` reports the missing
     delimiter as its own violation rather than a pile of missing fields.
     """
     lines = text.split("\n")
-    if not lines or lines[0].strip() != "---":
-        return {}, frozenset()
-    fields: dict[str, str] = {}
-    sequence_items: dict[str, list[str]] = {}
+    end = frontmatter_end(lines)
+    if end is None:
+        return {}
+    fields: dict[str, str | list[str]] = {}
     last_key: str | None = None
-    for line in lines[1:]:
-        if line.strip() == "---":
-            return fields, frozenset(sequence_items)
+    for line in lines[1:end]:
         m = re.match(r"^\s*([A-Za-z0-9_-]+)\s*:(.*)$", line)
         if m:
-            key = m.group(1)
-            last_key = key
+            key = last_key = m.group(1)
             raw = m.group(2).strip()
-            fields[key] = unquote(m.group(2))
-            # A flow sequence is the same shape violation as a block one. Tested on
-            # the raw value, since a *quoted* `"[x]"` is a string that looks like one.
+            # A flow sequence is the same shape as a block one. Tested on the raw
+            # value, since a *quoted* `"[x]"` is a string that looks like a list.
             if raw.startswith("[") and raw.endswith("]"):
-                sequence_items.setdefault(key, [])
+                inner = raw[1:-1].strip()
+                fields[key] = (
+                    [unquote(v) for v in inner.split(",") if v.strip()] if inner else []
+                )
+            else:
+                fields[key] = unquote(m.group(2))
             continue
-        # A block-sequence item continues the preceding key; without this a
-        # list-valued field read as empty, failing a doc on a shape YAML allows.
-        # Serialized as a flow sequence so the value stays non-empty (presence
-        # holds) while no scalar check accepts it, and reads well in the message.
-        # Joining bare instead made a *single-item* sequence indistinguishable from
-        # a scalar, which is why `frontmatter_sequences` carries the shape too.
         item = re.match(r"^\s*-\s+(.*)$", line)
         if item and last_key is not None:
-            existing = sequence_items.setdefault(last_key, [])
+            # A block-sequence item continues the preceding key. Without this a
+            # list-valued field read as the empty string, failing a doc on a shape
+            # YAML allows.
+            existing = fields.get(last_key)
+            if not isinstance(existing, list):
+                existing = []
+                fields[last_key] = existing
             existing.append(unquote(item.group(1)))
-            fields[last_key] = "[" + ", ".join(existing) + "]"
-    return {}, frozenset()
+    return fields
+
+
+def field_text(value: str | list[str]) -> str:
+    """A frontmatter value rendered for a violation message."""
+    return value if isinstance(value, str) else "[" + ", ".join(value) + "]"
 
 
 def has_unclosed_frontmatter(text: str) -> bool:
     """Whether a doc opens a frontmatter block and never closes it."""
     lines = text.split("\n")
-    if not lines or lines[0].strip() != "---":
-        return False
-    return not any(line.strip() == "---" for line in lines[1:])
+    return bool(lines) and lines[0].strip() == "---" and frontmatter_end(lines) is None
 
 
 def unquote(value: str) -> str:
@@ -617,6 +656,9 @@ class Repo:
     project_roots: tuple[str, ...] = ()
     _text: dict[str, str] = field(default_factory=dict)
     _anchors: dict[str, set[str]] = field(default_factory=dict)
+    _frontmatter: dict[str, dict[str, str | list[str]]] = field(default_factory=dict)
+    _tokens: dict[str, list] = field(default_factory=dict)
+    tracked: frozenset[str] = frozenset()
 
     def text(self, rel: str) -> str:
         if rel not in self._text:
@@ -628,11 +670,31 @@ class Repo:
 
     def anchors(self, rel: str) -> set[str]:
         if rel not in self._anchors:
-            self._anchors[rel] = collect_anchors(self.text(rel))
+            self._anchors[rel] = collect_anchors(self.tokens(rel))
         return self._anchors[rel]
 
-    def frontmatter(self, rel: str) -> dict[str, str]:
-        return parse_frontmatter(self.text(rel))
+    def tokens(self, rel: str) -> list:
+        """The document's token stream, parsed once per run.
+
+        Links, anchors, and map rows all walk the same tokens, and each used to
+        re-parse the file — 391 parses for 180 documents. Caching them took this
+        repo's run from 3.1s to 1.0s.
+
+        The cost is retention: the checks are sequential repo-wide passes, so the
+        saving comes precisely from holding every document's tokens across them,
+        at ~430KB each (peak RSS 48MB to 126MB here). That is linear in doc count.
+        If a repo ever grows large enough for that to matter, the fix is to invert
+        the loops — one pass over documents running every check — not to make this
+        cache cleverer.
+        """
+        if rel not in self._tokens:
+            self._tokens[rel] = parse_markdown(self.text(rel))
+        return self._tokens[rel]
+
+    def frontmatter(self, rel: str) -> dict[str, str | list[str]]:
+        if rel not in self._frontmatter:
+            self._frontmatter[rel] = parse_frontmatter(self.text(rel))
+        return self._frontmatter[rel]
 
     def git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -746,6 +808,8 @@ class Repo:
         """Drop cached content for a file this process just rewrote."""
         self._text.pop(rel, None)
         self._anchors.pop(rel, None)
+        self._frontmatter.pop(rel, None)
+        self._tokens.pop(rel, None)
 
 
 def discover_repo(config: Config) -> Repo:
@@ -821,6 +885,7 @@ def discover_repo(config: Config) -> Repo:
         root=root,
         config=config,
         docs=docs,
+        tracked=frozenset(tracked),
         doc_roots=tuple(sorted(doc_roots)),
         # Longest first, so `app/web` is tried before `app`.
         project_roots=tuple(sorted(project_roots, key=lambda s: (-len(s), s))),
@@ -1025,12 +1090,7 @@ def check_freshness(
     # An untracked doc is in no diff, so without this a brand-new doc's date went
     # unchecked locally and only failed once committed. It has no base blob, so it
     # takes the added-on-this-branch path below and must carry a current date.
-    untracked = {
-        rel
-        for rel in repo.docs
-        if repo.git("ls-files", "--error-unmatch", "--", rel, check=False).returncode
-        != 0
-    }
+    untracked = {rel for rel in repo.docs if rel not in repo.tracked}
     scope = sorted({p for p in changed if p} | untracked)
 
     violations: list[Violation] = []
@@ -1047,7 +1107,7 @@ def check_freshness(
         if not has_last_updated_key(text):
             continue
 
-        head_val = repo.frontmatter(rel).get("last-updated", "")
+        head_val = field_text(repo.frontmatter(rel).get("last-updated", ""))
         # A renamed doc's base blob lives under its old path. See rename_sources.
         base_path = renames.get(rel, rel)
         at_base = repo.git("cat-file", "-e", f"{merge_base}:{base_path}", check=False)
@@ -1098,15 +1158,9 @@ def check_freshness(
 EXTERNAL_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
 
 
-def scan_links(text: str) -> tuple[list[tuple[int, str]], bool]:
-    """One parse, two answers: (links worth resolving, unterminated comment found)."""
-    tokens = parse_markdown(text)
+def scan_links(tokens) -> tuple[list[tuple[int, str]], bool]:
+    """One walk, two answers: (links worth resolving, unterminated comment found)."""
     return list(_iter_links_in(tokens)), has_unterminated_comment(tokens)
-
-
-def iter_links(text: str):
-    """Yield (line_number, target) for links worth resolving."""
-    return iter(scan_links(text)[0])
 
 
 def _iter_links_in(tokens):
@@ -1116,95 +1170,32 @@ def _iter_links_in(tokens):
     `link_open` counts — `image` is a distinct token type, so `![](...)` needs no
     lookbehind, and a link inside a code span, fence, or comment emits no token.
 
-    Inline children carry no `map`, so `BlockPositions` locates the line within
-    the enclosing block; using the block's own line measured 24% of links wrong.
+    The line comes from the block's own `map` plus the newlines before the token's
+    recorded source offset (see `stamp_source_position`), so it is the parser's
+    answer rather than a reconstruction.
     """
-
-    # Offsets are spent in *source* order, not token order: an image spends its `](`
-    # where its token sits, but a link spends its own at the **close**, since
-    # everything nested in the label precedes it. `[![alt](i.png)](d.md)` is emitted
-    # link_open, image, link_close while the source runs image-first.
-    def walk(items, line: int, block: BlockPositions, open_links: list):
-        for token in items:
-            if token.map:
-                line = token.map[0] + 1
-            if token.type == "inline":
-                block = BlockPositions(token.content, token.children or [])
-            if token.type == "image":
-                block.take()
-            if token.type == "link_open":
-                open_links.append((token.attrGet("href") or "", token.markup))
-            if token.type == "link_close" and open_links:
-                raw, markup = open_links.pop()
-                # An autolink (`<https://x>`) has no `](` at all, so it must not
-                # consume one — doing so would steal a later link's position.
-                offset = None if markup == "autolink" else block.take()
-                found = line if offset is None else line + block.newlines_before(offset)
-                yield found, raw.strip()
-            # Not into an image's children. Those are its *alt text*, and markdown-it
-            # still tokenizes link syntax there — `![alt [x][ref]](i.png)` carries a
-            # `link_open` — but the render is `<img alt="alt x">` with no hyperlink at
-            # all. Recursing reported that destination as a broken link: a false
-            # positive, on a target that is not a link.
-            if token.children and token.type != "image":
-                yield from walk(token.children, line, block, open_links)
-
-    yield from walk(tokens, 1, BlockPositions("", []), [])
-
-
-class BlockPositions:
-    """The `](` offsets in one block's raw inline source, handed out in order.
-
-    Anchored on the syntax, not the destination text: searching for the
-    destination finds a *prose* mention of the same path earlier in the block, and
-    markdown-it percent-encodes an angle-bracket destination so the search misses
-    the real one anyway.
-
-    **The pairing validates itself before it is trusted.** A reference link
-    (`[a][r]`) or shortcut link (`[a]`) spends no `](`, so one in the block would
-    slip the pairing and report every later link on the wrong line — worse than
-    not looking. Offsets are used only when their count matches demand exactly;
-    otherwise the whole block falls back to its own line. An imprecise line in
-    rare blocks, never a wrong one.
-    """
-
-    def __init__(self, content: str, children) -> None:
-        self.content = content
-        offsets = [
-            m.start()
-            for m in re.finditer(r"\]\(", content)
-            # An escaped `\](` opens no link, so counting it inflates supply and
-            # steals a real link's position. Parity: `\\](` is an escaped
-            # backslash followed by a live delimiter.
-            if (len(content[: m.start()]) - len(content[: m.start()].rstrip("\\"))) % 2
-            == 0
-        ]
-        # An image spends one `](`; an autolink (`<https://x>`) spends none.
-        demand = sum(
-            1
-            for c in children
-            if c.type == "image" or (c.type == "link_open" and c.markup != "autolink")
-        )
-        self._offsets = offsets if len(offsets) == demand else []
-        self._next = 0
-
-    def take(self) -> int | None:
-        """The next `](` offset, or None when the pairing is not trustworthy."""
-        if self._next >= len(self._offsets):
-            return None
-        offset = self._offsets[self._next]
-        self._next += 1
-        return offset
-
-    def newlines_before(self, offset: int) -> int:
-        return self.content.count("\n", 0, offset)
+    for token in tokens:
+        if token.type != "inline" or not token.map:
+            continue
+        block_line = token.map[0] + 1
+        for child in token.children or []:
+            # Not into an image's children. Those are its *alt text*, and
+            # markdown-it still tokenizes link syntax there — `![alt [x][r]](i.png)`
+            # carries a `link_open` — but the render is `<img alt="alt x">` with no
+            # hyperlink at all, so resolving that destination is a false positive.
+            if child.type != "link_open":
+                continue
+            offset = child.meta.get(SRC_POS)
+            line = block_line
+            if offset is not None:
+                line += token.content.count("\n", 0, offset)
+            yield line, (child.attrGet("href") or "").strip()
 
 
 def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violation]:
     violations: list[Violation] = []
     for rel in repo.docs:
-        text = repo.text(rel)
-        links, unterminated_comment = scan_links(text)
+        links, unterminated_comment = scan_links(repo.tokens(rel))
         if (
             "links" in enabled
             and not repo.config.ignored(rel, "links")
@@ -1321,39 +1312,6 @@ def is_map_heading(heading: str) -> bool:
     return MAP_HEADING_RE.match(heading) is not None
 
 
-def find_map_files(repo: Repo) -> list[str]:
-    """Docs carrying a Documentation Map.
-
-    Discovered by heading *text*, not filename. A map does not always live in
-    `AGENTS.md`: a repo may keep it in a differently-named file (for instance one
-    symlinked into a parent directory under another name), so hardcoding the
-    filename would miss that repo's map entirely.
-    """
-    out: list[str] = []
-    for rel in repo.docs:
-        tokens = parse_markdown(repo.text(rel))
-        if any(
-            is_top_level_map_heading(tokens, i, token) for i, token in enumerate(tokens)
-        ):
-            out.append(rel)
-    return out
-
-
-def is_top_level_map_heading(tokens, i: int, token) -> bool:
-    """Whether this token opens a real Documentation Map heading.
-
-    `level` gates out containers: a map *quoted* as an example emits ordinary
-    heading and row tokens, so its rows would be resolved as real citations. A map
-    is a navigational structure at a document's top level, never in a blockquote
-    or list item.
-    """
-    return (
-        token.type == "heading_open"
-        and token.level == 0
-        and is_map_heading(heading_text(tokens[i + 1]))
-    )
-
-
 def raw_cell_count(line: str) -> int:
     r"""How many cells a table row's source line actually declares.
 
@@ -1408,11 +1366,12 @@ def parse_map_rows(repo: Repo, map_rel: str) -> list[MapRow]:
     row_line: int | None = None
     cells: list[str] = []
 
-    tokens = parse_markdown(text)
+    tokens = repo.tokens(map_rel)
     for i, token in enumerate(tokens):
-        # `token.level` gates out containers throughout: a quoted or list-nested
-        # heading or table is an *example* of a map, not one. See
-        # is_top_level_map_heading.
+        # `token.level` gates out containers throughout: a map *quoted* as an
+        # example emits ordinary heading and row tokens, and its rows would then be
+        # resolved as real citations. A map is a navigational structure at a
+        # document's top level, never inside a blockquote or list item.
         if token.type == "heading_open" and token.level == 0:
             level, heading = int(token.tag[1:]), heading_text(tokens[i + 1])
             if is_map_heading(heading):
@@ -1489,10 +1448,13 @@ def check_maps(
     violations: list[Violation] = []
     mapped: dict[str, set[str]] = {}
 
-    for map_rel in find_map_files(repo):
-        # A map section may legitimately hold no table — a repo whose real map
-        # lives elsewhere keeps the heading plus a pointer to it — so finding zero
-        # rows here is not an error.
+    # Every doc, not a pre-filtered list: `parse_map_rows` already yields nothing
+    # for a file with no map, and a separate detection pass meant a second parse of
+    # every document plus a second copy of the "what is a map heading" rule.
+    #
+    # A map section may legitimately hold no table — a repo whose real map lives
+    # elsewhere keeps the heading plus a pointer to it — so zero rows is not an error.
+    for map_rel in repo.docs:
         for row in parse_map_rows(repo, map_rel):
             if row.bad_cell_count is not None:
                 if "map_paths" in enabled and not repo.config.ignored(
@@ -1594,7 +1556,7 @@ def check_row_status_section(repo: Repo, row: MapRow, resolved: str) -> list[Vio
     if repo.config.is_template(resolved):
         # `status: active` here is placeholder text, not a live plan.
         return []
-    status = repo.frontmatter(resolved).get("status", "").strip()
+    status = field_text(repo.frontmatter(resolved).get("status", "")).strip()
     if not status:
         return [
             Violation(
@@ -1755,6 +1717,10 @@ def under_doc_root(repo: Repo, rel: str) -> bool:
 
 def check_frontmatter(repo: Repo) -> list[Violation]:
     violations: list[Violation] = []
+
+    def report(rel: str, message: str) -> None:
+        violations.append(Violation("frontmatter", rel, message))
+
     for rel in repo.docs:
         if not under_doc_root(repo, rel):
             # `AGENTS.md` / `README.md` carry no frontmatter by convention.
@@ -1762,13 +1728,9 @@ def check_frontmatter(repo: Repo) -> list[Violation]:
         if repo.config.ignored(rel, "frontmatter"):
             continue
         if has_unclosed_frontmatter(repo.text(rel)):
-            violations.append(
-                Violation(
-                    "frontmatter",
-                    rel,
-                    "frontmatter block is opened but never closed; add the "
-                    "closing `---`",
-                )
+            report(
+                rel,
+                "frontmatter block is opened but never closed; add the closing `---`",
             )
             # Every field check below reads a block that parsed to nothing, so
             # they would pile "missing title" onto the real cause.
@@ -1776,78 +1738,64 @@ def check_frontmatter(repo: Repo) -> list[Violation]:
 
         fm = repo.frontmatter(rel)
         required = required_fields(rel)
+
         missing = [k for k in required if k not in fm]
         if missing:
-            violations.append(
-                Violation(
-                    "frontmatter",
-                    rel,
-                    f"frontmatter is missing required field(s): {', '.join(missing)}",
-                )
+            report(
+                rel, f"frontmatter is missing required field(s): {', '.join(missing)}"
             )
+
         # A required key present with an empty value satisfies nothing the field
         # exists for, so it is a violation rather than a pass.
-        blank = [k for k in required if k in fm and not fm[k].strip()]
+        blank = [k for k in required if k in fm and not field_text(fm[k]).strip()]
         if blank:
-            violations.append(
-                Violation(
-                    "frontmatter",
-                    rel,
-                    f"frontmatter field(s) present but empty: {', '.join(blank)}",
-                )
-            )
+            report(rel, f"frontmatter field(s) present but empty: {', '.join(blank)}")
+
         # Shape, not value: a sequence is malformed for any field the conventions
         # define, whether or not that field has a value validator to trip over.
-        sequences = sorted(frontmatter_sequences(repo.text(rel)) & SCALAR_FIELDS)
+        sequences = sorted(
+            k for k, v in fm.items() if isinstance(v, list) and k in SCALAR_FIELDS
+        )
         if sequences:
-            violations.append(
-                Violation(
-                    "frontmatter",
-                    rel,
-                    f"frontmatter field(s) must hold a single value, not a list: "
-                    f"{', '.join(sequences)}",
-                )
+            report(
+                rel,
+                "frontmatter field(s) must hold a single value, not a list: "
+                f"{', '.join(sequences)}",
             )
+
         # The tables define these as ISO dates, and checking only that they are
         # populated accepted `created: yesterday`. `freshness` validates
         # `last-updated` too, but only for docs in this branch's diff — a doc
-        # nobody touched keeps whatever it has, so the value is checked here as
-        # well.
-        is_template = repo.config.is_template(rel)
-        for key in ("created", "last-updated"):
-            value = fm.get(key, "").strip()
-            if not is_template and value and not is_iso_date(value):
-                violations.append(
-                    Violation(
-                        "frontmatter",
+        # nobody touched keeps whatever it has, so the value is checked here as well.
+        if not repo.config.is_template(rel):
+            for key in ("created", "last-updated"):
+                value = field_text(fm.get(key, "")).strip()
+                if value and not is_iso_date(value):
+                    report(
                         rel,
                         f"`{key}` is not a valid ISO YYYY-MM-DD date (got '{value}')",
                     )
-                )
 
-        status = fm.get("status", "").strip()
+        status = field_text(fm.get("status", "")).strip()
         if (
             "/design-docs/" in f"/{rel}"
             and status
             and status not in DESIGN_DOC_STATUSES
         ):
-            violations.append(
-                Violation(
-                    "frontmatter",
-                    rel,
-                    f"design doc status must be one of "
-                    f"{', '.join(DESIGN_DOC_STATUSES)} (got '{status}')",
-                )
+            report(
+                rel,
+                f"design doc status must be one of "
+                f"{', '.join(DESIGN_DOC_STATUSES)} (got '{status}')",
             )
-        if "/generated/" in f"/{rel}" and fm.get("generated") not in (None, "true"):
-            violations.append(
-                Violation(
-                    "frontmatter",
+
+        # Absent is fine — the required-field check above owns that case.
+        if "/generated/" in f"/{rel}" and "generated" in fm:
+            generated = field_text(fm["generated"])
+            if generated != "true":
+                report(
                     rel,
-                    f"generated doc must declare `generated: true` "
-                    f"(got '{fm.get('generated')}')",
+                    f"generated doc must declare `generated: true` (got '{generated}')",
                 )
-            )
     return violations
 
 
@@ -1863,7 +1811,7 @@ def check_superseded_by(repo: Repo) -> list[Violation]:
         if "superseded-by" not in fm:
             # Omitting it is legitimate — a doc deprecated with no successor.
             continue
-        target = fm["superseded-by"].strip()
+        target = field_text(fm["superseded-by"]).strip()
         if not target:
             # Present but blank claims a successor exists and then names none, so
             # it routes the reader nowhere. Omit the field or give it a target.

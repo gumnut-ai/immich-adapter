@@ -23,9 +23,9 @@ from pathlib import Path
 import pytest
 
 from lint_docs import (
+    anchors_in,
     blank_frontmatter,
     bump_date_line,
-    collect_anchors,
     has_last_updated_key,
     parse_frontmatter,
     raw_cell_count,
@@ -1811,19 +1811,35 @@ def test_link_syntax_inside_image_alt_text_is_not_a_link(repo: FixtureRepo) -> N
     assert repo.lint("--check", "links").returncode == 0, "link inside image alt text"
 
 
-def test_linked_image_reports_the_links_own_line(repo: FixtureRepo) -> None:
-    """Offsets are spent in *source* order, which is not token order.
+def test_link_spanning_lines_reports_where_it_starts(repo: FixtureRepo) -> None:
+    """A multi-line link is reported at its opening `[`, not its destination.
 
-    A link spends its `](` at the **close** — everything nested in the label comes
-    first in the source — so `[![alt](img.png)\\n](dest.md)` is emitted
-    link_open, image, link_close while the source runs image-first. Consuming at
-    link_open handed the link its image's position and reported it on line 1.
+    `[![alt](img.png)\\n](dest.md)` opens on the first line and closes on the
+    second; the parser's recorded position is the opening bracket, which is the
+    usual convention for pointing at a construct.
     """
     repo.write_doc("docs/references/a.md", TODAY, "[![alt](image.png)\n](missing.md)")
     repo.commit_all()
     result = repo.lint("--check", "links")
     assert result.returncode == 1
-    assert "a.md:7:" in result.stderr, result.stderr
+    assert "a.md:6:" in result.stderr, result.stderr
+
+
+def test_reference_link_gets_its_own_line(repo: FixtureRepo) -> None:
+    """A reference link is located like any other, having a source position.
+
+    Reconstructing positions by counting `](` could not place one at all — it
+    spends no delimiter — so a block containing one fell back to the block's line.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "prose line one\nprose line two\nand [x][r] here\n\n[r]: ./gone.md",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:8:" in result.stderr, result.stderr
 
 
 def test_escaped_delimiter_does_not_steal_a_links_line(repo: FixtureRepo) -> None:
@@ -1894,12 +1910,13 @@ def test_encoded_hash_in_a_filename_is_not_a_fragment(repo: FixtureRepo) -> None
     assert repo.lint("--check", "links").returncode == 0, "encoded # in a filename"
 
 
-def test_reference_link_does_not_mislocate_a_later_link(repo: FixtureRepo) -> None:
-    """A reference link spends no `](`, so the pairing must not be trusted.
+def test_reference_and_inline_links_in_one_block_each_get_their_line(
+    repo: FixtureRepo,
+) -> None:
+    """Mixing the two forms in one block locates each independently.
 
-    Trusting it would slip by one and report the *inline* link on the reference
-    link's line. The supply/demand check falls the whole block back to its own
-    line instead — an imprecise line, never a wrong one.
+    Counting `](` delimiters could not: a reference link spends none, so it either
+    slipped the pairing by one or forced the whole block to a fallback line.
     """
     repo.write_doc(
         "docs/references/a.md",
@@ -1909,8 +1926,8 @@ def test_reference_link_does_not_mislocate_a_later_link(repo: FixtureRepo) -> No
     repo.commit_all()
     result = repo.lint("--check", "links")
     assert result.returncode == 1
-    # Both fall back to the block's first line rather than being mispaired.
-    assert "a.md:8:" not in result.stderr, result.stderr
+    assert "a.md:6: link target `./also-gone.md`" in result.stderr, result.stderr
+    assert "a.md:7: link target `gone.md`" in result.stderr, result.stderr
 
 
 def test_repeated_target_in_one_block_gets_distinct_lines(repo: FixtureRepo) -> None:
@@ -2055,7 +2072,7 @@ def test_literal_link_syntax_in_a_heading_keeps_both_words() -> None:
     assert slugify_heading("[foo](bar)") == "foobar"
     # A real link still contributes only its label, because heading_text already
     # dropped the destination before slugging.
-    assert collect_anchors("# See [the docs](x.md) now") == {"see-the-docs-now"}
+    assert anchors_in("# See [the docs](x.md) now") == {"see-the-docs-now"}
 
 
 def test_image_in_a_heading_contributes_no_slug_text() -> None:
@@ -2070,8 +2087,8 @@ def test_image_in_a_heading_contributes_no_slug_text() -> None:
     The mixed case keeps the two spaces that flanked the image, so the slug carries
     a double hyphen — whitespace runs do not collapse.
     """
-    assert collect_anchors("# ![Setup](icon.png)") == set()
-    assert collect_anchors("# Mixed ![icon](i.png) Heading") == {"mixed--heading"}
+    assert anchors_in("# ![Setup](icon.png)") == set()
+    assert anchors_in("# Mixed ![icon](i.png) Heading") == {"mixed--heading"}
 
 
 def test_heading_that_renders_no_text_defines_no_anchor(repo: FixtureRepo) -> None:
@@ -2824,12 +2841,12 @@ def test_slugify_heading(heading: str, slug: str) -> None:
 
 def test_collect_anchors_numbers_duplicates() -> None:
     text = "## Notes\n\n## Notes\n\n## Notes\n"
-    assert collect_anchors(text) == {"notes", "notes-1", "notes-2"}
+    assert anchors_in(text) == {"notes", "notes-1", "notes-2"}
 
 
 def test_collect_anchors_ignores_fenced_headings() -> None:
     text = "## Real\n\n```\n## Fake\n```\n"
-    assert collect_anchors(text) == {"real"}
+    assert anchors_in(text) == {"real"}
 
 
 def test_parse_frontmatter_stops_at_the_closing_delimiter() -> None:
