@@ -1769,6 +1769,21 @@ def test_image_before_a_link_does_not_steal_its_line(repo: FixtureRepo) -> None:
     assert "a.md:7:" in result.stderr, result.stderr
 
 
+def test_linked_image_reports_the_links_own_line(repo: FixtureRepo) -> None:
+    """Offsets are spent in *source* order, which is not token order.
+
+    A link spends its `](` at the **close** — everything nested in the label comes
+    first in the source — so `[![alt](img.png)\\n](dest.md)` is emitted
+    link_open, image, link_close while the source runs image-first. Consuming at
+    link_open handed the link its image's position and reported it on line 1.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "[![alt](image.png)\n](missing.md)")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:7:" in result.stderr, result.stderr
+
+
 def test_prose_mention_of_a_target_does_not_steal_its_line(repo: FixtureRepo) -> None:
     """Anchoring on link *syntax*, not the destination text.
 

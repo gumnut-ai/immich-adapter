@@ -1128,28 +1128,33 @@ def _iter_links_in(tokens):
     line is the fallback, which is exactly the old behavior.
     """
 
-    def walk(items, line: int, block: BlockPositions):
+    # Offsets are consumed in *source* order, which is not token order. An image
+    # spends its `](` where the image token sits, but a link spends its own at the
+    # **close** — everything nested inside the label comes first in the source. So
+    # `[![alt](img.png)](dest.md)` is emitted link_open, image, link_close while the
+    # source runs image-first; consuming at link_open handed the link its image's
+    # position and reported it on the image's line.
+    def walk(items, line: int, block: BlockPositions, open_links: list):
         for token in items:
             if token.map:
                 line = token.map[0] + 1
             if token.type == "inline":
                 block = BlockPositions(token.content, token.children or [])
-            # An image spends one `](` of the block's supply. Skipping it here
-            # handed its position to the *next* link, which then reported on the
-            # image's line.
             if token.type == "image":
                 block.take()
             if token.type == "link_open":
-                raw = token.attrGet("href") or ""
+                open_links.append((token.attrGet("href") or "", token.markup))
+            if token.type == "link_close" and open_links:
+                raw, markup = open_links.pop()
                 # An autolink (`<https://x>`) has no `](` at all, so it must not
                 # consume one — doing so would steal a later link's position.
-                offset = None if token.markup == "autolink" else block.take()
+                offset = None if markup == "autolink" else block.take()
                 found = line if offset is None else line + block.newlines_before(offset)
                 yield found, raw.strip()
             if token.children:
-                yield from walk(token.children, line, block)
+                yield from walk(token.children, line, block, open_links)
 
-    yield from walk(tokens, 1, BlockPositions("", []))
+    yield from walk(tokens, 1, BlockPositions("", []), [])
 
 
 class BlockPositions:
