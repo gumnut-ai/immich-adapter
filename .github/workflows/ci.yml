@@ -82,3 +82,45 @@ jobs:
             echo "::error::Mismatch: .immich-container-tag=$TAG but Dockerfile ARG IMMICH_VERSION=$DOCKERFILE_VERSION. See docs/references/code-practices.md § 'Bumping the Immich Version'."
             exit 1
           fi
+
+  lint-docs:
+    name: Lint documentation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.0
+        with:
+          # The freshness check compares each changed doc against the merge-base,
+          # so it needs history rather than a depth-1 snapshot.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version-file: ".python-version"
+
+      # No install step: the linter is stdlib-only so it runs anywhere python3
+      # does, which is the point of keeping it dependency-free. Its test suite
+      # runs in the `test` job above, via the ordinary pytest collection.
+      #
+      # Runs *every* enabled check rather than naming a subset, so adding a check
+      # to lint_docs.py can't leave it silently unrun here.
+      - name: Check documentation
+        env:
+          # Passed through env rather than interpolated into the run body.
+          #
+          # On a pull_request, the event payload's base SHA is more reliable than
+          # relying on checkout to materialize an `origin/main` ref, and since the
+          # checked-out ref is the merge commit, this diff is exactly the PR's net
+          # change. A push has no PR base, so it uses the pushed commit: the
+          # merge-base becomes HEAD itself, freshness finds no changed docs and
+          # no-ops, and the repo-wide structural checks still run.
+          #
+          # Branching on `event_name` rather than leaning on
+          # `pull_request.base.sha || github.sha` to null-propagate: an empty
+          # `--base` is a hard exit 1, and the push path can't be exercised until
+          # this is on main, so the failure would land there.
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+        run: python3 scripts/lint_docs.py --base "$BASE_SHA"

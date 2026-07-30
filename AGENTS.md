@@ -16,6 +16,27 @@ Run from the `immich-adapter/` directory:
 - **Lint**: `uv run ruff check`
 - **Type check**: `uv run pyright`
 - **Test**: `uv run pytest`
+- **Docs**: `python3 scripts/lint_docs.py` (`--fix` bumps stale `last-updated:` dates) — see § Documentation Checks below
+
+# Documentation Checks
+
+`scripts/lint_docs.py` enforces the mechanically checkable half of the conventions below, and runs on every PR (the `lint-docs` job in `.github/workflows/ci.yml`). It is stdlib-only, so it needs no install step and runs anywhere `python3` does.
+
+| Check | Enforces |
+|-------|----------|
+| `freshness` | `last-updated:` is a real calendar date, and current whenever the body changed |
+| `links` | Every inline markdown link target resolves |
+| `anchors` | Every `#fragment` resolves to a real heading or `<a id>` |
+| `map_paths` | Every Documentation Map row's path resolves, as does every `superseded-by:`; a design doc with no row fails |
+| `map_status_section` | A design doc's map section matches its `status:` frontmatter |
+| `map_cells` | The Consult-when cell stays one line, under 250 characters |
+| `frontmatter` | `docs/design-docs/` needs `title`/`status`/`created`/`last-updated`, with `status` one of the four values; other `docs/` need `title`/`last-updated`. No required field may be present-but-empty, and `superseded-by` is validated when present rather than required |
+
+Only `freshness` is diff-scoped. The rest run repo-wide, deliberately: renaming a doc breaks inbound links and map rows in files the change never touched. Checks are individually switchable in `scripts/lint_docs.toml`, and `--check <name>` overrides that so a disabled rule can be swept before being switched on.
+
+Citations naming another repo are skipped rather than resolved — both the org-qualified form this repo's conventions require (`gumnut-ai/<repo>/...`) and a path that climbs out of the repo. CI clones one repo, so no such path can resolve there; the linter decides this by path arithmetic alone, so its verdict doesn't change on a machine that happens to have the sibling cloned.
+
+The file is kept byte-identical to the copy in the Gumnut Photos repo — repo differences belong in `lint_docs.toml`, not the script. A green run is not a full review: the linter buys reachability and structural consistency, never correctness.
 
 # Documentation Map
 

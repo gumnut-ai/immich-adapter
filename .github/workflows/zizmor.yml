@@ -8,10 +8,16 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/**"
+      # The pin policy itself, so a change that weakens it is audited by
+      # the run it governs instead of landing unexercised.
+      - ".github/zizmor.yml"
   pull_request:
     branches: [main]
     paths:
       - ".github/workflows/**"
+      # The pin policy itself, so a change that weakens it is audited by
+      # the run it governs instead of landing unexercised.
+      - ".github/zizmor.yml"
 
 permissions:
   contents: read

@@ -3,6 +3,9 @@
   "venvPath": ".",
   "venv": ".venv",
   "pythonVersion": "3.14",
+  "extraPaths": [
+    "scripts"
+  ],
   "exclude": [
     "tools/**",
     ".venv/**"
