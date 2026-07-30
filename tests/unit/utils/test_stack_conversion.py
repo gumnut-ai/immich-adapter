@@ -1012,14 +1012,55 @@ class TestResolveTimelineStacks:
 
     @pytest.mark.anyio
     async def test_stack_with_no_live_members_stays_unresolved(self):
-        """`asset_count` is a live count, so zero means nothing to collapse to."""
+        """`asset_count` is a live count, so zero means nothing to collapse to.
+
+        Resolved on the fast path, not the fallback: zero live bucket members
+        equals the row's zero count, so the stack classifies complete and the
+        member read is never issued.
+        """
         stack, members = _stack_with_members(count=2, asset_count=0, trashed={0, 1})
+        client = _timeline_client([stack])
+
+        resolved = await resolve_timeline_stacks(client, members)
+
+        assert resolved.covers == {}
+        assert all(not resolved.is_collapsed_away(member) for member in members)
+        client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_partial_stack_whose_member_read_comes_back_empty(self):
+        """The fallback twin of the case above: the row claims live members but
+        the read returns none, so there is still no frame to collapse to."""
+        stack, members = _stack_with_members(count=2, asset_count=2, trashed={0, 1})
         client = _timeline_client([stack], members_by_stack={stack.id: []})
 
         resolved = await resolve_timeline_stacks(client, members)
 
         assert resolved.covers == {}
         assert all(not resolved.is_collapsed_away(member) for member in members)
+        client.assets.list.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_undecodable_stack_id_stays_unresolved(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """The guard exists so a change to the `asset_stack_` prefix contract
+        degrades instead of 500-ing the timeline — the adapter is that contract's
+        first production consumer. Without it this raises out of the route."""
+        stack, members = _stack_with_members(count=2, asset_count=2)
+        stack.id = "asset_stackX_notdecodable"
+        for member in members:
+            member.stack_id = stack.id
+        client = _timeline_client([stack])
+
+        with caplog.at_level(logging.WARNING):
+            resolved = await resolve_timeline_stacks(client, members)
+
+        assert resolved.covers == {}
+        assert resolved.tuples == {}
+        assert all(not resolved.is_collapsed_away(member) for member in members)
+        (record,) = [r for r in caplog.records if hasattr(r, "undecodable_stack_count")]
+        assert getattr(record, "undecodable_stack_count") == 1
 
 
 class TestTimelineStacks:

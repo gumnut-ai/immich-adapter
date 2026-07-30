@@ -595,6 +595,7 @@ async def resolve_timeline_stacks(
 
     covers: dict[str, str] = {}
     tuples: dict[str, list[str]] = {}
+    undecodable_ids: list[str] = []
     for stack_id in stack_ids:
         row = rows_by_id.get(stack_id)
         members = live_members.get(stack_id)
@@ -606,7 +607,8 @@ async def resolve_timeline_stacks(
             # No live frame to stand in for the stack. Leaving it out of
             # `covers` keeps its assets in the bucket; in a live bucket there
             # are none to keep, so this is a no-op that avoids collapsing
-            # against a cover that does not exist.
+            # against a cover that does not exist. Deliberately silent: nothing
+            # was hidden and nothing is wrong upstream.
             continue
         try:
             stack_uuid = safe_uuid_from_stack_id(stack_id)
@@ -615,14 +617,27 @@ async def resolve_timeline_stacks(
             # `asset_stack_` prefix contract, so a backend prefix change would
             # otherwise turn a feature designed to degrade into a 500 on the
             # app's primary view. Unresolved is the honest answer here too.
-            logger.warning(
-                "Stack ID %s is not decodable to an Immich UUID; leaving its "
-                "frames uncollapsed",
-                stack_id,
-                extra={"stack_id": stack_id},
-            )
+            undecodable_ids.append(stack_id)
             continue
         covers[stack_id] = cover_id
         tuples[stack_id] = [str(stack_uuid), str(row.asset_count)]
+
+    if undecodable_ids:
+        # Aggregated like the two records above, and this one needs it most: a
+        # prefix change is systemic by construction, so every stack in the month
+        # fails at once — and unlike the member reads, nothing caps how many
+        # stacks reach this loop.
+        logger.warning(
+            "%d of %d timeline stack IDs are not decodable to Immich UUIDs; "
+            "leaving their frames uncollapsed (sample: %s)",
+            len(undecodable_ids),
+            len(stack_ids),
+            undecodable_ids[:10],
+            extra={
+                "undecodable_stack_count": len(undecodable_ids),
+                "requested_stack_count": len(stack_ids),
+                "sample_stack_ids": undecodable_ids[:10],
+            },
+        )
 
     return TimelineStacks(covers=covers, tuples=tuples)
