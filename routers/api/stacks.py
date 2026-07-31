@@ -60,11 +60,15 @@ def _build_representable_response(
 ) -> StackResponseDto | None:
     """Build a stack's Immich DTO, or `None` when it can't form a valid one.
 
-    Both routes need the same notion of "not representable", and it is wider
-    than `hydrate_stack`'s member-less case: a stack whose members are *all*
-    trashed hydrates fine (`resolve_effective_primary` deliberately keeps naming
-    a cover) but converts to `assets: []` with a `primaryAssetId` no client can
-    fetch — breaking both contracts `build_stack_response` documents, since
+    Every read-shaped route needs the same notion of "not representable" — the
+    list, the detail read, and the update route, whose two paths both end in a
+    read. `create_stack` deliberately opts out; its docstring says why.
+
+    It is wider than `hydrate_stack`'s member-less case: a stack whose members
+    are *all* trashed hydrates fine (`resolve_effective_primary` deliberately
+    keeps naming a cover) but converts to `assets: []` with a `primaryAssetId`
+    no client can fetch — breaking both contracts `build_stack_response`
+    documents, since
     clients read `assets.length` as the stack's size and `assets[0]` as the
     cover. Upstream Immich never emits that DTO: it deletes a stack once it
     falls below two assets, so nothing is written to handle it.
@@ -250,26 +254,36 @@ async def create_stack(
 ) -> StackResponseDto:
     """Group the requested assets into a new stack, covered by the first one.
 
-    Immich's contract is that `assetIds[0]` becomes the primary — the web
-    client relies on it, deliberately putting an existing stack's cover first so
-    that stack gets folded into the new one. The Gumnut API instead leaves a
-    manual stack's cover unpinned unless one is named, so the first ID is passed
-    as `primary_asset_id` to reproduce Immich's rule.
+    Immich's contract is that `assetIds[0]` becomes the primary, and clients
+    read the response's `assets[0]` back as the cover. The Gumnut API instead
+    leaves a manual stack's cover unpinned unless one is named, so the first ID
+    is passed as `primary_asset_id` to reproduce Immich's rule.
 
     Everything else about the grouping is the backend's to decide and is
-    forwarded untouched: distinctness, the minimum of two, membership in the
-    caller's library, and the already-stacked reconciliation that repoints an
-    asset out of its old stack (folding that stack in whole when the asset was
-    its cover, dissolving what's left below two members). Both sides implement
-    that merge, so re-deriving any of it here would only introduce a way for the
-    two to disagree. The IDs go out in request order, undeduplicated, for the
-    same reason — the response is read back from the row the backend returns.
+    forwarded untouched, in request order: distinctness, the minimum of two,
+    membership in the caller's library, and the already-stacked reconciliation
+    that repoints an asset out of its old stack (folding that stack in whole
+    when the asset was its cover, dissolving what's left below two members).
+    Upstream Immich and the Gumnut API both implement that merge, so re-deriving
+    any of it here would only introduce a way for the two to disagree — the
+    membership that comes back can exceed what was asked for, and the response
+    is read off the returned row rather than off the request. The fold triggers
+    on a stack's cover appearing *anywhere* in `asset_ids`, not on its position:
+    worth knowing before reaching for a reordering the first ID doesn't need,
+    since its only special meaning is the cover pin above.
 
-    `library_id` is omitted, like every other Gumnut call the adapter makes:
-    Immich has no library selector to map from, so the backend infers the
-    caller's only library. An account with several would need the disambiguation
-    Immich can't express, and the backend's own validation response is what
-    surfaces that rather than a guess made here.
+    `library_id` is omitted, like every other Gumnut call the adapter makes —
+    see `docs/architecture/adapter-architecture.md` § "Single-library
+    assumption".
+
+    The one backend limit not left to fail late is worth naming: `asset_ids` is
+    capped at `GUMNUT_API_MAX_BULK_IDS`, so stacking a larger selection is a
+    422 naming the cap. It is deliberately *not* chunked into a create plus
+    `add_assets_to_stack` calls the way album creation chunks its initial
+    assets. Create is all-or-nothing upstream and a partial run can't be undone:
+    deleting the half-built stack would dissolve it without restoring the stacks
+    that were already folded into it. A clean failure that changed nothing beats
+    a partial merge nobody can unwind.
 
     Unlike the reads, a stack with no live members is still returned rather than
     dropped: the client just created it and needs its ID back, and reporting
@@ -296,7 +310,22 @@ async def create_stack(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Stack was created but could not be read back",
         )
-    return build_stack_response(hydrated, current_user)
+
+    response = build_stack_response(hydrated, current_user)
+    if not response.assets:
+        # The departure from `_build_representable_response` documented above,
+        # made queryable. The reads drop this stack silently because trashing a
+        # burst is ordinary user action; arriving here is not — it means a
+        # create request named nothing but trashed assets, which no shipped
+        # client can compose. Emitting the DTO is still the better answer than
+        # 404ing a write that succeeded, but not one to emit unobserved.
+        logger.warning(
+            "Created stack %s has no live members; returning a stack response "
+            "with an empty asset list",
+            stack.id,
+            extra={"stack_id": stack.id, "stack_asset_count": stack.asset_count},
+        )
+    return response
 
 
 @router.get("/{id}")
@@ -333,7 +362,11 @@ async def update_stack(
 
     Deprecated upstream, but still the only cover-setting call the shipped
     Immich clients make — the web asset viewer's "set as primary" action goes
-    through it.
+    through it. Its replacement, `PATCH /stacks/{id}`, already exists in the
+    pinned Immich source but is excluded from the OpenAPI spec, which is the
+    only reason the generated client still resolves "set as primary" to this
+    `PUT`. An Immich bump that publishes the `PATCH` is what makes this route
+    stop being reached, and nothing in CI would announce it.
 
     Immich's `StackUpdateDto` makes `primaryAssetId` optional while the Gumnut
     API rejects a null cover outright: a pin is cleared by the pinned frame

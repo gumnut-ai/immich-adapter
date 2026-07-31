@@ -711,9 +711,7 @@ class TestCreateStack:
 
     @pytest.mark.anyio
     async def test_pins_the_first_asset_as_the_cover(self, mock_current_user):
-        """Immich's own contract — `assetIds[0]` becomes the primary — which the
-        Gumnut API doesn't apply on its own, since it leaves a manual stack
-        unpinned unless a cover is named."""
+        """Pins the `assetIds[0]`-is-the-cover rule stated in `create_stack`."""
         stack, members = make_gumnut_stack_with_members(count=3)
         client = _write_client(stack, members)
         requested = _member_uuids(members)
@@ -728,8 +726,7 @@ class TestCreateStack:
 
     @pytest.mark.anyio
     async def test_omits_library_id(self, mock_current_user):
-        """The adapter presents one implicit library and has no Immich-side
-        selector to map from, so the backend infers it."""
+        """Pins the omitted-`library_id` rule stated in `create_stack`."""
         stack, members = make_gumnut_stack_with_members(count=2)
         client = _write_client(stack, members)
 
@@ -739,14 +736,8 @@ class TestCreateStack:
 
     @pytest.mark.anyio
     async def test_forwards_the_request_once_unmodified(self, mock_current_user):
-        """Distinctness and already-stacked reconciliation are the backend's.
-
-        A repeated ID is the cheapest way to show the adapter isn't quietly
-        pre-processing the list: an adapter that deduplicated (or re-ordered, or
-        split the call to merge stacks itself) would send something other than
-        the request, and its idea of the resulting membership could then drift
-        from the backend's.
-        """
+        """A repeated ID is the cheapest way to show the adapter isn't quietly
+        pre-processing the list — see `create_stack` for why it must not."""
         stack, members = make_gumnut_stack_with_members(count=2)
         client = _write_client(stack, members)
         requested = _member_uuids(members)
@@ -759,10 +750,12 @@ class TestCreateStack:
             uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in with_duplicate
         ]
 
-    def test_fewer_than_two_asset_ids_never_reaches_the_sdk(self):
-        """Immich's `min 2` is a request-validation rule, so FastAPI rejects the
-        body with a 422 before the handler — and before any upstream call —
-        rather than the adapter spending a round-trip to be told the same."""
+    def test_generated_dto_enforces_the_two_asset_minimum(self):
+        """Immich's `min 2` is a request-validation rule, so FastAPI rejects an
+        undersized body before the handler runs — which is also what keeps
+        `create_stack`'s unconditional `gumnut_asset_ids[0]` in bounds. A model
+        regen that dropped the constraint would turn an empty `assetIds` into an
+        `IndexError`, so the constraint itself is what this pins."""
         with pytest.raises(ValidationError):
             StackCreateDto(assetIds=[uuid4()])
 
@@ -775,6 +768,30 @@ class TestCreateStack:
             if isinstance(r, APIRoute) and r.endpoint is create_stack
         )
         assert route.status_code == status.HTTP_201_CREATED
+
+    @pytest.mark.anyio
+    async def test_response_follows_the_backend_membership_not_the_request(
+        self, mock_current_user
+    ):
+        """The fold-in case, and the reason the response is read off the
+        returned row rather than assembled from `assetIds`.
+
+        Stacking an asset that already covers another stack folds that whole
+        stack in, so the created stack can hold members the request never named.
+        Every other test here mocks members matching the request exactly, which
+        an implementation that echoed `request.assetIds` would also satisfy.
+        """
+        stack, members = make_gumnut_stack_with_members(count=4)
+        client = _write_client(stack, members)
+        # Only two of the four were asked for; the backend folded in the rest.
+        requested = _member_uuids(members[:2])
+
+        result = await _create(client, mock_current_user, requested)
+
+        assert [asset.id for asset in result.assets] == _member_uuids(members)
+        assert client.stacks.create_stack.call_args.kwargs["asset_ids"] == [
+            uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in requested
+        ]
 
     @pytest.mark.anyio
     async def test_backend_rejection_propagates_with_nothing_read_back(
@@ -795,14 +812,9 @@ class TestCreateStack:
 
     @pytest.mark.anyio
     async def test_all_trashed_stack_is_still_returned(self, mock_current_user):
-        """The one place a write parts company with the reads.
-
-        A stack of none-but-trashed frames is dropped by the list and 404s from
-        the detail route, but here the client just created it and needs its ID
-        back — answering "not found" for a write that succeeded is the worse
-        lie. Legal at the backend, which admits trashed frames into a manual
-        stack; unreachable from a shipped client, which stacks live selections.
-        """
+        """The one place a write parts company with the reads — see
+        `create_stack` for why, and `_build_representable_response` for the rule
+        it is departing from."""
         stack, members = make_gumnut_stack_with_members(count=2, trashed={0, 1})
         client = _write_client(stack, members)
 
@@ -872,9 +884,8 @@ class TestUpdateStack:
         "body", [{}, {"primaryAssetId": None}], ids=["omitted", "explicit-null"]
     )
     async def test_absent_cover_is_a_read(self, mock_current_user, body):
-        """The Gumnut API has no clear-cover operation and rejects a null pin,
-        so "no cover named" can only be answered by reading the stack back — not
-        by synthesizing a mutation to have something to send."""
+        """Pins the absent-cover-degenerates-to-a-read rule stated in
+        `update_stack`, across both wire shapes that mean "no cover named"."""
         stack, members = make_gumnut_stack_with_members(count=2)
         stack.primary_asset_id = members[1].id
         client = _write_client(stack, members)
@@ -915,17 +926,30 @@ class TestUpdateStack:
             await _update(client, mock_current_user, uuid4())
 
     @pytest.mark.anyio
-    async def test_all_trashed_stack_is_404(self, mock_current_user):
+    @pytest.mark.parametrize("pins_a_cover", [False, True], ids=["read", "set-cover"])
+    async def test_all_trashed_stack_is_404(self, mock_current_user, pins_a_cover):
         """Both paths through this route end in a read, so an unrepresentable
-        stack answers as `get_stack` does rather than as the create route
-        does."""
+        stack answers as `get_stack` does rather than as the create route does.
+
+        The `set-cover` case is the surprising half — a mutation that committed
+        upstream still answering 404 — and it is the one an implementation that
+        only guarded the read branch would get wrong.
+        """
         stack, members = make_gumnut_stack_with_members(count=2, trashed={0, 1})
         client = _write_client(stack, members)
+        body = (
+            {"primaryAssetId": safe_uuid_from_asset_id(members[0].id)}
+            if pins_a_cover
+            else {}
+        )
 
         with pytest.raises(HTTPException) as exc_info:
-            await _update(client, mock_current_user, safe_uuid_from_stack_id(stack.id))
+            await _update(
+                client, mock_current_user, safe_uuid_from_stack_id(stack.id), **body
+            )
 
         assert exc_info.value.status_code == 404
+        assert client.stacks.set_cover.call_count == (1 if pins_a_cover else 0)
 
 
 class TestRouteDependencies:

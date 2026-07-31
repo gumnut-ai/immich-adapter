@@ -181,7 +181,7 @@ Starting with the current upload-success events, but designed for future extensi
 
 ### Not Applicable
 
-Most of these events require features that don't exist in the Gumnut API. The exception is the first row, kept here because no client acts on it:
+Most of these events require features that don't exist in the Gumnut API. The exception is `on_asset_stack_update`, kept here because no client acts on it:
 
 | Event | Reason |
 |---|---|
