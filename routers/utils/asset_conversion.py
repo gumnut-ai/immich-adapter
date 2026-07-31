@@ -6,7 +6,6 @@ to the Immich API format, including metadata (camera/EXIF/GPS/location) processi
 """
 
 import logging
-from collections.abc import Mapping
 from datetime import datetime
 from uuid import UUID
 
@@ -502,54 +501,18 @@ def build_asset_upload_ready_payload(
     return AssetUploadReadyV1Payload(asset=sync_asset, exif=sync_exif)
 
 
-def resolve_asset_stack_summary(
-    gumnut_asset: AssetResponse,
-    stack_summaries: Mapping[str, AssetStackResponseDto] | None,
-) -> AssetStackResponseDto | None:
-    """Pick an asset's nested `stack` block out of a pre-resolved lookup.
-
-    The lookup is keyed by Gumnut stack ID and built by
-    ``routers/utils/stack_conversion.py::resolve_asset_stack_summaries``, which
-    owns every read the answer needs. Keeping the join here — rather than
-    letting each route index the lookup itself — is what makes `id`,
-    `primaryAssetId`, and `assetCount` arrive from one place on every emit path.
-
-    Everything but a hit returns `None`, and deliberately without a warning. A
-    `stack_id` missing from the lookup means the resolver already dropped that
-    stack and logged it once for the batch; repeating it here would fire per
-    asset. A `stack_summaries` of `None` means the caller did no stack
-    resolution at all — today only `build_stack_response`, converting a stack's
-    own members — which is not a fault. Only the resolver can tell those two
-    apart, which is why the warning lives there.
-    """
-    stack_id = gumnut_asset.stack_id
-    if stack_id is None or stack_summaries is None:
-        return None
-    return stack_summaries.get(stack_id)
-
-
 def convert_gumnut_asset_to_immich(
     gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
-    stack_summaries: Mapping[str, AssetStackResponseDto] | None = None,
+    stack: AssetStackResponseDto | None = None,
 ) -> AssetResponseDto:
     """
     Convert a Gumnut asset to AssetResponseDto format with comprehensive EXIF processing.
 
-    Stays I/O-free, including for the nested `stack` block: `stack_summaries` is
-    a lookup a caller resolved beforehand (see `resolve_asset_stack_summary`),
-    not something this function fetches. Omitting it yields `stack=None`, which
-    is why every existing caller kept working when the field was added — but a
-    REST route emitting this DTO should pass one, because Immich clients read
-    the block off every such response (see `docs/architecture/adapter-architecture.md`
-    § Nested stack summaries on asset responses).
-    `routers/utils/stack_conversion.py::convert_assets_with_stacks` does the
-    resolve-and-convert pair for a whole page.
-
     Args:
         gumnut_asset: The Gumnut AssetResponse object
         current_user: The current user's UserResponseDto
-        stack_summaries: Pre-resolved stack summaries keyed by Gumnut stack ID
+        stack: Pre-resolved nested stack summary
 
     Returns:
         AssetResponseDto object with processed data and EXIF information
@@ -606,5 +569,5 @@ def convert_gumnut_asset_to_immich(
         visibility=AssetVisibility.timeline,
         width=width if width else None,
         people=people,
-        stack=resolve_asset_stack_summary(gumnut_asset, stack_summaries),
+        stack=stack,
     )

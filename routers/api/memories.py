@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, List
 from uuid import UUID, uuid4
@@ -11,7 +10,6 @@ from gumnut.types.asset_response import AssetResponse
 from pydantic.json_schema import SkipJsonSchema
 
 from routers.immich_models import (
-    AssetStackResponseDto,
     BulkIdResponseDto,
     BulkIdsDto,
     MemoryCreateDto,
@@ -25,7 +23,6 @@ from routers.immich_models import (
 from routers.utils.asset_conversion import ASSET_INCLUDE, convert_gumnut_asset_to_immich
 from routers.utils.current_user import get_current_user, get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.stack_conversion import resolve_asset_stack_summaries
 
 
 logger = logging.getLogger(__name__)
@@ -157,24 +154,12 @@ def _build_memory(
     day: int,
     assets: list[AssetResponse],
     current_user: UserResponseDto,
-    stack_summaries: Mapping[str, AssetStackResponseDto],
 ) -> MemoryResponseDto:
-    """Build one synthesized memory from its day's assets.
-
-    `stack_summaries` is resolved by the caller across *every* memory in the
-    response rather than per memory: the same burst reappears on the same
-    calendar day of consecutive years about as often as any repeat photo spot
-    does, and `search_memories` builds up to 30 memories in one request, so
-    resolving inside here would re-read stack rows once per memory.
-    """
     memory_at = datetime(year, month, day, tzinfo=timezone.utc)
     return MemoryResponseDto(
         id=encode_memory_id(user_uuid, year, month, day),
         assets=[
-            convert_gumnut_asset_to_immich(
-                asset, current_user, stack_summaries=stack_summaries
-            )
-            for asset in assets
+            convert_gumnut_asset_to_immich(asset, current_user) for asset in assets
         ],
         createdAt=memory_at,
         updatedAt=memory_at,
@@ -265,13 +250,8 @@ async def search_memories(
         client, years, month, day, _ASSETS_PER_MEMORY
     )
 
-    stack_summaries = await resolve_asset_stack_summaries(
-        client, [asset for _, assets in year_assets for asset in assets]
-    )
     return [
-        _build_memory(
-            current_user_id, year, month, day, assets, current_user, stack_summaries
-        )
+        _build_memory(current_user_id, year, month, day, assets, current_user)
         for year, assets in year_assets
         if assets
     ]
@@ -333,10 +313,7 @@ async def get_memory(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found"
         )
-    stack_summaries = await resolve_asset_stack_summaries(client, assets)
-    return _build_memory(
-        current_user_id, year, month, day, assets, current_user, stack_summaries
-    )
+    return _build_memory(current_user_id, year, month, day, assets, current_user)
 
 
 @router.put("/{id}")

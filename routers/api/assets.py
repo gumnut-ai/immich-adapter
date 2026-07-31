@@ -22,7 +22,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.requests import ClientDisconnect
-from gumnut import AsyncGumnut
+from gumnut import AsyncGumnut, NotFoundError
 from gumnut.types.asset_bulk_update_assets_params import Update, UpdateChange
 from gumnut.types.asset_response import AssetResponse
 
@@ -71,9 +71,10 @@ from routers.utils.asset_conversion import (
     ASSET_INCLUDE,
     ASSET_INCLUDE_METADATA_ONLY,
     build_asset_upload_ready_payload,
+    convert_gumnut_asset_to_immich,
     mime_type_to_asset_type,
 )
-from routers.utils.stack_conversion import convert_assets_with_stacks
+from routers.utils.stack_conversion import build_asset_stack_summary, hydrate_stack
 from utils.livephoto import is_live_photo_video
 from routers.immich_models import AssetTypeEnum
 
@@ -345,30 +346,12 @@ _pending_emit_tasks: set[asyncio.Task[None]] = set()
 
 
 async def _do_emit_upload_events(
-    client: AsyncGumnut,
     gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
 ) -> None:
-    """Emit the UPLOAD_SUCCESS + ASSET_UPLOAD_READY_V1 WebSocket events.
-
-    `client` is only ever spent on the stack summary, and a just-uploaded asset
-    is not yet in a stack — burst detection runs after ingest — so in practice
-    this costs no upstream call. It is threaded through anyway so the payload
-    can't be the one `AssetResponseDto` on the wire that omits the block, which
-    is the sort of per-path exception this sweep exists to remove. Safe from the
-    delayed emit below despite being request-scoped: the SDK client wraps a
-    process-wide `httpx.AsyncClient` closed only at shutdown.
-
-    A failed stack read can't cost the event: `convert_assets_with_stacks`
-    degrades to an unstacked conversion rather than raising, which matters here
-    because the `except` below would otherwise swallow `on_upload_success` — the
-    signal Immich web inserts the new asset into its timeline on — and leave a
-    just-uploaded photo invisible until a manual refresh.
-    """
+    """Emit the UPLOAD_SUCCESS + ASSET_UPLOAD_READY_V1 WebSocket events."""
     try:
-        asset_response = (
-            await convert_assets_with_stacks(client, [gumnut_asset], current_user)
-        )[0]
+        asset_response = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
         await emit_user_event(
             WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response
         )
@@ -388,18 +371,16 @@ async def _do_emit_upload_events(
 
 
 async def _delayed_emit_upload_events(
-    client: AsyncGumnut,
     gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
     delay_seconds: float,
 ) -> None:
     """Sleep, then emit upload events. Used for videos to wait out thumbnail extraction."""
     await asyncio.sleep(delay_seconds)
-    await _do_emit_upload_events(client, gumnut_asset, current_user)
+    await _do_emit_upload_events(gumnut_asset, current_user)
 
 
 async def _emit_upload_events(
-    client: AsyncGumnut,
     gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
 ) -> None:
@@ -413,14 +394,14 @@ async def _emit_upload_events(
     if gumnut_asset.mime_type.startswith("video/"):
         task = asyncio.create_task(
             _delayed_emit_upload_events(
-                client, gumnut_asset, current_user, _VIDEO_EMIT_DELAY_SECONDS
+                gumnut_asset, current_user, _VIDEO_EMIT_DELAY_SECONDS
             )
         )
         _pending_emit_tasks.add(task)
         task.add_done_callback(_pending_emit_tasks.discard)
         return
 
-    await _do_emit_upload_events(client, gumnut_asset, current_user)
+    await _do_emit_upload_events(gumnut_asset, current_user)
 
 
 @router.post(
@@ -596,7 +577,7 @@ async def _upload_buffered(
                     status_code=status.HTTP_200_OK,
                 )
 
-            await _emit_upload_events(client, gumnut_asset, current_user)
+            await _emit_upload_events(gumnut_asset, current_user)
 
             return AssetMediaResponseDto(id=asset_uuid, status=AssetMediaStatus.created)
 
@@ -668,7 +649,7 @@ async def _upload_streaming(
         # Fetch asset metadata for WebSocket events (lightweight GET, no image bytes)
         try:
             gumnut_asset = await client.assets.retrieve(asset_id, include=ASSET_INCLUDE)
-            await _emit_upload_events(client, gumnut_asset, current_user)
+            await _emit_upload_events(gumnut_asset, current_user)
         except Exception as ws_err:
             logger.warning(
                 "Failed to emit WebSocket events for streaming upload",
@@ -1197,9 +1178,7 @@ async def update_asset(
     gumnut_asset = await client.assets.update_asset(
         uuid_to_gumnut_asset_id(id), **payload
     )
-    immich_asset = (
-        await convert_assets_with_stacks(client, [gumnut_asset], current_user)
-    )[0]
+    immich_asset = convert_gumnut_asset_to_immich(gumnut_asset, current_user)
     await emit_user_event(WebSocketEvent.ASSET_UPDATE, current_user.id, immich_asset)
     return immich_asset
 
@@ -1214,7 +1193,26 @@ async def get_asset_info(
 ) -> AssetResponseDto:
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
     gumnut_asset = await client.assets.retrieve(gumnut_asset_id, include=ASSET_INCLUDE)
-    return (await convert_assets_with_stacks(client, [gumnut_asset], current_user))[0]
+    stack_summary = None
+    if gumnut_asset.stack_id is not None:
+        try:
+            stack = await client.stacks.retrieve_stack(gumnut_asset.stack_id)
+            stack_summary = build_asset_stack_summary(
+                await hydrate_stack(client, stack)
+            )
+        except NotFoundError:
+            logger.warning(
+                "Stack %s referenced by asset %s was not found",
+                gumnut_asset.stack_id,
+                gumnut_asset.id,
+                extra={
+                    "stack_id": gumnut_asset.stack_id,
+                    "gumnut_id": gumnut_asset.id,
+                },
+            )
+    return convert_gumnut_asset_to_immich(
+        gumnut_asset, current_user, stack=stack_summary
+    )
 
 
 @router.get(

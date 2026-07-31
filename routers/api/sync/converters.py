@@ -208,11 +208,6 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: UUID) -> SyncA
         height=asset.height if asset.height else None,
         libraryId=None,
         livePhotoVideoId=None,
-        # Still null while the REST asset surfaces report real stacks (see
-        # `resolve_asset_stack_summaries`), so mobile — which builds its asset
-        # store from this stream, not from `AssetResponseDto` — sees no stacks.
-        # `asset.stack_id` is available here; what's missing is a resolver, since
-        # the REST one is request-scoped and this is a stream.
         stackId=None,
         thumbhash=asset.thumbhash,
         width=asset.width if asset.width else None,

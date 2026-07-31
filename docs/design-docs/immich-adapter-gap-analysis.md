@@ -144,15 +144,18 @@ Immich allows batch downloading multiple assets as a zip archive.
 
 Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pairs) with a primary asset representing the group.
 
-**Current behavior**: **Partially closed.** The two read endpoints (`GET /stacks`, `GET /stacks/{id}`) return real stacks with their live members, the list bounded by a 500-stack cap and a 5000-member hydration budget (whichever binds first) since Immich's `searchStacks` offers no pagination. Two more surfaces now populate the stack fields a client discovers a stack from: every REST `AssetResponseDto` carries its nested `stack` summary — asset detail and update, upload success, search, and memories — and `GET /api/timeline/bucket` collapses a burst to one tile and emits Immich's `[stackId, count]` tuples under `withStacked`. The other 5 endpoints — create, update-cover, delete, bulk-delete, remove-asset — still return empty/fake responses, so the stacking UI can display a stack but not edit one.
+**Current behavior**: **Partially closed.** Stack reads, the asset-detail summary,
+and timeline collapse work. Create, update-cover, delete, bulk-delete, and
+remove-asset remain stubbed.
 
-**User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently. The REST asset surfaces and the timeline bucket now populate the stack block clients discover a stack from, so the landed reads are reachable: the burst badge renders, a collapsed burst occupies one tile instead of one per frame, and the viewer's stack controls appear. The remaining gap a user would notice is the sync stream's `SyncAssetV1.stackId`, which is how the Immich **mobile** client builds its asset store, so mobile sees no stacks at all regardless of what REST and the timeline report.
+**User impact**: **Low** — Web can display stacks, but mobile cannot until the
+sync stream populates `SyncAssetV1.stackId`.
 
 **Dependency**: **Adapter-only** — the backend grouping concept this gap was originally blocked on now exists. The Gumnut API's stack resource covers create, add/remove assets, list, retrieve, set cover, and delete, with `list_stacks` exposing an `origin` filter (auto-detected bursts vs. user-grouped) and `primary_asset_id`; members are reachable through the `stack_id` filter on the asset list.
 
 One piece of the timeline surface *is* backend-blocked: `GET /api/timeline/buckets` cannot collapse its counts, because `assets.counts` has no stack-aware filter. The effect is cosmetic and the fix is a backend one — see "Timeline stack collapse" in `docs/architecture/adapter-architecture.md`.
 
-**Effort**: **S remaining** — the shared translation layer (`routers/utils/stack_conversion.py`), the read routes, the nested stack summaries on the REST asset surfaces, and the timeline surface have landed; the 5 write routes and the sync stream's `SyncAssetV1.stackId` are what's left. The sync one is the least mechanical: the summary path's resolver is request-scoped, and the sync stream would need its own.
+**Effort**: **S remaining** — five write routes and sync-stream stack resolution.
 
 **Recommendation**: **Revisit later** — the expensive half (translation, cover policy, read routes) is done, but the remaining work is still low user demand relative to the Tier-1 and Tier-2 gaps.
 
@@ -752,7 +755,7 @@ adapter code.
 | #1 Shared links | XL | Both | High value but major backend work |
 | #9 Partners | XL | Both | Family use case, deep auth changes |
 | #23 Album sharing | XL | Both | Blocked by sharing infrastructure |
-| #6 Stacks (write path) | S | Adapter-only | Low user demand; the reads, the translation layer, the nested asset stack summaries, and the timeline surface shipped, leaving the 5 write routes and the sync-stream `stackId` |
+| #6 Stacks (write path) | S | Adapter-only | Five write routes and sync-stream `stackId` remain |
 | #20 API keys | M | Both | Developer feature |
 | #24 Custom metadata | M | Both | Integration feature |
 | #25 Asset edits | M | Both | Low user demand |

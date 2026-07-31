@@ -31,10 +31,8 @@ from routers.utils.asset_conversion import (
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     safe_uuid_from_person_id,
-    safe_uuid_from_stack_id,
     uuid_to_gumnut_person_id,
 )
-from tests.conftest import MockSyncCursorPage, make_gumnut_stack_with_members
 
 
 def _make_person(
@@ -370,10 +368,6 @@ class TestSearchMetadata:
         gumnut_asset.metadata = None
         gumnut_asset.people = []
         gumnut_asset.trashed_at = None
-        # Loose asset. Must be explicit: an unset `Mock` attribute is a truthy
-        # `Mock`, which the stack-summary resolver would read as a real stack id
-        # and try to fetch.
-        gumnut_asset.stack_id = None
 
         search_item = Mock()
         search_item.asset = gumnut_asset
@@ -486,15 +480,8 @@ class TestSearchSmart:
         ]
 
 
-def _make_search_asset(
-    taken_at: datetime, mime_type: str = "image/jpeg", stack_id: str | None = None
-) -> Mock:
-    """Create a mock Gumnut AssetResponse with the full include set.
-
-    `stack_id` defaults to `None` (a loose asset) and must stay explicit: an
-    unset `Mock` attribute is a truthy `Mock`, which the stack-summary resolver
-    would read as a real stack id and try to fetch.
-    """
+def _make_search_asset(taken_at: datetime, mime_type: str = "image/jpeg") -> Mock:
+    """Create a mock Gumnut AssetResponse with the full include set."""
     from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
 
     asset = Mock()
@@ -519,7 +506,6 @@ def _make_search_asset(
     asset.metadata = None
     asset.people = []
     asset.trashed_at = None
-    asset.stack_id = stack_id
     return asset
 
 
@@ -1913,184 +1899,3 @@ class TestCameraAndPlaceFilters:
 
         client.search.search.assert_called_once()
         client.assets.list.assert_not_called()
-
-
-class TestSearchStackSummaries:
-    """Search results carry the same stack block asset detail does.
-
-    The surface-specific delta: upstream Immich leaves `stack` unset on search
-    responses, yet its web client still reads it here — `GalleryViewer` renders
-    the search results page through `Thumbnail` with `showStackedIcon` left at
-    its `true` default. Populating it is what makes the badge appear.
-    """
-
-    @staticmethod
-    def _search_response(assets: list[Mock]) -> Mock:
-        response = Mock()
-        response.data = [Mock(asset=asset) for asset in assets]
-        return response
-
-    @staticmethod
-    def _stacked_client(stack: Mock, members: list[Mock], assets: list[Mock]) -> Mock:
-        client = Mock()
-        client.search.search = AsyncMock(
-            return_value=TestSearchStackSummaries._search_response(assets)
-        )
-        client.stacks.list_stacks = Mock(return_value=MockSyncCursorPage([stack]))
-        client.assets.list = Mock(return_value=MockSyncCursorPage(members))
-        return client
-
-    @pytest.mark.anyio
-    async def test_metadata_search_results_carry_stack_summaries(
-        self, mock_current_user
-    ):
-        stack, members = make_gumnut_stack_with_members(count=3, primary_asset_id=None)
-        loose = _make_search_asset(datetime(2024, 6, 1, tzinfo=timezone.utc))
-        client = self._stacked_client(stack, members, [members[0], loose])
-
-        result = await search_assets(
-            request=MetadataSearchDto(make="Canon"),
-            client=client,
-            current_user=mock_current_user,
-        )
-
-        items = result.assets.items
-        assert items[0].stack is not None
-        assert items[0].stack.id == safe_uuid_from_stack_id(stack.id)
-        assert items[0].stack.assetCount == 3
-        assert items[1].stack is None
-
-    @pytest.mark.anyio
-    async def test_smart_search_uses_the_same_effective_primary(
-        self, mock_current_user
-    ):
-        """Search must not invent its own cover for an unpinned burst — the
-        adapter synthesizes one, and every surface has to agree on it."""
-        stack, members = make_gumnut_stack_with_members(
-            count=3, trashed={0}, primary_asset_id=None
-        )
-        client = self._stacked_client(stack, members, [members[1]])
-
-        result = await search_smart(
-            request=SmartSearchDto(query="burst"),
-            client=client,
-            current_user=mock_current_user,
-        )
-
-        summary = result.assets.items[0].stack
-        assert summary is not None
-        # The first *live* frame, not the first returned one — the trashed
-        # member[0] is skipped by `resolve_effective_primary`.
-        assert summary.primaryAssetId == safe_uuid_from_asset_id(members[1].id)
-        assert summary.assetCount == 2
-
-    @pytest.mark.anyio
-    async def test_all_loose_results_make_no_stack_calls(self, mock_current_user):
-        """The common page must not pay for the feature."""
-        assets = [
-            _make_search_asset(datetime(2024, 6, 1, tzinfo=timezone.utc)),
-            _make_search_asset(datetime(2024, 6, 2, tzinfo=timezone.utc)),
-        ]
-        client = Mock()
-        client.search.search = AsyncMock(return_value=self._search_response(assets))
-        client.stacks.list_stacks = Mock()
-
-        result = await search_smart(
-            request=SmartSearchDto(query="beach"),
-            client=client,
-            current_user=mock_current_user,
-        )
-
-        assert [item.stack for item in result.assets.items] == [None, None]
-        client.stacks.list_stacks.assert_not_called()
-
-    @pytest.mark.anyio
-    async def test_criterion_less_listing_page_carries_stack_summaries(
-        self, mock_current_user
-    ):
-        """The criterion-less enumeration takes a different code path from the
-        search call above (`_list_asset_page`), so it needs its own guard."""
-        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
-        client = Mock()
-        client.stacks.list_stacks = Mock(return_value=MockSyncCursorPage([stack]))
-
-        def _list(**kwargs):
-            if "stack_id" in kwargs:
-                return MockSyncCursorPage(members)
-            return MockSyncCursorPage([members[0]])
-
-        client.assets.list = Mock(side_effect=_list)
-
-        result = await search_assets(
-            request=MetadataSearchDto(size=10),
-            client=client,
-            current_user=mock_current_user,
-        )
-
-        assert result.assets.items[0].stack is not None
-        assert result.assets.items[0].stack.id == safe_uuid_from_stack_id(stack.id)
-
-    @pytest.mark.anyio
-    async def test_random_sample_carries_stack_summaries(self, mock_current_user):
-        """`/search/random` admits up to 1000 assets — the widest surface the
-        sweep touches, and the one the cover-read budget is sized against."""
-        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
-        counts_response = Mock()
-        counts_response.data = [
-            _make_count_bucket(1, datetime(2024, 6, 1, tzinfo=timezone.utc))
-        ]
-        counts_response.has_more = False
-
-        client = Mock()
-        client.assets.counts = AsyncMock(return_value=counts_response)
-        client.stacks.list_stacks = Mock(return_value=MockSyncCursorPage([stack]))
-
-        def _list(**kwargs):
-            if "stack_id" in kwargs:
-                return MockSyncCursorPage(members)
-            return MockSyncCursorPage([members[0]])
-
-        client.assets.list = Mock(side_effect=_list)
-
-        result = await search_random(
-            request=RandomSearchDto(size=1),
-            client=client,
-            current_user=mock_current_user,
-        )
-
-        assert len(result) == 1
-        assert result[0].stack is not None
-        assert result[0].stack.id == safe_uuid_from_stack_id(stack.id)
-
-    @pytest.mark.anyio
-    async def test_explore_representatives_carry_stack_summaries(
-        self, mock_current_user
-    ):
-        """Explore converts through its own by-id dict rather than the page
-        wrapper, so the lookup is threaded differently there."""
-        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
-        asset = _make_search_asset(
-            datetime(2024, 6, 1, tzinfo=timezone.utc), stack_id=stack.id
-        )
-        asset.id = members[0].id
-
-        client = Mock()
-        client.stacks.list_stacks = Mock(return_value=MockSyncCursorPage([stack]))
-
-        def _list(**kwargs):
-            if "stack_id" in kwargs:
-                return MockSyncCursorPage(members)
-            if kwargs.get("include") == ASSET_INCLUDE:
-                return MockSyncCursorPage([asset])
-            return MockSyncCursorPage([_scan_view(asset, city=None)])
-
-        client.assets.list = Mock(side_effect=_list)
-
-        result = await get_explore_data(client=client, current_user=mock_current_user)
-
-        recents = next(group for group in result if group.fieldName == "createdAt")
-        assert recents.items, "the recents group should carry the stacked asset"
-        summary = recents.items[0].data.stack
-        assert summary is not None
-        assert summary.id == safe_uuid_from_stack_id(stack.id)
-        assert summary.primaryAssetId == safe_uuid_from_asset_id(members[0].id)

@@ -19,10 +19,7 @@ from gumnut.types.asset_response import AssetResponse
 from gumnut.types.file_data_response import FileDataResponse
 
 from routers.immich_models import AssetStackResponseDto, PersonResponseDto
-from routers.utils.gumnut_id_conversion import (
-    uuid_to_gumnut_person_id,
-    uuid_to_gumnut_stack_id,
-)
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_person_id
 from routers.api.sync.converters import gumnut_asset_to_sync_asset_v1
 from routers.utils.asset_conversion import (
     build_asset_upload_ready_payload,
@@ -247,72 +244,16 @@ class TestConvertGumnutAssetToImmichV3Shape:
 
 
 class TestNestedStackSummary:
-    """`AssetResponseDto.stack` is joined from a lookup the caller resolved.
-
-    The four inputs the converter has to tell apart, all reached without any
-    I/O — the lookup is built by
-    `routers/utils/stack_conversion.py::resolve_asset_stack_summaries`.
-    """
-
-    @staticmethod
-    def _summary(assetCount: int = 3) -> AssetStackResponseDto:
-        return AssetStackResponseDto(
-            id=uuid4(), primaryAssetId=uuid4(), assetCount=assetCount
+    def test_carries_pre_resolved_summary(self, sample_gumnut_asset, mock_current_user):
+        summary = AssetStackResponseDto(
+            id=uuid4(), primaryAssetId=uuid4(), assetCount=7
         )
-
-    def test_loose_asset_has_no_stack(self, sample_gumnut_asset, mock_current_user):
-        sample_gumnut_asset.stack_id = None
 
         result = convert_gumnut_asset_to_immich(
-            sample_gumnut_asset,
-            mock_current_user,
-            stack_summaries={"asset_stack_other": self._summary()},
+            sample_gumnut_asset, mock_current_user, stack=summary
         )
 
-        assert result.stack is None
-
-    def test_resolved_member_carries_the_summary(
-        self, sample_gumnut_asset, mock_current_user
-    ):
-        """Whether the cover was pinned or synthesized is settled before the
-        converter sees it, so one case covers both."""
-        stack_id = uuid_to_gumnut_stack_id(uuid4())
-        sample_gumnut_asset.stack_id = stack_id
-        summary = self._summary(assetCount=7)
-
-        result = convert_gumnut_asset_to_immich(
-            sample_gumnut_asset, mock_current_user, stack_summaries={stack_id: summary}
-        )
-
-        assert result.stack is not None
         assert result.stack is summary
-        assert result.stack.assetCount == 7
-
-    def test_dangling_stack_id_yields_none(
-        self, sample_gumnut_asset, mock_current_user, caplog: pytest.LogCaptureFixture
-    ):
-        """The resolver already warned once for the batch; warning again here
-        would fire per asset."""
-        sample_gumnut_asset.stack_id = uuid_to_gumnut_stack_id(uuid4())
-
-        with caplog.at_level(logging.WARNING, logger="routers.utils.asset_conversion"):
-            result = convert_gumnut_asset_to_immich(
-                sample_gumnut_asset, mock_current_user, stack_summaries={}
-            )
-
-        assert result.stack is None
-        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
-
-    def test_omitted_lookup_yields_none_for_a_stacked_asset(
-        self, sample_gumnut_asset, mock_current_user
-    ):
-        """ "This caller did no stack resolution" is not an error — today that
-        is `build_stack_response`, converting a stack's own members."""
-        sample_gumnut_asset.stack_id = uuid_to_gumnut_stack_id(uuid4())
-
-        result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
-
-        assert result.stack is None
 
 
 class TestBuildAssetUploadReadyPayloadTrashState:

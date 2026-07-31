@@ -3,37 +3,21 @@
 A Gumnut stack row carries only identity and counts — its members live on the
 assets, reachable through the `stack_id` filter on `assets.list`. Every Immich
 stack surface (the `/stacks` reads and writes, the timeline's per-asset stack
-tuples, an asset's own `stack` block) therefore has to decide which frame Immich
-shows as the burst's cover, and most of them have to read the members to do it —
-a pinned row being the one shape that answers from its own field. Both the read
-and the choice live here so the surfaces can't drift into disagreeing about
+tuples, an asset's own `stack` block) therefore needs the same two steps before
+it can answer: fetch the members, and decide which one Immich should show as
+the cover. Both live here so the surfaces can't drift into disagreeing about
 which frame represents a burst.
 
 Member fetching is async and stack conversion is synchronous, deliberately: the
-upstream reads are confined to the async helpers in this module — `hydrate_stack`
-/ `hydrate_stacks` for the surfaces that return the members themselves, and
-`resolve_asset_stack_summaries` / `resolve_stack_cover` for those that need only
-a cover — so that `convert_gumnut_asset_to_immich` stays an I/O-free pure
-conversion. Routes resolve their stack context first and pass it into conversion,
-rather than the converter growing a hidden round-trip for all of its existing
-callers.
+upstream reads are confined to `hydrate_stack` / `hydrate_stacks` so that
+`convert_gumnut_asset_to_immich` stays an I/O-free pure conversion. Routes
+resolve their stack context first and pass it into conversion, rather than the
+converter growing a hidden round-trip for all of its existing callers.
 
-Hydration comes in two sizes, because the surfaces do. `hydrate_stack` pulls
-every member with `ASSET_INCLUDE`, for the `/stacks` reads that must return the
-member assets themselves. Surfaces needing only an ID, a count, and a cover go
-through a leaner read instead, one that never fetches a member the response
-won't contain: an asset's own nested `stack` block through
-`resolve_asset_stack_summaries`, and the timeline's `[stackId, assetCount]`
-tuples through `resolve_timeline_stacks`.
-
-The two sizes also fail differently, and deliberately. A `/stacks` read is
-*about* the stack, so `hydrate_stacks` lets an upstream error propagate. A lean
-read is decoration on a response that is about the assets, so those paths
-degrade rather than take the whole page down with it — at whichever granularity
-the failed read allows. A failed cover read costs one stack its summary
-(`resolve_stack_cover`); a failed stack-row lookup costs the page all of them
-(`resolve_asset_stack_summaries`); an unresolvable timeline stack simply stays
-uncollapsed (`resolve_timeline_stacks`).
+Hydration is sized for the surfaces that must return the member assets
+themselves. `hydrate_stack` pulls every member with `ASSET_INCLUDE`; the
+timeline's `[stackId, assetCount]` tuples need only an ID, a count, and a cover,
+so they go through the lean `resolve_timeline_stacks` path further down instead.
 """
 
 import logging
@@ -48,7 +32,6 @@ from gumnut.types.asset_response import AssetResponse
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.immich_models import (
-    AssetResponseDto,
     AssetStackResponseDto,
     StackResponseDto,
     UserResponseDto,
@@ -66,19 +49,6 @@ from routers.utils.gumnut_id_conversion import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Ceiling on the cover reads one request will spend filling nested asset stack
-# summaries. Only unpinned stacks cost a read (a pinned row names its own
-# cover), and each is a separate round trip because `assets.list` takes a
-# singular `stack_id` — there is no multi-stack filter to batch them with.
-#
-# Sized against the widest caller: `/search/random` admits up to 1000 assets in
-# one response, so without a bound a burst-heavy library could queue 1000 reads
-# behind `BULK_FANOUT_CONCURRENCY_LIMIT`, or 100 sequential waves, for a
-# decorative badge. 100 keeps the worst case to ~10 waves while covering any
-# realistic page: a 200-asset search page would have to be made almost entirely
-# of distinct 2-frame bursts to reach it.
-STACK_SUMMARY_COVER_READ_BUDGET = 100
 
 # Cap on the per-request fallback member reads a collapsed timeline bucket will
 # issue (see `resolve_timeline_stacks`). `gather_with_concurrency` bounds
@@ -327,11 +297,6 @@ def build_stack_response(
     upstream's behavior too — so callers must not assume `primaryAssetId` can
     be found there.
     """
-    # No `stack_summaries` — a stack's own members deliberately carry a null
-    # nested `stack` block. Upstream's `mapStack` maps them with `mapAsset(asset,
-    # { auth })` and no `withStack`, so every client is written against the
-    # absence; filling it in would nest each member's summary inside the very
-    # stack it describes, for a field no reader of this response consults.
     live_assets = [
         convert_gumnut_asset_to_immich(member, current_user)
         for member in hydrated.members
@@ -346,371 +311,17 @@ def build_stack_response(
     )
 
 
-async def fetch_stack_cover_prefix(
-    client: AsyncGumnut, gumnut_stack_id: str
-) -> list[AssetResponse]:
-    """Read an **unpinned** stack's members only as far as its cover.
-
-    Returns a prefix of the member list, not the member set: the walk stops at
-    the first live member, because that member *is* an unpinned stack's cover
-    (`resolve_effective_primary` rule 2) and nothing after it can change the
-    answer. A stack whose members are all trashed has no live member to stop on,
-    so it walks to exhaustion — which is exactly the signal the caller needs to
-    tell that case apart.
-
-    Only correct for a stack with no pinned cover. A pinned one can name any
-    member, including the last, so truncating its read could lose the pin and
-    silently demote it to the fallback. `resolve_stack_cover` is the only
-    caller and it short-circuits pinned rows before reaching here.
-
-    The walk otherwise matches `fetch_stack_members` — `state="all"` so a
-    trashed member still counts toward "this stack exists", `order="asc"` so
-    "first live member" means the earliest frame — minus `ASSET_INCLUDE`.
-    `resolve_effective_primary` reads only `id` and `trashed_at`, both
-    lean-core fields that stay populated with no include token (see
-    `ASSET_INCLUDE`'s comment for the lean-default migration this rides on).
-    Nothing downstream converts these rows, so paying for `metadata`, `people`,
-    and `file_data` on every frame of every burst on a search page would buy
-    nothing. `test_cover_walk_matches_the_member_walk` pins that shared
-    `state`/`order` pair across both functions — the duplication is two entry
-    points, not two independent policies.
-
-    Kept as a sibling of `fetch_stack_members` rather than an `include`
-    parameter on it: the two now differ in *how far they read*, not just what
-    they request, and an `include` argument threaded through would make it easy
-    to hand a lean, truncated member list to a converter that needs neither.
-    """
-    members: list[AssetResponse] = []
-    async for asset in client.assets.list(
-        stack_id=gumnut_stack_id,
-        state="all",
-        order="asc",
-        limit=GUMNUT_API_MAX_PAGE_SIZE,
-    ):
-        members.append(asset)
-        if asset.trashed_at is None:
-            break
-    return members
-
-
-async def resolve_stack_cover(
-    client: AsyncGumnut, stack: GumnutStackRow
-) -> UUID | None:
-    """Resolve a stack's Immich cover without hydrating its members.
-
-    Same answer as `HydratedStack.primary_asset_id`, reached more cheaply:
-
-    - **A pinned cover is taken at its word**, with no member read at all. This
-      is the one place the summary path can disagree with `hydrate_stack`, which
-      verifies the pin is among the members and falls back (loudly) when it
-      isn't. That disagreement needs an asset to have left the stack while its
-      pin lingered — a backend inconsistency `hydrate_stack` already logs from
-      the `/stacks` routes — and checking for it here would cost a member read
-      on every pinned stack of every search page to correct a case that should
-      not occur.
-    - **An unpinned stack** — the normal shape for an auto-detected burst, which
-      the backend never pins a cover for — runs `resolve_effective_primary` over
-      a lean member read. Calling that helper verbatim, rather than
-      re-implementing "first live member" here, is what keeps this path and
-      `/stacks` from ever naming different frames as the same burst's cover.
-
-    Returns `None` when the stack has nothing a client could act on — no members
-    at all, or no *live* member — and also when the cover read itself fails,
-    which is logged and costs only this stack its summary rather than the page's
-    (see the `except` below). A caller inheriting this path inherits that
-    swallowed-failure posture, which is the opposite of `hydrate_stack`'s.
-
-    The no-live-member case is where the member read earns
-    its keep over the row's `asset_count`. Both describe "no live frames", but
-    the count is read from a different endpoint at a different instant, so a
-    count that hasn't caught up with a just-trashed member would let the stack
-    through — and `resolve_effective_primary` would then hand back a trashed
-    frame (its rule 3), producing a summary whose `GET /api/stacks/{id}` 404s.
-    That is the "control that appears and then fails" the caller's own filter is
-    trying to prevent. Deciding it from the members instead makes this path
-    agree with `_build_representable_response` by construction rather than by
-    two endpoints agreeing. Note this is deliberately *not* rule 3: a stack with
-    no live frames is unrepresentable as a summary, where `/stacks` merely drops
-    it. The pinned branch genuinely cannot tell without a read, which is the
-    trade-off documented above.
-    """
-    pinned_id = stack.primary_asset_id
-    if pinned_id is not None:
-        return safe_uuid_from_asset_id(pinned_id)
-
-    try:
-        members = await fetch_stack_cover_prefix(client, stack.id)
-    except GumnutError:
-        # Caught per stack rather than left to the batch: cover reads are one
-        # round trip each, so a transient failure on one burst would otherwise
-        # take every other stack's summary on the page down with it — see
-        # `gather_with_concurrency`, which discards partial results. This stack
-        # alone loses its badge.
-        logger.warning(
-            "Cover read failed for stack %s; omitting its asset stack summary",
-            stack.id,
-            extra={"stack_id": stack.id},
-            exc_info=True,
-        )
+def build_asset_stack_summary(
+    hydrated: HydratedStack | None,
+) -> AssetStackResponseDto | None:
+    """Build the nested summary returned by Immich asset detail."""
+    if hydrated is None or hydrated.live_asset_count < 2:
         return None
-
-    primary = resolve_effective_primary(stack, members)
-    if primary is None:
-        # Same member-less contradiction `hydrate_stack` warns about, reached
-        # from the summary path: the row exists but its members don't.
-        logger.warning(
-            "Stack %s has no members; omitting its asset stack summary",
-            stack.id,
-            extra={"stack_id": stack.id, "stack_asset_count": stack.asset_count},
-        )
-        return None
-    if primary.trashed_at is not None:
-        # Unpinned, so `resolve_effective_primary` returned a trashed frame only
-        # after finding no live one — see the docstring. Not logged: trashing
-        # every frame of a burst is ordinary user action, and the row count
-        # normally filters this out before a read is ever spent.
-        return None
-    return safe_uuid_from_asset_id(primary.id)
-
-
-async def resolve_asset_stack_summaries(
-    client: AsyncGumnut, gumnut_assets: Sequence[AssetResponse]
-) -> dict[str, AssetStackResponseDto]:
-    """Resolve stack summaries for a page, degrading to `{}` on upstream failure.
-
-    `_resolve_asset_stack_summaries` does the resolving; this wrapper owns the
-    failure posture, which is the half worth explaining.
-
-    **A stack read that fails degrades the page rather than failing it.** The
-    block is decoration on a response whose real payload is the assets: losing a
-    burst badge costs a client nothing it can't recover on the next read, while
-    failing the request costs it the assets too. That matters more than it
-    sounds, because the global `GumnutError` handler forwards an upstream status
-    verbatim — a 404 from *this* lookup on `GET /api/assets/{id}` would reach
-    Immich web as "that asset is gone" and close the viewer on an asset that
-    exists. It also keeps this helper from overriding a caller's own posture:
-    `search_memories` deliberately tolerates a failed year (see
-    `_gather_year_assets`), and an all-or-nothing summary bolted onto it would
-    have made a cosmetic badge fail the whole carousel. Contrast
-    `hydrate_stacks`, which is right to fail loudly — there the stack *is* the
-    response.
-
-    `GumnutError` is the SDK's base class, so this covers both an HTTP status
-    from the stacks/assets reads and a transport failure. Nothing else is caught
-    — an `AttributeError` or a DTO validation failure here is an adapter bug, and
-    swallowing it would turn a broken stack summary into a silently absent one on
-    every response rather than a visible 500.
-    """
-    try:
-        return await _resolve_asset_stack_summaries(client, gumnut_assets)
-    except GumnutError:
-        logger.warning(
-            "Stack summary resolution failed; the page ships without stack blocks",
-            exc_info=True,
-        )
-        return {}
-
-
-async def _resolve_asset_stack_summaries(
-    client: AsyncGumnut, gumnut_assets: Sequence[AssetResponse]
-) -> dict[str, AssetStackResponseDto]:
-    """Resolve the nested stack summary for every stacked asset in one batch.
-
-    Returns a lookup keyed by **Gumnut** stack ID (the `asset_stack_`-prefixed
-    form on `AssetResponse.stack_id`), ready to hand to
-    `convert_gumnut_asset_to_immich`. An asset whose `stack_id` is absent from
-    the lookup — because it is null, or because its stack didn't resolve —
-    converts to `stack=None`; the converter treats both alike and stays
-    I/O-free.
-
-    The work is shaped by what the backend offers. Stack rows come back in
-    chunked `list_stacks(ids=...)` calls because that filter accepts a bounded
-    id list, so N stacked assets sharing one stack cost one row lookup rather
-    than N. Covers cannot be batched the same way — `assets.list` takes a
-    singular `stack_id` and there is no multi-stack filter — so each stack still
-    needing a cover costs its own read, run under `gather_with_concurrency`.
-    Pinned stacks and zero-member stacks need none at all, which is why the
-    common auto-burst-heavy page costs one row read plus one cover read per
-    distinct burst, not per asset.
-
-    Concurrency alone would not bound the work, because the callers' page sizes
-    don't agree on a ceiling: `/search/metadata`, `/search/smart`, and the
-    criterion-less listing page clamp to the Gumnut per-page ceiling (200) and
-    memories tops out at 30 windows x 20 assets, but `/search/random` is capped
-    only by `RandomSearchDto.size` — up to **1000** assets, and so up to 1000
-    distinct unpinned bursts, in one request. `STACK_SUMMARY_COVER_READ_BUDGET`
-    bounds the reads that page can commit to; stacks past it ship `stack=None`,
-    the same degraded shape a dangling id already produces, and
-    `stack_summary_truncated` in the log below is the signal that a real library
-    is hitting it.
-
-    A stack-row lookup failure propagates rather than degrading the page; the
-    `resolve_asset_stack_summaries` wrapper catches it and owns that posture.
-    (Cover-read failures degrade per stack inside `resolve_stack_cover` and
-    never reach here.)
-    """
-    # Deduped and order-preserving, so the log and any future budget count
-    # distinct stacks rather than stacked assets, and a fixed input yields a
-    # fixed sequence of upstream calls.
-    stack_ids = list(
-        dict.fromkeys(
-            asset.stack_id for asset in gumnut_assets if asset.stack_id is not None
-        )
+    return AssetStackResponseDto(
+        id=hydrated.id,
+        primaryAssetId=hydrated.primary_asset_id,
+        assetCount=hydrated.live_asset_count,
     )
-    if not stack_ids:
-        # The overwhelmingly common page: nothing stacked, so no stack API call
-        # is made at all. Every caller runs through this helper unconditionally,
-        # which only stays acceptable because of this early return.
-        return {}
-
-    rows: dict[str, GumnutStackRow] = {}
-    for chunk in batched(stack_ids, GUMNUT_API_MAX_BULK_IDS):
-        async for row in client.stacks.list_stacks(
-            ids=list(chunk), limit=GUMNUT_API_MAX_PAGE_SIZE
-        ):
-            rows[row.id] = row
-
-    dangling = [stack_id for stack_id in stack_ids if stack_id not in rows]
-    if dangling:
-        # One warning for the batch, not one per asset: a stack deleted between
-        # the asset read and this one shows up on every frame it held, and a
-        # per-asset warning would turn one backend event into a burst of
-        # identical lines.
-        logger.warning(
-            "%d stack id(s) on assets resolved to no stack row; "
-            "those assets ship without a stack summary",
-            len(dangling),
-            extra={"dangling_stack_ids": dangling},
-        )
-
-    # Walked in `stack_ids` order — the order the stacks appear on the page —
-    # rather than `rows.values()`, whose order comes from the backend's
-    # `list_stacks` response and isn't promised to match the ids requested. That
-    # only matters once the budget below truncates: spending it in page order
-    # means the badges that survive are the ones on the assets nearest the top,
-    # instead of an arbitrary subset.
-    #
-    # Fewer than two live members is not a burst a client can act on, so no
-    # summary is emitted. Zero is the same "not representable" state `/stacks`
-    # drops a stack for (`_build_representable_response`): its
-    # `StackResponseDto` would carry an empty `assets`, and the summary would
-    # hand the client a stack ID whose `GET /api/stacks/{id}` 404s.
-    #
-    # One is the case this sweep newly made reachable, and it needs the same
-    # treatment for a different reason. Trashing one frame of a two-frame auto
-    # burst is ordinary user action and leaves `asset_count` at 1 — but Immich
-    # renders the badge on `asset.stack` alone, with no count threshold, so the
-    # surviving photo would carry a burst badge reading "1". Upstream never
-    # emits that shape: it deletes a stack once it falls below two assets, which
-    # is why nothing client-side guards against it. `/stacks` would still return
-    # such a stack, and that asymmetry is safe in this direction — no asset
-    # advertises the ID, so no client asks for it.
-    #
-    # A cheap prefilter, so a burst that has drained costs no read at all;
-    # `resolve_stack_cover` re-decides the zero case from the members, which is
-    # what makes that half of the rule hold when this count is stale.
-    representable = [
-        rows[stack_id]
-        for stack_id in stack_ids
-        if stack_id in rows and rows[stack_id].asset_count > 1
-    ]
-
-    # Budget spent only on the rows that actually need a read. A pinned row
-    # answers from its own field, so a page of user-pinned stacks is unbounded
-    # in stacks but free in reads, and charging it against the budget would
-    # truncate a page that costs nothing. Tested before admitting (see
-    # `docs/references/code-practices.md` on why the flag would otherwise lie
-    # for a page of exactly the budget).
-    resolvable: list[GumnutStackRow] = []
-    truncated = 0
-    cover_reads = 0
-    for row in representable:
-        if row.primary_asset_id is None:
-            if cover_reads >= STACK_SUMMARY_COVER_READ_BUDGET:
-                truncated += 1
-                continue
-            cover_reads += 1
-        resolvable.append(row)
-
-    if truncated:
-        logger.warning(
-            "asset stack summaries: %d stack(s) past the %d-cover-read budget "
-            "ship without a summary",
-            truncated,
-            STACK_SUMMARY_COVER_READ_BUDGET,
-            extra={
-                "stack_summary_truncated": True,
-                "stack_summary_truncated_stacks": truncated,
-                "stack_summary_cover_read_budget": STACK_SUMMARY_COVER_READ_BUDGET,
-            },
-        )
-
-    covers = await gather_with_concurrency(
-        [resolve_stack_cover(client, row) for row in resolvable]
-    )
-
-    # `assetCount` is the row's **live** member count, which is what the field
-    # means to a client: web renders it directly as the burst badge's number,
-    # and it has to agree with the `assets.length` a follow-up
-    # `GET /api/stacks/{id}` reports, since `StackResponseDto` carries live
-    # members only (see `build_stack_response`). Trashed frames counted here
-    # would show a badge of 5 on a stack whose filmstrip holds 3.
-    summaries = {
-        row.id: AssetStackResponseDto(
-            id=safe_uuid_from_stack_id(row.id),
-            primaryAssetId=cover,
-            assetCount=row.asset_count,
-        )
-        for row, cover in zip(resolvable, covers)
-        if cover is not None
-    }
-    logger.info(
-        "asset stack summaries: %d stacked asset(s) across %d stack(s), "
-        "%d cover read(s), %d summary(ies) resolved "
-        "(stack_summary_truncated=%s)",
-        sum(1 for asset in gumnut_assets if asset.stack_id is not None),
-        len(stack_ids),
-        cover_reads,
-        len(summaries),
-        truncated > 0,
-        extra={
-            "stack_summary_stacks": len(stack_ids),
-            "stack_summary_cover_reads": cover_reads,
-            "stack_summary_resolved": len(summaries),
-            "stack_summary_dangling": len(dangling),
-            # Boolean under the truncation's own name, with the count beside it
-            # — the shape `stack_search_truncated` established in `stacks.py`,
-            # so one query form works across both stack surfaces.
-            "stack_summary_truncated": truncated > 0,
-            "stack_summary_truncated_stacks": truncated,
-        },
-    )
-    return summaries
-
-
-async def convert_assets_with_stacks(
-    client: AsyncGumnut,
-    gumnut_assets: Sequence[AssetResponse],
-    current_user: UserResponseDto,
-) -> list[AssetResponseDto]:
-    """Convert a page of assets to Immich DTOs with their stack summaries filled.
-
-    The default entry point for a REST route emitting `AssetResponseDto`s: one
-    batched stack resolution for the whole page, then the ordinary synchronous
-    conversion per asset. Output order matches the input.
-
-    A route that emits assets in *groups* (memories, whose response nests assets
-    under each synthesized memory) should call `resolve_asset_stack_summaries`
-    once over the flattened set and pass the lookup down instead — calling this
-    per group would re-read the same stack rows for every group.
-    """
-    stack_summaries = await resolve_asset_stack_summaries(client, gumnut_assets)
-    return [
-        convert_gumnut_asset_to_immich(
-            asset, current_user, stack_summaries=stack_summaries
-        )
-        for asset in gumnut_assets
-    ]
 
 
 # --------------------------------------------------------------------------- #
