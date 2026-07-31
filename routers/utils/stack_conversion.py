@@ -14,24 +14,31 @@ upstream reads are confined to `hydrate_stack` / `hydrate_stacks` so that
 resolve their stack context first and pass it into conversion, rather than the
 converter growing a hidden round-trip for all of its existing callers.
 
-Hydration is sized for the surfaces that must return the member assets
-themselves. `hydrate_stack` pulls every member with `ASSET_INCLUDE`, so surfaces
-needing only an ID, a count, and a cover (the timeline's `[stackId, assetCount]`
-tuples, an asset's own `stack` block) want a leaner read instead — added when
-one has a caller.
+Hydration comes in two sizes, because the surfaces do. `hydrate_stack` pulls
+every member with `ASSET_INCLUDE`, for the `/stacks` reads that must return the
+member assets themselves. Surfaces needing only an ID, a count, and a cover —
+an asset's own nested `stack` block, and eventually the timeline's
+`[stackId, assetCount]` tuples — go through `resolve_asset_stack_summaries`
+instead, which never fetches a member the response won't contain.
 """
 
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import batched
 from typing import Protocol
 from uuid import UUID
 
 from gumnut import AsyncGumnut
 from gumnut.types.asset_response import AssetResponse
 
-from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
-from routers.immich_models import StackResponseDto, UserResponseDto
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
+from routers.immich_models import (
+    AssetResponseDto,
+    AssetStackResponseDto,
+    StackResponseDto,
+    UserResponseDto,
+)
 from routers.utils.asset_conversion import ASSET_INCLUDE, convert_gumnut_asset_to_immich
 from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.gumnut_id_conversion import (
@@ -275,6 +282,11 @@ def build_stack_response(
     upstream's behavior too — so callers must not assume `primaryAssetId` can
     be found there.
     """
+    # No `stack_summaries` — a stack's own members deliberately carry a null
+    # nested `stack` block. Upstream's `mapStack` maps them with `mapAsset(asset,
+    # { auth })` and no `withStack`, so every client is written against the
+    # absence; filling it in would nest each member's summary inside the very
+    # stack it describes, for a field no reader of this response consults.
     live_assets = [
         convert_gumnut_asset_to_immich(member, current_user)
         for member in hydrated.members
@@ -287,3 +299,222 @@ def build_stack_response(
         # order — the same partition upstream's `mapStack` performs.
         assets=sorted(live_assets, key=lambda a: a.id != hydrated.primary_asset_id),
     )
+
+
+async def fetch_stack_cover_candidates(
+    client: AsyncGumnut, gumnut_stack_id: str
+) -> list[AssetResponse]:
+    """Fetch one stack's members for cover resolution only.
+
+    The same walk as `fetch_stack_members` — `state="all"` so a trashed pin
+    stays resolvable, `order="asc"` so "first live member" means the earliest
+    frame — minus `ASSET_INCLUDE`. `resolve_effective_primary` reads only `id`
+    and `trashed_at`, both lean-core fields that stay populated with no include
+    token (see `ASSET_INCLUDE`'s comment for the lean-default migration this
+    rides on). Nothing downstream converts these rows, so paying for `metadata`,
+    `people`, and `file_data` on every frame of every burst on a search page
+    would buy nothing.
+
+    Kept as a sibling of `fetch_stack_members` rather than an `include`
+    parameter on it: the two differ in what the caller does with the result, and
+    an `include` argument threaded through would make it easy to hand a
+    lean-fetched member to a converter that needs the heavy fields.
+    """
+    return [
+        asset
+        async for asset in client.assets.list(
+            stack_id=gumnut_stack_id,
+            state="all",
+            order="asc",
+            limit=GUMNUT_API_MAX_PAGE_SIZE,
+        )
+    ]
+
+
+async def resolve_stack_cover(
+    client: AsyncGumnut, stack: GumnutStackRow
+) -> UUID | None:
+    """Resolve a stack's Immich cover without hydrating its members.
+
+    Same answer as `HydratedStack.primary_asset_id`, reached more cheaply:
+
+    - **A pinned cover is taken at its word**, with no member read at all. This
+      is the one place the summary path can disagree with `hydrate_stack`, which
+      verifies the pin is among the members and falls back (loudly) when it
+      isn't. That disagreement needs an asset to have left the stack while its
+      pin lingered — a backend inconsistency `hydrate_stack` already logs from
+      the `/stacks` routes — and checking for it here would cost a member read
+      on every pinned stack of every search page to correct a case that should
+      not occur.
+    - **An unpinned stack** — the normal shape for an auto-detected burst, which
+      the backend never pins a cover for — runs `resolve_effective_primary` over
+      a lean member read. Calling that helper verbatim, rather than
+      re-implementing "first live member" here, is what keeps this path and
+      `/stacks` from ever naming different frames as the same burst's cover.
+
+    Returns `None` only when the member read comes back empty, which for an
+    unpinned stack means it has no members at all.
+    """
+    pinned_id = stack.primary_asset_id
+    if pinned_id is not None:
+        return safe_uuid_from_asset_id(pinned_id)
+
+    members = await fetch_stack_cover_candidates(client, stack.id)
+    primary = resolve_effective_primary(stack, members)
+    if primary is None:
+        # Same member-less contradiction `hydrate_stack` warns about, reached
+        # from the summary path: the row exists but its members don't.
+        logger.warning(
+            "Stack %s has no members; omitting its asset stack summary",
+            stack.id,
+            extra={"stack_id": stack.id, "stack_asset_count": stack.asset_count},
+        )
+        return None
+    return safe_uuid_from_asset_id(primary.id)
+
+
+def build_asset_stack_summary(
+    stack: GumnutStackRow, cover_asset_id: UUID
+) -> AssetStackResponseDto:
+    """Build the nested `AssetResponseDto.stack` block for one stack.
+
+    `assetCount` is the row's **live** member count, which is what the field
+    means to a client: web renders it directly as the burst badge's number, and
+    it has to agree with the `assets.length` a follow-up `GET /api/stacks/{id}`
+    reports, since `StackResponseDto` carries live members only (see
+    `build_stack_response`). Trashed frames counted here would show a badge of
+    5 on a stack whose filmstrip holds 3.
+    """
+    return AssetStackResponseDto(
+        id=safe_uuid_from_stack_id(stack.id),
+        primaryAssetId=cover_asset_id,
+        assetCount=stack.asset_count,
+    )
+
+
+async def resolve_asset_stack_summaries(
+    client: AsyncGumnut, gumnut_assets: Sequence[AssetResponse]
+) -> dict[str, AssetStackResponseDto]:
+    """Resolve the nested stack summary for every stacked asset in one batch.
+
+    Returns a lookup keyed by **Gumnut** stack ID (the `asset_stack_`-prefixed
+    form on `AssetResponse.stack_id`), ready to hand to
+    `convert_gumnut_asset_to_immich`. An asset whose `stack_id` is absent from
+    the lookup — because it is null, or because its stack didn't resolve —
+    converts to `stack=None`; the converter treats both alike and stays
+    I/O-free.
+
+    The work is shaped by what the backend offers. Stack rows come back in
+    chunked `list_stacks(ids=...)` calls because that filter accepts a bounded
+    id list, so N stacked assets sharing one stack cost one row lookup rather
+    than N. Covers cannot be batched the same way — `assets.list` takes a
+    singular `stack_id` and there is no multi-stack filter — so each stack still
+    needing a cover costs its own read, run under `gather_with_concurrency`.
+    Pinned stacks and zero-member stacks need none at all, which is why the
+    common auto-burst-heavy page costs one row read plus one cover read per
+    distinct burst, not per asset.
+
+    Nothing here bounds total round-trips, only concurrency. That is deliberate
+    for now: every caller's page size is already capped upstream (search at the
+    Gumnut per-page ceiling, memories at 30 windows x 20 assets), so the
+    unpinned-stack count is bounded by those rather than by the library. The
+    summary log below records how many stacks were seen against how many needed
+    a cover read, which is the measurement that would justify adding a budget
+    like `SEARCH_STACKS_MEMBER_BUDGET` rather than guessing at one.
+
+    An upstream failure on any single stack fails the whole call — the same
+    all-or-nothing `hydrate_stacks` has, and the same reasoning: a page that
+    silently drops the stack block on the assets a backend hiccup touched is
+    indistinguishable, to the client, from those assets not being stacked.
+    """
+    # Deduped and order-preserving, so the log and any future budget count
+    # distinct stacks rather than stacked assets, and a fixed input yields a
+    # fixed sequence of upstream calls.
+    stack_ids = list(
+        dict.fromkeys(
+            asset.stack_id for asset in gumnut_assets if asset.stack_id is not None
+        )
+    )
+    if not stack_ids:
+        # The overwhelmingly common page: nothing stacked, so no stack API call
+        # is made at all. Every caller runs through this helper unconditionally,
+        # which only stays acceptable because of this early return.
+        return {}
+
+    rows: dict[str, GumnutStackRow] = {}
+    for chunk in batched(stack_ids, GUMNUT_API_MAX_BULK_IDS):
+        async for row in client.stacks.list_stacks(
+            ids=list(chunk), limit=GUMNUT_API_MAX_PAGE_SIZE
+        ):
+            rows[row.id] = row
+
+    dangling = [stack_id for stack_id in stack_ids if stack_id not in rows]
+    if dangling:
+        # One warning for the batch, not one per asset: a stack deleted between
+        # the asset read and this one shows up on every frame it held, and a
+        # per-asset warning would turn one backend event into a burst of
+        # identical lines.
+        logger.warning(
+            "%d stack id(s) on assets resolved to no stack row; "
+            "those assets ship without a stack summary",
+            len(dangling),
+            extra={"dangling_stack_ids": dangling},
+        )
+
+    # Zero live members is the same "not representable" state `/stacks` drops a
+    # stack for (`_build_representable_response`): its `StackResponseDto` would
+    # carry an empty `assets`. Emitting the summary anyway would badge the asset
+    # with a count of 0 and hand the client a stack ID whose `GET
+    # /api/stacks/{id}` 404s — a control that appears and then fails. Filtered
+    # before the cover reads, so an all-trashed burst costs nothing.
+    resolvable = [row for row in rows.values() if row.asset_count > 0]
+    cover_reads = sum(1 for row in resolvable if row.primary_asset_id is None)
+    covers = await gather_with_concurrency(
+        [resolve_stack_cover(client, row) for row in resolvable]
+    )
+
+    summaries = {
+        row.id: build_asset_stack_summary(row, cover)
+        for row, cover in zip(resolvable, covers)
+        if cover is not None
+    }
+    logger.info(
+        "asset stack summaries: %d stacked asset(s) across %d stack(s), "
+        "%d cover read(s), %d summary(ies) resolved",
+        sum(1 for asset in gumnut_assets if asset.stack_id is not None),
+        len(stack_ids),
+        cover_reads,
+        len(summaries),
+        extra={
+            "stack_summary_stacks": len(stack_ids),
+            "stack_summary_cover_reads": cover_reads,
+            "stack_summary_resolved": len(summaries),
+            "stack_summary_dangling": len(dangling),
+        },
+    )
+    return summaries
+
+
+async def convert_assets_with_stacks(
+    client: AsyncGumnut,
+    gumnut_assets: Sequence[AssetResponse],
+    current_user: UserResponseDto,
+) -> list[AssetResponseDto]:
+    """Convert a page of assets to Immich DTOs with their stack summaries filled.
+
+    The default entry point for a REST route emitting `AssetResponseDto`s: one
+    batched stack resolution for the whole page, then the ordinary synchronous
+    conversion per asset. Output order matches the input.
+
+    A route that emits assets in *groups* (memories, whose response nests assets
+    under each synthesized memory) should call `resolve_asset_stack_summaries`
+    once over the flattened set and pass the lookup down instead — calling this
+    per group would re-read the same stack rows for every group.
+    """
+    stack_summaries = await resolve_asset_stack_summaries(client, gumnut_assets)
+    return [
+        convert_gumnut_asset_to_immich(
+            asset, current_user, stack_summaries=stack_summaries
+        )
+        for asset in gumnut_assets
+    ]

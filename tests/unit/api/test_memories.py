@@ -20,8 +20,15 @@ from routers.api.memories import (
     search_memories,
 )
 from routers.immich_models import MemoryType
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
-from tests.conftest import MockPaginatedListing, MockSyncCursorPage
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_stack_id,
+    uuid_to_gumnut_asset_id,
+)
+from tests.conftest import (
+    MockPaginatedListing,
+    MockSyncCursorPage,
+    make_gumnut_stack_with_members,
+)
 
 
 def _call_search(
@@ -45,8 +52,15 @@ def _call_search(
     )
 
 
-def _make_asset(asset_id_uuid: UUID, captured_at: datetime) -> Mock:
-    """Minimal mock Gumnut asset that survives `convert_gumnut_asset_to_immich`."""
+def _make_asset(
+    asset_id_uuid: UUID, captured_at: datetime, stack_id: str | None = None
+) -> Mock:
+    """Minimal mock Gumnut asset that survives `convert_gumnut_asset_to_immich`.
+
+    `stack_id` defaults to `None` (a loose asset) and must stay explicit: an
+    unset `Mock` attribute is a truthy `Mock`, which the stack-summary resolver
+    would read as a real stack id and try to fetch.
+    """
     asset = Mock()
     asset.id = uuid_to_gumnut_asset_id(asset_id_uuid)
     asset.original_file_name = "memory.jpg"
@@ -70,6 +84,7 @@ def _make_asset(asset_id_uuid: UUID, captured_at: datetime) -> Mock:
     asset.trashed_at = None
     asset.duration = None
     asset.library_id = "library-1"
+    asset.stack_id = stack_id
     return asset
 
 
@@ -542,3 +557,97 @@ class TestGetMemory:
                 current_user=mock_current_user,
             )
         assert exc.value.status_code == 404
+
+
+class TestMemoryStackSummaries:
+    """Memory assets carry the same stack block search and asset detail do.
+
+    Immich web's memory grid renders through `GalleryViewer`, so the burst badge
+    reads `asset.stack.assetCount` here too, and its "view in timeline" link
+    reads `asset.stack?.primaryAssetId`.
+    """
+
+    @staticmethod
+    def _stacked_client(
+        stack: Mock, members: list[Mock], assets_by_year: dict[int, list[Mock]]
+    ) -> Mock:
+        client = Mock()
+        _stub_assets_per_year(client, assets_by_year)
+        client.stacks.list_stacks = Mock(return_value=MockSyncCursorPage([stack]))
+        # `assets.list` is already stubbed by year for the memory fetch; the
+        # cover read routes on `stack_id`, which the year stub ignores, so
+        # dispatch on it here.
+        by_year = client.assets.list.side_effect
+
+        def _list(**kwargs):
+            if "stack_id" in kwargs:
+                return MockSyncCursorPage(members)
+            return by_year(**kwargs)
+
+        client.assets.list = Mock(side_effect=_list)
+        return client
+
+    @pytest.mark.anyio
+    async def test_memory_assets_carry_stack_summaries(self, mock_current_user):
+        reference = datetime(2024, 5, 4, tzinfo=timezone.utc)
+        stack, members = make_gumnut_stack_with_members(count=3, primary_asset_id=None)
+        # Reuse a real stacked member as the memory's asset, so the summary has
+        # to come back through the same lookup the converter reads.
+        stacked = _make_asset(uuid4(), reference, stack_id=stack.id)
+        stacked.id = members[0].id
+        loose = _make_asset(uuid4(), reference)
+        client = self._stacked_client(stack, members, {2023: [stacked, loose]})
+
+        result = await _call_search(
+            client=client,
+            current_user_id=mock_current_user.id,
+            current_user=mock_current_user,
+            for_param=reference,
+        )
+
+        assets = result[0].assets
+        assert assets[0].stack is not None
+        assert assets[0].stack.id == safe_uuid_from_stack_id(stack.id)
+        assert assets[0].stack.assetCount == 3
+        assert assets[1].stack is None
+
+    @pytest.mark.anyio
+    async def test_one_stack_shared_across_years_is_read_once(self, mock_current_user):
+        """The resolve is per response, not per memory — 30 years of memories
+        must not re-read the same stack row 30 times."""
+        reference = datetime(2024, 5, 4, tzinfo=timezone.utc)
+        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
+        per_year = {}
+        for offset, year in enumerate((2021, 2022, 2023)):
+            asset = _make_asset(uuid4(), reference, stack_id=stack.id)
+            asset.id = members[0].id
+            per_year[year] = [asset]
+        client = self._stacked_client(stack, members, per_year)
+
+        result = await _call_search(
+            client=client,
+            current_user_id=mock_current_user.id,
+            current_user=mock_current_user,
+            for_param=reference,
+        )
+
+        assert len(result) == 3
+        assert all(memory.assets[0].stack is not None for memory in result)
+        assert client.stacks.list_stacks.call_count == 1
+
+    @pytest.mark.anyio
+    async def test_all_loose_memories_make_no_stack_calls(self, mock_current_user):
+        reference = datetime(2024, 5, 4, tzinfo=timezone.utc)
+        client = Mock()
+        _stub_assets_per_year(client, {2023: [_make_asset(uuid4(), reference)]})
+        client.stacks.list_stacks = Mock()
+
+        result = await _call_search(
+            client=client,
+            current_user_id=mock_current_user.id,
+            current_user=mock_current_user,
+            for_param=reference,
+        )
+
+        assert result[0].assets[0].stack is None
+        client.stacks.list_stacks.assert_not_called()

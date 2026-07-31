@@ -42,6 +42,10 @@ from routers.utils.asset_conversion import (
     convert_gumnut_asset_to_immich,
     mime_type_to_asset_type,
 )
+from routers.utils.stack_conversion import (
+    convert_assets_with_stacks,
+    resolve_asset_stack_summaries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +124,17 @@ async def get_explore_data(
         async for asset in client.assets.list(ids=wanted_ids, include=ASSET_INCLUDE):
             assets_by_id[asset.id] = asset
 
+    # Resolved once over the whole re-fetch: a city representative and a recent
+    # asset can be the same frame of the same burst, and the two lists overlap
+    # by construction (`wanted_ids` is deduped), so a per-asset resolve would
+    # re-read one stack row several times.
+    stack_summaries = await resolve_asset_stack_summaries(
+        client, list(assets_by_id.values())
+    )
     converted = {
-        asset_id: convert_gumnut_asset_to_immich(asset, current_user)
+        asset_id: convert_gumnut_asset_to_immich(
+            asset, current_user, stack_summaries=stack_summaries
+        )
         for asset_id, asset in assets_by_id.items()
     }
 
@@ -434,9 +447,9 @@ async def _list_asset_page(
 
     has_more = len(page_assets) > size
     page_assets = page_assets[:size]
-    page_items = [
-        convert_gumnut_asset_to_immich(asset, current_user) for asset in page_assets
-    ]
+    # After the `[:size]` trim, so the lookahead asset that only exists to
+    # detect `has_more` never costs a stack read.
+    page_items = await convert_assets_with_stacks(client, page_assets, current_user)
 
     # `nextPage` is a JSON string (immich-go decodes it as `nextPage,string`);
     # `None` — never "" — on the last page keeps the mobile client's
@@ -502,10 +515,9 @@ async def search_assets(
 
     immich_assets = []
     if gumnut_results and gumnut_results.data:
-        for item in gumnut_results.data:
-            immich_assets.append(
-                convert_gumnut_asset_to_immich(item.asset, current_user)
-            )
+        immich_assets = await convert_assets_with_stacks(
+            client, [item.asset for item in gumnut_results.data], current_user
+        )
 
     return SearchResponseDto(
         albums=SearchAlbumResponseDto(count=0, facets=[], items=[], total=0),
@@ -545,10 +557,9 @@ async def search_smart(
 
     immich_assets = []
     if gumnut_assets:
-        for item in gumnut_assets.data:
-            immich_assets.append(
-                convert_gumnut_asset_to_immich(item.asset, current_user)
-            )
+        immich_assets = await convert_assets_with_stacks(
+            client, [item.asset for item in gumnut_assets.data], current_user
+        )
 
     return SearchResponseDto(
         albums=SearchAlbumResponseDto(count=0, facets=[], items=[], total=0),
@@ -748,4 +759,4 @@ async def search_random(
             if mime_type_to_asset_type(asset.mime_type) == request.type
         ]
     random.shuffle(sampled)
-    return [convert_gumnut_asset_to_immich(asset, current_user) for asset in sampled]
+    return await convert_assets_with_stacks(client, sampled, current_user)

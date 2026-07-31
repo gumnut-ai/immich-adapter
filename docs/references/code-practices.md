@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-07-30
+last-updated: 2026-07-31
 ---
 
 # Code Practices
@@ -148,6 +148,8 @@ Some SDK contracts are already pinned by committed tests, so a bump that breaks 
 ### Derive multi-path fields through one helper
 
 A field the adapter surfaces from more than one path must be derived identically in each: the write handler, the paired read handler, **and** the sync-stream converter (`routers/api/sync/converters.py`). Route any value mapped from a Gumnut field through a shared helper instead of hardcoding it per site, or the same entity reads back differently by path — e.g. a face's `sourceType` (mapped from `FaceResponse.source`) returned by `create_face` but hardcoded in `get_faces` / the sync converter, or a face box stored in a different coordinate frame than `get_faces` reads back. When you touch one emit site for such a field, grep for every constructor of the Immich response type (`AssetFaceResponseDto`, `SyncAssetFaceV1` / `SyncAssetFaceV2`, …) before assuming it has one home.
+
+When the shared value needs a **backend read** the converter can't make — it must stay synchronous and I/O-free — split it in two rather than letting each route resolve its own: an async resolver that answers for a whole page at once, and an optional lookup parameter the converter joins against. `AssetResponseDto.stack` is the worked example (`resolve_asset_stack_summaries` in `routers/utils/stack_conversion.py`, joined by `resolve_asset_stack_summary` in `asset_conversion.py`). The lookup being optional is what keeps callers that legitimately don't resolve — the sync-stream converters, and a stack's own members inside a `StackResponseDto` — from having to fake one; it also means **adding a route that emits the DTO without passing a lookup silently ships the field as null**, which no type check catches. Grep the converter's callers, not just the route you're adding.
 
 ### Reading Gumnut asset fields — request them via `include`
 

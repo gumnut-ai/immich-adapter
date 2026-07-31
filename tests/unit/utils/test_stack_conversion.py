@@ -5,6 +5,7 @@ import inspect
 import logging
 from datetime import datetime, timezone
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
 from gumnut import APIStatusError
@@ -18,24 +19,30 @@ from gumnut.types import (
 )
 from pydantic import BaseModel
 
-from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.utils.asset_conversion import ASSET_INCLUDE
 from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     safe_uuid_from_stack_id,
+    uuid_to_gumnut_asset_id,
 )
 from routers.utils.stack_conversion import (
     GumnutStackRow,
     build_stack_response,
+    convert_assets_with_stacks,
+    fetch_stack_cover_candidates,
     fetch_stack_members,
     hydrate_stack,
     hydrate_stacks,
+    resolve_asset_stack_summaries,
     resolve_effective_primary,
+    resolve_stack_cover,
 )
 from tests.conftest import (
     MockPaginatedListing,
     MockSyncCursorPage,
+    make_gumnut_asset,
     make_gumnut_stack,
     make_gumnut_stack_members,
     make_gumnut_stack_with_members,
@@ -482,6 +489,281 @@ class TestBuildStackResponse:
 
         assert response.assets == []
         assert response.primaryAssetId == safe_uuid_from_asset_id(members[0].id)
+
+    @pytest.mark.anyio
+    async def test_members_carry_no_nested_stack_block(self, mock_current_user):
+        """A stack's own members ship `stack=None`, matching upstream's
+        `mapStack`, which maps them without `withStack`."""
+        stack, members = make_gumnut_stack_with_members(count=2)
+        client = _client_returning(members)
+
+        hydrated = await hydrate_stack(client, stack)
+        assert hydrated is not None
+        response = build_stack_response(hydrated, mock_current_user)
+
+        assert [asset.stack for asset in response.assets] == [None, None]
+
+
+def _summary_client(
+    rows: list[Mock], members_by_stack: dict[str, list[Mock]] | None = None
+) -> Mock:
+    """A Mock client answering `stacks.list_stacks` and the cover member read.
+
+    `list_stacks` echoes back only the rows whose id was actually asked for, so
+    a test can model a dangling id by leaving its row out of `rows`, and the
+    chunking assertions see a realistic per-call response.
+    """
+    members_by_stack = members_by_stack or {}
+    rows_by_id = {row.id: row for row in rows}
+
+    client = Mock()
+    client.stacks.list_stacks = Mock(
+        side_effect=lambda **kwargs: MockSyncCursorPage(
+            [rows_by_id[i] for i in kwargs["ids"] if i in rows_by_id]
+        )
+    )
+    client.assets.list = Mock(
+        side_effect=lambda **kwargs: MockSyncCursorPage(
+            members_by_stack.get(kwargs["stack_id"], [])
+        )
+    )
+    return client
+
+
+class TestFetchStackCoverCandidates:
+    @pytest.mark.anyio
+    async def test_reads_the_same_walk_without_the_heavy_include(self):
+        """The cover read must keep every argument that decides *which* member
+        wins, and drop only the `include` that decides how fat each row is."""
+        stack, members = make_gumnut_stack_with_members(count=2)
+        client = _client_returning(members)
+
+        result = await fetch_stack_cover_candidates(client, stack.id)
+
+        assert result == members
+        kwargs = client.assets.list.call_args.kwargs
+        assert kwargs["stack_id"] == stack.id
+        assert kwargs["state"] == "all"
+        assert kwargs["order"] == "asc"
+        assert kwargs["limit"] == GUMNUT_API_MAX_PAGE_SIZE
+        assert "include" not in kwargs
+
+
+class TestResolveStackCover:
+    @pytest.mark.anyio
+    async def test_pinned_cover_costs_no_member_read(self):
+        """The saving the summary path exists for: a pinned row answers from
+        its own field."""
+        stack, members = make_gumnut_stack_with_members(count=3)
+        stack.primary_asset_id = members[2].id
+        client = _client_returning(members)
+
+        cover = await resolve_stack_cover(client, stack)
+
+        assert cover == safe_uuid_from_asset_id(members[2].id)
+        client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_unpinned_cover_matches_hydrate_stack(self):
+        """The two paths must never name different frames as one burst's cover.
+
+        Asserted against `hydrate_stack` itself rather than a hardcoded index,
+        so a future change to the effective-primary rule can't move one path
+        without the other.
+        """
+        stack, members = make_gumnut_stack_with_members(
+            count=4, trashed={0, 1}, primary_asset_id=None
+        )
+        client = _client_returning(members)
+
+        cover = await resolve_stack_cover(client, stack)
+        hydrated = await hydrate_stack(_client_returning(members), stack)
+
+        assert hydrated is not None
+        assert cover == hydrated.primary_asset_id
+        assert cover == safe_uuid_from_asset_id(members[2].id)
+
+    @pytest.mark.anyio
+    async def test_member_less_unpinned_stack_yields_none(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        stack = make_gumnut_stack(asset_count=4, primary_asset_id=None)
+        client = _client_returning([])
+
+        with caplog.at_level(logging.WARNING, logger="routers.utils.stack_conversion"):
+            assert await resolve_stack_cover(client, stack) is None
+
+        records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(records) == 1
+        assert getattr(records[0], "stack_id", None) == stack.id
+
+
+class TestResolveAssetStackSummaries:
+    @pytest.mark.anyio
+    async def test_all_loose_assets_make_no_stack_calls(self):
+        """The overwhelmingly common page. Every route calls this helper
+        unconditionally, so a library with no bursts must pay nothing."""
+        assets = [make_gumnut_asset() for _ in range(3)]
+        client = _summary_client([])
+
+        assert await resolve_asset_stack_summaries(client, assets) == {}
+
+        client.stacks.list_stacks.assert_not_called()
+        client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_shared_stack_is_read_once_for_many_assets(self):
+        """Ten frames of one burst cost one row read and one cover read — the
+        whole point of resolving per page instead of per asset."""
+        stack, members = make_gumnut_stack_with_members(count=10, primary_asset_id=None)
+        client = _summary_client([stack], {stack.id: members})
+
+        summaries = await resolve_asset_stack_summaries(client, members)
+
+        assert set(summaries) == {stack.id}
+        assert client.stacks.list_stacks.call_count == 1
+        assert client.stacks.list_stacks.call_args.kwargs["ids"] == [stack.id]
+        assert client.assets.list.call_count == 1
+
+    @pytest.mark.anyio
+    async def test_pinned_stack_needs_no_cover_read(self):
+        stack, members = make_gumnut_stack_with_members(count=3)
+        stack.primary_asset_id = members[1].id
+        client = _summary_client([stack], {stack.id: members})
+
+        summaries = await resolve_asset_stack_summaries(client, members)
+
+        assert summaries[stack.id].primaryAssetId == safe_uuid_from_asset_id(
+            members[1].id
+        )
+        client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_summary_carries_id_cover_and_live_count(self):
+        """All three fields come from the row, and `assetCount` is the *live*
+        count — what the burst badge shows and what `/stacks` would return."""
+        stack, members = make_gumnut_stack_with_members(
+            count=4, trashed={3}, primary_asset_id=None
+        )
+        client = _summary_client([stack], {stack.id: members})
+
+        summaries = await resolve_asset_stack_summaries(client, members)
+
+        summary = summaries[stack.id]
+        assert summary.id == safe_uuid_from_stack_id(stack.id)
+        assert summary.primaryAssetId == safe_uuid_from_asset_id(members[0].id)
+        assert summary.assetCount == 3
+
+    @pytest.mark.anyio
+    async def test_dangling_stack_id_is_omitted_and_warned_once(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """A stack deleted between the asset read and this one appears on every
+        frame it held, so the warning is per batch, not per asset."""
+        stack, members = make_gumnut_stack_with_members(count=3)
+        client = _summary_client([], {})
+
+        with caplog.at_level(logging.WARNING, logger="routers.utils.stack_conversion"):
+            summaries = await resolve_asset_stack_summaries(client, members)
+
+        assert summaries == {}
+        records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(records) == 1
+        assert getattr(records[0], "dangling_stack_ids", None) == [stack.id]
+
+    @pytest.mark.anyio
+    async def test_zero_live_member_stack_is_omitted_without_a_cover_read(self):
+        """Same not-representable rule `/stacks` drops a stack for: emitting the
+        summary would badge `0` and hand out an id whose detail read 404s."""
+        stack, members = make_gumnut_stack_with_members(
+            count=2, trashed={0, 1}, primary_asset_id=None
+        )
+        assert stack.asset_count == 0
+        client = _summary_client([stack], {stack.id: members})
+
+        assert await resolve_asset_stack_summaries(client, members) == {}
+
+        client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_chunks_ids_at_the_bulk_ceiling(self):
+        """`list_stacks(ids=...)` caps at `GUMNUT_API_MAX_BULK_IDS`, so a page
+        touching more distinct stacks than that must split across calls."""
+        total = GUMNUT_API_MAX_BULK_IDS + 5
+        # Pinned, so the chunking assertion isn't diluted by cover reads.
+        stacks = [
+            make_gumnut_stack(primary_asset_id=uuid_to_gumnut_asset_id(uuid4()))
+            for _ in range(total)
+        ]
+        assets = [make_gumnut_asset(stack_id=stack.id) for stack in stacks]
+        client = _summary_client(stacks)
+
+        summaries = await resolve_asset_stack_summaries(client, assets)
+
+        assert len(summaries) == total
+        sent = [call.kwargs["ids"] for call in client.stacks.list_stacks.call_args_list]
+        assert [len(ids) for ids in sent] == [GUMNUT_API_MAX_BULK_IDS, 5]
+        assert [i for ids in sent for i in ids] == [stack.id for stack in stacks]
+
+    @pytest.mark.anyio
+    async def test_bounds_concurrent_cover_reads(self):
+        """One read per unpinned stack would otherwise open a read per burst on
+        the page; the shared semaphore caps the in-flight count."""
+        stacks = [
+            make_gumnut_stack(primary_asset_id=None)
+            for _ in range(BULK_FANOUT_CONCURRENCY_LIMIT * 3)
+        ]
+        members_by_stack = {
+            stack.id: make_gumnut_stack_members(1, stack_id=stack.id)
+            for stack in stacks
+        }
+        assets = [member for members in members_by_stack.values() for member in members]
+        tracker = _ConcurrencyTracker()
+
+        client = _summary_client(stacks, members_by_stack)
+        client.assets.list = Mock(
+            side_effect=lambda **kwargs: _TrackedListing(
+                members_by_stack[kwargs["stack_id"]], tracker
+            )
+        )
+
+        summaries = await resolve_asset_stack_summaries(client, assets)
+
+        assert len(summaries) == len(stacks)
+        assert tracker.peak <= BULK_FANOUT_CONCURRENCY_LIMIT
+
+
+class TestConvertAssetsWithStacks:
+    @pytest.mark.anyio
+    async def test_mixed_page_keeps_order_and_other_fields(self, mock_current_user):
+        """A page of loose and stacked assets converts in place: order intact,
+        the stacked ones carrying a summary and the loose ones `None`."""
+        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
+        loose = make_gumnut_asset(original_file_name="loose.jpg")
+        page = [members[0], loose, members[1]]
+        client = _summary_client([stack], {stack.id: members})
+
+        converted = await convert_assets_with_stacks(client, page, mock_current_user)
+
+        assert [asset.id for asset in converted] == [
+            safe_uuid_from_asset_id(a.id) for a in page
+        ]
+        assert converted[1].stack is None
+        assert converted[1].originalFileName == "loose.jpg"
+        stack_uuid = safe_uuid_from_stack_id(stack.id)
+        assert converted[0].stack is not None and converted[0].stack.id == stack_uuid
+        assert converted[2].stack is not None and converted[2].stack.id == stack_uuid
+        # Every frame of one burst reports the same cover — the shared lookup is
+        # what stops each asset picking its own.
+        assert converted[0].stack.primaryAssetId == converted[2].stack.primaryAssetId
+
+    @pytest.mark.anyio
+    async def test_empty_page_makes_no_calls(self, mock_current_user):
+        client = _summary_client([])
+
+        assert await convert_assets_with_stacks(client, [], mock_current_user) == []
+
+        client.stacks.list_stacks.assert_not_called()
 
 
 # Every stack method the planned Immich stack routes call, with the parameters

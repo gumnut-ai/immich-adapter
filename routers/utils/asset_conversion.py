@@ -6,6 +6,7 @@ to the Immich API format, including metadata (camera/EXIF/GPS/location) processi
 """
 
 import logging
+from collections.abc import Mapping
 from datetime import datetime
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from routers.utils.datetime_utils import (
 )
 from routers.immich_models import (
     AssetResponseDto,
+    AssetStackResponseDto,
     AssetTypeEnum,
     AssetVisibility,
     ExifResponseDto,
@@ -500,15 +502,60 @@ def build_asset_upload_ready_payload(
     return AssetUploadReadyV1Payload(asset=sync_asset, exif=sync_exif)
 
 
+def resolve_asset_stack_summary(
+    gumnut_asset: AssetResponse,
+    stack_summaries: Mapping[str, AssetStackResponseDto] | None,
+) -> AssetStackResponseDto | None:
+    """Pick an asset's nested `stack` block out of a pre-resolved lookup.
+
+    The lookup is keyed by Gumnut stack ID and built by
+    ``routers/utils/stack_conversion.py::resolve_asset_stack_summaries``, which
+    owns every read the answer needs. Keeping the join here — rather than
+    letting each route index the lookup itself — is what makes `id`,
+    `primaryAssetId`, and `assetCount` arrive from one place on every emit path.
+
+    Three inputs, one outcome each:
+
+    - **Loose asset** (`stack_id is None`): `None`. Nothing was stacked.
+    - **Resolved member**: the summary the lookup holds, pinned or unpinned
+      cover alike — the distinction is settled upstream of here.
+    - **Dangling `stack_id`** (present, absent from the lookup): `None`. The
+      resolver logs it once per batch; repeating that here would fire per asset,
+      and would also mislabel the fourth case below.
+
+    ``stack_summaries`` of `None` means the caller did no stack resolution at
+    all — the sync-stream converters, and `/stacks`' own member conversion — and
+    is likewise `None` without complaint. That is why the dangling warning
+    belongs to the resolver: only it can tell "this stack vanished" from "this
+    caller never asked."
+    """
+    stack_id = gumnut_asset.stack_id
+    if stack_id is None or stack_summaries is None:
+        return None
+    return stack_summaries.get(stack_id)
+
+
 def convert_gumnut_asset_to_immich(
-    gumnut_asset: AssetResponse, current_user: UserResponseDto
+    gumnut_asset: AssetResponse,
+    current_user: UserResponseDto,
+    stack_summaries: Mapping[str, AssetStackResponseDto] | None = None,
 ) -> AssetResponseDto:
     """
     Convert a Gumnut asset to AssetResponseDto format with comprehensive EXIF processing.
 
+    Stays I/O-free, including for the nested `stack` block: `stack_summaries` is
+    a lookup a caller resolved beforehand (see `resolve_asset_stack_summary`),
+    not something this function fetches. Omitting it yields `stack=None`, which
+    is why every existing caller kept working when the field was added — but a
+    REST route emitting this DTO should pass one, since Immich web reads
+    `stack.assetCount` for the burst badge and `stack.id` to decide whether to
+    fetch the full stack. `routers/utils/stack_conversion.py::convert_assets_with_stacks`
+    does the resolve-and-convert pair for a whole page.
+
     Args:
         gumnut_asset: The Gumnut AssetResponse object
         current_user: The current user's UserResponseDto
+        stack_summaries: Pre-resolved stack summaries keyed by Gumnut stack ID
 
     Returns:
         AssetResponseDto object with processed data and EXIF information
@@ -565,4 +612,5 @@ def convert_gumnut_asset_to_immich(
         visibility=AssetVisibility.timeline,
         width=width if width else None,
         people=people,
+        stack=resolve_asset_stack_summary(gumnut_asset, stack_summaries),
     )
