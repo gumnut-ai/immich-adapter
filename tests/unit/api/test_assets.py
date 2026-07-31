@@ -41,7 +41,16 @@ from routers.api.assets import (
     get_asset_metadata_by_key,
     play_asset_video,
 )
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
+    safe_uuid_from_stack_id,
+    uuid_to_gumnut_asset_id,
+)
+from tests.conftest import (
+    MockSyncCursorPage,
+    make_gumnut_stack_with_members,
+    make_sdk_status_error,
+)
 from routers.immich_models import (
     AssetBulkUploadCheckDto,
     AssetBulkUploadCheckItem,
@@ -502,7 +511,6 @@ class TestUploadAsset:
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
-
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
         mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
@@ -609,7 +617,6 @@ class TestUploadAsset:
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
-
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
         mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
@@ -676,7 +683,6 @@ class TestUploadAsset:
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
-
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
         mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
@@ -2198,12 +2204,14 @@ class TestUpdateAsset:
     async def test_update_asset_empty_payload_no_sdk_call(
         self, sample_uuid, sample_gumnut_asset, mock_current_user
     ):
-        # Empty DTO + retrieve path: asset is fetched via get_asset_info, no
-        # PATCH is sent, no websocket fires.
+        # Empty DTO + retrieve path: asset is returned without GET-only stack
+        # enrichment, no PATCH is sent, and no websocket fires.
         sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        sample_gumnut_asset.stack_id = "asset_stack_example"
         mock_client = Mock()
         mock_client.assets.update_asset = AsyncMock()
         mock_client.assets.retrieve = AsyncMock(return_value=sample_gumnut_asset)
+        mock_client.stacks.retrieve_stack = AsyncMock()
 
         request = UpdateAssetDto()
 
@@ -2224,6 +2232,8 @@ class TestUpdateAsset:
         )
         mock_emit.assert_not_awaited()
         assert result.id == sample_uuid
+        assert result.stack is None
+        mock_client.stacks.retrieve_stack.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_update_asset_out_of_scope_fields_no_sdk_call(
@@ -2728,6 +2738,60 @@ class TestGetAssetInfo:
             await get_asset_info(
                 sample_uuid, client=mock_client, current_user=mock_current_user
             )
+
+    @pytest.mark.anyio
+    async def test_get_asset_info_carries_stack_summary(
+        self, sample_uuid, mock_current_user
+    ):
+        stack, members = make_gumnut_stack_with_members(count=3, primary_asset_id=None)
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(return_value=members[0])
+        mock_client.stacks.retrieve_stack = AsyncMock(return_value=stack)
+        mock_client.assets.list = Mock(return_value=MockSyncCursorPage(members))
+
+        result = await get_asset_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.stack is not None
+        assert result.stack.id == safe_uuid_from_stack_id(stack.id)
+        assert result.stack.primaryAssetId == safe_uuid_from_asset_id(members[0].id)
+        assert result.stack.assetCount == 3
+
+    @pytest.mark.anyio
+    async def test_get_asset_info_loose_asset_has_no_stack(
+        self, sample_gumnut_asset, sample_uuid, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(return_value=sample_gumnut_asset)
+        mock_client.stacks.retrieve_stack = AsyncMock()
+
+        result = await get_asset_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.stack is None
+        mock_client.stacks.retrieve_stack.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_get_asset_info_survives_a_failed_stack_read(
+        self, sample_uuid, mock_current_user
+    ):
+        from gumnut import NotFoundError
+
+        _, members = make_gumnut_stack_with_members(count=2)
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(return_value=members[0])
+        mock_client.stacks.retrieve_stack = AsyncMock(
+            side_effect=make_sdk_status_error(404, "Stack not found", cls=NotFoundError)
+        )
+
+        result = await get_asset_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.stack is None
+        assert result.id == safe_uuid_from_asset_id(members[0].id)
 
 
 def _make_mock_asset_with_urls(

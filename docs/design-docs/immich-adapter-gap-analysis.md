@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-30
+last-updated: 2026-07-31
 ---
 
 # Immich Adapter Gap Analysis
@@ -144,15 +144,18 @@ Immich allows batch downloading multiple assets as a zip archive.
 
 Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pairs) with a primary asset representing the group.
 
-**Current behavior**: **Partially closed.** The two read endpoints (`GET /stacks`, `GET /stacks/{id}`) return real stacks with their live members, the list bounded by a 500-stack cap and a 5000-member hydration budget (whichever binds first) since Immich's `searchStacks` offers no pagination. The timeline is no longer part of this gap either: `GET /api/timeline/bucket` collapses a burst to one tile and emits Immich's `[stackId, count]` tuples under `withStacked`, so a burst renders as a single badged tile in the month views that request it. The other 5 — create, update-cover, delete, bulk-delete, remove-asset — still return empty/fake responses, so the stacking UI can display a stack but not edit one.
+**Current behavior**: **Partially closed.** Stack reads, the asset-detail summary,
+and timeline collapse work. Create, update-cover, delete, bulk-delete, and
+remove-asset remain stubbed.
 
-**User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently. The reads are reachable from the timeline, which is the surface that populates a client-side stack field: the web client decodes the bucket tuple into `asset.stack` and the asset viewer fetches `GET /stacks/{id}` from it. The asset-detail read has no such field yet, so that surface still needs wiring.
+**User impact**: **Low** — Web can display stacks, but mobile cannot until the
+sync stream populates `SyncAssetV1.stackId`.
 
 **Dependency**: **Adapter-only** — the backend grouping concept this gap was originally blocked on now exists. The Gumnut API's stack resource covers create, add/remove assets, list, retrieve, set cover, and delete, with `list_stacks` exposing an `origin` filter (auto-detected bursts vs. user-grouped) and `primary_asset_id`; members are reachable through the `stack_id` filter on the asset list.
 
 One piece of the timeline surface *is* backend-blocked: `GET /api/timeline/buckets` cannot collapse its counts, because `assets.counts` has no stack-aware filter. The effect is cosmetic and the fix is a backend one — see "Timeline stack collapse" in `docs/architecture/adapter-architecture.md`.
 
-**Effort**: **S remaining** — the shared translation layer (`routers/utils/stack_conversion.py`), the read routes, and the timeline surface have landed; the 5 write routes plus the stack fields on the asset-detail surface are what's left.
+**Effort**: **S remaining** — five write routes and sync-stream stack resolution.
 
 **Recommendation**: **Revisit later** — the expensive half (translation, cover policy, read routes) is done, but the remaining work is still low user demand relative to the Tier-1 and Tier-2 gaps.
 
@@ -752,7 +755,7 @@ adapter code.
 | #1 Shared links | XL | Both | High value but major backend work |
 | #9 Partners | XL | Both | Family use case, deep auth changes |
 | #23 Album sharing | XL | Both | Blocked by sharing infrastructure |
-| #6 Stacks (write path) | S | Adapter-only | Low user demand; the reads, the translation layer, and the timeline surface shipped, leaving the 5 write routes |
+| #6 Stacks (write path) | S | Adapter-only | Five write routes and sync-stream `stackId` remain |
 | #20 API keys | M | Both | Developer feature |
 | #24 Custom metadata | M | Both | Integration feature |
 | #25 Asset edits | M | Both | Low user demand |

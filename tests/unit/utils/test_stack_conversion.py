@@ -5,6 +5,7 @@ import inspect
 import logging
 from datetime import datetime, timezone
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 from gumnut import APIStatusError
@@ -29,6 +30,7 @@ from routers.utils.stack_conversion import (
     MAX_TIMELINE_STACK_MEMBER_READS,
     GumnutStackRow,
     TimelineStacks,
+    build_asset_stack_summary,
     build_stack_response,
     fetch_live_stack_members,
     fetch_stack_members,
@@ -510,6 +512,27 @@ class TestBuildStackResponse:
 
         assert response.assets == []
         assert response.primaryAssetId == safe_uuid_from_asset_id(members[0].id)
+
+
+class TestBuildAssetStackSummary:
+    @pytest.mark.parametrize("asset_count", [2, 3])
+    def test_maps_hydrated_stack(self, asset_count):
+        hydrated = Mock(
+            id=UUID("019c0477-81f0-4fef-8000-000000000001"),
+            primary_asset_id=UUID("019c0477-81f0-4fef-8000-000000000002"),
+            live_asset_count=asset_count,
+        )
+
+        summary = build_asset_stack_summary(hydrated)
+
+        assert summary is not None
+        assert summary.id == hydrated.id
+        assert summary.primaryAssetId == hydrated.primary_asset_id
+        assert summary.assetCount == asset_count
+
+    @pytest.mark.parametrize("hydrated", [None, Mock(live_asset_count=1)])
+    def test_omits_unrepresentable_stack(self, hydrated):
+        assert build_asset_stack_summary(hydrated) is None
 
 
 # Every stack method the planned Immich stack routes call, with the parameters
