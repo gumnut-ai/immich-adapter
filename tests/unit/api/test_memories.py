@@ -28,6 +28,7 @@ from tests.conftest import (
     MockPaginatedListing,
     MockSyncCursorPage,
     make_gumnut_stack_with_members,
+    make_sdk_status_error,
 )
 
 
@@ -562,9 +563,9 @@ class TestGetMemory:
 class TestMemoryStackSummaries:
     """Memory assets carry the same stack block search and asset detail do.
 
-    Immich web's memory grid renders through `GalleryViewer`, so the burst badge
-    reads `asset.stack.assetCount` here too, and its "view in timeline" link
-    reads `asset.stack?.primaryAssetId`.
+    The surface-specific delta: the memory viewer's "view in timeline" link
+    reads `asset.stack?.primaryAssetId`, so an unpinned burst's *synthesized*
+    cover has to be right here, not just present.
     """
 
     @staticmethod
@@ -651,3 +652,58 @@ class TestMemoryStackSummaries:
 
         assert result[0].assets[0].stack is None
         client.stacks.list_stacks.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_get_memory_by_id_carries_stack_summaries(self, mock_current_user):
+        """`GET /memories/{id}` builds its memory on a separate path from the
+        list route, so it needs its own guard."""
+        user_uuid = mock_current_user.id
+        memory_id = encode_memory_id(user_uuid, 2024, 5, 4)
+        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
+        asset = _make_asset(
+            uuid4(), datetime(2024, 5, 4, tzinfo=timezone.utc), stack_id=stack.id
+        )
+        asset.id = members[0].id
+
+        client = Mock()
+        client.stacks.list_stacks = Mock(return_value=MockSyncCursorPage([stack]))
+
+        def _list(**kwargs):
+            if "stack_id" in kwargs:
+                return MockSyncCursorPage(members)
+            return MockSyncCursorPage([asset])
+
+        client.assets.list = Mock(side_effect=_list)
+
+        result = await get_memory(
+            id=memory_id,
+            client=client,
+            current_user_id=user_uuid,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets[0].stack is not None
+        assert result.assets[0].stack.id == safe_uuid_from_stack_id(stack.id)
+
+    @pytest.mark.anyio
+    async def test_memories_survive_a_failed_stack_read(self, mock_current_user):
+        """Memories deliberately degrade (a failed year yields N-1 memories), so
+        a cosmetic burst badge must not be the thing that fails the carousel."""
+        reference = datetime(2024, 5, 4, tzinfo=timezone.utc)
+        stack, members = make_gumnut_stack_with_members(count=2)
+        asset = _make_asset(uuid4(), reference, stack_id=stack.id)
+        client = Mock()
+        _stub_assets_per_year(client, {2023: [asset]})
+        client.stacks.list_stacks = Mock(
+            side_effect=make_sdk_status_error(503, "Upstream unavailable")
+        )
+
+        result = await _call_search(
+            client=client,
+            current_user_id=mock_current_user.id,
+            current_user=mock_current_user,
+            for_param=reference,
+        )
+
+        assert len(result) == 1
+        assert result[0].assets[0].stack is None

@@ -125,9 +125,8 @@ async def get_explore_data(
             assets_by_id[asset.id] = asset
 
     # Resolved once over the whole re-fetch: a city representative and a recent
-    # asset can be the same frame of the same burst, and the two lists overlap
-    # by construction (`wanted_ids` is deduped), so a per-asset resolve would
-    # re-read one stack row several times.
+    # asset can be different frames of the same burst, so a per-asset resolve
+    # would re-read one stack row several times.
     stack_summaries = await resolve_asset_stack_summaries(
         client, list(assets_by_id.values())
     )

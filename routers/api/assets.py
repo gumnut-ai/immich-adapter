@@ -71,7 +71,6 @@ from routers.utils.asset_conversion import (
     ASSET_INCLUDE,
     ASSET_INCLUDE_METADATA_ONLY,
     build_asset_upload_ready_payload,
-    convert_gumnut_asset_to_immich,
     mime_type_to_asset_type,
 )
 from routers.utils.stack_conversion import convert_assets_with_stacks
@@ -345,35 +344,6 @@ _VIDEO_EMIT_DELAY_SECONDS = 3.0
 _pending_emit_tasks: set[asyncio.Task[None]] = set()
 
 
-async def _convert_for_upload_event(
-    client: AsyncGumnut,
-    gumnut_asset: AssetResponse,
-    current_user: UserResponseDto,
-) -> AssetResponseDto:
-    """Convert an uploaded asset for its WebSocket payload, stack block optional.
-
-    Every other emit path lets a stack-resolution failure fail the response, so
-    the client can retry and never renders a half-answer. This one can't afford
-    that: `_do_emit_upload_events` swallows what it raises, and the event it
-    would swallow is `on_upload_success` — the signal the Immich web client
-    inserts the new asset into its timeline on. Losing it leaves a
-    just-uploaded photo invisible until a manual refresh, which is a far worse
-    outcome than a missing burst badge on an asset that, freshly ingested, is
-    almost certainly not in a stack yet anyway.
-    """
-    try:
-        return (await convert_assets_with_stacks(client, [gumnut_asset], current_user))[
-            0
-        ]
-    except Exception as stack_error:
-        logger.warning(
-            "Failed to resolve stack summary for upload event; "
-            "emitting the asset without it",
-            extra={"gumnut_id": gumnut_asset.id, "error": str(stack_error)},
-        )
-        return convert_gumnut_asset_to_immich(gumnut_asset, current_user)
-
-
 async def _do_emit_upload_events(
     client: AsyncGumnut,
     gumnut_asset: AssetResponse,
@@ -388,11 +358,17 @@ async def _do_emit_upload_events(
     is the sort of per-path exception this sweep exists to remove. Safe from the
     delayed emit below despite being request-scoped: the SDK client wraps a
     process-wide `httpx.AsyncClient` closed only at shutdown.
+
+    A failed stack read can't cost the event: `convert_assets_with_stacks`
+    degrades to an unstacked conversion rather than raising, which matters here
+    because the `except` below would otherwise swallow `on_upload_success` — the
+    signal Immich web inserts the new asset into its timeline on — and leave a
+    just-uploaded photo invisible until a manual refresh.
     """
     try:
-        asset_response = await _convert_for_upload_event(
-            client, gumnut_asset, current_user
-        )
+        asset_response = (
+            await convert_assets_with_stacks(client, [gumnut_asset], current_user)
+        )[0]
         await emit_user_event(
             WebSocketEvent.UPLOAD_SUCCESS, current_user.id, asset_response
         )

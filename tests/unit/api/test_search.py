@@ -1918,11 +1918,10 @@ class TestCameraAndPlaceFilters:
 class TestSearchStackSummaries:
     """Search results carry the same stack block asset detail does.
 
-    Upstream Immich leaves `stack` unset on search responses, but its web client
-    still reads it: `GalleryViewer` — which renders the search results page —
-    maps every hit through `toTimelineAsset` and draws `Thumbnail` without
-    `showStackedIcon`, whose default is `true`, so the burst badge's number is
-    `asset.stack.assetCount`. Populating it is what makes the badge appear.
+    The surface-specific delta: upstream Immich leaves `stack` unset on search
+    responses, yet its web client still reads it here — `GalleryViewer` renders
+    the search results page through `Thumbnail` with `showStackedIcon` left at
+    its `true` default. Populating it is what makes the badge appear.
     """
 
     @staticmethod
@@ -2004,3 +2003,94 @@ class TestSearchStackSummaries:
 
         assert [item.stack for item in result.assets.items] == [None, None]
         client.stacks.list_stacks.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_criterion_less_listing_page_carries_stack_summaries(
+        self, mock_current_user
+    ):
+        """The criterion-less enumeration takes a different code path from the
+        search call above (`_list_asset_page`), so it needs its own guard."""
+        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
+        client = Mock()
+        client.stacks.list_stacks = Mock(return_value=MockSyncCursorPage([stack]))
+
+        def _list(**kwargs):
+            if "stack_id" in kwargs:
+                return MockSyncCursorPage(members)
+            return MockSyncCursorPage([members[0]])
+
+        client.assets.list = Mock(side_effect=_list)
+
+        result = await search_assets(
+            request=MetadataSearchDto(size=10),
+            client=client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.items[0].stack is not None
+        assert result.assets.items[0].stack.id == safe_uuid_from_stack_id(stack.id)
+
+    @pytest.mark.anyio
+    async def test_random_sample_carries_stack_summaries(self, mock_current_user):
+        """`/search/random` admits up to 1000 assets — the widest surface the
+        sweep touches, and the one the cover-read budget is sized against."""
+        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
+        counts_response = Mock()
+        counts_response.data = [
+            _make_count_bucket(1, datetime(2024, 6, 1, tzinfo=timezone.utc))
+        ]
+        counts_response.has_more = False
+
+        client = Mock()
+        client.assets.counts = AsyncMock(return_value=counts_response)
+        client.stacks.list_stacks = Mock(return_value=MockSyncCursorPage([stack]))
+
+        def _list(**kwargs):
+            if "stack_id" in kwargs:
+                return MockSyncCursorPage(members)
+            return MockSyncCursorPage([members[0]])
+
+        client.assets.list = Mock(side_effect=_list)
+
+        result = await search_random(
+            request=RandomSearchDto(size=1),
+            client=client,
+            current_user=mock_current_user,
+        )
+
+        assert len(result) == 1
+        assert result[0].stack is not None
+        assert result[0].stack.id == safe_uuid_from_stack_id(stack.id)
+
+    @pytest.mark.anyio
+    async def test_explore_representatives_carry_stack_summaries(
+        self, mock_current_user
+    ):
+        """Explore converts through its own by-id dict rather than the page
+        wrapper, so the lookup is threaded differently there."""
+        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
+        asset = _make_search_asset(
+            datetime(2024, 6, 1, tzinfo=timezone.utc), stack_id=stack.id
+        )
+        asset.id = members[0].id
+
+        client = Mock()
+        client.stacks.list_stacks = Mock(return_value=MockSyncCursorPage([stack]))
+
+        def _list(**kwargs):
+            if "stack_id" in kwargs:
+                return MockSyncCursorPage(members)
+            if kwargs.get("include") == ASSET_INCLUDE:
+                return MockSyncCursorPage([asset])
+            return MockSyncCursorPage([_scan_view(asset, city=None)])
+
+        client.assets.list = Mock(side_effect=_list)
+
+        result = await get_explore_data(client=client, current_user=mock_current_user)
+
+        recents = next(group for group in result if group.fieldName == "createdAt")
+        assert recents.items, "the recents group should carry the stacked asset"
+        summary = recents.items[0].data.stack
+        assert summary is not None
+        assert summary.id == safe_uuid_from_stack_id(stack.id)
+        assert summary.primaryAssetId == safe_uuid_from_asset_id(members[0].id)

@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import logging
+import re
 from datetime import datetime, timezone
 from unittest.mock import Mock
 from uuid import uuid4
@@ -29,9 +30,10 @@ from routers.utils.gumnut_id_conversion import (
 )
 from routers.utils.stack_conversion import (
     GumnutStackRow,
+    STACK_SUMMARY_COVER_READ_BUDGET,
     build_stack_response,
     convert_assets_with_stacks,
-    fetch_stack_cover_candidates,
+    fetch_stack_cover_prefix,
     fetch_stack_members,
     hydrate_stack,
     hydrate_stacks,
@@ -392,7 +394,15 @@ class _ConcurrencyTracker:
 
 
 class _TrackedListing:
-    """Async iterable that records how many member reads are in flight."""
+    """Async iterable that records how many member reads are in flight.
+
+    The counter brackets the simulated round-trip *only*, releasing before the
+    first item is yielded, so it measures concurrent upstream reads rather than
+    generator lifetime. That distinction matters for consumers that stop early:
+    `fetch_stack_cover_prefix` breaks out of its `async for` at the first live
+    member, which leaves the generator suspended until GC, so a `finally` that
+    wrapped the yields would never run and the count would only ever climb.
+    """
 
     def __init__(self, items, tracker: _ConcurrencyTracker):
         self._items = items
@@ -407,11 +417,11 @@ class _TrackedListing:
             self._tracker.peak = max(self._tracker.peak, self._tracker.active)
         try:
             await asyncio.sleep(0.01)
-            for item in self._items:
-                yield item
         finally:
             async with self._tracker.lock:
                 self._tracker.active -= 1
+        for item in self._items:
+            yield item
 
 
 class TestBuildStackResponse:
@@ -530,23 +540,68 @@ def _summary_client(
     return client
 
 
-class TestFetchStackCoverCandidates:
+class TestFetchStackCoverPrefix:
     @pytest.mark.anyio
-    async def test_reads_the_same_walk_without_the_heavy_include(self):
+    async def test_drops_only_the_heavy_include(self):
         """The cover read must keep every argument that decides *which* member
         wins, and drop only the `include` that decides how fat each row is."""
         stack, members = make_gumnut_stack_with_members(count=2)
         client = _client_returning(members)
 
-        result = await fetch_stack_cover_candidates(client, stack.id)
+        await fetch_stack_cover_prefix(client, stack.id)
 
-        assert result == members
         kwargs = client.assets.list.call_args.kwargs
         assert kwargs["stack_id"] == stack.id
-        assert kwargs["state"] == "all"
-        assert kwargs["order"] == "asc"
         assert kwargs["limit"] == GUMNUT_API_MAX_PAGE_SIZE
         assert "include" not in kwargs
+
+    @pytest.mark.anyio
+    async def test_stops_at_the_first_live_member(self):
+        """Everything after the first live member is discarded by
+        `resolve_effective_primary`, so reading it is pure waste — a burst of
+        10,000 frames would otherwise cost 50 upstream pages to name a cover."""
+        stack = make_gumnut_stack(primary_asset_id=None, asset_count=200)
+        members = make_gumnut_stack_members(200, stack_id=stack.id, trashed={0, 1})
+        listing = MockPaginatedListing(members, page_size=GUMNUT_API_MAX_PAGE_SIZE)
+        client = Mock()
+        client.assets.list = Mock(return_value=listing)
+
+        result = await fetch_stack_cover_prefix(client, stack.id)
+
+        # Two trashed frames, then the first live one — and nothing past it.
+        assert result == members[:3]
+
+    @pytest.mark.anyio
+    async def test_all_trashed_stack_walks_to_exhaustion(self):
+        """No live member means no early exit, which is precisely the signal
+        `resolve_stack_cover` uses to tell the all-trashed case apart."""
+        stack = make_gumnut_stack(primary_asset_id=None, asset_count=0)
+        members = make_gumnut_stack_members(4, stack_id=stack.id, trashed={0, 1, 2, 3})
+        client = _client_returning(members)
+
+        assert await fetch_stack_cover_prefix(client, stack.id) == members
+
+
+def test_cover_walk_matches_the_member_walk():
+    """The two member walks must agree on `state` and `order`.
+
+    `order` decides which frame an unpinned burst shows as its cover, so a
+    change to one walk that skipped the other would move the cover on `/stacks`
+    while leaving asset responses on the old rule — with every existing
+    assertion still green, since each test pins its own walk's literals. This
+    reads the two source calls and compares them directly.
+    """
+
+    def _walk_args(func) -> dict[str, str | None]:
+        source = inspect.getsource(func)
+        found: dict[str, str | None] = {}
+        for key in ("state", "order"):
+            match = re.search(rf'\b{key}="(\w+)"', source)
+            found[key] = match.group(1) if match else None
+        return found
+
+    assert _walk_args(fetch_stack_members) == _walk_args(fetch_stack_cover_prefix)
+    assert _walk_args(fetch_stack_members) == {"state": "all", "order": "asc"}
 
 
 class TestResolveStackCover:
@@ -596,6 +651,23 @@ class TestResolveStackCover:
         records = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(records) == 1
         assert getattr(records[0], "stack_id", None) == stack.id
+
+    @pytest.mark.anyio
+    async def test_all_trashed_unpinned_stack_yields_none(self):
+        """Decided from the members, not the row count.
+
+        The row here *claims* live members, modelling a count that hasn't caught
+        up with the trash. Trusting it would emit a summary naming a trashed
+        cover, whose `GET /stacks/{id}` 404s. `resolve_effective_primary`'s
+        rule 3 deliberately still names that frame for `/stacks`; the summary
+        needs the stricter answer.
+        """
+        stack = make_gumnut_stack(asset_count=3, primary_asset_id=None)
+        members = make_gumnut_stack_members(3, stack_id=stack.id, trashed={0, 1, 2})
+        client = _client_returning(members)
+
+        assert resolve_effective_primary(stack, members) is members[0]
+        assert await resolve_stack_cover(client, stack) is None
 
 
 class TestResolveAssetStackSummaries:
@@ -684,6 +756,96 @@ class TestResolveAssetStackSummaries:
         assert await resolve_asset_stack_summaries(client, members) == {}
 
         client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_upstream_failure_degrades_to_no_summaries(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """A failed stack read must not take the page's assets down with it.
+
+        The asset payload is the response; the stack block is decoration. And
+        because the global handler forwards an upstream status verbatim, letting
+        this raise would surface a stacks-lookup 404 as a 404 on the asset.
+        """
+        stack, members = make_gumnut_stack_with_members(count=2)
+        client = _summary_client([stack], {stack.id: members})
+        client.stacks.list_stacks = Mock(
+            side_effect=make_sdk_status_error(404, "Stack not found")
+        )
+
+        with caplog.at_level(logging.WARNING, logger="routers.utils.stack_conversion"):
+            assert await resolve_asset_stack_summaries(client, members) == {}
+
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    @pytest.mark.anyio
+    async def test_cover_read_failure_also_degrades(self):
+        """The fan-out fails as a unit (`gather_with_concurrency` propagates the
+        first error), so the wrapper has to cover it too, not just the row read."""
+        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
+        client = _summary_client([stack], {stack.id: members})
+        client.assets.list = Mock(
+            side_effect=make_sdk_status_error(500, "Upstream exploded")
+        )
+
+        assert await resolve_asset_stack_summaries(client, members) == {}
+
+    @pytest.mark.anyio
+    async def test_adapter_bugs_are_not_swallowed(self):
+        """Only `GumnutError` degrades. A programming error here would otherwise
+        become a silently missing block on every response instead of a 500."""
+        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
+        client = _summary_client([stack], {stack.id: members})
+        client.assets.list = Mock(side_effect=TypeError("adapter bug"))
+
+        with pytest.raises(TypeError):
+            await resolve_asset_stack_summaries(client, members)
+
+    @pytest.mark.anyio
+    async def test_cover_reads_are_capped_by_the_budget(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """`/search/random` admits up to 1000 assets, so the unpinned-stack count
+        is not bounded by any page size. Stacks past the budget ship without a
+        summary rather than queueing another wave of reads."""
+        over = STACK_SUMMARY_COVER_READ_BUDGET + 3
+        stacks = [make_gumnut_stack(primary_asset_id=None) for _ in range(over)]
+        members_by_stack = {
+            stack.id: make_gumnut_stack_members(1, stack_id=stack.id)
+            for stack in stacks
+        }
+        assets = [m for members in members_by_stack.values() for m in members]
+        client = _summary_client(stacks, members_by_stack)
+
+        with caplog.at_level(logging.WARNING, logger="routers.utils.stack_conversion"):
+            summaries = await resolve_asset_stack_summaries(client, assets)
+
+        assert len(summaries) == STACK_SUMMARY_COVER_READ_BUDGET
+        assert client.assets.list.call_count == STACK_SUMMARY_COVER_READ_BUDGET
+        records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(records) == 1
+        assert getattr(records[0], "stack_summary_truncated", None) == 3
+
+    @pytest.mark.anyio
+    async def test_pinned_stacks_do_not_spend_the_budget(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """The budget bounds *reads*, not stacks. A page of pinned stacks costs
+        no reads, so truncating it would drop summaries to save nothing."""
+        over = STACK_SUMMARY_COVER_READ_BUDGET + 5
+        stacks = [
+            make_gumnut_stack(primary_asset_id=uuid_to_gumnut_asset_id(uuid4()))
+            for _ in range(over)
+        ]
+        assets = [make_gumnut_asset(stack_id=stack.id) for stack in stacks]
+        client = _summary_client(stacks)
+
+        with caplog.at_level(logging.WARNING, logger="routers.utils.stack_conversion"):
+            summaries = await resolve_asset_stack_summaries(client, assets)
+
+        assert len(summaries) == over
+        client.assets.list.assert_not_called()
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
     @pytest.mark.anyio
     async def test_chunks_ids_at_the_bulk_ceiling(self):

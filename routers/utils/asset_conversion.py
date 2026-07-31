@@ -514,20 +514,13 @@ def resolve_asset_stack_summary(
     letting each route index the lookup itself — is what makes `id`,
     `primaryAssetId`, and `assetCount` arrive from one place on every emit path.
 
-    Three inputs, one outcome each:
-
-    - **Loose asset** (`stack_id is None`): `None`. Nothing was stacked.
-    - **Resolved member**: the summary the lookup holds, pinned or unpinned
-      cover alike — the distinction is settled upstream of here.
-    - **Dangling `stack_id`** (present, absent from the lookup): `None`. The
-      resolver logs it once per batch; repeating that here would fire per asset,
-      and would also mislabel the fourth case below.
-
-    ``stack_summaries`` of `None` means the caller did no stack resolution at
-    all — the sync-stream converters, and `/stacks`' own member conversion — and
-    is likewise `None` without complaint. That is why the dangling warning
-    belongs to the resolver: only it can tell "this stack vanished" from "this
-    caller never asked."
+    Everything but a hit returns `None`, and deliberately without a warning. A
+    `stack_id` missing from the lookup means the resolver already dropped that
+    stack and logged it once for the batch; repeating it here would fire per
+    asset. A `stack_summaries` of `None` means the caller did no stack
+    resolution at all — the sync-stream converters, and `/stacks`' own member
+    conversion — which is not a fault. Only the resolver can tell those two
+    apart, which is why the warning lives there.
     """
     stack_id = gumnut_asset.stack_id
     if stack_id is None or stack_summaries is None:
@@ -547,10 +540,11 @@ def convert_gumnut_asset_to_immich(
     a lookup a caller resolved beforehand (see `resolve_asset_stack_summary`),
     not something this function fetches. Omitting it yields `stack=None`, which
     is why every existing caller kept working when the field was added — but a
-    REST route emitting this DTO should pass one, since Immich web reads
-    `stack.assetCount` for the burst badge and `stack.id` to decide whether to
-    fetch the full stack. `routers/utils/stack_conversion.py::convert_assets_with_stacks`
-    does the resolve-and-convert pair for a whole page.
+    REST route emitting this DTO should pass one, because Immich clients read
+    the block off every such response (see `docs/architecture/adapter-architecture.md`
+    § Nested stack summaries on asset responses).
+    `routers/utils/stack_conversion.py::convert_assets_with_stacks` does the
+    resolve-and-convert pair for a whole page.
 
     Args:
         gumnut_asset: The Gumnut AssetResponse object

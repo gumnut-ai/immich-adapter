@@ -46,7 +46,11 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_stack_id,
     uuid_to_gumnut_asset_id,
 )
-from tests.conftest import MockSyncCursorPage, make_gumnut_stack_with_members
+from tests.conftest import (
+    MockSyncCursorPage,
+    make_gumnut_stack_with_members,
+    make_sdk_status_error,
+)
 from routers.immich_models import (
     AssetBulkUploadCheckDto,
     AssetBulkUploadCheckItem,
@@ -2775,6 +2779,80 @@ class TestGetAssetInfo:
 
         assert result.stack is None
         mock_client.stacks.list_stacks.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_get_asset_info_survives_a_failed_stack_read(
+        self, sample_uuid, mock_current_user
+    ):
+        """A stacks-lookup failure must not fail the asset read.
+
+        The global handler forwards an upstream status verbatim, so letting this
+        propagate would answer 404 for an asset that exists — which Immich web
+        reads as "deleted" and closes the viewer on.
+        """
+        stack, members = make_gumnut_stack_with_members(count=2)
+        mock_client = _stack_aware_client(members[0], stack, members)
+        mock_client.stacks.list_stacks = Mock(
+            side_effect=make_sdk_status_error(404, "Stack not found")
+        )
+
+        result = await get_asset_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.stack is None
+        assert result.id == safe_uuid_from_asset_id(members[0].id)
+
+
+class TestUpdateAssetStackSummary:
+    @pytest.mark.anyio
+    async def test_update_asset_response_carries_stack_summary(
+        self, sample_uuid, mock_current_user
+    ):
+        """`PUT /assets/{id}` returns a full `AssetResponseDto`, so it carries
+        the block too — the same asset must not read back stacked on `GET` and
+        loose on `PUT`."""
+        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
+        mock_client = _stack_aware_client(members[0], stack, members)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            result = await update_asset(
+                sample_uuid,
+                UpdateAssetDto(description="updated"),
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        assert result.stack is not None
+        assert result.stack.id == safe_uuid_from_stack_id(stack.id)
+        assert result.stack.assetCount == 2
+
+
+class TestUploadEventStackDegradation:
+    @pytest.mark.anyio
+    async def test_upload_event_still_emits_when_the_stack_read_fails(
+        self, sample_uuid, mock_current_user
+    ):
+        """`_do_emit_upload_events` swallows what it raises, and the event it
+        would swallow is `on_upload_success` — the signal Immich web inserts the
+        new asset into its timeline on. A failed stack read must cost the badge,
+        never the event."""
+        from routers.api.assets import _do_emit_upload_events
+
+        stack, members = make_gumnut_stack_with_members(count=2)
+        mock_client = _stack_aware_client(members[0], stack, members)
+        mock_client.stacks.list_stacks = Mock(
+            side_effect=make_sdk_status_error(500, "Upstream exploded")
+        )
+
+        with patch(
+            "routers.api.assets.emit_user_event", new_callable=AsyncMock
+        ) as mock_emit:
+            await _do_emit_upload_events(mock_client, members[0], mock_current_user)
+
+        assert mock_emit.call_count == 2
+        assert mock_emit.call_args_list[0][0][0] == WebSocketEvent.UPLOAD_SUCCESS
+        assert mock_emit.call_args_list[0][0][2].stack is None
 
 
 def _stack_aware_client(asset: Mock, stack: Mock, members: list[Mock]) -> Mock:
