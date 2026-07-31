@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation Documentation for immich-adapter"
-last-updated: 2026-07-30
+last-updated: 2026-07-31
 ---
 
 # WebSocket Implementation Documentation for immich-adapter
@@ -179,13 +179,13 @@ Starting with the current upload-success events, but designed for future extensi
 |---|---|---|---|---|
 | `on_person_thumbnail` | `string` (personId) | Page-specific | No | Cache busting after face detection |
 
-### Not Applicable (Feature Not Supported)
+### Not Applicable
 
-These events require features that don't exist in the Gumnut API:
+Most of these events require features that don't exist in the Gumnut API. The exception is the first row, kept here because no client acts on it:
 
 | Event | Reason |
 |---|---|
-| `on_asset_stack_update` | Stack writes not implemented — no adapter code path mutates a stack, so nothing has an event to emit |
+| `on_asset_stack_update` | No listener to emit to. `POST /stacks` and `PUT /stacks/{id}` do now mutate stacks, so the adapter has the code paths upstream emits this from — but as of the pinned Immich version the web client only declares the event in its socket type map and subscribes to it nowhere, and mobile doesn't reference it at all. Emitting it would be writing to a listener that doesn't exist; re-check when a client starts consuming it |
 | `on_asset_hidden` | Asset visibility not supported |
 | `on_notification` | Album sharing & job failures not implemented |
 | `on_config_update` | Config management not implemented |

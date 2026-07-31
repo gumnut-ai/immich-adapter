@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-30
+last-updated: 2026-07-31
 ---
 
 # Immich Adapter Architecture
@@ -50,7 +50,9 @@ Immich clients are unmodified — either the original open-source Immich apps or
 
 Immich has no concept the adapter can map a Gumnut library onto — `/api/libraries` is a stub returning an empty list, and no Immich request carries a library selector. Every Gumnut listing call the adapter makes therefore goes out **unqualified by `library_id`**: the timeline, search, trash, memories, map markers, stack reads, and the sync stream all rely on the backend inferring the caller's only library.
 
-The Gumnut API makes `library_id` optional for a single-library account and **required** for an account that owns more than one. So the adapter today serves single-library accounts only, and a multi-library account fails on essentially every listing endpoint rather than on any one of them. Closing that gap is a cross-cutting change — pick a library (or fan out across all of them) once, in shared request context, and thread it through every list call — not something an individual route should solve locally. A route that qualified its own calls in isolation would report full results while its neighbours still failed, which is harder to diagnose than a uniform failure.
+The one **write** that accepts a library, `POST /stacks`, omits it on the same rule rather than picking one.
+
+The Gumnut API makes `library_id` optional for a single-library account and **required** for an account that owns more than one. So the adapter today serves single-library accounts only, and a multi-library account fails on essentially every listing endpoint rather than on any one of them — and, since the stack create above follows the rule, gets the backend's own validation response there instead of a stack filed in whichever library the adapter guessed. Closing that gap is a cross-cutting change — pick a library (or fan out across all of them) once, in shared request context, and thread it through every call — not something an individual route should solve locally. A route that qualified its own calls in isolation would report full results while its neighbours still failed, which is harder to diagnose than a uniform failure.
 
 ## Authentication and Session Management
 
@@ -503,7 +505,8 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | WebSockets | Real-time upload/trash/restore/delete notifications | Socket.IO with room-based messaging |
 | Memories (read) | Search, get-by-id, statistics for OnThisDay memories | Synthesized from per-day asset queries; mutations still stubbed |
 | Map (markers) | `GET /map/markers` and album-scoped `GET /albums/{id}/map-markers` return GPS-tagged assets | Server-side geotag filter via `client.assets.list(bbox=...)`; the album route also passes the album filter; capped at 2000 markers, with a degraded-path scan bound if the coordinate filter is unavailable; reverse-geocode still stubbed |
-| Stacks (read) | `GET /stacks` and `GET /stacks/{id}` return real burst stacks with their live members | Both go through `routers/utils/stack_conversion.py` for member hydration and cover resolution. The list walks the Gumnut API's stack cursor rather than answering with one page, since Immich's `searchStacks` has no pagination; bounded by both a 500-stack cap and a 5000-member hydration budget spent from each row's own asset count, whichever binds first, with walked/budgeted/hydrated/returned counts, a truncation flag, and which bound fired all logged. `primaryAssetId` is answered by resolving the asset's own stack and comparing effective covers, not by forwarding the backend's pinned-cover filter, and an unmatched or unknown ID yields `[]` rather than a 404. A stack with no live members is omitted from the list and 404s from the detail route. Writes still stubbed |
+| Stacks (read) | `GET /stacks` and `GET /stacks/{id}` return real burst stacks with their live members | Both go through `routers/utils/stack_conversion.py` for member hydration and cover resolution. The list walks the Gumnut API's stack cursor rather than answering with one page, since Immich's `searchStacks` has no pagination; bounded by both a 500-stack cap and a 5000-member hydration budget spent from each row's own asset count, whichever binds first, with walked/budgeted/hydrated/returned counts, a truncation flag, and which bound fired all logged. `primaryAssetId` is answered by resolving the asset's own stack and comparing effective covers, not by forwarding the backend's pinned-cover filter, and an unmatched or unknown ID yields `[]` rather than a 404. A stack with no live members is omitted from the list and 404s from the detail route |
+| Stacks (create, set-cover) | `POST /stacks` groups assets into a new stack; `PUT /stacks/{id}` pins its cover | Both read their response back through the same hydration as the reads, so a write answers exactly like the matching GET. Create forwards the asset IDs in request order and pins `assetIds[0]` as the cover (Immich's rule; the Gumnut API leaves a manual stack unpinned unless told otherwise), leaving distinctness, the two-member minimum, library membership, and already-stacked merge/repoint semantics to the backend. `PUT` is deprecated upstream but is still what the shipped clients call; its `primaryAssetId` is optional while the Gumnut API rejects a null cover, so an omitted or null value degenerates to a read rather than a synthesized mutation. Unlike the reads, create returns a stack with no live members instead of 404ing — the client just made it and needs the ID. Delete, bulk-delete, and remove-asset still stubbed |
 
 ### Stub implementations
 
@@ -517,7 +520,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | Notifications | Push notifications not implemented |
 | Partners | User sharing not implemented |
 | Duplicates | Duplicate detection handled differently in Gumnut |
-| Stacks (write) | Create, update-cover, delete, bulk-delete, and remove-asset still return fake or empty responses; the Gumnut API's stack resource covers all of them, so this is remaining adapter work rather than a backend gap |
+| Stacks (delete, remove-asset) | Delete, bulk-delete, and remove-asset still return empty responses; the Gumnut API's stack resource covers all three, so this is remaining adapter work rather than a backend gap |
 
 ## Key Files
 

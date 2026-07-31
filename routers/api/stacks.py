@@ -1,6 +1,6 @@
 import logging
 from typing import Annotated, List
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from gumnut import AsyncGumnut, NotFoundError
@@ -242,13 +242,61 @@ async def delete_stacks(request: BulkIdsDto):
     return
 
 
-@router.post("", status_code=201)
-async def create_stack(request: StackCreateDto) -> StackResponseDto:
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_stack(
+    request: StackCreateDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
+) -> StackResponseDto:
+    """Group the requested assets into a new stack, covered by the first one.
+
+    Immich's contract is that `assetIds[0]` becomes the primary — the web
+    client relies on it, deliberately putting an existing stack's cover first so
+    that stack gets folded into the new one. The Gumnut API instead leaves a
+    manual stack's cover unpinned unless one is named, so the first ID is passed
+    as `primary_asset_id` to reproduce Immich's rule.
+
+    Everything else about the grouping is the backend's to decide and is
+    forwarded untouched: distinctness, the minimum of two, membership in the
+    caller's library, and the already-stacked reconciliation that repoints an
+    asset out of its old stack (folding that stack in whole when the asset was
+    its cover, dissolving what's left below two members). Both sides implement
+    that merge, so re-deriving any of it here would only introduce a way for the
+    two to disagree. The IDs go out in request order, undeduplicated, for the
+    same reason — the response is read back from the row the backend returns.
+
+    `library_id` is omitted, like every other Gumnut call the adapter makes:
+    Immich has no library selector to map from, so the backend infers the
+    caller's only library. An account with several would need the disambiguation
+    Immich can't express, and the backend's own validation response is what
+    surfaces that rather than a guess made here.
+
+    Unlike the reads, a stack with no live members is still returned rather than
+    dropped: the client just created it and needs its ID back, and reporting
+    "not found" for a write that succeeded is the worse answer. That takes
+    stacking none-but-trashed assets — legal at the backend, which treats manual
+    stacking as general grouping, but not something a shipped Immich client can
+    ask for, since stacking acts on live timeline selections.
     """
-    Create a stack.
-    This is a stub implementation that returns a fake stack response.
-    """
-    return StackResponseDto(id=uuid4(), primaryAssetId=request.assetIds[0], assets=[])
+    gumnut_asset_ids = [
+        uuid_to_gumnut_asset_id(asset_id) for asset_id in request.assetIds
+    ]
+    stack = await client.stacks.create_stack(
+        asset_ids=gumnut_asset_ids,
+        primary_asset_id=gumnut_asset_ids[0],
+    )
+
+    hydrated = await hydrate_stack(client, stack)
+    if hydrated is None:
+        # A stack the backend just built out of >= 2 assets, reading back with
+        # no members at all: the row and the member read contradict each other
+        # (`hydrate_stack` logs the details), and there is no honest
+        # `primaryAssetId` to answer with.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Stack was created but could not be read back",
+        )
+    return build_stack_response(hydrated, current_user)
 
 
 @router.get("/{id}")
@@ -275,16 +323,49 @@ async def get_stack(
 
 
 @router.put("/{id}")
-async def update_stack(id: UUID, request: StackUpdateDto) -> StackResponseDto:
+async def update_stack(
+    id: UUID,
+    request: StackUpdateDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
+) -> StackResponseDto:
+    """Pin the stack's cover, and return the stack as `getStack` would.
+
+    Deprecated upstream, but still the only cover-setting call the shipped
+    Immich clients make — the web asset viewer's "set as primary" action goes
+    through it.
+
+    Immich's `StackUpdateDto` makes `primaryAssetId` optional while the Gumnut
+    API rejects a null cover outright: a pin is cleared by the pinned frame
+    leaving the stack, never by asking. Rather than inventing a mutation to
+    represent "no change", an absent cover degenerates to a read of the current
+    stack, which is what the field's own absence asks for and what upstream
+    ends up doing with the same body.
+
+    A cover that isn't a live member of this stack is the backend's to reject,
+    and reaches the client through the global `GumnutError` handler like any
+    other upstream failure. So does a stack that doesn't exist or belongs to
+    someone else. A stack with nothing left to show 404s here on the same rule
+    `get_stack` applies — both paths through this route end in a read, so they
+    answer as that read does.
     """
-    Update stack.
-    This is a stub implementation that returns a fake stack response.
-    """
-    return StackResponseDto(
-        id=id,
-        primaryAssetId=request.primaryAssetId if request.primaryAssetId else uuid4(),
-        assets=[],
-    )
+    gumnut_stack_id = uuid_to_gumnut_stack_id(id)
+
+    if request.primaryAssetId is None:
+        stack = await client.stacks.retrieve_stack(gumnut_stack_id)
+    else:
+        stack = await client.stacks.set_cover(
+            gumnut_stack_id,
+            primary_asset_id=uuid_to_gumnut_asset_id(request.primaryAssetId),
+        )
+
+    hydrated = await hydrate_stack(client, stack)
+    response = _build_representable_response(hydrated, current_user)
+    if response is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Stack not found"
+        )
+    return response
 
 
 @router.delete("/{id}", status_code=204)
