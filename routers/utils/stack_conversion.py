@@ -31,7 +31,11 @@ from gumnut import AsyncGumnut, GumnutError
 from gumnut.types.asset_response import AssetResponse
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
-from routers.immich_models import StackResponseDto, UserResponseDto
+from routers.immich_models import (
+    AssetStackResponseDto,
+    StackResponseDto,
+    UserResponseDto,
+)
 from routers.utils.asset_conversion import (
     ASSET_INCLUDE,
     convert_gumnut_asset_to_immich,
@@ -304,6 +308,19 @@ def build_stack_response(
         # Stable, so the cover moves to the front and the rest keep capture
         # order — the same partition upstream's `mapStack` performs.
         assets=sorted(live_assets, key=lambda a: a.id != hydrated.primary_asset_id),
+    )
+
+
+def build_asset_stack_summary(
+    hydrated: HydratedStack | None,
+) -> AssetStackResponseDto | None:
+    """Build the nested summary returned by Immich asset detail."""
+    if hydrated is None or hydrated.live_asset_count < 2:
+        return None
+    return AssetStackResponseDto(
+        id=hydrated.id,
+        primaryAssetId=hydrated.primary_asset_id,
+        assetCount=hydrated.live_asset_count,
     )
 
 

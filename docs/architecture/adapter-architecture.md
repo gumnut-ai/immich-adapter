@@ -180,12 +180,19 @@ Each entity type has a dedicated conversion module in `routers/utils/`:
 
 | Module | Gumnut type | Immich type | Key mappings |
 |--------|------------|-------------|--------------|
-| `asset_conversion.py` | `AssetResponse` | `AssetResponseDto` | `local_datetime` → `fileCreatedAt`, `mime_type` → `type` (IMAGE/VIDEO/AUDIO/OTHER), EXIF extraction |
+| `asset_conversion.py` | `AssetResponse` | `AssetResponseDto` | Dates, media type, EXIF, and optional caller-resolved stack summary |
 | `album_conversion.py` | `AlbumResponse` | `AlbumResponseDto` | `name` → `albumName`, `album_cover_asset_id` → `albumThumbnailAssetId`, album date range normalization |
-| `stack_conversion.py` | stack row + member `AssetResponse`s | `StackResponseDto`, time-bucket `stack` tuples | member hydration via the `stack_id` asset filter, effective-cover resolution (Immich requires a non-null `primaryAssetId`; an auto-detected burst has no pinned cover), live-only `assets` with the cover first, plus the lean collapsed-timeline path (see [Timeline stack collapse](#timeline-stack-collapse)) |
+| `stack_conversion.py` | stack row + member `AssetResponse`s | Stack DTOs and time-bucket tuples | Member hydration, cover resolution, asset-detail summary, and timeline collapse |
 | `person_conversion.py` | `PersonResponse` | `PersonResponseDto` | `is_favorite` → `isFavorite`, `thumbnail_face_url` → `thumbnailPath`, null name → "Unknown Person" |
 
 `album_conversion.py` also routes `start_date` / `end_date` through `to_immich_local_datetime()` before emitting `AlbumResponseDto.startDate` / `endDate`. Album date ranges are derived from assets' `local_datetime`, so they intentionally share the same keep-local-time normalization as each asset's `localDateTime`: naive values are labeled `UTC` without shifting the wall-clock, and `None` passes through unchanged. This keeps the album range aligned with the dates shown on its assets and avoids list-response DTO validation failures when a local capture timezone is unknown.
+
+#### Nested stack summaries on asset responses
+
+`GET /api/assets/{id}` populates the nested `{id, primaryAssetId, assetCount}`
+stack summary by hydrating the asset's stack through the shared cover policy.
+Other asset responses leave the optional field unpopulated, matching Immich. Missing or
+smaller-than-two stacks yield `stack=null`.
 
 ### Field naming convention
 
@@ -538,7 +545,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | WebSockets | Real-time upload/trash/restore/delete notifications | Socket.IO with room-based messaging |
 | Memories (read) | Search, get-by-id, statistics for OnThisDay memories | Synthesized from per-day asset queries; mutations still stubbed |
 | Map (markers) | `GET /map/markers` and album-scoped `GET /albums/{id}/map-markers` return GPS-tagged assets | Server-side geotag filter via `client.assets.list(bbox=...)`; the album route also passes the album filter; capped at 2000 markers, with a degraded-path scan bound if the coordinate filter is unavailable; reverse-geocode still stubbed |
-| Stacks (read) | `GET /stacks` and `GET /stacks/{id}` return real burst stacks with their live members | Both go through `routers/utils/stack_conversion.py` for member hydration and cover resolution. The list walks the Gumnut API's stack cursor rather than answering with one page, since Immich's `searchStacks` has no pagination; bounded by both a 500-stack cap and a 5000-member hydration budget spent from each row's own asset count, whichever binds first, with walked/budgeted/hydrated/returned counts, a truncation flag, and which bound fired all logged. `primaryAssetId` is answered by resolving the asset's own stack and comparing effective covers, not by forwarding the backend's pinned-cover filter, and an unmatched or unknown ID yields `[]` rather than a 404. A stack with no live members is omitted from the list and 404s from the detail route |
+| Stacks (read) | `GET /stacks` and `GET /stacks/{id}` return real burst stacks with their live members | Both go through `routers/utils/stack_conversion.py` for member hydration and cover resolution. The list walks the Gumnut API's stack cursor rather than answering with one page, since Immich's `searchStacks` has no pagination; bounded by both a 500-stack cap and a 5000-member hydration budget spent from each row's own asset count, whichever binds first, with walked/budgeted/hydrated/returned counts, a truncation flag, and which bound fired all logged. `primaryAssetId` is answered by resolving the asset's own stack and comparing effective covers, not by forwarding the backend's pinned-cover filter, and an unmatched or unknown ID yields `[]` rather than a 404. A stack with no live members is omitted from the list and 404s from the detail route. Asset detail carries a nested stack summary resolved through the same cover policy (see [Nested stack summaries on asset responses](#nested-stack-summaries-on-asset-responses)) |
 | Stacks (create, set-cover) | `POST /stacks` creates a stack; the deprecated `PUT /stacks/{id}`, still used by shipped clients, sets its cover | Both hydrate the Gumnut API response through `stack_conversion.py`; the backend owns membership, merge, limit, and cover validation rules |
 
 ### Stub implementations

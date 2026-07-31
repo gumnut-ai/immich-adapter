@@ -22,7 +22,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.requests import ClientDisconnect
-from gumnut import AsyncGumnut
+from gumnut import AsyncGumnut, NotFoundError
 from gumnut.types.asset_bulk_update_assets_params import Update, UpdateChange
 from gumnut.types.asset_response import AssetResponse
 
@@ -74,6 +74,7 @@ from routers.utils.asset_conversion import (
     convert_gumnut_asset_to_immich,
     mime_type_to_asset_type,
 )
+from routers.utils.stack_conversion import build_asset_stack_summary, hydrate_stack
 from utils.livephoto import is_live_photo_video
 from routers.immich_models import AssetTypeEnum
 
@@ -1172,7 +1173,10 @@ async def update_asset(
     """
     payload = _build_metadata_patch(request)
     if payload is None:
-        return await get_asset_info(id, client=client, current_user=current_user)
+        gumnut_asset = await client.assets.retrieve(
+            uuid_to_gumnut_asset_id(id), include=ASSET_INCLUDE
+        )
+        return convert_gumnut_asset_to_immich(gumnut_asset, current_user)
 
     gumnut_asset = await client.assets.update_asset(
         uuid_to_gumnut_asset_id(id), **payload
@@ -1192,7 +1196,26 @@ async def get_asset_info(
 ) -> AssetResponseDto:
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
     gumnut_asset = await client.assets.retrieve(gumnut_asset_id, include=ASSET_INCLUDE)
-    return convert_gumnut_asset_to_immich(gumnut_asset, current_user)
+    stack_summary = None
+    if gumnut_asset.stack_id is not None:
+        try:
+            stack = await client.stacks.retrieve_stack(gumnut_asset.stack_id)
+            stack_summary = build_asset_stack_summary(
+                await hydrate_stack(client, stack)
+            )
+        except NotFoundError:
+            logger.warning(
+                "Stack %s referenced by asset %s was not found",
+                gumnut_asset.stack_id,
+                gumnut_asset.id,
+                extra={
+                    "stack_id": gumnut_asset.stack_id,
+                    "gumnut_id": gumnut_asset.id,
+                },
+            )
+    return convert_gumnut_asset_to_immich(
+        gumnut_asset, current_user, stack=stack_summary
+    )
 
 
 @router.get(
