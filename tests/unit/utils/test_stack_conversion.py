@@ -38,15 +38,9 @@ from tests.conftest import (
     MockSyncCursorPage,
     make_gumnut_stack,
     make_gumnut_stack_members,
+    make_gumnut_stack_with_members,
     make_sdk_status_error,
 )
-
-
-def _stack_with_members(*, count: int, trashed: set[int] | None = None, **stack_kwargs):
-    """Build a (stack, members) pair whose members all point at the stack."""
-    stack = make_gumnut_stack(**stack_kwargs)
-    members = make_gumnut_stack_members(count, stack_id=stack.id, trashed=trashed)
-    return stack, members
 
 
 def _client_returning(members):
@@ -64,20 +58,20 @@ class TestResolveEffectivePrimary:
     """The one rule every Immich stack surface shares for picking a cover."""
 
     def test_pinned_cover_wins(self):
-        stack, members = _stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3)
         stack.primary_asset_id = members[2].id
 
         assert resolve_effective_primary(stack, members) is members[2]
 
     def test_unpinned_falls_back_to_first_live_member(self):
-        stack, members = _stack_with_members(count=3, primary_asset_id=None)
+        stack, members = make_gumnut_stack_with_members(count=3, primary_asset_id=None)
 
         assert resolve_effective_primary(stack, members) is members[0]
 
     def test_unpinned_skips_trashed_members(self):
         """A live frame outranks a trashed one, so Immich never renders a
         trashed thumbnail for a stack that still has live members."""
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, trashed={0, 1}, primary_asset_id=None
         )
 
@@ -85,14 +79,14 @@ class TestResolveEffectivePrimary:
 
     def test_trashed_pin_is_preserved(self):
         """A pinned cover stays the cover after being trashed."""
-        stack, members = _stack_with_members(count=3, trashed={2})
+        stack, members = make_gumnut_stack_with_members(count=3, trashed={2})
         stack.primary_asset_id = members[2].id
 
         assert resolve_effective_primary(stack, members) is members[2]
 
     def test_all_trashed_falls_back_to_first_member(self):
         """A fully-trashed stack still names a cover rather than dropping out."""
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, trashed={0, 1, 2}, primary_asset_id=None
         )
 
@@ -101,7 +95,7 @@ class TestResolveEffectivePrimary:
     def test_pin_absent_from_members_falls_back(self):
         """A cover that left the stack can't be named, so resolution falls
         through to the same fallbacks as an unpinned stack."""
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         stack.primary_asset_id = make_gumnut_stack_members(1, stack_id=stack.id)[0].id
 
         assert resolve_effective_primary(stack, members) is members[0]
@@ -117,7 +111,7 @@ class TestFetchStackMembers:
     async def test_pins_the_member_read_arguments(self):
         """Pins the arguments a stack read can't be correct without — see
         `fetch_stack_members` for why each is required."""
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         client = _client_returning(members)
 
         result = await fetch_stack_members(client, stack.id)
@@ -160,7 +154,7 @@ class TestFetchStackMembers:
 class TestHydrateStack:
     @pytest.mark.anyio
     async def test_converts_ids_and_resolves_cover(self):
-        stack, members = _stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3)
         stack.primary_asset_id = members[1].id
         client = _client_returning(members)
 
@@ -175,7 +169,9 @@ class TestHydrateStack:
     async def test_carries_the_gumnut_live_count(self):
         """The row's count reaches callers unchanged, so it can sit below the
         hydrated member count rather than being recomputed from it."""
-        stack, members = _stack_with_members(count=3, trashed={2}, asset_count=2)
+        stack, members = make_gumnut_stack_with_members(
+            count=3, trashed={2}, asset_count=2
+        )
         client = _client_returning(members)
 
         hydrated = await hydrate_stack(client, stack)
@@ -220,7 +216,7 @@ class TestHydrateStack:
     ):
         """Pin both IDs: the pinned one names what was lost, the effective one
         what replaced it. See `hydrate_stack` for why this case warns."""
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         departed = make_gumnut_stack_members(1, stack_id=stack.id)[0]
         stack.primary_asset_id = departed.id
         client = _client_returning(members)
@@ -245,7 +241,7 @@ class TestHydrateStack:
         those are different things — warning here would fire on every stack
         whose cover sits in the trash.
         """
-        stack, members = _stack_with_members(count=3, trashed={1})
+        stack, members = make_gumnut_stack_with_members(count=3, trashed={1})
         stack.primary_asset_id = members[1].id
         client = _client_returning(members)
 
@@ -259,7 +255,7 @@ class TestHydrateStack:
     @pytest.mark.anyio
     async def test_hydrated_stack_logs_nothing(self, caplog: pytest.LogCaptureFixture):
         """The happy path must stay silent, or the warning above is just noise."""
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         client = _client_returning(members)
 
         with caplog.at_level(logging.WARNING, logger="routers.utils.stack_conversion"):
@@ -415,7 +411,7 @@ class TestBuildStackResponse:
     @pytest.mark.anyio
     async def test_builds_dto_with_live_members_only(self, mock_current_user):
         """Pins the live-only rule stated in `build_stack_response`."""
-        stack, members = _stack_with_members(count=3, trashed={2})
+        stack, members = make_gumnut_stack_with_members(count=3, trashed={2})
         stack.primary_asset_id = members[1].id
         client = _client_returning(members)
 
@@ -440,7 +436,7 @@ class TestBuildStackResponse:
         The pin is deliberately *not* the API's first-returned member, so
         emitting members in fetch order fails.
         """
-        stack, members = _stack_with_members(count=4)
+        stack, members = make_gumnut_stack_with_members(count=4)
         stack.primary_asset_id = members[2].id
         client = _client_returning(members)
 
@@ -458,7 +454,7 @@ class TestBuildStackResponse:
     @pytest.mark.anyio
     async def test_trashed_pin_is_absent_from_assets(self, mock_current_user):
         """Pins the trashed-pin consequence stated in `build_stack_response`."""
-        stack, members = _stack_with_members(count=3, trashed={1})
+        stack, members = make_gumnut_stack_with_members(count=3, trashed={1})
         stack.primary_asset_id = members[1].id
         client = _client_returning(members)
 
@@ -475,7 +471,7 @@ class TestBuildStackResponse:
     @pytest.mark.anyio
     async def test_all_trashed_stack_yields_empty_assets(self, mock_current_user):
         """A fully-trashed stack still names a cover, but carries no assets."""
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, trashed={0, 1, 2}, primary_asset_id=None
         )
         client = _client_returning(members)
@@ -524,9 +520,10 @@ def test_sdk_stack_method_signature(method_name: str, expected_params: set[str])
 
 
 # The row classes `GumnutStackRow` claims are interchangeable. Nothing else
-# checks that claim: every test builds rows with a `Mock`, which satisfies any
-# Protocol by answering to any attribute, and while `routers/api/stacks.py` is
-# stubbed there is no production call site passing a real row.
+# checks that claim at runtime: every test builds rows with a `Mock`, which
+# satisfies any Protocol by answering to any attribute. The stack read routes do
+# pass real rows, so pyright checks the classes they use — but only those, and
+# only for the calls those routes happen to make.
 #
 # The annotation is the actual guard — pyright rejects the list if any of these
 # classes stops satisfying the Protocol. The test below re-checks it at runtime
@@ -569,7 +566,7 @@ def test_asset_list_accepts_stack_id_filter():
 def test_trashed_member_fixture_is_actually_trashed():
     """Guards the builder itself: an unset `Mock.trashed_at` is truthy, which
     would make every "live" assertion above pass for the wrong reason."""
-    stack, members = _stack_with_members(count=2, trashed={1})
+    stack, members = make_gumnut_stack_with_members(count=2, trashed={1})
 
     assert members[0].trashed_at is None
     assert isinstance(members[1].trashed_at, datetime)
