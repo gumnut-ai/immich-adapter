@@ -20,18 +20,18 @@ How to write and maintain documentation in this repository.
 
 ## Documentation Checks
 
-`scripts/lint_docs.py` runs in CI and locally from anywhere in the repo:
+`scripts/lint_docs.py` runs in CI and locally from anywhere in the repo. It parses Markdown with `markdown-it-py`, declared in the script's own PEP 723 header, so `uv` resolves the dependency and there is no project to install:
 
 ```bash
-python3 scripts/lint_docs.py
-python3 scripts/lint_docs.py --fix
+uv run scripts/lint_docs.py
+uv run scripts/lint_docs.py --fix
 ```
 
 It checks:
 
 | Check | Enforces |
 |-------|----------|
-| `freshness` | A changed doc's `last-updated:` is a real current date |
+| `freshness` | A changed doc's `last-updated:` is a real date within the configured tolerance |
 | `links` | Inline markdown link targets resolve |
 | `anchors` | `#fragment` targets resolve |
 | `map_paths` | Documentation Map paths and `superseded-by:` targets resolve; design docs are mapped |
@@ -101,7 +101,7 @@ Keep codebase-specific facts and traps that a capable contributor could reasonab
 - Explain a non-obvious rationale once and point to it elsewhere.
 - Scope absolute claims by checking the full repository for counterexamples.
 - Do not restate call-site counts, tunable constants, dependency inventories, or line numbers; point to the owning file, symbol, or grep.
-- Keep implementation mechanics in code. A reference doc states the durable pattern and cites the implementation.
+- Keep implementation mechanics in code. A reference doc states the durable pattern and cites the implementation — and when the rule is newer than the code, re-check every cited implementation still obeys it, or name the one that predates it. A citation that violates the rule stated beside it teaches the antipattern.
 - Verify third-party and upstream-Immich behavior from primary sources or the checked-out upstream source.
 - Everything committed here must stand on its own for a public reader. Describe the contract and rationale instead of relying on a private ticket or sibling path; follow `code-practices.md` § Project Conventions.
 
@@ -131,7 +131,7 @@ Retire a completed doc when an evergreen doc owns the live subject, the body wou
 
 ## Freshness
 
-Bump `last-updated:` whenever a doc body changes meaningfully. Run `python3 scripts/lint_docs.py --fix` to update missed dates. A content-preserving rename does not require a bump; a renamed-and-edited doc does.
+Bump `last-updated:` to the current date whenever a doc body changes meaningfully. The linter allows the `freshness_window_days` tolerance in `scripts/lint_docs.toml` so a recently bumped doc does not need a churn-only re-bump on every later push to the same branch; dates older than that window and dates beyond the existing timezone upper boundary fail. Run `uv run scripts/lint_docs.py --fix` to update offenders to today. A content-preserving rename does not require a bump; a renamed-and-edited doc does.
 
 Do not leave a date-only bump after reverting the body edit that prompted it. Compare the final file against `main`.
 

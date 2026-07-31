@@ -244,11 +244,16 @@ async def hydrate_stacks(
     `None` entries for member-less stacks.
 
     The bound is on concurrency only — round-trips and peak memory still scale
-    with `len(stacks)` times each stack's member count, which nothing here caps.
-    Immich's `searchStacks` takes no pagination parameters, so a whole-library
-    read must answer with every stack at once; at that size prefer the
-    transpose, one `assets.list` walk grouped in memory by `stack_id`. This
-    helper suits a bounded set of stacks.
+    with `len(stacks)` times each stack's member count, and neither factor is
+    capped here. Bounding both is the caller's job, and it is cheap to do
+    because a listing row already carries its own `asset_count`: budget the
+    members before hydrating rather than discovering the total afterwards (see
+    `SEARCH_STACKS_CAP` / `SEARCH_STACKS_MEMBER_BUDGET` in
+    `routers/api/stacks.py`). Immich's `searchStacks` takes no pagination
+    parameters, so a whole-library read must answer with every stack at once; a
+    library that keeps hitting those bounds wants the transpose instead, one
+    `assets.list` walk grouped in memory by `stack_id`. This helper suits a
+    bounded set of stacks.
 
     An upstream failure on any one stack aborts the whole batch, and the
     siblings still run to completion — see `gather_with_concurrency`. Only a

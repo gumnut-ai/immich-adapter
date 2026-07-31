@@ -16,11 +16,11 @@ Run from the `immich-adapter/` directory:
 - **Lint**: `uv run ruff check`
 - **Type check**: `uv run pyright`
 - **Test**: `uv run pytest`
-- **Docs**: `python3 scripts/lint_docs.py` (`--fix` bumps stale `last-updated:` dates) — see § Documentation Checks below
+- **Docs**: `uv run scripts/lint_docs.py` (`--fix` bumps stale `last-updated:` dates) — see § Documentation Checks below
 
 # Documentation Checks
 
-`scripts/lint_docs.py` runs on every PR in `.github/workflows/ci.yml`; use `--fix` to bump missed dates. The complete frontmatter, map, lifecycle, path, and review contract is local in `docs/references/documentation-conventions.md`. The linter is kept byte-identical to the Gumnut Photos copy, with repo differences in `scripts/lint_docs.toml`.
+`scripts/lint_docs.py` runs on every PR in `.github/workflows/ci.yml`; use `uv run scripts/lint_docs.py --fix` to bump missed dates. The complete frontmatter, map, lifecycle, path, and review contract is local in `docs/references/documentation-conventions.md`. The linter is kept byte-identical to the Gumnut Photos copy, with repo differences in `scripts/lint_docs.toml`.
 
 # Documentation Map
 
@@ -34,7 +34,7 @@ The sections below follow that order, with design docs split by their `status:` 
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Adapter architecture | `docs/architecture/adapter-architecture.md` | Overall adapter design, auth and session handling, request observability (Sentry tags and user attribution), trash/restore semantics, data translation, pagination, sync protocol, error handling, endpoint status |
+| Adapter architecture | `docs/architecture/adapter-architecture.md` | Overall adapter design, auth and session handling, request observability (Sentry tags, user attribution), the single-library assumption, trash/restore semantics, data translation, pagination, sync protocol, error handling, endpoint status |
 | Sync stream architecture | `docs/architecture/sync-stream-architecture.md` | Sync stream event processing, FK ordering, event classification, face/album handling, adding new sync type versions |
 | WebSocket implementation | `docs/architecture/websocket-implementation.md` | WebSocket connections, real-time sync, event handling |
 | Session & checkpoint implementation | `docs/architecture/session-checkpoint-implementation.md` | Session management, checkpoint tracking, sync state |

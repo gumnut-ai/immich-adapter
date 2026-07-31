@@ -14,19 +14,22 @@ and the assertions cannot straddle a date boundary.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 
 from lint_docs import (
-    blank_noncontent,
+    anchors_in,
+    blank_frontmatter,
     bump_date_line,
-    collect_anchors,
     has_last_updated_key,
     parse_frontmatter,
+    raw_cell_count,
     slugify_heading,
     strip_date_line,
 )
@@ -45,25 +48,23 @@ def utc_date(offset_seconds: int = 0) -> str:
 
 
 TODAY = time.strftime("%Y-%m-%d", time.localtime(NOW_EPOCH))
-UTC_TODAY = utc_date()
 EARLIEST_CURRENT_DATE = utc_date(-43_200)
 LATEST_CURRENT_DATE = utc_date(50_400)
+FRESHNESS_WINDOW_DAYS = 7
 
 
-def _outside_timezone_window() -> str:
-    """A date no timezone currently considers "today".
-
-    Adjacent UTC dates are usually outside the window, but during the short
-    interval where all three are current somewhere, two days ago still isn't.
-    """
-    current = {EARLIEST_CURRENT_DATE, UTC_TODAY, LATEST_CURRENT_DATE}
-    for candidate in (utc_date(-86_400), utc_date(86_400)):
-        if candidate not in current:
-            return candidate
-    return utc_date(-172_800)
-
-
-OUTSIDE_TIMEZONE_WINDOW = _outside_timezone_window()
+EARLIEST_FRESH_DATE = (
+    date.fromisoformat(EARLIEST_CURRENT_DATE) - timedelta(days=FRESHNESS_WINDOW_DAYS)
+).isoformat()
+INSIDE_FRESHNESS_WINDOW = (
+    date.fromisoformat(EARLIEST_CURRENT_DATE)
+    - timedelta(days=FRESHNESS_WINDOW_DAYS - 1)
+).isoformat()
+OUTSIDE_FRESHNESS_WINDOW = (
+    date.fromisoformat(EARLIEST_CURRENT_DATE)
+    - timedelta(days=FRESHNESS_WINDOW_DAYS + 1)
+).isoformat()
+FUTURE_DATE = (date.fromisoformat(LATEST_CURRENT_DATE) + timedelta(days=1)).isoformat()
 
 # Every check on, no exemptions — the fixture repos are built to exercise one
 # check at a time, so inheriting this repo's config would only add noise.
@@ -83,6 +84,7 @@ frontmatter = true
 
 [limits]
 consult_cell_chars = 250
+freshness_window_days = 7
 """
 
 
@@ -167,7 +169,9 @@ def freshness_repo(repo: FixtureRepo) -> FixtureRepo:
     repo.write_doc("same_day.md", TODAY, "original body")
     repo.write_doc("timezone_behind.md", EARLIEST_CURRENT_DATE, "original body")
     repo.write_doc("timezone_ahead.md", LATEST_CURRENT_DATE, "original body")
-    repo.write_doc("stale_unchanged.md", OUTSIDE_TIMEZONE_WINDOW, "original body")
+    repo.write_doc("within_window.md", EARLIEST_FRESH_DATE, "original body")
+    repo.write_doc("stale_unchanged.md", OUTSIDE_FRESHNESS_WINDOW, "original body")
+    repo.write_doc("future_date.md", FUTURE_DATE, "original body")
     repo.write_doc("backward_bump.md", "2020-01-01", "original body")
     repo.write_doc("impossible_date.md", "2020-01-01", "stable body")
     # A doc that documents the convention: no frontmatter field, but the body
@@ -192,7 +196,9 @@ def freshness_repo(repo: FixtureRepo) -> FixtureRepo:
     repo.write_doc("same_day.md", TODAY, "EDITED body")
     repo.write_doc("timezone_behind.md", EARLIEST_CURRENT_DATE, "EDITED body")
     repo.write_doc("timezone_ahead.md", LATEST_CURRENT_DATE, "EDITED body")
-    repo.write_doc("stale_unchanged.md", OUTSIDE_TIMEZONE_WINDOW, "EDITED body")
+    repo.write_doc("within_window.md", EARLIEST_FRESH_DATE, "EDITED body")
+    repo.write_doc("stale_unchanged.md", OUTSIDE_FRESHNESS_WINDOW, "EDITED body")
+    repo.write_doc("future_date.md", FUTURE_DATE, "EDITED body")
     # Body edited and the date *did* change from its base value — but backwards, to
     # another stale date. Keying on "differs from base" would accept this.
     repo.write_doc("backward_bump.md", "2019-12-31", "EDITED body")
@@ -213,7 +219,8 @@ def freshness_repo(repo: FixtureRepo) -> FixtureRepo:
         ("bad_date.md", "body changed and the date is junk"),
         ("date_only_bad.md", "date-only edit to a junk value"),
         ("blank_value.md", "date value blanked out"),
-        ("stale_unchanged.md", "date is outside the timezone window"),
+        ("stale_unchanged.md", "date is older than the freshness window"),
+        ("future_date.md", "date is beyond the timezone upper bound"),
         ("backward_bump.md", "date changed from base, but backwards to a stale date"),
         ("impossible_date.md", "ISO-shaped but not a real calendar date"),
     ],
@@ -224,6 +231,16 @@ def test_freshness_flags(freshness_repo: FixtureRepo, doc: str, reason: str) -> 
     assert doc in result.stderr, f"{doc} should be flagged: {reason}"
 
 
+def test_freshness_explains_stale_and_future_dates(
+    freshness_repo: FixtureRepo,
+) -> None:
+    result = freshness_repo.lint("--check", "freshness", "--base", "main")
+    assert f"older than the {FRESHNESS_WINDOW_DAYS}-day freshness window" in (
+        result.stderr
+    )
+    assert "post-dated beyond the timezone window" in result.stderr
+
+
 @pytest.mark.parametrize(
     ("doc", "reason"),
     [
@@ -232,6 +249,7 @@ def test_freshness_flags(freshness_repo: FixtureRepo, doc: str, reason: str) -> 
         ("same_day.md", "same-day re-edit escape hatch"),
         ("timezone_behind.md", "UTC-12 boundary is current"),
         ("timezone_ahead.md", "UTC+14 boundary is current"),
+        ("within_window.md", "lower freshness boundary is accepted"),
         ("conventions.md", "no frontmatter field, only a body mention"),
         ("clean.md", "not edited"),
     ],
@@ -253,6 +271,7 @@ def test_freshness_fix_bumps_offenders_and_preserves_bodies(
         "date_only_bad.md",
         "blank_value.md",
         "stale_unchanged.md",
+        "future_date.md",
         "backward_bump.md",
         "impossible_date.md",
     ):
@@ -283,8 +302,8 @@ def test_fix_reports_when_nothing_needs_a_bump(repo: FixtureRepo) -> None:
 # --------------------------------------------------------------------------
 #
 # The bash predecessor skipped any doc absent at the merge-base, so a doc created
-# on day 1 and edited on day 2 kept its day-1 date and every run — including --fix
-# — reported clean. Observed on a real branch before this was fixed.
+# on the branch could age past the tolerance window and every run — including
+# --fix — still reported clean. Observed on a real branch before this was fixed.
 
 
 def _branch_with_added_doc(repo: FixtureRepo, date: str) -> None:
@@ -301,23 +320,29 @@ def test_new_doc_added_and_edited_same_day_passes(repo: FixtureRepo) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_new_doc_edited_next_day_without_bump_fails(repo: FixtureRepo) -> None:
-    _branch_with_added_doc(repo, OUTSIDE_TIMEZONE_WINDOW)
+def test_new_doc_with_date_inside_window_passes(repo: FixtureRepo) -> None:
+    _branch_with_added_doc(repo, INSIDE_FRESHNESS_WINDOW)
+    result = repo.lint("--check", "freshness", "--base", "main")
+    assert result.returncode == 0, result.stderr
+
+
+def test_new_doc_with_date_outside_window_fails(repo: FixtureRepo) -> None:
+    _branch_with_added_doc(repo, OUTSIDE_FRESHNESS_WINDOW)
     result = repo.lint("--check", "freshness", "--base", "main")
     assert result.returncode == 1
     assert "added.md" in result.stderr
     assert "added on this branch" in result.stderr
 
 
-def test_new_doc_edited_next_day_with_bump_passes(repo: FixtureRepo) -> None:
-    _branch_with_added_doc(repo, OUTSIDE_TIMEZONE_WINDOW)
+def test_new_doc_with_stale_date_then_current_bump_passes(repo: FixtureRepo) -> None:
+    _branch_with_added_doc(repo, OUTSIDE_FRESHNESS_WINDOW)
     repo.write_doc("added.md", TODAY, "brand new doc, edited")
     result = repo.lint("--check", "freshness", "--base", "main")
     assert result.returncode == 0, result.stderr
 
 
 def test_new_doc_stale_date_is_fixable(repo: FixtureRepo) -> None:
-    _branch_with_added_doc(repo, OUTSIDE_TIMEZONE_WINDOW)
+    _branch_with_added_doc(repo, OUTSIDE_FRESHNESS_WINDOW)
     result = repo.lint("--check", "freshness", "--base", "main", "--fix")
     assert result.returncode == 0
     assert f"last-updated: {TODAY}" in repo.read("added.md")
@@ -326,7 +351,7 @@ def test_new_doc_stale_date_is_fixable(repo: FixtureRepo) -> None:
 def test_preexisting_doc_with_unchanged_body_and_stale_date_passes(
     repo: FixtureRepo,
 ) -> None:
-    repo.write_doc("stale.md", OUTSIDE_TIMEZONE_WINDOW, "body")
+    repo.write_doc("stale.md", OUTSIDE_FRESHNESS_WINDOW, "body")
     repo.commit_all()
     result = repo.lint("--check", "freshness", "--base", "main")
     assert result.returncode == 0, result.stderr
@@ -339,7 +364,7 @@ def test_pure_rename_does_not_require_a_bump(repo: FixtureRepo) -> None:
     absent at the merge-base. Treating that as "added" would fail every
     content-preserving move — exactly what a docs reorganization is made of.
     """
-    repo.write_doc("docs/references/a.md", OUTSIDE_TIMEZONE_WINDOW, "body")
+    repo.write_doc("docs/references/a.md", OUTSIDE_FRESHNESS_WINDOW, "body")
     repo.commit_all()
     repo.git("checkout", "-q", "-b", "feature")
     repo.git("mv", "docs/references/a.md", "docs/references/b.md")
@@ -348,11 +373,11 @@ def test_pure_rename_does_not_require_a_bump(repo: FixtureRepo) -> None:
 
 
 def test_rename_with_a_body_edit_still_requires_a_bump(repo: FixtureRepo) -> None:
-    repo.write_doc("docs/references/a.md", OUTSIDE_TIMEZONE_WINDOW, "body")
+    repo.write_doc("docs/references/a.md", OUTSIDE_FRESHNESS_WINDOW, "body")
     repo.commit_all()
     repo.git("checkout", "-q", "-b", "feature")
     repo.git("mv", "docs/references/a.md", "docs/references/b.md")
-    repo.write_doc("docs/references/b.md", OUTSIDE_TIMEZONE_WINDOW, "EDITED body")
+    repo.write_doc("docs/references/b.md", OUTSIDE_FRESHNESS_WINDOW, "EDITED body")
     result = repo.lint("--check", "freshness", "--base", "main")
     assert result.returncode == 1
     assert "docs/references/b.md" in result.stderr
@@ -891,6 +916,97 @@ def test_config_key_stranded_in_a_table_is_rejected(repo: FixtureRepo) -> None:
     assert "template_paths" in result.stderr
 
 
+def test_bare_string_where_a_list_belongs_is_rejected(repo: FixtureRepo) -> None:
+    """A quoted scalar is iterable, so it silently became ten one-char prefixes.
+
+    `strip_prefixes = "repo-root "` mangled every citation the linter resolved,
+    with no error anywhere. Quoting a single value instead of bracketing it reads
+    perfectly natural in TOML, which is what made this reachable.
+    """
+    repo.config_path.write_text(
+        FIXTURE_CONFIG.replace(
+            'strip_prefixes = ["repo-root "]', 'strip_prefixes = "repo-root "'
+        ),
+        encoding="utf-8",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "strip_prefixes" in result.stderr
+    # The message has to name the fix, since the value itself is not wrong.
+    assert "brackets" in result.stderr
+
+
+def test_list_containing_a_non_string_is_rejected(repo: FixtureRepo) -> None:
+    repo.config_path.write_text(
+        FIXTURE_CONFIG.replace(
+            'strip_prefixes = ["repo-root "]', "strip_prefixes = [42]"
+        ),
+        encoding="utf-8",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "strip_prefixes" in result.stderr
+
+
+def test_valid_list_config_still_loads(repo: FixtureRepo) -> None:
+    """The other direction: the guard must not reject the correct form."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "See `repo-root docs/references/a.md`."
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_configured_freshness_window_is_applied(repo: FixtureRepo) -> None:
+    repo.config_path.write_text(
+        FIXTURE_CONFIG.replace(
+            "freshness_window_days = 7", "freshness_window_days = 1"
+        ),
+        encoding="utf-8",
+    )
+    repo.write_doc("a.md", "2020-01-01", "original body")
+    repo.commit_all()
+    repo.write_doc("a.md", INSIDE_FRESHNESS_WINDOW, "EDITED body")
+    result = repo.lint("--check", "freshness", "--base", "main")
+    assert result.returncode == 1
+    assert "older than the 1-day freshness window" in result.stderr
+
+
+def test_missing_freshness_window_uses_default(repo: FixtureRepo) -> None:
+    repo.config_path.write_text(
+        FIXTURE_CONFIG.replace("freshness_window_days = 7\n", ""),
+        encoding="utf-8",
+    )
+    repo.write_doc("a.md", "2020-01-01", "original body")
+    repo.commit_all()
+    repo.write_doc("a.md", EARLIEST_FRESH_DATE, "EDITED body")
+    result = repo.lint("--check", "freshness", "--base", "main")
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("value", ['"wide"', "true", "0", "-5", "1.5"])
+def test_non_positive_int_limit_is_rejected(repo: FixtureRepo, value: str) -> None:
+    """A mistyped limit raised a bare ValueError traceback out of `int()`.
+
+    A traceback reads as the linter being broken rather than the config being
+    wrong. `true` is in the list because `bool` is an `int` subclass, so it would
+    otherwise silently mean a 1-character cell limit.
+    """
+    repo.config_path.write_text(
+        FIXTURE_CONFIG.replace(
+            "consult_cell_chars = 250", f"consult_cell_chars = {value}"
+        ),
+        encoding="utf-8",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "map_cells")
+    assert result.returncode == 1
+    assert "consult_cell_chars" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_unknown_check_name_in_config_is_rejected(repo: FixtureRepo) -> None:
     """A typo'd check name would otherwise silently configure nothing."""
     repo.config_path.write_text(
@@ -1371,6 +1487,34 @@ def test_unterminated_comment_is_reported(repo: FixtureRepo) -> None:
     assert "never closed" in result.stderr
 
 
+def test_comment_opened_partway_into_an_html_block_is_reported(
+    repo: FixtureRepo,
+) -> None:
+    """The opener need not begin the block.
+
+    `<div>` then `<!-- draft` is a single `html_block` starting with `<div>`, so a
+    prefix test declared it closed — losing the violation, and letting the links
+    after the block's blank line be resolved even though the rendered HTML leaves
+    them inside the still-open comment.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<div>\n<!-- unclosed\n\nThen [x](./gone.md)."
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "never closed" in result.stderr
+
+
+def test_closed_comment_inside_an_html_block_is_not_reported(
+    repo: FixtureRepo,
+) -> None:
+    """The other direction: a matched pair mid-block leaves nothing open."""
+    repo.write_doc("docs/references/a.md", TODAY, "<div>\n<!-- fine -->\n\nText.")
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
 def test_unclosed_inline_comment_marker_is_literal_text(repo: FixtureRepo) -> None:
     """Only a line-start opener can begin an HTML block.
 
@@ -1608,11 +1752,44 @@ def test_escaped_backtick_does_not_open_a_span(repo: FixtureRepo) -> None:
 
 
 def test_code_span_may_cross_a_line_break(repo: FixtureRepo) -> None:
-    """CommonMark spans may contain line endings.
+    """CommonMark spans may contain line endings, so a link inside one is not real.
 
-    Scanning each line independently made a span opened on one line and closed on the
-    next look like literal backticks, so a `<!--` inside it opened a comment: a spurious
-    unterminated-comment error *and* the links after the span swallowed.
+    This is the shape 66 docs in the real corpus rely on — a `{ a,\\nb }` literal
+    wrapped across lines in prose.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "Write `example\ntext [x](./gone.md)` and it is code.",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_mid_line_comment_marker_does_not_break_a_multiline_span(
+    repo: FixtureRepo,
+) -> None:
+    """Only a *line-initial* `<!--` can begin an HTML block.
+
+    Mid-prose it cannot interrupt the paragraph, so the span still closes and the
+    marker is literal text inside it.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "Write `example\nx <!-- draft\ntext` and it is code.",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0
+
+
+def test_line_initial_comment_interrupts_a_paragraph(repo: FixtureRepo) -> None:
+    """An HTML block interrupts a paragraph, so it can cut a code span in half.
+
+    `<!--` at the start of a line is an HTML block start condition, and blocks of
+    that type may interrupt a paragraph — so the span opened on the line before
+    never closes, and the comment runs to the end of the document. Reporting the
+    unterminated marker is correct: everything after it renders as nothing.
     """
     repo.write_doc(
         "docs/references/a.md",
@@ -1620,7 +1797,9 @@ def test_code_span_may_cross_a_line_break(repo: FixtureRepo) -> None:
         "Write `example\n<!-- draft\ntext` and it is code.",
     )
     repo.commit_all()
-    assert repo.lint("--check", "links").returncode == 0
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "never closed" in result.stderr
 
 
 def test_link_after_a_multiline_span_is_still_checked(repo: FixtureRepo) -> None:
@@ -1630,6 +1809,189 @@ def test_link_after_a_multiline_span_is_still_checked(repo: FixtureRepo) -> None
     result = repo.lint("--check", "links")
     assert result.returncode == 1
     assert "gone.md" in result.stderr
+
+
+def test_link_line_number_is_the_link_s_own_line(repo: FixtureRepo) -> None:
+    """Inline tokens carry no position, so the line must be found within the block.
+
+    Reporting the enclosing paragraph's first line instead measured as 24% of the
+    corpus's links wrong, one of them 33 lines adrift — far enough that the
+    violation points at unrelated prose.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "prose line one\nprose line two\nprose line three [x](./gone.md) here",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    # Body starts at line 6: three frontmatter lines, its closing `---`, then a
+    # blank. So the link on the body's third line is line 8, not the block's 6.
+    assert "a.md:8:" in result.stderr, result.stderr
+
+
+def test_image_before_a_link_does_not_steal_its_line(repo: FixtureRepo) -> None:
+    """An image spends one `](`, so it must consume one from the block's supply.
+
+    Otherwise its position is handed to the next link and the violation is
+    reported on the image's line. markdown-it also percent-encodes an
+    angle-bracket destination, so matching the href text cannot rescue it.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "![img](ok.png)\n[x](<missing file.md>)"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:7:" in result.stderr, result.stderr
+
+
+def test_link_syntax_inside_image_alt_text_is_not_a_link(repo: FixtureRepo) -> None:
+    """Alt text renders as `<img alt="...">`, with no hyperlink to resolve.
+
+    markdown-it still tokenizes link syntax inside an image's children, so
+    recursing into them reported the destination as broken — a false positive on
+    something that is not a link.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "![alt [text][ref]](image.png)\n\n[ref]: gone.md"
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0, "link inside image alt text"
+
+
+def test_link_spanning_lines_reports_where_it_starts(repo: FixtureRepo) -> None:
+    """A multi-line link is reported at its opening `[`, not its destination.
+
+    `[![alt](img.png)\\n](dest.md)` opens on the first line and closes on the
+    second; the parser's recorded position is the opening bracket, which is the
+    usual convention for pointing at a construct.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "[![alt](image.png)\n](missing.md)")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:6:" in result.stderr, result.stderr
+
+
+def test_reference_link_gets_its_own_line(repo: FixtureRepo) -> None:
+    """A reference link is located like any other, having a source position.
+
+    Reconstructing positions by counting `](` could not place one at all — it
+    spends no delimiter — so a block containing one fell back to the block's line.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "prose line one\nprose line two\nand [x][r] here\n\n[r]: ./gone.md",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:8:" in result.stderr, result.stderr
+
+
+def test_escaped_delimiter_does_not_steal_a_links_line(repo: FixtureRepo) -> None:
+    r"""An escaped `\](` opens no link, so it must not be counted as one.
+
+    Counting it both inflates the supply the pairing validates against and hands
+    its position to a real link on a later line.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "text \\](  here\nand [x](gone.md) there"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:7:" in result.stderr, result.stderr
+
+
+def test_nul_in_a_link_target_is_a_violation_not_a_crash(repo: FixtureRepo) -> None:
+    """`%00` decodes to an embedded NUL, which `Path.resolve()` refuses.
+
+    One malformed link took down the whole run with a traceback instead of
+    reporting itself.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "See [x](foo%00bar.md).")
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "does not resolve" in result.stderr
+    assert "Traceback" not in result.stderr, result.stderr
+
+
+def test_prose_mention_of_a_target_does_not_steal_its_line(repo: FixtureRepo) -> None:
+    """Anchoring on link *syntax*, not the destination text.
+
+    An unrestricted search for the destination finds a prose mention of the same
+    path earlier in the block and reports the violation there.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "gone.md is stale\nand [doc](gone.md) too"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:7:" in result.stderr, result.stderr
+
+
+def test_autolink_does_not_consume_a_later_links_position(repo: FixtureRepo) -> None:
+    """An autolink has no `](`, so consuming one would steal a real link's line."""
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "<https://example.com> then\n[x](gone.md)"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:7:" in result.stderr, result.stderr
+
+
+def test_encoded_hash_in_a_filename_is_not_a_fragment(repo: FixtureRepo) -> None:
+    """A real `#` in a filename must be encoded, so split before decoding.
+
+    Decoding first reintroduces the delimiter: `foo%23bar.md` becomes
+    `foo#bar.md`, the partition reads `#bar.md` as a fragment, and the linter
+    rejects a valid link by trying to resolve `foo`.
+    """
+    repo.write_doc("docs/references/foo#bar.md", TODAY, "target")
+    repo.write_doc("docs/references/a.md", TODAY, "See [x](foo%23bar.md).")
+    repo.commit_all()
+    assert repo.lint("--check", "links").returncode == 0, "encoded # in a filename"
+
+
+def test_reference_and_inline_links_in_one_block_each_get_their_line(
+    repo: FixtureRepo,
+) -> None:
+    """Mixing the two forms in one block locates each independently.
+
+    Counting `](` delimiters could not: a reference link spends none, so it either
+    slipped the pairing by one or forced the whole block to a fallback line.
+    """
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "text [a][r] more\nand [b](gone.md)\n\n[r]: ./also-gone.md",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:6: link target `./also-gone.md`" in result.stderr, result.stderr
+    assert "a.md:7: link target `gone.md`" in result.stderr, result.stderr
+
+
+def test_repeated_target_in_one_block_gets_distinct_lines(repo: FixtureRepo) -> None:
+    """The cursor must advance, or every repeat matches the first occurrence."""
+    repo.write_doc(
+        "docs/references/a.md",
+        TODAY,
+        "one [x](./gone.md)\ntwo\nthree [y](./gone.md)",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "links")
+    assert result.returncode == 1
+    assert "a.md:6:" in result.stderr, result.stderr
+    assert "a.md:8:" in result.stderr, result.stderr
 
 
 def test_blank_line_ends_an_unclosed_span(repo: FixtureRepo) -> None:
@@ -1703,6 +2065,93 @@ def test_comment_delimiter_in_a_fence_does_not_reach_outside(
     result = repo.lint("--check", "links")
     assert result.returncode == 1
     assert "gone.md" in result.stderr
+
+
+def test_frontmatter_is_not_a_setext_heading(repo: FixtureRepo) -> None:
+    """Frontmatter is YAML, and its closing `---` must not underline it.
+
+    Read as Markdown, a `---` after text makes the block above it a setext H2 — which
+    invented an anchor like `title-a-last-updated-...` on 215 of the 293 docs in the
+    real corpus. A link to that phantom fragment must not resolve.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "[x](#title-a-last-updated-2026-01-01)"
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "no matching heading" in result.stderr
+
+
+def test_hash_comment_in_frontmatter_is_not_a_heading(repo: FixtureRepo) -> None:
+    """A `#` line inside the YAML block is a comment, not an H1.
+
+    Parsing one as a heading is how six phantom anchors per daemon file appeared.
+    """
+    repo.write(
+        "docs/references/a.md",
+        f"---\ntitle: A\n# Daily, not every 6h\nlast-updated: {TODAY}\n---\n\n"
+        "[x](#daily-not-every-6h)\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "no matching heading" in result.stderr
+
+
+def test_setext_heading_defines_an_anchor(repo: FixtureRepo) -> None:
+    """GitHub renders setext headings and gives them anchors.
+
+    The previous ATX-only scan missed them, so a valid link to one was reported
+    broken.
+    """
+    repo.write_doc(
+        "docs/references/a.md", TODAY, "Real Heading\n===\n\n[x](#real-heading)"
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "anchors").returncode == 0
+
+
+def test_literal_link_syntax_in_a_heading_keeps_both_words() -> None:
+    """`slugify_heading` receives *rendered text*, so it must not re-strip markup.
+
+    Verified against GitHub's renderer: `# \\[foo\\]\\(bar\\)` renders as the text
+    `[foo](bar)`, which slugs to `foobar`. A link-stripping regex reduced it to
+    `foo`, so a valid `#foobar` link was reported broken.
+    """
+    assert slugify_heading("[foo](bar)") == "foobar"
+    # A real link still contributes only its label, because heading_text already
+    # dropped the destination before slugging.
+    assert anchors_in("# See [the docs](x.md) now") == {"see-the-docs-now"}
+
+
+def test_image_in_a_heading_contributes_no_slug_text() -> None:
+    """Alt text is an attribute, not text, so GitHub's anchor ignores it.
+
+    Verified against GitHub's own renderer: `# ![Setup](icon.png)` becomes
+    `<h1><a ...><img alt="Setup"></a></h1>`, whose *text content* — what the anchor
+    is slugged from — is empty. Including alt text would invent a `#setup` anchor
+    GitHub does not have, letting a broken link pass and shifting the `-1` dedup
+    suffix of any later real `Setup` heading.
+
+    The mixed case keeps the two spaces that flanked the image, so the slug carries
+    a double hyphen — whitespace runs do not collapse.
+    """
+    assert anchors_in("# ![Setup](icon.png)") == set()
+    assert anchors_in("# Mixed ![icon](i.png) Heading") == {"mixed--heading"}
+
+
+def test_heading_that_renders_no_text_defines_no_anchor(repo: FixtureRepo) -> None:
+    """`# <Title>` is raw inline HTML, so GitHub gives it no usable anchor.
+
+    Adding the empty slug would both invent a fragment and consume a dedup slot,
+    shifting the `-1` suffix of every later duplicate.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "# <Title>\n\n[x](#title)")
+    repo.commit_all()
+    result = repo.lint("--check", "anchors")
+    assert result.returncode == 1
+    assert "no matching heading" in result.stderr
 
 
 def test_fence_inside_a_real_comment_does_not_open_a_fence(
@@ -1826,6 +2275,32 @@ def test_map_row_with_wrong_column_count_is_flagged(repo: FixtureRepo) -> None:
     result = repo.lint("--check", "map_paths")
     assert result.returncode == 1
     assert "4 columns" in result.stderr
+
+
+def test_map_row_with_too_few_columns_is_flagged(repo: FixtureRepo) -> None:
+    """The parser pads a short row, so the source line is the only authority.
+
+    Against a three-column header a two-cell row arrives as `['a', 'b', '']` —
+    indistinguishable from a deliberately empty third cell.
+    """
+    repo.write("AGENTS.md", _map("References", "| Broken | `docs/references/a.md` |\n"))
+    repo.commit_all()
+    result = repo.lint("--check", "map_paths")
+    assert result.returncode == 1
+    assert "2 columns" in result.stderr
+
+
+def test_map_row_with_an_escaped_pipe_is_well_formed(repo: FixtureRepo) -> None:
+    """The other direction: `\\|` is a literal pipe, not a fourth column."""
+    repo.write_doc("docs/references/a.md", TODAY, "body")
+    repo.write(
+        "AGENTS.md",
+        _map(
+            "References", r"| Topic A | `docs/references/a.md` | why \| really |" + "\n"
+        ),
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0
 
 
 def test_dev_root_relative_cross_repo_link_is_skipped(repo: FixtureRepo) -> None:
@@ -2121,6 +2596,112 @@ def test_reference_doc_missing_title_is_flagged(repo: FixtureRepo) -> None:
     assert "title" in result.stderr
 
 
+def test_list_valued_field_is_not_treated_as_empty(repo: FixtureRepo) -> None:
+    """A YAML block sequence is a populated value, not a blank one.
+
+    The scalar-only parse read a key followed by `- items` as the empty string.
+    This is the case that motivated it: a key the conventions do not define, like
+    the daemon docs' `routines:`, is free to be a list and must not trip the
+    present-but-empty rule.
+    """
+    repo.write(
+        "docs/references/a.md",
+        f"---\ntitle: A\nlast-updated: {TODAY}\nroutines:\n  - First\n  - Second\n"
+        f"---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 0, result.stderr
+
+
+def test_sequence_is_rejected_for_a_field_with_no_value_validator(
+    repo: FixtureRepo,
+) -> None:
+    """Shape is checked directly, not inferred from a value check failing.
+
+    `title` has no format validator, so leaning on the value alone let
+    `title:\\n  - First` pass as merely non-empty. Every field the conventions
+    define holds a single value.
+    """
+    repo.write(
+        "docs/references/a.md",
+        f"---\ntitle:\n  - First\nlast-updated: {TODAY}\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "not a list" in result.stderr, result.stderr
+    assert "title" in result.stderr
+
+
+def test_flow_sequence_is_rejected_for_a_scalar_field(repo: FixtureRepo) -> None:
+    """`title: [First]` is the same shape violation as the block form.
+
+    The block form serializes to exactly this syntax, so the two are
+    indistinguishable by value — which is why the shape is tracked, and why the
+    flow form has to be tracked too.
+    """
+    repo.write(
+        "docs/references/a.md",
+        f"---\ntitle: [First, Second]\nlast-updated: {TODAY}\n---\n\nbody\n",
+    )
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "not a list" in result.stderr, result.stderr
+
+
+def test_quoted_string_that_looks_like_a_list_is_a_scalar(repo: FixtureRepo) -> None:
+    """The other direction: `"[literal]"` is a string that merely looks like one."""
+    repo.write(
+        "docs/references/a.md",
+        f'---\ntitle: "[literal]"\nlast-updated: {TODAY}\n---\n\nbody\n',
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "frontmatter").returncode == 0
+
+
+def test_quoted_map_example_is_not_a_real_map(repo: FixtureRepo) -> None:
+    """A map inside a blockquote is an *example*, not a navigational structure.
+
+    Its rows would otherwise be resolved as real citations — either satisfying the
+    unmapped-doc check with a quoted row or failing the column-count check.
+    """
+    repo.write_doc("docs/references/a.md", TODAY, "body")
+    repo.write(
+        "AGENTS.md",
+        _map("References", "| Topic A | `docs/references/a.md` | why |\n")
+        + "\nAn example of the shape:\n\n"
+        + "> # Documentation Map\n>\n> | Topic | Document | Consult when... |\n"
+        + "> |---|---|---|\n> | Q | `docs/references/nonexistent.md` | example |\n",
+    )
+    repo.commit_all()
+    assert repo.lint("--check", "map_paths").returncode == 0, "quoted map example"
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        # The single-item case is the one that matters: joining items bare made it
+        # indistinguishable from a scalar, so malformed frontmatter linted clean.
+        "last-updated:\n  - 2026-01-01\n",
+        "last-updated:\n  - 2026-01-01\n  - 2026-01-02\n",
+    ],
+    ids=["single-item", "multi-item"],
+)
+def test_list_valued_date_is_still_rejected(repo: FixtureRepo, block: str) -> None:
+    """Populated is not the same as valid — a sequence is no ISO date.
+
+    Every required field is scalar by convention, so the *shape* has to survive
+    parsing rather than be flattened away.
+    """
+    repo.write("docs/references/a.md", f"---\ntitle: A\n{block}---\n\nbody\n")
+    repo.commit_all()
+    result = repo.lint("--check", "frontmatter")
+    assert result.returncode == 1
+    assert "last-updated" in result.stderr
+
+
 def test_design_doc_missing_created_is_flagged(repo: FixtureRepo) -> None:
     repo.write(
         "docs/design-docs/a.md",
@@ -2297,7 +2878,10 @@ def test_missing_config_file_fails_loudly(repo: FixtureRepo) -> None:
         ),
         ("Layer 1: `AsyncGumnut` + 429 retry", "layer-1-asyncgumnut--429-retry"),
         ("**Bold** and *italic*", "bold-and-italic"),
-        ("A [linked](http://x) word", "a-linked-word"),
+        # Link syntax reaching this function is *literal* text — `heading_text`
+        # already reduced a real link to its label — so both words survive, which
+        # is what GitHub renders for `# A \[linked\]\(http://x\) word`.
+        ("A [linked](http://x) word", "a-linkedhttpx-word"),
         ("Trailing punctuation!", "trailing-punctuation"),
     ],
 )
@@ -2307,12 +2891,12 @@ def test_slugify_heading(heading: str, slug: str) -> None:
 
 def test_collect_anchors_numbers_duplicates() -> None:
     text = "## Notes\n\n## Notes\n\n## Notes\n"
-    assert collect_anchors(text) == {"notes", "notes-1", "notes-2"}
+    assert anchors_in(text) == {"notes", "notes-1", "notes-2"}
 
 
 def test_collect_anchors_ignores_fenced_headings() -> None:
     text = "## Real\n\n```\n## Fake\n```\n"
-    assert collect_anchors(text) == {"real"}
+    assert anchors_in(text) == {"real"}
 
 
 def test_parse_frontmatter_stops_at_the_closing_delimiter() -> None:
@@ -2346,13 +2930,121 @@ def test_bump_date_line_preserves_indentation() -> None:
     assert "  last-updated: 2026-01-01" in bump_date_line(text, "2026-01-01")
 
 
-def test_blanking_preserves_line_count() -> None:
-    text = "a\n```\nb\n```\nc\n"
-    assert len(blank_noncontent(text).split("\n")) == len(text.split("\n"))
+def _script_metadata() -> dict:
+    """The script's PEP 723 block, parsed."""
+    import tomllib
+
+    source = SCRIPT.read_text(encoding="utf-8")
+    block = re.search(r"^# /// script$(.*?)^# ///$", source, re.M | re.S)
+    assert block is not None, "lint_docs.py must carry a PEP 723 script block"
+    # Exactly one comment level, per PEP 723's reference algorithm. Stripping two
+    # (`removeprefix("# ").removeprefix("#")`) mangles a TOML comment *inside* the
+    # block into bare text, which then fails to parse.
+    return tomllib.loads(
+        "\n".join(
+            line[2:] if line.startswith("# ") else line[1:]
+            for line in block.group(1).strip().split("\n")
+        )
+    )
 
 
-def test_blanking_preserves_offsets() -> None:
-    text = "see `[x](y.md)` here"
-    blanked = blank_noncontent(text)
-    assert len(blanked) == len(text)
-    assert "[x](y.md)" not in blanked
+def test_pep723_dependency_matches_test_environment() -> None:
+    """The dependency is declared twice, so pin the two together.
+
+    The PEP 723 header serves `uv run`; the test environment serves this suite,
+    which imports `lint_docs` as a module rather than shelling out. Nothing else
+    would notice if they drifted until a version-specific behavior diverged.
+    """
+    from markdown_it import __version__ as installed
+
+    meta = _script_metadata()
+    specs = [d for d in meta["dependencies"] if d.startswith("markdown-it-py")]
+    assert len(specs) == 1, meta["dependencies"]
+
+    bounds = re.search(r">=(\d+),<(\d+)", specs[0])
+    assert bounds is not None, specs[0]
+    lower, upper = bounds.groups()
+    major = int(installed.split(".")[0])
+    assert int(lower) <= major < int(upper), (
+        f"installed markdown-it-py {installed} is outside the script's "
+        f"declared range {specs[0]}"
+    )
+
+
+def test_script_lock_pins_the_tested_version() -> None:
+    """CI must run the parser the suite actually exercised.
+
+    Without the adjacent lockfile, `uv run` resolves the range in a fresh
+    ephemeral environment on every run, so the repo-wide check could execute a
+    release no test ever saw — and skip the resolver cooldown while doing it.
+    This asserts the lock and the test environment agree on the exact version.
+    """
+    import tomllib
+
+    from markdown_it import __version__ as installed
+
+    lock_path = SCRIPT.with_name(SCRIPT.name + ".lock")
+    assert lock_path.is_file(), (
+        f"{lock_path.name} is missing — regenerate with "
+        f"`uv lock --script scripts/lint_docs.py`"
+    )
+    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    pinned = {p["name"]: p["version"] for p in lock["package"]}
+    assert pinned.get("markdown-it-py") == installed, (
+        f"lockfile pins markdown-it-py {pinned.get('markdown-it-py')} but the test "
+        f"environment has {installed}; re-lock both so CI runs what the suite tested"
+    )
+
+
+def test_script_declares_the_supply_chain_cooldown() -> None:
+    """The ephemeral resolve would otherwise bypass the repo's cooldown policy."""
+    assert _script_metadata()["tool"]["uv"]["exclude-newer"] == "14 days"
+
+
+def test_blank_frontmatter_preserves_line_count() -> None:
+    """Token line numbers are file line numbers, so the blanking cannot shift them."""
+    text = "---\ntitle: A\nlast-updated: 2026-01-01\n---\n\n# Heading\n\nbody\n"
+    blanked = blank_frontmatter(text)
+    assert len(blanked.split("\n")) == len(text.split("\n"))
+    assert blanked.split("\n")[5] == "# Heading"
+
+
+def test_blank_frontmatter_leaves_a_doc_without_frontmatter_alone() -> None:
+    text = "# Heading\n\nbody\n"
+    assert blank_frontmatter(text) == text
+
+
+def test_blank_frontmatter_leaves_an_unterminated_block_alone() -> None:
+    """Blanking to EOF would hide the whole doc from every other check.
+
+    `check_frontmatter` reports the missing delimiter as its own violation.
+    """
+    text = "---\ntitle: A\n\n# Heading\n"
+    assert blank_frontmatter(text) == text
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("| a | b | c |", 3),
+        ("| a | b |", 2),
+        ("| a | b | c | d |", 4),
+        (r"| a | b \| c | d |", 3),
+        (r"| a | `x \| y` | c |", 3),
+        ("| a | x | y | c |", 4),
+        # Trailing-pipe escaping is decided by backslash *parity*. An even run
+        # means the pipe is the row delimiter: a final cell ending in a literal
+        # backslash counted four cells for a valid three-column row.
+        ("| a | b | c" + "\\" * 2 + "|", 3),
+        # An odd run escapes it, so there is no closing delimiter and the last
+        # cell is `c|`.
+        ("| a | b | c" + "\\" + "|", 3),
+    ],
+)
+def test_raw_cell_count_counts_unescaped_delimiters(line: str, expected: int) -> None:
+    """The parser normalizes column counts away, so the source line is the authority.
+
+    A three-column table pads a short row and *truncates* a long one, so without
+    this both shapes would pass.
+    """
+    assert raw_cell_count(line) == expected

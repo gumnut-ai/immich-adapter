@@ -46,6 +46,12 @@ Immich clients are unmodified — either the original open-source Immich apps or
 - **User data storage** — All user data lives in Gumnut; the adapter only stores session metadata in Redis
 - **Image processing** — ML inference, thumbnail generation, etc. are handled by Celery workers in the backend
 
+### Single-library assumption
+
+Immich has no concept the adapter can map a Gumnut library onto — `/api/libraries` is a stub returning an empty list, and no Immich request carries a library selector. Every Gumnut listing call the adapter makes therefore goes out **unqualified by `library_id`**: the timeline, search, trash, memories, map markers, stack reads, and the sync stream all rely on the backend inferring the caller's only library.
+
+The Gumnut API makes `library_id` optional for a single-library account and **required** for an account that owns more than one. So the adapter today serves single-library accounts only, and a multi-library account fails on essentially every listing endpoint rather than on any one of them. Closing that gap is a cross-cutting change — pick a library (or fan out across all of them) once, in shared request context, and thread it through every list call — not something an individual route should solve locally. A route that qualified its own calls in isolation would report full results while its neighbours still failed, which is harder to diagnose than a uniform failure.
+
 ## Authentication and Session Management
 
 The adapter uses a **session token architecture** that decouples client authentication from backend JWT lifecycle. This is necessary because Immich clients expect stable authentication tokens, while Gumnut JWTs have short lifetimes and refresh frequently.
@@ -530,6 +536,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | WebSockets | Real-time upload/trash/restore/delete notifications | Socket.IO with room-based messaging |
 | Memories (read) | Search, get-by-id, statistics for OnThisDay memories | Synthesized from per-day asset queries; mutations still stubbed |
 | Map (markers) | `GET /map/markers` and album-scoped `GET /albums/{id}/map-markers` return GPS-tagged assets | Server-side geotag filter via `client.assets.list(bbox=...)`; the album route also passes the album filter; capped at 2000 markers, with a degraded-path scan bound if the coordinate filter is unavailable; reverse-geocode still stubbed |
+| Stacks (read) | `GET /stacks` and `GET /stacks/{id}` return real burst stacks with their live members | Both go through `routers/utils/stack_conversion.py` for member hydration and cover resolution. The list walks the Gumnut API's stack cursor rather than answering with one page, since Immich's `searchStacks` has no pagination; bounded by both a 500-stack cap and a 5000-member hydration budget spent from each row's own asset count, whichever binds first, with walked/budgeted/hydrated/returned counts, a truncation flag, and which bound fired all logged. `primaryAssetId` is answered by resolving the asset's own stack and comparing effective covers, not by forwarding the backend's pinned-cover filter, and an unmatched or unknown ID yields `[]` rather than a 404. A stack with no live members is omitted from the list and 404s from the detail route. Writes still stubbed |
 
 ### Stub implementations
 
@@ -543,7 +550,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | Notifications | Push notifications not implemented |
 | Partners | User sharing not implemented |
 | Duplicates | Duplicate detection handled differently in Gumnut |
-| Stacks | The `/api/stacks` routes are not wired up yet; the translation layer (`routers/utils/stack_conversion.py`) exists and the Gumnut API's stack resource is complete. The timeline surface is not stubbed — bucket contents already collapse bursts and carry stack tuples |
+| Stacks (write) | Create, update-cover, delete, bulk-delete, and remove-asset still return fake or empty responses; the Gumnut API's stack resource covers all of them, so this is remaining adapter work rather than a backend gap. The read routes and the timeline surface are not stubbed — bucket contents already collapse bursts and carry stack tuples |
 
 ## Key Files
 

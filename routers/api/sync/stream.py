@@ -144,8 +144,11 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
 #                          EXIF arrives via AssetExifsV1.
 #   - MemoriesV1 /
 #     MemoryToAssetsV1:    Gumnut has no memories feature; the tab renders empty.
-#   - StacksV1:            Gumnut has no stacks; assets carry stackId=None and
-#                          render individually, so absent stack rows hide nothing.
+#   - StacksV1:            stacks exist and are readable over REST (`/api/stacks`),
+#                          but nothing feeds them into the sync stream, and the
+#                          sync asset converters still emit stackId=None — so a
+#                          stack row here would name a grouping no synced asset
+#                          claims membership in.
 # UserMetadataV1 is deliberately NOT here — it is emitted (a synthesized
 # preferences row); see gumnut_user_to_sync_user_metadata_v1.
 _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {

@@ -107,9 +107,34 @@ jobs:
         with:
           python-version-file: ".python-version"
 
-      # No install step: the linter is stdlib-only so it runs anywhere python3
-      # does, which is the point of keeping it dependency-free. Its test suite
-      # runs in the `test` job above, via the ordinary pytest collection.
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
+      # `uv run` rather than `python3`: the linter declares markdown-it-py in its
+      # own PEP 723 header, so uv resolves it with no project to install. No
+      # `uv sync` here — this job deliberately does not build the adapter's
+      # environment, so the linter is invoked exactly the way a human or agent
+      # invokes it. Its test suite runs in the `test` job above, via the ordinary
+      # pytest collection.
+      #
+      # `--locked --script` resolves from the adjacent `lint_docs.py.lock` and
+      # fails if it is stale. Without it uv resolves the `>=3,<5` range fresh in an
+      # ephemeral environment on every run, so this gate would execute a parser
+      # release the test suite never saw, and skip the 14-day resolver cooldown
+      # that the lock and the script's own `[tool.uv]` block exist to enforce.
+      #
+      # `--no-config` keeps that resolution independent of whatever project sits
+      # around the script. uv otherwise *discovers* the surrounding
+      # `pyproject.toml`'s `[tool.uv]` settings and folds them into the script's
+      # resolution, then rejects the script lock as stale — which is how this
+      # failed in the adapter repo, whose root `pyproject.toml` carries an
+      # `exclude-newer-package` entry the script never declared. (`--no-project`
+      # does not help: it stops the project being *installed*, not being read as
+      # config.) The script's own inline `[tool.uv]` block is script metadata
+      # rather than a config file, so the cooldown above still applies. The script
+      # is byte-identical across repos, so its resolution must be too.
       #
       # Runs *every* enabled check rather than naming a subset, so adding a check
       # to lint_docs.py can't leave it silently unrun here.
@@ -117,16 +142,37 @@ jobs:
         env:
           # Passed through env rather than interpolated into the run body.
           #
-          # On a pull_request, the event payload's base SHA is more reliable than
-          # relying on checkout to materialize an `origin/main` ref, and since the
-          # checked-out ref is the merge commit, this diff is exactly the PR's net
-          # change. A push has no PR base, so it uses the pushed commit: the
-          # merge-base becomes HEAD itself, freshness finds no changed docs and
-          # no-ops, and the repo-wide structural checks still run.
+          # On a pull_request this is the base *branch*, not the event payload's
+          # `base.sha`. That sha is frozen when the PR is opened and never
+          # advances, so on any PR older than the base branch's latest doc edit
+          # the diff swept in main's own commits: their docs read as "changed by
+          # this PR", and the freshness rule then demanded today's date on files
+          # the PR never touched. Resolving the branch instead makes the
+          # merge-base track main, which is what this step always meant to
+          # compare against — and it stays correct when main advances after the
+          # merge ref was built, since merge-base finds the common ancestor
+          # rather than assuming one side is reachable from the other.
+          #
+          # A push has no PR base, so it uses the pushed commit: the merge-base
+          # becomes HEAD itself, freshness finds no changed docs and no-ops, and
+          # the repo-wide structural checks still run.
           #
           # Branching on `event_name` rather than leaning on
-          # `pull_request.base.sha || github.sha` to null-propagate: an empty
+          # `pull_request.base.ref || github.sha` to null-propagate: an empty
           # `--base` is a hard exit 1, and the push path can't be exercised until
           # this is on main, so the failure would land there.
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
-        run: python3 scripts/lint_docs.py --base "$BASE_SHA"
+          LINT_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.event.pull_request.base.ref) || github.sha }}
+        # `origin/<base>` comes from the checkout above: `fetch-depth: 0` fetches
+        # `+refs/heads/*:refs/remotes/origin/*`, so every branch is already a
+        # remote-tracking ref here. Deliberately no `git fetch` step to
+        # materialize it — `persist-credentials: false` leaves no usable
+        # credential behind for one.
+        #
+        # The ref is verified rather than assumed because an absent one fails
+        # *quietly*: `resolve_merge_base` would fall back to `HEAD^`, scan a
+        # one-commit diff, find nothing, and report success. A missing base
+        # should stop the run, not silently empty it.
+        run: |
+          git rev-parse --verify --quiet "$LINT_BASE^{commit}" > /dev/null \
+            || { echo "lint-docs: base '$LINT_BASE' did not resolve" >&2; exit 1; }
+          uv run --no-config --locked --script scripts/lint_docs.py --base "$LINT_BASE"

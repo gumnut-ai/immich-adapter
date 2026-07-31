@@ -46,15 +46,9 @@ from tests.conftest import (
     mock_list_stacks,
     make_gumnut_stack,
     make_gumnut_stack_members,
+    make_gumnut_stack_with_members,
     make_sdk_status_error,
 )
-
-
-def _stack_with_members(*, count: int, trashed: set[int] | None = None, **stack_kwargs):
-    """Build a (stack, members) pair whose members all point at the stack."""
-    stack = make_gumnut_stack(**stack_kwargs)
-    members = make_gumnut_stack_members(count, stack_id=stack.id, trashed=trashed)
-    return stack, members
 
 
 def _client_returning(members):
@@ -91,20 +85,20 @@ class TestResolveEffectivePrimary:
     """The one rule every Immich stack surface shares for picking a cover."""
 
     def test_pinned_cover_wins(self):
-        stack, members = _stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3)
         stack.primary_asset_id = members[2].id
 
         assert resolve_effective_primary(stack, members) is members[2]
 
     def test_unpinned_falls_back_to_first_live_member(self):
-        stack, members = _stack_with_members(count=3, primary_asset_id=None)
+        stack, members = make_gumnut_stack_with_members(count=3, primary_asset_id=None)
 
         assert resolve_effective_primary(stack, members) is members[0]
 
     def test_unpinned_skips_trashed_members(self):
         """A live frame outranks a trashed one, so Immich never renders a
         trashed thumbnail for a stack that still has live members."""
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, trashed={0, 1}, primary_asset_id=None
         )
 
@@ -112,14 +106,14 @@ class TestResolveEffectivePrimary:
 
     def test_trashed_pin_is_preserved(self):
         """A pinned cover stays the cover after being trashed."""
-        stack, members = _stack_with_members(count=3, trashed={2})
+        stack, members = make_gumnut_stack_with_members(count=3, trashed={2})
         stack.primary_asset_id = members[2].id
 
         assert resolve_effective_primary(stack, members) is members[2]
 
     def test_all_trashed_falls_back_to_first_member(self):
         """A fully-trashed stack still names a cover rather than dropping out."""
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, trashed={0, 1, 2}, primary_asset_id=None
         )
 
@@ -128,7 +122,7 @@ class TestResolveEffectivePrimary:
     def test_pin_absent_from_members_falls_back(self):
         """A cover that left the stack can't be named, so resolution falls
         through to the same fallbacks as an unpinned stack."""
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         stack.primary_asset_id = make_gumnut_stack_members(1, stack_id=stack.id)[0].id
 
         assert resolve_effective_primary(stack, members) is members[0]
@@ -144,7 +138,7 @@ class TestFetchStackMembers:
     async def test_pins_the_member_read_arguments(self):
         """Pins the arguments a stack read can't be correct without — see
         `fetch_stack_members` for why each is required."""
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         client = _client_returning(members)
 
         result = await fetch_stack_members(client, stack.id)
@@ -187,7 +181,7 @@ class TestFetchStackMembers:
 class TestHydrateStack:
     @pytest.mark.anyio
     async def test_converts_ids_and_resolves_cover(self):
-        stack, members = _stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3)
         stack.primary_asset_id = members[1].id
         client = _client_returning(members)
 
@@ -202,7 +196,9 @@ class TestHydrateStack:
     async def test_carries_the_gumnut_live_count(self):
         """The row's count reaches callers unchanged, so it can sit below the
         hydrated member count rather than being recomputed from it."""
-        stack, members = _stack_with_members(count=3, trashed={2}, asset_count=2)
+        stack, members = make_gumnut_stack_with_members(
+            count=3, trashed={2}, asset_count=2
+        )
         client = _client_returning(members)
 
         hydrated = await hydrate_stack(client, stack)
@@ -247,7 +243,7 @@ class TestHydrateStack:
     ):
         """Pin both IDs: the pinned one names what was lost, the effective one
         what replaced it. See `hydrate_stack` for why this case warns."""
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         departed = make_gumnut_stack_members(1, stack_id=stack.id)[0]
         stack.primary_asset_id = departed.id
         client = _client_returning(members)
@@ -272,7 +268,7 @@ class TestHydrateStack:
         those are different things — warning here would fire on every stack
         whose cover sits in the trash.
         """
-        stack, members = _stack_with_members(count=3, trashed={1})
+        stack, members = make_gumnut_stack_with_members(count=3, trashed={1})
         stack.primary_asset_id = members[1].id
         client = _client_returning(members)
 
@@ -286,7 +282,7 @@ class TestHydrateStack:
     @pytest.mark.anyio
     async def test_hydrated_stack_logs_nothing(self, caplog: pytest.LogCaptureFixture):
         """The happy path must stay silent, or the warning above is just noise."""
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         client = _client_returning(members)
 
         with caplog.at_level(logging.WARNING, logger="routers.utils.stack_conversion"):
@@ -442,7 +438,7 @@ class TestBuildStackResponse:
     @pytest.mark.anyio
     async def test_builds_dto_with_live_members_only(self, mock_current_user):
         """Pins the live-only rule stated in `build_stack_response`."""
-        stack, members = _stack_with_members(count=3, trashed={2})
+        stack, members = make_gumnut_stack_with_members(count=3, trashed={2})
         stack.primary_asset_id = members[1].id
         client = _client_returning(members)
 
@@ -467,7 +463,7 @@ class TestBuildStackResponse:
         The pin is deliberately *not* the API's first-returned member, so
         emitting members in fetch order fails.
         """
-        stack, members = _stack_with_members(count=4)
+        stack, members = make_gumnut_stack_with_members(count=4)
         stack.primary_asset_id = members[2].id
         client = _client_returning(members)
 
@@ -485,7 +481,7 @@ class TestBuildStackResponse:
     @pytest.mark.anyio
     async def test_trashed_pin_is_absent_from_assets(self, mock_current_user):
         """Pins the trashed-pin consequence stated in `build_stack_response`."""
-        stack, members = _stack_with_members(count=3, trashed={1})
+        stack, members = make_gumnut_stack_with_members(count=3, trashed={1})
         stack.primary_asset_id = members[1].id
         client = _client_returning(members)
 
@@ -502,7 +498,7 @@ class TestBuildStackResponse:
     @pytest.mark.anyio
     async def test_all_trashed_stack_yields_empty_assets(self, mock_current_user):
         """A fully-trashed stack still names a cover, but carries no assets."""
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, trashed={0, 1, 2}, primary_asset_id=None
         )
         client = _client_returning(members)
@@ -551,9 +547,10 @@ def test_sdk_stack_method_signature(method_name: str, expected_params: set[str])
 
 
 # The row classes `GumnutStackRow` claims are interchangeable. Nothing else
-# checks that claim: every test builds rows with a `Mock`, which satisfies any
-# Protocol by answering to any attribute, and while `routers/api/stacks.py` is
-# stubbed there is no production call site passing a real row.
+# checks that claim at runtime: every test builds rows with a `Mock`, which
+# satisfies any Protocol by answering to any attribute. The stack read routes do
+# pass real rows, so pyright checks the classes they use — but only those, and
+# only for the calls those routes happen to make.
 #
 # The annotation is the actual guard — pyright rejects the list if any of these
 # classes stops satisfying the Protocol. The test below re-checks it at runtime
@@ -596,7 +593,7 @@ def test_asset_list_accepts_stack_id_filter():
 def test_trashed_member_fixture_is_actually_trashed():
     """Guards the builder itself: an unset `Mock.trashed_at` is truthy, which
     would make every "live" assertion above pass for the wrong reason."""
-    stack, members = _stack_with_members(count=2, trashed={1})
+    stack, members = make_gumnut_stack_with_members(count=2, trashed={1})
 
     assert members[0].trashed_at is None
     assert isinstance(members[1].trashed_at, datetime)
@@ -608,7 +605,7 @@ def test_stack_member_fixture_captures_in_ascending_order():
     """Guards the other half of the builder: the cover rules below assert which
     frame is *earliest*, which means nothing if every member shares a
     timestamp."""
-    _, members = _stack_with_members(count=3)
+    _, members = make_gumnut_stack_with_members(count=3)
 
     captured = [member.local_datetime for member in members]
     assert captured == sorted(captured)
@@ -690,7 +687,7 @@ class TestFetchLiveStackMembers:
         """`state="live"` and `order="asc"` are what make the result usable as
         `select_timeline_cover`'s complete-live-set argument; no `include`,
         because the caller reads only `id`."""
-        stack, members = _stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2)
         client = _client_returning(members)
 
         result = await fetch_live_stack_members(client, stack.id)
@@ -729,13 +726,13 @@ class TestSelectTimelineCover:
     `resolve_effective_primary`."""
 
     def test_live_pin_wins(self):
-        stack, members = _stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3)
         stack.primary_asset_id = members[2].id
 
         assert select_timeline_cover(stack, members) == members[2].id
 
     def test_unpinned_falls_back_to_earliest_frame(self):
-        stack, members = _stack_with_members(count=3, primary_asset_id=None)
+        stack, members = make_gumnut_stack_with_members(count=3, primary_asset_id=None)
 
         assert select_timeline_cover(stack, members) == members[0].id
 
@@ -753,7 +750,7 @@ class TestSelectTimelineCover:
         Each function gets the input it really receives: the hydrated path sees
         every member, the timeline path only the live ones.
         """
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, trashed={0}, primary_asset_id=None
         )
         stack.primary_asset_id = members[0].id
@@ -764,7 +761,7 @@ class TestSelectTimelineCover:
     def test_pin_naming_no_live_frame_falls_back(self):
         """A pin that left the stack entirely — no clause-1 match for either
         rule, so both promote the earliest live frame."""
-        stack, members = _stack_with_members(count=3, primary_asset_id=None)
+        stack, members = make_gumnut_stack_with_members(count=3, primary_asset_id=None)
         stack.primary_asset_id = make_gumnut_asset().id
 
         assert select_timeline_cover(stack, members) == members[0].id
@@ -793,7 +790,7 @@ class TestResolveTimelineStacks:
     async def test_complete_stack_resolves_without_a_member_read(self):
         """The fast path: a bucket holding `asset_count` live members holds the
         stack's whole live set, so the cover needs no extra round-trip."""
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, asset_count=3, primary_asset_id=None
         )
         client = _timeline_client([stack])
@@ -810,7 +807,7 @@ class TestResolveTimelineStacks:
     async def test_bucket_order_does_not_decide_the_cover(self):
         """Buckets arrive newest-first by default, so a rule reading position
         instead of capture time would pick the burst's last frame."""
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, asset_count=3, primary_asset_id=None
         )
         client = _timeline_client([stack])
@@ -823,7 +820,7 @@ class TestResolveTimelineStacks:
     async def test_partial_stack_falls_back_to_a_member_read(self):
         """A burst straddling a month boundary leaves the bucket short of the
         row's count; the true cover may not be in the bucket at all."""
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, asset_count=3, primary_asset_id=None
         )
         client = _timeline_client([stack], members_by_stack={stack.id: members})
@@ -838,8 +835,12 @@ class TestResolveTimelineStacks:
 
     @pytest.mark.anyio
     async def test_several_stacks_batch_into_one_row_request(self):
-        first, first_members = _stack_with_members(count=2, primary_asset_id=None)
-        second, second_members = _stack_with_members(count=2, primary_asset_id=None)
+        first, first_members = make_gumnut_stack_with_members(
+            count=2, primary_asset_id=None
+        )
+        second, second_members = make_gumnut_stack_with_members(
+            count=2, primary_asset_id=None
+        )
         first.asset_count = 2
         second.asset_count = 2
         client = _timeline_client([first, second])
@@ -860,7 +861,7 @@ class TestResolveTimelineStacks:
     ):
         """A stack dissolved between the asset read and the stack read must not
         collapse its former members away — they are real photos."""
-        stack, members = _stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3)
         client = _timeline_client([])
 
         with caplog.at_level(logging.WARNING):
@@ -877,7 +878,7 @@ class TestResolveTimelineStacks:
         """The badge reports the stack's live size, not how many of its frames
         this bucket happens to hold — the two differ for any straddling burst,
         and every other test has them equal."""
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, asset_count=3, primary_asset_id=None
         )
         client = _timeline_client([stack], members_by_stack={stack.id: members})
@@ -891,8 +892,12 @@ class TestResolveTimelineStacks:
         """`zip(read_ids, fetched_members)` rests on the fan-out preserving input
         order. A transposition would hand one stack the other's members, pick a
         cover that is not a member, and collapse away every frame it really has."""
-        first, first_members = _stack_with_members(count=3, primary_asset_id=None)
-        second, second_members = _stack_with_members(count=3, primary_asset_id=None)
+        first, first_members = make_gumnut_stack_with_members(
+            count=3, primary_asset_id=None
+        )
+        second, second_members = make_gumnut_stack_with_members(
+            count=3, primary_asset_id=None
+        )
         first.asset_count = 3
         second.asset_count = 3
         client = _timeline_client(
@@ -914,7 +919,7 @@ class TestResolveTimelineStacks:
         """`local_datetime` can arrive naive or aware, and comparing the two
         raises — which would 500 a whole month. Without the UTC normalization in
         the sort key this raises instead of resolving."""
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=3, asset_count=3, primary_asset_id=None
         )
         members[1].local_datetime = members[1].local_datetime.replace(tzinfo=None)
@@ -930,8 +935,12 @@ class TestResolveTimelineStacks:
     ):
         """One flaky read should cost that stack its collapse, not the batch —
         `gather_with_concurrency` would otherwise propagate and lose the month."""
-        healthy, healthy_members = _stack_with_members(count=3, primary_asset_id=None)
-        broken, broken_members = _stack_with_members(count=3, primary_asset_id=None)
+        healthy, healthy_members = make_gumnut_stack_with_members(
+            count=3, primary_asset_id=None
+        )
+        broken, broken_members = make_gumnut_stack_with_members(
+            count=3, primary_asset_id=None
+        )
         healthy.asset_count = 3
         broken.asset_count = 3
 
@@ -966,7 +975,7 @@ class TestResolveTimelineStacks:
         total = MAX_TIMELINE_STACK_MEMBER_READS + 5
         stacks, bucket, members_by_stack = [], [], {}
         for _ in range(total):
-            stack, members = _stack_with_members(
+            stack, members = make_gumnut_stack_with_members(
                 count=3, asset_count=3, primary_asset_id=None
             )
             stacks.append(stack)
@@ -1000,7 +1009,7 @@ class TestResolveTimelineStacks:
         Skipping trashed assets when grouping makes the totals disagree instead,
         routing the stack to the member read that resolves it correctly.
         """
-        stack, members = _stack_with_members(
+        stack, members = make_gumnut_stack_with_members(
             count=2, asset_count=2, trashed={0}, primary_asset_id=None
         )
         client = _timeline_client([stack], members_by_stack={stack.id: [members[1]]})
@@ -1018,7 +1027,9 @@ class TestResolveTimelineStacks:
         equals the row's zero count, so the stack classifies complete and the
         member read is never issued.
         """
-        stack, members = _stack_with_members(count=2, asset_count=0, trashed={0, 1})
+        stack, members = make_gumnut_stack_with_members(
+            count=2, asset_count=0, trashed={0, 1}
+        )
         client = _timeline_client([stack])
 
         resolved = await resolve_timeline_stacks(client, members)
@@ -1031,7 +1042,9 @@ class TestResolveTimelineStacks:
     async def test_partial_stack_whose_member_read_comes_back_empty(self):
         """The fallback twin of the case above: the row claims live members but
         the read returns none, so there is still no frame to collapse to."""
-        stack, members = _stack_with_members(count=2, asset_count=2, trashed={0, 1})
+        stack, members = make_gumnut_stack_with_members(
+            count=2, asset_count=2, trashed={0, 1}
+        )
         client = _timeline_client([stack], members_by_stack={stack.id: []})
 
         resolved = await resolve_timeline_stacks(client, members)
@@ -1047,7 +1060,7 @@ class TestResolveTimelineStacks:
         """The guard exists so a change to the `asset_stack_` prefix contract
         degrades instead of 500-ing the timeline — the adapter is that contract's
         first production consumer. Without it this raises out of the route."""
-        stack, members = _stack_with_members(count=2, asset_count=2)
+        stack, members = make_gumnut_stack_with_members(count=2, asset_count=2)
         stack.id = "asset_stackX_notdecodable"
         for member in members:
             member.stack_id = stack.id
@@ -1065,7 +1078,7 @@ class TestResolveTimelineStacks:
 
 class TestTimelineStacks:
     def test_only_non_cover_members_are_collapsed_away(self):
-        stack, members = _stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3)
         resolved = TimelineStacks(
             covers={stack.id: members[1].id}, tuples={stack.id: ["uuid", "3"]}
         )
