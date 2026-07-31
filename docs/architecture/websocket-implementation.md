@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation Documentation for immich-adapter"
-last-updated: 2026-07-15
+last-updated: 2026-07-31
 ---
 
 # WebSocket Implementation Documentation for immich-adapter
@@ -179,13 +179,15 @@ Starting with the current upload-success events, but designed for future extensi
 |---|---|---|---|---|
 | `on_person_thumbnail` | `string` (personId) | Page-specific | No | Cache busting after face detection |
 
-### Not Applicable (Feature Not Supported)
+### Not Applicable (Feature Not Supported by the Adapter)
 
-These events require features that don't exist in the Gumnut API:
+These events are not currently emitted by the adapter. Some require features
+that don't exist in the Gumnut API; others depend on adapter surfaces that
+remain unimplemented:
 
 | Event | Reason |
 |---|---|
-| `on_asset_stack_update` | Stacks not implemented |
+| `on_asset_stack_update` | Gumnut supports stacks, but the adapter's stack routes, timeline/detail fields, sync stream, and event wiring are not implemented |
 | `on_asset_hidden` | Asset visibility not supported |
 | `on_notification` | Album sharing & job failures not implemented |
 | `on_config_update` | Config management not implemented |

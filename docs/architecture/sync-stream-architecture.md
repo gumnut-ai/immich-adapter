@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-07-14
+last-updated: 2026-07-31
 ---
 
 # Sync Stream Architecture
@@ -85,9 +85,9 @@ The invariant tests in `test_sync_v2.py` assert that every V2 type in `_SYNC_TYP
 
 ## No-Op Request Types
 
-Immich sync types that are accepted but have no Gumnut equivalent (e.g., `AssetEditsV1` — we don't support editing) go in `_NOOP_REQUEST_TYPES` in `stream.py`. This prevents "unsupported type" warnings while making the no-op explicit. Do not just add them to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that silently drops them.
+Immich sync types that are accepted but the adapter cannot currently populate from Gumnut (e.g., `AssetEditsV1` — we don't support editing) go in `_NOOP_REQUEST_TYPES` in `stream.py`. This prevents "unsupported type" warnings while making the no-op explicit. Do not just add them to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that silently drops them.
 
-The v3 mobile client requests a broad set of these on **every** sync (partner-*, stacks-*, memories-*, `AssetMetadataV1`, `AssetOcrV1`, `AlbumAssetExifsV1`, the V2 partner/album-asset variants) — all no-ops for a single-user Gumnut backend with no sharing/stacks/memories/OCR. They all belong in `_NOOP_REQUEST_TYPES` so the per-sync "unsupported types" warning stays quiet. `UserMetadataV1` is the one requested type the adapter *does* synthesize (see "User Preferences" above), so it is deliberately **not** a no-op — it's handled specially alongside `UsersV1`/`AuthUsersV1`.
+The v3 mobile client requests a broad set of these on **every** sync (partner-*, stacks-*, memories-*, `AssetMetadataV1`, `AssetOcrV1`, `AlbumAssetExifsV1`, the V2 partner/album-asset variants). The adapter keeps them as no-ops where the required surface is absent: Gumnut is single-user (so there is no sharing), it has no memories or OCR support, and although Gumnut now exposes a stack resource, this adapter has not wired stacks into the sync stream. They all belong in `_NOOP_REQUEST_TYPES` so the per-sync "unsupported types" warning stays quiet. `UserMetadataV1` is the one requested type the adapter *does* synthesize (see "User Preferences" above), so it is deliberately **not** a no-op — it's handled specially alongside `UsersV1`/`AuthUsersV1`.
 
 ## Contract with the Gumnut API
 
