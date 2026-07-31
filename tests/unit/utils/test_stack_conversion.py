@@ -901,6 +901,37 @@ class TestResolveAssetStackSummaries:
         assert getattr(records[0], "stack_summary_truncated_stacks", None) == 3
 
     @pytest.mark.anyio
+    async def test_exact_budget_admits_every_summary_without_truncating(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """At *exactly* `STACK_SUMMARY_COVER_READ_BUDGET` unpinned stacks the
+        budget is spent to the last read: every summary is admitted and no
+        truncation warning fires. The over-budget tests (budget+2, budget+3)
+        always expect the warning, so only this boundary case rules out a
+        too-eager guard that drops the last admissible row, or a warning keyed
+        off input size rather than an actual drop. The `>=` vs `>` comparator
+        itself is already pinned by those over-budget tests — a `>` slip admits
+        one row too many there — since at exactly the budget the two comparators
+        behave identically and this case can't tell them apart."""
+        exactly = STACK_SUMMARY_COVER_READ_BUDGET
+        stacks = [make_gumnut_stack(primary_asset_id=None) for _ in range(exactly)]
+        members_by_stack = {
+            stack.id: make_gumnut_stack_members(2, stack_id=stack.id)
+            for stack in stacks
+        }
+        assets = [make_gumnut_asset(stack_id=stack.id) for stack in stacks]
+        client = _summary_client(stacks, members_by_stack)
+
+        with caplog.at_level(logging.WARNING, logger="routers.utils.stack_conversion"):
+            summaries = await resolve_asset_stack_summaries(client, assets)
+
+        assert len(summaries) == exactly
+        assert client.assets.list.call_count == exactly
+        assert not [
+            r for r in caplog.records if getattr(r, "stack_summary_truncated", None)
+        ]
+
+    @pytest.mark.anyio
     async def test_pinned_stacks_do_not_spend_the_budget(
         self, caplog: pytest.LogCaptureFixture
     ):

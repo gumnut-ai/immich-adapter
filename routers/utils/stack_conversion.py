@@ -524,18 +524,10 @@ async def _resolve_asset_stack_summaries(
     `stack_summary_truncated` in the log below is the signal that a real library
     is hitting it.
 
-    **A stack read that fails degrades the page rather than failing it.** The
-    block is decoration on a response whose real payload is the assets: losing a
-    burst badge costs a client nothing it can't recover on the next read, while
-    failing the request costs it the assets too. That matters more than it
-    sounds, because the global `GumnutError` handler forwards an upstream status
-    verbatim — a 404 from *this* lookup on `GET /api/assets/{id}` would reach
-    Immich web as "that asset is gone" and close the viewer on an asset that
-    exists. It also keeps this helper from overriding a caller's own posture:
-    `search_memories` deliberately tolerates a failed year (see
-    `_gather_year_assets`), and an all-or-nothing summary bolted onto it would
-    have made a cosmetic badge fail the whole carousel. Contrast `hydrate_stacks`,
-    which is right to fail loudly — there the stack *is* the response.
+    A stack-row lookup failure propagates rather than degrading the page; the
+    `resolve_asset_stack_summaries` wrapper catches it and owns that posture.
+    (Cover-read failures degrade per stack inside `resolve_stack_cover` and
+    never reach here.)
     """
     # Deduped and order-preserving, so the log and any future budget count
     # distinct stacks rather than stacked assets, and a fixed input yields a
