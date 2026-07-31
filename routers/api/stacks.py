@@ -1,6 +1,6 @@
 import logging
 from typing import Annotated, List
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from gumnut import AsyncGumnut, NotFoundError
@@ -58,21 +58,7 @@ SEARCH_STACKS_MEMBER_BUDGET = 5000
 def _build_representable_response(
     hydrated: HydratedStack | None, current_user: UserResponseDto
 ) -> StackResponseDto | None:
-    """Build a stack's Immich DTO, or `None` when it can't form a valid one.
-
-    Both routes need the same notion of "not representable", and it is wider
-    than `hydrate_stack`'s member-less case: a stack whose members are *all*
-    trashed hydrates fine (`resolve_effective_primary` deliberately keeps naming
-    a cover) but converts to `assets: []` with a `primaryAssetId` no client can
-    fetch — breaking both contracts `build_stack_response` documents, since
-    clients read `assets.length` as the stack's size and `assets[0]` as the
-    cover. Upstream Immich never emits that DTO: it deletes a stack once it
-    falls below two assets, so nothing is written to handle it.
-
-    Trashing every frame of a burst is ordinary user action rather than a
-    backend inconsistency, so unlike the member-less case this one is not
-    logged — `hydrate_stack` already logs that one.
-    """
+    """Build an Immich DTO, or `None` when the stack has no live members."""
     if hydrated is None:
         return None
     response = build_stack_response(hydrated, current_user)
@@ -242,13 +228,45 @@ async def delete_stacks(request: BulkIdsDto):
     return
 
 
-@router.post("", status_code=201)
-async def create_stack(request: StackCreateDto) -> StackResponseDto:
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_stack(
+    request: StackCreateDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
+) -> StackResponseDto:
+    """Group the requested assets into a new stack, covered by the first one.
+
+    The backend owns validation and reconciliation, so the request is forwarded
+    once and the response is hydrated from the returned stack. Oversized
+    requests are not chunked because a partial merge cannot be rolled back.
+
+    Unlike reads, a successfully created stack with no live members is returned
+    so the client still receives its ID.
     """
-    Create a stack.
-    This is a stub implementation that returns a fake stack response.
-    """
-    return StackResponseDto(id=uuid4(), primaryAssetId=request.assetIds[0], assets=[])
+    gumnut_asset_ids = [
+        uuid_to_gumnut_asset_id(asset_id) for asset_id in request.assetIds
+    ]
+    stack = await client.stacks.create_stack(
+        asset_ids=gumnut_asset_ids,
+        primary_asset_id=gumnut_asset_ids[0],
+    )
+
+    hydrated = await hydrate_stack(client, stack)
+    if hydrated is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Stack was created but could not be read back",
+        )
+
+    response = build_stack_response(hydrated, current_user)
+    if not response.assets:
+        logger.warning(
+            "Created stack %s has no live members; returning a stack response "
+            "with an empty asset list",
+            stack.id,
+            extra={"stack_id": stack.id, "stack_asset_count": stack.asset_count},
+        )
+    return response
 
 
 @router.get("/{id}")
@@ -275,16 +293,36 @@ async def get_stack(
 
 
 @router.put("/{id}")
-async def update_stack(id: UUID, request: StackUpdateDto) -> StackResponseDto:
+async def update_stack(
+    id: UUID,
+    request: StackUpdateDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
+) -> StackResponseDto:
+    """Set the stack cover, or return the unchanged stack when none is supplied.
+
+    This deprecated PUT remains the route used by generated Immich clients;
+    the replacement PATCH is excluded from the upstream OpenAPI spec. The
+    backend validates the cover, and unrepresentable stacks return 404 as they
+    do from `get_stack`.
     """
-    Update stack.
-    This is a stub implementation that returns a fake stack response.
-    """
-    return StackResponseDto(
-        id=id,
-        primaryAssetId=request.primaryAssetId if request.primaryAssetId else uuid4(),
-        assets=[],
-    )
+    gumnut_stack_id = uuid_to_gumnut_stack_id(id)
+
+    if request.primaryAssetId is None:
+        stack = await client.stacks.retrieve_stack(gumnut_stack_id)
+    else:
+        stack = await client.stacks.set_cover(
+            gumnut_stack_id,
+            primary_asset_id=uuid_to_gumnut_asset_id(request.primaryAssetId),
+        )
+
+    hydrated = await hydrate_stack(client, stack)
+    response = _build_representable_response(hydrated, current_user)
+    if response is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Stack not found"
+        )
+    return response
 
 
 @router.delete("/{id}", status_code=204)
