@@ -1173,7 +1173,10 @@ async def update_asset(
     """
     payload = _build_metadata_patch(request)
     if payload is None:
-        return await get_asset_info(id, client=client, current_user=current_user)
+        gumnut_asset = await client.assets.retrieve(
+            uuid_to_gumnut_asset_id(id), include=ASSET_INCLUDE
+        )
+        return convert_gumnut_asset_to_immich(gumnut_asset, current_user)
 
     gumnut_asset = await client.assets.update_asset(
         uuid_to_gumnut_asset_id(id), **payload

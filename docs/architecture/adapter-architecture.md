@@ -545,7 +545,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | WebSockets | Real-time upload/trash/restore/delete notifications | Socket.IO with room-based messaging |
 | Memories (read) | Search, get-by-id, statistics for OnThisDay memories | Synthesized from per-day asset queries; mutations still stubbed |
 | Map (markers) | `GET /map/markers` and album-scoped `GET /albums/{id}/map-markers` return GPS-tagged assets | Server-side geotag filter via `client.assets.list(bbox=...)`; the album route also passes the album filter; capped at 2000 markers, with a degraded-path scan bound if the coordinate filter is unavailable; reverse-geocode still stubbed |
-| Stacks (read) | `GET /stacks` and `GET /stacks/{id}` return real burst stacks with their live members | The list is bounded by 500 stacks and a 5000-member hydration budget. Missing IDs return `[]`; stacks without live members are omitted or 404. Asset detail carries a nested summary. Writes remain stubbed |
+| Stacks (read) | `GET /stacks` and `GET /stacks/{id}` return real burst stacks with their live members | The list is bounded by 500 stacks and a 5000-member hydration budget. An unknown `primaryAssetId` search returns `[]`; an unknown detail ID returns 404. Stacks without live members are omitted or 404. Asset detail carries a nested summary. Writes remain stubbed |
 
 ### Stub implementations
 

@@ -515,11 +515,12 @@ class TestBuildStackResponse:
 
 
 class TestBuildAssetStackSummary:
-    def test_maps_hydrated_stack(self):
+    @pytest.mark.parametrize("asset_count", [2, 3])
+    def test_maps_hydrated_stack(self, asset_count):
         hydrated = Mock(
             id=UUID("019c0477-81f0-4fef-8000-000000000001"),
             primary_asset_id=UUID("019c0477-81f0-4fef-8000-000000000002"),
-            live_asset_count=3,
+            live_asset_count=asset_count,
         )
 
         summary = build_asset_stack_summary(hydrated)
@@ -527,7 +528,7 @@ class TestBuildAssetStackSummary:
         assert summary is not None
         assert summary.id == hydrated.id
         assert summary.primaryAssetId == hydrated.primary_asset_id
-        assert summary.assetCount == 3
+        assert summary.assetCount == asset_count
 
     @pytest.mark.parametrize("hydrated", [None, Mock(live_asset_count=1)])
     def test_omits_unrepresentable_stack(self, hydrated):

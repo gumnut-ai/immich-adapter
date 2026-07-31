@@ -2204,12 +2204,14 @@ class TestUpdateAsset:
     async def test_update_asset_empty_payload_no_sdk_call(
         self, sample_uuid, sample_gumnut_asset, mock_current_user
     ):
-        # Empty DTO + retrieve path: asset is fetched via get_asset_info, no
-        # PATCH is sent, no websocket fires.
+        # Empty DTO + retrieve path: asset is returned without GET-only stack
+        # enrichment, no PATCH is sent, and no websocket fires.
         sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        sample_gumnut_asset.stack_id = "asset_stack_example"
         mock_client = Mock()
         mock_client.assets.update_asset = AsyncMock()
         mock_client.assets.retrieve = AsyncMock(return_value=sample_gumnut_asset)
+        mock_client.stacks.retrieve_stack = AsyncMock()
 
         request = UpdateAssetDto()
 
@@ -2230,6 +2232,8 @@ class TestUpdateAsset:
         )
         mock_emit.assert_not_awaited()
         assert result.id == sample_uuid
+        assert result.stack is None
+        mock_client.stacks.retrieve_stack.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_update_asset_out_of_scope_fields_no_sdk_call(
