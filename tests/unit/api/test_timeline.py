@@ -1,5 +1,7 @@
 """Tests for timeline.py endpoints."""
 
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
@@ -1312,12 +1314,9 @@ def _stack_client(bucket_assets, stack_rows=(), *, live_members=None):
 
 
 class TestTimeBucketStacks:
-    """The bucket's `stack` column and the server-side collapse it comes with.
-
-    Immich collapses a burst to one tile in its own bucket query and attaches a
-    `[stackId, liveCount]` tuple to the survivor; the client renders a badge and
-    collapses nothing. See `get_time_bucket` for why both halves are gated on
-    `withStacked` and skipped for trash.
+    """The bucket's `stack` column and the server-side collapse it comes with —
+    see "Timeline stack collapse" in `docs/architecture/adapter-architecture.md`
+    for why the adapter does both halves and why each gate is load-bearing.
     """
 
     @pytest.mark.anyio
@@ -1470,9 +1469,18 @@ class TestTimeBucketStacks:
         assert result["stack"] == [[str(safe_uuid_from_stack_id(stack.id)), "3"]]
 
     @pytest.mark.anyio
-    async def test_stack_read_failure_degrades_to_an_uncollapsed_bucket(self):
+    async def test_stack_read_failure_degrades_to_an_uncollapsed_bucket(
+        self, caplog: pytest.LogCaptureFixture
+    ):
         """The assets already came back; a stacks-resource outage should cost
-        the badges, not 5xx the app's primary view."""
+        the badges, not 5xx the app's primary view.
+
+        The severity is asserted, not incidental: this clause and the one below
+        differ *only* in log level, so without pinning both directions the two
+        collapse into one — and an expected upstream outage would start paging
+        on the ERROR channel reserved for adapter bugs. A 503 on purpose, since
+        that is the status the general upstream-log-level rule maps to ERROR.
+        """
         stack, members = _stacked_bucket(count=3)
         client = _stack_client(members, [stack])
         client.stacks.list_stacks = Mock(
@@ -1481,12 +1489,45 @@ class TestTimeBucketStacks:
 
         with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
             mock_user_id.return_value = uuid4()
-            result = await call_get_time_bucket(
-                timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
-            )
+            with caplog.at_level(logging.WARNING):
+                result = await call_get_time_bucket(
+                    timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+                )
 
         assert len(result["id"]) == 3
         assert result["stack"] == [None, None, None]
+        (record,) = [r for r in caplog.records if r.name == "routers.api.timeline"]
+        assert record.levelno == logging.WARNING
+        assert getattr(record, "time_bucket") == "2024-01-01T00:00:00"
+
+    @pytest.mark.anyio
+    async def test_non_sdk_failure_degrades_the_same_way(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """The promise is about the endpoint, not about which exception family
+        broke it.
+
+        Resolution does non-SDK work too — the `zip(..., strict=True)` that
+        names its ordering invariant, the capture-time sort key — so catching
+        only `GumnutError` would let a future line 500 the app's primary view.
+        The ERROR half of the severity split the sibling above pins.
+        """
+        stack, members = _stacked_bucket(count=3)
+        client = _stack_client(members, [stack])
+        client.stacks.list_stacks = Mock(side_effect=RuntimeError("invariant broke"))
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            with caplog.at_level(logging.WARNING):
+                result = await call_get_time_bucket(
+                    timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+                )
+
+        assert len(result["id"]) == 3
+        assert result["stack"] == [None, None, None]
+        (record,) = [r for r in caplog.records if r.name == "routers.api.timeline"]
+        assert record.levelno == logging.ERROR
+        assert getattr(record, "time_bucket") == "2024-01-01T00:00:00"
 
     @pytest.mark.anyio
     async def test_partially_contained_stack_reads_its_members(self):

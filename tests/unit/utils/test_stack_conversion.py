@@ -47,6 +47,7 @@ from tests.conftest import (
     make_gumnut_stack,
     make_gumnut_stack_members,
     make_gumnut_stack_with_members,
+    make_sdk_connection_error,
     make_sdk_status_error,
 )
 
@@ -722,8 +723,9 @@ class TestFetchLiveStackMembers:
 
 
 class TestSelectTimelineCover:
-    """The timeline's cover rule — see `select_timeline_cover` for why it is not
-    `resolve_effective_primary`."""
+    """The timeline's cover — `resolve_effective_primary` over the live member
+    set, returned as an ID. See `select_timeline_cover` for why the input, not
+    the rule, is what the timeline changes."""
 
     def test_live_pin_wins(self):
         stack, members = make_gumnut_stack_with_members(count=3)
@@ -737,18 +739,20 @@ class TestSelectTimelineCover:
         assert select_timeline_cover(stack, members) == members[0].id
 
     def test_trashed_pin_falls_back_instead_of_hiding_the_burst(self):
-        """The deliberate divergence from `resolve_effective_primary`.
+        """The deliberate divergence between the two surfaces, which is in the
+        *input* rather than the rule.
 
-        The pinned frame must be genuinely trashed *and* present in the member
-        list for the two rules to part company: that is the branch where
-        `resolve_effective_primary` keeps the pin — so `primaryAssetId` stays
-        non-null — while the timeline must promote a frame the grid can show, or
-        collapse erases the burst. A pin naming some asset that was never a
-        member exercises neither rule's first clause, and both fall through to
-        the earliest frame in agreement.
+        Both calls run the same selection, so the same input would give the same
+        answer; what differs is the member set each surface resolves against.
+        Handed every member, the shared rule keeps the trashed pin, which is
+        what `/stacks` wants — `primaryAssetId` stays non-null and the response
+        still lists the live frames beside it. Handed only the live ones, it
+        promotes a frame the grid can show, which is what the timeline needs
+        because collapse drops everything that is not the cover.
 
-        Each function gets the input it really receives: the hydrated path sees
-        every member, the timeline path only the live ones.
+        A pin naming some asset that was never a member would not exercise this:
+        the pin clause misses on both member sets and both fall through to the
+        earliest live frame in agreement.
         """
         stack, members = make_gumnut_stack_with_members(
             count=3, trashed={0}, primary_asset_id=None
@@ -757,6 +761,14 @@ class TestSelectTimelineCover:
 
         assert resolve_effective_primary(stack, members) is members[0]
         assert select_timeline_cover(stack, members[1:]) == members[1].id
+        # Handed the trashed frame anyway, the timeline still refuses it. This
+        # is the precondition being enforced rather than assumed: a cover the
+        # bucket cannot show would collapse away every live frame of the burst,
+        # the one degradation in this design that loses photos instead of
+        # falling back. Both production callers already filter, so this input
+        # is unreachable today — which is exactly why nothing else would catch
+        # a third caller that forgot.
+        assert select_timeline_cover(stack, members) == members[1].id
 
     def test_pin_naming_no_live_frame_falls_back(self):
         """A pin that left the stack entirely — no clause-1 match for either
@@ -874,10 +886,15 @@ class TestResolveTimelineStacks:
         assert stack.id in caplog.text
 
     @pytest.mark.anyio
-    async def test_count_comes_from_the_row_not_the_resolved_members(self):
+    async def test_count_comes_from_the_row_not_the_bucket_members(self):
         """The badge reports the stack's live size, not how many of its frames
-        this bucket happens to hold — the two differ for any straddling burst,
-        and every other test has them equal."""
+        this bucket happens to hold — the two differ for any straddling burst.
+
+        Only the *bucket* count is varied here; the resolved member count still
+        equals the row's, so this does not pin the row against the resolved set.
+        `test_trashed_bucket_member_cannot_be_named_cover` is the fixture where
+        those two diverge, and it carries that assertion.
+        """
         stack, members = make_gumnut_stack_with_members(
             count=3, asset_count=3, primary_asset_id=None
         )
@@ -965,6 +982,37 @@ class TestResolveTimelineStacks:
         (record,) = [r for r in caplog.records if hasattr(r, "failed_stack_count")]
         assert getattr(record, "failed_stack_count") == 1
         assert getattr(record, "attempted_stack_count") == 2
+        # The counts say how many; these say why — see the log site for why
+        # this record has to carry both.
+        assert getattr(record, "failed_error_type") == "APIStatusError"
+        assert getattr(record, "failed_status_code") == 500
+        assert record.exc_info is not None
+
+    @pytest.mark.anyio
+    async def test_a_statusless_failure_still_names_its_cause(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """Not every SDK failure carries a status.
+
+        `APIConnectionError` and `APITimeoutError` never reach a response, so
+        they have no `status_code` at all — the record reads it defensively for
+        exactly this case. A transport failure is also the one an operator most
+        needs distinguished from a 4xx, since it points at the network rather
+        than at the request.
+        """
+        stack, members = make_gumnut_stack_with_members(
+            count=3, asset_count=3, primary_asset_id=None
+        )
+        client = _timeline_client([stack])
+        client.assets.list = Mock(side_effect=make_sdk_connection_error())
+
+        with caplog.at_level(logging.WARNING):
+            resolved = await resolve_timeline_stacks(client, [members[1]])
+
+        assert resolved.covers == {}
+        (record,) = [r for r in caplog.records if hasattr(r, "failed_stack_count")]
+        assert getattr(record, "failed_error_type") == "APIConnectionError"
+        assert getattr(record, "failed_status_code") is None
 
     @pytest.mark.anyio
     async def test_member_reads_are_capped_per_request(
@@ -996,6 +1044,81 @@ class TestResolveTimelineStacks:
         (record,) = [r for r in caplog.records if hasattr(r, "member_read_cap")]
         assert getattr(record, "partial_stack_count") == total
         assert getattr(record, "member_read_cap") == MAX_TIMELINE_STACK_MEMBER_READS
+        # The numerator is how many went uncollapsed, not how many were partial.
+        # The ratio is the first thing triage reads, so a numerator equal to the
+        # denominator would report a total outage on a bucket that in fact
+        # resolved all but five.
+        assert (
+            getattr(record, "over_cap_stack_count")
+            == total - MAX_TIMELINE_STACK_MEMBER_READS
+        )
+        # The stacks that went uncollapsed are the sample worth triaging, so it
+        # is the tail past the cap rather than the front of the list.
+        assert (
+            getattr(record, "sample_stack_ids")
+            == [stack.id for stack in stacks[MAX_TIMELINE_STACK_MEMBER_READS:]][:10]
+        )
+
+    @pytest.mark.anyio
+    async def test_exactly_the_cap_reads_every_stack_and_stays_quiet(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """The boundary the sibling above doesn't reach.
+
+        With `>=` instead of `>`, a bucket sitting exactly on the cap resolves
+        every stack but still logs "above the cap; leaving 0 stacks uncollapsed"
+        with an empty sample — a false alarm on every such request, on the
+        endpoint the aggregate-record convention exists to keep quiet.
+        """
+        stacks, bucket, members_by_stack = [], [], {}
+        for _ in range(MAX_TIMELINE_STACK_MEMBER_READS):
+            stack, members = make_gumnut_stack_with_members(
+                count=3, asset_count=3, primary_asset_id=None
+            )
+            stacks.append(stack)
+            members_by_stack[stack.id] = members
+            bucket.append(members[1])
+        client = _timeline_client(stacks, members_by_stack=members_by_stack)
+
+        with caplog.at_level(logging.WARNING):
+            resolved = await resolve_timeline_stacks(client, bucket)
+
+        assert client.assets.list.call_count == MAX_TIMELINE_STACK_MEMBER_READS
+        assert len(resolved.covers) == MAX_TIMELINE_STACK_MEMBER_READS
+        assert not [r for r in caplog.records if hasattr(r, "member_read_cap")]
+
+    @pytest.mark.anyio
+    async def test_bounds_concurrent_timeline_member_reads(self):
+        """The cap above bounds the *total* reads; this bounds how many are open
+        at once.
+
+        The two are independent — a plain `asyncio.gather` still issues exactly
+        `MAX_TIMELINE_STACK_MEMBER_READS` calls and satisfies every assertion
+        above while opening all of them against the backend simultaneously, from
+        a single request, on the timeline's hottest endpoint.
+        """
+        stacks, bucket, members_by_stack = [], [], {}
+        for _ in range(BULK_FANOUT_CONCURRENCY_LIMIT * 3):
+            stack, members = make_gumnut_stack_with_members(
+                count=3, asset_count=3, primary_asset_id=None
+            )
+            stacks.append(stack)
+            members_by_stack[stack.id] = members
+            # One frame of each burst, so every stack lands partial and takes
+            # the member read.
+            bucket.append(members[1])
+        tracker = _ConcurrencyTracker()
+        client = _timeline_client(stacks)
+        client.assets.list = Mock(
+            side_effect=lambda **kwargs: _TrackedListing(
+                members_by_stack[kwargs["stack_id"]], tracker
+            )
+        )
+
+        await resolve_timeline_stacks(client, bucket)
+
+        assert tracker.peak > 1, "expected concurrent member reads"
+        assert tracker.peak <= BULK_FANOUT_CONCURRENCY_LIMIT
 
     @pytest.mark.anyio
     async def test_trashed_bucket_member_cannot_be_named_cover(self):
@@ -1008,6 +1131,11 @@ class TestResolveTimelineStacks:
         frame — the only one the timeline can show — would be collapsed away.
         Skipping trashed assets when grouping makes the totals disagree instead,
         routing the stack to the member read that resolves it correctly.
+
+        This is also the one fixture where the row's `asset_count` and the
+        number of members resolved for it genuinely differ (2 against 1), so it
+        carries the count assertion: everywhere else the two are equal and
+        emitting `len(members)` would pass.
         """
         stack, members = make_gumnut_stack_with_members(
             count=2, asset_count=2, trashed={0}, primary_asset_id=None
@@ -1017,6 +1145,7 @@ class TestResolveTimelineStacks:
         resolved = await resolve_timeline_stacks(client, members)
 
         assert resolved.covers[stack.id] == members[1].id
+        assert resolved.tuples[stack.id][1] == "2"
         client.assets.list.assert_called_once()
 
     @pytest.mark.anyio

@@ -209,14 +209,19 @@ async def get_time_bucket(
 
     filtered_assets = [a async for a in client.assets.list(**list_kwargs)]
 
-    # Immich collapses a burst to one tile server-side and badges the survivor
-    # with a `[stackId, liveCount]` tuple; its client collapses nothing, so the
-    # tuple alone would badge every frame instead of showing one tile. Both
-    # halves are gated on `withStacked` and skipped for trash — see "Timeline
-    # stack collapse" in docs/architecture/adapter-architecture.md for why each
-    # of those is load-bearing.
+    # Collapse and badge together, gated on `withStacked` and skipped for trash
+    # — see "Timeline stack collapse" in docs/architecture/adapter-architecture.md
+    # for why each gate is load-bearing.
     stacks: TimelineStacks | None = None
     if withStacked and not isTrashed:
+        # Which month, how big, and which filter shape — a burst of these
+        # records is otherwise unnarrowable to any of the three.
+        degradation_context = {
+            "time_bucket": timeBucket,
+            "bucket_asset_count": len(filtered_assets),
+            "album_id": str(albumId) if albumId else None,
+            "person_id": str(personId) if personId else None,
+        }
         try:
             stacks = await resolve_timeline_stacks(client, filtered_assets)
         except GumnutError:
@@ -224,11 +229,33 @@ async def get_time_bucket(
             # should cost the badges, not the month. Falling back to an empty
             # resolution reproduces the pre-stack response — every frame, all
             # tuples null — on the app's primary view.
+            #
+            # Deliberately WARNING for every upstream status, including the 5xx
+            # that *Upstream response log levels* maps to ERROR: that rule is
+            # for calls whose failure fails the request. This one is designed to
+            # fail, so an outage here is expected and quiet, and the ERROR
+            # channel is reserved for the clause below.
             logger.warning(
                 "Failed to resolve timeline stacks; returning the bucket uncollapsed",
                 exc_info=True,
+                extra=degradation_context,
             )
-            stacks = TimelineStacks(covers={}, tuples={})
+            stacks = TimelineStacks.empty()
+        except Exception:
+            # Same degradation, because the promise above is about the endpoint,
+            # not about which exception family broke it: `resolve_timeline_stacks`
+            # does non-SDK work in this scope too (the `zip(..., strict=True)`
+            # that names its ordering invariant, the capture-time sort key), and
+            # a raise from any of it would turn a feature designed to degrade
+            # into a 500 on the app's primary view. ERROR because reaching here
+            # means an adapter bug rather than an upstream one.
+            logger.error(
+                "Unexpected error resolving timeline stacks; returning the "
+                "bucket uncollapsed",
+                exc_info=True,
+                extra=degradation_context,
+            )
+            stacks = TimelineStacks.empty()
         filtered_assets = [
             asset for asset in filtered_assets if not stacks.is_collapsed_away(asset)
         ]

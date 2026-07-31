@@ -256,13 +256,19 @@ def mock_list_stacks(rows):
     wholesale, so chunked reads get their own chunk back — and so a test can
     model a row that vanished between the asset read and the stack read simply
     by leaving that stack out of `rows`.
+
+    The matched rows come back **reversed**, deliberately not in the order the
+    caller requested: the Gumnut API promises no row order and callers index by
+    `row.id`, so replaying the request order would let a consumer that walked
+    the response instead of its own ID list pass. See the comment above
+    `complete_ids` in `resolve_timeline_stacks` for why that matters there.
     """
     rows_by_id = {row.id: row for row in rows}
     return Mock(
         side_effect=lambda **kwargs: MockSyncCursorPage(
             [
                 rows_by_id[stack_id]
-                for stack_id in kwargs["ids"]
+                for stack_id in reversed(kwargs["ids"])
                 if stack_id in rows_by_id
             ]
         )

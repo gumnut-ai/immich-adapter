@@ -53,6 +53,10 @@ logger = logging.getLogger(__name__)
 # hundreds. Stacks past the cap stay uncollapsed rather than uncounted — the
 # same inert degradation as a missing row. Sized well above the handful of
 # month-straddling bursts the main timeline actually produces.
+#
+# The row read a step earlier needs no such cap despite looking symmetric: it is
+# one request per `GUMNUT_API_MAX_BULK_IDS` stacks, so N stacks costs
+# ceil(N / 200) requests rather than N.
 MAX_TIMELINE_STACK_MEMBER_READS = 50
 
 
@@ -360,28 +364,26 @@ def select_timeline_cover(
     collapsed timeline: the pinned cover when the pin is live, otherwise the
     earliest live frame.
 
-    `live_members` must be the stack's **complete** live member set in ascending
-    capture order, since both rules read from it — an incomplete set can promote
-    a later frame, or miss a live pin and fall back. Returns `None` for a stack
-    with no live members, which has no frame to represent it.
+    `live_members` must be the stack's **complete** member set in ascending
+    capture order — an incomplete set can promote a later frame, or miss a live
+    pin and fall back. Returns `None` for a stack with no live members, which
+    has no frame to represent it.
 
-    Deliberately not `resolve_effective_primary`, which keeps a *trashed* pin so
-    `StackResponseDto.primaryAssetId` can stay non-null: collapse drops every
-    frame that is not the cover, so naming a trashed asset would erase the whole
-    burst from the grid. See "Timeline cover vs. effective primary" in
-    `docs/architecture/adapter-architecture.md` for why the two surfaces are
-    allowed to disagree about a trashed pin.
+    The rule is `resolve_effective_primary`'s, not a second copy of it; what
+    the timeline changes is the *input*. See "Timeline cover vs. effective
+    primary" in `docs/architecture/adapter-architecture.md` for why the two
+    surfaces resolve over different member sets.
+
+    Liveness is enforced here rather than assumed of the caller, because it is
+    the one precondition whose violation is not inert: the shared rule keeps a
+    trashed pin, and a cover the bucket cannot show collapses away every live
+    frame the burst has. Both of the current input paths already carry live-only
+    sets, so this filters nothing today — it is what keeps the next caller from
+    having to know.
     """
-    if not live_members:
-        return None
-
-    pinned_id = stack.primary_asset_id
-    if pinned_id is not None:
-        for member in live_members:
-            if member.id == pinned_id:
-                return pinned_id
-
-    return live_members[0].id
+    live_only = [member for member in live_members if member.trashed_at is None]
+    primary = resolve_effective_primary(stack, live_only)
+    return primary.id if primary is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -406,6 +408,15 @@ class TimelineStacks:
     on the wire even though it is a number everywhere else.
     """
 
+    @classmethod
+    def empty(cls) -> "TimelineStacks":
+        """The inert resolution: collapses nothing, badges nothing.
+
+        Every whole-bucket degradation returns this, so "the failure paths
+        degrade identically" is one object rather than a repeated literal.
+        """
+        return cls(covers={}, tuples={})
+
     def is_collapsed_away(self, asset: AssetResponse) -> bool:
         """Whether `asset` is a non-cover member and must not reach the bucket."""
         stack_id = asset.stack_id
@@ -427,12 +438,12 @@ def _bucket_members_by_stack(
 ) -> dict[str, list[AssetResponse]]:
     """Group a bucket's **live** stacked assets by stack ID, earliest first.
 
-    Trashed assets are skipped so the result is a live member set by
-    construction, whatever query produced `assets`. `select_timeline_cover`
-    requires that, and today it holds only because the bucket read inherits the
-    Gumnut API's `state="live"` default — an invariant that would invert
-    silently if that read ever passed `state="all"`, naming a trashed cover and
-    collapsing away every live frame of the burst.
+    Trashed assets are skipped because the caller compares `len()` of these
+    groups against `row.asset_count`, which is a **live** count: counting a
+    trashed frame toward it would let a partial stack classify as complete and
+    resolve its cover from an incomplete set, skipping the member read that
+    would have corrected it. `select_timeline_cover` re-enforces liveness on its
+    own, so this is not that guard duplicated — the two protect different steps.
 
     Sorted on the UTC-normalized capture time so the comparison is total:
     `local_datetime` can arrive naive or aware, and mixing the two raises. `id`
@@ -447,23 +458,23 @@ def _bucket_members_by_stack(
     return grouped
 
 
-async def _live_members_or_none(
+async def _live_members_or_error(
     client: AsyncGumnut, gumnut_stack_id: str
-) -> list[AssetResponse] | None:
-    """`fetch_live_stack_members`, degrading to `None` on an upstream failure.
+) -> list[AssetResponse] | GumnutError:
+    """`fetch_live_stack_members`, degrading to the error on an upstream failure.
 
     Caught per stack rather than propagated because the caller is the timeline's
     hottest endpoint: the assets have already been read successfully, and one
     failed member read should cost that stack its collapse, not the whole month.
     An unresolved stack is inert — see `TimelineStacks`.
 
-    Silent on purpose; the caller logs one aggregate record for the batch, for
-    the same reason it aggregates the missing-row case.
+    Returned rather than swallowed so the caller's aggregate record can name the
+    cause; see that record for why it has to.
     """
     try:
         return await fetch_live_stack_members(client, gumnut_stack_id)
-    except GumnutError:
-        return None
+    except GumnutError as exc:
+        return exc
 
 
 async def resolve_timeline_stacks(
@@ -493,25 +504,22 @@ async def resolve_timeline_stacks(
       `personId` — but any other client may, which is also why the read count is
       capped: a person-filtered month can leave hundreds of stacks partial.
 
-    A stack the adapter cannot resolve — no row in the response, a failed member
-    read, past the read cap, or no live members — is left out of the result
-    rather than guessed at, so its frames stay in the bucket uncollapsed.
+    A stack the adapter cannot resolve is left out of the result rather than
+    guessed at, so its frames stay in the bucket uncollapsed. The `continue`
+    branches below are the cases; `docs/architecture/adapter-architecture.md`
+    enumerates them alongside the whole-resource failure the route handles.
     """
     stack_ids = list(
         dict.fromkeys(asset.stack_id for asset in assets if asset.stack_id is not None)
     )
     if not stack_ids:
-        return TimelineStacks(covers={}, tuples={})
+        return TimelineStacks.empty()
 
     rows_by_id = {row.id: row for row in await fetch_stack_rows(client, stack_ids)}
 
     # The asset read and the stack read are separate round-trips, so a stack
     # dissolved in between leaves its former members carrying a stale
-    # `stack_id`. One aggregate record rather than one per stack: this endpoint
-    # is hit once per month scrolled, and a systemic cause (an `ids` filter the
-    # backend stops honoring, a library-scoping change) would otherwise flood
-    # the log with one line per stack in the month. The ratio is what
-    # distinguishes that from the rare single-stack race.
+    # `stack_id`. Aggregated per `docs/references/code-practices.md`.
     missing_ids = [stack_id for stack_id in stack_ids if stack_id not in rows_by_id]
     if missing_ids:
         logger.warning(
@@ -548,20 +556,30 @@ async def resolve_timeline_stacks(
 
     read_ids = partial_ids[:MAX_TIMELINE_STACK_MEMBER_READS]
     if len(partial_ids) > len(read_ids):
+        # The sample is the stacks past the cap, not the front of the list: the
+        # ones that went uncollapsed are what an operator needs to look at.
+        dropped_ids = partial_ids[len(read_ids) :]
         logger.warning(
             "Timeline bucket needs %d stack member reads, above the %d cap; "
-            "leaving %d stacks uncollapsed",
+            "leaving %d stacks uncollapsed (sample: %s)",
             len(partial_ids),
             MAX_TIMELINE_STACK_MEMBER_READS,
-            len(partial_ids) - len(read_ids),
+            len(dropped_ids),
+            dropped_ids[:10],
             extra={
+                # Named for the cause, like its three siblings, rather than for
+                # the shared effect: all four leave stacks uncollapsed, so an
+                # `uncollapsed_stack_count` here would read as the total while
+                # reporting only this one.
+                "over_cap_stack_count": len(dropped_ids),
                 "partial_stack_count": len(partial_ids),
                 "member_read_cap": MAX_TIMELINE_STACK_MEMBER_READS,
+                "sample_stack_ids": dropped_ids[:10],
             },
         )
 
     fetched_members = await gather_with_concurrency(
-        [_live_members_or_none(client, stack_id) for stack_id in read_ids]
+        [_live_members_or_error(client, stack_id) for stack_id in read_ids]
     )
     live_members: dict[str, Sequence[AssetResponse]] = {
         # `.get` because a row with `asset_count == 0` classifies as complete
@@ -574,27 +592,36 @@ async def resolve_timeline_stacks(
     # members with another's row — and a cover that is not a member collapses
     # away every frame the stack really has.
     failed_ids: list[str] = []
+    first_error: GumnutError | None = None
     for stack_id, members in zip(read_ids, fetched_members, strict=True):
-        if members is None:
+        if isinstance(members, GumnutError):
             failed_ids.append(stack_id)
+            if first_error is None:
+                first_error = members
         else:
             live_members[stack_id] = members
 
     if failed_ids:
-        # Aggregated for the same reason as the missing-row record above, and
-        # more urgently: a degraded assets resource that leaves `list_stacks`
-        # healthy never trips the route-level guard, so a per-stack record here
-        # would emit up to `MAX_TIMELINE_STACK_MEMBER_READS` of them per request.
+        # Aggregated, and this one has the most to flood with: a degraded assets
+        # resource that leaves `list_stacks` healthy never trips the route-level
+        # guard, so a per-stack record would emit up to
+        # `MAX_TIMELINE_STACK_MEMBER_READS` of them per request. One traceback
+        # rather than none: these reads fail for the same reason far more often
+        # than not, and the count alone cannot separate an expired token from
+        # throttling from an outage.
         logger.warning(
             "%d of %d timeline stack member reads failed; leaving those frames "
             "uncollapsed (sample: %s)",
             len(failed_ids),
             len(read_ids),
             failed_ids[:10],
+            exc_info=first_error,
             extra={
                 "failed_stack_count": len(failed_ids),
                 "attempted_stack_count": len(read_ids),
                 "sample_stack_ids": failed_ids[:10],
+                "failed_error_type": type(first_error).__name__,
+                "failed_status_code": getattr(first_error, "status_code", None),
             },
         )
 
@@ -628,10 +655,9 @@ async def resolve_timeline_stacks(
         tuples[stack_id] = [str(stack_uuid), str(row.asset_count)]
 
     if undecodable_ids:
-        # Aggregated like the two records above, and this one needs it most: a
-        # prefix change is systemic by construction, so every stack in the month
-        # fails at once — and unlike the member reads, nothing caps how many
-        # stacks reach this loop.
+        # Aggregated, and a prefix change is systemic by construction, so every
+        # stack in the month fails at once — and unlike the member reads,
+        # nothing caps how many stacks reach this loop.
         logger.warning(
             "%d of %d timeline stack IDs are not decodable to Immich UUIDs; "
             "leaving their frames uncollapsed (sample: %s)",

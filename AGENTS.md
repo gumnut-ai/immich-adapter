@@ -34,7 +34,7 @@ The sections below follow that order, with design docs split by their `status:` 
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Adapter architecture | `docs/architecture/adapter-architecture.md` | Overall adapter design, auth and session handling, request observability (Sentry tags, user attribution), the single-library assumption, trash/restore semantics, data translation, pagination, sync protocol, error handling, endpoint status |
+| Adapter architecture | `docs/architecture/adapter-architecture.md` | Adapter design, auth and sessions, request observability (Sentry tags, user attribution), the single-library assumption, trash/restore, timeline burst-stack collapse, data translation, pagination, sync protocol, error handling, endpoint status |
 | Sync stream architecture | `docs/architecture/sync-stream-architecture.md` | Sync stream event processing, FK ordering, event classification, face/album handling, adding new sync type versions |
 | WebSocket implementation | `docs/architecture/websocket-implementation.md` | WebSocket connections, real-time sync, event handling |
 | Session & checkpoint implementation | `docs/architecture/session-checkpoint-implementation.md` | Session management, checkpoint tracking, sync state |
