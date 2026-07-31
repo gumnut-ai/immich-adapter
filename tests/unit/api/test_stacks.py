@@ -1084,9 +1084,12 @@ class TestDeleteStacks:
         await _delete_stacks(client, stack_uuids)
 
         assert client.stacks.delete.call_count == len(stack_uuids)
-        assert peak <= BULK_FANOUT_CONCURRENCY_LIMIT
-        # Guards against the assertion passing only because nothing overlapped.
-        assert peak < len(stack_uuids)
+        # Single-threaded scheduling admits exactly the limit before any coro
+        # releases the semaphore, so with more ids than the limit the peak is the
+        # bound itself. Asserting equality rather than `<= limit` also proves the
+        # calls overlapped — a regression to a sequential `for … await` loop would
+        # leave peak at 1 and pass a `<= limit` check silently.
+        assert peak == BULK_FANOUT_CONCURRENCY_LIMIT
 
     @pytest.mark.anyio
     async def test_all_success_returns_no_body(self, mock_current_user):

@@ -244,11 +244,9 @@ async def delete_stacks(
     An empty id list is a successful no-op (204), matching the general bulk
     route pattern.
     """
-    seen: set[UUID] = set()
+    # `dict.fromkeys` dedupes while preserving first-seen order (UUIDs hash).
     gumnut_stack_ids = [
-        uuid_to_gumnut_stack_id(stack_id)
-        for stack_id in request.ids
-        if not (stack_id in seen or seen.add(stack_id))
+        uuid_to_gumnut_stack_id(stack_id) for stack_id in dict.fromkeys(request.ids)
     ]
     if not gumnut_stack_ids:
         return
