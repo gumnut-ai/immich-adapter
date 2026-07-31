@@ -17,11 +17,13 @@ deny:
   - bump `gumnut-sdk` outside the exemption already declared in pyproject.toml (it tracks the upstream API surface — pin moves require human review)
   - push commits directly to main
   - approve or merge pull requests
-# Weekly: dependency upgrades (gated on "2+ minor versions behind" and the
-# 14-day cooldown) and dead-code cleanup are low-urgency maintenance. Daily
-# passes mostly re-evaluate unchanged state. Security advisories are NOT gated
-# by this cron — they fire on the watch above (24h SLA).
-schedule: "0 9 * * 1"
+# Daily, not every 6h: dependency upgrades (gated on "2+ minor versions behind"
+# and the 14-day cooldown) and dead-code cleanup are low-urgency maintenance, so
+# four scheduled passes a day mostly re-evaluate unchanged state and churn CI on
+# the open PRs. Security advisories are NOT gated by this cron — they fire on the
+# `when a security advisory is published` watch above (24h SLA), so the slower
+# cadence doesn't slow the urgent path.
+schedule: "0 9 * * *"
 ---
 
 ## Policy
@@ -41,7 +43,7 @@ If any check fails, do not open the PR. Note the failure in an internal log entr
 
 ## Thresholds
 - Upgrade a dependency only when it is at least two minor versions behind the latest stable that the supply-chain guard allows.
-- Do not bump the same dependency more than once every 30 days. Security-advisory patches are exempt — they keep the 24-hour threshold below. Fast-moving dependencies clear the two-minor-versions bar again within days, so without this cap recurring activations can re-propose the same package soon after it lands, churning CI and review attention. Before proposing a non-security bump, run both checks below and skip the dependency if either shows it was bumped in the last 30 days:
+- Do not bump the same dependency more than once every 30 days. Security-advisory patches are exempt — they keep the 24-hour threshold below. Fast-moving dependencies clear the two-minor-versions bar again within days, so without this cap a daily activation re-proposes the same package every week or two, churning CI and review attention for an upgrade that just landed. Before proposing a non-security bump, run both checks below and skip the dependency if either shows it was bumped in the last 30 days:
   - **Merged history** — compare the package's locked version against its version 30 days ago. Run the block as a script with the package name as its argument:
 
     ```bash
