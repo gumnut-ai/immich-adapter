@@ -2,7 +2,7 @@
 title: "Immich v2.7.5 → v3.0 API Change Analysis"
 status: active
 created: 2026-06-16
-last-updated: 2026-07-29
+last-updated: 2026-07-31
 ---
 
 # Immich v2.7.5 → v3.0 API Change Analysis
@@ -261,8 +261,14 @@ no-ops because Gumnut has no corresponding data.
 
 ### Deprecated-in-place (still functional in RC)
 
-These PUTs are now `deprecated: true` but **no PATCH replacement exists in the
-RC** (no methods were added) — likely pre-announcing a future PATCH migration:
+These PUTs are now `deprecated: true` but **no PATCH replacement appears in the
+RC spec** — likely pre-announcing a future PATCH migration. Read that as a
+statement about the spec, not the server: at least one replacement (`PATCH
+/stacks/{id}`, `updateStackV3`) already exists in the Immich source, marked
+`@ApiExcludeEndpoint` so it stays out of the OpenAPI document and out of every
+generated client. A deprecated PUT the adapter implements therefore keeps
+working only until upstream publishes its PATCH, and no spec diff will announce
+the switch.
 
 `PUT` on `/assets`, `/assets/{id}`, `/admin/users/{id}`,
 `/admin/users/{id}/preferences`, `/api-keys/{id}`, `/libraries/{id}`,
