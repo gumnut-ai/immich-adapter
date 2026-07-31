@@ -811,17 +811,28 @@ class TestCreateStack:
         assert client.assets.list.call_count == 0
 
     @pytest.mark.anyio
-    async def test_all_trashed_stack_is_still_returned(self, mock_current_user):
+    async def test_all_trashed_stack_is_still_returned(
+        self, mock_current_user, caplog: pytest.LogCaptureFixture
+    ):
         """The one place a write parts company with the reads — see
         `create_stack` for why, and `_build_representable_response` for the rule
-        it is departing from."""
+        it is departing from.
+
+        The empty-asset DTO is emitted deliberately but "not one to emit
+        unobserved," so the warning that flags it is pinned here alongside the
+        response.
+        """
         stack, members = make_gumnut_stack_with_members(count=2, trashed={0, 1})
         client = _write_client(stack, members)
 
-        result = await _create(client, mock_current_user, _member_uuids(members))
+        with caplog.at_level(logging.WARNING, logger="routers.api.stacks"):
+            result = await _create(client, mock_current_user, _member_uuids(members))
 
         assert result.id == safe_uuid_from_stack_id(stack.id)
         assert result.assets == []
+        warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
+        assert getattr(warning, "stack_id") == stack.id
+        assert getattr(warning, "stack_asset_count") == stack.asset_count
 
     @pytest.mark.anyio
     async def test_member_less_read_back_is_an_error(self, mock_current_user):

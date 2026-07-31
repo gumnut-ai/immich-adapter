@@ -68,10 +68,9 @@ def _build_representable_response(
     are *all* trashed hydrates fine (`resolve_effective_primary` deliberately
     keeps naming a cover) but converts to `assets: []` with a `primaryAssetId`
     no client can fetch — breaking both contracts `build_stack_response`
-    documents, since
-    clients read `assets.length` as the stack's size and `assets[0]` as the
-    cover. Upstream Immich never emits that DTO: it deletes a stack once it
-    falls below two assets, so nothing is written to handle it.
+    documents, since clients read `assets.length` as the stack's size and
+    `assets[0]` as the cover. Upstream Immich never emits that DTO: it deletes
+    a stack once it falls below two assets, so nothing is written to handle it.
 
     Trashing every frame of a burst is ordinary user action rather than a
     backend inconsistency, so unlike the member-less case this one is not
@@ -276,14 +275,14 @@ async def create_stack(
     see `docs/architecture/adapter-architecture.md` § "Single-library
     assumption".
 
-    The one backend limit not left to fail late is worth naming: `asset_ids` is
-    capped at `GUMNUT_API_MAX_BULK_IDS`, so stacking a larger selection is a
-    422 naming the cap. It is deliberately *not* chunked into a create plus
-    `add_assets_to_stack` calls the way album creation chunks its initial
-    assets. Create is all-or-nothing upstream and a partial run can't be undone:
-    deleting the half-built stack would dissolve it without restoring the stacks
-    that were already folded into it. A clean failure that changed nothing beats
-    a partial merge nobody can unwind.
+    One backend limit is worth naming: an oversized `asset_ids` selection is
+    rejected upstream rather than forwarded in pieces, and the adapter passes
+    that rejection back unchanged. The create is deliberately *not* chunked into
+    a create plus `add_assets_to_stack` calls the way album creation chunks its
+    initial assets. Create is all-or-nothing upstream and a partial run can't be
+    undone: deleting the half-built stack would dissolve it without restoring
+    the stacks that were already folded into it. A clean failure that changed
+    nothing beats a partial merge nobody can unwind.
 
     Unlike the reads, a stack with no live members is still returned rather than
     dropped: the client just created it and needs its ID back, and reporting
