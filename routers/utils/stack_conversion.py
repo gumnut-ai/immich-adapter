@@ -27,9 +27,11 @@ instead, which never fetches a member the response won't contain.
 
 The two sizes also fail differently, and deliberately. A `/stacks` read is
 *about* the stack, so `hydrate_stacks` lets an upstream error propagate. A
-summary is decoration on a response that is about the assets, so
-`resolve_asset_stack_summaries` degrades to no summaries rather than take the
-whole page down with it.
+summary is decoration on a response that is about the assets, so the summary
+path degrades rather than take the whole page down with it — at whichever
+granularity the failed read allows. A failed cover read costs one stack its
+summary (`resolve_stack_cover`); a failed stack-row lookup costs the page all
+of them (`resolve_asset_stack_summaries`), since nothing resolved.
 """
 
 import logging
@@ -392,8 +394,13 @@ async def resolve_stack_cover(
       re-implementing "first live member" here, is what keeps this path and
       `/stacks` from ever naming different frames as the same burst's cover.
 
-    Returns `None` when the stack has nothing a client could act on: no members
-    at all, or no *live* member. The second case is where the member read earns
+    Returns `None` when the stack has nothing a client could act on — no members
+    at all, or no *live* member — and also when the cover read itself fails,
+    which is logged and costs only this stack its summary rather than the page's
+    (see the `except` below). A caller inheriting this path inherits that
+    swallowed-failure posture, which is the opposite of `hydrate_stack`'s.
+
+    The no-live-member case is where the member read earns
     its keep over the row's `asset_count`. Both describe "no live frames", but
     the count is read from a different endpoint at a different instant, so a
     count that hasn't caught up with a just-trashed member would let the stack
