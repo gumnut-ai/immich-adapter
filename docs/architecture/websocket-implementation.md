@@ -181,11 +181,11 @@ Starting with the current upload-success events, but designed for future extensi
 
 ### Not Applicable
 
-Most of these events require features that don't exist in the Gumnut API. The exception is `on_asset_stack_update`, kept here because no client acts on it:
+Most require unsupported Gumnut API features; `on_asset_stack_update` is listed because no client consumes it.
 
 | Event | Reason |
 |---|---|
-| `on_asset_stack_update` | No listener to emit to. `POST /stacks` and `PUT /stacks/{id}` do now mutate stacks, so the adapter has the code paths upstream emits this from — but as of the pinned Immich version the web client only declares the event in its socket type map and subscribes to it nowhere, and mobile doesn't reference it at all. Emitting it would be writing to a listener that doesn't exist; re-check when a client starts consuming it |
+| `on_asset_stack_update` | Stack writes exist, but the web client only declares the event and mobile does not reference it; re-check when a client subscribes |
 | `on_asset_hidden` | Asset visibility not supported |
 | `on_notification` | Album sharing & job failures not implemented |
 | `on_config_update` | Config management not implemented |

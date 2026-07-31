@@ -144,19 +144,17 @@ Immich allows batch downloading multiple assets as a zip archive.
 
 Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pairs) with a primary asset representing the group.
 
-**Current behavior**: **Partially closed.** Four of the seven endpoints are real. The two reads (`GET /stacks`, `GET /stacks/{id}`) return real stacks with their live members, the list bounded by a 500-stack cap and a 5000-member hydration budget (whichever binds first) since Immich's `searchStacks` offers no pagination. The two mutations that return a stack body — `POST /stacks` (create) and the deprecated-but-still-called `PUT /stacks/{id}` (set cover) — are backed by the Gumnut API's `create_stack` / `set_cover` and hydrate their response through the same path as the reads, so a write reads back exactly like the matching GET. The remaining 3 — delete, bulk-delete, remove-asset — still return empty responses, so the stacking UI can create a stack and choose its cover but not take one apart. The timeline is no longer part of this gap either: `GET /api/timeline/bucket` collapses a burst to one tile and emits Immich's `[stackId, count]` tuples under `withStacked`, so a burst renders as a single badged tile in the month views that request it.
+**Current behavior**: **Partially closed.** Four of seven endpoints are real: list, detail, create, and set-cover. The three removal endpoints still return empty responses. Timeline buckets also collapse stacks into one badged tile.
 
-**User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently.
-
-The reads are reachable from the timeline, which is the surface that populates a client-side stack field: the web client decodes the bucket tuple into `asset.stack` and the asset viewer fetches `GET /stacks/{id}` from it. Create is reachable independently — the web timeline's multi-select "Stack" action and the duplicates utility page call `POST /stacks` directly — and because the timeline bucket re-collapses a stack on the next fetch (grouping by `stack_id`, so manual stacks collapse the same as auto-detected bursts), a stack created that way reads back as stacked rather than vanishing on refresh. The asset-detail and search surfaces still leave the stack field null, so those surfaces stay unwired until it is populated.
+**User impact**: **Low** — Timeline and duplicate-management actions can create stacks and set covers, but asset-detail and search responses do not yet populate their stack field. Removal remains unavailable.
 
 **Dependency**: **Adapter-only** — the backend grouping concept this gap was originally blocked on now exists. The Gumnut API's stack resource covers create, add/remove assets, list, retrieve, set cover, and delete, with `list_stacks` exposing an `origin` filter (auto-detected bursts vs. user-grouped) and `primary_asset_id`; members are reachable through the `stack_id` filter on the asset list.
 
 One piece of the timeline surface *is* backend-blocked: `GET /api/timeline/buckets` cannot collapse its counts, because `assets.counts` has no stack-aware filter. The effect is cosmetic and the fix is a backend one — see "Timeline stack collapse" in `docs/architecture/adapter-architecture.md`.
 
-**Effort**: **S remaining** — the shared translation layer (`routers/utils/stack_conversion.py`), the read routes, the create/set-cover writes, and the timeline surface have landed; the 3 removal routes plus the stack fields on the asset-detail and search surfaces are what's left.
+**Effort**: **S remaining** — implement the three removal routes and populate stack fields in asset-detail and search responses.
 
-**Recommendation**: **Revisit later** — the expensive half (translation, cover policy, read routes, create/set-cover, timeline surface) is done, but the remaining work is still low user demand relative to the Tier-1 and Tier-2 gaps.
+**Recommendation**: **Revisit later** — remaining work has low demand relative to Tier-1 and Tier-2 gaps.
 
 ---
 
@@ -754,7 +752,7 @@ adapter code.
 | #1 Shared links | XL | Both | High value but major backend work |
 | #9 Partners | XL | Both | Family use case, deep auth changes |
 | #23 Album sharing | XL | Both | Blocked by sharing infrastructure |
-| #6 Stacks (removal path) | S | Adapter-only | Low user demand; the reads, the translation layer, the create/set-cover writes, and the timeline surface shipped, leaving the 3 removal routes |
+| #6 Stacks (removal path) | S | Adapter-only | Low user demand; three removal routes remain |
 | #20 API keys | M | Both | Developer feature |
 | #24 Custom metadata | M | Both | Integration feature |
 | #25 Asset edits | M | Both | Low user demand |

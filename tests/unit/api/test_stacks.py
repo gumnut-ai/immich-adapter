@@ -1,11 +1,8 @@
 """Tests for the stack routes in routers/api/stacks.py.
 
 Cover resolution, member hydration, and DTO shape are pinned once in
-`tests/unit/utils/test_stack_conversion.py`. What's left to these tests is what
-the routes themselves decide: which upstream calls they make, how they exhaust
-pagination, how the `primaryAssetId` filter is answered, which parts of a write
-are forwarded rather than re-derived, and which conditions become a 404 rather
-than a response.
+`tests/unit/utils/test_stack_conversion.py`. These tests cover route calls,
+pagination, filtering, write forwarding, and error responses.
 """
 
 import inspect
@@ -105,12 +102,7 @@ async def _get(client, current_user, stack_uuid):
 
 
 def _write_client(stack, members) -> Mock:
-    """`_client`, plus the two write calls resolving to the same (stack, members).
-
-    Both writes read their response back out of the row the backend returns, so
-    a write test needs the read side wired up exactly as the read tests do —
-    hence building on `_client` rather than mocking the write in isolation.
-    """
+    """Build a client whose stack writes return the supplied stack."""
     client = _client((stack, members))
     client.stacks.create_stack = AsyncMock(return_value=stack)
     client.stacks.set_cover = AsyncMock(return_value=stack)
@@ -126,12 +118,7 @@ async def _create(client, current_user, asset_uuids):
 
 
 async def _update(client, current_user, stack_uuid, **body):
-    """Call the update route with `body` as the *literal* request payload.
-
-    Passing no kwargs models an omitted `primaryAssetId` and
-    `primaryAssetId=None` models an explicit null — the two wire shapes the
-    route deliberately treats alike.
-    """
+    """Call update with a literal body to distinguish omitted and null fields."""
     return await update_stack(  # type: ignore[call-arg]
         id=stack_uuid,
         request=StackUpdateDto(**body),
@@ -711,7 +698,6 @@ class TestCreateStack:
 
     @pytest.mark.anyio
     async def test_pins_the_first_asset_as_the_cover(self, mock_current_user):
-        """Pins the `assetIds[0]`-is-the-cover rule stated in `create_stack`."""
         stack, members = make_gumnut_stack_with_members(count=3)
         client = _write_client(stack, members)
         requested = _member_uuids(members)
@@ -726,7 +712,6 @@ class TestCreateStack:
 
     @pytest.mark.anyio
     async def test_omits_library_id(self, mock_current_user):
-        """Pins the omitted-`library_id` rule stated in `create_stack`."""
         stack, members = make_gumnut_stack_with_members(count=2)
         client = _write_client(stack, members)
 
@@ -736,8 +721,6 @@ class TestCreateStack:
 
     @pytest.mark.anyio
     async def test_forwards_the_request_once_unmodified(self, mock_current_user):
-        """A repeated ID is the cheapest way to show the adapter isn't quietly
-        pre-processing the list — see `create_stack` for why it must not."""
         stack, members = make_gumnut_stack_with_members(count=2)
         client = _write_client(stack, members)
         requested = _member_uuids(members)
@@ -751,17 +734,11 @@ class TestCreateStack:
         ]
 
     def test_generated_dto_enforces_the_two_asset_minimum(self):
-        """Immich's `min 2` is a request-validation rule, so FastAPI rejects an
-        undersized body before the handler runs — which is also what keeps
-        `create_stack`'s unconditional `gumnut_asset_ids[0]` in bounds. A model
-        regen that dropped the constraint would turn an empty `assetIds` into an
-        `IndexError`, so the constraint itself is what this pins."""
+        """Keep the handler's first-item access protected by DTO validation."""
         with pytest.raises(ValidationError):
             StackCreateDto(assetIds=[uuid4()])
 
     def test_is_registered_as_201(self):
-        """Immich's `createStack` is specified 201, and a route that answered
-        200 would still pass every handler-level test in this class."""
         route = next(
             r
             for r in router.routes
@@ -773,17 +750,9 @@ class TestCreateStack:
     async def test_response_follows_the_backend_membership_not_the_request(
         self, mock_current_user
     ):
-        """The fold-in case, and the reason the response is read off the
-        returned row rather than assembled from `assetIds`.
-
-        Stacking an asset that already covers another stack folds that whole
-        stack in, so the created stack can hold members the request never named.
-        Every other test here mocks members matching the request exactly, which
-        an implementation that echoed `request.assetIds` would also satisfy.
-        """
+        """A backend merge can add members absent from the request."""
         stack, members = make_gumnut_stack_with_members(count=4)
         client = _write_client(stack, members)
-        # Only two of the four were asked for; the backend folded in the rest.
         requested = _member_uuids(members[:2])
 
         result = await _create(client, mock_current_user, requested)
@@ -797,9 +766,6 @@ class TestCreateStack:
     async def test_backend_rejection_propagates_with_nothing_read_back(
         self, mock_current_user
     ):
-        """Duplicate, missing, and cross-library members are all rejected
-        upstream; the global handler shapes the response, and the adapter must
-        not paper over a failed create with a partial local one."""
         stack, members = make_gumnut_stack_with_members(count=2)
         client = _write_client(stack, members)
         error = make_sdk_status_error(404, "assets not found", cls=NotFoundError)
@@ -814,14 +780,7 @@ class TestCreateStack:
     async def test_all_trashed_stack_is_still_returned(
         self, mock_current_user, caplog: pytest.LogCaptureFixture
     ):
-        """The one place a write parts company with the reads — see
-        `create_stack` for why, and `_build_representable_response` for the rule
-        it is departing from.
-
-        The empty-asset DTO is emitted deliberately but "not one to emit
-        unobserved," so the warning that flags it is pinned here alongside the
-        response.
-        """
+        """A successful write returns its ID even when all members are trashed."""
         stack, members = make_gumnut_stack_with_members(count=2, trashed={0, 1})
         client = _write_client(stack, members)
 
@@ -836,9 +795,6 @@ class TestCreateStack:
 
     @pytest.mark.anyio
     async def test_member_less_read_back_is_an_error(self, mock_current_user):
-        """A stack built from two assets that reads back with none is the row
-        and the member read contradicting each other — there is no honest
-        `primaryAssetId` to put in a 201."""
         stack, members = make_gumnut_stack_with_members(count=2)
         client = _write_client(stack, [])
 
@@ -866,7 +822,6 @@ class TestUpdateStack:
         )
 
         assert result.primaryAssetId == requested
-        # Full members with the cover first — the same shape `getStack` returns.
         assert [asset.id for asset in result.assets] == [
             requested,
             *_member_uuids(members[:2]),
@@ -874,8 +829,6 @@ class TestUpdateStack:
 
     @pytest.mark.anyio
     async def test_converts_each_id_with_its_own_prefix(self, mock_current_user):
-        """`asset_` is a strict prefix of `asset_stack_`, and this route is the
-        one place both conversions happen in a single call."""
         stack, members = make_gumnut_stack_with_members(count=2)
         client = _write_client(stack, members)
         stack_uuid = safe_uuid_from_stack_id(stack.id)
@@ -895,8 +848,6 @@ class TestUpdateStack:
         "body", [{}, {"primaryAssetId": None}], ids=["omitted", "explicit-null"]
     )
     async def test_absent_cover_is_a_read(self, mock_current_user, body):
-        """Pins the absent-cover-degenerates-to-a-read rule stated in
-        `update_stack`, across both wire shapes that mean "no cover named"."""
         stack, members = make_gumnut_stack_with_members(count=2)
         stack.primary_asset_id = members[1].id
         client = _write_client(stack, members)
@@ -912,8 +863,6 @@ class TestUpdateStack:
 
     @pytest.mark.anyio
     async def test_non_member_cover_propagates(self, mock_current_user):
-        """Whether a cover is a live member of this stack is the backend's
-        rule — the adapter holds no membership list to check it against."""
         stack, members = make_gumnut_stack_with_members(count=2)
         client = _write_client(stack, members)
         error = make_sdk_status_error(400, "cover must be a member of the stack")
@@ -939,13 +888,7 @@ class TestUpdateStack:
     @pytest.mark.anyio
     @pytest.mark.parametrize("pins_a_cover", [False, True], ids=["read", "set-cover"])
     async def test_all_trashed_stack_is_404(self, mock_current_user, pins_a_cover):
-        """Both paths through this route end in a read, so an unrepresentable
-        stack answers as `get_stack` does rather than as the create route does.
-
-        The `set-cover` case is the surprising half — a mutation that committed
-        upstream still answering 404 — and it is the one an implementation that
-        only guarded the read branch would get wrong.
-        """
+        """Both read and set-cover paths apply the read response policy."""
         stack, members = make_gumnut_stack_with_members(count=2, trashed={0, 1})
         client = _write_client(stack, members)
         body = (

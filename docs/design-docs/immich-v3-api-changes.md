@@ -261,14 +261,9 @@ no-ops because Gumnut has no corresponding data.
 
 ### Deprecated-in-place (still functional in RC)
 
-These PUTs are now `deprecated: true` but **no PATCH replacement appears in the
-RC spec** — likely pre-announcing a future PATCH migration. Read that as a
-statement about the spec, not the server: at least one replacement (`PATCH
-/stacks/{id}`, `updateStackV3`) already exists in the Immich source, marked
-`@ApiExcludeEndpoint` so it stays out of the OpenAPI document and out of every
-generated client. A deprecated PUT the adapter implements therefore keeps
-working only until upstream publishes its PATCH, and no spec diff will announce
-the switch.
+These PUTs are now `deprecated: true`, but no PATCH replacements appear in the
+RC spec. `PATCH /stacks/{id}` already exists in Immich source behind
+`@ApiExcludeEndpoint`, so controller changes must supplement spec diffs.
 
 `PUT` on `/assets`, `/assets/{id}`, `/admin/users/{id}`,
 `/admin/users/{id}/preferences`, `/api-keys/{id}`, `/libraries/{id}`,

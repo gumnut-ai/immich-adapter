@@ -111,7 +111,7 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`, and t
 
 **Sent to**: Stack owner (by userId)
 
-Otherwise as in the Summary Table; emitted from `notification.service.ts`. Unlike its neighbours in that table, it reaches no client handler: the web client declares it in its socket type map and subscribes to it nowhere, and mobile doesn't reference it at all. That, rather than a missing capability, is why the adapter's stack writes don't emit it — see `../architecture/websocket-implementation.md`.
+Otherwise as in the Summary Table; emitted from `notification.service.ts`. The adapter omits it because no web or mobile handler subscribes; see `../architecture/websocket-implementation.md`.
 
 ---
 
