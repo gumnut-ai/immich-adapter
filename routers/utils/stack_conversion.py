@@ -411,7 +411,22 @@ async def resolve_stack_cover(
     if pinned_id is not None:
         return safe_uuid_from_asset_id(pinned_id)
 
-    members = await fetch_stack_cover_prefix(client, stack.id)
+    try:
+        members = await fetch_stack_cover_prefix(client, stack.id)
+    except GumnutError:
+        # Caught per stack rather than left to the batch: cover reads are one
+        # round trip each, so a transient failure on one burst would otherwise
+        # take every other stack's summary on the page down with it — see
+        # `gather_with_concurrency`, which discards partial results. This stack
+        # alone loses its badge.
+        logger.warning(
+            "Cover read failed for stack %s; omitting its asset stack summary",
+            stack.id,
+            extra={"stack_id": stack.id},
+            exc_info=True,
+        )
+        return None
+
     primary = resolve_effective_primary(stack, members)
     if primary is None:
         # Same member-less contradiction `hydrate_stack` warns about, reached
@@ -431,32 +446,27 @@ async def resolve_stack_cover(
     return safe_uuid_from_asset_id(primary.id)
 
 
-def build_asset_stack_summary(
-    stack: GumnutStackRow, cover_asset_id: UUID
-) -> AssetStackResponseDto:
-    """Build the nested `AssetResponseDto.stack` block for one stack.
-
-    `assetCount` is the row's **live** member count, which is what the field
-    means to a client: web renders it directly as the burst badge's number, and
-    it has to agree with the `assets.length` a follow-up `GET /api/stacks/{id}`
-    reports, since `StackResponseDto` carries live members only (see
-    `build_stack_response`). Trashed frames counted here would show a badge of
-    5 on a stack whose filmstrip holds 3.
-    """
-    return AssetStackResponseDto(
-        id=safe_uuid_from_stack_id(stack.id),
-        primaryAssetId=cover_asset_id,
-        assetCount=stack.asset_count,
-    )
-
-
 async def resolve_asset_stack_summaries(
     client: AsyncGumnut, gumnut_assets: Sequence[AssetResponse]
 ) -> dict[str, AssetStackResponseDto]:
     """Resolve stack summaries for a page, degrading to `{}` on upstream failure.
 
-    See `_resolve_asset_stack_summaries` for the resolution itself; this wrapper
-    owns only the failure posture, which is documented there.
+    `_resolve_asset_stack_summaries` does the resolving; this wrapper owns the
+    failure posture, which is the half worth explaining.
+
+    **A stack read that fails degrades the page rather than failing it.** The
+    block is decoration on a response whose real payload is the assets: losing a
+    burst badge costs a client nothing it can't recover on the next read, while
+    failing the request costs it the assets too. That matters more than it
+    sounds, because the global `GumnutError` handler forwards an upstream status
+    verbatim — a 404 from *this* lookup on `GET /api/assets/{id}` would reach
+    Immich web as "that asset is gone" and close the viewer on an asset that
+    exists. It also keeps this helper from overriding a caller's own posture:
+    `search_memories` deliberately tolerates a failed year (see
+    `_gather_year_assets`), and an all-or-nothing summary bolted onto it would
+    have made a cosmetic badge fail the whole carousel. Contrast
+    `hydrate_stacks`, which is right to fail loudly — there the stack *is* the
+    response.
 
     `GumnutError` is the SDK's base class, so this covers both an HTTP status
     from the stacks/assets reads and a transport failure. Nothing else is caught
@@ -554,15 +564,37 @@ async def _resolve_asset_stack_summaries(
             extra={"dangling_stack_ids": dangling},
         )
 
-    # Zero live members is the same "not representable" state `/stacks` drops a
-    # stack for (`_build_representable_response`): its `StackResponseDto` would
-    # carry an empty `assets`. Emitting the summary anyway would badge the asset
-    # with a count of 0 and hand the client a stack ID whose `GET
-    # /api/stacks/{id}` 404s — a control that appears and then fails. Applied
-    # here as a cheap prefilter so an all-trashed burst costs no read at all;
-    # `resolve_stack_cover` re-decides it from the members, which is what makes
-    # the rule hold when this count is stale.
-    representable = [row for row in rows.values() if row.asset_count > 0]
+    # Walked in `stack_ids` order — the order the stacks appear on the page —
+    # rather than `rows.values()`, whose order comes from the backend's
+    # `list_stacks` response and isn't promised to match the ids requested. That
+    # only matters once the budget below truncates: spending it in page order
+    # means the badges that survive are the ones on the assets nearest the top,
+    # instead of an arbitrary subset.
+    #
+    # Fewer than two live members is not a burst a client can act on, so no
+    # summary is emitted. Zero is the same "not representable" state `/stacks`
+    # drops a stack for (`_build_representable_response`): its
+    # `StackResponseDto` would carry an empty `assets`, and the summary would
+    # hand the client a stack ID whose `GET /api/stacks/{id}` 404s.
+    #
+    # One is the case this sweep newly made reachable, and it needs the same
+    # treatment for a different reason. Trashing one frame of a two-frame auto
+    # burst is ordinary user action and leaves `asset_count` at 1 — but Immich
+    # renders the badge on `asset.stack` alone, with no count threshold, so the
+    # surviving photo would carry a burst badge reading "1". Upstream never
+    # emits that shape: it deletes a stack once it falls below two assets, which
+    # is why nothing client-side guards against it. `/stacks` would still return
+    # such a stack, and that asymmetry is safe in this direction — no asset
+    # advertises the ID, so no client asks for it.
+    #
+    # A cheap prefilter, so a burst that has drained costs no read at all;
+    # `resolve_stack_cover` re-decides the zero case from the members, which is
+    # what makes that half of the rule hold when this count is stale.
+    representable = [
+        rows[stack_id]
+        for stack_id in stack_ids
+        if stack_id in rows and rows[stack_id].asset_count > 1
+    ]
 
     # Budget spent only on the rows that actually need a read. A pinned row
     # answers from its own field, so a page of user-pinned stacks is unbounded
@@ -588,7 +620,8 @@ async def _resolve_asset_stack_summaries(
             truncated,
             STACK_SUMMARY_COVER_READ_BUDGET,
             extra={
-                "stack_summary_truncated": truncated,
+                "stack_summary_truncated": True,
+                "stack_summary_truncated_stacks": truncated,
                 "stack_summary_cover_read_budget": STACK_SUMMARY_COVER_READ_BUDGET,
             },
         )
@@ -597,8 +630,18 @@ async def _resolve_asset_stack_summaries(
         [resolve_stack_cover(client, row) for row in resolvable]
     )
 
+    # `assetCount` is the row's **live** member count, which is what the field
+    # means to a client: web renders it directly as the burst badge's number,
+    # and it has to agree with the `assets.length` a follow-up
+    # `GET /api/stacks/{id}` reports, since `StackResponseDto` carries live
+    # members only (see `build_stack_response`). Trashed frames counted here
+    # would show a badge of 5 on a stack whose filmstrip holds 3.
     summaries = {
-        row.id: build_asset_stack_summary(row, cover)
+        row.id: AssetStackResponseDto(
+            id=safe_uuid_from_stack_id(row.id),
+            primaryAssetId=cover,
+            assetCount=row.asset_count,
+        )
         for row, cover in zip(resolvable, covers)
         if cover is not None
     }
@@ -616,7 +659,11 @@ async def _resolve_asset_stack_summaries(
             "stack_summary_cover_reads": cover_reads,
             "stack_summary_resolved": len(summaries),
             "stack_summary_dangling": len(dangling),
-            "stack_summary_truncated": truncated,
+            # Boolean under the truncation's own name, with the count beside it
+            # — the shape `stack_search_truncated` established in `stacks.py`,
+            # so one query form works across both stack surfaces.
+            "stack_summary_truncated": truncated > 0,
+            "stack_summary_truncated_stacks": truncated,
         },
     )
     return summaries

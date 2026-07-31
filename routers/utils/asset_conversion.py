@@ -518,8 +518,8 @@ def resolve_asset_stack_summary(
     `stack_id` missing from the lookup means the resolver already dropped that
     stack and logged it once for the batch; repeating it here would fire per
     asset. A `stack_summaries` of `None` means the caller did no stack
-    resolution at all — the sync-stream converters, and `/stacks`' own member
-    conversion — which is not a fault. Only the resolver can tell those two
+    resolution at all — today only `build_stack_response`, converting a stack's
+    own members — which is not a fault. Only the resolver can tell those two
     apart, which is why the warning lives there.
     """
     stack_id = gumnut_asset.stack_id

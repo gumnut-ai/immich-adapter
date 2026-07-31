@@ -3,7 +3,6 @@
 import asyncio
 import inspect
 import logging
-import re
 from datetime import datetime, timezone
 from unittest.mock import Mock
 from uuid import uuid4
@@ -582,26 +581,28 @@ class TestFetchStackCoverPrefix:
         assert await fetch_stack_cover_prefix(client, stack.id) == members
 
 
-def test_cover_walk_matches_the_member_walk():
-    """The two member walks must agree on `state` and `order`.
+@pytest.mark.anyio
+async def test_cover_walk_matches_the_member_walk():
+    """The two member walks must agree on everything but the heavy include.
 
-    `order` decides which frame an unpinned burst shows as its cover, so a
-    change to one walk that skipped the other would move the cover on `/stacks`
-    while leaving asset responses on the old rule — with every existing
-    assertion still green, since each test pins its own walk's literals. This
-    reads the two source calls and compares them directly.
+    `order` decides which frame an unpinned burst shows as its cover, so
+    changing one walk without the other would move the cover on `/stacks` while
+    leaving asset responses on the old rule — and each walk's own test pins only
+    its own literals, so neither would fail.
+
+    Compares the calls the two functions actually make rather than their source
+    text, which covers every shared kwarg (including ones added later) and can't
+    be fooled by a literal that also appears in a docstring.
     """
+    stack, members = make_gumnut_stack_with_members(count=2)
+    full, prefix = _client_returning(members), _client_returning(members)
 
-    def _walk_args(func) -> dict[str, str | None]:
-        source = inspect.getsource(func)
-        found: dict[str, str | None] = {}
-        for key in ("state", "order"):
-            match = re.search(rf'\b{key}="(\w+)"', source)
-            found[key] = match.group(1) if match else None
-        return found
+    await fetch_stack_members(full, stack.id)
+    await fetch_stack_cover_prefix(prefix, stack.id)
 
-    assert _walk_args(fetch_stack_members) == _walk_args(fetch_stack_cover_prefix)
-    assert _walk_args(fetch_stack_members) == {"state": "all", "order": "asc"}
+    assert full.assets.list.call_args.kwargs == (
+        prefix.assets.list.call_args.kwargs | {"include": ASSET_INCLUDE}
+    )
 
 
 class TestResolveStackCover:
@@ -779,16 +780,85 @@ class TestResolveAssetStackSummaries:
         assert [r for r in caplog.records if r.levelno >= logging.WARNING]
 
     @pytest.mark.anyio
-    async def test_cover_read_failure_also_degrades(self):
-        """The fan-out fails as a unit (`gather_with_concurrency` propagates the
-        first error), so the wrapper has to cover it too, not just the row read."""
-        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
-        client = _summary_client([stack], {stack.id: members})
-        client.assets.list = Mock(
-            side_effect=make_sdk_status_error(500, "Upstream exploded")
+    async def test_cover_read_failure_costs_only_that_stack(self):
+        """Cover reads are one round trip each, so a transient failure on one
+        burst must not cost the badges of every other stack on the page —
+        `gather_with_concurrency` would otherwise discard them all."""
+        good, good_members = make_gumnut_stack_with_members(
+            count=2, primary_asset_id=None
+        )
+        bad, bad_members = make_gumnut_stack_with_members(
+            count=2, primary_asset_id=None
+        )
+        client = _summary_client([good, bad], {good.id: good_members})
+
+        def _list(**kwargs):
+            if kwargs["stack_id"] == bad.id:
+                raise make_sdk_status_error(500, "Upstream exploded")
+            return MockSyncCursorPage(good_members)
+
+        client.assets.list = Mock(side_effect=_list)
+
+        summaries = await resolve_asset_stack_summaries(
+            client, good_members + bad_members
         )
 
+        assert set(summaries) == {good.id}
+
+    @pytest.mark.anyio
+    async def test_single_live_member_stack_is_omitted(self):
+        """Trashing one frame of a two-frame burst is ordinary user action, and
+        Immich draws the badge on `asset.stack` with no count threshold — so a
+        summary here would label the surviving photo a burst of "1". Upstream
+        never emits that shape; it deletes a stack below two assets."""
+        stack, members = make_gumnut_stack_with_members(
+            count=2, trashed={1}, primary_asset_id=None
+        )
+        assert stack.asset_count == 1
+        client = _summary_client([stack], {stack.id: members})
+
         assert await resolve_asset_stack_summaries(client, members) == {}
+
+        client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_two_live_members_is_the_admitting_boundary(self):
+        """The other side of the rule above — two live frames is a real burst."""
+        stack, members = make_gumnut_stack_with_members(count=2, primary_asset_id=None)
+        assert stack.asset_count == 2
+        client = _summary_client([stack], {stack.id: members})
+
+        summaries = await resolve_asset_stack_summaries(client, members)
+
+        assert summaries[stack.id].assetCount == 2
+
+    @pytest.mark.anyio
+    async def test_budget_is_spent_in_page_order(self):
+        """Which stacks keep their badge when the budget binds should be the
+        ones nearest the top of the page, not whatever order the backend
+        happened to return rows in."""
+        over = STACK_SUMMARY_COVER_READ_BUDGET + 2
+        stacks = [make_gumnut_stack(primary_asset_id=None) for _ in range(over)]
+        members_by_stack = {
+            stack.id: make_gumnut_stack_members(2, stack_id=stack.id)
+            for stack in stacks
+        }
+        assets = [make_gumnut_asset(stack_id=stack.id) for stack in stacks]
+
+        client = _summary_client(stacks, members_by_stack)
+        # Rows come back reversed, modelling a backend that doesn't echo the
+        # requested id order.
+        client.stacks.list_stacks = Mock(
+            side_effect=lambda **kwargs: MockSyncCursorPage(
+                [s for s in reversed(stacks) if s.id in set(kwargs["ids"])]
+            )
+        )
+
+        summaries = await resolve_asset_stack_summaries(client, assets)
+
+        assert set(summaries) == {
+            stack.id for stack in stacks[:STACK_SUMMARY_COVER_READ_BUDGET]
+        }
 
     @pytest.mark.anyio
     async def test_adapter_bugs_are_not_swallowed(self):
@@ -824,7 +894,11 @@ class TestResolveAssetStackSummaries:
         assert client.assets.list.call_count == STACK_SUMMARY_COVER_READ_BUDGET
         records = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(records) == 1
-        assert getattr(records[0], "stack_summary_truncated", None) == 3
+        # Boolean under the truncation's own name, count beside it — matching
+        # `stack_search_truncated` in `stacks.py` so one query form works
+        # across both stack surfaces.
+        assert getattr(records[0], "stack_summary_truncated", None) is True
+        assert getattr(records[0], "stack_summary_truncated_stacks", None) == 3
 
     @pytest.mark.anyio
     async def test_pinned_stacks_do_not_spend_the_budget(
@@ -892,6 +966,7 @@ class TestResolveAssetStackSummaries:
         summaries = await resolve_asset_stack_summaries(client, assets)
 
         assert len(summaries) == len(stacks)
+        assert tracker.peak > 1, "expected concurrent cover reads"
         assert tracker.peak <= BULK_FANOUT_CONCURRENCY_LIMIT
 
 

@@ -306,8 +306,8 @@ class TestNestedStackSummary:
     def test_omitted_lookup_yields_none_for_a_stacked_asset(
         self, sample_gumnut_asset, mock_current_user
     ):
-        """ "This caller did no stack resolution" — the sync converters and
-        `/stacks`' own member conversion — is not an error."""
+        """ "This caller did no stack resolution" is not an error — today that
+        is `build_stack_response`, converting a stack's own members."""
         sample_gumnut_asset.stack_id = uuid_to_gumnut_stack_id(uuid4())
 
         result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
