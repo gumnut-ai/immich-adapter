@@ -12,7 +12,7 @@ import hashlib
 
 import pytest
 from unittest.mock import AsyncMock, Mock
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from typing import List, Any
 
@@ -104,6 +104,7 @@ def make_gumnut_asset(
     checksum_sha1: str = "PaDX6+c+Lhjpm5/ciXUROL1ryaU=",
     trashed_at: datetime | None = None,
     stack_id: str | None = None,
+    local_datetime: datetime | None = None,
 ) -> Mock:
     """Build a Mock Gumnut asset carrying every field the converters read.
 
@@ -118,12 +119,14 @@ def make_gumnut_asset(
     a test builds several assets whose identities must stay distinguishable;
     otherwise a dedup-aware assertion passes because every asset carries the
     same value. `stack_id` takes an `asset_stack_`-prefixed Gumnut ID, not a
-    UUID, and is `None` for an unstacked asset.
+    UUID, and is `None` for an unstacked asset. `local_datetime` is the capture
+    time every ordering rule in the adapter sorts on; pass distinct values
+    whenever a test depends on which asset comes first.
     """
     now = datetime.now(timezone.utc)
     asset = Mock()
     asset.id = asset_id or uuid_to_gumnut_asset_id(uuid4())
-    asset.local_datetime = now
+    asset.local_datetime = local_datetime or now
     asset.created_at = now
     asset.updated_at = now
     asset.mime_type = "image/jpeg"
@@ -189,6 +192,7 @@ def make_gumnut_stack_members(
     *,
     stack_id: str,
     trashed: set[int] | None = None,
+    first_captured_at: datetime | None = None,
 ) -> list[Mock]:
     """Build `count` Mock assets belonging to `stack_id`, in member order.
 
@@ -197,9 +201,16 @@ def make_gumnut_stack_members(
     filename, device IDs, and both checksums — varies by index, so a member
     that leaks into the wrong position is visible in failure output rather than
     matching its neighbours.
+
+    Capture times ascend one second per index from `first_captured_at`, so
+    member order and capture order agree and "the earliest frame" is a single
+    unambiguous asset. Identical timestamps would leave any capture-time sort
+    deciding on its tiebreaker, which is not what such a test means to assert.
+    A real burst is sub-second, but only the ordering matters here.
     """
     trashed = trashed or set()
     now = datetime.now(timezone.utc)
+    first_captured_at = first_captured_at or now
     return [
         make_gumnut_asset(
             original_file_name=f"burst-{i}.jpg",
@@ -210,6 +221,7 @@ def make_gumnut_stack_members(
             checksum_sha1=fake_sha1_checksum(f"burst-{i}"),
             trashed_at=now if i in trashed else None,
             stack_id=stack_id,
+            local_datetime=first_captured_at + timedelta(seconds=i),
         )
         for i in range(count)
     ]
@@ -235,6 +247,32 @@ def make_gumnut_stack_with_members(
     stack = make_gumnut_stack(**stack_kwargs)
     members = make_gumnut_stack_members(count, stack_id=stack.id, trashed=trashed)
     return stack, members
+
+
+def mock_list_stacks(rows):
+    """A `client.stacks.list_stacks` mock returning the requested subset of `rows`.
+
+    Filters by the `ids` each call asks for rather than replaying `rows`
+    wholesale, so chunked reads get their own chunk back — and so a test can
+    model a row that vanished between the asset read and the stack read simply
+    by leaving that stack out of `rows`.
+
+    The matched rows come back **reversed**, deliberately not in the order the
+    caller requested: the Gumnut API promises no row order and callers index by
+    `row.id`, so replaying the request order would let a consumer that walked
+    the response instead of its own ID list pass. See the comment above
+    `complete_ids` in `resolve_timeline_stacks` for why that matters there.
+    """
+    rows_by_id = {row.id: row for row in rows}
+    return Mock(
+        side_effect=lambda **kwargs: MockSyncCursorPage(
+            [
+                rows_by_id[stack_id]
+                for stack_id in reversed(kwargs["ids"])
+                if stack_id in rows_by_id
+            ]
+        )
+    )
 
 
 @pytest.fixture
