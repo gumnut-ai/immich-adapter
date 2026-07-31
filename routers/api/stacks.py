@@ -3,7 +3,7 @@ from typing import Annotated, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from gumnut import AsyncGumnut, NotFoundError
+from gumnut import AsyncGumnut, GumnutError, NotFoundError
 from pydantic.json_schema import SkipJsonSchema
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
@@ -14,6 +14,7 @@ from routers.immich_models import (
     BulkIdsDto,
     UserResponseDto,
 )
+from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
@@ -220,11 +221,51 @@ async def search_stacks(
 
 
 @router.delete("", status_code=204)
-async def delete_stacks(request: BulkIdsDto):
+async def delete_stacks(
+    request: BulkIdsDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+):
+    """Dissolve every stack named in the bulk id list; the photos are untouched.
+
+    The Gumnut SDK has no bulk-delete transaction, so this fans out one
+    single-stack delete per id. Ids are deduped with request order preserved,
+    because the same stack named twice would otherwise turn its own successful
+    dissolve into a not-found on the second call.
+
+    **Not atomic.** Immich's `deleteStacks` promises no atomicity, and neither
+    can the adapter: a backend failure part-way through leaves the deletes that
+    already committed committed. Rather than surface whichever error happens to
+    land first, every fan-out call is allowed to settle and the first error in
+    request order is raised afterward — a deterministic result the client can
+    reproduce, forwarded to the global `GumnutError` handler. Only SDK
+    (`GumnutError`) failures are deferred this way; anything else propagates at
+    once and aborts the batch.
+
+    An empty id list is a successful no-op (204), matching the general bulk
+    route pattern.
     """
-    Delete multiple stacks.
-    This is a stub implementation that does not perform any action.
-    """
+    seen: set[UUID] = set()
+    gumnut_stack_ids = [
+        uuid_to_gumnut_stack_id(stack_id)
+        for stack_id in request.ids
+        if not (stack_id in seen or seen.add(stack_id))
+    ]
+    if not gumnut_stack_ids:
+        return
+
+    async def _delete(gumnut_stack_id: str) -> GumnutError | None:
+        try:
+            await client.stacks.delete(gumnut_stack_id)
+            return None
+        except GumnutError as exc:
+            return exc
+
+    errors = await gather_with_concurrency(
+        [_delete(gumnut_stack_id) for gumnut_stack_id in gumnut_stack_ids]
+    )
+    first_error = next((error for error in errors if error is not None), None)
+    if first_error is not None:
+        raise first_error
     return
 
 
@@ -326,18 +367,39 @@ async def update_stack(
 
 
 @router.delete("/{id}", status_code=204)
-async def delete_stack(id: UUID):
+async def delete_stack(
+    id: UUID,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+):
+    """Dissolve one stack, returning its members to loose display.
+
+    Only the grouping is removed; the photos themselves are untouched. The
+    Gumnut delete answers with an empty acknowledgment, which is discarded so
+    the route returns a bodyless 204. A missing or foreign stack surfaces as a
+    404 through the global `GumnutError` handler, as it does from `get_stack`.
     """
-    Delete stack.
-    This is a stub implementation that does not perform any action.
-    """
+    await client.stacks.delete(uuid_to_gumnut_stack_id(id))
     return
 
 
 @router.delete("/{id}/assets/{assetId}", status_code=204)
-async def remove_asset_from_stack(id: UUID, assetId: UUID):
+async def remove_asset_from_stack(
+    id: UUID,
+    assetId: UUID,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+):
+    """Pull a single frame out of a stack, leaving the asset itself untouched.
+
+    The one Immich path asset becomes a one-element `asset_ids` list. Cover
+    clearing, dissolution below two members, and user-origin semantics are all
+    owned by the backend's `remove_assets`, so the adapter forwards the request
+    and does nothing else — a backend-triggered dissolution needs no second
+    call. Removing an asset the backend does not consider a member is a silent
+    success upstream, which this route preserves. A missing or foreign stack
+    surfaces as a 404 through the global `GumnutError` handler.
     """
-    Remove asset from stack.
-    This is a stub implementation that does not perform any action.
-    """
+    await client.stacks.remove_assets(
+        uuid_to_gumnut_stack_id(id),
+        asset_ids=[uuid_to_gumnut_asset_id(assetId)],
+    )
     return
