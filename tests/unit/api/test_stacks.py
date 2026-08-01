@@ -950,8 +950,7 @@ class TestDeleteStack:
 
     @pytest.mark.anyio
     async def test_does_not_touch_any_asset_removal_api(self, mock_current_user):
-        """A dissolve removes the grouping only; the frames must stay put, so no
-        asset-removal call is made."""
+        """A dissolve removes the grouping only, not the frames."""
         client = _removal_client()
 
         await _delete_stack(client, uuid4())
@@ -1047,9 +1046,8 @@ class TestDeleteStacks:
     async def test_dedupes_repeated_ids_preserving_first_seen_order(
         self, mock_current_user
     ):
-        """A stack named twice must be deleted once — the second call would 404
-        on the grouping the first already dissolved — and the surviving order is
-        first-seen so the deterministic error below is well defined."""
+        """A stack named twice is deleted once (the second call would 404), and
+        the surviving order is first-seen so the deterministic error is defined."""
         client = _removal_client()
         first, second, third = uuid4(), uuid4(), uuid4()
         with_duplicates = [first, second, first, third, second]
@@ -1084,11 +1082,9 @@ class TestDeleteStacks:
         await _delete_stacks(client, stack_uuids)
 
         assert client.stacks.delete.call_count == len(stack_uuids)
-        # Single-threaded scheduling admits exactly the limit before any coro
-        # releases the semaphore, so with more ids than the limit the peak is the
-        # bound itself. Asserting equality rather than `<= limit` also proves the
-        # calls overlapped — a regression to a sequential `for … await` loop would
-        # leave peak at 1 and pass a `<= limit` check silently.
+        # Asserting equality (not `<= limit`) also proves the calls overlapped:
+        # a regression to a sequential `for … await` loop would leave peak at 1
+        # and pass a `<= limit` check silently.
         assert peak == BULK_FANOUT_CONCURRENCY_LIMIT
 
     @pytest.mark.anyio
@@ -1103,10 +1099,8 @@ class TestDeleteStacks:
     async def test_raises_the_first_error_in_request_order_after_all_settle(
         self, mock_current_user
     ):
-        """Partial failure is not atomic: every started delete is allowed to
-        settle, and the error raised is the first in request order — not
-        whichever landed first in time — so the client sees a reproducible
-        result. The earlier-ordered failure is made the *slower* one to prove the
+        """The error raised is the first in request order, not the first in
+        time. The earlier-ordered failure is made the *slower* one to prove the
         route sorts by request order rather than completion order.
         """
         first, second, third, fourth = uuid4(), uuid4(), uuid4(), uuid4()
