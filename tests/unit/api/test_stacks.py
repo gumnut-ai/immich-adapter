@@ -1097,7 +1097,7 @@ class TestDeleteStacks:
 
     @pytest.mark.anyio
     async def test_raises_the_first_error_in_request_order_after_all_settle(
-        self, mock_current_user
+        self, mock_current_user, caplog
     ):
         """The error raised is the first in request order, not the first in
         time. The earlier-ordered failure is made the *slower* one to prove the
@@ -1120,12 +1120,15 @@ class TestDeleteStacks:
         client = _removal_client()
         client.stacks.delete = AsyncMock(side_effect=_delete)
 
-        with pytest.raises(GumnutError) as exc_info:
-            await _delete_stacks(client, [first, second, third, fourth])
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(GumnutError) as exc_info:
+                await _delete_stacks(client, [first, second, third, fourth])
 
         assert exc_info.value is slow_error
         # Every id was attempted even though an earlier one failed.
         assert client.stacks.delete.call_count == 4
+        # The non-atomic partial failure leaves a triage signal.
+        assert "2 of 4 deletes failed" in caplog.text
 
     @pytest.mark.anyio
     async def test_non_sdk_error_aborts_without_deferral(self, mock_current_user):

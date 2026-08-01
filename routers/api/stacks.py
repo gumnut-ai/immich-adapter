@@ -232,9 +232,10 @@ async def delete_stacks(
     own dissolve into a not-found on the second call.
 
     Not atomic: a mid-batch failure leaves earlier deletes committed. Every
-    call is allowed to settle, then the first `GumnutError` in request order is
-    raised — a deterministic result — via the global handler. Non-SDK errors
-    propagate immediately. An empty list is a 204 no-op.
+    call is allowed to settle, the failure count is logged, then the first
+    `GumnutError` in request order is raised — a deterministic result — via the
+    global handler. Non-SDK errors propagate immediately. An empty list is a 204
+    no-op.
     """
     # `dict.fromkeys` dedupes while preserving first-seen order (UUIDs hash).
     gumnut_stack_ids = [
@@ -253,9 +254,16 @@ async def delete_stacks(
     errors = await gather_with_concurrency(
         [_delete(gumnut_stack_id) for gumnut_stack_id in gumnut_stack_ids]
     )
-    first_error = next((error for error in errors if error is not None), None)
-    if first_error is not None:
-        raise first_error
+    failures = [error for error in errors if error is not None]
+    if failures:
+        logger.warning(
+            "Bulk stack dissolve: %d of %d deletes failed; raising the first in "
+            "request order",
+            len(failures),
+            len(gumnut_stack_ids),
+            extra={"failed": len(failures), "requested": len(gumnut_stack_ids)},
+        )
+        raise failures[0]
     return
 
 
