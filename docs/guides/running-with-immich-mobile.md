@@ -1,11 +1,18 @@
 ---
 title: "Running with Immich Mobile"
-last-updated: 2026-05-07
+last-updated: 2026-08-02
 ---
 
 # Running with Immich Mobile
 
 The Immich mobile app requires HTTPS to complete the OAuth login flow. For local development, use [mkcert](https://github.com/FiloSottile/mkcert) to generate a locally-trusted certificate.
+
+Before starting the adapter, follow the [README setup](../../README.md): copy
+`.env.example` to `.env`, set the required `SESSION_ENCRYPTION_KEY`, and make
+sure Redis is reachable at the configured `REDIS_URL` (default:
+`redis://localhost:6379/1`). The adapter pings Redis during startup, so the
+service must be running before the HTTPS command below. Keep the encryption key
+stable across restarts so existing sessions remain usable.
 
 ## 1. Install mkcert and set up the local CA
 

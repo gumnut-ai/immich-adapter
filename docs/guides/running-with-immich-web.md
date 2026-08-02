@@ -1,6 +1,6 @@
 ---
 title: "Running with Immich Web"
-last-updated: 2026-03-19
+last-updated: 2026-08-02
 ---
 
 # Running with Immich Web
@@ -8,6 +8,12 @@ last-updated: 2026-03-19
 There are two ways to run the Immich web UI locally: using pre-built static files (simpler) or running the Vite dev server from source (needed for frontend changes).
 
 Both approaches require the adapter to be running — see the [README](../../README.md) for setup instructions.
+
+Before starting the adapter, copy `.env.example` to `.env`, generate and set
+the required `SESSION_ENCRYPTION_KEY`, and start Redis at the configured
+`REDIS_URL` (default: `redis://localhost:6379/1`). The adapter pings Redis
+during startup, so it will not start until that service is reachable. Keep the
+encryption key stable across restarts so existing sessions remain usable.
 
 ## Option 1: Static Files
 
@@ -27,7 +33,8 @@ For details on how the adapter handles requests in this setup, see the [adapter 
 1. **Docker** running locally
 2. **Gumnut API backend** running on `localhost:8000` (refer to the Gumnut API's own setup instructions)
 3. **Clerk OAuth configured** on the Gumnut API backend (the backend's `CLERK_OAUTH_CLIENT_ID` set to a real value, not the placeholder)
-4. **immich-adapter** running on `localhost:3001`
+4. **Redis** running at the `REDIS_URL` configured for the adapter
+5. **immich-adapter** running on `localhost:3001`
 
 ### Extract Immich web files
 
@@ -77,8 +84,9 @@ Browser (localhost:3000)
 
 1. **Gumnut API backend** running on `localhost:8000` (refer to the Gumnut API's own setup instructions)
 2. **Clerk OAuth configured** on the Gumnut API backend (the backend's `CLERK_OAUTH_CLIENT_ID` set to a real value, not the placeholder)
-3. **immich-adapter** running on `localhost:3001`
-4. The [Immich repository](https://github.com/immich-app/immich) cloned as a sibling directory (`../immich/`)
+3. **Redis** running at the `REDIS_URL` configured for the adapter
+4. **immich-adapter** running on `localhost:3001`
+5. The [Immich repository](https://github.com/immich-app/immich) cloned as a sibling directory (`../immich/`)
 
 ### Build and run Immich web
 
