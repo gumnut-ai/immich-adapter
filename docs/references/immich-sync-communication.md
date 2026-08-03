@@ -1,6 +1,6 @@
 ---
 title: "Immich Client<>Server Sync Communication"
-last-updated: 2026-07-12
+last-updated: 2026-08-03
 ---
 
 # Immich Client<>Server Sync Communication
@@ -215,6 +215,17 @@ The 22 SyncRequestTypes generate 50 SyncEntityTypes in specific orders.
 Notes (discussed below):
 - `SyncAckV1`\* = Backfill completion marker (via `sendEntityBackfillCompleteAck()`, one per entity)
 - `SyncAckV1`\*\* = Phase transition marker (before first CREATE, marks updates complete)
+
+**Adapter behavior for `StacksV1`:** the table above is what the upstream client
+accepts. The adapter emits `StacksV1` as a **current-state snapshot** — `StackV1`
+upserts only, never `StackDeleteV1` — and only on reset / first sync (no
+`StackV1` checkpoint); an already-synced client receives nothing. Assets carry
+their `stackId` in the same sync so members group under the snapshot's stack
+rows. Incremental stack create/update/delete propagation is out of scope until a
+Gumnut stack event source lands, so a stack changed after a client's initial
+sync is not reflected until that client resets. `PartnerStacksV1` is a no-op
+(no partner sharing). See the "Stack Snapshot" section of
+`docs/architecture/sync-stream-architecture.md` for the full rationale.
 
 ## Special SyncEntityTypes
 

@@ -71,6 +71,42 @@ pass: an `album_deleted` event emits `AlbumDeleteV1`, and the client's
 delete from the album-user pass would duplicate `AlbumDeleteV1`. No
 `AlbumUserDeleteV1` is emitted (Gumnut has no unshare operation).
 
+## Stack Snapshot (StacksV1)
+
+Stacks reach the mobile client two ways, both driven from the initial/full sync:
+
+1. **Asset membership.** Each sync asset row carries its `stackId` — the Gumnut
+   `stack_id` FK mapped to the Immich UUID (loose assets stay null). V2 inherits
+   it through the V1 delegation. This is what groups burst members under a stack
+   on the client.
+2. **Stack rows.** `StacksV1` streams a **current-state snapshot** of `StackV1`
+   rows, handled specially (`_stream_stacks`) alongside the user types rather
+   than via the events API — the Gumnut backend emits no stack lifecycle events
+   yet, so there is nothing to feed the event stream. Each row's
+   `primaryAssetId` is the **effective primary** resolved by the shared
+   `resolve_effective_primary`/`hydrate_stack` helpers (the exact rule the REST
+   `/stacks` surfaces use), so an auto-detected burst with no pinned cover still
+   gets a valid non-null primary. A member-less stack has no honest primary and
+   is skipped with a warning. `ownerId` is always the current user (Gumnut is
+   single-user; no stack sharing).
+
+The snapshot is emitted **before** the phase-1 asset loop, so a stack row exists
+on the client before any asset naming it via `stackId` arrives. (The mobile
+client's `stackId` / `primaryAssetId` columns are unenforced indexes, not FKs,
+so the circular reference is not order-sensitive in practice — stacks-first is a
+deliberate, defensive choice for the asset→stack direction.)
+
+**Scope boundary — snapshot only.** The snapshot streams only on **reset / first
+sync** (no `StackV1` checkpoint). Once a client has acked, an existing `StackV1`
+checkpoint suppresses the pass entirely: no speculative updates are emitted.
+Incremental stack create/update/delete propagation is intentionally out of scope
+and tracked on a separate event-support track — re-emitting the full stack table
+on every delta is **not** a substitute, because it still cannot express deletes
+and wastes bandwidth. Per-row acks are `stack.updated_at` + id (pipe-free,
+stable), so a reset replays deterministically. `PartnerStacksV1` stays a no-op
+(partner sharing is unsupported), and `on_asset_stack_update` is **not** in the
+supported WebSocket table.
+
 ## Adding a New Sync Type Version
 
 When the same gumnut entity type maps to multiple Immich sync versions (e.g., AssetFacesV2 alongside V1), update these files in coordination:
@@ -87,7 +123,7 @@ The invariant tests in `test_sync_v2.py` assert that every V2 type in `_SYNC_TYP
 
 Immich sync types that are accepted but have no Gumnut equivalent (e.g., `AssetEditsV1` — we don't support editing) go in `_NOOP_REQUEST_TYPES` in `stream.py`. This prevents "unsupported type" warnings while making the no-op explicit. Do not just add them to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that silently drops them.
 
-The v3 mobile client requests a broad set of these on **every** sync (partner-*, stacks-*, memories-*, `AssetMetadataV1`, `AssetOcrV1`, `AlbumAssetExifsV1`, the V2 partner/album-asset variants) — all no-ops because the adapter has no sync-stream source for them, whether the underlying feature is absent (sharing, OCR) or reachable only through the REST surfaces (stacks, memories). They all belong in `_NOOP_REQUEST_TYPES` so the per-sync "unsupported types" warning stays quiet. `UserMetadataV1` is the one requested type the adapter *does* synthesize (see "User Preferences" above), so it is deliberately **not** a no-op — it's handled specially alongside `UsersV1`/`AuthUsersV1`.
+The v3 mobile client requests a broad set of these on **every** sync (partner-*, `PartnerStacksV1`, memories-*, `AssetMetadataV1`, `AssetOcrV1`, `AlbumAssetExifsV1`, the V2 partner/album-asset variants) — all no-ops because the adapter has no sync-stream source for them, whether the underlying feature is absent (sharing, OCR) or reachable only through the REST surfaces (memories). They all belong in `_NOOP_REQUEST_TYPES` so the per-sync "unsupported types" warning stays quiet. Two requested types the adapter *does* handle are deliberately **not** no-ops, both handled specially alongside `UsersV1`/`AuthUsersV1` rather than via `_SYNC_TYPE_ORDER`: `UserMetadataV1` (synthesized preferences row — see "User Preferences" above) and `StacksV1` (current-state snapshot — see "Stack Snapshot" above). `PartnerStacksV1` remains a no-op regardless.
 
 ## Contract with the Gumnut API
 

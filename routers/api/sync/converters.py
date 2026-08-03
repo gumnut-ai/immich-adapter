@@ -11,6 +11,7 @@ from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.person_response import PersonResponse
+from gumnut.types.stack_list_stacks_response import StackListStacksResponse
 from gumnut.types.user_response import UserResponse
 
 from routers.immich_models import (
@@ -28,6 +29,7 @@ from routers.immich_models import (
     SyncAssetV2,
     SyncAuthUserV1,
     SyncPersonV1,
+    SyncStackV1,
     SyncUserMetadataV1,
     SyncUserV1,
     UserMetadataKey,
@@ -53,6 +55,7 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     safe_uuid_from_face_id,
     safe_uuid_from_person_id,
+    safe_uuid_from_stack_id,
     safe_uuid_from_user_id,
 )
 
@@ -208,7 +211,12 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: UUID) -> SyncA
         height=asset.height if asset.height else None,
         libraryId=None,
         livePhotoVideoId=None,
-        stackId=None,
+        # The asset's stack FK, so the client can group burst members under the
+        # stack row streamed by StacksV1. Loose (unstacked) assets stay null.
+        # V2 inherits this through the model_dump delegation below.
+        stackId=(
+            str(safe_uuid_from_stack_id(asset.stack_id)) if asset.stack_id else None
+        ),
         thumbhash=asset.thumbhash,
         width=asset.width if asset.width else None,
     )
@@ -409,4 +417,29 @@ def gumnut_album_asset_to_sync_album_to_asset_v1(
     return SyncAlbumToAssetV1(
         albumId=safe_uuid_from_album_id(album_asset.album_id),
         assetId=safe_uuid_from_asset_id(album_asset.asset_id),
+    )
+
+
+def gumnut_stack_to_sync_stack_v1(
+    stack: StackListStacksResponse, primary_asset_id: UUID, owner_id: UUID
+) -> SyncStackV1:
+    """Convert a Gumnut stack row to Immich SyncStackV1 format.
+
+    ``primary_asset_id`` is the *effective* cover resolved by the shared
+    ``resolve_effective_primary`` helper (via ``hydrate_stack``) — never the raw
+    Gumnut row's pinned cover, which is null for an auto-detected burst.
+    ``SyncStackV1.primaryAssetId`` is required and non-null, so callers must
+    resolve a cover before converting; a member-less stack has none and is
+    skipped upstream rather than reaching here.
+
+    Gumnut is single-user with no stack sharing, so ``ownerId`` is always the
+    current user — the row itself carries no owner. Member assets are not
+    embedded: each carries this stack's id in its own ``stackId`` field.
+    """
+    return SyncStackV1(
+        id=safe_uuid_from_stack_id(stack.id),
+        ownerId=owner_id,
+        primaryAssetId=primary_asset_id,
+        createdAt=stack.created_at,
+        updatedAt=stack.updated_at,
     )

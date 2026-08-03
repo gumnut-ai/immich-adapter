@@ -28,6 +28,7 @@ from services.checkpoint_store import Checkpoint
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.sync.converters import (
+    gumnut_stack_to_sync_stack_v1,
     gumnut_user_to_sync_auth_user_v1,
     gumnut_user_to_sync_user_metadata_v1,
     gumnut_user_to_sync_user_v1,
@@ -46,6 +47,7 @@ from routers.api.sync.fk_integrity import (
     null_deleted_fk_references,
     payload_override,
 )
+from routers.utils.stack_conversion import hydrate_stack
 
 logger = logging.getLogger(__name__)
 
@@ -144,11 +146,9 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
 #                          EXIF arrives via AssetExifsV1.
 #   - MemoriesV1 /
 #     MemoryToAssetsV1:    Gumnut has no memories feature; the tab renders empty.
-#   - StacksV1:            stacks exist and are readable over REST (`/api/stacks`),
-#                          but nothing feeds them into the sync stream, and the
-#                          sync asset converters still emit stackId=None — so a
-#                          stack row here would name a grouping no synced asset
-#                          claims membership in.
+# StacksV1 is deliberately NOT here — it is emitted as a current-state snapshot
+# (see _stream_stacks), alongside the special user types below rather than via
+# the events API. PartnerStacksV1 stays a no-op: partner sharing is unsupported.
 # UserMetadataV1 is deliberately NOT here — it is emitted (a synthesized
 # preferences row); see gumnut_user_to_sync_user_metadata_v1.
 _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
@@ -163,19 +163,20 @@ _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
     SyncRequestType.AlbumAssetExifsV1: SyncEntityType.AlbumAssetExifCreateV1,
     SyncRequestType.MemoriesV1: SyncEntityType.MemoryV1,
     SyncRequestType.MemoryToAssetsV1: SyncEntityType.MemoryToAssetV1,
-    SyncRequestType.StacksV1: SyncEntityType.StackV1,
 }
 
 # Supported SyncRequestTypes (used to detect unsupported types requested by
-# client). AuthUsersV1/UsersV1/UserMetadataV1 are handled specially (not via
-# _SYNC_TYPE_ORDER): the first two stream the user record, and UserMetadataV1
-# streams a synthesized preferences row (see gumnut_user_to_sync_user_metadata_v1).
+# client). AuthUsersV1/UsersV1/UserMetadataV1/StacksV1 are handled specially (not
+# via _SYNC_TYPE_ORDER): the first two stream the user record, UserMetadataV1
+# streams a synthesized preferences row (see gumnut_user_to_sync_user_metadata_v1),
+# and StacksV1 streams a current-state snapshot (see _stream_stacks).
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
     | {
         SyncRequestType.AuthUsersV1,
         SyncRequestType.UsersV1,
         SyncRequestType.UserMetadataV1,
+        SyncRequestType.StacksV1,
     }
     | _NOOP_REQUEST_TYPES.keys()
 )
@@ -503,6 +504,58 @@ def _yield_buffered_deletes(
             yield json_line, delete_type
 
 
+async def _stream_stacks(
+    gumnut_client: AsyncGumnut,
+    owner_id: UUID,
+    checkpoint: Checkpoint | None,
+) -> AsyncGenerator[str, None]:
+    """Stream StackV1 rows as a current-state snapshot.
+
+    Stacks are not sourced from the events API — the Gumnut backend emits no
+    stack lifecycle events yet — so this is a point-in-time snapshot, not a
+    delta. Incremental create/update/delete support is intentionally out of
+    scope (tracked on a separate event-support track):
+
+    - **Checkpoint present** → emit nothing. An already-synced client keeps the
+      stacks it has until that track lands; re-emitting the whole table every
+      delta cannot express deletes and only wastes bandwidth.
+    - **Checkpoint absent** (reset / first sync) → page every stack, resolve its
+      effective cover, and emit a StackV1 row.
+
+    The caller emits this before the phase-1 asset loop, so a stack row exists on
+    the client before any asset naming it via ``stackId`` arrives.
+
+    A member-less stack has no honest ``primaryAssetId`` (``SyncStackV1`` requires
+    a non-null one), so ``hydrate_stack`` returns ``None`` — logging a warning —
+    and it is skipped here.
+
+    The per-row ack cursor is ``stack.updated_at`` + id: pipe-free and stable, so
+    a reset replays deterministically and the last row's ack becomes the StackV1
+    checkpoint that suppresses future snapshots.
+    """
+    if checkpoint is not None:
+        # An existing checkpoint means the client already holds the snapshot;
+        # emit no speculative updates. See the docstring's scope boundary.
+        return
+
+    async for stack in gumnut_client.stacks.list_stacks(limit=GUMNUT_API_MAX_PAGE_SIZE):
+        hydrated = await hydrate_stack(gumnut_client, stack)
+        if hydrated is None:
+            # Member-less stack — hydrate_stack already logged a warning. Skipped
+            # rather than emitting an invalid required primary.
+            continue
+
+        sync_stack = gumnut_stack_to_sync_stack_v1(
+            stack, hydrated.primary_asset_id, owner_id
+        )
+        cursor = f"{stack.updated_at.isoformat()}_{stack.id}"
+        yield make_sync_event(
+            SyncEntityType.StackV1,
+            sync_stack.model_dump(mode="json"),
+            cursor,
+        )
+
+
 async def generate_sync_stream(
     gumnut_client: AsyncGumnut,
     request: SyncStreamDto,
@@ -622,6 +675,22 @@ async def generate_sync_stream(
         # Counters for logging
         event_counts: dict[str, int] = {}
         total_events = 0
+
+        # Stream the stack snapshot before the asset loop (StacksV1). Stacks are
+        # a current-state snapshot rather than events, emitted first so every
+        # asset's stackId names a stack row the client already holds. Only a
+        # reset / first sync produces rows — see _stream_stacks for the
+        # checkpoint semantics and the incremental-support scope boundary.
+        if SyncRequestType.StacksV1 in requested_types:
+            stack_checkpoint = checkpoint_map.get(SyncEntityType.StackV1)
+            async for stack_line in _stream_stacks(
+                gumnut_client, owner_uuid, stack_checkpoint
+            ):
+                yield stack_line
+                event_counts[SyncEntityType.StackV1.value] = (
+                    event_counts.get(SyncEntityType.StackV1.value, 0) + 1
+                )
+                total_events += 1
 
         # Phase 1: Stream upserts for all entity types in FK dependency order,
         # buffering delete events for phase 2.
