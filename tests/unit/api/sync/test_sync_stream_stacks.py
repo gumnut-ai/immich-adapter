@@ -101,6 +101,18 @@ class TestAssetStackIdConversion:
 
         assert gumnut_asset_to_sync_asset_v2(asset, TEST_UUID).stackId is None
 
+    def test_undecodable_stack_id_degrades_to_loose_without_raising(self, caplog):
+        """A malformed stack_id (e.g. a backend prefix change) must not abort the
+        sync stream — the asset syncs as loose, with only a debug log (a prefix
+        break is systemic; a per-asset warning would flood the sync)."""
+        asset = make_gumnut_asset(stack_id="not_a_valid_stack_prefix")
+
+        with caplog.at_level("DEBUG"):
+            sync = gumnut_asset_to_sync_asset_v1(asset, TEST_UUID)
+
+        assert sync.stackId is None
+        assert any("not decodable" in record.message for record in caplog.records)
+
 
 # --- Stack converter -----------------------------------------------------------
 

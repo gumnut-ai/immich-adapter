@@ -218,14 +218,11 @@ Notes (discussed below):
 
 **Adapter behavior for `StacksV1`:** the table above is what the upstream client
 accepts. The adapter emits `StacksV1` as a **current-state snapshot** — `StackV1`
-upserts only, never `StackDeleteV1` — and only on reset / first sync (no
-`StackV1` checkpoint); an already-synced client receives nothing. Assets carry
-their `stackId` in the same sync so members group under the snapshot's stack
-rows. Incremental stack create/update/delete propagation is out of scope until a
-Gumnut stack event source lands, so a stack changed after a client's initial
-sync is not reflected until that client resets. `PartnerStacksV1` is a no-op
-(no partner sharing). See the "Stack Snapshot" section of
-`docs/architecture/sync-stream-architecture.md` for the full rationale.
+upserts only, never `StackDeleteV1`, and only on reset / first sync — with assets
+carrying their `stackId` in the same sync so members group under the snapshot's
+stack rows. `PartnerStacksV1` stays a no-op (no partner sharing). See the "Stack
+Snapshot" section of `docs/architecture/sync-stream-architecture.md` for the
+snapshot semantics and the incremental-support scope boundary.
 
 ## Special SyncEntityTypes
 

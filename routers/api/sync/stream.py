@@ -532,6 +532,23 @@ async def _stream_stacks(
     The per-row ack cursor is ``stack.updated_at`` + id: pipe-free and stable, so
     a reset replays deterministically and the last row's ack becomes the StackV1
     checkpoint that suppresses future snapshots.
+
+    Two accepted trade-offs, both cheap because this pass is reset-only:
+
+    - Each stack is hydrated through the shared ``hydrate_stack`` — the same
+      helper REST ``/stacks`` uses, so the effective primary matches exactly
+      (including the trashed-pin rule) — which fetches every member with
+      ``ASSET_INCLUDE`` even though only the resolved primary id is used here.
+      Reusing the single source of truth is worth the unused member payload on a
+      reset; a lean member read is a later optimization if a large, burst-heavy
+      library ever makes reset latency matter.
+    - A client with no stacks (or only member-less ones) emits no StackV1 row, so
+      never acks one, so never stores a checkpoint — it re-pages ``list_stacks``
+      (one empty page) on every sync until it has a real stack to checkpoint.
+      A consequence: the first stack a stackless client gains after its initial
+      sync does propagate on the next delta (there is no checkpoint yet to
+      suppress it) — strictly more than the "snapshot only on reset" guarantee,
+      never less, so it is harmless.
     """
     if checkpoint is not None:
         # An existing checkpoint means the client already holds the snapshot;
@@ -676,11 +693,8 @@ async def generate_sync_stream(
         event_counts: dict[str, int] = {}
         total_events = 0
 
-        # Stream the stack snapshot before the asset loop (StacksV1). Stacks are
-        # a current-state snapshot rather than events, emitted first so every
-        # asset's stackId names a stack row the client already holds. Only a
-        # reset / first sync produces rows — see _stream_stacks for the
-        # checkpoint semantics and the incremental-support scope boundary.
+        # Stream the StackV1 snapshot before the asset loop (so each asset's
+        # stackId names a stack the client already holds). See _stream_stacks.
         if SyncRequestType.StacksV1 in requested_types:
             stack_checkpoint = checkpoint_map.get(SyncEntityType.StackV1)
             async for stack_line in _stream_stacks(

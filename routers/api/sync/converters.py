@@ -4,6 +4,7 @@ Converter functions mapping Gumnut SDK types to Immich sync models.
 Pure functions with no internal dependencies.
 """
 
+import logging
 from uuid import UUID
 
 from gumnut.types.album_asset_response import AlbumAssetResponse
@@ -58,6 +59,40 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_stack_id,
     safe_uuid_from_user_id,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _immich_stack_id(gumnut_stack_id: str | None) -> str | None:
+    """Map an asset's Gumnut stack FK to the Immich ``stackId``, or None.
+
+    Returns None for a loose (unstacked) asset, and — critically — also for a
+    stack_id that fails to decode rather than letting the ValueError abort the
+    whole sync stream. A stacked asset then syncs as loose (an inert
+    degradation), the same fallback ``resolve_timeline_stacks`` takes for this
+    prefix contract; the alternative is the streaming generator's broad handler
+    swallowing the error mid-stream, so the client never receives
+    ``SyncCompleteV1`` and every subsequent sync fails identically on the same
+    asset. The decode failure is logged at debug, not warning — see below.
+    """
+    if not gumnut_stack_id:
+        return None
+    try:
+        return str(safe_uuid_from_stack_id(gumnut_stack_id))
+    except ValueError:
+        # Logged at debug, not warning: the only cause is a backend change to the
+        # asset_stack_ prefix, which is systemic — it breaks every stacked asset
+        # at once, so a per-asset warning would flood a full-library sync with
+        # thousands of identical lines. That break already surfaces loudly and
+        # aggregated on the app's primary view via resolve_timeline_stacks; this
+        # path only needs to degrade quietly to a loose asset.
+        logger.debug(
+            "Asset stack_id is not decodable to an Immich UUID; syncing the "
+            "asset as loose (stackId=None)",
+            extra={"stack_id": gumnut_stack_id},
+        )
+        return None
 
 
 def _format_exposure_time(exposure_time: float | None) -> str | None:
@@ -212,11 +247,10 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: UUID) -> SyncA
         libraryId=None,
         livePhotoVideoId=None,
         # The asset's stack FK, so the client can group burst members under the
-        # stack row streamed by StacksV1. Loose (unstacked) assets stay null.
-        # V2 inherits this through the model_dump delegation below.
-        stackId=(
-            str(safe_uuid_from_stack_id(asset.stack_id)) if asset.stack_id else None
-        ),
+        # stack row streamed by StacksV1. Loose (unstacked) assets stay null, as
+        # does an undecodable stack_id — see _immich_stack_id. V2 inherits this
+        # through the model_dump delegation below.
+        stackId=_immich_stack_id(asset.stack_id),
         thumbhash=asset.thumbhash,
         width=asset.width if asset.width else None,
     )
