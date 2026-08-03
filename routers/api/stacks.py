@@ -3,7 +3,7 @@ from typing import Annotated, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from gumnut import AsyncGumnut, NotFoundError
+from gumnut import AsyncGumnut, GumnutError, NotFoundError
 from pydantic.json_schema import SkipJsonSchema
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
@@ -14,6 +14,7 @@ from routers.immich_models import (
     BulkIdsDto,
     UserResponseDto,
 )
+from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
@@ -220,11 +221,49 @@ async def search_stacks(
 
 
 @router.delete("", status_code=204)
-async def delete_stacks(request: BulkIdsDto):
+async def delete_stacks(
+    request: BulkIdsDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+):
+    """Dissolve every stack in the bulk id list; the photos are untouched.
+
+    The SDK has no bulk-delete, so this fans out one delete per id. Ids are
+    deduped (request order preserved) so a stack named twice doesn't turn its
+    own dissolve into a not-found on the second call.
+
+    Not atomic: a mid-batch failure leaves earlier deletes committed. Every
+    call is allowed to settle, the failure count is logged, then the first
+    `GumnutError` in request order is raised — a deterministic result — via the
+    global handler. Non-SDK errors propagate immediately. An empty list is a 204
+    no-op.
     """
-    Delete multiple stacks.
-    This is a stub implementation that does not perform any action.
-    """
+    # `dict.fromkeys` dedupes while preserving first-seen order (UUIDs hash).
+    gumnut_stack_ids = [
+        uuid_to_gumnut_stack_id(stack_id) for stack_id in dict.fromkeys(request.ids)
+    ]
+    if not gumnut_stack_ids:
+        return
+
+    async def _delete(gumnut_stack_id: str) -> GumnutError | None:
+        try:
+            await client.stacks.delete(gumnut_stack_id)
+            return None
+        except GumnutError as exc:
+            return exc
+
+    errors = await gather_with_concurrency(
+        [_delete(gumnut_stack_id) for gumnut_stack_id in gumnut_stack_ids]
+    )
+    failures = [error for error in errors if error is not None]
+    if failures:
+        logger.warning(
+            "Bulk stack dissolve: %d of %d deletes failed; raising the first in "
+            "request order",
+            len(failures),
+            len(gumnut_stack_ids),
+            extra={"failed": len(failures), "requested": len(gumnut_stack_ids)},
+        )
+        raise failures[0]
     return
 
 
@@ -326,18 +365,34 @@ async def update_stack(
 
 
 @router.delete("/{id}", status_code=204)
-async def delete_stack(id: UUID):
+async def delete_stack(
+    id: UUID,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+):
+    """Dissolve one stack; only the grouping is removed, the photos are not.
+
+    A missing or foreign stack 404s through the global `GumnutError` handler,
+    as it does from `get_stack`.
     """
-    Delete stack.
-    This is a stub implementation that does not perform any action.
-    """
+    await client.stacks.delete(uuid_to_gumnut_stack_id(id))
     return
 
 
 @router.delete("/{id}/assets/{assetId}", status_code=204)
-async def remove_asset_from_stack(id: UUID, assetId: UUID):
+async def remove_asset_from_stack(
+    id: UUID,
+    assetId: UUID,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+):
+    """Remove one asset from a stack, leaving the asset itself untouched.
+
+    Cover clearing and dissolution below two members are owned by the backend's
+    `remove_assets`, so the adapter just forwards the request. Removing a
+    non-member is a silent upstream success; a missing or foreign stack 404s
+    through the global `GumnutError` handler.
     """
-    Remove asset from stack.
-    This is a stub implementation that does not perform any action.
-    """
+    await client.stacks.remove_assets(
+        uuid_to_gumnut_stack_id(id),
+        asset_ids=[uuid_to_gumnut_asset_id(assetId)],
+    )
     return

@@ -144,15 +144,15 @@ Immich allows batch downloading multiple assets as a zip archive.
 
 Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pairs) with a primary asset representing the group.
 
-**Current behavior**: **Partially closed.** Four of seven endpoints are real: list, detail, create, and set-cover. Asset detail also carries a nested stack summary, and timeline buckets collapse stacks into one badged tile. The three removal endpoints (delete, bulk-delete, remove-asset) still return empty responses.
+**Current behavior**: **REST-complete.** All seven REST endpoints are real: list, detail, create, set-cover, delete, bulk-delete, and remove-asset. Asset detail also carries a nested stack summary, and timeline buckets collapse stacks into one badged tile. The one remaining gap is the sync path — the sync stream does not yet populate `SyncAssetV1.stackId`.
 
-**User impact**: **Low** — Web can display stacks and create them or set covers from the timeline and duplicate-management surfaces, now that asset detail populates the nested stack summary. Mobile still cannot see stacks until the sync stream populates `SyncAssetV1.stackId`, and removal remains unavailable.
+**User impact**: **Low** — Web can display stacks, create them, set covers, and dissolve or trim them from the timeline and duplicate-management surfaces. Mobile still cannot see stacks until the sync stream populates `SyncAssetV1.stackId`.
 
 **Dependency**: **Adapter-only** — the backend grouping concept this gap was originally blocked on now exists. The Gumnut API's stack resource covers create, add/remove assets, list, retrieve, set cover, and delete, with `list_stacks` exposing an `origin` filter (auto-detected bursts vs. user-grouped) and `primary_asset_id`; members are reachable through the `stack_id` filter on the asset list.
 
 One piece of the timeline surface *is* backend-blocked: `GET /api/timeline/buckets` cannot collapse its counts, because `assets.counts` has no stack-aware filter. The effect is cosmetic and the fix is a backend one — see "Timeline stack collapse" in `docs/architecture/adapter-architecture.md`.
 
-**Effort**: **S remaining** — the three removal routes and sync-stream stack resolution (`SyncAssetV1.stackId`).
+**Effort**: **S remaining** — sync-stream stack resolution (`SyncAssetV1.stackId`); the REST surface is done.
 
 **Recommendation**: **Revisit later** — remaining work has low demand relative to Tier-1 and Tier-2 gaps.
 
@@ -752,7 +752,7 @@ adapter code.
 | #1 Shared links | XL | Both | High value but major backend work |
 | #9 Partners | XL | Both | Family use case, deep auth changes |
 | #23 Album sharing | XL | Both | Blocked by sharing infrastructure |
-| #6 Stacks (removal + sync path) | S | Adapter-only | Low user demand; three removal routes and sync-stream `stackId` remain |
+| #6 Stacks (sync path) | S | Adapter-only | Low user demand; REST surface complete, sync-stream `stackId` remains |
 | #20 API keys | M | Both | Developer feature |
 | #24 Custom metadata | M | Both | Integration feature |
 | #25 Asset edits | M | Both | Low user demand |

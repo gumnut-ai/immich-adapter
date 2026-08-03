@@ -5,6 +5,7 @@ Cover resolution, member hydration, and DTO shape are pinned once in
 pagination, filtering, write forwarding, and error responses.
 """
 
+import asyncio
 import inspect
 import logging
 import math
@@ -14,7 +15,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException, status
 from fastapi.routing import APIRoute
-from gumnut import NotFoundError
+from gumnut import GumnutError, NotFoundError
 from pydantic import ValidationError
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
@@ -22,12 +23,16 @@ from routers.api.stacks import (
     SEARCH_STACKS_CAP,
     SEARCH_STACKS_MEMBER_BUDGET,
     create_stack,
+    delete_stack,
+    delete_stacks,
     get_stack,
+    remove_asset_from_stack,
     router,
     search_stacks,
     update_stack,
 )
-from routers.immich_models import StackCreateDto, StackUpdateDto
+from routers.immich_models import BulkIdsDto, StackCreateDto, StackUpdateDto
+from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
@@ -906,6 +911,236 @@ class TestUpdateStack:
         assert client.stacks.set_cover.call_count == (1 if pins_a_cover else 0)
 
 
+def _removal_client() -> Mock:
+    """A Mock client whose stack-removal methods succeed with empty responses."""
+    client = Mock()
+    client.stacks.delete = AsyncMock(return_value=Mock())
+    client.stacks.remove_assets = AsyncMock(return_value=Mock())
+    return client
+
+
+async def _delete_stack(client, stack_uuid):
+    return await delete_stack(id=stack_uuid, client=client)  # type: ignore[call-arg]
+
+
+async def _remove_asset(client, stack_uuid, asset_uuid):
+    return await remove_asset_from_stack(  # type: ignore[call-arg]
+        id=stack_uuid, assetId=asset_uuid, client=client
+    )
+
+
+async def _delete_stacks(client, stack_uuids):
+    return await delete_stacks(  # type: ignore[call-arg]
+        request=BulkIdsDto(ids=list(stack_uuids)), client=client
+    )
+
+
+class TestDeleteStack:
+    @pytest.mark.anyio
+    async def test_dissolves_the_stack_and_returns_no_body(self, mock_current_user):
+        client = _removal_client()
+        stack_uuid = uuid4()
+
+        result = await _delete_stack(client, stack_uuid)
+
+        assert result is None
+        assert client.stacks.delete.call_args.args == (
+            uuid_to_gumnut_stack_id(stack_uuid),
+        )
+
+    @pytest.mark.anyio
+    async def test_does_not_touch_any_asset_removal_api(self, mock_current_user):
+        """A dissolve removes the grouping only, not the frames."""
+        client = _removal_client()
+
+        await _delete_stack(client, uuid4())
+
+        assert client.stacks.remove_assets.call_count == 0
+
+    @pytest.mark.anyio
+    async def test_missing_or_foreign_stack_reaches_the_global_handler(
+        self, mock_current_user
+    ):
+        error = make_sdk_status_error(404, "stack not found", cls=NotFoundError)
+        client = _removal_client()
+        client.stacks.delete = AsyncMock(side_effect=error)
+
+        with pytest.raises(type(error)):
+            await _delete_stack(client, uuid4())
+
+
+class TestRemoveAssetFromStack:
+    @pytest.mark.anyio
+    async def test_removes_one_asset_and_returns_no_body(self, mock_current_user):
+        client = _removal_client()
+        stack_uuid = uuid4()
+        asset_uuid = uuid4()
+
+        result = await _remove_asset(client, stack_uuid, asset_uuid)
+
+        assert result is None
+        assert client.stacks.remove_assets.call_args.args == (
+            uuid_to_gumnut_stack_id(stack_uuid),
+        )
+        assert client.stacks.remove_assets.call_args.kwargs == {
+            "asset_ids": [uuid_to_gumnut_asset_id(asset_uuid)]
+        }
+
+    @pytest.mark.anyio
+    async def test_backend_triggered_dissolution_needs_no_second_call(
+        self, mock_current_user
+    ):
+        """Pulling the second-to-last frame dissolves the stack backend-side; the
+        adapter must not chase it with its own delete."""
+        client = _removal_client()
+
+        await _remove_asset(client, uuid4(), uuid4())
+
+        assert client.stacks.delete.call_count == 0
+
+    @pytest.mark.anyio
+    async def test_backend_ignoring_a_non_member_is_a_success(self, mock_current_user):
+        """Upstream silently no-ops on an asset it does not consider a member, so
+        the adapter returns 204 rather than manufacturing an error."""
+        client = _removal_client()
+
+        result = await _remove_asset(client, uuid4(), uuid4())
+
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_missing_or_foreign_stack_reaches_the_global_handler(
+        self, mock_current_user
+    ):
+        error = make_sdk_status_error(404, "stack not found", cls=NotFoundError)
+        client = _removal_client()
+        client.stacks.remove_assets = AsyncMock(side_effect=error)
+
+        with pytest.raises(type(error)):
+            await _remove_asset(client, uuid4(), uuid4())
+
+
+class TestDeleteStacks:
+    @pytest.mark.anyio
+    async def test_empty_id_list_is_a_noop_success(self, mock_current_user):
+        client = _removal_client()
+
+        result = await _delete_stacks(client, [])
+
+        assert result is None
+        assert client.stacks.delete.call_count == 0
+
+    @pytest.mark.anyio
+    async def test_deletes_every_unique_stack_once(self, mock_current_user):
+        client = _removal_client()
+        stack_uuids = [uuid4(), uuid4(), uuid4()]
+
+        result = await _delete_stacks(client, stack_uuids)
+
+        assert result is None
+        assert {call.args[0] for call in client.stacks.delete.call_args_list} == {
+            uuid_to_gumnut_stack_id(stack_uuid) for stack_uuid in stack_uuids
+        }
+
+    @pytest.mark.anyio
+    async def test_dedupes_repeated_ids_preserving_first_seen_order(
+        self, mock_current_user
+    ):
+        """A stack named twice is deleted once (the second call would 404), and
+        the surviving order is first-seen so the deterministic error is defined."""
+        client = _removal_client()
+        first, second, third = uuid4(), uuid4(), uuid4()
+        with_duplicates = [first, second, first, third, second]
+
+        await _delete_stacks(client, with_duplicates)
+
+        assert [call.args[0] for call in client.stacks.delete.call_args_list] == [
+            uuid_to_gumnut_stack_id(first),
+            uuid_to_gumnut_stack_id(second),
+            uuid_to_gumnut_stack_id(third),
+        ]
+
+    @pytest.mark.anyio
+    async def test_fan_out_is_bounded(self, mock_current_user):
+        """More ids than the concurrency limit must not all be in flight at once,
+        or one client could fan out arbitrarily wide upstream."""
+        in_flight = 0
+        peak = 0
+
+        async def _track(_gumnut_stack_id):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0)
+            in_flight -= 1
+            return Mock()
+
+        client = _removal_client()
+        client.stacks.delete = AsyncMock(side_effect=_track)
+        stack_uuids = [uuid4() for _ in range(BULK_FANOUT_CONCURRENCY_LIMIT * 2 + 5)]
+
+        await _delete_stacks(client, stack_uuids)
+
+        assert client.stacks.delete.call_count == len(stack_uuids)
+        # Asserting equality (not `<= limit`) also proves the calls overlapped:
+        # a regression to a sequential `for … await` loop would leave peak at 1
+        # and pass a `<= limit` check silently.
+        assert peak == BULK_FANOUT_CONCURRENCY_LIMIT
+
+    @pytest.mark.anyio
+    async def test_all_success_returns_no_body(self, mock_current_user):
+        client = _removal_client()
+
+        result = await _delete_stacks(client, [uuid4(), uuid4()])
+
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_raises_the_first_error_in_request_order_after_all_settle(
+        self, mock_current_user, caplog
+    ):
+        """The error raised is the first in request order, not the first in
+        time. The earlier-ordered failure is made the *slower* one to prove the
+        route sorts by request order rather than completion order.
+        """
+        first, second, third, fourth = uuid4(), uuid4(), uuid4(), uuid4()
+        slow_error = make_sdk_status_error(500, "second failed")
+        fast_error = make_sdk_status_error(503, "fourth failed")
+        gid_second = uuid_to_gumnut_stack_id(second)
+        gid_fourth = uuid_to_gumnut_stack_id(fourth)
+
+        async def _delete(gumnut_stack_id):
+            if gumnut_stack_id == gid_second:
+                await asyncio.sleep(0)
+                raise slow_error
+            if gumnut_stack_id == gid_fourth:
+                raise fast_error
+            return Mock()
+
+        client = _removal_client()
+        client.stacks.delete = AsyncMock(side_effect=_delete)
+
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(GumnutError) as exc_info:
+                await _delete_stacks(client, [first, second, third, fourth])
+
+        assert exc_info.value is slow_error
+        # Every id was attempted even though an earlier one failed.
+        assert client.stacks.delete.call_count == 4
+        # The non-atomic partial failure leaves a triage signal.
+        assert "2 of 4 deletes failed" in caplog.text
+
+    @pytest.mark.anyio
+    async def test_non_sdk_error_aborts_without_deferral(self, mock_current_user):
+        """Only SDK failures are collected and deferred; a programming error must
+        surface immediately rather than be swallowed into the first-error scan."""
+        client = _removal_client()
+        client.stacks.delete = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with pytest.raises(RuntimeError):
+            await _delete_stacks(client, [uuid4(), uuid4()])
+
+
 class TestRouteDependencies:
     """Every stack route is user-scoped, so each must resolve a client and user.
 
@@ -928,3 +1163,12 @@ class TestRouteDependencies:
     def test_handler_declares_its_dependency(self, handler, param, dependency):
         default = inspect.signature(handler).parameters[param].default
         assert default.dependency is dependency
+
+    @pytest.mark.parametrize(
+        "handler", [delete_stacks, delete_stack, remove_asset_from_stack]
+    )
+    def test_removal_handler_declares_the_client_dependency(self, handler):
+        """The removal routes forward to the backend but hydrate nothing, so they
+        take the client (and must authenticate) without a `current_user`."""
+        default = inspect.signature(handler).parameters["client"].default
+        assert default.dependency is get_authenticated_gumnut_client
