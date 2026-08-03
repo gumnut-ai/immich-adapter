@@ -217,12 +217,10 @@ Notes (discussed below):
 - `SyncAckV1`\*\* = Phase transition marker (before first CREATE, marks updates complete)
 
 **Adapter behavior for `StacksV1`:** the table above is what the upstream client
-accepts. The adapter emits `StacksV1` as a **current-state snapshot** — `StackV1`
-upserts only, never `StackDeleteV1`, and only on reset / first sync — with assets
-carrying their `stackId` in the same sync so members group under the snapshot's
-stack rows. `PartnerStacksV1` stays a no-op (no partner sharing). See the "Stack
-Snapshot" section of `docs/architecture/sync-stream-architecture.md` for the
-snapshot semantics and the incremental-support scope boundary.
+accepts; the adapter emits `StackV1` upserts only, never `StackDeleteV1`.
+`PartnerStacksV1` stays a no-op (no partner sharing). See the "Stack Snapshot
+(StacksV1)" section of `docs/architecture/sync-stream-architecture.md` for the
+delivery semantics and the delete-detection scope boundary.
 
 ## Special SyncEntityTypes
 

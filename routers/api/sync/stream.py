@@ -13,7 +13,7 @@ from collections.abc import Iterator
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
-from gumnut import AsyncGumnut
+from gumnut import AsyncGumnut, GumnutError
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.user_response import UserResponse
@@ -23,7 +23,11 @@ from routers.immich_models import (
     SyncRequestType,
     SyncStreamDto,
 )
-from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
+from routers.utils.datetime_utils import to_actual_utc
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_stack_id,
+    safe_uuid_from_user_id,
+)
 from services.checkpoint_store import Checkpoint
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
@@ -509,67 +513,84 @@ async def _stream_stacks(
     owner_id: UUID,
     checkpoint: Checkpoint | None,
 ) -> AsyncGenerator[str, None]:
-    """Stream StackV1 rows as a current-state snapshot.
+    """Stream StackV1 rows for the StacksV1 sync type.
 
-    Stacks are not sourced from the events API — the Gumnut backend emits no
-    stack lifecycle events yet — so this is a point-in-time snapshot, not a
-    delta. Incremental create/update/delete support is intentionally out of
-    scope (tracked on a separate event-support track):
+    Every sync re-pages the whole stack table (the Gumnut backend emits no stack
+    lifecycle events yet) and emits rows in ``(updated_at, id)`` order, filtered
+    strictly after the checkpoint cursor — which gives incremental upsert and
+    mid-stream resume, with delete detection out of scope. The "Stack Snapshot
+    (StacksV1)" section of ``docs/architecture/sync-stream-architecture.md`` owns
+    why each of those matters and what stays out of scope.
 
-    - **Checkpoint present** → emit nothing. An already-synced client keeps the
-      stacks it has until that track lands; re-emitting the whole table every
-      delta cannot express deletes and only wastes bandwidth.
-    - **Checkpoint absent** (reset / first sync) → page every stack, resolve its
-      effective cover, and emit a StackV1 row.
+    Two code-local details:
 
-    The caller emits this before the phase-1 asset loop, so a stack row exists on
-    the client before any asset naming it via ``stackId`` arrives.
+    - Each surviving stack is hydrated through the shared ``hydrate_stack`` — the
+      same helper REST ``/stacks`` uses, so the effective primary matches exactly
+      — which fetches every member even though only the resolved primary id is
+      used here. Reusing the single source of truth is worth the unused member
+      payload; a lean member read is a later optimization if reset latency ever
+      matters.
+    - Only an undecodable ``stack.id`` (a systemic ``asset_stack_`` prefix change)
+      is degraded to a skip, and it is decoded *up front* so the guard cannot also
+      swallow a ``ValidationError`` or ``GumnutError`` raised during member
+      hydration — those are real failures that must surface, not be mislabeled.
 
     A member-less stack has no honest ``primaryAssetId`` (``SyncStackV1`` requires
     a non-null one), so ``hydrate_stack`` returns ``None`` — logging a warning —
     and it is skipped here.
-
-    The per-row ack cursor is ``stack.updated_at`` + id: pipe-free and stable, so
-    a reset replays deterministically and the last row's ack becomes the StackV1
-    checkpoint that suppresses future snapshots.
-
-    Two accepted trade-offs, both cheap because this pass is reset-only:
-
-    - Each stack is hydrated through the shared ``hydrate_stack`` — the same
-      helper REST ``/stacks`` uses, so the effective primary matches exactly
-      (including the trashed-pin rule) — which fetches every member with
-      ``ASSET_INCLUDE`` even though only the resolved primary id is used here.
-      Reusing the single source of truth is worth the unused member payload on a
-      reset; a lean member read is a later optimization if a large, burst-heavy
-      library ever makes reset latency matter.
-    - A client with no stacks (or only member-less ones) emits no StackV1 row, so
-      never acks one, so never stores a checkpoint — it re-pages ``list_stacks``
-      (one empty page) on every sync until it has a real stack to checkpoint.
-      A consequence: the first stack a stackless client gains after its initial
-      sync does propagate on the next delta (there is no checkpoint yet to
-      suppress it) — strictly more than the "snapshot only on reset" guarantee,
-      never less, so it is harmless.
     """
-    if checkpoint is not None:
-        # An existing checkpoint means the client already holds the snapshot;
-        # emit no speculative updates. See the docstring's scope boundary.
-        return
+    # Collect so the rows can be emitted in a stable (updated_at, id) order — a
+    # plain async-for can't reorder. Normalize to UTC so a naive/aware mix can't
+    # crash the sort or invert the cursor comparison below (same normalization
+    # stack_conversion applies to its member sort).
+    stacks = [
+        stack
+        async for stack in gumnut_client.stacks.list_stacks(
+            limit=GUMNUT_API_MAX_PAGE_SIZE
+        )
+    ]
+    stacks.sort(key=lambda s: (to_actual_utc(s.updated_at), s.id))
 
-    async for stack in gumnut_client.stacks.list_stacks(limit=GUMNUT_API_MAX_PAGE_SIZE):
-        hydrated = await hydrate_stack(gumnut_client, stack)
-        if hydrated is None:
-            # Member-less stack — hydrate_stack already logged a warning. Skipped
-            # rather than emitting an invalid required primary.
+    checkpoint_cursor = checkpoint.cursor if checkpoint is not None else None
+    undecodable_ids: list[str] = []
+
+    for stack in stacks:
+        cursor = f"{to_actual_utc(stack.updated_at).isoformat()}_{stack.id}"
+        if checkpoint_cursor is not None and cursor <= checkpoint_cursor:
             continue
 
+        # Decode the id first: it is the only ValueError this pass degrades on.
+        # Keeping it out of the hydrate call below means a member ValidationError
+        # (pydantic subclasses ValueError) or GumnutError truncates loudly instead
+        # of being mislabeled as an undecodable stack id and silently dropped.
+        try:
+            safe_uuid_from_stack_id(stack.id)
+        except ValueError:
+            undecodable_ids.append(stack.id)
+            continue
+
+        hydrated = await hydrate_stack(gumnut_client, stack)
+        if hydrated is None:
+            # Member-less stack — hydrate_stack already logged a warning.
+            continue
         sync_stack = gumnut_stack_to_sync_stack_v1(
             stack, hydrated.primary_asset_id, owner_id
         )
-        cursor = f"{stack.updated_at.isoformat()}_{stack.id}"
         yield make_sync_event(
             SyncEntityType.StackV1,
             sync_stack.model_dump(mode="json"),
             cursor,
+        )
+
+    if undecodable_ids:
+        logger.warning(
+            "Skipped %d stack(s) with undecodable ids in the StackV1 snapshot; "
+            "syncing their assets as loose",
+            len(undecodable_ids),
+            extra={
+                "undecodable_stack_count": len(undecodable_ids),
+                "sample_stack_ids": undecodable_ids[:10],
+            },
         )
 
 
@@ -695,16 +716,29 @@ async def generate_sync_stream(
 
         # Stream the StackV1 snapshot before the asset loop (so each asset's
         # stackId names a stack the client already holds). See _stream_stacks.
+        # A GumnutError while hydrating one stack ends the pass gracefully rather
+        # than truncating the whole sync: because this runs first, an unhandled
+        # error would suppress assets/albums/faces too. Rows already yielded are
+        # acked, so the remaining stacks resume from the checkpoint next sync,
+        # and the asset loop below still runs this cycle.
         if SyncRequestType.StacksV1 in requested_types:
             stack_checkpoint = checkpoint_map.get(SyncEntityType.StackV1)
-            async for stack_line in _stream_stacks(
-                gumnut_client, owner_uuid, stack_checkpoint
-            ):
-                yield stack_line
-                event_counts[SyncEntityType.StackV1.value] = (
-                    event_counts.get(SyncEntityType.StackV1.value, 0) + 1
+            try:
+                async for stack_line in _stream_stacks(
+                    gumnut_client, owner_uuid, stack_checkpoint
+                ):
+                    yield stack_line
+                    event_counts[SyncEntityType.StackV1.value] = (
+                        event_counts.get(SyncEntityType.StackV1.value, 0) + 1
+                    )
+                    total_events += 1
+            except GumnutError:
+                logger.warning(
+                    "StackV1 snapshot cut short by a Gumnut API error; already "
+                    "streamed rows are acked and the rest resume next sync",
+                    extra={"user_id": owner_id},
+                    exc_info=True,
                 )
-                total_events += 1
 
         # Phase 1: Stream upserts for all entity types in FK dependency order,
         # buffering delete events for phase 2.
