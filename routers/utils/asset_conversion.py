@@ -17,6 +17,7 @@ from routers.utils.datetime_utils import (
 )
 from routers.immich_models import (
     AssetResponseDto,
+    AssetStackResponseDto,
     AssetTypeEnum,
     AssetVisibility,
     ExifResponseDto,
@@ -501,7 +502,9 @@ def build_asset_upload_ready_payload(
 
 
 def convert_gumnut_asset_to_immich(
-    gumnut_asset: AssetResponse, current_user: UserResponseDto
+    gumnut_asset: AssetResponse,
+    current_user: UserResponseDto,
+    stack: AssetStackResponseDto | None = None,
 ) -> AssetResponseDto:
     """
     Convert a Gumnut asset to AssetResponseDto format with comprehensive EXIF processing.
@@ -509,6 +512,7 @@ def convert_gumnut_asset_to_immich(
     Args:
         gumnut_asset: The Gumnut AssetResponse object
         current_user: The current user's UserResponseDto
+        stack: Pre-resolved nested stack summary
 
     Returns:
         AssetResponseDto object with processed data and EXIF information
@@ -565,4 +569,5 @@ def convert_gumnut_asset_to_immich(
         visibility=AssetVisibility.timeline,
         width=width if width else None,
         people=people,
+        stack=stack,
     )

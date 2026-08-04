@@ -13,7 +13,8 @@ GUMNUT_API_MAX_BULK_IDS = 200
 # constant device_id plus a unique per-upload device_asset_id (a fresh UUID) —
 # unique so two distinct assets never collapse onto one device tuple. Dedup-safe:
 # the backend deduplicates by checksum, not by device identifier, so true
-# re-uploads are still caught (see docs/design-docs/checksum-support.md).
+# re-uploads are still caught (see docs/references/code-practices.md
+# § "Outbound asset checksums").
 GUMNUT_UPLOAD_DEVICE_ID = "gumnut-device"
 
 # Placeholder license key for the stubbed license surfaces (the adapter has no

@@ -1,9 +1,10 @@
+import logging
 from datetime import datetime, timedelta
 from typing import Any, List, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from gumnut import AsyncGumnut
+from gumnut import AsyncGumnut, GumnutError
 from gumnut.types.asset_count_response import AssetCountResponse, Data
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
@@ -26,6 +27,9 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_person_id,
 )
+from routers.utils.stack_conversion import TimelineStacks, resolve_timeline_stacks
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/timeline",
@@ -205,6 +209,57 @@ async def get_time_bucket(
 
     filtered_assets = [a async for a in client.assets.list(**list_kwargs)]
 
+    # Collapse and badge together, gated on `withStacked` and skipped for trash
+    # — see "Timeline stack collapse" in docs/architecture/adapter-architecture.md
+    # for why each gate is load-bearing.
+    stacks: TimelineStacks | None = None
+    if withStacked and not isTrashed:
+        # Which month, how big, and which filter shape — a burst of these
+        # records is otherwise unnarrowable to any of the three.
+        degradation_context = {
+            "time_bucket": timeBucket,
+            "bucket_asset_count": len(filtered_assets),
+            "album_id": str(albumId) if albumId else None,
+            "person_id": str(personId) if personId else None,
+        }
+        try:
+            stacks = await resolve_timeline_stacks(client, filtered_assets)
+        except GumnutError:
+            # The assets already came back fine; a stacks-resource failure
+            # should cost the badges, not the month. Falling back to an empty
+            # resolution reproduces the pre-stack response — every frame, all
+            # tuples null — on the app's primary view.
+            #
+            # Deliberately WARNING for every upstream status, including the 5xx
+            # that *Upstream response log levels* maps to ERROR: that rule is
+            # for calls whose failure fails the request. This one is designed to
+            # fail, so an outage here is expected and quiet, and the ERROR
+            # channel is reserved for the clause below.
+            logger.warning(
+                "Failed to resolve timeline stacks; returning the bucket uncollapsed",
+                exc_info=True,
+                extra=degradation_context,
+            )
+            stacks = TimelineStacks.empty()
+        except Exception:
+            # Same degradation, because the promise above is about the endpoint,
+            # not about which exception family broke it: `resolve_timeline_stacks`
+            # does non-SDK work in this scope too (the `zip(..., strict=True)`
+            # that names its ordering invariant, the capture-time sort key), and
+            # a raise from any of it would turn a feature designed to degrade
+            # into a 500 on the app's primary view. ERROR because reaching here
+            # means an adapter bug rather than an upstream one.
+            logger.error(
+                "Unexpected error resolving timeline stacks; returning the "
+                "bucket uncollapsed",
+                exc_info=True,
+                extra=degradation_context,
+            )
+            stacks = TimelineStacks.empty()
+        filtered_assets = [
+            asset for asset in filtered_assets if not stacks.is_collapsed_away(asset)
+        ]
+
     asset_count = len(filtered_assets)
 
     asset_ids = []
@@ -221,6 +276,7 @@ async def get_time_bucket(
     is_trashed_list = []
     duration_list: list[int | None] = []
     thumbhash_list: list[str | None] = []
+    stack_list: list[list[str] | None] = []
 
     for asset in filtered_assets:
         asset_id = asset.id
@@ -265,9 +321,14 @@ async def get_time_bucket(
         # it. Previously every tile shipped one shared hardcoded constant.
         thumbhash_list.append(asset.thumbhash)
 
+        # None for a loose asset, and also for a stack the adapter could not
+        # resolve — see `TimelineStacks`. Appended in the same loop as every
+        # other column so the parallel arrays stay index-aligned.
+        stack_list.append(stacks.tuple_for(asset) if stacks is not None else None)
+
     # Return as dict to bypass Pydantic validation issues with None in List[str]
     # XXX revisit this issue later
-    return {
+    response: dict[str, Any] = {
         "city": [None] * asset_count,
         "country": [None] * asset_count,
         "createdAt": created_at_list,
@@ -284,7 +345,14 @@ async def get_time_bucket(
         "ownerId": [str(current_user_id)] * asset_count,
         "projectionType": [None] * asset_count,
         "ratio": ratio_list,
-        "stack": [None] * asset_count,
         "thumbhash": thumbhash_list,
         "visibility": visibility_list,
     }
+
+    # Omitted rather than all-nulls when stacks weren't requested, matching
+    # upstream. The client reads `stack?.at(i)`, so absence and a null entry
+    # behave identically for a loose asset.
+    if stacks is not None:
+        response["stack"] = stack_list
+
+    return response

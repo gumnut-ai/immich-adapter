@@ -15,6 +15,10 @@ from utils.jwt_encryption import JWTEncryptionError
 
 # Test UUIDs for consistent testing
 TEST_SESSION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+# The `intuser_*` id is hardcoded rather than computed, so these tests pin the
+# encoding instead of restating the implementation.
+TEST_USER_UUID = "550e8400-e29b-41d4-a716-446655440001"
+TEST_INTUSER_ID = "intuser_H9cNmGXLEc8NWcZzSThA9T"
 TEST_ENCRYPTED_JWT = "gAAAAABh..."  # Mock encrypted JWT
 TEST_JWT = "test.jwt.token"
 
@@ -24,7 +28,7 @@ def create_test_session(session_id: UUID = TEST_SESSION_ID) -> Session:
     now = datetime.now(timezone.utc)
     return Session(
         id=session_id,
-        user_id="user_123",
+        user_id=TEST_USER_UUID,
         library_id="lib_456",
         stored_jwt=TEST_ENCRYPTED_JWT,
         device_type="iOS",
@@ -438,6 +442,33 @@ class TestSessionLookupErrors:
             assert response.status_code == 500
             assert response.json()["message"] == "Internal server error"
 
+    def test_jwt_decryption_error_is_still_attributed(self, app_for_errors):
+        """A failure after the session resolves is still attributed to its user."""
+
+        mock_session_store = AsyncMock()
+        session = create_test_session()
+        session.get_jwt = MagicMock(side_effect=JWTEncryptionError("decryption failed"))
+        mock_session_store.get_by_id.return_value = session
+
+        async def mock_get_session_store():
+            return mock_session_store
+
+        with (
+            patch(
+                "routers.middleware.auth_middleware.get_session_store",
+                mock_get_session_store,
+            ),
+            patch(
+                "routers.middleware.auth_middleware.sentry_sdk.set_user"
+            ) as mock_set_user,
+        ):
+            client = TestClient(app_for_errors)
+            headers = {"Authorization": f"Bearer {TEST_SESSION_ID}"}
+
+            assert client.get("/api/test/protected", headers=headers).status_code == 500
+
+        mock_set_user.assert_called_once_with({"id": TEST_INTUSER_ID})
+
     def test_redis_error_returns_500(self, app_for_errors):
         """Test that Redis errors return 500."""
         mock_session_store = AsyncMock()
@@ -458,3 +489,48 @@ class TestSessionLookupErrors:
 
             assert response.status_code == 500
             assert response.json()["message"] == "Internal server error"
+
+
+class TestSentryUserAttribution:
+    """Sentry `user.id` attribution for authenticated session-token requests.
+
+    The route used here declares no current-user dependency, mirroring the
+    streaming and sync endpoints that make up most adapter traffic.
+    """
+
+    def test_authenticated_request_sets_intuser_id(self, client_with_mocks):
+        """The session's UUID-form user id is restored to its `intuser_*` form."""
+        with patch(
+            "routers.middleware.auth_middleware.sentry_sdk.set_user"
+        ) as mock_set_user:
+            headers = {"Authorization": f"Bearer {TEST_SESSION_ID}"}
+            response = client_with_mocks.get("/api/test/protected", headers=headers)
+
+        assert response.status_code == 200
+        mock_set_user.assert_called_once_with({"id": TEST_INTUSER_ID})
+
+    def test_unauthenticated_request_is_not_attributed(self, client_with_mocks):
+        """Requests with no credential stay in the genuinely-anonymous bucket."""
+        with patch(
+            "routers.middleware.auth_middleware.sentry_sdk.set_user"
+        ) as mock_set_user:
+            response = client_with_mocks.get("/api/test/protected")
+
+        assert response.status_code == 200
+        mock_set_user.assert_not_called()
+
+    def test_malformed_session_user_id_does_not_fail_the_request(
+        self, client_with_mocks, mock_session_store
+    ):
+        """A session whose user id isn't a UUID is logged, not raised."""
+        mock_session_store.get_by_id.return_value.user_id = "not-a-uuid"
+
+        with patch(
+            "routers.middleware.auth_middleware.sentry_sdk.set_user"
+        ) as mock_set_user:
+            headers = {"Authorization": f"Bearer {TEST_SESSION_ID}"}
+            response = client_with_mocks.get("/api/test/protected", headers=headers)
+
+        assert response.status_code == 200
+        assert response.json()["jwt_token"] == TEST_JWT
+        mock_set_user.assert_not_called()

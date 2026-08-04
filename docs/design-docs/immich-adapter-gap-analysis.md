@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-07-22
+last-updated: 2026-07-31
 ---
 
 # Immich Adapter Gap Analysis
@@ -120,7 +120,7 @@ Immich supports soft-delete with a configurable retention period. Trashed items 
 
 **Effort**: **M** — now shipped across delete flow, trash router, timeline/statistics, sync, WebSocket, and server config.
 
-**Recommendation**: **Closed** — detailed implementation notes now live in `docs/design-docs/trash-soft-delete-adapter.md`.
+**Recommendation**: **Closed** — detailed implementation notes now live in `docs/architecture/adapter-architecture.md` § "Trash and Deletion Semantics".
 
 ---
 
@@ -144,15 +144,17 @@ Immich allows batch downloading multiple assets as a zip archive.
 
 Immich stacks group related photos (e.g., burst shots, HDR series, RAW+JPEG pairs) with a primary asset representing the group.
 
-**Current behavior**: All 7 endpoints return empty/fake responses. No stacking UI is functional.
+**Current behavior**: **REST-complete.** All seven REST endpoints are real: list, detail, create, set-cover, delete, bulk-delete, and remove-asset. Asset detail also carries a nested stack summary, and timeline buckets collapse stacks into one badged tile. The one remaining gap is the sync path — the sync stream does not yet populate `SyncAssetV1.stackId`.
 
-**User impact**: **Low** — Stacking is a power-user feature. Most users don't manually stack photos. Some Immich features auto-create stacks (e.g., for live photos), but the adapter handles live photos differently.
+**User impact**: **Low** — Web can display stacks, create them, set covers, and dissolve or trim them from the timeline and duplicate-management surfaces. Mobile still cannot see stacks until the sync stream populates `SyncAssetV1.stackId`.
 
-**Dependency**: **Both** — the Gumnut API would need a grouping/stacking concept. The adapter translation is straightforward.
+**Dependency**: **Adapter-only** — the backend grouping concept this gap was originally blocked on now exists. The Gumnut API's stack resource covers create, add/remove assets, list, retrieve, set cover, and delete, with `list_stacks` exposing an `origin` filter (auto-detected bursts vs. user-grouped) and `primary_asset_id`; members are reachable through the `stack_id` filter on the asset list.
 
-**Effort**: **L** — Backend needs a parent-child asset relationship model, group CRUD, and primary asset designation logic.
+One piece of the timeline surface *is* backend-blocked: `GET /api/timeline/buckets` cannot collapse its counts, because `assets.counts` has no stack-aware filter. The effect is cosmetic and the fix is a backend one — see "Timeline stack collapse" in `docs/architecture/adapter-architecture.md`.
 
-**Recommendation**: **Revisit later** — Low user impact. Consider when burst/HDR detection is added to Gumnut.
+**Effort**: **S remaining** — sync-stream stack resolution (`SyncAssetV1.stackId`); the REST surface is done.
+
+**Recommendation**: **Revisit later** — remaining work has low demand relative to Tier-1 and Tier-2 gaps.
 
 ---
 
@@ -216,7 +218,7 @@ Immich detects duplicate photos using perceptual hashing and lets users resolve 
 
 **User impact**: **Low** — Duplicate detection is a background optimization feature. Most users don't actively manage duplicates unless prompted.
 
-**Dependency**: **Both** — Gumnut may handle deduplication differently (e.g., at upload time via checksums — see `docs/design-docs/checksum-support.md`). Surfacing duplicate candidates requires perceptual hash comparison in the backend.
+**Dependency**: **Both** — Gumnut may handle deduplication differently (e.g., at upload time via checksums — see `docs/references/code-practices.md` § "Outbound asset checksums"). Surfacing duplicate candidates requires perceptual hash comparison in the backend.
 
 **Effort**: **L** — Backend needs perceptual hashing (e.g., pHash), similarity matching, and a duplicate candidate API. Adapter translation is S.
 
@@ -750,7 +752,7 @@ adapter code.
 | #1 Shared links | XL | Both | High value but major backend work |
 | #9 Partners | XL | Both | Family use case, deep auth changes |
 | #23 Album sharing | XL | Both | Blocked by sharing infrastructure |
-| #6 Stacks | L | Both | Low user demand |
+| #6 Stacks (sync path) | S | Adapter-only | Low user demand; REST surface complete, sync-stream `stackId` remains |
 | #20 API keys | M | Both | Developer feature |
 | #24 Custom metadata | M | Both | Integration feature |
 | #25 Asset edits | M | Both | Low user demand |
@@ -796,7 +798,7 @@ The `GET /server/features` fix (gap #14) is the primary mechanism for hiding uns
 
 ## Version target and future considerations
 
-The adapter targets Immich v3.0.3. References to v2.7.5 elsewhere in this document are the historical baseline used for the v2-to-v3 comparison. Future Immich releases may introduce:
+The adapter targets Immich v3.1.0. The inventory in this document was performed against the v3.0.3 spec, whose endpoint surface is identical to v3.1.0's (the v3.1.0 spec delta is documentation-only annotations). References to v2.7.5 elsewhere in this document are the historical baseline used for the v2-to-v3 comparison. Future Immich releases may introduce:
 
 - **New API endpoints** not present in v3.0.3 — these would require new stubs at minimum
 - **Changed request/response schemas** — the model generator (`tools/generate_immich_models.py`) and API compatibility validator (`tools/validate_api_compatibility.py`) can detect these

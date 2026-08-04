@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-06-11
+last-updated: 2026-07-27
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -73,7 +73,13 @@ That means the session token a client stores is stable even when the backend lat
 
 ### Authenticated requests and JWT refresh
 
-`AuthMiddleware` treats the UUID session token as the only client credential it needs. For each authenticated request it:
+`AuthMiddleware` supports two credential paths:
+
+- API-key clients send a Gumnut API key in `x-api-key`. The adapter forwards
+  that key as the Gumnut credential without looking up a Redis session or
+  performing a session JWT refresh.
+- Session-token clients (web and mobile) use the UUID session token described
+  below. For each authenticated request it:
 
 1. Extracts the session token from `Authorization: Bearer`, `x-immich-user-token`, or the `immich_access_token` cookie.
 2. Loads `session:{uuid}` from Redis.
@@ -166,4 +172,4 @@ The adapter parses each ack string as `SyncEntityType|cursor|`.
 
 - [`docs/references/session-checkpoint-reference.md`](../references/session-checkpoint-reference.md) — field-level Redis schema reference
 - [`docs/architecture/sync-stream-architecture.md`](./sync-stream-architecture.md) — two-phase event streaming and foreign-key ordering
-- [`docs/design-docs/auth-design.md`](../design-docs/auth-design.md) — broader auth/session design rationale
+- [`docs/design-docs/auth-design.md`](../design-docs/auth-design.md) (deprecated) — broader auth/session design rationale

@@ -21,7 +21,9 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       # According to https://docs.astral.sh/uv/guides/integration/github/#setting-up-python
       # This can be faster, because GitHub caches the Python versions alongside the runner.

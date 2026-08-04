@@ -69,7 +69,7 @@ docker run --rm -p 8080:8080 \
 
 **Build with a specific Immich version:**
 ```bash
-docker build --build-arg IMMICH_VERSION=v3.0.3 -t immich-adapter .
+docker build --build-arg IMMICH_VERSION=v3.1.0 -t immich-adapter .
 ```
 
 ### Production Mode
@@ -104,10 +104,13 @@ This invokes `uvicorn` directly because the `fastapi` CLI doesn't expose `--ws`,
 
 - [Running with Immich Web](docs/guides/running-with-immich-web.md) — static files or dev server
 - [Running with Immich Mobile](docs/guides/running-with-immich-mobile.md) — HTTPS setup with mkcert
+- [Importing with immich-go](docs/guides/importing-with-immich-go.md) — bulk-importing a library with `x-api-key` auth via a Gumnut API key
 
 ## References
 
 - [Architecture](docs/architecture/adapter-architecture.md) — how the adapter works: auth, data translation, pagination, sync, error handling
 - [Code Practices](docs/references/code-practices.md) — Python style, endpoint patterns, testing, logging
+- [Documentation Conventions](docs/references/documentation-conventions.md) — frontmatter, maps, lifecycle, paths, and freshness
 - [Development Tools](docs/references/development-tools.md) — model generator, API compatibility, OpenAPI spec, dependency automation
+- [GitHub Actions Best Practices](docs/references/github-actions-best-practices.md) — workflow security and review rules
 - See [docs/](docs/) for design docs and more
