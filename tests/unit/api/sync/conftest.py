@@ -72,10 +72,6 @@ def create_mock_gumnut_client(user: Mock) -> Mock:
     client.album_assets.list.return_value = empty_page
     client.people.list.return_value = empty_page
     client.faces.list.return_value = empty_page
-    # Default: no stacks. The StacksV1 snapshot pages this on reset/first sync;
-    # a bare Mock would not be async-iterable and break any test that requests
-    # StacksV1 without setting up its own stacks. Tests that model stacks
-    # override this.
     client.stacks.list_stacks.return_value = empty_page
     return client
 
@@ -173,10 +169,7 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     asset.file_data.file_size_bytes = 1059218
     asset.metadata = None
     asset.trashed_at = None
-    # Loose (unstacked) by default. Set explicitly because the sync asset
-    # converter now reads stack_id — a bare Mock attribute would be truthy and
-    # feed a Mock into safe_uuid_from_stack_id. Tests that model a stacked asset
-    # override this with an asset_stack_-prefixed Gumnut ID.
+    # Avoid a truthy auto-created Mock for unstacked assets.
     asset.stack_id = None
     return asset
 

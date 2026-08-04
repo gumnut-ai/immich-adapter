@@ -259,7 +259,14 @@ for asset_uuid in request.ids:
 
 Use `map_gumnut_error(e, context, extra=..., exc_info=True)` only when the call site needs to enrich the upstream log record with context the global handler can't see — most commonly the upload paths logging filename / device ids / tracebacks.
 
-**Exception — streaming responses swallow errors after the 200.** The "just let it bubble" rule holds only until a `StreamingResponse` commits its 200. After that a raised error no longer reaches the global handler: `generate_sync_stream`'s broad `except Exception` logs and returns, truncating the stream (no `SyncCompleteV1`, so the client re-fails identically every sync). Resolve auth/setup errors *before* streaming (the sync route pre-fetches the user for exactly this), and make per-item work inside the generator degrade rather than raise — e.g. `_immich_stack_id` falls back to a loose asset instead of letting a bad stack-prefix `ValueError` abort the whole sync. Scope such a degradation guard to the decode call itself, not the surrounding hydration: pydantic `ValidationError` subclasses `ValueError`, so an `except ValueError` wrapping model construction (an SDK member fetch, a DTO build) would swallow a real validation failure and mislabel it as the benign decode case. And when a per-item pass runs *before* other work in the same generator (the `StackV1` snapshot precedes the asset loop), catch its transport errors at the call site — an unhandled error there suppresses everything downstream, not just its own rows.
+**Streaming responses.** Once a `StreamingResponse` commits its headers,
+generator exceptions cannot reach the global error handler. Resolve
+authentication and setup errors before returning the response, and handle
+expected per-item failures inside the generator so they do not truncate the
+stream. Keep degradation guards narrow: `ValidationError` subclasses
+`ValueError`, so catch decoding failures around the decode call rather than
+around model construction. Catch transport errors at the call site when an
+early pass should not suppress later stream work.
 
 ### Omit vs explicit-null in update-style DTOs — use `model_fields_set`
 

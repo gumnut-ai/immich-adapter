@@ -674,9 +674,6 @@ class TestGenerateSyncStream:
         request = SyncStreamDto(
             types=[
                 SyncRequestType.MemoriesV1,
-                # StacksV1 is no longer a no-op — it streams a current-state
-                # snapshot (covered in test_sync_stream_stacks.py). PartnerStacksV1
-                # stays a no-op and stands in for the stack family here.
                 SyncRequestType.PartnerStacksV1,
                 SyncRequestType.PartnersV1,
                 SyncRequestType.AssetMetadataV1,

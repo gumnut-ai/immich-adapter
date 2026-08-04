@@ -246,8 +246,6 @@ def test_requested_empty_v3_types_are_explicit_noops():
     # UserMetadataV1 is emitted, so it must NOT be a no-op, but still supported.
     assert SyncRequestType.UserMetadataV1 not in _NOOP_REQUEST_TYPES
     assert SyncRequestType.UserMetadataV1 in _SUPPORTED_REQUEST_TYPES
-    # StacksV1 became a current-state snapshot (see _stream_stacks): supported,
-    # emitted, and therefore no longer a no-op. PartnerStacksV1 stays a no-op.
     assert SyncRequestType.StacksV1 not in _NOOP_REQUEST_TYPES
     assert SyncRequestType.StacksV1 in _SUPPORTED_REQUEST_TYPES
     assert SyncRequestType.PartnerStacksV1 in _NOOP_REQUEST_TYPES

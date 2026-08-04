@@ -65,28 +65,13 @@ logger = logging.getLogger(__name__)
 
 
 def _immich_stack_id(gumnut_stack_id: str | None) -> str | None:
-    """Map an asset's Gumnut stack FK to the Immich ``stackId``, or None.
-
-    Returns None for a loose (unstacked) asset, and — critically — also for a
-    stack_id that fails to decode rather than letting the ValueError abort the
-    whole sync stream. A stacked asset then syncs as loose (an inert
-    degradation), the same fallback ``resolve_timeline_stacks`` takes for this
-    prefix contract; the alternative is the streaming generator's broad handler
-    swallowing the error mid-stream, so the client never receives
-    ``SyncCompleteV1`` and every subsequent sync fails identically on the same
-    asset. The decode failure is logged at debug, not warning — see below.
-    """
+    """Map a stack FK, degrading invalid IDs to an unstacked asset."""
     if not gumnut_stack_id:
         return None
     try:
         return str(safe_uuid_from_stack_id(gumnut_stack_id))
     except ValueError:
-        # Logged at debug, not warning: the only cause is a backend change to the
-        # asset_stack_ prefix, which is systemic — it breaks every stacked asset
-        # at once, so a per-asset warning would flood a full-library sync with
-        # thousands of identical lines. That break already surfaces loudly and
-        # aggregated on the app's primary view via resolve_timeline_stacks; this
-        # path only needs to degrade quietly to a loose asset.
+        # Prefix drift affects every stack, so avoid one warning per asset.
         logger.debug(
             "Asset stack_id is not decodable to an Immich UUID; syncing the "
             "asset as loose (stackId=None)",
@@ -246,10 +231,6 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: UUID) -> SyncA
         height=asset.height if asset.height else None,
         libraryId=None,
         livePhotoVideoId=None,
-        # The asset's stack FK, so the client can group burst members under the
-        # stack row streamed by StacksV1. Loose (unstacked) assets stay null, as
-        # does an undecodable stack_id — see _immich_stack_id. V2 inherits this
-        # through the model_dump delegation below.
         stackId=_immich_stack_id(asset.stack_id),
         thumbhash=asset.thumbhash,
         width=asset.width if asset.width else None,
@@ -457,19 +438,7 @@ def gumnut_album_asset_to_sync_album_to_asset_v1(
 def gumnut_stack_to_sync_stack_v1(
     stack: StackListStacksResponse, primary_asset_id: UUID, owner_id: UUID
 ) -> SyncStackV1:
-    """Convert a Gumnut stack row to Immich SyncStackV1 format.
-
-    ``primary_asset_id`` is the *effective* cover resolved by the shared
-    ``resolve_effective_primary`` helper (via ``hydrate_stack``) — never the raw
-    Gumnut row's pinned cover, which is null for an auto-detected burst.
-    ``SyncStackV1.primaryAssetId`` is required and non-null, so callers must
-    resolve a cover before converting; a member-less stack has none and is
-    skipped upstream rather than reaching here.
-
-    Gumnut is single-user with no stack sharing, so ``ownerId`` is always the
-    current user — the row itself carries no owner. Member assets are not
-    embedded: each carries this stack's id in its own ``stackId`` field.
-    """
+    """Convert a stack using its resolved effective primary."""
     return SyncStackV1(
         id=safe_uuid_from_stack_id(stack.id),
         ownerId=owner_id,

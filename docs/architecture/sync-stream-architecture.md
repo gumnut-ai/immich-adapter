@@ -73,56 +73,19 @@ delete from the album-user pass would duplicate `AlbumDeleteV1`. No
 
 ## Stack Snapshot (StacksV1)
 
-Stacks reach the mobile client two ways, both driven from the initial/full sync:
+Each sync asset carries its stack membership in `stackId`. Before streaming
+assets, `_stream_stacks` re-pages the stack table and emits rows after the
+client's checkpoint in `(updated_at, id)` order. This provides incremental
+upserts and resumes a truncated pass without a stack lifecycle event stream.
 
-1. **Asset membership.** Each sync asset row carries its `stackId` — the Gumnut
-   `stack_id` FK mapped to the Immich UUID (loose assets stay null). V2 inherits
-   it through the V1 delegation. This is what groups burst members under a stack
-   on the client.
-2. **Stack rows.** `StacksV1` streams `StackV1` rows, handled specially
-   (`_stream_stacks`) alongside the user types rather than via the events API —
-   the Gumnut backend emits no stack lifecycle events yet, so there is nothing to
-   feed the event stream. Each row's `primaryAssetId` is the **effective primary**
-   resolved by the shared `resolve_effective_primary`/`hydrate_stack` helpers (the
-   exact rule the REST `/stacks` surfaces use), so an auto-detected burst with no
-   pinned cover still gets a valid non-null primary. A member-less stack has no
-   honest primary and is skipped with a warning. `ownerId` is always the current
-   user (Gumnut is single-user; no stack sharing).
+Each row uses the same effective-primary resolution as the REST stack endpoints;
+member-less stacks are skipped because `primaryAssetId` is required. Incremental
+upserts prevent assets from referencing a missing stack, which would hide the
+burst in the mobile timeline.
 
-The stack rows are emitted **before** the phase-1 asset loop, so a stack row
-exists on the client before any asset naming it via `stackId` arrives. (The
-mobile client's `stackId` / `primaryAssetId` columns are unenforced indexes, not
-FKs, so the circular reference is not order-sensitive in practice — stacks-first
-is a deliberate, defensive choice for the asset→stack direction.)
-
-**Scope boundary — upserts only, no delete detection.** With no lifecycle event
-stream, `_stream_stacks` re-pages the whole stack table on **every** sync and
-emits the rows the client has not yet acked: it orders by `(updated_at, id)` and
-skips rows at or before the `StackV1` checkpoint cursor. This is upsert-only
-incremental delivery, and it exists for a concrete reason — asset rows carry
-`stackId` from current entity state unconditionally, so a burst created *after*
-the initial sync would otherwise leave its member assets pointing at a stack row
-the client never received. A dangling `stackId` is not benign: the mobile
-timeline join (`merged_asset.drift.dart`,
-`... AND (rae.stack_id IS NULL OR rae.id = se.primary_asset_id)`) hides **every
-frame** of a burst whose stack row is missing. Emitting the new stack keeps the
-burst visible and grouped.
-
-Ordering by the ack cursor also makes the pass **resumable**: if a snapshot
-truncates mid-stream, the checkpoint holds the last acked row's cursor and the
-next sync skips at-or-before it, so the un-streamed tail is not lost. This is
-also why a Gumnut API error while hydrating one stack is caught at the call site
-and ends the pass gracefully rather than propagating: the snapshot runs *before*
-the asset loop, so an unhandled error would suppress assets/albums/faces too —
-instead the already-streamed rows are acked, the asset loop still runs, and the
-remaining stacks resume next sync.
-
-**Delete detection stays out of scope**, tracked on a separate event-support
-track. A dissolved stack's row goes stale but is harmless: unstacking clears each
-member's `asset.stack_id` via asset events, and a stack row no asset references
-satisfies the `rae.stack_id IS NULL` branch of the join. `PartnerStacksV1` stays
-a no-op (partner sharing is unsupported), and `on_asset_stack_update` is **not**
-in the supported WebSocket table.
+Delete detection remains unsupported. A dissolved stack row is harmless once
+asset events clear its members' `stackId`. `PartnerStacksV1` remains a no-op
+because partner sharing is unsupported.
 
 ## Adding a New Sync Type Version
 
@@ -140,7 +103,10 @@ The invariant tests in `test_sync_v2.py` assert that every V2 type in `_SYNC_TYP
 
 Immich sync types that are accepted but have no Gumnut equivalent (e.g., `AssetEditsV1` — we don't support editing) go in `_NOOP_REQUEST_TYPES` in `stream.py`. This prevents "unsupported type" warnings while making the no-op explicit. Do not just add them to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that silently drops them.
 
-The v3 mobile client requests a broad set of these on **every** sync (partner-*, `PartnerStacksV1`, memories-*, `AssetMetadataV1`, `AssetOcrV1`, `AlbumAssetExifsV1`, the V2 partner/album-asset variants) — all no-ops because the adapter has no sync-stream source for them, whether the underlying feature is absent (sharing, OCR) or reachable only through the REST surfaces (memories). They all belong in `_NOOP_REQUEST_TYPES` so the per-sync "unsupported types" warning stays quiet. Two requested types the adapter *does* handle are deliberately **not** no-ops, both handled specially alongside `UsersV1`/`AuthUsersV1` rather than via `_SYNC_TYPE_ORDER`: `UserMetadataV1` (synthesized preferences row — see "User Preferences" above) and `StacksV1` (current-state snapshot — see "Stack Snapshot" above). `PartnerStacksV1` remains a no-op regardless.
+The v3 mobile client requests these types on every sync, so keep unsupported
+ones in `_NOOP_REQUEST_TYPES` to avoid repeated warnings. `UserMetadataV1` and
+`StacksV1` are handled specially outside `_SYNC_TYPE_ORDER` and must not be
+listed as no-ops.
 
 ## Contract with the Gumnut API
 

@@ -297,8 +297,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         # an explicit None the unset Mock attribute would silently produce a
         # truthy Mock and walk the wrong branch.
         asset.metadata = None
-        # Loose by default — the sync asset converter reads stack_id, and an
-        # unset Mock attribute is truthy (see conftest's create_mock_asset_data).
+        # Avoid a truthy auto-created Mock for an unstacked asset.
         asset.stack_id = None
         return asset
 

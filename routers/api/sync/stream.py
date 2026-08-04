@@ -150,9 +150,7 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
 #                          EXIF arrives via AssetExifsV1.
 #   - MemoriesV1 /
 #     MemoryToAssetsV1:    Gumnut has no memories feature; the tab renders empty.
-# StacksV1 is deliberately NOT here — it is emitted as a current-state snapshot
-# (see _stream_stacks), alongside the special user types below rather than via
-# the events API. PartnerStacksV1 stays a no-op: partner sharing is unsupported.
+# StacksV1 is emitted by _stream_stacks; PartnerStacksV1 remains a no-op.
 # UserMetadataV1 is deliberately NOT here — it is emitted (a synthesized
 # preferences row); see gumnut_user_to_sync_user_metadata_v1.
 _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
@@ -169,11 +167,7 @@ _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
     SyncRequestType.MemoryToAssetsV1: SyncEntityType.MemoryToAssetV1,
 }
 
-# Supported SyncRequestTypes (used to detect unsupported types requested by
-# client). AuthUsersV1/UsersV1/UserMetadataV1/StacksV1 are handled specially (not
-# via _SYNC_TYPE_ORDER): the first two stream the user record, UserMetadataV1
-# streams a synthesized preferences row (see gumnut_user_to_sync_user_metadata_v1),
-# and StacksV1 streams a current-state snapshot (see _stream_stacks).
+# User and stack types below are handled outside _SYNC_TYPE_ORDER.
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
     | {
@@ -513,36 +507,13 @@ async def _stream_stacks(
     owner_id: UUID,
     checkpoint: Checkpoint | None,
 ) -> AsyncGenerator[str, None]:
-    """Stream StackV1 rows for the StacksV1 sync type.
+    """Stream incremental StackV1 upserts in stable checkpoint order.
 
-    Every sync re-pages the whole stack table (the Gumnut backend emits no stack
-    lifecycle events yet) and emits rows in ``(updated_at, id)`` order, filtered
-    strictly after the checkpoint cursor — which gives incremental upsert and
-    mid-stream resume, with delete detection out of scope. The "Stack Snapshot
-    (StacksV1)" section of ``docs/architecture/sync-stream-architecture.md`` owns
-    why each of those matters and what stays out of scope.
-
-    Two code-local details:
-
-    - Each surviving stack is hydrated through the shared ``hydrate_stack`` — the
-      same helper REST ``/stacks`` uses, so the effective primary matches exactly
-      — which fetches every member even though only the resolved primary id is
-      used here. Reusing the single source of truth is worth the unused member
-      payload; a lean member read is a later optimization if reset latency ever
-      matters.
-    - Only an undecodable ``stack.id`` (a systemic ``asset_stack_`` prefix change)
-      is degraded to a skip, and it is decoded *up front* so the guard cannot also
-      swallow a ``ValidationError`` or ``GumnutError`` raised during member
-      hydration — those are real failures that must surface, not be mislabeled.
-
-    A member-less stack has no honest ``primaryAssetId`` (``SyncStackV1`` requires
-    a non-null one), so ``hydrate_stack`` returns ``None`` — logging a warning —
-    and it is skipped here.
+    The pass re-pages the stack table because the Gumnut API has no stack
+    lifecycle events. Hydration reuses the REST effective-primary rules;
+    undecodable IDs and member-less stacks are skipped.
     """
-    # Collect so the rows can be emitted in a stable (updated_at, id) order — a
-    # plain async-for can't reorder. Normalize to UTC so a naive/aware mix can't
-    # crash the sort or invert the cursor comparison below (same normalization
-    # stack_conversion applies to its member sort).
+    # Stable UTC ordering makes checkpoint comparison and resume deterministic.
     stacks = [
         stack
         async for stack in gumnut_client.stacks.list_stacks(
@@ -559,10 +530,7 @@ async def _stream_stacks(
         if checkpoint_cursor is not None and cursor <= checkpoint_cursor:
             continue
 
-        # Decode the id first: it is the only ValueError this pass degrades on.
-        # Keeping it out of the hydrate call below means a member ValidationError
-        # (pydantic subclasses ValueError) or GumnutError truncates loudly instead
-        # of being mislabeled as an undecodable stack id and silently dropped.
+        # Keep the ValueError guard separate from hydration failures.
         try:
             safe_uuid_from_stack_id(stack.id)
         except ValueError:
@@ -571,7 +539,6 @@ async def _stream_stacks(
 
         hydrated = await hydrate_stack(gumnut_client, stack)
         if hydrated is None:
-            # Member-less stack — hydrate_stack already logged a warning.
             continue
         sync_stack = gumnut_stack_to_sync_stack_v1(
             stack, hydrated.primary_asset_id, owner_id
@@ -714,13 +681,7 @@ async def generate_sync_stream(
         event_counts: dict[str, int] = {}
         total_events = 0
 
-        # Stream the StackV1 snapshot before the asset loop (so each asset's
-        # stackId names a stack the client already holds). See _stream_stacks.
-        # A GumnutError while hydrating one stack ends the pass gracefully rather
-        # than truncating the whole sync: because this runs first, an unhandled
-        # error would suppress assets/albums/faces too. Rows already yielded are
-        # acked, so the remaining stacks resume from the checkpoint next sync,
-        # and the asset loop below still runs this cycle.
+        # Emit stacks before assets; hydration errors must not suppress later types.
         if SyncRequestType.StacksV1 in requested_types:
             stack_checkpoint = checkpoint_map.get(SyncEntityType.StackV1)
             try:
