@@ -1,5 +1,7 @@
 """Tests for timeline.py endpoints."""
 
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
@@ -17,9 +19,19 @@ from routers.immich_models import (
     AssetVisibility,
 )
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
+    safe_uuid_from_stack_id,
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_person_id,
+)
+from tests.conftest import (
+    MockSyncCursorPage,
+    make_gumnut_asset,
+    mock_list_stacks,
+    make_gumnut_stack,
+    make_gumnut_stack_members,
+    make_sdk_status_error,
 )
 
 # Expected date range query for January 2024 — the most common test timeBucket.
@@ -1241,3 +1253,420 @@ class TestDateRangeFiltering:
                 album_id=uuid_to_gumnut_album_id(sample_uuid),
                 extra_query=JANUARY_2024_DATE_RANGE,
             )
+
+
+# Every columnar field the bucket emits per asset. A stack collapse that dropped
+# assets after some of these were built would leave the arrays misaligned, which
+# silently pairs one asset's ID with another's ratio in the client.
+COLUMNAR_FIELDS = (
+    "city",
+    "country",
+    "createdAt",
+    "duration",
+    "fileCreatedAt",
+    "id",
+    "isFavorite",
+    "isImage",
+    "isTrashed",
+    "latitude",
+    "livePhotoVideoId",
+    "localOffsetHours",
+    "longitude",
+    "ownerId",
+    "projectionType",
+    "ratio",
+    "thumbhash",
+    "visibility",
+)
+
+
+def _january(day: int) -> datetime:
+    return datetime(2024, 1, day, 10, 0, 0, tzinfo=timezone.utc)
+
+
+def _stacked_bucket(*, count: int, first_day: int = 5):
+    """A stack row plus `count` live members captured inside January 2024."""
+    stack = make_gumnut_stack(asset_count=count, primary_asset_id=None)
+    members = make_gumnut_stack_members(
+        count, stack_id=stack.id, first_captured_at=_january(first_day)
+    )
+    return stack, members
+
+
+def _stack_client(bucket_assets, stack_rows=(), *, live_members=None):
+    """Mock client serving both reads `get_time_bucket` makes under `withStacked`.
+
+    `assets.list` answers the bucket read, or — when called with `stack_id` — the
+    fallback live-member read, so a test can assert which one happened. Omitting
+    a stack from `stack_rows` models a row that vanished between the two reads.
+    """
+    live_members = live_members or {}
+
+    def _list_assets(**kwargs):
+        if "stack_id" in kwargs:
+            return MockSyncCursorPage(live_members.get(kwargs["stack_id"], []))
+        return MockSyncCursorPage(bucket_assets)
+
+    client = Mock()
+    client.assets.list = Mock(side_effect=_list_assets)
+    client.stacks.list_stacks = mock_list_stacks(stack_rows)
+    return client
+
+
+class TestTimeBucketStacks:
+    """The bucket's `stack` column and the server-side collapse it comes with —
+    see "Timeline stack collapse" in `docs/architecture/adapter-architecture.md`
+    for why the adapter does both halves and why each gate is load-bearing.
+    """
+
+    @pytest.mark.anyio
+    async def test_omits_the_stack_column_when_not_requested(self):
+        """Upstream puts both the per-asset select and the aggregate inside the
+        same `withStacked` conditional, so the key is absent, not all-null."""
+        _, members = _stacked_bucket(count=3)
+        client = _stack_client(members)
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", client=client
+            )
+
+        assert "stack" not in result
+        assert len(result["id"]) == 3
+        client.stacks.list_stacks.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_does_not_collapse_when_not_requested(self):
+        """The album month view asks for buckets without `withStacked` while
+        still rendering stack badges, so collapsing unconditionally would drop
+        burst frames from albums that upstream keeps."""
+        stack, members = _stacked_bucket(count=3)
+        client = _stack_client(members, [stack])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00",
+                albumId=uuid4(),
+                withStacked=False,
+                client=client,
+            )
+
+        assert len(result["id"]) == 3
+        assert "stack" not in result
+
+    @pytest.mark.anyio
+    async def test_loose_assets_get_null_tuples(self):
+        loose = [make_gumnut_asset(local_datetime=_january(day)) for day in (5, 6)]
+        client = _stack_client(loose)
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+            )
+
+        assert result["stack"] == [None, None]
+        client.stacks.list_stacks.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_collapses_a_burst_to_its_cover(self):
+        """Both tuple elements are strings on the wire: upstream emits
+        `count(…)::text` against a `z.array(z.string()).length(2)` schema, and
+        the client parses element 1 with `Number.parseInt`. The equality below
+        fails for an int count or a `UUID` object."""
+        stack, members = _stacked_bucket(count=3)
+        client = _stack_client(members, [stack])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+            )
+
+        assert result["id"] == [str(safe_uuid_from_asset_id(members[0].id))]
+        assert result["stack"] == [[str(safe_uuid_from_stack_id(stack.id)), "3"]]
+
+    @pytest.mark.anyio
+    async def test_pinned_cover_is_the_surviving_frame(self):
+        stack, members = _stacked_bucket(count=3)
+        stack.primary_asset_id = members[2].id
+        client = _stack_client(members, [stack])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+            )
+
+        assert result["id"] == [str(safe_uuid_from_asset_id(members[2].id))]
+
+    @pytest.mark.anyio
+    async def test_pin_naming_no_live_frame_falls_back(self):
+        """A pin naming no frame in the live bucket — a cover the user trashed,
+        or one that left the stack — must promote a frame that exists, or
+        collapsing against it would erase the whole burst from the month.
+
+        The trashed-pin *divergence* from `resolve_effective_primary` is not
+        observable here: the route only ever hands live members to the selector.
+        `TestSelectTimelineCover` pins that one directly.
+        """
+        stack, members = _stacked_bucket(count=3)
+        stack.primary_asset_id = make_gumnut_asset().id
+        client = _stack_client(members, [stack])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+            )
+
+        assert result["id"] == [str(safe_uuid_from_asset_id(members[0].id))]
+
+    @pytest.mark.anyio
+    async def test_several_stacks_batch_and_preserve_asset_order(self):
+        first, first_members = _stacked_bucket(count=2, first_day=5)
+        second, second_members = _stacked_bucket(count=2, first_day=15)
+        loose = make_gumnut_asset(local_datetime=_january(10))
+        bucket = [*first_members, loose, *second_members]
+        client = _stack_client(bucket, [first, second])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+            )
+
+        assert result["id"] == [
+            str(safe_uuid_from_asset_id(first_members[0].id)),
+            str(safe_uuid_from_asset_id(loose.id)),
+            str(safe_uuid_from_asset_id(second_members[0].id)),
+        ]
+        assert result["stack"] == [
+            [str(safe_uuid_from_stack_id(first.id)), "2"],
+            None,
+            [str(safe_uuid_from_stack_id(second.id)), "2"],
+        ]
+        client.stacks.list_stacks.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_badge_counts_the_whole_stack_not_the_bucket(self):
+        """A burst straddling a month boundary keeps its cover in the earlier
+        month, where the badge must report the stack's live size rather than how
+        many of its frames this bucket happens to hold."""
+        stack, members = _stacked_bucket(count=3)
+        client = _stack_client(members[:2], [stack], live_members={stack.id: members})
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+            )
+
+        assert result["id"] == [str(safe_uuid_from_asset_id(members[0].id))]
+        # One tile ships, but it is badged 3 — the third frame is next month's.
+        assert result["stack"] == [[str(safe_uuid_from_stack_id(stack.id)), "3"]]
+
+    @pytest.mark.anyio
+    async def test_stack_read_failure_degrades_to_an_uncollapsed_bucket(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """The assets already came back; a stacks-resource outage should cost
+        the badges, not 5xx the app's primary view.
+
+        The severity is asserted, not incidental: this clause and the one below
+        differ *only* in log level, so without pinning both directions the two
+        collapse into one — and an expected upstream outage would start paging
+        on the ERROR channel reserved for adapter bugs. A 503 on purpose, since
+        that is the status the general upstream-log-level rule maps to ERROR.
+        """
+        stack, members = _stacked_bucket(count=3)
+        client = _stack_client(members, [stack])
+        client.stacks.list_stacks = Mock(
+            side_effect=make_sdk_status_error(503, "Service Unavailable")
+        )
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            with caplog.at_level(logging.WARNING):
+                result = await call_get_time_bucket(
+                    timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+                )
+
+        assert len(result["id"]) == 3
+        assert result["stack"] == [None, None, None]
+        (record,) = [r for r in caplog.records if r.name == "routers.api.timeline"]
+        assert record.levelno == logging.WARNING
+        assert getattr(record, "time_bucket") == "2024-01-01T00:00:00"
+
+    @pytest.mark.anyio
+    async def test_non_sdk_failure_degrades_the_same_way(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """The promise is about the endpoint, not about which exception family
+        broke it.
+
+        Resolution does non-SDK work too — the `zip(..., strict=True)` that
+        names its ordering invariant, the capture-time sort key — so catching
+        only `GumnutError` would let a future line 500 the app's primary view.
+        The ERROR half of the severity split the sibling above pins.
+        """
+        stack, members = _stacked_bucket(count=3)
+        client = _stack_client(members, [stack])
+        client.stacks.list_stacks = Mock(side_effect=RuntimeError("invariant broke"))
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            with caplog.at_level(logging.WARNING):
+                result = await call_get_time_bucket(
+                    timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+                )
+
+        assert len(result["id"]) == 3
+        assert result["stack"] == [None, None, None]
+        (record,) = [r for r in caplog.records if r.name == "routers.api.timeline"]
+        assert record.levelno == logging.ERROR
+        assert getattr(record, "time_bucket") == "2024-01-01T00:00:00"
+
+    @pytest.mark.anyio
+    async def test_partially_contained_stack_reads_its_members(self):
+        """A burst straddling a month boundary leaves the bucket short of the
+        row's live count, and the true cover may sit in the other month."""
+        stack, members = _stacked_bucket(count=3)
+        client = _stack_client(members[1:], [stack], live_members={stack.id: members})
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+            )
+
+        # The cover is in the previous month, so this month contributes nothing
+        # from the burst — the same single tile Immich shows, counted once.
+        assert result["id"] == []
+        member_reads = [
+            call
+            for call in client.assets.list.call_args_list
+            if "stack_id" in call.kwargs
+        ]
+        assert len(member_reads) == 1
+
+    @pytest.mark.anyio
+    async def test_dangling_stack_row_keeps_every_frame(self):
+        """A stack dissolved between the two reads must degrade to the pre-stack
+        timeline rather than hiding photos behind a cover that no longer exists."""
+        _, members = _stacked_bucket(count=3)
+        client = _stack_client(members, [])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+            )
+
+        assert len(result["id"]) == 3
+        assert result["stack"] == [None, None, None]
+
+    @pytest.mark.anyio
+    async def test_trash_opts_out_of_the_stack_path(self):
+        """Upstream's predicate keys on the live primary, so replicating it here
+        would filter trashed non-primary frames out of the one view that can
+        restore them. The live `asset_count` would misdescribe trash besides."""
+        stack, members = _stacked_bucket(count=3)
+        for member in members:
+            member.trashed_at = _january(20)
+        client = _stack_client(members, [stack])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00",
+                isTrashed=True,
+                withStacked=True,
+                client=client,
+            )
+
+        assert len(result["id"]) == 3
+        assert "stack" not in result
+        client.stacks.list_stacks.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_album_filter_still_reaches_the_bucket_read(self):
+        """The stack path adds its own `assets.list` calls, so the bucket read's
+        own filters have to survive being one call among several."""
+        stack, members = _stacked_bucket(count=2)
+        client = _stack_client(members, [stack])
+        album_id = uuid4()
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00",
+                albumId=album_id,
+                withStacked=True,
+                client=client,
+            )
+
+        bucket_read = client.assets.list.call_args_list[0]
+        assert bucket_read.kwargs == {
+            "album_id": uuid_to_gumnut_album_id(album_id),
+            "extra_query": JANUARY_2024_DATE_RANGE,
+        }
+
+    @pytest.mark.anyio
+    async def test_person_filter_still_reaches_the_bucket_read(self):
+        stack, members = _stacked_bucket(count=2)
+        client = _stack_client(members, [stack])
+        person_id = uuid4()
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00",
+                personId=person_id,
+                withStacked=True,
+                client=client,
+            )
+
+        bucket_read = client.assets.list.call_args_list[0]
+        assert bucket_read.kwargs == {
+            "person_id": uuid_to_gumnut_person_id(person_id),
+            "extra_query": JANUARY_2024_DATE_RANGE,
+        }
+
+    @pytest.mark.anyio
+    async def test_every_column_stays_aligned_after_collapse(self):
+        """Collapse happens before the columns are built, so no array may keep a
+        dropped asset's entry.
+
+        The arity sweep alone can't catch the defect that actually hurts —
+        several columns are built as `[None] * asset_count`, so they are
+        length-correct by construction. The per-asset values below are what pin
+        the *pairing*: each survivor's ratio and thumbhash must sit at its own
+        index, not a dropped neighbour's.
+        """
+        stack, members = _stacked_bucket(count=4)
+        for index, member in enumerate(members):
+            member.thumbhash = f"burst-hash-{index}"
+            member.width, member.height = 400 + index, 100
+        loose = make_gumnut_asset(local_datetime=_january(20))
+        loose.thumbhash = "loose-hash"
+        loose.width, loose.height = 1000, 100
+        client = _stack_client([*members, loose], [stack])
+
+        with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
+            mock_user_id.return_value = uuid4()
+            result = await call_get_time_bucket(
+                timeBucket="2024-01-01T00:00:00", withStacked=True, client=client
+            )
+
+        for field in COLUMNAR_FIELDS:
+            assert len(result[field]) == 2, f"{field} is misaligned"
+        assert len(result["stack"]) == 2
+        assert result["id"] == [
+            str(safe_uuid_from_asset_id(members[0].id)),
+            str(safe_uuid_from_asset_id(loose.id)),
+        ]
+        assert result["thumbhash"] == ["burst-hash-0", "loose-hash"]
+        assert result["ratio"] == [4.0, 10.0]

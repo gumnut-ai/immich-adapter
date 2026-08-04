@@ -388,7 +388,8 @@ async def remove_asset_from_album(
 
     gumnut_album_id = uuid_to_gumnut_album_id(id)
 
-    # Upstream silently skips missing assets and 204s on success.
+    # Upstream silently skips missing assets and returns an empty
+    # acknowledgment body on success.
     errors_by_uuid: dict[UUID, BulkIdErrorReason] = {}
     async for outcome in chunked_per_item_bulk(
         request.ids,

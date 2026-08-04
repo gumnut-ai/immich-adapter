@@ -1,11 +1,17 @@
 ---
 title: "Checksum Support"
-status: completed
+status: deprecated
+superseded-by: ../references/code-practices.md
 created: 2025-11-25
-last-updated: 2026-07-11
+last-updated: 2026-07-27
 ---
 
 # Asset Checksum & Deduplication Analysis
+
+> **Deprecated (2026-07-27):** This doc analyzed Immich's checksum-based deduplication and proposed adding a SHA-1 checksum column to the Gumnut backend, which shipped. The living description of how the adapter handles checksums today — emitting base64 SHA-1 via `resolve_immich_checksum`, and the inbound `bulk_upload_check` dedup path — is [`docs/references/code-practices.md`](../references/code-practices.md) § "Outbound asset checksums". This doc is retained for the decision rationale and the alternatives weighed; it is no longer updated as the system changes. Pruned 2026-07-27 to its decision record; implementation detail was removed as it is owned by the code — specifically the "Schema Changes" section, a column-and-index definition that the backend's asset model owns and that had already drifted from it. Two things proposed below never became reality:
+>
+> - **The composite index did not ship.** This doc proposed indexing both `checksum_sha1` and `(library_id, checksum_sha1)`; the backend's asset model carries a single-column index on `checksum_sha1` only. The composite indexes that exist are on the SHA-256 `checksum` column (the `(library_id, checksum)` unique constraint and a live-rows partial index), not on `checksum_sha1`.
+> - **The Background section is a description of upstream Immich, not of the adapter.** Of the three endpoints it catalogs, only `POST /api/assets/bulk-upload-check` is implemented here. The adapter has no `POST /api/assets/exist` route, and it does not implement the upload-time `x-immich-checksum` duplicate-detection path — do not read that section as an adapter capability list.
 
 ## Background: How Immich Deduplicates Assets
 
@@ -92,7 +98,7 @@ duration: <string>
 }
 ```
 
-**Source**: `immich/server/src/services/asset-media.service.ts:272-300`
+**Source**: `immich/server/src/services/asset-media.service.ts`
 
 ### 3. Existence Check Endpoint (`POST /api/assets/exist`)
 
@@ -121,11 +127,7 @@ duration: <string>
 
 ### Dedicated Column Approach
 
-Add a `checksum_sha1` column to the existing Assets table alongside the existing SHA-256 checksum.
-
-### Schema Changes
-
-Add a `checksum_sha1 BYTEA` column to the Gumnut backend Assets table, indexed on `checksum_sha1` and on `(library_id, checksum_sha1)` for library-scoped deduplication lookups. The column lives in the Gumnut backend, not this adapter.
+Add a `checksum_sha1` column to the existing Assets table alongside the existing SHA-256 checksum, indexed for deduplication lookups. The column lives in the Gumnut backend, not this adapter.
 
 ### Key Points
 

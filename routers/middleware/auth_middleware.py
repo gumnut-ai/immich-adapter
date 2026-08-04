@@ -1,5 +1,7 @@
 import logging
+from uuid import UUID
 
+import sentry_sdk
 from fastapi import Request, Response, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -9,9 +11,37 @@ from routers.utils.gumnut_client import (
     get_refreshed_token,
     init_refresh_token_holder,
 )
+from routers.utils.gumnut_id_conversion import uuid_to_gumnut_user_id
 from services.session_store import get_session_store
 
 logger = logging.getLogger(__name__)
+
+
+def _set_sentry_user(session_user_id: str) -> None:
+    """Attribute the current request to a Gumnut user in Sentry.
+
+    Sessions store the user id in the UUID form Immich clients expect; Sentry
+    wants the `intuser_*` form the Gumnut API tags its own events with. The
+    conversion is a pure shortuuid re-encode, so attribution costs no backend
+    call and reaches routes that never resolve a user DTO — which is most of
+    the read-heavy traffic (streaming, sync, timeline buckets).
+
+    Id only, never email or other PII.
+
+    Non-throwing: a session whose stored user id isn't a UUID is a data problem,
+    not a reason to fail a request that has otherwise authenticated. The caller
+    wraps this in a `try` that turns anything raised into a 500.
+    """
+    try:
+        user_id = uuid_to_gumnut_user_id(UUID(session_user_id))
+    except (ValueError, TypeError):
+        logger.warning(
+            "Session user id is not a UUID; skipping Sentry attribution",
+            extra={"session_user_id": session_user_id},
+        )
+        return
+
+    sentry_sdk.set_user({"id": user_id})
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -25,8 +55,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
        from cookies (web) or the Authorization header (mobile)
     3. For session tokens, looks up the session in Redis and decrypts the stored
        JWT; for API keys, forwards the key straight through as the credential
-    4. Stores the resulting credential in request.state for dependency injection
-    5. Handles JWT refresh from backend by updating stored JWT in session
+    4. Attributes the request to the session's user in Sentry (see
+       `_set_sentry_user`); API keys carry no session, so those requests are
+       attributed later, by whichever route resolves the current user
+    5. Stores the resulting credential in request.state for dependency injection
+    6. Handles JWT refresh from backend by updating stored JWT in session
        (session-token clients only; API keys are non-refreshing)
     """
 
@@ -140,6 +173,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 session = await session_store.get_by_id(session_token)
 
                 if session:
+                    # Before `get_jwt()`, so a decryption failure is
+                    # attributable to the user it failed for.
+                    _set_sentry_user(session.user_id)
                     jwt_token = session.get_jwt()
                 else:
                     logger.warning(

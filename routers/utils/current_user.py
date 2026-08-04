@@ -75,11 +75,10 @@ async def get_current_user_admin(
     # Fetch from Gumnut backend (SDK errors bubble to the global GumnutError handler)
     user = await client.users.me()
 
-    # Attribute this request to the Gumnut user in Sentry as early as the
-    # intuser_* id is known, so the active transaction and any error events
-    # group per-user. Set the intuser_* id only, never email/PII — matching how
-    # the Gumnut backend tags its own Sentry events. This dependency is cached
-    # per request, so set_user runs once when the user is first resolved.
+    # Covers `x-api-key` clients, whose credential carries no session, so
+    # AuthMiddleware can't attribute them (see `_set_sentry_user` there) and
+    # this response is the first time their user id is known. Session-token
+    # requests are already attributed; re-setting the same id is harmless.
     sentry_sdk.set_user({"id": user.id})
 
     # Map Gumnut UserResponse to Immich UserAdminResponseDto

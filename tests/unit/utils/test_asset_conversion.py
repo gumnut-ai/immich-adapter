@@ -18,7 +18,7 @@ import pytest
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.file_data_response import FileDataResponse
 
-from routers.immich_models import PersonResponseDto
+from routers.immich_models import AssetStackResponseDto, PersonResponseDto
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_person_id
 from routers.api.sync.converters import gumnut_asset_to_sync_asset_v1
 from routers.utils.asset_conversion import (
@@ -241,6 +241,19 @@ class TestConvertGumnutAssetToImmichV3Shape:
         assert isinstance(people[0], PersonResponseDto)
         # v3 PersonResponseDto carries no inline face bounding boxes.
         assert not hasattr(people[0], "faces")
+
+
+class TestNestedStackSummary:
+    def test_carries_pre_resolved_summary(self, sample_gumnut_asset, mock_current_user):
+        summary = AssetStackResponseDto(
+            id=uuid4(), primaryAssetId=uuid4(), assetCount=7
+        )
+
+        result = convert_gumnut_asset_to_immich(
+            sample_gumnut_asset, mock_current_user, stack=summary
+        )
+
+        assert result.stack is summary
 
 
 class TestBuildAssetUploadReadyPayloadTrashState:

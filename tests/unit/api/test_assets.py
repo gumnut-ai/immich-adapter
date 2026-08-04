@@ -41,7 +41,16 @@ from routers.api.assets import (
     get_asset_metadata_by_key,
     play_asset_video,
 )
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_asset_id
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
+    safe_uuid_from_stack_id,
+    uuid_to_gumnut_asset_id,
+)
+from tests.conftest import (
+    MockSyncCursorPage,
+    make_gumnut_stack_with_members,
+    make_sdk_status_error,
+)
 from routers.immich_models import (
     AssetBulkUploadCheckDto,
     AssetBulkUploadCheckItem,
@@ -502,7 +511,6 @@ class TestUploadAsset:
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
-
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
         mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
@@ -609,7 +617,6 @@ class TestUploadAsset:
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
-
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
         mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
@@ -676,7 +683,6 @@ class TestUploadAsset:
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
-
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
         mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
@@ -2198,12 +2204,14 @@ class TestUpdateAsset:
     async def test_update_asset_empty_payload_no_sdk_call(
         self, sample_uuid, sample_gumnut_asset, mock_current_user
     ):
-        # Empty DTO + retrieve path: asset is fetched via get_asset_info, no
-        # PATCH is sent, no websocket fires.
+        # Empty DTO + retrieve path: asset is returned without GET-only stack
+        # enrichment, no PATCH is sent, and no websocket fires.
         sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        sample_gumnut_asset.stack_id = "asset_stack_example"
         mock_client = Mock()
         mock_client.assets.update_asset = AsyncMock()
         mock_client.assets.retrieve = AsyncMock(return_value=sample_gumnut_asset)
+        mock_client.stacks.retrieve_stack = AsyncMock()
 
         request = UpdateAssetDto()
 
@@ -2224,6 +2232,8 @@ class TestUpdateAsset:
         )
         mock_emit.assert_not_awaited()
         assert result.id == sample_uuid
+        assert result.stack is None
+        mock_client.stacks.retrieve_stack.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_update_asset_out_of_scope_fields_no_sdk_call(
@@ -2316,17 +2326,16 @@ class TestDeleteAssets:
     """Test the delete_assets endpoint.
 
     The handler branches on ``force``: ``True`` → bulk hard-delete via
-    ``client.delete("/api/assets", body=...)`` with one ``on_asset_delete``
-    per id. ``False``/absent → bulk soft-delete via
-    ``client.post("/api/assets/trash", body=...)`` with one batched
-    ``on_asset_trash`` per chunk.
+    ``client.assets.delete_list(ids=...)`` with one ``on_asset_delete`` per id.
+    ``False``/absent → bulk soft-delete via ``client.assets.trash(ids=...)``
+    with one batched ``on_asset_trash`` per chunk.
     """
 
     @pytest.mark.anyio
     async def test_delete_assets_force_false_calls_trash_endpoint(self):
-        """force=False routes to POST /api/assets/trash with the full id list."""
+        """force=False routes to the bulk trash method with the full id list."""
         mock_client = Mock()
-        mock_client.post = AsyncMock(return_value=None)
+        mock_client.assets.trash = AsyncMock(return_value=None)
 
         asset_ids = [uuid4(), uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
@@ -2338,18 +2347,18 @@ class TestDeleteAssets:
             )
 
         assert result.status_code == 204
-        mock_client.post.assert_awaited_once()
-        call = mock_client.post.await_args
-        assert call.args[0] == "/api/assets/trash"
-        body = call.kwargs["body"]
-        assert set(body["ids"]) == {uuid_to_gumnut_asset_id(uid) for uid in asset_ids}
+        mock_client.assets.trash.assert_awaited_once()
+        call = mock_client.assets.trash.await_args_list[0]
+        assert set(call.kwargs["ids"]) == {
+            uuid_to_gumnut_asset_id(uid) for uid in asset_ids
+        }
 
     @pytest.mark.anyio
     async def test_delete_assets_force_absent_treated_as_soft_delete(self):
         """force omitted (Immich's native default) routes to trash, not hard-delete."""
         mock_client = Mock()
-        mock_client.post = AsyncMock(return_value=None)
-        mock_client.delete = AsyncMock(return_value=None)
+        mock_client.assets.trash = AsyncMock(return_value=None)
+        mock_client.assets.delete_list = AsyncMock(return_value=None)
 
         asset_ids = [uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids)
@@ -2361,14 +2370,14 @@ class TestDeleteAssets:
             )
 
         assert result.status_code == 204
-        mock_client.post.assert_awaited_once()
-        mock_client.delete.assert_not_awaited()
+        mock_client.assets.trash.assert_awaited_once()
+        mock_client.assets.delete_list.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_delete_assets_force_true_calls_bulk_delete_endpoint(self):
-        """force=True routes to bulk DELETE /api/assets."""
+        """force=True routes to the bulk permanent-delete method."""
         mock_client = Mock()
-        mock_client.delete = AsyncMock(return_value=None)
+        mock_client.assets.delete_list = AsyncMock(return_value=None)
 
         asset_ids = [uuid4(), uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=True)
@@ -2380,17 +2389,17 @@ class TestDeleteAssets:
             )
 
         assert result.status_code == 204
-        mock_client.delete.assert_awaited_once()
-        call = mock_client.delete.await_args
-        assert call.args[0] == "/api/assets"
-        body = call.kwargs["body"]
-        assert set(body["ids"]) == {uuid_to_gumnut_asset_id(uid) for uid in asset_ids}
+        mock_client.assets.delete_list.assert_awaited_once()
+        call = mock_client.assets.delete_list.await_args_list[0]
+        assert set(call.kwargs["ids"]) == {
+            uuid_to_gumnut_asset_id(uid) for uid in asset_ids
+        }
 
     @pytest.mark.anyio
     async def test_delete_assets_force_false_emits_single_batched_trash_event(self):
         """A single bulk soft-delete fires one on_asset_trash with the full id array."""
         mock_client = Mock()
-        mock_client.post = AsyncMock(return_value=None)
+        mock_client.assets.trash = AsyncMock(return_value=None)
 
         asset_ids = [uuid4(), uuid4(), uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
@@ -2413,7 +2422,7 @@ class TestDeleteAssets:
     async def test_delete_assets_force_true_emits_one_delete_event_per_id(self):
         """A bulk hard-delete fires one on_asset_delete per id (single-id wire shape)."""
         mock_client = Mock()
-        mock_client.delete = AsyncMock(return_value=None)
+        mock_client.assets.delete_list = AsyncMock(return_value=None)
 
         asset_ids = [uuid4(), uuid4(), uuid4()]
         request = AssetBulkDeleteDto(ids=asset_ids, force=True)
@@ -2440,7 +2449,7 @@ class TestDeleteAssets:
     async def test_delete_assets_chunks_when_over_cap(self):
         """Request larger than the per-call cap is split into chunks."""
         mock_client = Mock()
-        mock_client.post = AsyncMock(return_value=None)
+        mock_client.assets.trash = AsyncMock(return_value=None)
 
         asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 50)]
         request = AssetBulkDeleteDto(ids=asset_ids, force=False)
@@ -2454,9 +2463,9 @@ class TestDeleteAssets:
             )
 
         assert result.status_code == 204
-        assert mock_client.post.await_count == 2
+        assert mock_client.assets.trash.await_count == 2
         chunk_sizes = [
-            len(call.kwargs["body"]["ids"]) for call in mock_client.post.await_args_list
+            len(call.kwargs["ids"]) for call in mock_client.assets.trash.await_args_list
         ]
         assert chunk_sizes == [GUMNUT_API_MAX_BULK_IDS, 50]
         # One batched on_asset_trash per chunk.
@@ -2464,9 +2473,9 @@ class TestDeleteAssets:
 
     @pytest.mark.anyio
     async def test_delete_assets_force_true_chunks_and_emits_per_id(self):
-        """force=True over the cap chunks bulk DELETE and emits one event per id."""
+        """force=True over the cap chunks the permanent-delete call, one event per id."""
         mock_client = Mock()
-        mock_client.delete = AsyncMock(return_value=None)
+        mock_client.assets.delete_list = AsyncMock(return_value=None)
 
         asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 50)]
         request = AssetBulkDeleteDto(ids=asset_ids, force=True)
@@ -2483,10 +2492,10 @@ class TestDeleteAssets:
             )
 
         assert result.status_code == 204
-        assert mock_client.delete.await_count == 2
+        assert mock_client.assets.delete_list.await_count == 2
         chunk_sizes = [
-            len(call.kwargs["body"]["ids"])
-            for call in mock_client.delete.await_args_list
+            len(call.kwargs["ids"])
+            for call in mock_client.assets.delete_list.await_args_list
         ]
         assert chunk_sizes == [GUMNUT_API_MAX_BULK_IDS, 50]
         assert mock_emit.await_count == len(asset_ids)
@@ -2495,7 +2504,7 @@ class TestDeleteAssets:
     async def test_delete_assets_websocket_error_does_not_fail_deletion(self):
         """WebSocket emission errors must not fail the deletion."""
         mock_client = Mock()
-        mock_client.post = AsyncMock(return_value=None)
+        mock_client.assets.trash = AsyncMock(return_value=None)
 
         request = AssetBulkDeleteDto(ids=[uuid4()], force=False)
         current_user_id = uuid4()
@@ -2517,8 +2526,8 @@ class TestDeleteAssets:
     async def test_delete_assets_empty_id_list_is_noop(self):
         """An empty ids list returns 204 without calling the backend."""
         mock_client = Mock()
-        mock_client.post = AsyncMock(return_value=None)
-        mock_client.delete = AsyncMock(return_value=None)
+        mock_client.assets.trash = AsyncMock(return_value=None)
+        mock_client.assets.delete_list = AsyncMock(return_value=None)
 
         request = AssetBulkDeleteDto(ids=[], force=False)
 
@@ -2528,22 +2537,24 @@ class TestDeleteAssets:
             )
 
         assert result.status_code == 204
-        mock_client.post.assert_not_awaited()
-        mock_client.delete.assert_not_awaited()
+        mock_client.assets.trash.assert_not_awaited()
+        mock_client.assets.delete_list.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_delete_assets_force_false_propagates_sdk_error(self):
         """SDK errors on bulk-trash bubble to the global GumnutError handler.
 
-        Pins the no-swallow contract: a future refactor that wraps client.post
-        in try/except (e.g. to ignore per-id 404s the way the legacy per-id
-        loop did) must break this test.
+        Pins the no-swallow contract: a future refactor that wraps the bulk
+        trash call in try/except (e.g. to ignore per-id 404s the way the legacy
+        per-id loop did) must break this test.
         """
         from gumnut import APIStatusError
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
-        mock_client.post = AsyncMock(side_effect=make_sdk_status_error(500, "boom"))
+        mock_client.assets.trash = AsyncMock(
+            side_effect=make_sdk_status_error(500, "boom")
+        )
 
         request = AssetBulkDeleteDto(ids=[uuid4()], force=False)
 
@@ -2560,7 +2571,9 @@ class TestDeleteAssets:
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
-        mock_client.delete = AsyncMock(side_effect=make_sdk_status_error(500, "boom"))
+        mock_client.assets.delete_list = AsyncMock(
+            side_effect=make_sdk_status_error(500, "boom")
+        )
 
         request = AssetBulkDeleteDto(ids=[uuid4()], force=True)
 
@@ -2725,6 +2738,60 @@ class TestGetAssetInfo:
             await get_asset_info(
                 sample_uuid, client=mock_client, current_user=mock_current_user
             )
+
+    @pytest.mark.anyio
+    async def test_get_asset_info_carries_stack_summary(
+        self, sample_uuid, mock_current_user
+    ):
+        stack, members = make_gumnut_stack_with_members(count=3, primary_asset_id=None)
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(return_value=members[0])
+        mock_client.stacks.retrieve_stack = AsyncMock(return_value=stack)
+        mock_client.assets.list = Mock(return_value=MockSyncCursorPage(members))
+
+        result = await get_asset_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.stack is not None
+        assert result.stack.id == safe_uuid_from_stack_id(stack.id)
+        assert result.stack.primaryAssetId == safe_uuid_from_asset_id(members[0].id)
+        assert result.stack.assetCount == 3
+
+    @pytest.mark.anyio
+    async def test_get_asset_info_loose_asset_has_no_stack(
+        self, sample_gumnut_asset, sample_uuid, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(return_value=sample_gumnut_asset)
+        mock_client.stacks.retrieve_stack = AsyncMock()
+
+        result = await get_asset_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.stack is None
+        mock_client.stacks.retrieve_stack.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_get_asset_info_survives_a_failed_stack_read(
+        self, sample_uuid, mock_current_user
+    ):
+        from gumnut import NotFoundError
+
+        _, members = make_gumnut_stack_with_members(count=2)
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(return_value=members[0])
+        mock_client.stacks.retrieve_stack = AsyncMock(
+            side_effect=make_sdk_status_error(404, "Stack not found", cls=NotFoundError)
+        )
+
+        result = await get_asset_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.stack is None
+        assert result.id == safe_uuid_from_asset_id(members[0].id)
 
 
 def _make_mock_asset_with_urls(

@@ -22,7 +22,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.requests import ClientDisconnect
-from gumnut import AsyncGumnut
+from gumnut import AsyncGumnut, NotFoundError
 from gumnut.types.asset_bulk_update_assets_params import Update, UpdateChange
 from gumnut.types.asset_response import AssetResponse
 
@@ -74,6 +74,7 @@ from routers.utils.asset_conversion import (
     convert_gumnut_asset_to_immich,
     mime_type_to_asset_type,
 )
+from routers.utils.stack_conversion import build_asset_stack_summary, hydrate_stack
 from utils.livephoto import is_live_photo_video
 from routers.immich_models import AssetTypeEnum
 
@@ -972,12 +973,12 @@ async def delete_assets(
     """
     Delete multiple assets, branching on the Immich `force` flag.
 
-    - ``force=True`` permanently deletes via the backend's bulk
-      ``DELETE /api/assets`` endpoint. Emits one ``on_asset_delete`` per id —
-      Immich's wire shape is single-id-per-event for permanent deletes.
+    - ``force=True`` permanently deletes via the SDK's bulk
+      ``assets.delete_list``. Emits one ``on_asset_delete`` per id — Immich's
+      wire shape is single-id-per-event for permanent deletes.
     - ``force=False`` or absent (Immich's native default) soft-deletes via the
-      backend's ``POST /api/assets/trash`` endpoint. Emits a single batched
-      ``on_asset_trash`` event per chunk carrying the full id array.
+      SDK's bulk ``assets.trash``. Emits a single batched ``on_asset_trash``
+      event per chunk carrying the full id array.
 
     The backend bulk endpoints are idempotent — already-trashed or already-purged
     rows are skipped without erroring — so the previous per-id 404 swallowing
@@ -1003,11 +1004,7 @@ async def _bulk_permanent_delete(
     """Bulk hard-delete; emits one on_asset_delete per id."""
     for chunk in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
-        await client.delete(
-            "/api/assets",
-            body={"ids": gumnut_ids},
-            cast_to=type(None),
-        )
+        await client.assets.delete_list(ids=gumnut_ids)
         await emit_user_event_per_id(
             WebSocketEvent.ASSET_DELETE,
             user_id,
@@ -1023,11 +1020,7 @@ async def _bulk_trash(
     """Bulk soft-delete; emits one batched on_asset_trash per chunk."""
     for chunk in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
         gumnut_ids = [uuid_to_gumnut_asset_id(uid) for uid in chunk]
-        await client.post(
-            "/api/assets/trash",
-            body={"ids": gumnut_ids},
-            cast_to=type(None),
-        )
+        await client.assets.trash(ids=gumnut_ids)
         chunk_uuid_strs = [str(uid) for uid in chunk]
         await emit_user_event(
             WebSocketEvent.ASSET_TRASH,
@@ -1180,7 +1173,10 @@ async def update_asset(
     """
     payload = _build_metadata_patch(request)
     if payload is None:
-        return await get_asset_info(id, client=client, current_user=current_user)
+        gumnut_asset = await client.assets.retrieve(
+            uuid_to_gumnut_asset_id(id), include=ASSET_INCLUDE
+        )
+        return convert_gumnut_asset_to_immich(gumnut_asset, current_user)
 
     gumnut_asset = await client.assets.update_asset(
         uuid_to_gumnut_asset_id(id), **payload
@@ -1200,7 +1196,26 @@ async def get_asset_info(
 ) -> AssetResponseDto:
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
     gumnut_asset = await client.assets.retrieve(gumnut_asset_id, include=ASSET_INCLUDE)
-    return convert_gumnut_asset_to_immich(gumnut_asset, current_user)
+    stack_summary = None
+    if gumnut_asset.stack_id is not None:
+        try:
+            stack = await client.stacks.retrieve_stack(gumnut_asset.stack_id)
+            stack_summary = build_asset_stack_summary(
+                await hydrate_stack(client, stack)
+            )
+        except NotFoundError:
+            logger.warning(
+                "Stack %s referenced by asset %s was not found",
+                gumnut_asset.stack_id,
+                gumnut_asset.id,
+                extra={
+                    "stack_id": gumnut_asset.stack_id,
+                    "gumnut_id": gumnut_asset.id,
+                },
+            )
+    return convert_gumnut_asset_to_immich(
+        gumnut_asset, current_user, stack=stack_summary
+    )
 
 
 @router.get(

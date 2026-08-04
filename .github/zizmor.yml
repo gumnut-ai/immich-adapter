@@ -1,6 +1,8 @@
 # zizmor configuration. See: https://docs.zizmor.sh/configuration/
 #
-# Requires SHA-pin on third-party actions; allows tag refs on first-party actions/*.
+# Requires SHA-pin on third-party actions. `ref-pin` mechanically allows tags
+# or branches for first-party actions/*; the documented convention narrows that
+# exemption to version tags, which review must enforce.
 
 rules:
   unpinned-uses:

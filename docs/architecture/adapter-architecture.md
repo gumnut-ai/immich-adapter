@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-07-22
+last-updated: 2026-07-31
 ---
 
 # Immich Adapter Architecture
@@ -46,6 +46,12 @@ Immich clients are unmodified — either the original open-source Immich apps or
 - **User data storage** — All user data lives in Gumnut; the adapter only stores session metadata in Redis
 - **Image processing** — ML inference, thumbnail generation, etc. are handled by Celery workers in the backend
 
+### Single-library assumption
+
+Immich has no concept the adapter can map a Gumnut library onto — `/api/libraries` is a stub returning an empty list, and no Immich request carries a library selector. Gumnut reads and writes therefore omit `library_id` and rely on the backend inferring the caller's only library.
+
+The Gumnut API requires `library_id` for multi-library accounts, so the adapter currently supports only single-library accounts. Supporting more requires selecting one library or fanning out in shared request context and applying that choice to every call; route-specific fixes would produce inconsistent behavior.
+
 ## Authentication and Session Management
 
 The adapter uses a **session token architecture** that decouples client authentication from backend JWT lifecycle. This is necessary because Immich clients expect stable authentication tokens, while Gumnut JWTs have short lifetimes and refresh frequently.
@@ -69,7 +75,7 @@ For mobile, OAuth providers that don't support custom URL schemes (e.g., `app.im
 3. Decrypts the JWT and creates a Gumnut SDK client authenticated with it
 4. Route handler uses the SDK client to make API calls
 5. On response, middleware checks for `x-new-access-token` header (backend JWT refresh)
-6. If present, updates the stored JWT in Redis — the client's session token remains unchanged
+6. If present, updates the stored JWT in Redis — the client's session token remains unchanged — and deletes the header from the outbound response, so the refreshed JWT never reaches the client
 
 **API-key clients (e.g. immich-go).** A request carrying an `x-api-key` header takes a separate, sessionless branch. The header value is a Gumnut API key (`apikey_...`) that the backend validates directly, so the middleware forwards it straight through as the SDK credential — it does **not** look up Redis, and there is no session token. Because there is no session, the JWT-refresh step (5–6) is a no-op for these requests: API keys are long-lived and non-refreshing, and the backend does not emit `x-new-access-token` for them. The `x-api-key` header is checked before the session-token sources above; Immich web (cookie) and mobile (Bearer / `x-immich-user-token`) never send it. Key *management* through the Immich API-keys endpoints remains stubbed — minting a Gumnut key requires a first-party browser session that the adapter's delegated OAuth token can't perform (see `docs/guides/importing-with-immich-go.md`).
 
@@ -79,7 +85,7 @@ For mobile, OAuth providers that don't support custom URL schemes (e.g., `app.im
 
 - **`interface` tag** — A low-cardinality Sentry tag/span attribute describing the Immich client behind the request: `immich-mobile-ios`, `immich-mobile-android`, or `immich-web`. Classification uses the mobile `deviceType` header first, falls back to `immich-ios` / `immich-android` transfer User-Agents, and treats standard browser User-Agents as web. Unrecognized callers stay unset.
 - **`user_agent.original` span attribute** — The raw `User-Agent` header is attached to the active span following the OpenTelemetry semantic convention. Because it is high-cardinality, it is emitted as a span attribute rather than a tag.
-- **Authenticated user attribution** — When a handler resolves the current user, the adapter sets Sentry `user.id` to the internal `intuser_*` id. No email or other PII is attached, and the dependency is cached per request so attribution happens once.
+- **Authenticated user attribution** — Sentry `user.id` is set to the internal `intuser_*` id; no email or other PII is attached. For session-token clients (Immich web and mobile), `AuthMiddleware` sets it from the session's stored UUID-form id as soon as Redis resolves, so read-heavy routes that never resolve a user DTO (streaming, sync, timeline buckets) are attributed too. `x-api-key` clients (immich-go) carry no session, so they are attributed only when a handler resolves the current user, via the cached `users.me()` response.
 
 ### Session storage (Redis)
 
@@ -100,9 +106,54 @@ Session storage is ~3KB per device, enabling horizontal scaling of the adapter.
 - **Logout**: Deletes the Redis session key, clears cookies, emits `on_session_delete` WebSocket event to notify connected clients
 - **JWT refresh failure**: If the backend cannot refresh an expired JWT, the next request using that session returns 401. The client must re-authenticate via OAuth.
 
+### Wire-compatibility constraints
+
+These bind every adapter change, not just auth work. They follow from the adapter's purpose — being indistinguishable from an Immich server to an unmodified Immich client — so they are not expected to relax:
+
+- **The Immich clients cannot be modified.** Web and mobile are the upstream apps or light forks; nothing may require a client-side change to work.
+- **Endpoint signatures cannot change.** Request and response shapes must match Immich's OpenAPI spec, which is why `routers/immich_models.py` is generated from that spec rather than hand-written.
+- **No endpoints can be added.** Any Gumnut-specific need has to be expressed through an endpoint Immich already defines.
+- **Tokens handed to clients must be long-lived.** The Immich client treats its access token as persistent and has no refresh path, which is the reason the adapter mints a stable session token instead of forwarding the short-lived Gumnut JWT.
+
+When a Gumnut capability has no Immich-shaped home, the outcome is a stub or a translation compromise (see "Endpoint Implementation Status" and the search-filter discussion below), never a protocol extension.
+
+### Cookie security properties
+
+All auth cookies are minted in one place — `set_auth_cookies` in `routers/utils/cookies.py` — so the flags below hold for every path that authenticates a browser. Keep new auth endpoints going through that helper rather than calling `response.set_cookie` directly.
+
+- **`HttpOnly`** on `immich_access_token` and `immich_auth_type`. `immich_is_authenticated` is deliberately JS-readable so the web frontend can branch on it; it carries no credential.
+- **`Secure`** is protocol-aware, not hardcoded: the OAuth callback passes `request.url.scheme == "https"`, so deployed HTTPS traffic gets the flag while plain-HTTP local dev still works. It is not a value to "turn on" — it is already on wherever the scheme warrants it.
+- **`SameSite=Lax`**, blocking the cookie on cross-site subrequests.
+- **`Path=/`** comes from Starlette's default; **no `Domain` is set**, so the cookies are host-only to the adapter's own origin. Adding a parent `Domain` (e.g. a `.gumnut.ai` wildcard) to share the session across subdomains would expose the session token to every host under that domain, so it is a deliberate trade, not a convenience toggle.
+- **`Max-Age`** is 400 days (see "Session lifecycle" above). The cookie carries the *session token*, not the Gumnut JWT, so its lifetime is intentionally decoupled from JWT expiry; the Redis session TTL is what tracks the JWT.
+
+### CORS
+
+The adapter registers **no CORS middleware**. It serves the Immich web bundle from its own origin (`static/` mounted at `/` in `main.py`), so browser traffic is same-origin and there is nothing to allow. Any request arriving cross-origin today gets no CORS headers and is blocked by the browser.
+
+If CORS is ever introduced, `allow_credentials=True` must never be paired with `allow_origins=["*"]`. That pairing is not the harmless no-op it looks like: browsers reject a literal `*` alongside credentials, but Starlette's `CORSMiddleware` resolves the combination by echoing the request's own `Origin` back (`allow_all_origins and allow_credentials` → `allow_explicit_origin`), which is a wildcard that actually works. Because the session token rides in a cookie, that would let any origin issue credentialed `fetch()` calls and read authenticated responses. Enumerate exact origins instead.
+
+### Mobile OAuth callback interception (open gap)
+
+The mobile OAuth callback currently lands on `GET /api/oauth/mobile-redirect` — unauthenticated by design, and listed in `AuthMiddleware.UNAUTHENTICATED_PATHS` — which 302s to a **custom URL scheme** (`OAUTH_MOBILE_REDIRECT_URI`, default `app.immich:///oauth-callback`) with the provider's query string, including the authorization `code`, appended.
+
+Custom schemes carry no ownership verification. Registration is first-come-first-served on iOS and ambiguous on Android, where several installed apps may claim the same scheme, so any app on the device can register `app.immich://` and receive the authorization code.
+
+The hardening that removes this is an HTTPS redirect URI covered by **iOS Universal Links / Android App Links**. Their security property is OS-enforced domain verification: iOS honors the link only if an `apple-app-site-association` file naming the app's team ID is served from `/.well-known/` on that domain, and Android only if an `assetlinks.json` there carries the app signing certificate's SHA-256 fingerprint. An attacker who knows the `client_id` still cannot host those files on a domain they do not control, so the OS refuses to route the callback to their app.
+
+**This is not implemented.** The adapter serves no `apple-app-site-association` and no `assetlinks.json` — `routers/well_known.py` exposes only `/.well-known/immich`, and the extracted web bundle's `.well-known/` carries only upstream Immich's `security.txt`. Closing the gap requires publishing the team ID and signing fingerprint of a mobile build, which is a build-and-distribution decision rather than an adapter change: the "clients cannot be modified" constraint above means the adapter cannot vouch for an app whose signing identity it does not own. PKCE reduces the exposure in the meantime — the adapter forwards the client's `codeChallenge` to the backend when requesting the authorization URL — but it does not remove the interception itself.
+
+### OAuth client registration ownership
+
+The Clerk OAuth client credentials live on the **Gumnut API**, not the adapter. The backend holds the client id and secret, builds the authorization URL, and performs the code exchange; the adapter has no client id or secret in `config/settings.py` and reaches those operations through the SDK (`client.oauth.auth_url(...)` and the exchange call in `routers/api/oauth.py`).
+
+There is a standing argument that this is the wrong side of the boundary. `redirect_uri` is the mechanism that ties an authorization code back to a legitimate client, and the adapter's redirect URIs are adapter-specific — the web callback handed to `POST /api/oauth/authorize`, and the `/api/oauth/mobile-redirect` URL that `rewrite_redirect_uri` substitutes for the mobile scheme — while every other Gumnut OAuth client (MCP hosts, dynamically registered clients) has its own id and its own allowlist. Registering Immich as its own OAuth client, owning its id, secret, and redirect-URI allowlist, would make each client's allowlist independently verifiable instead of pooling adapter redirect URIs into a shared backend client. Doing so is a backend-side change; it is recorded here so the reasoning is not rediscovered from scratch.
+
+One product constraint shapes that work: Gumnut's own surfaces (dashboard, photos web, photos mobile) are first-party and should not show an OAuth consent screen — login and you are in — while genuinely third-party integrations should. Immich-on-Gumnut is first-party.
+
 **Related docs:**
-- `docs/design-docs/auth-design.md` — Full auth architecture and OAuth flow design
 - `docs/architecture/session-checkpoint-implementation.md` — Session and checkpoint storage details
+- `docs/design-docs/auth-design.md` (deprecated) — historical record of the session-token decision and the alternatives considered
 
 ## Data Translation Layer
 
@@ -117,8 +168,11 @@ Gumnut uses prefixed short UUIDs (e.g., `asset_BM3nUmJ6fkBqBADyz5FEiu`), while I
 | Person | `person_` | `person_J5wEn1lMpQrStUxY2zA3bC` |
 | Face | `face_` | `face_H4vDm0kLoOnRtTwX1yA2bB` |
 | User | `intuser_` | `intuser_G3uCl9jKnNmQsSvW0xZ1aA` |
+| Stack (burst) | `asset_stack_` | `asset_stack_F2tBk8iJmMlPrRuV9wY0zZ` |
 
 All Gumnut IDs are encoded using the `shortuuid` library and are deterministically convertible to/from standard UUIDs (e.g., `asset_BM3nUmJ6fkBqBADyz5FEiu` ↔ `550e8400-e29b-41d4-a716-446655440000`). Immich clients always see standard UUIDs.
+
+`asset_` is a strict prefix of `asset_stack_`, so use the `stack` conversion pair for stacks and the `asset` pair for assets — never route one through the other. Crossing them raises rather than silently decoding; see `safe_uuid_from_stack_id` for why.
 
 ### Model mapping
 
@@ -126,11 +180,19 @@ Each entity type has a dedicated conversion module in `routers/utils/`:
 
 | Module | Gumnut type | Immich type | Key mappings |
 |--------|------------|-------------|--------------|
-| `asset_conversion.py` | `AssetResponse` | `AssetResponseDto` | `local_datetime` → `fileCreatedAt`, `mime_type` → `type` (IMAGE/VIDEO/AUDIO/OTHER), EXIF extraction |
+| `asset_conversion.py` | `AssetResponse` | `AssetResponseDto` | Dates, media type, EXIF, and optional caller-resolved stack summary |
 | `album_conversion.py` | `AlbumResponse` | `AlbumResponseDto` | `name` → `albumName`, `album_cover_asset_id` → `albumThumbnailAssetId`, album date range normalization |
+| `stack_conversion.py` | stack row + member `AssetResponse`s | Stack DTOs and time-bucket tuples | Member hydration, cover resolution, asset-detail summary, and timeline collapse |
 | `person_conversion.py` | `PersonResponse` | `PersonResponseDto` | `is_favorite` → `isFavorite`, `thumbnail_face_url` → `thumbnailPath`, null name → "Unknown Person" |
 
 `album_conversion.py` also routes `start_date` / `end_date` through `to_immich_local_datetime()` before emitting `AlbumResponseDto.startDate` / `endDate`. Album date ranges are derived from assets' `local_datetime`, so they intentionally share the same keep-local-time normalization as each asset's `localDateTime`: naive values are labeled `UTC` without shifting the wall-clock, and `None` passes through unchanged. This keeps the album range aligned with the dates shown on its assets and avoids list-response DTO validation failures when a local capture timezone is unknown.
+
+#### Nested stack summaries on asset responses
+
+`GET /api/assets/{id}` populates the nested `{id, primaryAssetId, assetCount}`
+stack summary by hydrating the asset's stack through the shared cover policy.
+Other asset responses leave the optional field unpopulated, matching Immich. Missing or
+smaller-than-two stacks yield `stack=null`.
 
 ### Field naming convention
 
@@ -201,6 +263,22 @@ numeric page cannot encode the Gumnut cursor, but it no longer exhausts the
 remaining library just to compute an exact total. A request carrying a real
 search criterion continues to use `client.search.search`, which mandates one.
 
+**Camera and place filters are folded into the query, not applied as filters.**
+Immich's `make` / `model` / `lensModel` / `city` / `state` / `country` have no
+typed equivalent on the Gumnut API, but all six are indexed in its full-text
+metadata corpus, so `_compose_free_text_query` appends their values to the
+free-text query on both `/search/metadata` and `/search/smart`. Without this a
+filters-only request reaches the API with no criterion and 400s — which is what
+Immich's Explore and Places pages and its asset detail panel all generate.
+
+The cost is that **query terms are OR-ed, not intersected**, and retrieval is
+capped at a fixed candidate count. Adding a term therefore widens the candidate
+pool rather than narrowing it: searching "beach" with `make=Canon` against a
+library of thousands of Canon photos can crowd the beach matches out. Weigh
+that before folding any further Immich filter into the query string — a filter
+that is common in the library degrades the caller's own search term. Exact
+filtering needs a typed parameter on the Gumnut API.
+
 **Endpoints using this pattern:**
 
 | Endpoint | SDK call | Cursor + filters |
@@ -264,6 +342,41 @@ The adapter applies this sort in memory before pagination slicing (see `_immich_
 
 Timeline bucket contents are returned in reverse chronological order by default (`local_datetime` descending). The `order` query parameter can reverse this to ascending.
 
+### Timeline stack collapse
+
+Immich renders a burst as a single tile carrying a frame-count badge, and it is the **server** that produces that shape. Under `withStacked`, upstream's bucket query keeps an asset only when the asset is loose or is its stack's primary, and attaches a `[stackId, liveCount]` tuple to the survivor. The web client collapses nothing itself — it reads the tuple, renders the badge, and treats whichever asset carries the tuple as the stack's primary. So the tuple alone is not enough: emitting it without collapsing badges every frame of a burst instead of showing one tile.
+
+`GET /api/timeline/bucket` therefore does both, in `routers/api/timeline.py` over the helpers in `routers/utils/stack_conversion.py`:
+
+1. Collect the distinct `stack_id`s of the bucket's assets and read their rows through `client.stacks.list_stacks(ids=…)`, chunked at `GUMNUT_API_MAX_BULK_IDS`.
+2. Resolve each stack's **timeline cover** — the one frame that represents it in the grid.
+3. Drop every other member, then build the columnar arrays over the survivors so all of them stay index-aligned.
+4. Emit `[stack UUID, live count]` per surviving stacked asset, both elements as strings (upstream emits `count(…)::text` and the client parses element 1 with `Number.parseInt`).
+
+**Both halves are gated on `withStacked`**, matching upstream, which puts its per-asset select and its aggregate inside the same conditional — when the flag is falsy the `stack` key is absent from the response entirely. The gate is load-bearing rather than cosmetic: Immich web's album month view requests buckets *without* `withStacked` while still passing `showStackedIcon` to the thumbnail, so upstream albums are badge-free only because the field is missing. Collapsing or badging unconditionally would drop burst frames from albums and badge them where upstream never does.
+
+**Trash opts out**, diverging from upstream deliberately. Upstream's predicate keys on the live primary, so a trashed non-primary frame is filtered out of the trash view — the one place it must stay visible, since trash is the only route back to restoring it. The Gumnut API's `asset_count` is a live count that would misdescribe a trash-only view besides. No Immich client requests `withStacked` on the trash view, so the divergence costs nothing in practice.
+
+#### Timeline cover vs. effective primary
+
+Both surfaces run the same selection, `resolve_effective_primary`. What differs is the member set they run it over: `/stacks` resolves against every member, the timeline only against live ones (`select_timeline_cover` is that call plus a liveness filter and an ID unwrap). One rule and two inputs, rather than two rules, because a second hand-written copy would let the surfaces drift into showing different frames for the same all-live burst with nothing failing.
+
+The divergence is worth having because collapse is destructive in a way a stack listing is not. `/stacks` naming a trashed pin still lists the live frames beside it; the timeline naming one would drop every frame that is not the cover and erase the burst from the grid. Upstream Immich has that hole — a trashed pin hides its stack's live frames — but it promotes a new primary on permanent deletion, so the state is transient. The Gumnut API preserves a trashed pin until permanent deletion too, which stretches that window to the whole retention period and makes matching upstream here a standing way to lose photos.
+
+The consequence is that the two surfaces disagree about a trashed pin: `/stacks` reports the user's pin, the timeline shows a frame that exists. Nothing on the wire can tell, because the bucket tuple carries no asset ID.
+
+#### Cost, and the bucket-count divergence
+
+Resolution usually costs nothing beyond the row read; `resolve_timeline_stacks` documents the fast path, the two shapes that reach the fallback member read, and the per-request cap on it.
+
+**`GET /api/timeline/buckets` counts are not collapsed.** Upstream applies the identical predicate to its count query so counts and contents agree by construction; the adapter cannot, because `assets.counts` has no stack-aware filter and `assets.list` exposes only a single-stack `stack_id` filter — there is no "belongs to any stack" filter to walk. Computing the per-month deduction would mean paginating every stack in the library plus a member read each, on a hot endpoint.
+
+Counts therefore overstate a month containing bursts. This is cosmetic: the client uses the count for a pre-load month height estimate, which the real layout replaces once the bucket loads. Two things still read the raw count — the scrubber, which snapshots it and refreshes only on a viewport resize, and `getRandomAsset()`, whose shuffle can pick an index past a collapsed month's real contents and no-op for that press. Neither shows a wrong asset. The clean fix is a backend stack-collapse option on both `assets.counts` and `assets.list`, which would return the adapter to a pass-through.
+
+Every failure mode degrades the same way, because degrading to the pre-stack timeline always beats hiding photos behind a cover that may not exist. A stack is left unresolved — frames uncollapsed, tuple null — when its row is missing from the `list_stacks` response (dissolved between the two reads), when its member read fails, when it falls past the read cap, when its ID will not decode to an Immich UUID, or when it has no live members. A failure of the stacks resource as a whole is caught at the route and degrades the entire bucket the same way: every frame kept, every tuple null (the `stack` key is still present, unlike the `withStacked`-falsy path where it is absent), rather than a 5xx on the app's primary view.
+
+The first four cases each log one aggregate record per request rather than one per stack, per *Per-item degradation on hot endpoints* in `docs/references/code-practices.md`. The no-live-members case logs nothing on purpose: in a live bucket it collapses nothing and hides nothing, so there is no signal to raise.
+
 ### Album and asset ordering
 
 Albums use Gumnut's default ordering. Criterion-less asset enumeration forwards the Immich request's ascending/descending order to the Gumnut API and does not re-sort the returned assets in the adapter.
@@ -278,6 +391,15 @@ Immich's trash flow is implemented end to end. The adapter preserves Immich's pu
 - `POST /api/trash/restore/assets`, `POST /api/trash/restore`, and `POST /api/trash/empty` are real implementations backed by the backend trash endpoints.
 - `GET /api/server/config` surfaces `trashDays` from `TRASH_RETENTION_DAYS`, so the web trash page shows the deployed retention period.
 
+### Returned counts are approximate
+
+`TrashResponseDto.count` is not a count of rows the backend actually transitioned — no backend trash endpoint returns one.
+
+- `POST /api/trash/restore/assets` returns `len(request.ids)`: the upstream restore endpoint answers with an empty acknowledgment body carrying no per-row count, and already-live ids are silently skipped backend-side.
+- `POST /api/trash/restore` and `POST /api/trash/empty` return the count of ids enumerated *before* mutating. A concurrent request that transitions some of those ids between enumeration and the chunked mutation makes the true count slightly smaller.
+
+**Enumerate before mutate.** Both restore-all and empty-trash call `_list_trashed_ids` to collect the full trashed id list before issuing any mutation (`routers/api/trash.py`). This is load-bearing, not incidental: the enumeration walks a cursor-paginated `state="trashed"` listing, and mutating mid-walk shrinks the result set out from under the cursor, making resumption ill-defined. The approximate count above is the price of that ordering. The SDK's one-shot `assets.empty_trash` is deliberately unused for the same reason, plus one more — it purges without yielding the id list the flow needs for per-id delete events.
+
 ### Trash-aware read paths
 
 - `GET /api/timeline/buckets` and `GET /api/timeline/bucket` pass `state="trashed"` when `isTrashed=true`.
@@ -291,8 +413,13 @@ Trash state travels through both client update channels:
 - The sync stream emits `SyncAssetV1.deletedAt` from `trashed_at`, and asset hydration uses `state="all"` so `asset_trashed` events do not disappear during fetch.
 - Socket.IO emits `on_asset_trash` / `on_asset_restore` with batched id arrays and reserves `on_asset_delete` for permanent deletes.
 
+### Remaining limitations
+
+- `trashDays` is a shared deploy-time environment-variable contract (`TRASH_RETENTION_DAYS`, documented in `.env.example` and the README), not a value the adapter discovers from the backend at runtime. Adapter and backend must be configured with the same number or the web trash page misreports the retention window.
+- Trash visibility on the search surface is partial. The criterion-less `POST /api/search/metadata` enumeration path honors `withDeleted` (widen to live + trashed) and `trashedAfter` (trashed-only, with the timestamp bound applied client-side). Criterion-bearing metadata searches route to `client.search.search`, which has no trash selector, and `trashedBefore` is treated as a restricting filter that keeps a request off the enumeration path entirely. `GET /api/search/large-assets` is a full stub, so it surfaces nothing at all.
+
 **Related docs:**
-- `docs/design-docs/trash-soft-delete-adapter.md` — detailed trash implementation record
+- `docs/design-docs/trash-soft-delete-adapter.md` (deprecated) — historical record of the trash decision and the backend capabilities it depended on
 
 ## Sync Protocol
 
@@ -411,13 +538,16 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | Albums | CRUD, add/remove assets, statistics | User sharing not supported (returns 501) |
 | People | CRUD, list with pagination/sort/filter, thumbnails, statistics, merge | |
 | Faces | List, create, delete, reassign | Create draws a user-specified box on an asset and links it to a person (Immich's "create a face on-the-fly" flow) |
-| Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling, including `isTrashed=true` |
-| Search | Smart search, metadata search, person search, statistics, random sampling, explore (cities + recents) | Places, cities, suggestions, and large-assets are stubs |
+| Timeline | Time buckets (monthly), bucket contents | Date-range filtering with timezone handling, including `isTrashed=true`; bucket contents collapse bursts and emit `[stackId, count]` tuples under `withStacked` (see [Timeline stack collapse](#timeline-stack-collapse)) |
+| Search | Smart search, metadata search, person search, statistics, random sampling, explore (cities + recents) | Camera/place filters are folded into the query, not filtered on (see above); places, cities, suggestions, and large-assets are stubs |
 | Sync | Stream, ack | Two-phase ordering, checkpoint management |
 | Auth | OAuth login/callback, logout, session management | Clerk OAuth via the Gumnut API |
 | WebSockets | Real-time upload/trash/restore/delete notifications | Socket.IO with room-based messaging |
 | Memories (read) | Search, get-by-id, statistics for OnThisDay memories | Synthesized from per-day asset queries; mutations still stubbed |
 | Map (markers) | `GET /map/markers` and album-scoped `GET /albums/{id}/map-markers` return GPS-tagged assets | Server-side geotag filter via `client.assets.list(bbox=...)`; the album route also passes the album filter; capped at 2000 markers, with a degraded-path scan bound if the coordinate filter is unavailable; reverse-geocode still stubbed |
+| Stacks (read) | `GET /stacks` and `GET /stacks/{id}` return real burst stacks with their live members | Both go through `routers/utils/stack_conversion.py` for member hydration and cover resolution. The list walks the Gumnut API's stack cursor rather than answering with one page, since Immich's `searchStacks` has no pagination; bounded by both a 500-stack cap and a 5000-member hydration budget spent from each row's own asset count, whichever binds first, with walked/budgeted/hydrated/returned counts, a truncation flag, and which bound fired all logged. `primaryAssetId` is answered by resolving the asset's own stack and comparing effective covers, not by forwarding the backend's pinned-cover filter, and an unmatched or unknown ID yields `[]` rather than a 404. A stack with no live members is omitted from the list and 404s from the detail route. Asset detail carries a nested stack summary resolved through the same cover policy (see [Nested stack summaries on asset responses](#nested-stack-summaries-on-asset-responses)) |
+| Stacks (create, set-cover) | `POST /stacks` creates a stack; the deprecated `PUT /stacks/{id}`, still used by shipped clients, sets its cover | Both hydrate the Gumnut API response through `stack_conversion.py`; the backend owns membership, merge, limit, and cover validation rules |
+| Stacks (delete, bulk-delete, remove-asset) | `DELETE /stacks/{id}` dissolves one stack, `DELETE /stacks/{id}/assets/{assetId}` pulls one frame out, and `DELETE /stacks` dissolves many | All forward to the Gumnut SDK and return a bodyless 204; the photos are untouched. Bulk-delete dedupes its id list (request order preserved) and fans out one delete per id under `gather_with_concurrency`; since neither Immich nor the SDK is atomic, it lets every call settle then raises the first error in request order, so a mid-batch failure is deterministic but can leave earlier dissolves committed. Cover clearing and sub-two dissolution stay server-owned. Completes all seven stack REST endpoints |
 
 ### Stub implementations
 
@@ -445,6 +575,7 @@ The adapter implements a subset of Immich's API surface. Unimplemented endpoints
 | `routers/utils/asset_conversion.py` | Asset model translation and EXIF extraction |
 | `routers/utils/album_conversion.py` | Album model translation |
 | `routers/utils/person_conversion.py` | Person model translation |
+| `routers/utils/stack_conversion.py` | Burst-stack member hydration, cover resolution, stack DTO building, and collapsed-timeline stack tuples |
 | `routers/utils/error_mapping.py` | Gumnut SDK exceptions → HTTPException mapping |
 | `routers/immich_models.py` | Pydantic models matching Immich's OpenAPI spec |
 | `config/` | Settings, Redis, Sentry configuration |

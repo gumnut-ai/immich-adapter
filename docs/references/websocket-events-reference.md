@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-07-12
+last-updated: 2026-07-31
 ---
 
 # Immich WebSocket Events Reference
@@ -15,7 +15,7 @@ last-updated: 2026-07-12
 | `on_asset_trash` | Asset moved to trash | `assetIds: string[]` | Global listener | Listener |
 | `on_asset_restore` | Asset restored from trash | `assetIds: string[]` | Global listener | Listener |
 | `on_asset_update` | Sidecar metadata extracted (upstream) / asset metadata edited (adapter) | `AssetResponseDto` | Global listener | Listener |
-| `on_asset_stack_update` | Stack created/updated/deleted | None | Global listener | Listener |
+| `on_asset_stack_update` | Stack created/updated/deleted | None | Declared, not subscribed | Not referenced |
 | `on_asset_hidden` | Asset visibility changed | `assetId: string` | Global listener | Listener |
 | `on_person_thumbnail` | Person thumbnail generated | `personId: string` | Page-specific | Not used |
 | `on_session_delete` | Session invalidated | `sessionId: string` | Global (triggers logout) | Not used |
@@ -111,7 +111,7 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`, and t
 
 **Sent to**: Stack owner (by userId)
 
-Otherwise as in the Summary Table; emitted from `notification.service.ts`, and the mobile listener triggers a sync.
+Otherwise as in the Summary Table; emitted from `notification.service.ts`. The adapter omits it because no web or mobile handler subscribes; see `../architecture/websocket-implementation.md`.
 
 ---
 
