@@ -1,8 +1,8 @@
 ---
 title: "Static File Sharing Proposal"
-status: active
+status: completed
 created: 2025-10-26
-last-updated: 2026-06-24
+last-updated: 2026-08-04
 ---
 
 # Proposed Immich-adapter Static File Sharing
