@@ -24,9 +24,29 @@ uv sync
 
 ```bash
 cp .env.example .env
+
+# Generate a Fernet key, then put the output in SESSION_ENCRYPTION_KEY in .env.
+uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-The default should be good enough to get started with, but feel free to take a look at modify it.
+The copied file supplies development defaults, but two adapter-owned prerequisites
+still need to be ready before startup:
+
+- `SESSION_ENCRYPTION_KEY` must contain the generated Fernet key. Keep this value
+  stable across restarts so existing sessions can still be decrypted, and do not
+  commit it.
+- Redis must be running at `REDIS_URL` (the default is
+  `redis://localhost:6379/1`). The adapter pings Redis during startup, so a
+  missing or unreachable Redis instance prevents the application from starting.
+
+The Gumnut API must also be reachable at `GUMNUT_API_BASE_URL`; the development
+default is `http://localhost:8000`.
+
+For a quick local Redis instance, run:
+
+```bash
+docker run --rm --name immich-adapter-redis -p 6379:6379 redis:7
+```
 
 ## Running the Application
 
@@ -48,12 +68,23 @@ Build and run the application in a Docker container:
 docker build -t immich-adapter .
 
 # Run the container
+export SESSION_ENCRYPTION_KEY="$(uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+
 docker run --rm -p 8080:8080 \
   -e PORT=8080 \
   -e GUMNUT_API_BASE_URL=http://host.docker.internal:8000 \
+  -e REDIS_URL=redis://host.docker.internal:6379/1 \
+  -e SESSION_ENCRYPTION_KEY="$SESSION_ENCRYPTION_KEY" \
   -e ENVIRONMENT=development \
   immich-adapter
 ```
+
+The generated key is held in the shell only for this example. Persist the same
+value in your deployment secret store when sessions must survive container
+restarts. This example assumes the Gumnut API and Redis are running on the host
+at ports `8000` and `6379`.
+If Redis runs in another container, put both containers on a shared Docker
+network and use the Redis container's network name in `REDIS_URL` instead.
 
 **Important:** Use `host.docker.internal` instead of `localhost` to access services running on your host machine from within the container.
 
@@ -62,6 +93,8 @@ docker run --rm -p 8080:8080 \
 **Environment Variables:**
 - `PORT`: Port to bind to (default: 8080)
 - `GUMNUT_API_BASE_URL`: URL of the Gumnut API backend
+- `REDIS_URL`: Redis connection URL (default: `redis://localhost:6379/1`)
+- `SESSION_ENCRYPTION_KEY`: Required Fernet key for encrypting stored sessions
 - `OAUTH_MOBILE_REDIRECT_URI`: Custom URL scheme for mobile app deep linking during OAuth flow (default: app.immich:///oauth-callback)
 - `TRASH_RETENTION_DAYS`: Trash retention window surfaced to Immich clients as `trashDays` (default: `90`)
 - `ENVIRONMENT`: Set to `development` or `production`
