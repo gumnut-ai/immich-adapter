@@ -14,6 +14,7 @@ deny:
   - delete, skip, xfail, or weaken tests to make a build pass
   - 'add type-suppression comments (`# type: ignore`, `# pyright: ignore`, `# noqa`) or relax lint / type-check configuration to make a build pass'
   - 'relax, remove, or bypass the `exclude-newer` supply-chain guard in `pyproject.toml`, or propose/lock a non-exempt dependency at a version published less than 14 days ago (the `gumnut-sdk` exemption is declared in `pyproject.toml`)'
+  - 'add a direct dependency solely to steer a transitive version that can be represented in `uv.lock`'
   - bump `gumnut-sdk` outside the exemption already declared in pyproject.toml (it tracks the upstream API surface — pin moves require human review)
   - push commits directly to main
   - approve or merge pull requests
@@ -31,9 +32,10 @@ schedule: "0 9 * * *"
 - Every upgrade PR must include passing tests.
 - Every dependency upgrade PR description must summarize what changed in the dependency between the old and new version — pull from the dependency's release notes / changelog (e.g. GitHub Releases, `CHANGELOG.md`) for the bumped range. Call out behavior changes, deprecations, and breaking changes relevant to how this repo uses the dependency, and link the upstream changelog/release. If no changelog is available, say so and link the version-diff (e.g. the compare view between the two tags) instead.
 - Respect the `exclude-newer = "14 days"` supply-chain guard in `pyproject.toml` — only consider package versions that satisfy it.
+- Preserve dependency ownership: direct updates change the existing `pyproject.toml` declaration and `uv.lock`; transitive updates remain lockfile-only. Do not promote a transitive package to a direct dependency merely to steer resolution or make update cadence visible. If a fixed transitive version cannot be selected within its parent constraints, upgrade the direct dependency that owns those constraints or leave the fix pending and surface the blocker.
 
 ## Verification
-Resolve each dependency bump by re-locking with `uv lock` (it honors `exclude-newer`) — never hand-edit `uv.lock`. Then, before opening a PR, run:
+Resolve direct dependency bumps after changing their existing declaration with `uv lock`. Resolve transitive lockfile-only bumps with `uv lock --upgrade-package <package>`, and confirm that only the expected package and dependency entries changed. Both commands honor `exclude-newer`; never hand-edit `uv.lock`. Then, before opening a PR, run:
 - `uv sync --locked`
 - `uv run ruff format && uv run ruff check`
 - `uv run pyright`
