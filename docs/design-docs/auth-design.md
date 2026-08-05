@@ -3,16 +3,17 @@ title: "Updated Authentication Design"
 status: deprecated
 superseded-by: ../architecture/adapter-architecture.md
 created: 2025-12-06
-last-updated: 2026-07-27
+last-updated: 2026-08-05
 ---
 
 # Updated Authentication Design Document
 
-> **Deprecated (2026-07-27):** This doc proposed the session-token authentication architecture, which shipped. The living description of how adapter auth works today is [`docs/architecture/adapter-architecture.md`](../architecture/adapter-architecture.md) § "Authentication and Session Management", with the Redis-side detail in [`docs/architecture/session-checkpoint-implementation.md`](../architecture/session-checkpoint-implementation.md); this doc is retained for the decision rationale and trade-offs considered. It is no longer updated as the system changes, and the body has already drifted: it names backend endpoints (`/auth/auth-url`, `/auth/exchange`) that do not match the real `/api/oauth/*` paths, knows only two session-token sources where the middleware accepts three (cookie, `Authorization: Bearer`, and `x-immich-user-token`), and omits three OAuth routes that exist today (`/link`, `/unlink`, `/mobile-redirect`).
->
-> Also pruned 2026-07-27: the "Adapter Architecture / Middleware-Based Token Handling" section (a file-path inventory and a generic benefits list — `adapter-architecture.md` owns the file map and request flow), "Flow 3: Token Refresh" (a restatement of Flow 2; its one novel line was folded into Flow 2's Key Points), and the Conclusion's "Key Benefits" list (a verbatim restatement of "Why Session Tokens").
->
-> Pruned 2026-07-27 to its decision record; implementation detail was removed as it is owned by the code. That pass also removed Flow 1's login response-body JSON dump, whose shape is owned by the generated Immich model; the one point it carried that the surrounding prose did not — that the client receives the session token and never the raw Gumnut JWT — was folded into the step above it.
+> **Deprecated —** This document records why the adapter introduced stable
+> session tokens in front of Gumnut JWTs. It was pruned on 2026-08-05 to the
+> constraints, architecture, rationale, and outcome; endpoint-by-endpoint flows
+> and component inventories are owned by the implementation. For current
+> behavior, see [`adapter-architecture.md`](../architecture/adapter-architecture.md)
+> and [`session-checkpoint-implementation.md`](../architecture/session-checkpoint-implementation.md).
 
 Date: 2025-12-05
 
@@ -78,50 +79,6 @@ The adapter now generates a stable UUID session token at login and returns that 
                                                       └──────────────┘
 ```
 
-### Component Responsibilities
-
-### 1. Web Client (Browser)
-
-- Initiates OAuth authentication flow
-- Stores session token in cookies (managed by adapter)
-- Sends requests with cookies
-- **Does not handle token refresh** - adapter manages cookies automatically
-
-### 2. Mobile Client (Mobile App)
-
-- Initiates OAuth authentication flow
-- Stores session token from OAuth response body
-- Sends requests with `Authorization: Bearer` header
-- Keeps the stable session token returned at login; backend JWT refresh stays internal to the adapter
-
-### 3. Immich Adapter (Session Manager with Middleware)
-
-- **Role**: Session management and request forwarding
-- **Session Generation**: Creates UUID session tokens at login
-- **JWT Storage**: Stores encrypted Gumnut JWTs in Redis, keyed by session token
-- **Auth Middleware**: Handles session token extraction and JWT lookup for both client types
-- **Client Type Detection**: Identifies web vs mobile clients by request format
-- **Token Refresh Handling**:
-  - Extracts session token from cookies (web) or Authorization header (mobile)
-  - Looks up stored JWT from Redis
-  - Forwards requests with JWT to backend
-  - If backend returns new JWT, updates stored JWT in Redis
-  - Session token remains stable across JWT refreshes
-- **OAuth endpoints**: Forwards to backend authentication endpoints
-- **No JWT validation**: Does not validate JWTs (backend responsibility)
-- Maintains Immich API compatibility
-
-### 4. Gumnut Backend (Authentication Server)
-
-- **Role**: All authentication logic and JWT management
-- Validates OAuth tokens with provider
-- Manages user creation/lookup in Clerk
-- Issues JWTs with appropriate expiration
-- Validates JWTs on every API request
-- Handles token refresh logic
-- Handles token revocation
-- Only component that communicates with OAuth Provider and Clerk
-
 ## Session Token Architecture
 
 ### Why Session Tokens (Not Raw JWTs)
@@ -149,158 +106,6 @@ For the complete Redis data model, including:
 - User session indexes
 
 See [`docs/references/session-checkpoint-reference.md`](../references/session-checkpoint-reference.md), which holds the field-level schema.
-
-## Authentication Flows
-
-### Flow 1: Initial Authentication & Token Exchange
-
-```
-User → Web Client → Adapter → Backend → OAuth Provider → Clerk
-```
-
-**Sequence:**
-
-1. **User initiates login**
-   - Web client calls adapter: `POST /api/oauth/authorize`
-   - Body: `{redirectUri: "http://localhost:3000/auth/callback"}`
-
-2. **Adapter forwards to backend**
-   - Adapter calls backend: `GET /auth/auth-url`
-   - Params: `redirect_uri`, optional PKCE params
-   - Backend creates CSRF state token
-   - Backend builds authorization URL for OAuth provider
-   - Backend returns authorization URL to adapter
-   - Adapter returns URL to web client
-
-3. **OAuth provider authentication**
-   - Web client redirects user to OAuth provider
-   - User sees consent dialog and approves
-   - OAuth provider redirects back with authorization code
-
-4. **Token exchange**
-   - Web client calls adapter: `POST /api/oauth/callback`
-   - Body: `{url: "callback_url_with_code_and_state"}`
-   - Adapter parses code, state, and error from callback URL
-   - Adapter forwards to backend: `POST /auth/exchange`
-   - Body: `{code: "code_from_provider", state: "state_from_provider", error: "error_if_any_from_provider"}`
-
-5. **Backend processes OAuth token**
-   - Backend validates CSRF state
-   - Backend exchanges code for access token with OAuth provider
-   - Backend validates ID token (if present)
-   - Backend fetches user info from userinfo endpoint
-   - Backend checks Clerk for existing user (by email)
-   - If user doesn't exist, creates user in Clerk
-   - Backend generates JWT containing Clerk user_id
-   - Backend returns JWT + user info to adapter
-
-6. **Adapter creates session and responds to client**
-   - Adapter generates UUID session token
-   - Adapter encrypts and stores Gumnut JWT in Redis, keyed by session token
-   - Adapter sets cookies:
-     - `immich_access_token=<session_token>` (httponly)
-     - `immich_auth_type=oauth` (httponly)
-     - `immich_is_authenticated=true`
-   - Adapter returns the session token as `accessToken` alongside the Immich login response's user fields (the generated Immich model owns the exact shape) — note the client receives the session token here, never the raw Gumnut JWT
-   - Client stores session token
-
-**Key Points:**
-
-- Backend determines JWT expiration policy
-- Adapter generates session token and stores encrypted JWT
-- Client stores and manages session token (not the raw JWT)
-- CSRF protection handled by backend
-- Stale or replayed callback exchanges surface the backend's 400 response so the client can restart the login flow
-
-### Flow 2: Subsequent API Requests (with Token Refresh)
-
-```
-User → Web/Mobile Client → Adapter Middleware → Backend → Gumnut API
-```
-
-> This flow describes the session-token clients (web/mobile). API-key clients skip session lookup and refresh entirely — see "API-key clients are the exception" under *Implemented Architecture*.
-
-**Sequence:**
-
-1. **User makes API request**
-   - **Web client**: Sends request with `immich_access_token` cookie (contains session token)
-   - **Mobile client**: Sends request with `Authorization: Bearer {session_token}` header
-   - Request goes to adapter API endpoint (e.g., `GET /api/albums`)
-
-2. **Adapter middleware processes request**
-   - Detects client type:
-     - If `Authorization` header present -> mobile client
-     - If `immich_access_token` cookie present -> web client
-   - Extracts session token from appropriate source
-   - Looks up session in Redis by session token
-   - Retrieves and decrypts stored Gumnut JWT
-   - Adds `Authorization: Bearer {jwt}` header for backend
-   - Request forwarded to endpoint handler
-
-3. **Adapter forwards to backend**
-   - Endpoint handler forwards request to backend
-   - Includes Gumnut JWT in `Authorization` header
-   - Same method, path, and body
-
-4. **Backend validates JWT and processes request**
-   - Backend verifies JWT signature
-   - Backend checks JWT expiration
-   - Backend extracts user_id from JWT claims
-   - Backend processes request for authenticated user
-   - **If JWT is close to expiration**: Backend generates new JWT
-
-5. **Backend response**
-   - Backend returns API response
-   - **If token refreshed**: Includes `X-New-Access-Token: {new_jwt}` header
-
-6. **Adapter middleware processes response**
-   - Checks for `X-New-Access-Token` header
-   - If present:
-     - Updates stored JWT in Redis (encrypted)
-     - **Session token remains unchanged**
-     - Removes `X-New-Access-Token` header from response (client doesn't need it)
-
-7. **Response to client**
-   - Adapter forwards response to client
-   - **Web client**: Unaware of JWT refresh (cookie unchanged, same session token)
-   - **Mobile client**: Unaware of JWT refresh (same session token)
-
-**Key Points:**
-
-- **Middleware handles all token logic** - endpoint code unchanged
-- Adapter performs **no JWT validation** (only session lookup)
-- All authorization logic in backend
-- **Token refresh is transparent to all clients** - session token is stable
-- Backend controls when to refresh tokens
-- No separate refresh endpoint needed - refresh happens during normal API requests
-
-### Flow 4: Logout (Session Deletion)
-
-```
-User → Client → Adapter
-```
-
-**Sequence:**
-
-1. **User initiates logout**
-   - Client calls adapter: `POST /api/auth/logout`
-
-2. **Adapter deletes session**
-   - Extracts session token from cookie or header
-   - Deletes session from Redis (including stored JWT)
-   - Clears authentication cookies
-   - Returns success response
-
-3. **Session cleanup**
-   - Session deletion also clears any associated checkpoints
-   - User session index is updated
-   - Next request with this session token will fail authentication
-
-**Key Points:**
-
-- Session deletion is immediate
-- Stored JWT is deleted from Redis
-- Client must re-authenticate to get a new session
 
 ## Conclusion
 

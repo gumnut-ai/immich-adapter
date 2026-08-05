@@ -3,16 +3,17 @@ title: "Trash: Soft-Delete with Retention (Adapter)"
 status: deprecated
 superseded-by: ../architecture/adapter-architecture.md
 created: 2026-04-20
-last-updated: 2026-07-27
+last-updated: 2026-08-05
 ---
 
 # Trash: Soft-Delete with Retention (Adapter)
 
-> **Deprecated (2026-07-27):** This doc proposed and recorded the adapter's trash/soft-delete flow, which shipped. The living description — `force` branching, the three trash routes, `trashDays`, trash-aware reads, sync/Socket.IO propagation, count semantics, the enumerate-before-mutate invariant, and the remaining limitations — is [`docs/architecture/adapter-architecture.md`](../architecture/adapter-architecture.md) § "Trash and Deletion Semantics". This doc is retained for the decision rationale and the backend capabilities the work depended on; it is no longer updated as the system changes. Its "Remaining limitations" list has already drifted: the typed SDK now *does* expose trash helpers (`assets.trash` / `assets.restore` / `assets.delete_list` / `assets.empty_trash`), and criterion-less `POST /api/search/metadata` now honors `withDeleted` and `trashedAfter`.
->
-> Also pruned 2026-07-27: the § Verification test-file inventory table, which restated what a directory listing already shows.
->
-> Pruned 2026-07-27 to its decision record; implementation detail was removed as it is owned by the code. A second pass the same day removed the remainder of § Verification — a two-line pointer at the test module and a grep suggestion for shipped work, which the suite itself answers more reliably.
+> **Deprecated —** This document records the adapter-side decisions behind
+> Immich-compatible trash and permanent deletion. It was pruned on 2026-08-05
+> to the context, cross-service contract, and evolution notes; endpoint,
+> filtering, event, and configuration inventories are owned by the code. For
+> current behavior, see [`adapter-architecture.md`](../architecture/adapter-architecture.md)
+> under “Trash and Deletion Semantics.”
 
 ## Context
 
@@ -20,61 +21,14 @@ The adapter now implements Immich's trash flow on top of the Gumnut API soft-del
 
 This work spans delete semantics, trash endpoints, timeline/statistics filters, sync `deletedAt` propagation, WebSocket events, and the `trashDays` value shown in the web app. This doc records the shipped adapter behavior and the remaining deliberate limitations.
 
-## Implemented behavior
+## Implemented outcome
 
-### Delete semantics
-
-`DELETE /api/assets` now branches on Immich's `force` flag:
-
-- `force=false` or omitted: soft-delete via `POST /api/assets/trash`
-- `force=true`: permanent delete via bulk `DELETE /api/assets`
-
-Both paths batch requests by `GUMNUT_API_MAX_BULK_IDS`. Soft-delete emits one `on_asset_trash` event per chunk carrying the full id array. Permanent delete emits one `on_asset_delete` event per id, matching Immich's wire shape for hard deletes.
-
-The backend trash and delete endpoints are idempotent for already-transitioned ids, so the adapter does not need the old per-id 404 swallowing loop.
-
-### Trash endpoints
-
-| Endpoint | Current behavior | Count semantics |
-|----------|------------------|-----------------|
-| `POST /api/trash/restore/assets` | Restores the requested ids in chunks via `POST /api/assets/restore` | Returns `len(request.ids)` because the upstream restore endpoint returns `204` with no per-row count |
-| `POST /api/trash/restore` | Enumerates the caller's `state="trashed"` assets, then restores them in chunks | Returns the upfront enumerated id count; concurrent changes can make the exact number of transitioned rows slightly smaller |
-| `POST /api/trash/empty` | Enumerates the caller's `state="trashed"` assets, then permanently deletes them in chunks | Returns the upfront enumerated id count; concurrent changes can make the exact number of transitioned rows slightly smaller |
-
-The restore-all and empty-trash flows collect the trashed id list before mutating anything so the pagination cursor stays stable while the `state="trashed"` result set shrinks.
-
-### Trash-aware read paths
-
-Trash state is now visible across the adapter's main read surfaces:
-
-- `GET /api/timeline/buckets?isTrashed=true` passes `state="trashed"` to the monthly counts query.
-- `GET /api/timeline/bucket?isTrashed=true` passes `state="trashed"` to asset listing and populates each response entry's `isTrashed` value from that asset's `trashed_at` field.
-- `GET /api/assets/statistics?isTrashed=true` passes `state="trashed"` through to the backend listing path.
-- `AssetResponseDto.isTrashed` and the upload-ready WebSocket payload's `asset.deletedAt` are sourced from `trashed_at`, not hardcoded placeholders.
-
-Live read paths continue to use the backend's default live-only filtering when `isTrashed` is absent or false.
-
-### Sync stream and WebSocket propagation
-
-Trash state now flows through both client update channels:
-
-- `SyncAssetV1.deletedAt` is populated from `trashed_at`.
-- Sync asset hydration uses `client.assets.list(state="all", ids=...)` so `asset_trashed` events can still hydrate after the asset leaves the live view.
-- `on_asset_trash` and `on_asset_restore` carry batched id arrays; `on_asset_delete` remains the permanent-delete event and carries one id per emission.
-
-This preserves the intended Immich behavior: trash/restore remain upserts in the sync stream, while permanent delete continues to use the delete path.
-
-### Server config
-
-`GET /api/server/config` now reads `trashDays` from `TRASH_RETENTION_DAYS` through `get_settings().trash_retention_days`. The web trash page therefore shows the deployed retention period instead of a hardcoded placeholder.
-
-The adapter and backend still need to agree on the same deploy-time `TRASH_RETENTION_DAYS` value; `.env.example` and the README document that contract.
-
-## Remaining limitations
-
-- The typed SDK still does not expose dedicated trash helpers, so the trash router uses `AsyncGumnut.post()` / `.delete()` directly for the restore and bulk-delete endpoints.
-- `search/metadata` and `search/large-assets` still do not surface trashed results through `withDeleted`, `trashedBefore`, or `trashedAfter`; that follow-up remains separate from the shipped trash flow.
-- `trashDays` is accurate at deploy time, but it is still a shared environment-variable contract rather than a backend-discovered runtime setting.
+The adapter preserved Immich's public trash contract while translating it onto
+the Gumnut API's soft-delete, restore, and permanent-delete primitives. The
+`force` flag distinguishes trash from permanent deletion; trash-aware reads and
+sync/realtime events keep client state coherent; and restore-all and empty-trash
+enumerate the target set before mutation so shrinking result sets do not break
+pagination. The adapter and API share the configured retention window.
 
 ## Dependencies
 
