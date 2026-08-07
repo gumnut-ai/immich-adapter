@@ -684,7 +684,7 @@ class TestGetTimeBucket:
 
             assert len(result["id"]) == 1
             mock_client.assets.list.assert_called_once_with(
-                person_id=uuid_to_gumnut_person_id(sample_uuid),
+                person_ids=[uuid_to_gumnut_person_id(sample_uuid)],
                 extra_query=JANUARY_2024_DATE_RANGE,
             )
 
@@ -1631,7 +1631,7 @@ class TestTimeBucketStacks:
 
         bucket_read = client.assets.list.call_args_list[0]
         assert bucket_read.kwargs == {
-            "person_id": uuid_to_gumnut_person_id(person_id),
+            "person_ids": [uuid_to_gumnut_person_id(person_id)],
             "extra_query": JANUARY_2024_DATE_RANGE,
         }
 

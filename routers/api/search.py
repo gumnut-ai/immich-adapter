@@ -602,7 +602,7 @@ async def _fetch_month_assets_at_offsets(
     if album_id is not None:
         list_kwargs["album_id"] = album_id
     if person_id is not None:
-        list_kwargs["person_id"] = person_id
+        list_kwargs["person_ids"] = [person_id]
 
     picked: list[AssetResponse] = []
     index = 0
