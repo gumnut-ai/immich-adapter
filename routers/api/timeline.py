@@ -205,7 +205,7 @@ async def get_time_bucket(
     if albumId:
         list_kwargs["album_id"] = uuid_to_gumnut_album_id(albumId)
     elif personId:
-        list_kwargs["person_id"] = uuid_to_gumnut_person_id(personId)
+        list_kwargs["person_ids"] = [uuid_to_gumnut_person_id(personId)]
 
     filtered_assets = [a async for a in client.assets.list(**list_kwargs)]
 

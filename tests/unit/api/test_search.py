@@ -1557,9 +1557,9 @@ class TestSearchRandom:
             mock_client.assets.counts.call_args.kwargs["person_id"]
             == expected_person_id
         )
-        assert (
-            mock_client.assets.list.call_args.kwargs["person_id"] == expected_person_id
-        )
+        assert mock_client.assets.list.call_args.kwargs["person_ids"] == [
+            expected_person_id
+        ]
         assert len(result) == 1
 
     @pytest.mark.anyio
