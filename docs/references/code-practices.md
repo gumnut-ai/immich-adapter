@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-07-31
+last-updated: 2026-08-03
 ---
 
 # Code Practices
@@ -258,6 +258,15 @@ for asset_uuid in request.ids:
 ```
 
 Use `map_gumnut_error(e, context, extra=..., exc_info=True)` only when the call site needs to enrich the upstream log record with context the global handler can't see — most commonly the upload paths logging filename / device ids / tracebacks.
+
+**Streaming responses.** Once a `StreamingResponse` commits its headers,
+generator exceptions cannot reach the global error handler. Resolve
+authentication and setup errors before returning the response, and handle
+expected per-item failures inside the generator so they do not truncate the
+stream. Keep degradation guards narrow: `ValidationError` subclasses
+`ValueError`, so catch decoding failures around the decode call rather than
+around model construction. Catch transport errors at the call site when an
+early pass should not suppress later stream work.
 
 ### Omit vs explicit-null in update-style DTOs — use `model_fields_set`
 

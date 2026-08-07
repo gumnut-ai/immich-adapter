@@ -674,7 +674,7 @@ class TestGenerateSyncStream:
         request = SyncStreamDto(
             types=[
                 SyncRequestType.MemoriesV1,
-                SyncRequestType.StacksV1,
+                SyncRequestType.PartnerStacksV1,
                 SyncRequestType.PartnersV1,
                 SyncRequestType.AssetMetadataV1,
             ]

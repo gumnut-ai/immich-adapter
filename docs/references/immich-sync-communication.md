@@ -1,6 +1,6 @@
 ---
 title: "Immich Client<>Server Sync Communication"
-last-updated: 2026-07-12
+last-updated: 2026-08-03
 ---
 
 # Immich Client<>Server Sync Communication
@@ -215,6 +215,8 @@ The 22 SyncRequestTypes generate 50 SyncEntityTypes in specific orders.
 Notes (discussed below):
 - `SyncAckV1`\* = Backfill completion marker (via `sendEntityBackfillCompleteAck()`, one per entity)
 - `SyncAckV1`\*\* = Phase transition marker (before first CREATE, marks updates complete)
+
+Adapter-specific behavior is documented in [Stack Snapshot](../architecture/sync-stream-architecture.md#stack-snapshot-stacksv1).
 
 ## Special SyncEntityTypes
 

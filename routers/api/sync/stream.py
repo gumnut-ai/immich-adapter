@@ -13,7 +13,7 @@ from collections.abc import Iterator
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
-from gumnut import AsyncGumnut
+from gumnut import AsyncGumnut, GumnutError
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.user_response import UserResponse
@@ -23,11 +23,16 @@ from routers.immich_models import (
     SyncRequestType,
     SyncStreamDto,
 )
-from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
+from routers.utils.datetime_utils import to_actual_utc
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_stack_id,
+    safe_uuid_from_user_id,
+)
 from services.checkpoint_store import Checkpoint
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.sync.converters import (
+    gumnut_stack_to_sync_stack_v1,
     gumnut_user_to_sync_auth_user_v1,
     gumnut_user_to_sync_user_metadata_v1,
     gumnut_user_to_sync_user_v1,
@@ -46,6 +51,7 @@ from routers.api.sync.fk_integrity import (
     null_deleted_fk_references,
     payload_override,
 )
+from routers.utils.stack_conversion import hydrate_stack
 
 logger = logging.getLogger(__name__)
 
@@ -144,11 +150,7 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
 #                          EXIF arrives via AssetExifsV1.
 #   - MemoriesV1 /
 #     MemoryToAssetsV1:    Gumnut has no memories feature; the tab renders empty.
-#   - StacksV1:            stacks exist and are readable over REST (`/api/stacks`),
-#                          but nothing feeds them into the sync stream, and the
-#                          sync asset converters still emit stackId=None — so a
-#                          stack row here would name a grouping no synced asset
-#                          claims membership in.
+# StacksV1 is emitted by _stream_stacks; PartnerStacksV1 remains a no-op.
 # UserMetadataV1 is deliberately NOT here — it is emitted (a synthesized
 # preferences row); see gumnut_user_to_sync_user_metadata_v1.
 _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
@@ -163,19 +165,16 @@ _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
     SyncRequestType.AlbumAssetExifsV1: SyncEntityType.AlbumAssetExifCreateV1,
     SyncRequestType.MemoriesV1: SyncEntityType.MemoryV1,
     SyncRequestType.MemoryToAssetsV1: SyncEntityType.MemoryToAssetV1,
-    SyncRequestType.StacksV1: SyncEntityType.StackV1,
 }
 
-# Supported SyncRequestTypes (used to detect unsupported types requested by
-# client). AuthUsersV1/UsersV1/UserMetadataV1 are handled specially (not via
-# _SYNC_TYPE_ORDER): the first two stream the user record, and UserMetadataV1
-# streams a synthesized preferences row (see gumnut_user_to_sync_user_metadata_v1).
+# User and stack types below are handled outside _SYNC_TYPE_ORDER.
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
     | {
         SyncRequestType.AuthUsersV1,
         SyncRequestType.UsersV1,
         SyncRequestType.UserMetadataV1,
+        SyncRequestType.StacksV1,
     }
     | _NOOP_REQUEST_TYPES.keys()
 )
@@ -503,6 +502,65 @@ def _yield_buffered_deletes(
             yield json_line, delete_type
 
 
+async def _stream_stacks(
+    gumnut_client: AsyncGumnut,
+    owner_id: UUID,
+    checkpoint: Checkpoint | None,
+) -> AsyncGenerator[str, None]:
+    """Stream incremental StackV1 upserts in stable checkpoint order.
+
+    The pass re-pages the stack table because the Gumnut API has no stack
+    lifecycle events. Hydration reuses the REST effective-primary rules;
+    undecodable IDs and member-less stacks are skipped.
+    """
+    # Stable UTC ordering makes checkpoint comparison and resume deterministic.
+    stacks = [
+        stack
+        async for stack in gumnut_client.stacks.list_stacks(
+            limit=GUMNUT_API_MAX_PAGE_SIZE
+        )
+    ]
+    stacks.sort(key=lambda s: (to_actual_utc(s.updated_at), s.id))
+
+    checkpoint_cursor = checkpoint.cursor if checkpoint is not None else None
+    undecodable_ids: list[str] = []
+
+    for stack in stacks:
+        cursor = f"{to_actual_utc(stack.updated_at).isoformat()}_{stack.id}"
+        if checkpoint_cursor is not None and cursor <= checkpoint_cursor:
+            continue
+
+        # Keep the ValueError guard separate from hydration failures.
+        try:
+            safe_uuid_from_stack_id(stack.id)
+        except ValueError:
+            undecodable_ids.append(stack.id)
+            continue
+
+        hydrated = await hydrate_stack(gumnut_client, stack)
+        if hydrated is None:
+            continue
+        sync_stack = gumnut_stack_to_sync_stack_v1(
+            stack, hydrated.primary_asset_id, owner_id
+        )
+        yield make_sync_event(
+            SyncEntityType.StackV1,
+            sync_stack.model_dump(mode="json"),
+            cursor,
+        )
+
+    if undecodable_ids:
+        logger.warning(
+            "Skipped %d stack(s) with undecodable ids in the StackV1 snapshot; "
+            "syncing their assets as loose",
+            len(undecodable_ids),
+            extra={
+                "undecodable_stack_count": len(undecodable_ids),
+                "sample_stack_ids": undecodable_ids[:10],
+            },
+        )
+
+
 async def generate_sync_stream(
     gumnut_client: AsyncGumnut,
     request: SyncStreamDto,
@@ -622,6 +680,26 @@ async def generate_sync_stream(
         # Counters for logging
         event_counts: dict[str, int] = {}
         total_events = 0
+
+        # Emit stacks before assets; hydration errors must not suppress later types.
+        if SyncRequestType.StacksV1 in requested_types:
+            stack_checkpoint = checkpoint_map.get(SyncEntityType.StackV1)
+            try:
+                async for stack_line in _stream_stacks(
+                    gumnut_client, owner_uuid, stack_checkpoint
+                ):
+                    yield stack_line
+                    event_counts[SyncEntityType.StackV1.value] = (
+                        event_counts.get(SyncEntityType.StackV1.value, 0) + 1
+                    )
+                    total_events += 1
+            except GumnutError:
+                logger.warning(
+                    "StackV1 snapshot cut short by a Gumnut API error; already "
+                    "streamed rows are acked and the rest resume next sync",
+                    extra={"user_id": owner_id},
+                    exc_info=True,
+                )
 
         # Phase 1: Stream upserts for all entity types in FK dependency order,
         # buffering delete events for phase 2.

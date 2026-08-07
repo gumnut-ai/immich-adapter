@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-07-30
+last-updated: 2026-08-03
 ---
 
 # Sync Stream Architecture
@@ -71,6 +71,22 @@ pass: an `album_deleted` event emits `AlbumDeleteV1`, and the client's
 delete from the album-user pass would duplicate `AlbumDeleteV1`. No
 `AlbumUserDeleteV1` is emitted (Gumnut has no unshare operation).
 
+## Stack Snapshot (StacksV1)
+
+Each sync asset carries its stack membership in `stackId`. Before streaming
+assets, `_stream_stacks` re-pages the stack table and emits rows after the
+client's checkpoint in `(updated_at, id)` order. This provides incremental
+upserts and resumes a truncated pass without a stack lifecycle event stream.
+
+Each row uses the same effective-primary resolution as the REST stack endpoints;
+member-less stacks are skipped because `primaryAssetId` is required. Incremental
+upserts prevent assets from referencing a missing stack, which would hide the
+burst in the mobile timeline.
+
+Delete detection remains unsupported. A dissolved stack row is harmless once
+asset events clear its members' `stackId`. `PartnerStacksV1` remains a no-op
+because partner sharing is unsupported.
+
 ## Adding a New Sync Type Version
 
 When the same gumnut entity type maps to multiple Immich sync versions (e.g., AssetFacesV2 alongside V1), update these files in coordination:
@@ -87,7 +103,10 @@ The invariant tests in `test_sync_v2.py` assert that every V2 type in `_SYNC_TYP
 
 Immich sync types that are accepted but have no Gumnut equivalent (e.g., `AssetEditsV1` — we don't support editing) go in `_NOOP_REQUEST_TYPES` in `stream.py`. This prevents "unsupported type" warnings while making the no-op explicit. Do not just add them to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that silently drops them.
 
-The v3 mobile client requests a broad set of these on **every** sync (partner-*, stacks-*, memories-*, `AssetMetadataV1`, `AssetOcrV1`, `AlbumAssetExifsV1`, the V2 partner/album-asset variants) — all no-ops because the adapter has no sync-stream source for them, whether the underlying feature is absent (sharing, OCR) or reachable only through the REST surfaces (stacks, memories). They all belong in `_NOOP_REQUEST_TYPES` so the per-sync "unsupported types" warning stays quiet. `UserMetadataV1` is the one requested type the adapter *does* synthesize (see "User Preferences" above), so it is deliberately **not** a no-op — it's handled specially alongside `UsersV1`/`AuthUsersV1`.
+The v3 mobile client requests these types on every sync, so keep unsupported
+ones in `_NOOP_REQUEST_TYPES` to avoid repeated warnings. `UserMetadataV1` and
+`StacksV1` are handled specially outside `_SYNC_TYPE_ORDER` and must not be
+listed as no-ops.
 
 ## Contract with the Gumnut API
 
