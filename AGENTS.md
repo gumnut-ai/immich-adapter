@@ -64,11 +64,8 @@ The sections below follow that order, with design docs split by their `status:` 
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Static file sharing | `docs/design-docs/static-file-sharing.md` | File sharing proposals, static asset serving |
-| Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Sync FK integrity, event ordering, face/person deletion issues |
 | Large upload timeout | `docs/design-docs/large-upload-timeout.md` | Streaming upload pipeline, large file upload failures, Immich client timeout limits |
 | Immich adapter gap analysis | `docs/design-docs/immich-adapter-gap-analysis.md` | Prioritizing adapter work, evaluating stub endpoints, assessing feature gaps |
-| Immich v3 API change analysis | `docs/design-docs/immich-v3-api-changes.md` | Planning an Immich 3.0 retarget, reviewing breaking API diffs, and scoping compatibility work |
 
 ## Historical & Deprecated Design Docs
 
@@ -80,3 +77,6 @@ Decision records, not descriptions of the running system — consult them for *w
 | Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Why the adapter deploys as a multi-stage Docker image, and the pinned-vs-floating base-image trade-off |
 | Checksum support | `docs/design-docs/checksum-support.md` | Why a dedicated SHA-1 column beat a side table — current checksum rules are in `docs/references/code-practices.md` |
 | Trash soft-delete (adapter) | `docs/design-docs/trash-soft-delete-adapter.md` | The original adapter-side trash design record — current trash/restore semantics are in `docs/architecture/adapter-architecture.md` |
+| Static file sharing | `docs/design-docs/static-file-sharing.md` | Why the adapter serves Immich static files itself, and the Docker extraction decision |
+| Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Why sync upserts and deletes use FK-safe ordering, and the trade-offs of that design |
+| Immich v3 API change analysis | `docs/design-docs/immich-v3-api-changes.md` | Why the adapter made a clean Immich v3 retarget and which compatibility gaps remained |

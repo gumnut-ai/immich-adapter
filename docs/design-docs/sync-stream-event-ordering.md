@@ -1,8 +1,8 @@
 ---
 title: "Sync Stream Event Ordering"
-status: active
+status: completed
 created: 2026-03-13
-last-updated: 2026-04-16
+last-updated: 2026-08-04
 ---
 
 # Sync Stream Event Ordering
