@@ -380,10 +380,17 @@ class StreamingUploadPipeline:
             if self._parse_error is not None:
                 self._pipe.set_error(self._parse_error)
 
-            if feed_task is not None and not feed_task.done():
-                if not self._pipe.has_error:
-                    self._pipe.set_error(Exception("Upload aborted"))
-                feed_task.cancel()
+            if feed_task is not None:
+                if not feed_task.done():
+                    if not self._pipe.has_error:
+                        self._pipe.set_error(Exception("Upload aborted"))
+                    feed_task.cancel()
+                # Always await, even when the task already finished: a feeder
+                # that failed (e.g. the client disconnected mid-body) holds its
+                # exception until retrieved, and an unretrieved task exception
+                # is logged by asyncio at error level on garbage collection.
+                # The failure itself still reaches the caller through the pipe
+                # error, so swallowing it here loses nothing.
                 try:
                     await feed_task
                 except (asyncio.CancelledError, Exception):
