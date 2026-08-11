@@ -20,28 +20,43 @@ def _batched(items: list[str], size: int) -> list[list[str]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
+class StackMemberReadInconsistent(Exception):
+    """A stack row claims live members but its member read came back empty.
+
+    A transient contradiction (e.g. read replication lag), not a member-less
+    stack — surfaced so the sync truncates and retries rather than skipping the
+    stack and stranding its members as a hidden burst.
+    """
+
+
 async def _hydrate_stack_for_sync(
     client: AsyncGumnut, stack_row: StackListStacksResponse
 ) -> HydratedStack | None:
     """Hydrate one stack, skipping only *permanent* non-emittable conditions.
 
     Returns `None` — routed to the inert `missing_ids` skip — only when the stack
-    can never be emitted and skipping strands no member: an undecodable id
+    truly cannot be emitted and skipping strands no member: an undecodable id
     (prefix drift; its members degrade to loose via `_immich_stack_id`), or a
-    member-less stack (`hydrate_stack` returns `None`; no asset carries its
-    `stackId`). The decode is guarded around the call so a member
-    `ValidationError` — also a `ValueError` — raised deeper in hydration is not
-    swallowed with it.
+    genuinely member-less stack (`asset_count == 0` and `hydrate_stack` returns
+    `None`; no asset carries its `stackId`). The decode is guarded around the
+    call so a member `ValidationError` — also a `ValueError` — raised deeper in
+    hydration is not swallowed with it.
 
-    A transient `GumnutError` from the member read is deliberately **not** caught.
-    It is retriable, and skipping it would let `_stream_entity_type` advance the
-    events cursor past the stack while the asset pass still stamps `stackId` on
-    its members — permanently hiding the whole burst, since the mobile timeline
-    drops an asset whose `stackId` names no stack row. Propagating truncates this
-    sync so the cursor is preserved and the stack retries next cycle. A stack
-    that fails *persistently* wedges the pass until it recovers — loud in the
-    logs, and the price of never stranding a member; bounded per-stack retry is a
-    possible future refinement.
+    Two *retriable* failures are deliberately surfaced rather than skipped,
+    because skipping would let `_stream_entity_type` advance the events cursor
+    past the stack while the asset pass still stamps `stackId` on its members —
+    permanently hiding the whole burst, since the mobile timeline drops an asset
+    whose `stackId` names no stack row:
+
+    - a member-read `GumnutError` (propagated by not catching it); and
+    - an empty member read that contradicts a positive `asset_count`
+      (`StackMemberReadInconsistent`) — a transient inconsistency, since the
+      `state="all"` read would otherwise see even trashed members.
+
+    Either truncates the sync so the cursor is preserved and the stack retries
+    next cycle. A stack that fails *persistently* wedges the pass until it
+    recovers — loud in the logs, and the price of never stranding a member;
+    bounded per-stack retry is a possible future refinement.
     """
     try:
         safe_uuid_from_stack_id(stack_row.id)
@@ -52,7 +67,13 @@ async def _hydrate_stack_for_sync(
             extra={"stack_id": stack_row.id},
         )
         return None
-    return await hydrate_stack(client, stack_row)
+    hydrated = await hydrate_stack(client, stack_row)
+    if hydrated is None and stack_row.asset_count > 0:
+        raise StackMemberReadInconsistent(
+            f"stack {stack_row.id} reports {stack_row.asset_count} member(s) but "
+            "its member read returned none"
+        )
+    return hydrated
 
 
 async def fetch_entities_map(

@@ -19,7 +19,10 @@ from routers.api.sync.converters import (
     gumnut_asset_to_sync_asset_v2,
     gumnut_stack_to_sync_stack_v1,
 )
-from routers.api.sync.entity_fetch import fetch_entities_map
+from routers.api.sync.entity_fetch import (
+    StackMemberReadInconsistent,
+    fetch_entities_map,
+)
 from routers.api.sync.stream import generate_sync_stream
 from routers.api.sync.types import FetchedStack
 from routers.immich_models import SyncRequestType, SyncStreamDto
@@ -231,6 +234,20 @@ class TestStackEntityFetch:
 
         with pytest.raises(GumnutError):
             await fetch_entities_map(client, "stack", [good.id, bad.id])
+
+    @pytest.mark.anyio
+    async def test_empty_read_contradicting_asset_count_propagates(self):
+        # The row claims members but the state="all" read comes back empty — a
+        # transient contradiction, not a member-less stack (a member-less stack
+        # reports asset_count 0). It must propagate to retry, not skip, or the
+        # stack's members strand as a hidden burst.
+        stack = make_gumnut_stack(asset_count=2)
+        client = Mock()
+        client.stacks.list_stacks = mock_list_stacks([stack])
+        client.assets.list = _assets_list(members_by_stack={stack.id: []})
+
+        with pytest.raises(StackMemberReadInconsistent):
+            await fetch_entities_map(client, "stack", [stack.id])
 
     @pytest.mark.anyio
     async def test_undecodable_stack_id_skips_only_that_stack(self, caplog):
