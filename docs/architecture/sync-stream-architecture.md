@@ -11,7 +11,12 @@ The sync stream (`routers/api/sync/stream.py`) consumes events from the Gumnut A
 
 The stream yields all upserts first (in FK dependency order per `_SYNC_TYPE_ORDER`), then all deletes (in reverse FK order per `_DELETE_TYPE_ORDER`). This prevents FK constraint violations in the mobile client — parents exist before children reference them, and children are cleaned up before parents are removed. See the [sync stream event ordering design doc](../design-docs/sync-stream-event-ordering.md) for the full design rationale and history.
 
-Failure is not isolated per pass: an unhandled fetch/hydration error propagates to `generate_sync_stream`'s top-level handler, which logs it and ends the generator — a truncated HTTP 200 with no `SyncCompleteV1` that drops every later pass, so the earliest passes carry the widest blast radius. Skip a fetch failure to `missing_ids` **only** when the row is *permanently* non-emittable and skipping strands nothing downstream (a member-less or undecodable stack). A *retriable* failure must propagate instead: skipping advances the events cursor past the row while dependent rows still reference it, permanently losing it — for stacks, that hides the burst from the timeline (see `_hydrate_stack_for_sync`).
+Failure is not isolated per pass: an unhandled fetch error propagates to
+`generate_sync_stream`'s top-level handler and ends the generator without
+`SyncCompleteV1`, dropping every later pass. Degrade to `missing_ids` only when
+skipping cannot strand dependent rows; for stacks, that applies to an
+undecodable ID, not an empty member read. Retriable failures must propagate so
+the event cursor remains unacknowledged.
 
 ## Event Classification
 
@@ -75,35 +80,25 @@ delete from the album-user pass would duplicate `AlbumDeleteV1`. No
 
 ## Stacks (StacksV1)
 
-Stacks ride the same event-cursor path as every other entity type. `StacksV1`
-sits first in `_SYNC_TYPE_ORDER` — before assets — because the mobile timeline
-hides an asset whose `stackId` names a stack row the client doesn't hold (its
-`stack_id IS NULL OR id = primaryAssetId` visibility clause), so the stack must
-arrive before the member asset that points at it. The client enforces no stack
-foreign key in either direction; the ordering is about visibility, not insert
-constraints. A `stack_created` or `stack_updated` event hydrates the stack and
-emits `StackV1`; a `stack_deleted` event emits `StackDeleteV1`, placed after
-asset deletes in `_DELETE_TYPE_ORDER` (the inverse order). An already-synced
-client receives stack changes as deltas, not on reset.
+`StacksV1` uses the event cursor and sits before assets in `_SYNC_TYPE_ORDER`.
+The mobile timeline hides an asset whose `stackId` names an unknown stack, so a
+`stack_created` or `stack_updated` event must emit `StackV1` before its member
+assets. The client has no stack foreign key; this is a visibility constraint.
+Deletes use the inverse order, with `StackDeleteV1` after asset deletes.
 
-Hydration reuses the same effective-primary resolution as the REST stack
-endpoints — `StackV1.primaryAssetId` is required, so a member-less stack is
-dropped (`fetch_entities_map` reports it missing) rather than emitted with a
-manufactured cover. Resolving the primary needs the members, but
-`convert_entity_to_sync_event` is I/O-free, so `fetch_entities_map` hydrates each
-stack under a bounded concurrency fan-out and carries the resolved primary
-alongside the row in a `FetchedStack`.
+`StackV1.primaryAssetId` is required but an unpinned Gumnut stack has no primary
+on its row. Sync therefore reads members without heavy asset includes, applies
+the shared effective-primary rule, and carries only the resulting UUID into the
+converter. Reads are concurrency-bounded. An empty all-state member read is
+retryable even when `asset_count` is zero, because that count excludes trashed
+members; propagating the error truncates the stream before its cursor is acked.
 
-**Dissolve safety lives on the asset side, not in `FK_REFERENCES`.** An asset
-carries whatever `stackId` its `stack_id` decodes to, and that reference is
-deliberately absent from `FK_REFERENCES`, so nothing nulls it when the stack is
-deleted. Correctness relies instead on the Gumnut API emitting an `asset_updated`
-(clearing `stack_id`) for every frame freed from a dissolving stack, ahead of
-the `stack_deleted` — which it does, both when a user removes frames and when
-burst re-detection dissolves a run. Those member upserts stream in phase 1 and
-`StackDeleteV1` streams last in phase 2, so the client clears each member's
-`stackId` before it drops the stack row, and no frame is left pointing at a stack
-the client no longer holds.
+Stack references stay out of `FK_REFERENCES`. When a stack dissolves, the
+Gumnut API emits an `asset_updated` clearing each member's `stack_id` before
+`stack_deleted`. Those upserts run in phase 1 and the stack delete in phase 2,
+so members stop referencing the stack before the client removes it. Asset
+updates use the payload's event-time `stack_id`, preventing a later move outside
+the sync window from leaking into the current event.
 
 `PartnerStacksV1` remains a no-op because partner sharing is unsupported.
 

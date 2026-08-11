@@ -1,16 +1,21 @@
 """Batch entity fetching from the Gumnut API."""
 
 import logging
+from typing import Literal
+from uuid import UUID
 
 from gumnut import AsyncGumnut
+from gumnut.types.asset_response import AssetResponse
 from gumnut.types.stack_list_stacks_response import StackListStacksResponse
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.sync.types import EntityType, FetchedStack
 from routers.utils.asset_conversion import ASSET_INCLUDE_NO_PEOPLE
 from routers.utils.concurrency import gather_with_concurrency
-from routers.utils.gumnut_id_conversion import safe_uuid_from_stack_id
-from routers.utils.stack_conversion import HydratedStack, hydrate_stack
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
+    safe_uuid_from_stack_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,43 +26,34 @@ def _batched(items: list[str], size: int) -> list[list[str]]:
 
 
 class StackMemberReadInconsistent(Exception):
-    """A stack row claims live members but its member read came back empty.
-
-    A transient contradiction (e.g. read replication lag), not a member-less
-    stack — surfaced so the sync truncates and retries rather than skipping the
-    stack and stranding its members as a hidden burst.
-    """
+    """A stack row was returned but its all-state member read was empty."""
 
 
-async def _hydrate_stack_for_sync(
+async def _first_stack_member(
+    client: AsyncGumnut,
+    stack_id: str,
+    *,
+    state: Literal["live", "all"],
+    asset_id: str | None = None,
+) -> AssetResponse | None:
+    """Return the first matching member without walking later cursor pages."""
+    if asset_id is None:
+        page = client.assets.list(stack_id=stack_id, state=state, order="asc", limit=1)
+    else:
+        page = client.assets.list(
+            stack_id=stack_id,
+            ids=[asset_id],
+            state=state,
+            order="asc",
+            limit=1,
+        )
+    return await anext(aiter(page), None)
+
+
+async def _resolve_stack_primary_for_sync(
     client: AsyncGumnut, stack_row: StackListStacksResponse
-) -> HydratedStack | None:
-    """Hydrate one stack, skipping only *permanent* non-emittable conditions.
-
-    Returns `None` — routed to the inert `missing_ids` skip — only when the stack
-    truly cannot be emitted and skipping strands no member: an undecodable id
-    (prefix drift; its members degrade to loose via `_immich_stack_id`), or a
-    genuinely member-less stack (`asset_count == 0` and `hydrate_stack` returns
-    `None`; no asset carries its `stackId`). The decode is guarded around the
-    call so a member `ValidationError` — also a `ValueError` — raised deeper in
-    hydration is not swallowed with it.
-
-    Two *retriable* failures are deliberately surfaced rather than skipped,
-    because skipping would let `_stream_entity_type` advance the events cursor
-    past the stack while the asset pass still stamps `stackId` on its members —
-    permanently hiding the whole burst, since the mobile timeline drops an asset
-    whose `stackId` names no stack row:
-
-    - a member-read `GumnutError` (propagated by not catching it); and
-    - an empty member read that contradicts a positive `asset_count`
-      (`StackMemberReadInconsistent`) — a transient inconsistency, since the
-      `state="all"` read would otherwise see even trashed members.
-
-    Either truncates the sync so the cursor is preserved and the stack retries
-    next cycle. A stack that fails *persistently* wedges the pass until it
-    recovers — loud in the logs, and the price of never stranding a member;
-    bounded per-stack retry is a possible future refinement.
-    """
+) -> UUID | None:
+    """Resolve a stack primary, skipping only an undecodable stack ID."""
     try:
         safe_uuid_from_stack_id(stack_row.id)
     except ValueError:
@@ -67,13 +63,27 @@ async def _hydrate_stack_for_sync(
             extra={"stack_id": stack_row.id},
         )
         return None
-    hydrated = await hydrate_stack(client, stack_row)
-    if hydrated is None and stack_row.asset_count > 0:
-        raise StackMemberReadInconsistent(
-            f"stack {stack_row.id} reports {stack_row.asset_count} member(s) but "
-            "its member read returned none"
+
+    primary = None
+    if stack_row.primary_asset_id is not None:
+        primary = await _first_stack_member(
+            client,
+            stack_row.id,
+            state="all",
+            asset_id=stack_row.primary_asset_id,
         )
-    return hydrated
+    if primary is None:
+        primary = await _first_stack_member(client, stack_row.id, state="live")
+    if primary is None:
+        primary = await _first_stack_member(client, stack_row.id, state="all")
+    if primary is None:
+        # asset_count excludes trashed members, so even zero cannot prove that
+        # an empty all-state read is permanent. Propagate to preserve the cursor.
+        raise StackMemberReadInconsistent(
+            f"stack {stack_row.id} member read returned none "
+            f"(row reports {stack_row.asset_count} live member(s))"
+        )
+    return safe_uuid_from_asset_id(primary.id)
 
 
 async def fetch_entities_map(
@@ -170,30 +180,22 @@ async def fetch_entities_map(
                     missing_ids.add(asset.id)
 
         elif gumnut_entity_type == "stack":
-            # hydrate_stack resolves the effective primary carried in
-            # FetchedStack (see its docstring for why the converter stays
-            # I/O-free). Each hydration is a per-stack member read, so run them
-            # under the shared concurrency bound rather than serially: a first
-            # sync replays every stack event and would otherwise open one
-            # blocking round-trip per stack. A permanently non-emittable stack
-            # (member-less, or undecodable id per _hydrate_stack_for_sync) yields
-            # None and goes to missing_ids — the same inert skip as an asset
-            # lacking metadata; a transient member-read failure propagates
-            # instead (see _hydrate_stack_for_sync for why skipping would hide
-            # the burst).
+            # Primary resolution costs one lean member read per stack, bounded
+            # here so a first sync does not fan out without limit.
             stack_page = await gumnut_client.stacks.list_stacks(
                 ids=chunk, limit=len(chunk)
             )
             rows = stack_page.data
-            hydrated_stacks = await gather_with_concurrency(
-                [_hydrate_stack_for_sync(gumnut_client, row) for row in rows]
+            primary_ids = await gather_with_concurrency(
+                [_resolve_stack_primary_for_sync(gumnut_client, row) for row in rows],
+                cancel_on_error=True,
             )
-            for stack_row, hydrated in zip(rows, hydrated_stacks, strict=True):
-                if hydrated is None:
+            for stack_row, primary_id in zip(rows, primary_ids, strict=True):
+                if primary_id is None:
                     missing_ids.add(stack_row.id)
                 else:
                     result[stack_row.id] = FetchedStack(
-                        row=stack_row, primary_asset_id=hydrated.primary_asset_id
+                        row=stack_row, primary_asset_id=primary_id
                     )
 
     return result, missing_ids

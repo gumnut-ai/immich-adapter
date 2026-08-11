@@ -14,23 +14,14 @@ from gumnut.types.stack_list_stacks_response import StackListStacksResponse
 
 @dataclass(frozen=True)
 class FetchedStack:
-    """A stack row paired with its resolved effective primary.
-
-    Stacks are the one fetched entity whose sync conversion needs a value that
-    isn't on the row: SyncStackV1 requires a non-null primaryAssetId, and an
-    unpinned burst's cover is only knowable by reading its members. Resolving it
-    is an async round-trip, but convert_entity_to_sync_event is deliberately
-    I/O-free — so fetch_entities_map hydrates the members and carries the
-    resolved primary here, keeping the converter pure.
-    """
+    """A stack row paired with the member-derived primary required by sync."""
 
     row: StackListStacksResponse
     primary_asset_id: UUID
 
     @property
     def id(self) -> str:
-        """The Gumnut stack id, so the generic stream loop can track it like any
-        other fetched entity (see stats.streamed_ids)."""
+        """Return the Gumnut stack ID used by the generic stream loop."""
         return self.row.id
 
 

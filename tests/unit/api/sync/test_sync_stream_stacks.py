@@ -1,18 +1,12 @@
-"""Tests for stacks in the event-driven sync stream.
-
-Stacks ride the same event-cursor path as every other entity type: a
-``stack_created`` / ``stack_updated`` event hydrates and emits ``StackV1``, a
-``stack_deleted`` event emits ``StackDeleteV1``, and a caught-up client that
-sends no new events gets nothing (no full-table sweep). The asset ``stackId``
-mapping and the ``gumnut_stack_to_sync_stack_v1`` converter are exercised here
-too, since both feed the stack rows the stream emits.
-"""
+"""Tests for stacks in the event-driven sync stream."""
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from gumnut import GumnutError
+from gumnut.types.asset_response import AssetResponse
+from gumnut.types.file_data_response import FileDataResponse
 
 from routers.api.sync.converters import (
     gumnut_asset_to_sync_asset_v1,
@@ -26,6 +20,7 @@ from routers.api.sync.entity_fetch import (
 from routers.api.sync.stream import generate_sync_stream
 from routers.api.sync.types import FetchedStack
 from routers.immich_models import SyncRequestType, SyncStreamDto
+from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     safe_uuid_from_stack_id,
@@ -50,12 +45,7 @@ UPDATED_AT = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
 
 
 def _events_by_type(mapping):
-    """An ``events.get`` mock keyed on each pass's ``entity_types`` filter.
-
-    Each entity-type pass queries ``/api/events`` for its own type, so a shared
-    ``return_value`` would leak one pass's events into another. This returns the
-    events registered for the requested ``entity_types`` only.
-    """
+    """Return events keyed by each sync pass's entity-type filter."""
     return AsyncMock(
         side_effect=lambda **kwargs: create_mock_events_response(
             mapping.get(kwargs.get("entity_types"), [])
@@ -64,17 +54,18 @@ def _events_by_type(mapping):
 
 
 def _assets_list(*, members_by_stack=None, assets_by_id=None):
-    """One ``assets.list`` mock serving both stack hydration and entity fetch.
-
-    Stack hydration reads members with ``stack_id=``; the asset pass fetches by
-    ``ids=``. Dispatch on which kwarg is present so a single test can drive both.
-    """
+    """Serve stack-member and by-ID asset reads from one mock."""
     members_by_stack = members_by_stack or {}
     assets_by_id = assets_by_id or {}
 
     def _list(**kwargs):
         if "stack_id" in kwargs:
-            return MockSyncCursorPage(members_by_stack.get(kwargs["stack_id"], []))
+            members = members_by_stack.get(kwargs["stack_id"], [])
+            if kwargs.get("state") == "live":
+                members = [member for member in members if member.trashed_at is None]
+            if ids := kwargs.get("ids"):
+                members = [member for member in members if member.id in ids]
+            return MockSyncCursorPage(members)
         ids = kwargs.get("ids") or []
         return MockSyncCursorPage([assets_by_id[i] for i in ids if i in assets_by_id])
 
@@ -82,31 +73,24 @@ def _assets_list(*, members_by_stack=None, assets_by_id=None):
 
 
 class TestAssetStackIdConversion:
-    def test_v1_maps_stack_id_to_uuid_string(self):
+    @pytest.mark.parametrize(
+        "converter", [gumnut_asset_to_sync_asset_v1, gumnut_asset_to_sync_asset_v2]
+    )
+    def test_maps_stack_id_to_uuid_string(self, converter):
         stack = make_gumnut_stack()
         asset = make_gumnut_asset(stack_id=stack.id)
 
-        sync = gumnut_asset_to_sync_asset_v1(asset, TEST_UUID)
+        sync = converter(asset, TEST_UUID)
 
         assert sync.stackId == str(safe_uuid_from_stack_id(stack.id))
 
-    def test_v1_loose_asset_is_null(self):
+    @pytest.mark.parametrize(
+        "converter", [gumnut_asset_to_sync_asset_v1, gumnut_asset_to_sync_asset_v2]
+    )
+    def test_loose_asset_is_null(self, converter):
         asset = make_gumnut_asset(stack_id=None)
 
-        assert gumnut_asset_to_sync_asset_v1(asset, TEST_UUID).stackId is None
-
-    def test_v2_inherits_stack_id(self):
-        stack = make_gumnut_stack()
-        asset = make_gumnut_asset(stack_id=stack.id)
-
-        sync = gumnut_asset_to_sync_asset_v2(asset, TEST_UUID)
-
-        assert sync.stackId == str(safe_uuid_from_stack_id(stack.id))
-
-    def test_v2_loose_asset_is_null(self):
-        asset = make_gumnut_asset(stack_id=None)
-
-        assert gumnut_asset_to_sync_asset_v2(asset, TEST_UUID).stackId is None
+        assert converter(asset, TEST_UUID).stackId is None
 
     def test_undecodable_stack_id_degrades_to_loose_without_raising(self, caplog):
         asset = make_gumnut_asset(stack_id="not_a_valid_stack_prefix")
@@ -141,7 +125,7 @@ class TestStackEntityFetch:
 
     @pytest.mark.anyio
     async def test_resolves_pinned_primary(self):
-        stack, members = make_gumnut_stack_with_members(count=3)
+        stack, members = make_gumnut_stack_with_members(count=3, trashed={2})
         stack.primary_asset_id = members[2].id
         client = Mock()
         client.stacks.list_stacks = mock_list_stacks([stack])
@@ -153,6 +137,40 @@ class TestStackEntityFetch:
         assert isinstance(fetched, FetchedStack)
         assert fetched.primary_asset_id == safe_uuid_from_asset_id(members[2].id)
         assert missing == set()
+        assert client.assets.list.call_args_list == [
+            call(
+                stack_id=stack.id,
+                ids=[members[2].id],
+                state="all",
+                order="asc",
+                limit=1,
+            )
+        ]
+
+    @pytest.mark.anyio
+    async def test_missing_pin_falls_back_to_first_live_member(self):
+        stack, members = make_gumnut_stack_with_members(count=2)
+        missing_pin = make_gumnut_asset().id
+        stack.primary_asset_id = missing_pin
+        client = Mock()
+        client.stacks.list_stacks = mock_list_stacks([stack])
+        client.assets.list = _assets_list(members_by_stack={stack.id: members})
+
+        result, _ = await fetch_entities_map(client, "stack", [stack.id])
+
+        fetched = result[stack.id]
+        assert isinstance(fetched, FetchedStack)
+        assert fetched.primary_asset_id == safe_uuid_from_asset_id(members[0].id)
+        assert client.assets.list.call_args_list == [
+            call(
+                stack_id=stack.id,
+                ids=[missing_pin],
+                state="all",
+                order="asc",
+                limit=1,
+            ),
+            call(stack_id=stack.id, state="live", order="asc", limit=1),
+        ]
 
     @pytest.mark.anyio
     async def test_synthesizes_primary_for_unpinned_burst(self):
@@ -166,22 +184,52 @@ class TestStackEntityFetch:
 
         fetched = result[stack.id]
         assert isinstance(fetched, FetchedStack)
-        # The earliest-captured member stands in for an unpinned burst.
         assert fetched.primary_asset_id == safe_uuid_from_asset_id(members[0].id)
 
     @pytest.mark.anyio
-    async def test_member_less_stack_is_reported_missing(self, caplog):
-        stack = make_gumnut_stack(asset_count=0)
+    async def test_all_trashed_stack_still_resolves_primary(self):
+        stack, members = make_gumnut_stack_with_members(count=2, trashed={0, 1})
+        assert stack.asset_count == 0
         client = Mock()
         client.stacks.list_stacks = mock_list_stacks([stack])
-        client.assets.list = _assets_list(members_by_stack={stack.id: []})
+        client.assets.list = _assets_list(members_by_stack={stack.id: members})
 
-        with caplog.at_level("WARNING"):
-            result, missing = await fetch_entities_map(client, "stack", [stack.id])
+        result, missing = await fetch_entities_map(client, "stack", [stack.id])
 
-        assert stack.id not in result
-        assert stack.id in missing
-        assert any("no members" in record.message for record in caplog.records)
+        fetched = result[stack.id]
+        assert isinstance(fetched, FetchedStack)
+        assert fetched.primary_asset_id == safe_uuid_from_asset_id(members[0].id)
+        assert missing == set()
+        assert client.assets.list.call_args.kwargs["state"] == "all"
+        assert "include" not in client.assets.list.call_args.kwargs
+        assert client.assets.list.call_args_list == [
+            call(stack_id=stack.id, state="live", order="asc", limit=1),
+            call(stack_id=stack.id, state="all", order="asc", limit=1),
+        ]
+
+    @pytest.mark.anyio
+    async def test_primary_resolution_stops_after_first_sufficient_member(self):
+        stack, members = make_gumnut_stack_with_members(count=2)
+        consumed = []
+
+        async def member_page():
+            for member in members:
+                consumed.append(member.id)
+                yield member
+
+        client = Mock()
+        client.stacks.list_stacks = mock_list_stacks([stack])
+        client.assets.list = Mock(return_value=member_page())
+
+        result, _ = await fetch_entities_map(client, "stack", [stack.id])
+
+        fetched = result[stack.id]
+        assert isinstance(fetched, FetchedStack)
+        assert fetched.primary_asset_id == safe_uuid_from_asset_id(members[0].id)
+        assert consumed == [members[0].id]
+        assert client.assets.list.call_args_list == [
+            call(stack_id=stack.id, state="live", order="asc", limit=1)
+        ]
 
     @pytest.mark.anyio
     async def test_two_stacks_in_one_fetch_each_keep_their_own_primary(self):
@@ -213,10 +261,6 @@ class TestStackEntityFetch:
 
     @pytest.mark.anyio
     async def test_transient_member_read_failure_propagates_not_skipped(self):
-        # A transient member-read failure must NOT degrade to a skip: skipping
-        # would advance the events cursor past the stack while its members still
-        # carry stackId, permanently hiding the burst. It propagates so the sync
-        # truncates and the stack retries next cycle.
         good, good_members = make_gumnut_stack_with_members(count=2)
         good.primary_asset_id = good_members[0].id
         bad, _bad_members = make_gumnut_stack_with_members(count=2)
@@ -236,12 +280,38 @@ class TestStackEntityFetch:
             await fetch_entities_map(client, "stack", [good.id, bad.id])
 
     @pytest.mark.anyio
-    async def test_empty_read_contradicting_asset_count_propagates(self):
-        # The row claims members but the state="all" read comes back empty — a
-        # transient contradiction, not a member-less stack (a member-less stack
-        # reports asset_count 0). It must propagate to retry, not skip, or the
-        # stack's members strand as a hidden burst.
-        stack = make_gumnut_stack(asset_count=2)
+    async def test_member_failure_cancels_queued_stack_reads(self):
+        stacks_and_members = [
+            make_gumnut_stack_with_members(count=1)
+            for _ in range(BULK_FANOUT_CONCURRENCY_LIMIT + 2)
+        ]
+        stacks = [stack for stack, _ in stacks_and_members]
+        members_by_stack = {stack.id: members for stack, members in stacks_and_members}
+        bad = stacks[0]
+        started = []
+        client = Mock()
+        client.stacks.list_stacks = Mock(return_value=MockSyncCursorPage(stacks))
+
+        def _list(**kwargs):
+            stack_id = kwargs["stack_id"]
+            started.append(stack_id)
+            if stack_id == bad.id:
+                raise GumnutError("member read failed")
+            return MockSyncCursorPage(members_by_stack[stack_id])
+
+        client.assets.list = Mock(side_effect=_list)
+
+        with pytest.raises(GumnutError):
+            await fetch_entities_map(client, "stack", [stack.id for stack in stacks])
+
+        assert not set(started) & {
+            stack.id for stack in stacks[BULK_FANOUT_CONCURRENCY_LIMIT:]
+        }
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("asset_count", [0, 2])
+    async def test_empty_member_read_propagates(self, asset_count):
+        stack = make_gumnut_stack(asset_count=asset_count)
         client = Mock()
         client.stacks.list_stacks = mock_list_stacks([stack])
         client.assets.list = _assets_list(members_by_stack={stack.id: []})
@@ -307,7 +377,6 @@ class TestEventDrivenStacks:
         assert stack_events[0]["data"]["primaryAssetId"] == str(
             safe_uuid_from_asset_id(members[0].id)
         )
-        # The ack is the raw event cursor, not a synthetic snapshot cursor.
         assert stack_events[0]["ack"] == "StackV1|cur_s1|"
         assert events[-1]["type"] == "SyncCompleteV1"
 
@@ -357,7 +426,6 @@ class TestEventDrivenStacks:
         assert delete_events[0]["data"]["stackId"] == str(
             safe_uuid_from_stack_id(stack.id)
         )
-        # A delete needs no entity hydration — the stack table is never read.
         client.stacks.list_stacks.assert_not_called()
 
     @pytest.mark.anyio
@@ -400,6 +468,70 @@ class TestEventDrivenStacks:
         assert events[-1]["type"] == "SyncCompleteV1"
 
     @pytest.mark.anyio
+    async def test_asset_uses_event_time_stack_membership(self):
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        event_stack, event_stack_members = make_gumnut_stack_with_members(count=1)
+        later_stack = make_gumnut_stack()
+        asset_id = make_gumnut_asset().id
+        asset = AssetResponse(
+            id=asset_id,
+            created_at=UPDATED_AT,
+            local_datetime=UPDATED_AT,
+            mime_type="image/jpeg",
+            original_file_name="moved.jpg",
+            updated_at=UPDATED_AT,
+            file_data=FileDataResponse(
+                checksum="sha256",
+                checksum_sha1="PaDX6+c+Lhjpm5/ciXUROL1ryaU=",
+                device_asset_id="device-asset",
+                device_id="device",
+                file_created_at=UPDATED_AT,
+                file_modified_at=UPDATED_AT,
+                file_size_bytes=1,
+            ),
+            stack_id=later_stack.id,
+        )
+        client.events.get = _events_by_type(
+            {
+                "stack": [
+                    create_mock_event(
+                        "stack",
+                        event_stack.id,
+                        "stack_created",
+                        UPDATED_AT,
+                        "cur_s",
+                    )
+                ],
+                "asset": [
+                    create_mock_event(
+                        "asset",
+                        asset.id,
+                        "asset_updated",
+                        UPDATED_AT,
+                        "cur_a",
+                        payload={"stack_id": event_stack.id},
+                    )
+                ],
+            }
+        )
+        client.stacks.list_stacks = mock_list_stacks([event_stack])
+        client.assets.list = _assets_list(
+            members_by_stack={event_stack.id: event_stack_members},
+            assets_by_id={asset.id: asset},
+        )
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.StacksV1, SyncRequestType.AssetsV2]
+        )
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        asset_event = next(event for event in events if event["type"] == "AssetV2")
+        assert asset_event["data"]["stackId"] == str(
+            safe_uuid_from_stack_id(event_stack.id)
+        )
+
+    @pytest.mark.anyio
     async def test_stack_delete_streams_after_asset_delete(self):
         user = create_mock_user(UPDATED_AT)
         client = create_mock_gumnut_client(user)
@@ -426,13 +558,10 @@ class TestEventDrivenStacks:
         events = await collect_stream(generate_sync_stream(client, request, {}, user))
 
         types = [e["type"] for e in events]
-        # Children (assets) are removed before their parent stack.
         assert types.index("AssetDeleteV1") < types.index("StackDeleteV1")
 
     @pytest.mark.anyio
     async def test_caught_up_client_gets_no_stacks_and_no_sweep(self):
-        # No events for any type: a caught-up client. The event path emits
-        # nothing and never sweeps the stack table (the snapshot path would).
         user = create_mock_user(UPDATED_AT)
         client = create_mock_gumnut_client(user)
 
@@ -443,30 +572,46 @@ class TestEventDrivenStacks:
         client.stacks.list_stacks.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_stack_created_for_member_less_stack_is_skipped(self, caplog):
+    async def test_stack_hydration_failure_truncates_before_asset_pass(self, caplog):
         user = create_mock_user(UPDATED_AT)
         client = create_mock_gumnut_client(user)
         stack = make_gumnut_stack(asset_count=0)
-        client.events.get.return_value = create_mock_events_response(
-            [create_mock_event("stack", stack.id, "stack_created", UPDATED_AT, "cur_m")]
+        asset = make_gumnut_asset(stack_id=stack.id)
+        client.events.get = _events_by_type(
+            {
+                "stack": [
+                    create_mock_event(
+                        "stack", stack.id, "stack_created", UPDATED_AT, "cur_s"
+                    )
+                ],
+                "asset": [
+                    create_mock_event(
+                        "asset", asset.id, "asset_created", UPDATED_AT, "cur_a"
+                    )
+                ],
+            }
         )
         client.stacks.list_stacks = mock_list_stacks([stack])
-        client.assets.list = _assets_list(members_by_stack={stack.id: []})
+        client.assets.list = _assets_list(
+            members_by_stack={stack.id: []}, assets_by_id={asset.id: asset}
+        )
 
-        request = SyncStreamDto(types=[SyncRequestType.StacksV1])
-        with caplog.at_level("WARNING"):
+        request = SyncStreamDto(
+            types=[SyncRequestType.StacksV1, SyncRequestType.AssetsV2]
+        )
+        with caplog.at_level("ERROR"):
             events = await collect_stream(
                 generate_sync_stream(client, request, {}, user)
             )
 
-        assert not any(e["type"] == "StackV1" for e in events)
-        assert events[-1]["type"] == "SyncCompleteV1"
-        assert any("no members" in record.message for record in caplog.records)
+        assert not any(e["type"] in {"StackV1", "AssetV2"} for e in events)
+        assert not any(e["type"] == "SyncCompleteV1" for e in events)
+        assert not any(
+            call.kwargs.get("ids") for call in client.assets.list.call_args_list
+        )
 
     @pytest.mark.anyio
     async def test_stack_vanished_between_event_and_fetch_is_skipped(self, caplog):
-        # The stack event arrives, but the stack is gone by the time we fetch it.
-        # It must be skipped, not crash the stream (the not-returned path).
         user = create_mock_user(UPDATED_AT)
         client = create_mock_gumnut_client(user)
         stack = make_gumnut_stack()
@@ -503,9 +648,7 @@ class TestEventDrivenStacks:
 
     @pytest.mark.anyio
     async def test_undecodable_stack_deleted_event_is_skipped(self, caplog):
-        # A stack_deleted with an undecodable id must skip, not truncate the
-        # sync (stacks are the first pass, so an unguarded decode would take
-        # every later pass and SyncCompleteV1 with it).
+        # Stacks run first, so an unguarded decode would drop every later pass.
         user = create_mock_user(UPDATED_AT)
         client = create_mock_gumnut_client(user)
         client.events.get.return_value = create_mock_events_response(

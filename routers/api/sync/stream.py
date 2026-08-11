@@ -15,6 +15,7 @@ from uuid import UUID
 
 from gumnut import AsyncGumnut
 from gumnut.types.album_response import AlbumResponse
+from gumnut.types.asset_response import AssetResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.user_response import UserResponse
 
@@ -128,8 +129,7 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
     SyncEntityType.PersonDeleteV1,
     SyncEntityType.AlbumDeleteV1,
     SyncEntityType.AssetDeleteV1,
-    # After asset deletes: a stack is the FK parent of its member assets, so the
-    # children (assets) must be removed on the client before the parent (stack).
+    # Delete member assets before their stack; dissolve updates ran in phase 1.
     SyncEntityType.StackDeleteV1,
 ]
 
@@ -396,6 +396,18 @@ async def _stream_entity_type(
                     )
                     if should_apply and entity.person_id != person_id:
                         entity = entity.model_copy(update={"person_id": person_id})
+
+                # Preserve event-time stack membership when hydration observes
+                # a later move whose stack event is outside this sync window.
+                if (
+                    sync_entity_type in (SyncEntityType.AssetV1, SyncEntityType.AssetV2)
+                    and event.event_type == "asset_updated"
+                    and isinstance(entity, AssetResponse)
+                    and isinstance(event.payload, dict)
+                ):
+                    should_apply, stack_id = payload_override(event.payload, "stack_id")
+                    if should_apply and entity.stack_id != stack_id:
+                        entity = entity.model_copy(update={"stack_id": stack_id})
 
                 # album_updated events carry the causally-consistent
                 # album_cover_asset_id in the event payload. Use it
