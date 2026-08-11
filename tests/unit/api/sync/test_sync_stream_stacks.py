@@ -242,6 +242,35 @@ class TestStackEntityFetch:
             for record in caplog.records
         )
 
+    @pytest.mark.anyio
+    async def test_undecodable_stack_id_skips_only_that_stack(self, caplog):
+        # An undecodable stack id (prefix drift) must degrade to a skip, not
+        # raise out of the first sync pass and truncate everything. The decode
+        # is guarded before hydration; the sibling stack still resolves.
+        good, good_members = make_gumnut_stack_with_members(count=2)
+        good.primary_asset_id = good_members[0].id
+        bad, bad_members = make_gumnut_stack_with_members(
+            count=2, stack_id="not_a_valid_stack_prefix"
+        )
+        client = Mock()
+        client.stacks.list_stacks = mock_list_stacks([good, bad])
+        client.assets.list = _assets_list(
+            members_by_stack={good.id: good_members, bad.id: bad_members}
+        )
+
+        with caplog.at_level("WARNING"):
+            result, missing = await fetch_entities_map(
+                client, "stack", [good.id, bad.id]
+            )
+
+        assert isinstance(result.get(good.id), FetchedStack)
+        assert bad.id in missing
+        assert bad.id not in result
+        assert any(
+            "undecodable stack id" in record.message.lower()
+            for record in caplog.records
+        )
+
 
 class TestEventDrivenStacks:
     """Stacks flow through generate_sync_stream on the shared event-cursor path."""
@@ -464,3 +493,27 @@ class TestEventDrivenStacks:
             "unsupported" in record.message.lower() for record in caplog.records
         )
         client.stacks.list_stacks.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_undecodable_stack_deleted_event_is_skipped(self, caplog):
+        # A stack_deleted with an undecodable id must skip, not truncate the
+        # sync (stacks are the first pass, so an unguarded decode would take
+        # every later pass and SyncCompleteV1 with it).
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        client.events.get.return_value = create_mock_events_response(
+            [
+                create_mock_event(
+                    "stack", "not_a_valid_stack_prefix", "stack_deleted", UPDATED_AT
+                )
+            ]
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.StacksV1])
+        with caplog.at_level("WARNING"):
+            events = await collect_stream(
+                generate_sync_stream(client, request, {}, user)
+            )
+
+        assert not any(e["type"] == "StackDeleteV1" for e in events)
+        assert events[-1]["type"] == "SyncCompleteV1"

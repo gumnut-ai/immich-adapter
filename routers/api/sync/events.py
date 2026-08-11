@@ -193,7 +193,18 @@ def make_delete_sync_event(
         )
 
     elif event.event_type == "stack_deleted":
-        data = SyncStackDeleteV1(stackId=safe_uuid_from_stack_id(event.entity_id))
+        # Stacks are the first sync pass, so an unguarded decode here would
+        # truncate the whole sync on prefix drift. Skip instead, degrading like
+        # the other stack surfaces rather than the sibling delete types.
+        try:
+            stack_uuid = safe_uuid_from_stack_id(event.entity_id)
+        except ValueError:
+            logger.warning(
+                "Undecodable stack id in stack_deleted event, skipping",
+                extra={"entity_id": event.entity_id, "cursor": event.cursor},
+            )
+            return None
+        data = SyncStackDeleteV1(stackId=stack_uuid)
         return (
             make_sync_event(
                 SyncEntityType.StackDeleteV1,

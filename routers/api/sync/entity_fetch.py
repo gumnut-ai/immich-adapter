@@ -9,6 +9,7 @@ from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.sync.types import EntityType, FetchedStack
 from routers.utils.asset_conversion import ASSET_INCLUDE_NO_PEOPLE
 from routers.utils.concurrency import gather_with_concurrency
+from routers.utils.gumnut_id_conversion import safe_uuid_from_stack_id
 from routers.utils.stack_conversion import HydratedStack, hydrate_stack
 
 logger = logging.getLogger(__name__)
@@ -22,15 +23,30 @@ def _batched(items: list[str], size: int) -> list[list[str]]:
 async def _hydrate_stack_or_skip(
     client: AsyncGumnut, stack_row: StackListStacksResponse
 ) -> HydratedStack | None:
-    """Hydrate one stack, degrading a member-read failure to a skip.
+    """Hydrate one stack, degrading a decode or member-read failure to a skip.
 
     StackV1 is the first pass in the sync stream, so an unhandled error here
-    truncates every later pass and `SyncCompleteV1`. `hydrate_stacks` aborts the
-    whole batch on one failure, so hydrate per stack behind this guard instead
-    (the same per-stack catch the timeline's `_live_members_or_error` uses): a
-    transient member read failing for one stack costs only its own `StackV1`,
-    routed to the inert `missing_ids` skip, not the sync.
+    escapes the whole `gather` batch (losing every sibling's `StackV1` too) and
+    truncates every later pass plus `SyncCompleteV1`. Two conditions are degraded
+    to the inert `missing_ids` skip instead — matching how the timeline and the
+    asset `stackId` converter already degrade them, rather than the delete path
+    that crashes:
+
+    - an undecodable stack id (prefix drift), guarded around the decode call
+      itself so a member `ValidationError` — also a `ValueError` — raised deeper
+      in hydration is not swallowed with it; and
+    - a transient member-read `GumnutError` (the per-stack catch `hydrate_stacks`'
+      docstring points callers to, since a batch-level failure drops siblings).
     """
+    try:
+        safe_uuid_from_stack_id(stack_row.id)
+    except ValueError:
+        logger.warning(
+            "Undecodable stack id during sync; skipping the stack row and "
+            "syncing its assets as loose",
+            extra={"stack_id": stack_row.id},
+        )
+        return None
     try:
         return await hydrate_stack(client, stack_row)
     except GumnutError:
@@ -152,7 +168,7 @@ async def fetch_entities_map(
             hydrated_stacks = await gather_with_concurrency(
                 [_hydrate_stack_or_skip(gumnut_client, row) for row in rows]
             )
-            for stack_row, hydrated in zip(rows, hydrated_stacks):
+            for stack_row, hydrated in zip(rows, hydrated_stacks, strict=True):
                 if hydrated is None:
                     missing_ids.add(stack_row.id)
                 else:
