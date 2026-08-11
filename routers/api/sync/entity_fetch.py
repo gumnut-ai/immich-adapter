@@ -2,12 +2,14 @@
 
 import logging
 
-from gumnut import AsyncGumnut
+from gumnut import AsyncGumnut, GumnutError
+from gumnut.types.stack_list_stacks_response import StackListStacksResponse
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.sync.types import EntityType, FetchedStack
 from routers.utils.asset_conversion import ASSET_INCLUDE_NO_PEOPLE
-from routers.utils.stack_conversion import hydrate_stack
+from routers.utils.concurrency import gather_with_concurrency
+from routers.utils.stack_conversion import HydratedStack, hydrate_stack
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,30 @@ logger = logging.getLogger(__name__)
 def _batched(items: list[str], size: int) -> list[list[str]]:
     """Split a list into chunks of the given size."""
     return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+async def _hydrate_stack_or_skip(
+    client: AsyncGumnut, stack_row: StackListStacksResponse
+) -> HydratedStack | None:
+    """Hydrate one stack, degrading a member-read failure to a skip.
+
+    StackV1 is the first pass in the sync stream, so an unhandled error here
+    truncates every later pass and `SyncCompleteV1`. `hydrate_stacks` aborts the
+    whole batch on one failure, so hydrate per stack behind this guard instead
+    (the same per-stack catch the timeline's `_live_members_or_error` uses): a
+    transient member read failing for one stack costs only its own `StackV1`,
+    routed to the inert `missing_ids` skip, not the sync.
+    """
+    try:
+        return await hydrate_stack(client, stack_row)
+    except GumnutError:
+        logger.warning(
+            "Stack member read failed during sync; syncing its assets as loose "
+            "and skipping the stack row",
+            extra={"stack_id": stack_row.id},
+            exc_info=True,
+        )
+        return None
 
 
 async def fetch_entities_map(
@@ -111,23 +137,27 @@ async def fetch_entities_map(
                     missing_ids.add(asset.id)
 
         elif gumnut_entity_type == "stack":
-            # Stacks need a hop the other types don't: SyncStackV1 requires a
-            # primaryAssetId, and for an unpinned burst that cover is only known
-            # by reading the members. hydrate_stack resolves it (reusing the REST
-            # effective-primary rules) and the resolved id rides along in
-            # FetchedStack so convert_entity_to_sync_event stays I/O-free. A
-            # member-less stack has no honest primary, so it goes to missing_ids
-            # and is skipped — the same inert path as an asset lacking metadata.
+            # hydrate_stack resolves the effective primary carried in
+            # FetchedStack (see its docstring for why the converter stays
+            # I/O-free). Each hydration is a per-stack member read, so run them
+            # under the shared concurrency bound rather than serially: a first
+            # sync replays every stack event and would otherwise open one
+            # blocking round-trip per stack. A member-less stack (or one whose
+            # member read fails, per _hydrate_stack_or_skip) yields None and goes
+            # to missing_ids — the same inert skip as an asset lacking metadata.
             stack_page = await gumnut_client.stacks.list_stacks(
                 ids=chunk, limit=len(chunk)
             )
-            for stack_row in stack_page.data:
-                hydrated = await hydrate_stack(gumnut_client, stack_row)
+            rows = stack_page.data
+            hydrated_stacks = await gather_with_concurrency(
+                [_hydrate_stack_or_skip(gumnut_client, row) for row in rows]
+            )
+            for stack_row, hydrated in zip(rows, hydrated_stacks):
                 if hydrated is None:
                     missing_ids.add(stack_row.id)
-                    continue
-                result[stack_row.id] = FetchedStack(
-                    row=stack_row, primary_asset_id=hydrated.primary_asset_id
-                )
+                else:
+                    result[stack_row.id] = FetchedStack(
+                        row=stack_row, primary_asset_id=hydrated.primary_asset_id
+                    )
 
     return result, missing_ids

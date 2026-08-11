@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from gumnut import GumnutError
 
 from routers.api.sync.converters import (
     gumnut_asset_to_sync_asset_v1,
@@ -178,6 +179,68 @@ class TestStackEntityFetch:
         assert stack.id not in result
         assert stack.id in missing
         assert any("no members" in record.message for record in caplog.records)
+
+    @pytest.mark.anyio
+    async def test_two_stacks_in_one_fetch_each_keep_their_own_primary(self):
+        # A page can carry several stacks, and mock_list_stacks returns rows
+        # reversed vs. the requested order — so a consumer that zipped response
+        # order to request order (instead of keying by row.id) would cross the
+        # covers. Each stack must resolve to its own.
+        stack_a, members_a = make_gumnut_stack_with_members(count=2)
+        stack_a.primary_asset_id = members_a[0].id
+        stack_b, members_b = make_gumnut_stack_with_members(count=3)
+        stack_b.primary_asset_id = members_b[2].id
+        client = Mock()
+        client.stacks.list_stacks = mock_list_stacks([stack_a, stack_b])
+        client.assets.list = _assets_list(
+            members_by_stack={stack_a.id: members_a, stack_b.id: members_b}
+        )
+
+        result, missing = await fetch_entities_map(
+            client, "stack", [stack_a.id, stack_b.id]
+        )
+
+        assert missing == set()
+        fetched_a = result[stack_a.id]
+        fetched_b = result[stack_b.id]
+        assert isinstance(fetched_a, FetchedStack)
+        assert isinstance(fetched_b, FetchedStack)
+        assert fetched_a.primary_asset_id == safe_uuid_from_asset_id(members_a[0].id)
+        assert fetched_b.primary_asset_id == safe_uuid_from_asset_id(members_b[2].id)
+
+    @pytest.mark.anyio
+    async def test_one_stack_member_read_failure_skips_only_that_stack(self, caplog):
+        # StackV1 is the first sync pass, so one stack's member-read failure must
+        # not abort the batch (or truncate the whole sync). The bad stack skips
+        # to missing_ids; its sibling still resolves.
+        good, good_members = make_gumnut_stack_with_members(count=2)
+        good.primary_asset_id = good_members[0].id
+        bad, _bad_members = make_gumnut_stack_with_members(count=2)
+        client = Mock()
+        client.stacks.list_stacks = mock_list_stacks([good, bad])
+
+        def _list(**kwargs):
+            if kwargs.get("stack_id") == bad.id:
+                raise GumnutError("member read failed")
+            return MockSyncCursorPage(
+                {good.id: good_members}.get(kwargs.get("stack_id"), [])
+            )
+
+        client.assets.list = Mock(side_effect=_list)
+
+        with caplog.at_level("WARNING"):
+            result, missing = await fetch_entities_map(
+                client, "stack", [good.id, bad.id]
+            )
+
+        assert isinstance(result.get(good.id), FetchedStack)
+        assert bad.id in missing
+        assert bad.id not in result
+        assert any(
+            "member read failed" in record.message.lower()
+            or "stack member read failed" in record.message.lower()
+            for record in caplog.records
+        )
 
 
 class TestEventDrivenStacks:

@@ -74,20 +74,34 @@ delete from the album-user pass would duplicate `AlbumDeleteV1`. No
 ## Stacks (StacksV1)
 
 Stacks ride the same event-cursor path as every other entity type. `StacksV1`
-sits first in `_SYNC_TYPE_ORDER` — before assets — because `SyncAssetV1.stackId`
-is an asset→stack FK, so the parent stack must reach the client before the
-member asset that references it. A `stack_created` or `stack_updated` event
-hydrates the stack and emits `StackV1`; a `stack_deleted` event emits
-`StackDeleteV1`, placed after asset deletes in `_DELETE_TYPE_ORDER` (the inverse
-order) so the client removes a burst's members before their parent stack. An
-already-synced client receives stack changes as deltas, not on reset.
+sits first in `_SYNC_TYPE_ORDER` — before assets — because the mobile timeline
+hides an asset whose `stackId` names a stack row the client doesn't hold (its
+`stack_id IS NULL OR id = primaryAssetId` visibility clause), so the stack must
+arrive before the member asset that points at it. The client enforces no stack
+foreign key in either direction; the ordering is about visibility, not insert
+constraints. A `stack_created` or `stack_updated` event hydrates the stack and
+emits `StackV1`; a `stack_deleted` event emits `StackDeleteV1`, placed after
+asset deletes in `_DELETE_TYPE_ORDER` (the inverse order). An already-synced
+client receives stack changes as deltas, not on reset.
 
 Hydration reuses the same effective-primary resolution as the REST stack
 endpoints — `StackV1.primaryAssetId` is required, so a member-less stack is
 dropped (`fetch_entities_map` reports it missing) rather than emitted with a
 manufactured cover. Resolving the primary needs the members, but
-`convert_entity_to_sync_event` is I/O-free, so `fetch_entities_map` hydrates and
-carries the resolved primary alongside the row in a `FetchedStack`.
+`convert_entity_to_sync_event` is I/O-free, so `fetch_entities_map` hydrates each
+stack under a bounded concurrency fan-out and carries the resolved primary
+alongside the row in a `FetchedStack`.
+
+**Dissolve safety lives on the asset side, not in `FK_REFERENCES`.** An asset
+carries whatever `stackId` its `stack_id` decodes to, and that reference is
+deliberately absent from `FK_REFERENCES`, so nothing nulls it when the stack is
+deleted. Correctness relies instead on the Gumnut API emitting an `asset_updated`
+(clearing `stack_id`) for every frame freed from a dissolving stack, ahead of
+the `stack_deleted` — which it does, both when a user removes frames and when
+burst re-detection dissolves a run. Those member upserts stream in phase 1 and
+`StackDeleteV1` streams last in phase 2, so the client clears each member's
+`stackId` before it drops the stack row, and no frame is left pointing at a stack
+the client no longer holds.
 
 `PartnerStacksV1` remains a no-op because partner sharing is unsupported.
 

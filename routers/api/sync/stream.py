@@ -73,8 +73,10 @@ _SKIPPED_EVENT_TYPES: frozenset[str] = frozenset()
 # Order matters - assets before metadata, albums before album_assets, etc.
 # This ordering ensures FK parents are streamed before children during upserts.
 _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
-    # Stacks stream before assets: SyncAssetV1.stackId is an asset->stack FK, so
-    # the stack (parent) must land before the asset (child) that references it.
+    # Stacks stream before assets: the mobile timeline hides an asset whose
+    # stackId names a stack row the client doesn't have, so the stack must land
+    # before the member asset pointing at it. (The client enforces no FK
+    # constraint either way — this is about visibility, not insert order.)
     (SyncRequestType.StacksV1, "stack", SyncEntityType.StackV1),
     (SyncRequestType.AssetsV1, "asset", SyncEntityType.AssetV1),
     (SyncRequestType.AssetsV2, "asset", SyncEntityType.AssetV2),
