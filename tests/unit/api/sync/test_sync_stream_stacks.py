@@ -209,10 +209,11 @@ class TestStackEntityFetch:
         assert fetched_b.primary_asset_id == safe_uuid_from_asset_id(members_b[2].id)
 
     @pytest.mark.anyio
-    async def test_one_stack_member_read_failure_skips_only_that_stack(self, caplog):
-        # StackV1 is the first sync pass, so one stack's member-read failure must
-        # not abort the batch (or truncate the whole sync). The bad stack skips
-        # to missing_ids; its sibling still resolves.
+    async def test_transient_member_read_failure_propagates_not_skipped(self):
+        # A transient member-read failure must NOT degrade to a skip: skipping
+        # would advance the events cursor past the stack while its members still
+        # carry stackId, permanently hiding the burst. It propagates so the sync
+        # truncates and the stack retries next cycle.
         good, good_members = make_gumnut_stack_with_members(count=2)
         good.primary_asset_id = good_members[0].id
         bad, _bad_members = make_gumnut_stack_with_members(count=2)
@@ -228,19 +229,8 @@ class TestStackEntityFetch:
 
         client.assets.list = Mock(side_effect=_list)
 
-        with caplog.at_level("WARNING"):
-            result, missing = await fetch_entities_map(
-                client, "stack", [good.id, bad.id]
-            )
-
-        assert isinstance(result.get(good.id), FetchedStack)
-        assert bad.id in missing
-        assert bad.id not in result
-        assert any(
-            "member read failed" in record.message.lower()
-            or "stack member read failed" in record.message.lower()
-            for record in caplog.records
-        )
+        with pytest.raises(GumnutError):
+            await fetch_entities_map(client, "stack", [good.id, bad.id])
 
     @pytest.mark.anyio
     async def test_undecodable_stack_id_skips_only_that_stack(self, caplog):

@@ -11,7 +11,7 @@ The sync stream (`routers/api/sync/stream.py`) consumes events from the Gumnut A
 
 The stream yields all upserts first (in FK dependency order per `_SYNC_TYPE_ORDER`), then all deletes (in reverse FK order per `_DELETE_TYPE_ORDER`). This prevents FK constraint violations in the mobile client — parents exist before children reference them, and children are cleaned up before parents are removed. See the [sync stream event ordering design doc](../design-docs/sync-stream-event-ordering.md) for the full design rationale and history.
 
-Failure is not isolated per pass: an unhandled fetch/hydration error propagates to `generate_sync_stream`'s top-level handler, which logs it and ends the generator — a truncated HTTP 200 with no `SyncCompleteV1` that silently drops every later pass. New pass code must catch per-item failures and skip them (see `_hydrate_stack_or_skip`); the earliest passes carry the widest blast radius.
+Failure is not isolated per pass: an unhandled fetch/hydration error propagates to `generate_sync_stream`'s top-level handler, which logs it and ends the generator — a truncated HTTP 200 with no `SyncCompleteV1` that drops every later pass, so the earliest passes carry the widest blast radius. Skip a fetch failure to `missing_ids` **only** when the row is *permanently* non-emittable and skipping strands nothing downstream (a member-less or undecodable stack). A *retriable* failure must propagate instead: skipping advances the events cursor past the row while dependent rows still reference it, permanently losing it — for stacks, that hides the burst from the timeline (see `_hydrate_stack_for_sync`).
 
 ## Event Classification
 

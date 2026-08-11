@@ -2,7 +2,7 @@
 
 import logging
 
-from gumnut import AsyncGumnut, GumnutError
+from gumnut import AsyncGumnut
 from gumnut.types.stack_list_stacks_response import StackListStacksResponse
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
@@ -20,23 +20,28 @@ def _batched(items: list[str], size: int) -> list[list[str]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
-async def _hydrate_stack_or_skip(
+async def _hydrate_stack_for_sync(
     client: AsyncGumnut, stack_row: StackListStacksResponse
 ) -> HydratedStack | None:
-    """Hydrate one stack, degrading a decode or member-read failure to a skip.
+    """Hydrate one stack, skipping only *permanent* non-emittable conditions.
 
-    StackV1 is the first pass in the sync stream, so an unhandled error here
-    escapes the whole `gather` batch (losing every sibling's `StackV1` too) and
-    truncates every later pass plus `SyncCompleteV1`. Two conditions are degraded
-    to the inert `missing_ids` skip instead — matching how the timeline and the
-    asset `stackId` converter already degrade them, rather than the delete path
-    that crashes:
+    Returns `None` — routed to the inert `missing_ids` skip — only when the stack
+    can never be emitted and skipping strands no member: an undecodable id
+    (prefix drift; its members degrade to loose via `_immich_stack_id`), or a
+    member-less stack (`hydrate_stack` returns `None`; no asset carries its
+    `stackId`). The decode is guarded around the call so a member
+    `ValidationError` — also a `ValueError` — raised deeper in hydration is not
+    swallowed with it.
 
-    - an undecodable stack id (prefix drift), guarded around the decode call
-      itself so a member `ValidationError` — also a `ValueError` — raised deeper
-      in hydration is not swallowed with it; and
-    - a transient member-read `GumnutError` (the per-stack catch `hydrate_stacks`'
-      docstring points callers to, since a batch-level failure drops siblings).
+    A transient `GumnutError` from the member read is deliberately **not** caught.
+    It is retriable, and skipping it would let `_stream_entity_type` advance the
+    events cursor past the stack while the asset pass still stamps `stackId` on
+    its members — permanently hiding the whole burst, since the mobile timeline
+    drops an asset whose `stackId` names no stack row. Propagating truncates this
+    sync so the cursor is preserved and the stack retries next cycle. A stack
+    that fails *persistently* wedges the pass until it recovers — loud in the
+    logs, and the price of never stranding a member; bounded per-stack retry is a
+    possible future refinement.
     """
     try:
         safe_uuid_from_stack_id(stack_row.id)
@@ -47,16 +52,7 @@ async def _hydrate_stack_or_skip(
             extra={"stack_id": stack_row.id},
         )
         return None
-    try:
-        return await hydrate_stack(client, stack_row)
-    except GumnutError:
-        logger.warning(
-            "Stack member read failed during sync; syncing its assets as loose "
-            "and skipping the stack row",
-            extra={"stack_id": stack_row.id},
-            exc_info=True,
-        )
-        return None
+    return await hydrate_stack(client, stack_row)
 
 
 async def fetch_entities_map(
@@ -158,15 +154,18 @@ async def fetch_entities_map(
             # I/O-free). Each hydration is a per-stack member read, so run them
             # under the shared concurrency bound rather than serially: a first
             # sync replays every stack event and would otherwise open one
-            # blocking round-trip per stack. A member-less stack (or one whose
-            # member read fails, per _hydrate_stack_or_skip) yields None and goes
-            # to missing_ids — the same inert skip as an asset lacking metadata.
+            # blocking round-trip per stack. A permanently non-emittable stack
+            # (member-less, or undecodable id per _hydrate_stack_for_sync) yields
+            # None and goes to missing_ids — the same inert skip as an asset
+            # lacking metadata; a transient member-read failure propagates
+            # instead (see _hydrate_stack_for_sync for why skipping would hide
+            # the burst).
             stack_page = await gumnut_client.stacks.list_stacks(
                 ids=chunk, limit=len(chunk)
             )
             rows = stack_page.data
             hydrated_stacks = await gather_with_concurrency(
-                [_hydrate_stack_or_skip(gumnut_client, row) for row in rows]
+                [_hydrate_stack_for_sync(gumnut_client, row) for row in rows]
             )
             for stack_row, hydrated in zip(rows, hydrated_stacks, strict=True):
                 if hydrated is None:
