@@ -11,6 +11,8 @@ The sync stream (`routers/api/sync/stream.py`) consumes events from the Gumnut A
 
 The stream yields all upserts first (in FK dependency order per `_SYNC_TYPE_ORDER`), then all deletes (in reverse FK order per `_DELETE_TYPE_ORDER`). This prevents FK constraint violations in the mobile client — parents exist before children reference them, and children are cleaned up before parents are removed. See the [sync stream event ordering design doc](../design-docs/sync-stream-event-ordering.md) for the full design rationale and history.
 
+Failure is not isolated per pass: an unhandled fetch/hydration error propagates to `generate_sync_stream`'s top-level handler, which logs it and ends the generator — a truncated HTTP 200 with no `SyncCompleteV1` that silently drops every later pass. New pass code must catch per-item failures and skip them (see `_hydrate_stack_or_skip`); the earliest passes carry the widest blast radius.
+
 ## Event Classification
 
 Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync event from event data), `_SKIPPED_EVENT_TYPES` (ignored), and everything else is treated as an upsert (fetch full entity from the Gumnut API). Delete events are buffered during iteration and yielded in phase 2.
