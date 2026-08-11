@@ -5,8 +5,9 @@ import logging
 from gumnut import AsyncGumnut
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
-from routers.api.sync.types import EntityType
+from routers.api.sync.types import EntityType, FetchedStack
 from routers.utils.asset_conversion import ASSET_INCLUDE_NO_PEOPLE
+from routers.utils.stack_conversion import hydrate_stack
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,15 @@ async def fetch_entities_map(
         Tuple of (entity_id -> entity object mapping, set of IDs that were
         explicitly missing — e.g., assets fetched but lacking metadata)
     """
-    _SUPPORTED_TYPES = {"asset", "album", "person", "face", "album_asset", "metadata"}
+    _SUPPORTED_TYPES = {
+        "asset",
+        "album",
+        "person",
+        "face",
+        "album_asset",
+        "metadata",
+        "stack",
+    }
     if gumnut_entity_type not in _SUPPORTED_TYPES:
         raise ValueError(
             f"Unsupported entity type in fetch_entities_map: {gumnut_entity_type}"
@@ -100,5 +109,25 @@ async def fetch_entities_map(
                         extra={"asset_id": asset.id},
                     )
                     missing_ids.add(asset.id)
+
+        elif gumnut_entity_type == "stack":
+            # Stacks need a hop the other types don't: SyncStackV1 requires a
+            # primaryAssetId, and for an unpinned burst that cover is only known
+            # by reading the members. hydrate_stack resolves it (reusing the REST
+            # effective-primary rules) and the resolved id rides along in
+            # FetchedStack so convert_entity_to_sync_event stays I/O-free. A
+            # member-less stack has no honest primary, so it goes to missing_ids
+            # and is skipped — the same inert path as an asset lacking metadata.
+            stack_page = await gumnut_client.stacks.list_stacks(
+                ids=chunk, limit=len(chunk)
+            )
+            for stack_row in stack_page.data:
+                hydrated = await hydrate_stack(gumnut_client, stack_row)
+                if hydrated is None:
+                    missing_ids.add(stack_row.id)
+                    continue
+                result[stack_row.id] = FetchedStack(
+                    row=stack_row, primary_asset_id=hydrated.primary_asset_id
+                )
 
     return result, missing_ids

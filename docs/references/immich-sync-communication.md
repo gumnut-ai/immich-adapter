@@ -1,6 +1,6 @@
 ---
 title: "Immich Client<>Server Sync Communication"
-last-updated: 2026-08-03
+last-updated: 2026-08-11
 ---
 
 # Immich Client<>Server Sync Communication
@@ -216,7 +216,7 @@ Notes (discussed below):
 - `SyncAckV1`\* = Backfill completion marker (via `sendEntityBackfillCompleteAck()`, one per entity)
 - `SyncAckV1`\*\* = Phase transition marker (before first CREATE, marks updates complete)
 
-Adapter-specific behavior is documented in [Stack Snapshot](../architecture/sync-stream-architecture.md#stack-snapshot-stacksv1).
+Adapter-specific behavior is documented in [Stacks](../architecture/sync-stream-architecture.md#stacks-stacksv1).
 
 ## Special SyncEntityTypes
 

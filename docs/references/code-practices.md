@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-08-03
+last-updated: 2026-08-11
 ---
 
 # Code Practices
@@ -265,8 +265,7 @@ authentication and setup errors before returning the response, and handle
 expected per-item failures inside the generator so they do not truncate the
 stream. Keep degradation guards narrow: `ValidationError` subclasses
 `ValueError`, so catch decoding failures around the decode call rather than
-around model construction. Catch transport errors at the call site when an
-early pass should not suppress later stream work.
+around model construction.
 
 ### Omit vs explicit-null in update-style DTOs — use `model_fields_set`
 

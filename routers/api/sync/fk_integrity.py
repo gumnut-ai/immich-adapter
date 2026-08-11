@@ -5,6 +5,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
+from pydantic import BaseModel
+
 from gumnut.types.events_response import Data as EventData
 
 from routers.immich_models import SyncEntityType
@@ -79,6 +81,7 @@ _GUMNUT_TYPE_TO_SYNC_TYPES: dict[str, list[SyncEntityType]] = {
     "metadata": [SyncEntityType.AssetExifV1],
     "person": [SyncEntityType.PersonV1],
     "face": [SyncEntityType.AssetFaceV1, SyncEntityType.AssetFaceV2],
+    "stack": [SyncEntityType.StackV1],
 }
 
 
@@ -211,7 +214,11 @@ def null_deleted_fk_references(
             )
             updates[attr_name] = None
 
-    if updates:
+    if updates and isinstance(entity, BaseModel):
+        # Only FK-bearing pydantic entities reach here — FetchedStack has no
+        # FK_REFERENCES entry, so `refs` was empty and we returned above. The
+        # isinstance narrows the EntityType union (which now includes the
+        # non-pydantic FetchedStack) for the type checker.
         entity = entity.model_copy(update=updates)
 
     return entity

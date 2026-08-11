@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-08-03
+last-updated: 2026-08-11
 ---
 
 # Sync Stream Architecture
@@ -71,21 +71,25 @@ pass: an `album_deleted` event emits `AlbumDeleteV1`, and the client's
 delete from the album-user pass would duplicate `AlbumDeleteV1`. No
 `AlbumUserDeleteV1` is emitted (Gumnut has no unshare operation).
 
-## Stack Snapshot (StacksV1)
+## Stacks (StacksV1)
 
-Each sync asset carries its stack membership in `stackId`. Before streaming
-assets, `_stream_stacks` re-pages the stack table and emits rows after the
-client's checkpoint in `(updated_at, id)` order. This provides incremental
-upserts and resumes a truncated pass without a stack lifecycle event stream.
+Stacks ride the same event-cursor path as every other entity type. `StacksV1`
+sits first in `_SYNC_TYPE_ORDER` — before assets — because `SyncAssetV1.stackId`
+is an asset→stack FK, so the parent stack must reach the client before the
+member asset that references it. A `stack_created` or `stack_updated` event
+hydrates the stack and emits `StackV1`; a `stack_deleted` event emits
+`StackDeleteV1`, placed after asset deletes in `_DELETE_TYPE_ORDER` (the inverse
+order) so the client removes a burst's members before their parent stack. An
+already-synced client receives stack changes as deltas, not on reset.
 
-Each row uses the same effective-primary resolution as the REST stack endpoints;
-member-less stacks are skipped because `primaryAssetId` is required. Incremental
-upserts prevent assets from referencing a missing stack, which would hide the
-burst in the mobile timeline.
+Hydration reuses the same effective-primary resolution as the REST stack
+endpoints — `StackV1.primaryAssetId` is required, so a member-less stack is
+dropped (`fetch_entities_map` reports it missing) rather than emitted with a
+manufactured cover. Resolving the primary needs the members, but
+`convert_entity_to_sync_event` is I/O-free, so `fetch_entities_map` hydrates and
+carries the resolved primary alongside the row in a `FetchedStack`.
 
-Delete detection remains unsupported. A dissolved stack row is harmless once
-asset events clear its members' `stackId`. `PartnerStacksV1` remains a no-op
-because partner sharing is unsupported.
+`PartnerStacksV1` remains a no-op because partner sharing is unsupported.
 
 ## Adding a New Sync Type Version
 
@@ -104,9 +108,8 @@ The invariant tests in `test_sync_v2.py` assert that every V2 type in `_SYNC_TYP
 Immich sync types that are accepted but have no Gumnut equivalent (e.g., `AssetEditsV1` — we don't support editing) go in `_NOOP_REQUEST_TYPES` in `stream.py`. This prevents "unsupported type" warnings while making the no-op explicit. Do not just add them to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that silently drops them.
 
 The v3 mobile client requests these types on every sync, so keep unsupported
-ones in `_NOOP_REQUEST_TYPES` to avoid repeated warnings. `UserMetadataV1` and
-`StacksV1` are handled specially outside `_SYNC_TYPE_ORDER` and must not be
-listed as no-ops.
+ones in `_NOOP_REQUEST_TYPES` to avoid repeated warnings. `UserMetadataV1` is
+handled specially outside `_SYNC_TYPE_ORDER` and must not be listed as a no-op.
 
 ## Contract with the Gumnut API
 
