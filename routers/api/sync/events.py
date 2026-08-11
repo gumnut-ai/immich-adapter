@@ -19,12 +19,14 @@ from routers.immich_models import (
     SyncAssetFaceDeleteV1,
     SyncEntityType,
     SyncPersonDeleteV1,
+    SyncStackDeleteV1,
 )
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_album_id,
     safe_uuid_from_asset_id,
     safe_uuid_from_face_id,
     safe_uuid_from_person_id,
+    safe_uuid_from_stack_id,
 )
 
 from routers.api.sync.converters import (
@@ -38,8 +40,9 @@ from routers.api.sync.converters import (
     gumnut_face_to_sync_face_v2,
     gumnut_metadata_to_sync_exif_v1,
     gumnut_person_to_sync_person_v1,
+    gumnut_stack_to_sync_stack_v1,
 )
-from routers.api.sync.types import EntityType
+from routers.api.sync.types import EntityType, FetchedStack
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +53,7 @@ _DELETE_EVENT_ENTITY_TYPES: dict[str, str] = {
     "person_deleted": "person",
     "face_deleted": "face",
     "album_asset_removed": "album_asset",
+    "stack_deleted": "stack",
 }
 
 
@@ -188,6 +192,28 @@ def make_delete_sync_event(
             SyncEntityType.AssetFaceDeleteV1,
         )
 
+    elif event.event_type == "stack_deleted":
+        # Stacks are the first sync pass, so an unguarded decode here would
+        # truncate the whole sync on prefix drift. Skip instead, degrading like
+        # the other stack surfaces rather than the sibling delete types.
+        try:
+            stack_uuid = safe_uuid_from_stack_id(event.entity_id)
+        except ValueError:
+            logger.warning(
+                "Undecodable stack id in stack_deleted event, skipping",
+                extra={"entity_id": event.entity_id, "cursor": event.cursor},
+            )
+            return None
+        data = SyncStackDeleteV1(stackId=stack_uuid)
+        return (
+            make_sync_event(
+                SyncEntityType.StackDeleteV1,
+                data.model_dump(mode="json"),
+                event.cursor,
+            ),
+            SyncEntityType.StackDeleteV1,
+        )
+
     elif event.event_type == "album_asset_removed":
         if not isinstance(event.payload, dict):
             logger.warning(
@@ -318,6 +344,13 @@ def convert_entity_to_sync_event(
             sync_model = gumnut_face_to_sync_face_v1(cast(FaceResponse, entity))
     elif gumnut_entity_type == "metadata":
         sync_model = gumnut_metadata_to_sync_exif_v1(cast(AssetResponse, entity))
+    elif gumnut_entity_type == "stack":
+        # fetch_entities_map hydrated the members and resolved the effective
+        # primary into FetchedStack, so the converter stays I/O-free.
+        fetched = cast(FetchedStack, entity)
+        sync_model = gumnut_stack_to_sync_stack_v1(
+            fetched.row, fetched.primary_asset_id, owner_id
+        )
     else:
         raise ValueError(f"Unsupported entity type: {gumnut_entity_type}")
 

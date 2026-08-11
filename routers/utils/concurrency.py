@@ -24,6 +24,7 @@ async def gather_with_concurrency[T](
     coros: Sequence[Coroutine[Any, Any, T]],
     *,
     limit: int = BULK_FANOUT_CONCURRENCY_LIMIT,
+    cancel_on_error: bool = False,
 ) -> list[T]:
     """Run coroutines in parallel under a bounded semaphore.
 
@@ -31,14 +32,10 @@ async def gather_with_concurrency[T](
     callers that walk the results in input order (e.g. sticky-first-error
     semantics, or zipping back to the input id list).
 
-    If any coroutine raises, the exception propagates and the partial results
-    are discarded. The siblings are **not** cancelled — ``asyncio.gather``
-    without ``return_exceptions`` lets already-scheduled awaitables run to
-    completion, and this helper's ``finally`` release lets queued ones acquire
-    the semaphore and start — so an aborted batch still costs its full fan-out
-    upstream. Callers that need per-item errors must catch inside the coroutine
-    and return a result object; callers that need the work to actually *stop*
-    need a different primitive (e.g. a TaskGroup), not this one.
+    If any coroutine raises, the exception propagates and partial results are
+    discarded. By default siblings continue; set ``cancel_on_error`` when their
+    results become useless after the first failure. Callers that need per-item
+    errors must catch inside the coroutine and return a result object.
 
     Only the first exception **to occur** is ever visible — completion order,
     not input order, so which of several failures a caller sees is not
@@ -50,6 +47,7 @@ async def gather_with_concurrency[T](
     the coroutine.
     """
     semaphore = asyncio.Semaphore(limit)
+    failed = asyncio.Event()
 
     async def _run(coro: Coroutine[Any, Any, T]) -> T:
         # Inputs are already-constructed coroutines, so any coro whose `_run`
@@ -61,9 +59,25 @@ async def gather_with_concurrency[T](
         except BaseException:
             coro.close()
             raise
+        if cancel_on_error and failed.is_set():
+            coro.close()
+            semaphore.release()
+            raise asyncio.CancelledError
         try:
             return await coro
+        except BaseException:
+            if cancel_on_error:
+                failed.set()
+            raise
         finally:
             semaphore.release()
 
-    return await asyncio.gather(*(_run(coro) for coro in coros))
+    tasks = [asyncio.create_task(_run(coro)) for coro in coros]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        if cancel_on_error:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        raise

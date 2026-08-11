@@ -228,7 +228,7 @@ def test_album_user_converter_sets_owner_role():
 def test_requested_empty_v3_types_are_explicit_noops():
     """Every v3 type the client requests but the adapter has no data for is an
     explicit no-op (so it is not logged "unsupported" on every sync). Excludes
-    UserMetadataV1, which is emitted, not a no-op."""
+    UserMetadataV1 and StacksV1, which are emitted, not no-ops."""
     empty_requested = {
         SyncRequestType.AssetMetadataV1,
         SyncRequestType.PartnersV1,
@@ -237,7 +237,6 @@ def test_requested_empty_v3_types_are_explicit_noops():
         SyncRequestType.AlbumAssetExifsV1,
         SyncRequestType.MemoriesV1,
         SyncRequestType.MemoryToAssetsV1,
-        SyncRequestType.StacksV1,
     }
     assert empty_requested <= set(_NOOP_REQUEST_TYPES)
     assert empty_requested <= _SUPPORTED_REQUEST_TYPES
@@ -247,6 +246,9 @@ def test_requested_empty_v3_types_are_explicit_noops():
     # UserMetadataV1 is emitted, so it must NOT be a no-op, but still supported.
     assert SyncRequestType.UserMetadataV1 not in _NOOP_REQUEST_TYPES
     assert SyncRequestType.UserMetadataV1 in _SUPPORTED_REQUEST_TYPES
+    assert SyncRequestType.StacksV1 not in _NOOP_REQUEST_TYPES
+    assert SyncRequestType.StacksV1 in _SUPPORTED_REQUEST_TYPES
+    assert SyncRequestType.PartnerStacksV1 in _NOOP_REQUEST_TYPES
 
 
 # --- UserMetadataV1 preferences (minimumFaces override) ------------------------

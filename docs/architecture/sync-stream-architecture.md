@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-07-30
+last-updated: 2026-08-11
 ---
 
 # Sync Stream Architecture
@@ -10,6 +10,13 @@ The sync stream (`routers/api/sync/stream.py`) consumes events from the Gumnut A
 ## Two-Phase Ordering
 
 The stream yields all upserts first (in FK dependency order per `_SYNC_TYPE_ORDER`), then all deletes (in reverse FK order per `_DELETE_TYPE_ORDER`). This prevents FK constraint violations in the mobile client — parents exist before children reference them, and children are cleaned up before parents are removed. See the [sync stream event ordering design doc](../design-docs/sync-stream-event-ordering.md) for the full design rationale and history.
+
+Failure is not isolated per pass: an unhandled fetch error propagates to
+`generate_sync_stream`'s top-level handler and ends the generator without
+`SyncCompleteV1`, dropping every later pass. Degrade to `missing_ids` only when
+skipping cannot strand dependent rows; for stacks, that applies to an
+undecodable ID, not an empty member read. Retriable failures must propagate so
+the event cursor remains unacknowledged.
 
 ## Event Classification
 
@@ -71,6 +78,30 @@ pass: an `album_deleted` event emits `AlbumDeleteV1`, and the client's
 delete from the album-user pass would duplicate `AlbumDeleteV1`. No
 `AlbumUserDeleteV1` is emitted (Gumnut has no unshare operation).
 
+## Stacks (StacksV1)
+
+`StacksV1` uses the event cursor and sits before assets in `_SYNC_TYPE_ORDER`.
+The mobile timeline hides an asset whose `stackId` names an unknown stack, so a
+`stack_created` or `stack_updated` event must emit `StackV1` before its member
+assets. The client has no stack foreign key; this is a visibility constraint.
+Deletes use the inverse order, with `StackDeleteV1` after asset deletes.
+
+`StackV1.primaryAssetId` is required but an unpinned Gumnut stack has no primary
+on its row. Sync therefore reads members without heavy asset includes, applies
+the shared effective-primary rule, and carries only the resulting UUID into the
+converter. Reads are concurrency-bounded. An empty all-state member read is
+retryable even when `asset_count` is zero, because that count excludes trashed
+members; propagating the error truncates the stream before its cursor is acked.
+
+Stack references stay out of `FK_REFERENCES`. When a stack dissolves, the
+Gumnut API emits an `asset_updated` clearing each member's `stack_id` before
+`stack_deleted`. Those upserts run in phase 1 and the stack delete in phase 2,
+so members stop referencing the stack before the client removes it. Asset
+updates use the payload's event-time `stack_id`, preventing a later move outside
+the sync window from leaking into the current event.
+
+`PartnerStacksV1` remains a no-op because partner sharing is unsupported.
+
 ## Adding a New Sync Type Version
 
 When the same gumnut entity type maps to multiple Immich sync versions (e.g., AssetFacesV2 alongside V1), update these files in coordination:
@@ -87,7 +118,9 @@ The invariant tests in `test_sync_v2.py` assert that every V2 type in `_SYNC_TYP
 
 Immich sync types that are accepted but have no Gumnut equivalent (e.g., `AssetEditsV1` — we don't support editing) go in `_NOOP_REQUEST_TYPES` in `stream.py`. This prevents "unsupported type" warnings while making the no-op explicit. Do not just add them to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that silently drops them.
 
-The v3 mobile client requests a broad set of these on **every** sync (partner-*, stacks-*, memories-*, `AssetMetadataV1`, `AssetOcrV1`, `AlbumAssetExifsV1`, the V2 partner/album-asset variants) — all no-ops because the adapter has no sync-stream source for them, whether the underlying feature is absent (sharing, OCR) or reachable only through the REST surfaces (stacks, memories). They all belong in `_NOOP_REQUEST_TYPES` so the per-sync "unsupported types" warning stays quiet. `UserMetadataV1` is the one requested type the adapter *does* synthesize (see "User Preferences" above), so it is deliberately **not** a no-op — it's handled specially alongside `UsersV1`/`AuthUsersV1`.
+The v3 mobile client requests these types on every sync, so keep unsupported
+ones in `_NOOP_REQUEST_TYPES` to avoid repeated warnings. `UserMetadataV1` is
+handled specially outside `_SYNC_TYPE_ORDER` and must not be listed as a no-op.
 
 ## Contract with the Gumnut API
 

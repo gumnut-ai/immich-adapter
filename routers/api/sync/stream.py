@@ -15,6 +15,7 @@ from uuid import UUID
 
 from gumnut import AsyncGumnut
 from gumnut.types.album_response import AlbumResponse
+from gumnut.types.asset_response import AssetResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.user_response import UserResponse
 
@@ -60,6 +61,7 @@ _DELETE_EVENT_TYPES = frozenset(
         "person_deleted",
         "face_deleted",
         "album_asset_removed",
+        "stack_deleted",
     }
 )
 
@@ -72,6 +74,11 @@ _SKIPPED_EVENT_TYPES: frozenset[str] = frozenset()
 # Order matters - assets before metadata, albums before album_assets, etc.
 # This ordering ensures FK parents are streamed before children during upserts.
 _SYNC_TYPE_ORDER: list[tuple[SyncRequestType, str, SyncEntityType]] = [
+    # Stacks stream before assets: the mobile timeline hides an asset whose
+    # stackId names a stack row the client doesn't have, so the stack must land
+    # before the member asset pointing at it. (The client enforces no FK
+    # constraint either way — this is about visibility, not insert order.)
+    (SyncRequestType.StacksV1, "stack", SyncEntityType.StackV1),
     (SyncRequestType.AssetsV1, "asset", SyncEntityType.AssetV1),
     (SyncRequestType.AssetsV2, "asset", SyncEntityType.AssetV2),
     (SyncRequestType.AlbumsV1, "album", SyncEntityType.AlbumV1),
@@ -122,6 +129,8 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
     SyncEntityType.PersonDeleteV1,
     SyncEntityType.AlbumDeleteV1,
     SyncEntityType.AssetDeleteV1,
+    # Delete member assets before their stack; dissolve updates ran in phase 1.
+    SyncEntityType.StackDeleteV1,
 ]
 
 # Request types that are accepted but have no Gumnut equivalent, so nothing is
@@ -144,11 +153,7 @@ _DELETE_TYPE_ORDER: list[SyncEntityType] = [
 #                          EXIF arrives via AssetExifsV1.
 #   - MemoriesV1 /
 #     MemoryToAssetsV1:    Gumnut has no memories feature; the tab renders empty.
-#   - StacksV1:            stacks exist and are readable over REST (`/api/stacks`),
-#                          but nothing feeds them into the sync stream, and the
-#                          sync asset converters still emit stackId=None — so a
-#                          stack row here would name a grouping no synced asset
-#                          claims membership in.
+# StacksV1 is event-driven via _SYNC_TYPE_ORDER; PartnerStacksV1 remains a no-op.
 # UserMetadataV1 is deliberately NOT here — it is emitted (a synthesized
 # preferences row); see gumnut_user_to_sync_user_metadata_v1.
 _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
@@ -163,13 +168,9 @@ _NOOP_REQUEST_TYPES: dict[SyncRequestType, SyncEntityType] = {
     SyncRequestType.AlbumAssetExifsV1: SyncEntityType.AlbumAssetExifCreateV1,
     SyncRequestType.MemoriesV1: SyncEntityType.MemoryV1,
     SyncRequestType.MemoryToAssetsV1: SyncEntityType.MemoryToAssetV1,
-    SyncRequestType.StacksV1: SyncEntityType.StackV1,
 }
 
-# Supported SyncRequestTypes (used to detect unsupported types requested by
-# client). AuthUsersV1/UsersV1/UserMetadataV1 are handled specially (not via
-# _SYNC_TYPE_ORDER): the first two stream the user record, and UserMetadataV1
-# streams a synthesized preferences row (see gumnut_user_to_sync_user_metadata_v1).
+# User types below are handled outside _SYNC_TYPE_ORDER.
 _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
     {request_type for request_type, _, _ in _SYNC_TYPE_ORDER}
     | {
@@ -395,6 +396,18 @@ async def _stream_entity_type(
                     )
                     if should_apply and entity.person_id != person_id:
                         entity = entity.model_copy(update={"person_id": person_id})
+
+                # Preserve event-time stack membership when hydration observes
+                # a later move whose stack event is outside this sync window.
+                if (
+                    sync_entity_type in (SyncEntityType.AssetV1, SyncEntityType.AssetV2)
+                    and event.event_type == "asset_updated"
+                    and isinstance(entity, AssetResponse)
+                    and isinstance(event.payload, dict)
+                ):
+                    should_apply, stack_id = payload_override(event.payload, "stack_id")
+                    if should_apply and entity.stack_id != stack_id:
+                        entity = entity.model_copy(update={"stack_id": stack_id})
 
                 # album_updated events carry the causally-consistent
                 # album_cover_asset_id in the event payload. Use it

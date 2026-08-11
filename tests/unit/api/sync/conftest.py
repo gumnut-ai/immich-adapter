@@ -72,6 +72,7 @@ def create_mock_gumnut_client(user: Mock) -> Mock:
     client.album_assets.list.return_value = empty_page
     client.people.list.return_value = empty_page
     client.faces.list.return_value = empty_page
+    client.stacks.list_stacks.return_value = empty_page
     return client
 
 
@@ -168,6 +169,8 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     asset.file_data.file_size_bytes = 1059218
     asset.metadata = None
     asset.trashed_at = None
+    # Avoid a truthy auto-created Mock for unstacked assets.
+    asset.stack_id = None
     return asset
 
 
