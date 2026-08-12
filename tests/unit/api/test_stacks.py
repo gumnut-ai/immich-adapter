@@ -9,7 +9,7 @@ import asyncio
 import inspect
 import logging
 import math
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import pytest
@@ -33,7 +33,7 @@ from routers.api.stacks import (
 )
 from routers.immich_models import BulkIdsDto, StackCreateDto, StackUpdateDto
 from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
-from routers.utils.current_user import get_current_user
+from routers.utils.current_user import get_current_user, get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
@@ -41,6 +41,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_stack_id,
 )
+from services.websockets import WebSocketEvent
 from tests.conftest import (
     MockPaginatedListing,
     MockSyncCursorPage,
@@ -919,19 +920,26 @@ def _removal_client() -> Mock:
     return client
 
 
-async def _delete_stack(client, stack_uuid):
-    return await delete_stack(id=stack_uuid, client=client)  # type: ignore[call-arg]
-
-
-async def _remove_asset(client, stack_uuid, asset_uuid):
-    return await remove_asset_from_stack(  # type: ignore[call-arg]
-        id=stack_uuid, assetId=asset_uuid, client=client
+async def _delete_stack(client, stack_uuid, current_user_id=None):
+    return await delete_stack(  # type: ignore[call-arg]
+        id=stack_uuid, client=client, current_user_id=current_user_id or uuid4()
     )
 
 
-async def _delete_stacks(client, stack_uuids):
+async def _remove_asset(client, stack_uuid, asset_uuid, current_user_id=None):
+    return await remove_asset_from_stack(  # type: ignore[call-arg]
+        id=stack_uuid,
+        assetId=asset_uuid,
+        client=client,
+        current_user_id=current_user_id or uuid4(),
+    )
+
+
+async def _delete_stacks(client, stack_uuids, current_user_id=None):
     return await delete_stacks(  # type: ignore[call-arg]
-        request=BulkIdsDto(ids=list(stack_uuids)), client=client
+        request=BulkIdsDto(ids=list(stack_uuids)),
+        client=client,
+        current_user_id=current_user_id or uuid4(),
     )
 
 
@@ -1141,6 +1149,120 @@ class TestDeleteStacks:
             await _delete_stacks(client, [uuid4(), uuid4()])
 
 
+class TestStackUpdateWebSocket:
+    """`on_asset_stack_update` emission from the mutating stack routes.
+
+    The event carries no payload (see `services/websockets.py`); these tests pin
+    that it fires once per successful mutation, targets the owning user's room,
+    and stays silent on the read-only PUT path. Emission is patched out so the
+    tests assert the call, not a live socket.
+    """
+
+    @staticmethod
+    def _patch_emit():
+        return patch("routers.api.stacks.emit_user_event", new_callable=AsyncMock)
+
+    @pytest.mark.anyio
+    async def test_create_emits_scoped_to_the_owner(self, mock_current_user):
+        stack, members = make_gumnut_stack_with_members(count=2)
+        client = _write_client(stack, members)
+
+        with self._patch_emit() as mock_emit:
+            await _create(client, mock_current_user, _member_uuids(members))
+
+        mock_emit.assert_awaited_once_with(
+            WebSocketEvent.STACK_UPDATE, mock_current_user.id
+        )
+
+    @pytest.mark.anyio
+    async def test_cover_change_emits(self, mock_current_user):
+        stack, members = make_gumnut_stack_with_members(count=2)
+        client = _write_client(stack, members)
+        stack_uuid = safe_uuid_from_stack_id(stack.id)
+        cover_uuid = safe_uuid_from_asset_id(members[0].id)
+
+        with self._patch_emit() as mock_emit:
+            await _update(
+                client, mock_current_user, stack_uuid, primaryAssetId=cover_uuid
+            )
+
+        mock_emit.assert_awaited_once_with(
+            WebSocketEvent.STACK_UPDATE, mock_current_user.id
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "body", [{}, {"primaryAssetId": None}], ids=["omitted", "explicit-null"]
+    )
+    async def test_cover_less_put_is_silent(self, mock_current_user, body):
+        """A cover-less PUT is a pure read, so it emits nothing — unlike upstream,
+        which emits `StackUpdate` unconditionally."""
+        stack, members = make_gumnut_stack_with_members(count=2)
+        stack.primary_asset_id = members[1].id
+        client = _write_client(stack, members)
+        stack_uuid = safe_uuid_from_stack_id(stack.id)
+
+        with self._patch_emit() as mock_emit:
+            await _update(client, mock_current_user, stack_uuid, **body)
+
+        mock_emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_delete_emits_scoped_to_the_owner(self):
+        client = _removal_client()
+        user_id = uuid4()
+
+        with self._patch_emit() as mock_emit:
+            await _delete_stack(client, uuid4(), current_user_id=user_id)
+
+        mock_emit.assert_awaited_once_with(WebSocketEvent.STACK_UPDATE, user_id)
+
+    @pytest.mark.anyio
+    async def test_remove_asset_emits_scoped_to_the_owner(self):
+        client = _removal_client()
+        user_id = uuid4()
+
+        with self._patch_emit() as mock_emit:
+            await _remove_asset(client, uuid4(), uuid4(), current_user_id=user_id)
+
+        mock_emit.assert_awaited_once_with(WebSocketEvent.STACK_UPDATE, user_id)
+
+    @pytest.mark.anyio
+    async def test_clean_bulk_dissolve_emits_once(self):
+        client = _removal_client()
+        user_id = uuid4()
+
+        with self._patch_emit() as mock_emit:
+            await _delete_stacks(
+                client, [uuid4(), uuid4(), uuid4()], current_user_id=user_id
+            )
+
+        mock_emit.assert_awaited_once_with(WebSocketEvent.STACK_UPDATE, user_id)
+
+    @pytest.mark.anyio
+    async def test_bulk_dissolve_is_silent_when_a_delete_fails(self):
+        """A partial batch raises before emitting; the client reconciles through
+        the sync stream instead of a hint for a half-applied dissolve."""
+        client = _removal_client()
+        client.stacks.delete = AsyncMock(side_effect=make_sdk_status_error(500, "boom"))
+
+        with self._patch_emit() as mock_emit:
+            with pytest.raises(GumnutError):
+                await _delete_stacks(client, [uuid4(), uuid4()])
+
+        mock_emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_empty_bulk_dissolve_is_silent(self):
+        """A no-op bulk delete changed nothing, so it emits nothing."""
+        client = _removal_client()
+
+        with self._patch_emit() as mock_emit:
+            await _delete_stacks(client, [])
+
+        mock_emit.assert_not_awaited()
+
+
 class TestRouteDependencies:
     """Every stack route is user-scoped, so each must resolve a client and user.
 
@@ -1168,7 +1290,16 @@ class TestRouteDependencies:
         "handler", [delete_stacks, delete_stack, remove_asset_from_stack]
     )
     def test_removal_handler_declares_the_client_dependency(self, handler):
-        """The removal routes forward to the backend but hydrate nothing, so they
-        take the client (and must authenticate) without a `current_user`."""
+        """The removal routes forward to the backend and hydrate nothing, so they
+        take the client (and must authenticate) without a full `current_user`."""
         default = inspect.signature(handler).parameters["client"].default
         assert default.dependency is get_authenticated_gumnut_client
+
+    @pytest.mark.parametrize(
+        "handler", [delete_stacks, delete_stack, remove_asset_from_stack]
+    )
+    def test_removal_handler_declares_the_user_id_dependency(self, handler):
+        """The removal routes emit `on_asset_stack_update` to the owning user's
+        room, so each resolves the caller's id even though it hydrates nothing."""
+        default = inspect.signature(handler).parameters["current_user_id"].default
+        assert default.dependency is get_current_user_id

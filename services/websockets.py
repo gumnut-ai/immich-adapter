@@ -49,6 +49,13 @@ class WebSocketEvent(Enum):
     # type `(asset: AssetResponseDto) => void`). Web upserts the asset into the
     # timeline manager on receipt; mobile triggers a generic sync refresh.
     ASSET_UPDATE = "on_asset_update"
+    # Carries no payload. Upstream emits `clientSend("on_asset_stack_update",
+    # userId)` with no data arg — the repository type `on_asset_stack_update:
+    # string[]` is a rest-param that spreads to zero args, not an id array. So
+    # this is emitted with the default `payload=None` via emit_user_event, never
+    # emit_user_event_per_id. Emitted on stack create / cover change / dissolve /
+    # member removal, scoped to the owning user's room.
+    STACK_UPDATE = "on_asset_stack_update"
     SESSION_DELETE = "on_session_delete"
     SERVER_VERSION = "on_server_version"
 
