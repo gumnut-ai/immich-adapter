@@ -94,8 +94,7 @@ retryable even when `asset_count` is zero, because that count excludes trashed
 members; propagating the error truncates the stream before its cursor is acked.
 
 The asset converter maps a member's `stack_id` to the Immich `stackId` through
-the shared `immich_stack_id` helper (`gumnut_id_conversion.py`), which degrades
-an undecodable ID to a loose asset rather than raising; the upload-ready
+the shared `immich_stack_id` helper (`gumnut_id_conversion.py`); the upload-ready
 WebSocket payload uses the same helper, so both surfaces treat membership
 identically.
 

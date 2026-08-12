@@ -596,13 +596,36 @@ class TestEventDrivenStacks:
     @pytest.mark.anyio
     async def test_dissolve_frees_member_with_null_stack_id_before_delete(self):
         # A dissolve lands stack_deleted plus the freed member's asset_updated
-        # (stack_id cleared) in one window. The freed asset must reach the client
-        # with stackId=None (phase 1) before StackDeleteV1 (phase 2), so it is
-        # never left pointing at a stack the client has already removed.
+        # (stack_id cleared) in one window. Hydration can still observe the
+        # member pointing at the about-to-be-deleted stack, so the freed asset
+        # is built with stack_id=stack.id and the asset_updated payload clears
+        # it to None — proving the event-time override, not the fetched state,
+        # drives the emitted value. It must reach the client with stackId=None
+        # (phase 1) before StackDeleteV1 (phase 2), so it is never left pointing
+        # at a stack the client has already removed.
         user = create_mock_user(UPDATED_AT)
         client = create_mock_gumnut_client(user)
         stack = make_gumnut_stack()
-        freed = make_gumnut_asset(stack_id=None)
+        # A real AssetResponse (not a Mock) so the event-time stack_id override
+        # in the asset pass actually runs — it is gated on isinstance(AssetResponse).
+        freed = AssetResponse(
+            id=make_gumnut_asset().id,
+            created_at=UPDATED_AT,
+            local_datetime=UPDATED_AT,
+            mime_type="image/jpeg",
+            original_file_name="freed.jpg",
+            updated_at=UPDATED_AT,
+            file_data=FileDataResponse(
+                checksum="sha256",
+                checksum_sha1="PaDX6+c+Lhjpm5/ciXUROL1ryaU=",
+                device_asset_id="device-asset",
+                device_id="device",
+                file_created_at=UPDATED_AT,
+                file_modified_at=UPDATED_AT,
+                file_size_bytes=1,
+            ),
+            stack_id=stack.id,
+        )
         client.events.get = _events_by_type(
             {
                 "stack": [
