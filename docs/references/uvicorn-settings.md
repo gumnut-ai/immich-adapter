@@ -26,7 +26,7 @@ The adapter selects `websockets-sansio` explicitly. Uvicorn's `auto` selection p
 
 The minimum Uvicorn dependency is intentional: the selected implementation needs the keepalive behavior present at that floor. Do not lower it or switch protocols based only on a clean application test; exercise a real Socket.IO connect/disconnect path.
 
-`tests/unit/config/test_uvicorn_ws_config.py` pins the production command, debugger configuration, dependency floor, and explanatory comments together.
+`tests/unit/config/test_uvicorn_ws_config.py` verifies that Uvicorn resolves `websockets-sansio` to the modern protocol and that the implementation does not import the legacy WebSocket tree. The production command, debugger setting, dependency floor, and their comments remain separate owners; verify them together when changing this protocol.
 
 ## HTTP connection tuning
 
