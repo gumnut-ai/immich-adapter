@@ -9,12 +9,13 @@ import json
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
 from gumnut import AsyncGumnut
 from gumnut.types.album_response import AlbumResponse
+from gumnut.types.events_response import Data as EventData
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.user_response import UserResponse
@@ -52,6 +53,28 @@ logger = logging.getLogger(__name__)
 
 # Page size for events API pagination
 EVENTS_PAGE_SIZE = GUMNUT_API_MAX_PAGE_SIZE
+
+
+class StackRowReadIncomplete(Exception):
+    """A stack upsert event names a row the bulk read did not return, and no
+    delete event in the sync window explains the absence.
+
+    A transiently-invisible row (e.g. read lag between the events endpoint and
+    ``list_stacks``), not a deleted stack — surfaced so the sync truncates and
+    retries with the cursor preserved. Skipping instead would advance the
+    cursor past the stack while the asset pass still stamps ``stackId`` on its
+    members, and the mobile timeline hides any asset whose ``stackId`` names no
+    stack row — a hidden burst that would not self-heal until some later stack
+    event re-emitted the row.
+
+    Both transient shapes resolve on the retry: a lagging row becomes visible,
+    and a stack deleted *after* the window bound gets its delete event inside
+    the next window. A stack that fails *persistently* wedges the pass until it
+    recovers — loud in the logs, and the same trade-off the member-read
+    failures in ``entity_fetch`` already make; never stranding a member is the
+    priority.
+    """
+
 
 # Delete event types that are converted to Immich delete sync models
 _DELETE_EVENT_TYPES = frozenset(
@@ -182,6 +205,67 @@ _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
 )
 
 
+async def _require_missing_stacks_deleted(
+    gumnut_client: AsyncGumnut,
+    absent_ids: set[str],
+    page_events: Sequence[EventData],
+    page_has_more: bool,
+    sync_started_at: datetime,
+) -> None:
+    """Raise unless every absent stack row is explained by an in-window delete.
+
+    ``absent_ids`` are ids the bulk read did not return at all — distinct from
+    ``fetch_entities_map``'s ``missing_ids``, which the read returned but
+    deliberately degraded.
+
+    A stack **created and deleted within one sync window** is legitimately
+    absent from ``list_stacks`` — its create is an upsert event, but the row is
+    already gone — so treating every missing row as retriable would wedge the
+    sync forever on a stack that can never be fetched. The absence is excused
+    exactly when a ``stack_deleted`` event for the id exists in the window:
+    first checked against the current page (free), then by paging the remaining
+    stack events forward to the window bound. The events API has no entity-id
+    filter, so the look-ahead is a scan — acceptable because it runs only in
+    the rare missing-row case and stack events are sparse.
+
+    Any id left unexplained raises :class:`StackRowReadIncomplete` (see there
+    for why the transient shapes self-heal and a persistent failure wedges the
+    pass, deliberately).
+    """
+    unexplained = absent_ids - {
+        event.entity_id for event in page_events if event.event_type == "stack_deleted"
+    }
+    last_cursor = page_events[-1].cursor
+    has_more = page_has_more
+    while unexplained and has_more:
+        # The dict is deliberate: the SDK types entity_types as a string
+        # sequence, but the API also accepts the plain string
+        # _stream_entity_type sends — the untyped dict is what lets the same
+        # wire shape pass the type checker.
+        params: dict[str, Any] = {
+            "created_at_lt": sync_started_at,
+            "entity_types": "stack",
+            "limit": EVENTS_PAGE_SIZE,
+            "after_cursor": last_cursor,
+        }
+        events_response = await gumnut_client.events.get(**params)
+        events = events_response.data
+        if not events:
+            break
+        unexplained -= {
+            event.entity_id for event in events if event.event_type == "stack_deleted"
+        }
+        last_cursor = events[-1].cursor
+        has_more = events_response.has_more
+
+    if unexplained:
+        raise StackRowReadIncomplete(
+            f"{len(unexplained)} stack row(s) missing from the bulk read with "
+            f"no delete event in the sync window "
+            f"(sample: {sorted(unexplained)[:10]})"
+        )
+
+
 async def _stream_entity_type(
     gumnut_client: AsyncGumnut,
     gumnut_entity_type: str,
@@ -262,6 +346,18 @@ async def _stream_entity_type(
         # Track entity IDs that were requested but not returned (deleted/404)
         not_returned = set(upsert_ids) - entities_map.keys()
         if not_returned:
+            # A missing stack row is only safely skippable when a delete
+            # explains it — see StackRowReadIncomplete. Rows the fetch returned
+            # but deliberately degraded (undecodable id, in missing_ids) are
+            # excluded: they are not evidence of read lag.
+            if gumnut_entity_type == "stack":
+                await _require_missing_stacks_deleted(
+                    gumnut_client,
+                    not_returned - missing_ids,
+                    events,
+                    events_response.has_more,
+                    sync_started_at,
+                )
             stats.not_found_ids[gumnut_entity_type].update(not_returned)
 
         # Verify that IDs referenced in event payloads (e.g. face_updated's

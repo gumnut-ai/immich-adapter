@@ -708,20 +708,249 @@ class TestEventDrivenStacks:
         )
 
     @pytest.mark.anyio
-    async def test_stack_vanished_between_event_and_fetch_is_skipped(self, caplog):
+    async def test_missing_stack_row_without_delete_truncates_before_asset_pass(self):
+        # A stack_created whose row the bulk read doesn't return, with no
+        # delete anywhere in the window, is transient (e.g. read lag). The
+        # stream must truncate so the cursor is preserved — skipping would let
+        # the asset pass stamp stackId on members of a stack the client never
+        # receives, hiding the burst.
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        stack = make_gumnut_stack()
+        asset = make_gumnut_asset(stack_id=stack.id)
+        client.events.get = _events_by_type(
+            {
+                "stack": [
+                    create_mock_event(
+                        "stack", stack.id, "stack_created", UPDATED_AT, "cur_v"
+                    )
+                ],
+                "asset": [
+                    create_mock_event(
+                        "asset", asset.id, "asset_created", UPDATED_AT, "cur_a"
+                    )
+                ],
+            }
+        )
+        client.stacks.list_stacks = mock_list_stacks([])  # row not visible yet
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.StacksV1, SyncRequestType.AssetsV2]
+        )
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        assert not any(e["type"] in {"StackV1", "AssetV2"} for e in events)
+        assert not any(e["type"] == "SyncCompleteV1" for e in events)
+        assert not any(
+            call.kwargs.get("ids") for call in client.assets.list.call_args_list
+        )
+        # The page reported has_more=False, so the guard must conclude from it
+        # alone — no look-ahead scan call.
+        stack_event_reads = [
+            call
+            for call in client.events.get.call_args_list
+            if call.kwargs.get("entity_types") == "stack"
+        ]
+        assert len(stack_event_reads) == 1
+
+    @pytest.mark.anyio
+    async def test_missing_stack_row_with_same_page_delete_is_skipped(self):
+        # Created and deleted within one page: the row is legitimately gone,
+        # so the absence is inert — the delete still reaches the client.
         user = create_mock_user(UPDATED_AT)
         client = create_mock_gumnut_client(user)
         stack = make_gumnut_stack()
         client.events.get.return_value = create_mock_events_response(
-            [create_mock_event("stack", stack.id, "stack_created", UPDATED_AT, "cur_v")]
+            [
+                create_mock_event(
+                    "stack", stack.id, "stack_created", UPDATED_AT, "cur_s1"
+                ),
+                create_mock_event(
+                    "stack", stack.id, "stack_deleted", UPDATED_AT, "cur_s2"
+                ),
+            ]
         )
-        client.stacks.list_stacks = mock_list_stacks([])  # nothing comes back
+        client.stacks.list_stacks = mock_list_stacks([])
 
         request = SyncStreamDto(types=[SyncRequestType.StacksV1])
-        with caplog.at_level("WARNING"):
-            events = await collect_stream(
-                generate_sync_stream(client, request, {}, user)
-            )
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        assert not any(e["type"] == "StackV1" for e in events)
+        delete_events = [e for e in events if e["type"] == "StackDeleteV1"]
+        assert len(delete_events) == 1
+        assert events[-1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_missing_stack_row_with_later_page_delete_is_skipped(self):
+        # The delete that explains the absence sits in a later page of the
+        # window, so the guard's look-ahead scan has to find it.
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        stack = make_gumnut_stack()
+        pages_by_cursor = {
+            None: create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", stack.id, "stack_created", UPDATED_AT, "cur_s1"
+                    )
+                ],
+                has_more=True,
+            ),
+            "cur_s1": create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", stack.id, "stack_deleted", UPDATED_AT, "cur_s2"
+                    )
+                ]
+            ),
+        }
+        client.events.get = AsyncMock(
+            side_effect=lambda **kwargs: pages_by_cursor[kwargs.get("after_cursor")]
+        )
+        client.stacks.list_stacks = mock_list_stacks([])
+
+        request = SyncStreamDto(types=[SyncRequestType.StacksV1])
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        assert not any(e["type"] == "StackV1" for e in events)
+        delete_events = [e for e in events if e["type"] == "StackDeleteV1"]
+        assert len(delete_events) == 1
+        assert events[-1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_scan_explaining_only_one_of_two_missing_stacks_truncates(self):
+        # Two rows missing; the look-ahead scan finds a delete for one of them
+        # in a later page. The other stays unexplained, so the stream must
+        # still truncate — exercising the scan's has_more chaining and partial
+        # set subtraction.
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        deleted_stack = make_gumnut_stack()
+        lagging_stack = make_gumnut_stack()
+        pages_by_cursor = {
+            None: create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", deleted_stack.id, "stack_created", UPDATED_AT, "cur_s1"
+                    ),
+                    create_mock_event(
+                        "stack", lagging_stack.id, "stack_created", UPDATED_AT, "cur_s2"
+                    ),
+                ],
+                has_more=True,
+            ),
+            "cur_s2": create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", deleted_stack.id, "stack_deleted", UPDATED_AT, "cur_s3"
+                    )
+                ]
+            ),
+        }
+        client.events.get = AsyncMock(
+            side_effect=lambda **kwargs: pages_by_cursor[kwargs.get("after_cursor")]
+        )
+        client.stacks.list_stacks = mock_list_stacks([])
+
+        request = SyncStreamDto(types=[SyncRequestType.StacksV1])
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        assert not any(
+            e["type"] in {"StackV1", "StackDeleteV1", "SyncCompleteV1"} for e in events
+        )
+
+    @pytest.mark.anyio
+    async def test_scan_finds_delete_on_second_scan_page(self):
+        # The explaining delete sits two scan pages ahead, behind an unrelated
+        # delete — pinning the scan's page-to-page cursor advance. Keying the
+        # mock by after_cursor makes stale-cursor reuse fail fast (KeyError)
+        # instead of looping.
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        stack = make_gumnut_stack()
+        other_stack = make_gumnut_stack()
+        pages_by_cursor = {
+            None: create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", stack.id, "stack_created", UPDATED_AT, "cur_s1"
+                    )
+                ],
+                has_more=True,
+            ),
+            "cur_s1": create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", other_stack.id, "stack_deleted", UPDATED_AT, "cur_s2"
+                    )
+                ],
+                has_more=True,
+            ),
+            "cur_s2": create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", stack.id, "stack_deleted", UPDATED_AT, "cur_s3"
+                    )
+                ]
+            ),
+        }
+        client.events.get = AsyncMock(
+            side_effect=lambda **kwargs: pages_by_cursor[kwargs.get("after_cursor")]
+        )
+        client.stacks.list_stacks = mock_list_stacks([])
+
+        request = SyncStreamDto(types=[SyncRequestType.StacksV1])
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        assert not any(e["type"] == "StackV1" for e in events)
+        delete_events = [e for e in events if e["type"] == "StackDeleteV1"]
+        assert len(delete_events) == 2
+        assert events[-1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_scan_hitting_empty_page_despite_has_more_truncates(self):
+        # Degraded upstream input: the trigger page claims has_more=True but
+        # the look-ahead page comes back empty. The guard must fall out of the
+        # scan and still raise rather than loop or excuse the absence.
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        stack = make_gumnut_stack()
+        pages_by_cursor = {
+            None: create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", stack.id, "stack_created", UPDATED_AT, "cur_s1"
+                    )
+                ],
+                has_more=True,
+            ),
+            "cur_s1": create_mock_events_response([], has_more=True),
+        }
+        client.events.get = AsyncMock(
+            side_effect=lambda **kwargs: pages_by_cursor[kwargs.get("after_cursor")]
+        )
+        client.stacks.list_stacks = mock_list_stacks([])
+
+        request = SyncStreamDto(types=[SyncRequestType.StacksV1])
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        assert not any(e["type"] in {"StackV1", "SyncCompleteV1"} for e in events)
+
+    @pytest.mark.anyio
+    async def test_undecodable_stack_row_degrades_without_truncating(self):
+        # An undecodable id is returned by the bulk read and deliberately
+        # degraded (missing_ids) — it is not evidence of read lag, so it must
+        # not trip the missing-row guard even with no delete in the window.
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        stack = make_gumnut_stack(stack_id="not_a_valid_stack_prefix")
+        client.events.get.return_value = create_mock_events_response(
+            [create_mock_event("stack", stack.id, "stack_created", UPDATED_AT, "cur_u")]
+        )
+        client.stacks.list_stacks = mock_list_stacks([stack])
+
+        request = SyncStreamDto(types=[SyncRequestType.StacksV1])
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
 
         assert not any(e["type"] == "StackV1" for e in events)
         assert events[-1]["type"] == "SyncCompleteV1"
