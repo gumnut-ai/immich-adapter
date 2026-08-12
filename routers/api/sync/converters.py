@@ -4,7 +4,6 @@ Converter functions mapping Gumnut SDK types to Immich sync models.
 Pure functions with no internal dependencies.
 """
 
-import logging
 from uuid import UUID
 
 from gumnut.types.album_asset_response import AlbumAssetResponse
@@ -52,6 +51,7 @@ from routers.utils.datetime_utils import (
     to_actual_utc,
 )
 from routers.utils.gumnut_id_conversion import (
+    immich_stack_id,
     safe_uuid_from_album_id,
     safe_uuid_from_asset_id,
     safe_uuid_from_face_id,
@@ -59,25 +59,6 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_stack_id,
     safe_uuid_from_user_id,
 )
-
-
-logger = logging.getLogger(__name__)
-
-
-def _immich_stack_id(gumnut_stack_id: str | None) -> str | None:
-    """Map a stack FK, degrading invalid IDs to an unstacked asset."""
-    if not gumnut_stack_id:
-        return None
-    try:
-        return str(safe_uuid_from_stack_id(gumnut_stack_id))
-    except ValueError:
-        # Prefix drift affects every stack, so avoid one warning per asset.
-        logger.debug(
-            "Asset stack_id is not decodable to an Immich UUID; syncing the "
-            "asset as loose (stackId=None)",
-            extra={"stack_id": gumnut_stack_id},
-        )
-        return None
 
 
 def _format_exposure_time(exposure_time: float | None) -> str | None:
@@ -231,7 +212,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: UUID) -> SyncA
         height=asset.height if asset.height else None,
         libraryId=None,
         livePhotoVideoId=None,
-        stackId=_immich_stack_id(asset.stack_id),
+        stackId=immich_stack_id(asset.stack_id),
         thumbhash=asset.thumbhash,
         width=asset.width if asset.width else None,
     )

@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-07-31
+last-updated: 2026-08-12
 ---
 
 # Immich WebSocket Events Reference
@@ -58,7 +58,7 @@ last-updated: 2026-07-31
 - **Videos**: emitted after the same `_VIDEO_EMIT_DELAY_SECONDS` deferral used for `on_upload_success`, so mobile clients do not hear about a new upload before the video's still-image variants usually exist.
 
 **Sent to**: Asset owner (by userId)
-**Payload**: Compact sync format — `SyncAssetV1` asset + `SyncAssetExifV1` exif (see `routers/immich_models.py`)
+**Payload**: Compact sync format — `SyncAssetV1` asset + `SyncAssetExifV1` exif (see `routers/immich_models.py`). The asset's `stackId` reflects burst-stack membership (mapped via `immich_stack_id`) and is `null` for a loose asset — usually the case at upload time, since bursts are detected afterward.
 
 **Client handling**:
 - **Web**: Not used

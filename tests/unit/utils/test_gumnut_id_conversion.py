@@ -19,6 +19,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_face_id,
     safe_uuid_from_stack_id,
     uuid_to_gumnut_stack_id,
+    immich_stack_id,
     safe_uuid_from_user_id,
     uuid_to_gumnut_user_id,
 )
@@ -283,3 +284,21 @@ class TestEdgeCases:
             gumnut_id = uuid_to_gumnut_id(test_uuid, prefix)
             recovered = safe_uuid_from_gumnut_id(gumnut_id, prefix)
             assert recovered == test_uuid, f"Failed with prefix: {prefix}"
+
+
+class TestImmichStackId:
+    """immich_stack_id maps a Gumnut stack FK to the Immich stackId string,
+    degrading a missing or undecodable ID to None (a loose asset) instead of
+    raising."""
+
+    def test_none_maps_to_none(self):
+        assert immich_stack_id(None) is None
+
+    def test_valid_stack_id_maps_to_uuid_string(self):
+        stack_id = uuid_to_gumnut_stack_id(uuid4())
+        assert immich_stack_id(stack_id) == str(safe_uuid_from_stack_id(stack_id))
+
+    def test_undecodable_stack_id_degrades_to_none(self):
+        # A non-stack prefix can't decode; the helper returns None rather than
+        # raising, so a backend prefix change degrades to a loose asset.
+        assert immich_stack_id("not_a_valid_stack_prefix") is None

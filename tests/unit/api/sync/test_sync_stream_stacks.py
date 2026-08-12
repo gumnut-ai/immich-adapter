@@ -561,6 +561,103 @@ class TestEventDrivenStacks:
         assert types.index("AssetDeleteV1") < types.index("StackDeleteV1")
 
     @pytest.mark.anyio
+    async def test_moved_between_stacks_upsert_carries_new_stack_id(self):
+        # A membership move is signalled as one asset_updated; the resulting
+        # single AssetV2 upsert carries the new stack's stackId.
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        new_stack = make_gumnut_stack()
+        asset = make_gumnut_asset(stack_id=new_stack.id)
+        client.events.get = _events_by_type(
+            {
+                "asset": [
+                    create_mock_event(
+                        "asset",
+                        asset.id,
+                        "asset_updated",
+                        UPDATED_AT,
+                        "cur_a",
+                        payload={"stack_id": new_stack.id},
+                    )
+                ],
+            }
+        )
+        client.assets.list = _assets_list(assets_by_id={asset.id: asset})
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetsV2])
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        asset_events = [e for e in events if e["type"] == "AssetV2"]
+        assert len(asset_events) == 1
+        assert asset_events[0]["data"]["stackId"] == str(
+            safe_uuid_from_stack_id(new_stack.id)
+        )
+
+    @pytest.mark.anyio
+    async def test_dissolve_frees_member_with_null_stack_id_before_delete(self):
+        # A dissolve lands stack_deleted plus the freed member's asset_updated
+        # (stack_id cleared) in one window. Hydration can still observe the
+        # member pointing at the about-to-be-deleted stack, so the freed asset
+        # is built with stack_id=stack.id and the asset_updated payload clears
+        # it to None — proving the event-time override, not the fetched state,
+        # drives the emitted value. It must reach the client with stackId=None
+        # (phase 1) before StackDeleteV1 (phase 2), so it is never left pointing
+        # at a stack the client has already removed.
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        stack = make_gumnut_stack()
+        # A real AssetResponse (not a Mock) so the event-time stack_id override
+        # in the asset pass actually runs — it is gated on isinstance(AssetResponse).
+        freed = AssetResponse(
+            id=make_gumnut_asset().id,
+            created_at=UPDATED_AT,
+            local_datetime=UPDATED_AT,
+            mime_type="image/jpeg",
+            original_file_name="freed.jpg",
+            updated_at=UPDATED_AT,
+            file_data=FileDataResponse(
+                checksum="sha256",
+                checksum_sha1="PaDX6+c+Lhjpm5/ciXUROL1ryaU=",
+                device_asset_id="device-asset",
+                device_id="device",
+                file_created_at=UPDATED_AT,
+                file_modified_at=UPDATED_AT,
+                file_size_bytes=1,
+            ),
+            stack_id=stack.id,
+        )
+        client.events.get = _events_by_type(
+            {
+                "stack": [
+                    create_mock_event(
+                        "stack", stack.id, "stack_deleted", UPDATED_AT, "cur_sd"
+                    )
+                ],
+                "asset": [
+                    create_mock_event(
+                        "asset",
+                        freed.id,
+                        "asset_updated",
+                        UPDATED_AT,
+                        "cur_a",
+                        payload={"stack_id": None},
+                    )
+                ],
+            }
+        )
+        client.assets.list = _assets_list(assets_by_id={freed.id: freed})
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.AssetsV2, SyncRequestType.StacksV1]
+        )
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        types = [e["type"] for e in events]
+        asset_event = next(e for e in events if e["type"] == "AssetV2")
+        assert asset_event["data"]["stackId"] is None
+        assert types.index("AssetV2") < types.index("StackDeleteV1")
+
+    @pytest.mark.anyio
     async def test_caught_up_client_gets_no_stacks_and_no_sweep(self):
         user = create_mock_user(UPDATED_AT)
         client = create_mock_gumnut_client(user)

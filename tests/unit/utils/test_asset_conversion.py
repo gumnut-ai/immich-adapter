@@ -19,7 +19,10 @@ from gumnut.types.asset_response import AssetResponse
 from gumnut.types.file_data_response import FileDataResponse
 
 from routers.immich_models import AssetStackResponseDto, PersonResponseDto
-from routers.utils.gumnut_id_conversion import uuid_to_gumnut_person_id
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_stack_id,
+    uuid_to_gumnut_person_id,
+)
 from routers.api.sync.converters import gumnut_asset_to_sync_asset_v1
 from routers.utils.asset_conversion import (
     build_asset_upload_ready_payload,
@@ -34,6 +37,7 @@ from routers.utils.asset_conversion import (
     resolve_immich_checksum,
 )
 from routers.utils.datetime_utils import to_actual_utc
+from tests.conftest import make_gumnut_asset, make_gumnut_stack
 
 
 class TestDateResolution:
@@ -877,3 +881,26 @@ class TestFileDataSourcing:
         # the capture time, never ``None`` (Immich requires fileModifiedAt).
         result = resolve_file_modified_at(self._asset(None))
         assert result == to_actual_utc(self.DT)
+
+
+class TestUploadReadyPayloadStackId:
+    """The upload-ready WebSocket payload carries the asset's stack membership,
+    mapped through the same shared ``immich_stack_id`` helper as the sync stream
+    (so a stacked asset and a loose one behave identically on both surfaces)."""
+
+    OWNER = UUID("22222222-2222-2222-2222-222222222222")
+
+    def test_stacked_asset_carries_mapped_stack_id(self):
+        stack = make_gumnut_stack()
+        asset = make_gumnut_asset(stack_id=stack.id)
+
+        payload = build_asset_upload_ready_payload(asset, self.OWNER)
+
+        assert payload.asset.stackId == str(safe_uuid_from_stack_id(stack.id))
+
+    def test_loose_asset_has_null_stack_id(self):
+        asset = make_gumnut_asset(stack_id=None)
+
+        payload = build_asset_upload_ready_payload(asset, self.OWNER)
+
+        assert payload.asset.stackId is None
