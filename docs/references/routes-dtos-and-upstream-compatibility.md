@@ -46,7 +46,7 @@ For the full error handling strategy including rate limit protection and per-ite
 
 ## Defining Endpoint Parameters
 
-- Use `Annotated` to specify attributes, such as `Query()`, `Path()`, `Body()` functions, or numeric or string validations, but do not use `Default` — the default value should be specified as part of the Python declaration. This is not just style: the `Query(default=X)` shape makes a param's default untestable — see the Testing section.
+- Use `Annotated` to specify attributes, such as `Query()`, `Path()`, `Body()` functions, or numeric or string validations, but do not use `Default` — the default value should be specified as part of the Python declaration. This is not just style: the `Query(default=X)` shape makes a param's default untestable — see [Testing](testing-and-logging.md#testing).
 - If a parameter is not required, use `| SkipJsonSchema[None]` after defining the type to allow Pydantic to accept the `None` type, but prevent `None` from being exposed in the OpenAPI schema.
 - If the exposed parameter name needs to be camelCase, use `alias="camelCase"` within the function and then use an appropriate snake_case name for the parameter in the function signature.
 
@@ -82,7 +82,7 @@ A regen can add newly-required fields to (or retype) the generated DTOs, breakin
 
 The SDK is auto-generated (Stainless), so a version bump can add **newly-required** fields to response models (e.g. `FaceResponse.source` arrived in 0.116). Tests construct these models directly as fixtures, so a bump can break suites unrelated to the endpoint you're touching. Run the **full** `uv run pytest` after a bump (not just the changed endpoint's tests), and when a required field is added, `grep` the tests for `<Model>(` to fix every direct construction.
 
-A bump can also *close* gaps silently: grep for raw `client.post(` / `client.delete(` call sites and migrate any whose typed method has now landed (see the raw-client note under *Bulk-ID Endpoints*). Nothing fails to prompt this — a raw call keeps working forever.
+A bump can also *close* gaps silently: grep for raw `client.post(` / `client.delete(` call sites and migrate any whose typed method has now landed (see [Bulk-ID Endpoints](pagination-bulk-and-concurrency.md#bulk-id-endpoints)). Nothing fails to prompt this — a raw call keeps working forever.
 
 Some SDK contracts are already pinned by committed tests, so a bump that breaks them fails the suite rather than waiting to be caught by hand. `tests/unit/utils/test_stack_conversion.py` does this for the stack resource — asserting each method still accepts the parameters the stack routes are being built to pass, and that each stack response class still carries the fields `GumnutStackRow` reads. Note what that guard does and doesn't cover: it catches a **renamed or dropped** parameter, not a newly-**required** one, so the full-suite run above is still what surfaces those. Extend the pattern when adding a surface whose SDK contract pyright can't check.
 
