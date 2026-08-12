@@ -1,6 +1,6 @@
 ---
 title: "Running with Immich Mobile"
-last-updated: 2026-08-02
+last-updated: 2026-08-11
 ---
 
 # Running with Immich Mobile
@@ -59,7 +59,7 @@ uv run uvicorn main:app --reload --port 3001 \
   --ssl-certfile=cert.pem
 ```
 
-This uses `uvicorn` directly because the `fastapi` CLI doesn't expose SSL options. `--ws websockets-sansio` matches what production runs — see `docs/references/uvicorn-settings.md` § "ws (WebSocket protocol implementation)" for why the default is wrong for our Socket.IO transport. `--host` is set to your machine's IP (the same one from step 2) because the default (`127.0.0.1`) only accepts connections from the local machine. Using the specific IP rather than `0.0.0.0` limits access to your LAN interface instead of exposing the server on all network interfaces.
+This uses `uvicorn` directly because the `fastapi` CLI doesn't expose SSL options. `--ws websockets-sansio` matches what production runs — see `docs/references/uvicorn-settings.md` § "WebSocket implementation" for why the default is wrong for our Socket.IO transport. `--host` is set to your machine's IP (the same one from step 2) because the default (`127.0.0.1`) only accepts connections from the local machine. Using the specific IP rather than `0.0.0.0` limits access to your LAN interface instead of exposing the server on all network interfaces.
 
 The server will now be available at `https://192.168.1.100:3001`.
 

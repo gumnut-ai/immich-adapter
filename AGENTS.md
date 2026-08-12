@@ -2,7 +2,7 @@
 
 Before starting work, read `README.md` for project setup and consult the Documentation Map below for relevant docs.
 
-**This repo is public, so everything committed here has to stand on its own.** A reader who can't open a Gumnut ticket or a private sibling repo (`gumnut-ai/photos`, `gumnut-ai/gumnut-dev-setup`) still needs the full picture from code, docs, commit messages, and PR bodies. That's not because those things are secret — they aren't — but because a pointer nobody can follow carries no information. So put the context in the repo: write the rationale instead of citing a tracker ID, describe the contract instead of citing a private file path, and call the backend by its public name — **the Gumnut API** (`api.gumnut.ai`) — never the internal `photos-api`. The consolidated convention, with examples, is in `docs/references/code-practices.md` § Project Conventions.
+**This repo is public, so everything committed here has to stand on its own.** A reader who can't open a Gumnut ticket or a private sibling repo (`gumnut-ai/photos`, `gumnut-ai/gumnut-dev-setup`) still needs the full picture from code, docs, commit messages, and PR bodies. That's not because those things are secret — they aren't — but because a pointer nobody can follow carries no information. So put the context in the repo: write the rationale instead of citing a tracker ID, describe the contract instead of citing a private file path, and call the backend by its public name — **the Gumnut API** (`api.gumnut.ai`) — never the internal `photos-api`. The consolidated convention, with examples, is in `docs/references/project-conventions.md` § Project Conventions.
 
 Concrete violations that have actually shipped: cross-link lines like `Cross-link: gumnut-ai/photos#NNN` in a PR description (the PR number resolves to a 404 for outsiders) and "see `photos-api/services/...`" file-path references. When a Linear issue or design doc that lives in a private repo asks you to "cross-link the photos-api PR," do not copy that framing verbatim — describe what the other repo's change does instead.
 
@@ -34,7 +34,7 @@ The sections below follow that order, with design docs split by their `status:` 
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Adapter architecture | `docs/architecture/adapter-architecture.md` | Adapter design, auth and sessions, request observability (Sentry tags, user attribution), the single-library assumption, trash/restore, timeline burst-stack collapse, data translation, pagination, sync protocol, error handling, endpoint status |
+| Adapter architecture | `docs/architecture/adapter-architecture.md` | Adapter boundary, request and data translation, persistence/custody routing, timeline stack collapse, trash, sync/realtime routing, and failure behavior |
 | Sync stream architecture | `docs/architecture/sync-stream-architecture.md` | Sync stream event processing, FK ordering, event classification, face/album handling, adding new sync type versions |
 | WebSocket implementation | `docs/architecture/websocket-implementation.md` | WebSocket connections, real-time sync, event handling |
 | Session & checkpoint implementation | `docs/architecture/session-checkpoint-implementation.md` | Session management, checkpoint tracking, sync state |
@@ -43,7 +43,12 @@ The sections below follow that order, with design docs split by their `status:` 
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Code practices | `docs/references/code-practices.md` | Python style, project conventions, endpoint patterns, checksum handling and deduplication, error handling, testing, logging, PR practices |
+| Code practices index | `docs/references/code-practices.md` | Choosing the focused convention reference for a task |
+| Project conventions | `docs/references/project-conventions.md` | Python style, repository organization, public-repository wording, and pull requests |
+| Routes and compatibility | `docs/references/routes-dtos-and-upstream-compatibility.md` | Route parameters, DTOs, errors, generated models, upstream behavior, and version bumps |
+| Asset and media handling | `docs/references/asset-and-media-handling.md` | Asset fields, media variants, checksums, and asset-operation WebSocket emission |
+| Pagination, bulk, and concurrency | `docs/references/pagination-bulk-and-concurrency.md` | Cursor/offset translation, bounded enumeration, aggregates, fan-out, and bulk-ID operations |
+| Testing and logging | `docs/references/testing-and-logging.md` | Test fixtures, async test traps, structured logging, and upstream severity policy |
 | Documentation conventions | `docs/references/documentation-conventions.md` | Writing or maintaining docs — frontmatter, map rows, lifecycle, freshness, path citations |
 | GitHub Actions best practices | `docs/references/github-actions-best-practices.md` | Writing or reviewing workflows — action pins, permissions, untrusted triggers, shell interpolation, zizmor |
 | WebSocket events reference | `docs/references/websocket-events-reference.md` | WebSocket event types, payload formats |
@@ -75,8 +80,8 @@ Decision records, not descriptions of the running system — consult them for *w
 |-------|----------|-----------------|
 | Authentication design | `docs/design-docs/auth-design.md` | Why session tokens replaced raw JWTs, and the constraints that forced it — current auth is in `docs/architecture/adapter-architecture.md` |
 | Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Why the adapter deploys as a multi-stage Docker image, and the pinned-vs-floating base-image trade-off |
-| Checksum support | `docs/design-docs/checksum-support.md` | Why a dedicated SHA-1 column beat a side table — current checksum rules are in `docs/references/code-practices.md` |
+| Checksum support | `docs/design-docs/checksum-support.md` | Why a dedicated SHA-1 column beat a side table — current checksum rules are in `docs/references/asset-and-media-handling.md` |
 | Trash soft-delete (adapter) | `docs/design-docs/trash-soft-delete-adapter.md` | The original adapter-side trash design record — current trash/restore semantics are in `docs/architecture/adapter-architecture.md` |
-| Static file sharing | `docs/design-docs/static-file-sharing.md` | Why the adapter serves Immich static files itself, and the Docker extraction decision |
-| Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Why sync upserts and deletes use FK-safe ordering, and the trade-offs of that design |
-| Immich v3 API change analysis | `docs/design-docs/immich-v3-api-changes.md` | Why the adapter made a clean Immich v3 retarget and which compatibility gaps remained |
+| Static file sharing | `docs/design-docs/static-file-sharing.md` | Why the adapter serves Immich static files itself and chose Docker extraction — current operation is in the web guide |
+| Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Why event replay required parent-first upserts, child-first deletes, and current-state FK verification |
+| Immich v3 API change analysis | `docs/design-docs/immich-v3-api-changes.md` | Why the adapter made a clean Immich v3 retarget and how behavioral changes were separated from codegen noise |

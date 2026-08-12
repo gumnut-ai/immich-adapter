@@ -1,6 +1,6 @@
 ---
 title: Documentation Conventions
-last-updated: 2026-07-30
+last-updated: 2026-08-11
 ---
 
 # Documentation Conventions
@@ -103,7 +103,7 @@ Keep codebase-specific facts and traps that a capable contributor could reasonab
 - Do not restate call-site counts, tunable constants, dependency inventories, or line numbers; point to the owning file, symbol, or grep.
 - Keep implementation mechanics in code. A reference doc states the durable pattern and cites the implementation — and when the rule is newer than the code, re-check every cited implementation still obeys it, or name the one that predates it. A citation that violates the rule stated beside it teaches the antipattern.
 - Verify third-party and upstream-Immich behavior from primary sources or the checked-out upstream source.
-- Everything committed here must stand on its own for a public reader. Describe the contract and rationale instead of relying on a private ticket or sibling path; follow `code-practices.md` § Project Conventions.
+- Everything committed here must stand on its own for a public reader. Describe the contract and rationale instead of relying on a private ticket or sibling path; follow `project-conventions.md` § Project Conventions.
 
 If a reference doc grows because it covers several legitimate topics, split it behind a short index instead of deleting high-signal rules.
 

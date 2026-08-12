@@ -241,8 +241,8 @@ def gumnut_asset_to_sync_asset_v2(asset: AssetResponse, owner_id: UUID) -> SyncA
     """Convert Gumnut AssetResponse to Immich SyncAssetV2 format.
 
     SyncAssetV2 is SyncAssetV1 with ``duration`` as integer milliseconds instead
-    of the interval string — the only payload difference between the two (see the
-    ``immich-v3-api-changes.md`` design doc, §5). Delegate to V1 and swap it.
+    of the interval string — the only payload difference between the two.
+    Delegate to V1 and swap it.
     """
     fields = gumnut_asset_to_sync_asset_v1(asset, owner_id).model_dump()
     fields["duration"] = duration_ms(asset.duration)
@@ -357,9 +357,8 @@ def gumnut_album_to_sync_album_v1(album: AlbumResponse, owner_id: UUID) -> SyncA
 def gumnut_album_to_sync_album_v2(album: AlbumResponse, owner_id: UUID) -> SyncAlbumV2:
     """Convert Gumnut AlbumResponse to Immich SyncAlbumV2 format.
 
-    In the Immich v3 GA model SyncAlbumV2 is SyncAlbumV1 without ``ownerId``
-    (see the ``immich-v3-api-changes.md`` design doc, §5). Delegate to V1 and
-    drop the field V2 no longer carries.
+    In the Immich v3 model SyncAlbumV2 is SyncAlbumV1 without ``ownerId``.
+    Delegate to V1 and drop the field V2 no longer carries.
     """
     fields = gumnut_album_to_sync_album_v1(album, owner_id).model_dump()
     fields.pop("ownerId", None)
@@ -371,8 +370,7 @@ def gumnut_album_to_sync_album_user_v1(
 ) -> SyncAlbumUserV1:
     """Synthesize the owner album-user link for an album.
 
-    Immich v3's ``SyncAlbumV2`` dropped ``ownerId`` (see the
-    ``immich-v3-api-changes.md`` design doc, §5), so the v3 mobile client no
+    Immich v3's ``SyncAlbumV2`` dropped ``ownerId``, so the v3 mobile client no
     longer derives the owner from the album event itself. It instead builds the
     album↔owner relationship from the separate ``AlbumUsersV1`` stream, and its
     album-list query inner-joins on an owner-role album-user row — without one,

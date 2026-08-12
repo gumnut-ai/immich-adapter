@@ -5,7 +5,7 @@ For Immich endpoints that accept `BulkIdsDto` and must return
 album add/remove flows). The trash-style flow — where errors propagate to the
 global `GumnutError` handler unmapped — uses the simpler `for chunk in
 batched(...)` pattern in-place; see `routers/api/trash.py` and the
-"Bulk-ID Endpoints" section of `docs/references/code-practices.md` for the
+"Bulk-ID Endpoints" section of `docs/references/pagination-bulk-and-concurrency.md` for the
 distinction.
 
 Two helpers live here:

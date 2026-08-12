@@ -3,7 +3,7 @@ title: "Static File Sharing Decision"
 status: deprecated
 superseded-by: ../guides/running-with-immich-web.md
 created: 2025-10-26
-last-updated: 2026-08-07
+last-updated: 2026-08-11
 ---
 
 # Static File Sharing Decision
@@ -73,3 +73,14 @@ The project chose the Docker extraction option. The Docker build copies the
 web files from the pinned Immich server image, while the extraction script
 supports local development. This decision avoids committing built assets and
 keeps the selected Immich version in a version-controlled build input.
+
+## Outcome
+
+Closed on **2026-08-11** after reverification against the default branch. The
+production Docker image extracts the pinned Immich web build, the FastAPI
+application serves static assets and SPA fallback alongside the API, and
+`scripts/extract-immich-web.py` provides the same source for local testing.
+Current setup and verification are maintained in
+[`running-with-immich-web.md`](../guides/running-with-immich-web.md); current
+system boundaries are in
+[`adapter-architecture.md`](../architecture/adapter-architecture.md).

@@ -1,161 +1,64 @@
 ---
-title: "Session & Checkpoint Object Reference"
-last-updated: 2026-07-22
+title: "Session and Checkpoint Storage Reference"
+last-updated: 2026-08-11
 ---
 
-# Session & Checkpoint Object Reference
+# Session and Checkpoint Storage Reference
 
-## Redis Data Model
+This reference defines the Redis records owned by `SessionStore` and `CheckpointStore`. For OAuth, request authentication, refresh, sync, acknowledgement, and logout flow, read the [session and checkpoint architecture](../architecture/session-checkpoint-implementation.md).
 
-### Overview
+The adapter uses core Redis data structures only; it does not require RedisJSON or RediSearch.
 
-The adapter uses Redis for session and checkpoint storage, leaning on its built-in TTL for session expiration.
+## Session records
 
-**Note:** This implementation uses only core Redis commands -- no RedisJSON, RediSearch, or other modules required.
+`services/session_store.py` owns the complete field set and serialization.
 
-### Session Token Architecture
+| Key | Redis type | Purpose |
+|-----|------------|---------|
+| `session:{uuid}` | Hash | One adapter session, including the encrypted Gumnut JWT and client metadata |
+| `user:{user_id}:sessions` | Set | Session UUIDs associated with one user |
+| `sessions:by_updated_at` | Sorted set | Explicit stale-session maintenance ordered by session activity |
 
-The adapter generates a **separate session token** (a UUID) that is independent of the Gumnut JWT. This design:
+The stable session UUID is the client-facing Immich access token. It is independent of the backend JWT, so a JWT refresh can update encrypted server-side custody without changing the client token or checkpoint namespace.
 
-- **Survives JWT refresh**: Gumnut may refresh the JWT, but the session token remains stable
-- **Enables session revocation**: Deleting a session immediately revokes access
-- **Supports checkpoints**: Sync checkpoints are tied to the stable session ID, not a changing JWT hash
+Representative session fields are `user_id`, `library_id`, `stored_jwt`, `device_type`, `device_os`, `app_version`, `created_at`, `updated_at`, and `is_pending_sync_reset`. Treat `services/session_store.py::Session` as the field authority rather than copying defaults or client-version examples here.
 
-**Authentication flow:**
+Session hashes may have a TTL. When a TTL is configured, the checkpoint hash receives the same TTL. Redis expiry does not remove set/sorted-set index entries; normal user-session reads lazily prune orphans, and `SessionStore.cleanup_stale_sessions` is an explicit maintenance operation rather than a background scheduler.
 
-1. User logs in via OAuth -> Gumnut returns JWT
-2. Adapter generates a session token (UUID) and stores the encrypted JWT
-3. Client receives the session token as `accessToken`
-4. On each request, client sends session token -> adapter looks up session -> retrieves stored JWT for Gumnut API calls
+## Checkpoint records
 
-### Key Schema
+| Key | Redis type | Field | Value |
+|-----|------------|-------|-------|
+| `session:{uuid}:checkpoints` | Hash | Generated `SyncEntityType` value | `{updated_at}|{cursor}` |
+
+A synthetic record looks like:
 
 ```text
-# Session data (Hash) - with optional TTL for expiration
-session:{uuid}
-  ├── user_id: "user_123"
-  ├── library_id: "lib_456"
-  ├── stored_jwt: "<encrypted Gumnut JWT>"
-  ├── device_type: "iOS"
-  ├── device_os: "iOS"
-  ├── app_version: "1.94.0"
-  ├── created_at: "2025-01-20T10:00:00+00:00"
-  ├── updated_at: "2025-01-20T10:30:00+00:00"
-  └── is_pending_sync_reset: "0"
-
-# User sessions index (Set) - enables "get all sessions for user"
-user:{user_id}:sessions
-  └── {uuid_1, uuid_2, ...}
-
-# Checkpoints for a session (Hash) - all entity types in one key
-session:{uuid}:checkpoints
-  ├── AssetV1: "2025-01-20T10:30:45.123456+00:00|2025-01-20T10:30:45+00:00"
-  ├── AlbumV1: "2025-01-20T09:30:00.000000+00:00|2025-01-20T09:30:00+00:00"
-  └── PeopleV1: "2025-01-19T14:00:00.000000+00:00|2025-01-19T14:00:00+00:00"
-
-# Session activity index (Sorted Set) - supports explicit stale-session maintenance
-sessions:by_updated_at
-  └── {uuid → updated_at_timestamp_score}
+session:00000000-0000-4000-8000-000000000001:checkpoints
+  AssetV2 = 2026-08-11T20:15:30.123456+00:00|cursor-example-001
 ```
 
----
+### First component: `updated_at`
 
-## Sessions
+`updated_at` is when `CheckpointStore` wrote the Redis value. It is inspection metadata; it is not the sync position and it does not drive session activity cleanup.
 
-**Key:** `session:{uuid}`
-**Type:** Hash
-**TTL:** Optional - Redis automatically deletes expired sessions
+### Second component: `cursor`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `user_id` | string | Gumnut user ID (UUID format, converted from Gumnut's internal ID) |
-| `library_id` | string | User's default library (empty string if not available) |
-| `stored_jwt` | string | **Encrypted** Gumnut JWT - used for backend API calls |
-| `device_type` | string | "iOS", "Android", "Chrome", etc. (from User-Agent parsing) |
-| `device_os` | string | "iOS", "macOS", "Android", etc. (exact values for Immich UI icons) |
-| `app_version` | string | "1.94.0" or empty for web (extracted from Immich mobile User-Agent) |
-| `created_at` | string | ISO 8601 timestamp |
-| `updated_at` | string | ISO 8601 timestamp |
-| `is_pending_sync_reset` | string | "0" or "1" - When "1", server sends `SyncResetV1` message telling client to clear local data and full re-sync |
+`cursor` is the opaque resume position acknowledged for that Immich sync entity type. Event-backed streams use Gumnut API event cursors. User-derived streams use a cursor derived from the current user record. Sync resumes from this component, not from `updated_at`.
 
-**Session Identification:** The session ID is a UUID generated at login time. This UUID serves as both the session token (sent to clients as `accessToken`) and the Redis key. Because it is independent of the JWT, it provides the stability and revocation properties described in [Session Token Architecture](#session-token-architecture).
+`Checkpoint.to_redis_value` and `Checkpoint.from_redis_value` in `services/checkpoint_store.py` are the serialization authority.
 
-### Session Expiration via TTL
+## Compatibility and corruption behavior
 
-Sessions can optionally expire using Redis TTL. When a session is created with an expiration time, the same TTL is applied to both the session key (`session:{uuid}`) and its checkpoint key (`session:{uuid}:checkpoints`) so they expire together.
+The current reader accepts exactly two pipe-delimited components and parses the first as an ISO timestamp. It does not maintain a compatibility parser for older timestamp-only or differently ordered values.
 
-**Note:** When Redis expires a session key via TTL, the checkpoint key expires too (same TTL), but the index entries (`user:{user_id}:sessions` and `sessions:by_updated_at`) are not automatically cleaned. The adapter does not run a background cleanup scheduler. `SessionStore.cleanup_stale_sessions()` is an explicit maintenance method, while normal reads through `get_by_user()` lazily remove orphaned entries when they encounter expired or corrupted sessions.
+A malformed checkpoint value is logged and skipped by `CheckpointStore.get` or `get_all`. The affected entity type therefore has no usable checkpoint and re-syncs from its normal starting position. This fail-open-to-resync behavior is safer than resuming from an ambiguous cursor.
 
----
+The ack wire format is distinct from Redis storage:
 
-## User Sessions Index
+| Boundary | Format |
+|----------|--------|
+| Immich client ↔ adapter | `{SyncEntityType}|{cursor}|` |
+| Adapter checkpoint hash | field = `SyncEntityType`; value = `{updated_at}|{cursor}` |
 
-**Key:** `user:{user_id}:sessions`
-**Type:** Set
-
-Contains all session UUIDs belonging to a user. Enables efficient lookup of all sessions for session management endpoints (e.g., `/api/sessions` to list all devices).
-
----
-
-## Checkpoints
-
-**Key:** `session:{uuid}:checkpoints`
-**Type:** Hash
-
-Each field is an entity type, and the value is a pipe-delimited `{last_synced_at}|{updated_at}` string (see the [Key Schema](#key-schema) for an example). Both timestamps are fixed ISO 8601 format, so the value is split on the single `|` rather than carrying a JSON wrapper.
-
-**Why checkpoints are tied to sessions:**
-
-- Each device (session) tracks its own sync progress independently
-- When a session is deleted, its checkpoints are also deleted
-- Client must re-sync from scratch if session is revoked
-- Because the session UUID is stable across JWT refresh (see [Session Token Architecture](#session-token-architecture)), checkpoints survive token refreshes
-
-### `last_synced_at` (First Component)
-
-**What it is:** The timestamp extracted from the `ack` string (ISO 8601 format)
-
-**Why needed:**
-
-- **Sync filtering** - Used to query Gumnut for objects updated after this timestamp
-- **Progress tracking** - Shows how far along sync has progressed for each entity type
-
-**Example use:**
-
-```python
-# Parse from checkpoint value
-checkpoint_value = redis.hget(f"session:{session_uuid}:checkpoints", "AssetV1")
-last_synced_at, updated_at = checkpoint_value.split("|")
-```
-
-### `updated_at` (Second Component)
-
-**What it is:** When this checkpoint was last modified (NOT the sync timestamp)
-
-**Why needed:**
-
-- **Session activity tracking** - Know when each session last acknowledged data
-- **Cleanup operations** - Support explicit deletion of sessions that have been inactive past the cleanup threshold
-- **Monitoring** - Alert if a session stops syncing
-
-**How it's used:** `cleanup_stale_sessions` (in `services/session_store.py`) range-queries `sessions:by_updated_at` (a sorted set scored by `updated_at`) for sessions whose score is older than its `days` threshold, then deletes each stale session and its associated data. This is an explicit maintenance method; the adapter does not invoke it on a schedule.
-
----
-
-## Session Activity Index
-
-**Key:** `sessions:by_updated_at`
-**Type:** Sorted Set
-**Score:** Unix timestamp of `updated_at`
-**Member:** Session UUID (string)
-
-Enables efficient queries for:
-
-- Finding stale sessions (inactive > N days)
-- Supporting explicit stale-session maintenance
-
----
-
-## Session Dataclass
-
-The `Session` dataclass (in `services/session_store.py`) carries the fields documented in the [Sessions](#sessions) table, plus the `id` (the session UUID). Its `to_dict` / `from_dict` methods round-trip the dataclass to and from the Redis hash, serializing every value as a string (timestamps as ISO 8601, `is_pending_sync_reset` as `"0"`/`"1"`).
+See the [sync wire reference](immich-sync-communication.md#acknowledgements) for parsing and reset behavior.

@@ -126,6 +126,24 @@ handled specially outside `_SYNC_TYPE_ORDER` and must not be listed as a no-op.
 
 The adapter depends on the events API response shape (`EventsResponse`). Fields like `payload` are typed in the SDK (v0.52.0+) and accessed directly. For backward compatibility with old events that predate a field, check for `None` before use.
 
+### Current-state verification is not snapshot-aware
+
+Payload FK verification reads current Gumnut state while the events query is
+bounded at the sync start time. If a referenced person or asset is deleted
+during the cycle, verification can null the reference one cycle before the
+bounded delete event arrives. The client converges on the same final state; the
+temporary early null is preferred to emitting an FK that can permanently wedge
+sync. Snapshot-aware verification would require an event-timeline lookup or an
+API-level `as_of` read contract.
+
+### Interrupted delete phase
+
+If the stream ends after upserts but before buffered deletes, an older delete
+cursor can fall behind an acknowledged upsert cursor and the client may retain a
+stale entity until a full sync. The implementation logs this condition. A
+two-pass checkpoint model could remove the tradeoff, but the current design
+prioritizes preventing unacknowledgeable FK failures.
+
 ## Debugging Immich Mobile Logs
 
 Immich mobile app logs contain Immich UUIDs, not Gumnut IDs. When debugging sync issues from mobile logs, use `routers/utils/gumnut_id_conversion.py` to convert UUIDs to Gumnut IDs (e.g., `face_`, `person_`, `asset_` prefixed) before looking up entities in production via API or MCP tools.
