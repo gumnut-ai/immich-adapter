@@ -83,8 +83,9 @@ delete from the album-user pass would duplicate `AlbumDeleteV1`. No
 `StacksV1` uses the event cursor and sits before assets in `_SYNC_TYPE_ORDER`.
 The mobile timeline hides an asset whose `stackId` names an unknown stack, so a
 `stack_created` or `stack_updated` event must emit `StackV1` before its member
-assets. The client has no stack foreign key; this is a visibility constraint.
-Deletes use the inverse order, with `StackDeleteV1` after asset deletes.
+assets. The client has no stack foreign key (the column is indexed only); this
+is a visibility constraint. Deletes use the inverse order, with `StackDeleteV1`
+after asset deletes.
 
 `StackV1.primaryAssetId` is required but an unpinned Gumnut stack has no primary
 on its row. Sync therefore reads members without heavy asset includes, applies
@@ -105,9 +106,9 @@ so members stop referencing the stack before the client removes it. Asset
 updates use the payload's event-time `stack_id`, preventing a later move outside
 the sync window from leaking into the current event. Unlike the face→person and
 album→cover payload references, stacks are deliberately not verified per event:
-the client has no `stackId` foreign key (the column is indexed only), so an
-unavoidable transient reference to an already-removed stack is a self-healing
-timeline-visibility gap, not an unacknowledgeable insert failure.
+with no client-side `stackId` FK, a transient reference to an already-removed
+stack is a self-healing timeline-visibility gap, not an unacknowledgeable insert
+failure.
 
 `PartnerStacksV1` remains a no-op because partner sharing is unsupported.
 
