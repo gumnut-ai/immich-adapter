@@ -511,6 +511,7 @@ class TestUploadAsset:
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
+        mock_gumnut_asset.stack_id = None
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
         mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
@@ -617,6 +618,7 @@ class TestUploadAsset:
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
+        mock_gumnut_asset.stack_id = None
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
         mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)
@@ -683,6 +685,7 @@ class TestUploadAsset:
         mock_gumnut_asset.metadata = None
         mock_gumnut_asset.people = []
         mock_gumnut_asset.trashed_at = None
+        mock_gumnut_asset.stack_id = None
         mock_raw_response = Mock()
         mock_raw_response.status_code = 201
         mock_raw_response.parse = AsyncMock(return_value=mock_gumnut_asset)

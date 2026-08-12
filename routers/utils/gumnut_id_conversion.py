@@ -5,9 +5,12 @@ Gumnut uses short UUIDs with prefixes like 'album_' and 'asset_'
 while Immich expects regular UUIDs.
 """
 
+import logging
 from uuid import UUID
 
 import shortuuid
+
+logger = logging.getLogger(__name__)
 
 
 def safe_uuid_from_gumnut_id(gumnut_id: str, prefix: str) -> UUID:
@@ -92,6 +95,29 @@ def safe_uuid_from_stack_id(stack_id: str) -> UUID:
 def uuid_to_gumnut_stack_id(uuid_obj: UUID) -> str:
     """Convert UUID to burst-stack ID."""
     return uuid_to_gumnut_id(uuid_obj, "asset_stack")
+
+
+def immich_stack_id(gumnut_stack_id: str | None) -> str | None:
+    """Map a Gumnut stack FK to the Immich ``stackId`` string, or ``None``.
+
+    Returns ``None`` for a loose asset (no stack) and also degrades an
+    undecodable stack ID to ``None`` rather than raising — a backend prefix
+    change would otherwise break every stacked asset's conversion. Shared by the
+    sync asset converter and the upload-ready WebSocket payload so both treat an
+    invalid ID identically (mirroring ``resolve_timeline_stacks``'s fallback).
+    """
+    if not gumnut_stack_id:
+        return None
+    try:
+        return str(safe_uuid_from_stack_id(gumnut_stack_id))
+    except ValueError:
+        # Prefix drift affects every stack, so log once at debug, not per asset.
+        logger.debug(
+            "Asset stack_id is not decodable to an Immich UUID; "
+            "treating the asset as loose (stackId=None)",
+            extra={"stack_id": gumnut_stack_id},
+        )
+        return None
 
 
 def safe_uuid_from_person_id(person_id: str) -> UUID:

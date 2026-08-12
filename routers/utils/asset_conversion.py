@@ -26,7 +26,10 @@ from routers.immich_models import (
     UserResponseDto,
 )
 from services.websockets import AssetUploadReadyV1Payload
-from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
+from routers.utils.gumnut_id_conversion import (
+    immich_stack_id,
+    safe_uuid_from_asset_id,
+)
 from routers.utils.person_conversion import convert_gumnut_person_to_immich
 
 logger = logging.getLogger(__name__)
@@ -490,7 +493,7 @@ def build_asset_upload_ready_payload(
         livePhotoVideoId=None,
         localDateTime=local_date_time,
         originalFileName=gumnut_asset.original_file_name or "",
-        stackId=None,
+        stackId=immich_stack_id(gumnut_asset.stack_id),
         type=mime_type_to_asset_type(gumnut_asset.mime_type),
         visibility=AssetVisibility.timeline,
         width=int(width) if width else None,

@@ -93,12 +93,22 @@ converter. Reads are concurrency-bounded. An empty all-state member read is
 retryable even when `asset_count` is zero, because that count excludes trashed
 members; propagating the error truncates the stream before its cursor is acked.
 
+The asset converter maps a member's `stack_id` to the Immich `stackId` through
+the shared `immich_stack_id` helper (`gumnut_id_conversion.py`), which degrades
+an undecodable ID to a loose asset rather than raising; the upload-ready
+WebSocket payload uses the same helper, so both surfaces treat membership
+identically.
+
 Stack references stay out of `FK_REFERENCES`. When a stack dissolves, the
 Gumnut API emits an `asset_updated` clearing each member's `stack_id` before
 `stack_deleted`. Those upserts run in phase 1 and the stack delete in phase 2,
 so members stop referencing the stack before the client removes it. Asset
 updates use the payload's event-time `stack_id`, preventing a later move outside
-the sync window from leaking into the current event.
+the sync window from leaking into the current event. Unlike the face→person and
+album→cover payload references, stacks are deliberately not verified per event:
+the client has no `stackId` foreign key (the column is indexed only), so an
+unavoidable transient reference to an already-removed stack is a self-healing
+timeline-visibility gap, not an unacknowledgeable insert failure.
 
 `PartnerStacksV1` remains a no-op because partner sharing is unsupported.
 
