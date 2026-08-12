@@ -1,6 +1,6 @@
 ---
 title: "Code Practices"
-last-updated: 2026-08-11
+last-updated: 2026-08-12
 ---
 
 # Code Practices
@@ -9,7 +9,7 @@ Style, patterns, and conventions for the immich-adapter codebase.
 
 ## Python Style Guide
 
-- **Type Hints**: Use modern Python 3.12+ syntax (`int | None` instead of `Optional[int]`). Add type annotations to all function parameters and return types.
+- **Type Hints**: Use modern Python 3.14+ syntax (`int | None` instead of `Optional[int]`). Add type annotations to all function parameters and return types.
 - **Type narrowing — overloads, not asserts**: When a helper returns `T | None` but a specific call site is guaranteed to receive non-None input, narrow with `@overload` decorators on the helper (`@overload def f(x: T) -> T; @overload def f(x: None) -> None; @overload def f(x: T | None) -> T | None`) rather than `assert x is not None` at the call site. Asserts are stripped under `python -O`, obscure whether the None branch is actually reachable, and only narrow at one site instead of helping every caller. See `to_actual_utc` / `to_immich_local_datetime` in `routers/utils/datetime_utils.py` for the pattern. For genuine runtime defense (input that *can* be invalid), use exceptions, not `assert`.
 - **Named types over bare tuples**: When a function returns multiple values whose positional meaning is ambiguous (e.g. two `int | None` a caller could transpose), return a small `NamedTuple` (or dataclass) with named fields and a docstring rather than a bare `tuple[...]`. Named fields make call sites self-documenting and let the type carry what `None` means. See `ImmichUserQuota` / `map_user_quota` in `routers/utils/current_user.py`.
 - **Naming**: Use `snake_case` for all variables, functions, and SQLAlchemy model attributes

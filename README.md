@@ -6,7 +6,9 @@ Gumnut compatible with the Immich ecosystem of apps and integrations.
 
 ## Getting Started
 
-1. **Install uv**
+1. **Install Python 3.14 or newer**
+
+2. **Install uv**
 
 ```bash
 curl -sSf https://astral.sh/uv/install.sh | bash
@@ -14,13 +16,13 @@ curl -sSf https://astral.sh/uv/install.sh | bash
 
 Or see: https://docs.astral.sh/uv/getting-started/installation/
 
-2. **Install application dependencies**
+3. **Install application dependencies**
 
 ```bash
 uv sync
 ```
 
-3. **Configure application environment**
+4. **Configure application environment**
 
 ```bash
 cp .env.example .env
