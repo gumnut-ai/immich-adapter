@@ -239,7 +239,7 @@ async def _require_missing_stacks_deleted(
     has_more = page_has_more
     while unexplained and has_more:
         # The dict is deliberate: the SDK types entity_types as a string
-        # sequence, but the API also accepts the plain comma-delimited string
+        # sequence, but the API also accepts the plain string
         # _stream_entity_type sends — the untyped dict is what lets the same
         # wire shape pass the type checker.
         params: dict[str, Any] = {
