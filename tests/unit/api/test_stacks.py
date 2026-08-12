@@ -32,7 +32,6 @@ from routers.api.stacks import (
     update_stack,
 )
 from routers.immich_models import BulkIdsDto, StackCreateDto, StackUpdateDto
-from services.websockets import WebSocketEvent
 from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.utils.current_user import get_current_user, get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
@@ -42,6 +41,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_stack_id,
 )
+from services.websockets import WebSocketEvent
 from tests.conftest import (
     MockPaginatedListing,
     MockSyncCursorPage,
