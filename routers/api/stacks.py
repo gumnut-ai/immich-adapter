@@ -15,7 +15,7 @@ from routers.immich_models import (
     UserResponseDto,
 )
 from routers.utils.concurrency import gather_with_concurrency
-from routers.utils.current_user import get_current_user
+from routers.utils.current_user import get_current_user, get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
@@ -27,6 +27,7 @@ from routers.utils.stack_conversion import (
     hydrate_stack,
     hydrate_stacks,
 )
+from services.websockets import WebSocketEvent, emit_user_event
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +225,7 @@ async def search_stacks(
 async def delete_stacks(
     request: BulkIdsDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user_id: UUID = Depends(get_current_user_id),
 ):
     """Dissolve every stack in the bulk id list; the photos are untouched.
 
@@ -264,6 +266,11 @@ async def delete_stacks(
             extra={"failed": len(failures), "requested": len(gumnut_stack_ids)},
         )
         raise failures[0]
+
+    # One realtime hint for the whole clean batch (upstream StackDeleteAll ->
+    # a single on_asset_stack_update). A partial batch raises above without
+    # emitting; the client reconciles through the sync stream regardless.
+    await emit_user_event(WebSocketEvent.STACK_UPDATE, current_user_id)
     return
 
 
@@ -289,6 +296,12 @@ async def create_stack(
         asset_ids=gumnut_asset_ids,
         primary_asset_id=gumnut_asset_ids[0],
     )
+
+    # Best-effort realtime hint that the caller's stacks changed (upstream
+    # StackCreate -> on_asset_stack_update). Fire-and-forget after the mutation
+    # committed; emit_user_event swallows transport errors so a WS hiccup can't
+    # fail a stack that the backend already created.
+    await emit_user_event(WebSocketEvent.STACK_UPDATE, current_user.id)
 
     hydrated = await hydrate_stack(client, stack)
     if hydrated is None:
@@ -348,12 +361,17 @@ async def update_stack(
     gumnut_stack_id = uuid_to_gumnut_stack_id(id)
 
     if request.primaryAssetId is None:
+        # A cover-less PUT is a pure read — no backend mutation — so no event is
+        # emitted here. Upstream's update() emits unconditionally, but signalling
+        # "stack updated" when nothing changed would be misleading noise.
         stack = await client.stacks.retrieve_stack(gumnut_stack_id)
     else:
         stack = await client.stacks.set_cover(
             gumnut_stack_id,
             primary_asset_id=uuid_to_gumnut_asset_id(request.primaryAssetId),
         )
+        # Cover actually changed (upstream StackUpdate -> on_asset_stack_update).
+        await emit_user_event(WebSocketEvent.STACK_UPDATE, current_user.id)
 
     hydrated = await hydrate_stack(client, stack)
     response = _build_representable_response(hydrated, current_user)
@@ -368,6 +386,7 @@ async def update_stack(
 async def delete_stack(
     id: UUID,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user_id: UUID = Depends(get_current_user_id),
 ):
     """Dissolve one stack; only the grouping is removed, the photos are not.
 
@@ -375,6 +394,9 @@ async def delete_stack(
     as it does from `get_stack`.
     """
     await client.stacks.delete(uuid_to_gumnut_stack_id(id))
+    # Realtime hint that the stack dissolved (upstream StackDelete ->
+    # on_asset_stack_update).
+    await emit_user_event(WebSocketEvent.STACK_UPDATE, current_user_id)
     return
 
 
@@ -383,6 +405,7 @@ async def remove_asset_from_stack(
     id: UUID,
     assetId: UUID,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user_id: UUID = Depends(get_current_user_id),
 ):
     """Remove one asset from a stack, leaving the asset itself untouched.
 
@@ -395,4 +418,8 @@ async def remove_asset_from_stack(
         uuid_to_gumnut_stack_id(id),
         asset_ids=[uuid_to_gumnut_asset_id(assetId)],
     )
+    # Membership changed (upstream removeAsset -> StackUpdate ->
+    # on_asset_stack_update); a below-two-members dissolve is covered by the
+    # same hint.
+    await emit_user_event(WebSocketEvent.STACK_UPDATE, current_user_id)
     return

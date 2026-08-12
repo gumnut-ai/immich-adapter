@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-07-31
+last-updated: 2026-08-12
 ---
 
 # Immich WebSocket Events Reference
@@ -110,8 +110,19 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`, and t
 ### `on_asset_stack_update`
 
 **Sent to**: Stack owner (by userId)
+**Payload**: none — the event carries no data (see below)
 
-Otherwise as in the Summary Table; emitted from `notification.service.ts`. The adapter omits it because no web or mobile handler subscribes; see `../architecture/websocket-implementation.md`.
+**Trigger**:
+- **Upstream Immich**: emitted from `notification.service.ts` on `StackCreate`, `StackUpdate`, `StackDelete`, and `StackDeleteAll`.
+- **immich-adapter**: emitted from the five mutating stack routes in `routers/api/stacks.py`, one emit per successful mutation — `create_stack`, `update_stack` (only when the cover actually changes; a cover-less PUT is a pure read and emits nothing), `remove_asset_from_stack`, `delete_stack`, and `delete_stacks` (a single emit after a clean bulk dissolve). All are scoped to the owning user's room.
+
+**Payload shape**: none. Upstream calls `clientSend('on_asset_stack_update', userId)` with no data argument — the repository type `on_asset_stack_update: string[]` is a rest-param (`...data: string[]`) that spreads to zero args, not an id array. The adapter therefore emits with `payload=None` via `emit_user_event`, never `emit_user_event_per_id`.
+
+**Client handling**:
+- **Web**: Declared in the `Events` type map but **not subscribed** — no `.on('on_asset_stack_update', …)` handler is registered.
+- **Mobile**: Not referenced.
+
+**Note**: Because no current Immich client subscribes, this emission is upstream-parity / forward-compat rather than an immediate UI trigger. The durable convergence path for stack changes is the event-driven sync stream, not this hint.
 
 ---
 
