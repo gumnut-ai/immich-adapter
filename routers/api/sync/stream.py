@@ -66,6 +66,13 @@ class StackRowReadIncomplete(Exception):
     members, and the mobile timeline hides any asset whose ``stackId`` names no
     stack row — a hidden burst that would not self-heal until some later stack
     event re-emitted the row.
+
+    Both transient shapes resolve on the retry: a lagging row becomes visible,
+    and a stack deleted *after* the window bound gets its delete event inside
+    the next window. A stack that fails *persistently* wedges the pass until it
+    recovers — loud in the logs, and the same trade-off the member-read
+    failures in ``entity_fetch`` already make; never stranding a member is the
+    priority.
     """
 
 
@@ -202,6 +209,7 @@ async def _require_missing_stacks_deleted(
     gumnut_client: AsyncGumnut,
     missing_ids: set[str],
     page_events: Sequence[EventData],
+    page_has_more: bool,
     sync_started_at: datetime,
 ) -> None:
     """Raise unless every missing stack row is explained by an in-window delete.
@@ -216,19 +224,16 @@ async def _require_missing_stacks_deleted(
     filter, so the look-ahead is a scan — acceptable because it runs only in
     the rare missing-row case and stack events are sparse.
 
-    Any id left unexplained raises :class:`StackRowReadIncomplete`, ending the
-    stream before the page's cursor is emitted. Both transient shapes then
-    self-heal on the next sync: a lagging row becomes visible, and a stack
-    deleted *after* ``sync_started_at`` gets its delete event inside the next
-    window. A stack that fails *persistently* wedges the pass until it recovers
-    — loud in the logs, and the same trade-off the member-read failures in
-    ``entity_fetch`` already make; never stranding a member is the priority.
+    Any id left unexplained raises :class:`StackRowReadIncomplete` (see there
+    for why the transient shapes self-heal and a persistent failure wedges the
+    pass, deliberately).
     """
     unexplained = missing_ids - {
         event.entity_id for event in page_events if event.event_type == "stack_deleted"
     }
     last_cursor = page_events[-1].cursor
-    while unexplained:
+    has_more = page_has_more
+    while unexplained and has_more:
         # Params dict matches _stream_entity_type's call shape, including the
         # plain-string entity_types the SDK accepts as a comma-delimited value.
         params: dict[str, Any] = {
@@ -245,8 +250,7 @@ async def _require_missing_stacks_deleted(
             event.entity_id for event in events if event.event_type == "stack_deleted"
         }
         last_cursor = events[-1].cursor
-        if not events_response.has_more:
-            break
+        has_more = events_response.has_more
 
     if unexplained:
         raise StackRowReadIncomplete(
@@ -336,16 +340,16 @@ async def _stream_entity_type(
         # Track entity IDs that were requested but not returned (deleted/404)
         not_returned = set(upsert_ids) - entities_map.keys()
         if not_returned:
-            # For stacks, an inert skip is only safe when a delete explains the
-            # absence — otherwise the asset pass would stamp stackId on members
-            # of a stack the client never receives, hiding the burst. Rows the
-            # fetch returned but deliberately degraded (undecodable id, in
-            # missing_ids) are excluded: they are not evidence of read lag.
+            # A missing stack row is only safely skippable when a delete
+            # explains it — see StackRowReadIncomplete. Rows the fetch returned
+            # but deliberately degraded (undecodable id, in missing_ids) are
+            # excluded: they are not evidence of read lag.
             if gumnut_entity_type == "stack":
                 await _require_missing_stacks_deleted(
                     gumnut_client,
                     not_returned - missing_ids,
                     events,
+                    events_response.has_more,
                     sync_started_at,
                 )
             stats.not_found_ids[gumnut_entity_type].update(not_returned)
