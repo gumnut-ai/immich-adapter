@@ -1,8 +1,8 @@
 ---
 title: "Immich v2.7.5 → v3.0 API Change Analysis"
-status: active
+status: completed
 created: 2026-06-16
-last-updated: 2026-07-31
+last-updated: 2026-08-04
 ---
 
 # Immich v2.7.5 → v3.0 API Change Analysis
