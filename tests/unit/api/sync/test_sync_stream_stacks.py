@@ -860,6 +860,54 @@ class TestEventDrivenStacks:
         )
 
     @pytest.mark.anyio
+    async def test_scan_finds_delete_on_second_scan_page(self):
+        # The explaining delete sits two scan pages ahead, behind an unrelated
+        # delete — pinning the scan's page-to-page cursor advance. Keying the
+        # mock by after_cursor makes stale-cursor reuse fail fast (KeyError)
+        # instead of looping.
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        stack = make_gumnut_stack()
+        other_stack = make_gumnut_stack()
+        pages_by_cursor = {
+            None: create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", stack.id, "stack_created", UPDATED_AT, "cur_s1"
+                    )
+                ],
+                has_more=True,
+            ),
+            "cur_s1": create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", other_stack.id, "stack_deleted", UPDATED_AT, "cur_s2"
+                    )
+                ],
+                has_more=True,
+            ),
+            "cur_s2": create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", stack.id, "stack_deleted", UPDATED_AT, "cur_s3"
+                    )
+                ]
+            ),
+        }
+        client.events.get = AsyncMock(
+            side_effect=lambda **kwargs: pages_by_cursor[kwargs.get("after_cursor")]
+        )
+        client.stacks.list_stacks = mock_list_stacks([])
+
+        request = SyncStreamDto(types=[SyncRequestType.StacksV1])
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        assert not any(e["type"] == "StackV1" for e in events)
+        delete_events = [e for e in events if e["type"] == "StackDeleteV1"]
+        assert len(delete_events) == 2
+        assert events[-1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
     async def test_scan_hitting_empty_page_despite_has_more_truncates(self):
         # Degraded upstream input: the trigger page claims has_more=True but
         # the look-ahead page comes back empty. The guard must fall out of the
