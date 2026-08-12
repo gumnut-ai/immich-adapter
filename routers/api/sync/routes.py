@@ -5,7 +5,7 @@ This module implements the Immich sync protocol via streaming sync. The legacy
 full/delta sync endpoints were removed in Immich v3 — Sync v2 supersedes them
 over the existing /sync/stream.
 
-The streaming sync uses the Gumnut API v2 events endpoint (/api/v2/events) to
+The streaming sync uses the Gumnut API events endpoint (/api/events) to
 fetch lightweight event records, then batch-fetches full entities as needed.
 Events are processed in priority order (assets before exif, etc.).
 """

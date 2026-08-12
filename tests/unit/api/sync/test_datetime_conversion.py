@@ -297,6 +297,8 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         # an explicit None the unset Mock attribute would silently produce a
         # truthy Mock and walk the wrong branch.
         asset.metadata = None
+        # Avoid a truthy auto-created Mock for an unstacked asset.
+        asset.stack_id = None
         return asset
 
     def test_file_created_at_uses_local_datetime_not_file_created_at(self):

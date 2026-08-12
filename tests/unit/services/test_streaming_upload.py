@@ -1,5 +1,7 @@
 """Tests for the StreamingUploadPipeline."""
 
+import asyncio
+import gc
 from datetime import datetime
 from typing import NamedTuple
 from unittest.mock import MagicMock, patch
@@ -8,6 +10,7 @@ from uuid import UUID
 import httpx
 import pytest
 from fastapi import HTTPException
+from starlette.requests import ClientDisconnect
 
 from services.streaming_upload import StreamingUploadPipeline
 
@@ -307,6 +310,72 @@ class TestStreamingUploadPipeline:
 
         # 4xx (other than 401) should be forwarded as-is, not mapped to 502
         assert exc_info.value.status_code == 413
+
+    @pytest.mark.anyio
+    async def test_feeder_disconnect_exception_is_retrieved(self):
+        """A mid-body client disconnect must not leave the feeder task's
+        exception unretrieved — an unretrieved task exception is logged by
+        asyncio at error level ("Task exception was never retrieved") when the
+        task is garbage-collected, turning every aborted upload into error
+        noise even though the route already answers it as an expected 499."""
+        _, ct_header = _build_multipart_body()
+
+        request = MagicMock()
+        request.headers = {"content-type": ct_header}
+
+        async def stream():
+            # The client hangs up before any body bytes arrive. Failing on the
+            # first read makes the feeder finish (with this exception) before
+            # the upload thread can observe the error, which is the ordering
+            # that leaves the task's exception unretrieved.
+            raise ClientDisconnect()
+            yield b""  # pragma: no cover — makes this an async generator
+
+        request.stream = stream
+
+        # The upload never reaches the HTTP POST: the parser fails on the
+        # missing body first.
+        mock_client = MagicMock()
+
+        captured: list[dict] = []
+        loop = asyncio.get_running_loop()
+        previous_handler = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, context: captured.append(context))
+        try:
+            with patch(
+                "services.streaming_upload._get_streaming_http_client",
+                return_value=mock_client,
+            ):
+                pipeline = StreamingUploadPipeline(
+                    request, "http://localhost:8000", "jwt"
+                )
+                # Plain try/except instead of pytest.raises: the excinfo would
+                # keep the traceback (and through it the feeder task) alive,
+                # letting the task dodge the garbage collection this test
+                # depends on.
+                raised = False
+                try:
+                    await pipeline.execute(_extract_fields)
+                except ClientDisconnect:
+                    raised = True
+                assert raised, "expected the disconnect to fail the upload"
+
+            del pipeline
+            # The task only becomes collectable after the loop finishes the
+            # turn that delivered the failure (lingering frame/exception
+            # references), so give it a few turns before collecting.
+            for _ in range(4):
+                await asyncio.sleep(0)
+                gc.collect()
+        finally:
+            loop.set_exception_handler(previous_handler)
+
+        unretrieved = [
+            context
+            for context in captured
+            if "never retrieved" in context.get("message", "")
+        ]
+        assert unretrieved == []
 
     @pytest.mark.anyio
     async def test_401_mapped_to_502(self):
