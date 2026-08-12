@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-08-11
+last-updated: 2026-08-12
 ---
 
 # Immich Adapter Architecture
@@ -20,6 +20,12 @@ The adapter owns protocol compatibility and short-lived translation state. It do
 
 The deployment assumes one Gumnut library per authenticated user. Immich library-management routes are compatibility stubs rather than a second library model.
 
+## Compatibility invariants
+
+The adapter cannot add Gumnut-specific endpoints or require client changes. A Gumnut capability with no Immich-shaped home therefore has to be represented by an existing Immich contract, an explicit compatibility stub, or a documented translation compromise.
+
+The single-library assumption is more specific than a generic compatibility stub. Immich does not expose a library selector that the adapter can map to Gumnut, and `/api/libraries` is therefore an empty compatibility surface. Adapter calls omit `library_id` and rely on the Gumnut API to resolve the authenticated user's only library. Supporting multiple libraries would require one selection or fan-out decision shared across every route; fixing individual routes would create inconsistent authorization and data visibility.
+
 ## Request path
 
 1. `AuthMiddleware` accepts an adapter session token or a Gumnut API key.
@@ -30,6 +36,14 @@ The deployment assumes one Gumnut library per authenticated user. Immich library
 6. Asset/session mutations may emit Socket.IO events after the backend operation succeeds.
 
 For session creation, credential custody, JWT refresh, checkpoint flow, and logout, read [Session and Checkpoint Implementation](session-checkpoint-implementation.md). For room membership and realtime failure behavior, read [WebSocket Implementation](websocket-implementation.md).
+
+### Security decisions not visible in route behavior
+
+The adapter currently has no CORS middleware because it serves the web bundle from its own origin. If cross-origin access is introduced, credentialed requests must use an explicit origin allowlist; never combine credentials with a wildcard origin.
+
+Mobile OAuth has a deliberate security gap: providers that cannot redirect to `app.immich:///oauth-callback` are sent to the adapter's HTTPS `/api/oauth/mobile-redirect`, which then redirects to the custom scheme. Custom schemes have no OS-enforced app ownership, so another installed app could register the scheme and receive the authorization code. PKCE reduces the usefulness of an intercepted code but does not prevent interception. Universal Links or Android App Links would require publishing the mobile app's signing identity, making the hardening a mobile distribution decision rather than an adapter-only change.
+
+The Gumnut API owns the OAuth client credentials and performs authorization URL creation and code exchange; the adapter passes its web and mobile redirect URIs through the SDK. Moving OAuth client registration to the adapter would require a coordinated backend and redirect-allowlist decision.
 
 ### Request observability
 
