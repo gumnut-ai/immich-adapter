@@ -1674,7 +1674,7 @@ class TestUpdateAssets:
     @pytest.mark.parametrize(
         "total, expected_chunks",
         [
-            # Exact-boundary cases per docs/references/code-practices.md to
+            # Exact-boundary cases per docs/references/pagination-bulk-and-concurrency.md to
             # catch off-by-one regressions a hand-rolled `if len > N` split
             # would introduce. The third case verifies
             # the "second chunk is a single element" edge.
@@ -1856,7 +1856,7 @@ class TestUpdateAssets:
     ):
         """Pin the no-rollback contract for cross-chunk failures.
 
-        The handler docstring (and `docs/references/code-practices.md`) call
+        The handler docstring (and `docs/references/pagination-bulk-and-concurrency.md`) call
         out that SDK atomicity holds per call but not across chunks: chunk N
         (N≥2) raising leaves chunks 1..N-1 already committed and the error
         propagates as one 5xx. A future refactor that wraps the per-chunk

@@ -85,7 +85,7 @@ def _local_today(for_param: datetime | None) -> tuple[int, int, int]:
     `for_param` carries the user's local calendar date, in either of two wire
     forms: Immich v3.0.3+ web sends `yyyy-MM-dd`, which pydantic parses to
     midnight; earlier clients sent the local wall-clock as a fictitious UTC
-    value (the `keepLocalTime` hack — see `docs/references/code-practices.md`
+    value (the `keepLocalTime` hack — see `docs/references/project-conventions.md`
     "Immich web 'today' wire format"). Both carry local y/m/d, so pull the
     components off as-is and apply no timezone math. The parameter stays typed
     `datetime` rather than `date` to keep accepting both forms; narrowing it to
@@ -126,7 +126,7 @@ async def _fetch_assets_for_day(
     fail-fast tanks the whole `/memories` call.
 
     `limit` is per-page; the explicit break caps total iteration (see
-    `docs/references/code-practices.md` "Counts and Aggregates").
+    `docs/references/pagination-bulk-and-concurrency.md` "Counts and Aggregates").
     """
     try:
         day_start = datetime(year, month, day)

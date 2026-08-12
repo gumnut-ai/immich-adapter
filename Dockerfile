@@ -6,7 +6,7 @@
 # IMPORTANT: keep in sync with .immich-container-tag. Render builds this
 # Dockerfile automatically without a way to inject build-args from a file,
 # so this default is what ships to production. See
-# docs/references/code-practices.md § "Bumping the Immich Version".
+# docs/references/routes-dtos-and-upstream-compatibility.md § "Bumping the Immich Version".
 # Last updated: 2026-07-29 (Immich v3.1.0)
 ARG IMMICH_VERSION=v3.1.0
 ARG GIT_COMMIT=unknown

@@ -5,7 +5,8 @@ a regen that adds a required field breaks them at import and these tests fail
 at collection. What import alone can't catch is the values the client gates on
 and the update endpoint's ignore-the-request contract; the tests below pin
 those, alongside a construction check mirroring `test_users.py`.
-See code-practices § "Bumping the Immich Version".
+See `docs/references/routes-dtos-and-upstream-compatibility.md` § "Bumping
+the Immich Version".
 """
 
 from uuid import uuid4

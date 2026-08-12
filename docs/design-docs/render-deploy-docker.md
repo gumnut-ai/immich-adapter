@@ -3,12 +3,12 @@ title: "Render Deploy with Docker"
 status: deprecated
 superseded-by: ../references/uvicorn-settings.md
 created: 2025-10-23
-last-updated: 2026-07-27
+last-updated: 2026-08-11
 ---
 
 # Multi-Stage Docker Deployment Guide for Render
 
-> **Deprecated (2026-07-27):** This doc argued for moving the adapter's Render deploy from a native Python runtime to a multi-stage Docker build, which shipped. It does not describe the current build. The repository's `Dockerfile` (and `.dockerignore`) is the source of truth for how the image is built and what it runs; [`docs/references/code-practices.md`](../references/code-practices.md) § "Bumping the Immich Version" owns Immich version pinning and the CI sync check; and the Render `$PORT` / SSL-termination contract now lives in [`docs/references/uvicorn-settings.md`](../references/uvicorn-settings.md). This doc is retained for the decision rationale — the multi-stage-build reasoning, the native-vs-Docker comparison, and the migration/rollback strategy. It is no longer updated as the system changes.
+> **Deprecated (2026-07-27):** This doc argued for moving the adapter's Render deploy from a native Python runtime to a multi-stage Docker build, which shipped. It does not describe the current build. The repository's `Dockerfile` (and `.dockerignore`) is the source of truth for how the image is built and what it runs; [`docs/references/routes-dtos-and-upstream-compatibility.md`](../references/routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version) owns Immich version pinning and the CI sync check; and the Render `$PORT` / SSL-termination contract now lives in [`docs/references/uvicorn-settings.md`](../references/uvicorn-settings.md). This doc is retained for the decision rationale — the multi-stage-build reasoning, the native-vs-Docker comparison, and the migration/rollback strategy. It is no longer updated as the system changes.
 >
 > Pruned 2026-07-11 to its stable historical context: the problem framing, the multi-stage-build rationale, the migration/rollback strategy, the Immich version-pinning trade-offs, and the performance comparison. (The Render port-handling gotcha it also retained was extracted and removed in the 2026-07-27 pass below.) The full sample Dockerfile / `.dockerignore` / `render.yaml`, the step-by-step build/config/local-test how-tos, the version-bump command sequences, and the troubleshooting catalog were removed because they are now owned by the code and were drifting from the live build.
 >
@@ -69,7 +69,7 @@ Immich provides these Docker tags:
 
 ### Pinning to Specific Version
 
-The pinned-version option is the one that shipped: the `Dockerfile` declares `ARG IMMICH_VERSION`, kept in sync with `.immich-container-tag` and enforced by a CI job. See [`docs/references/code-practices.md`](../references/code-practices.md) § "Bumping the Immich Version" for the current procedure. The trade-off analysis that led there:
+The pinned-version option is the one that shipped: the `Dockerfile` declares `ARG IMMICH_VERSION`, kept in sync with `.immich-container-tag` and enforced by a CI job. See [`docs/references/routes-dtos-and-upstream-compatibility.md`](../references/routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version) for the current procedure. The trade-off analysis that led there:
 
 **Pros of `release` tag:**
 

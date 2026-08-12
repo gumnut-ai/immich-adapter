@@ -1,9 +1,9 @@
 ---
 title: "Checksum Support"
 status: deprecated
-superseded-by: ../references/code-practices.md
+superseded-by: ../references/asset-and-media-handling.md
 created: 2025-11-25
-last-updated: 2026-08-05
+last-updated: 2026-08-11
 ---
 
 # Asset Checksum & Deduplication Analysis
@@ -12,8 +12,8 @@ last-updated: 2026-08-05
 > that led to storing SHA-1 alongside Gumnut's SHA-256 checksum. It was pruned
 > on 2026-08-05 to the upstream protocol, chosen approach, and trade-offs; large
 > sample payloads and request walkthroughs are owned by the protocol and code.
-> Current adapter behavior lives in [`code-practices.md`](../references/code-practices.md)
-> under “Outbound asset checksums.” Two proposed details did not ship:
+> Current adapter behavior lives in [Asset and Media Handling](../references/asset-and-media-handling.md#outbound-asset-checksums--emit-base64-sha-1-never-the-sha-256).
+> Two proposed details did not ship:
 >
 > - **The composite index did not ship.** This doc proposed indexing both `checksum_sha1` and `(library_id, checksum_sha1)`; the backend's asset model carries a single-column index on `checksum_sha1` only. The composite indexes that exist are on the SHA-256 `checksum` column (the `(library_id, checksum)` unique constraint and a live-rows partial index), not on `checksum_sha1`.
 > - **The Background section is a description of upstream Immich, not of the adapter.** Of the three endpoints it catalogs, only `POST /api/assets/bulk-upload-check` is implemented here. The adapter has no `POST /api/assets/exist` route, and it does not implement the upload-time `x-immich-checksum` duplicate-detection path — do not read that section as an adapter capability list.

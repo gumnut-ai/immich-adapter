@@ -536,7 +536,7 @@ async def resolve_timeline_stacks(
 
     # The asset read and the stack read are separate round-trips, so a stack
     # dissolved in between leaves its former members carrying a stale
-    # `stack_id`. Aggregated per `docs/references/code-practices.md`.
+    # `stack_id`. Aggregated per `docs/references/testing-and-logging.md`.
     missing_ids = [stack_id for stack_id in stack_ids if stack_id not in rows_by_id]
     if missing_ids:
         logger.warning(

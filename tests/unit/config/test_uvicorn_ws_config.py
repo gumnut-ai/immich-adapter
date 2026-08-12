@@ -6,8 +6,7 @@ deprecated legacy `websockets` API, whose receive loop wraps
 `asyncio.shield(self.transfer_data_task)` and leaks
 `"exception in shielded future"` records on peer close. This test fails
 loudly if a future uvicorn version renames or removes the sansio impl key.
-See `docs/references/uvicorn-settings.md` § "ws (WebSocket protocol
-implementation)".
+See `docs/references/uvicorn-settings.md` § "WebSocket implementation".
 """
 
 import uvicorn
