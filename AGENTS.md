@@ -43,7 +43,6 @@ The sections below follow that order, with design docs split by their `status:` 
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Code practices index | `docs/references/code-practices.md` | Choosing the focused convention reference for a task |
 | Project conventions | `docs/references/project-conventions.md` | Python style, repository organization, public-repository wording, and pull requests |
 | Routes and compatibility | `docs/references/routes-dtos-and-upstream-compatibility.md` | Route parameters, DTOs, errors, generated models, upstream behavior, and version bumps |
 | Asset and media handling | `docs/references/asset-and-media-handling.md` | Asset fields, media variants, checksums, and asset-operation WebSocket emission |

@@ -142,7 +142,11 @@ This invokes `uvicorn` directly because the `fastapi` CLI doesn't expose `--ws`,
 ## References
 
 - [Architecture](docs/architecture/adapter-architecture.md) — how the adapter works: auth, data translation, pagination, sync, error handling
-- [Code Practices](docs/references/code-practices.md) — routing index for focused conventions on routes, assets, pagination, testing, and logging
+- [Project Conventions](docs/references/project-conventions.md) — Python style, repository organization, public-repository wording, and pull requests
+- [Routes and Upstream Compatibility](docs/references/routes-dtos-and-upstream-compatibility.md) — route parameters, DTOs, errors, generated models, upstream behavior, and version bumps
+- [Asset and Media Handling](docs/references/asset-and-media-handling.md) — asset fields, media variants, checksums, and asset-operation WebSocket emission
+- [Pagination, Bulk, and Concurrency](docs/references/pagination-bulk-and-concurrency.md) — cursor/offset translation, bounded enumeration, aggregates, fan-out, and bulk-ID operations
+- [Testing and Logging](docs/references/testing-and-logging.md) — test fixtures, async test traps, structured logging, and upstream severity policy
 - [Documentation Conventions](docs/references/documentation-conventions.md) — frontmatter, maps, lifecycle, paths, and freshness
 - [Development Tools](docs/references/development-tools.md) — model generator, API compatibility, OpenAPI spec, dependency automation
 - [GitHub Actions Best Practices](docs/references/github-actions-best-practices.md) — workflow security and review rules
