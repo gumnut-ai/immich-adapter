@@ -744,6 +744,14 @@ class TestEventDrivenStacks:
         assert not any(
             call.kwargs.get("ids") for call in client.assets.list.call_args_list
         )
+        # The page reported has_more=False, so the guard must conclude from it
+        # alone — no look-ahead scan call.
+        stack_event_reads = [
+            call
+            for call in client.events.get.call_args_list
+            if call.kwargs.get("entity_types") == "stack"
+        ]
+        assert len(stack_event_reads) == 1
 
     @pytest.mark.anyio
     async def test_missing_stack_row_with_same_page_delete_is_skipped(self):
@@ -850,6 +858,35 @@ class TestEventDrivenStacks:
         assert not any(
             e["type"] in {"StackV1", "StackDeleteV1", "SyncCompleteV1"} for e in events
         )
+
+    @pytest.mark.anyio
+    async def test_scan_hitting_empty_page_despite_has_more_truncates(self):
+        # Degraded upstream input: the trigger page claims has_more=True but
+        # the look-ahead page comes back empty. The guard must fall out of the
+        # scan and still raise rather than loop or excuse the absence.
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        stack = make_gumnut_stack()
+        pages_by_cursor = {
+            None: create_mock_events_response(
+                [
+                    create_mock_event(
+                        "stack", stack.id, "stack_created", UPDATED_AT, "cur_s1"
+                    )
+                ],
+                has_more=True,
+            ),
+            "cur_s1": create_mock_events_response([], has_more=True),
+        }
+        client.events.get = AsyncMock(
+            side_effect=lambda **kwargs: pages_by_cursor[kwargs.get("after_cursor")]
+        )
+        client.stacks.list_stacks = mock_list_stacks([])
+
+        request = SyncStreamDto(types=[SyncRequestType.StacksV1])
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        assert not any(e["type"] in {"StackV1", "SyncCompleteV1"} for e in events)
 
     @pytest.mark.anyio
     async def test_undecodable_stack_row_degrades_without_truncating(self):

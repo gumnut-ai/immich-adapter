@@ -207,12 +207,16 @@ _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
 
 async def _require_missing_stacks_deleted(
     gumnut_client: AsyncGumnut,
-    missing_ids: set[str],
+    absent_ids: set[str],
     page_events: Sequence[EventData],
     page_has_more: bool,
     sync_started_at: datetime,
 ) -> None:
-    """Raise unless every missing stack row is explained by an in-window delete.
+    """Raise unless every absent stack row is explained by an in-window delete.
+
+    ``absent_ids`` are ids the bulk read did not return at all — distinct from
+    ``fetch_entities_map``'s ``missing_ids``, which the read returned but
+    deliberately degraded.
 
     A stack **created and deleted within one sync window** is legitimately
     absent from ``list_stacks`` — its create is an upsert event, but the row is
@@ -228,14 +232,16 @@ async def _require_missing_stacks_deleted(
     for why the transient shapes self-heal and a persistent failure wedges the
     pass, deliberately).
     """
-    unexplained = missing_ids - {
+    unexplained = absent_ids - {
         event.entity_id for event in page_events if event.event_type == "stack_deleted"
     }
     last_cursor = page_events[-1].cursor
     has_more = page_has_more
     while unexplained and has_more:
-        # Params dict matches _stream_entity_type's call shape, including the
-        # plain-string entity_types the SDK accepts as a comma-delimited value.
+        # The dict is deliberate: the SDK types entity_types as a string
+        # sequence, but the API also accepts the plain comma-delimited string
+        # _stream_entity_type sends — the untyped dict is what lets the same
+        # wire shape pass the type checker.
         params: dict[str, Any] = {
             "created_at_lt": sync_started_at,
             "entity_types": "stack",
