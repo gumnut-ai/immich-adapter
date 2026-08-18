@@ -18,6 +18,7 @@ from routers.utils.asset_conversion import (
     ASSET_INCLUDE_METADATA_ONLY,
     duration_ms,
     mime_type_to_asset_type,
+    resolve_asset_location,
     resolve_capture_datetime,
     resolve_created_at,
 )
@@ -174,7 +175,7 @@ async def get_time_bucket(
     bbox: str = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user_id: UUID = Depends(get_current_user_id),
-) -> Any:
+) -> Any:  # Preserve raw dict passthrough so optional columns stay omitted.
     """Retrieve assets that match the specified time bucket."""
 
     # Compute month boundaries from timeBucket for server-side date filtering.
@@ -321,19 +322,11 @@ async def get_time_bucket(
         # other column so the parallel arrays stay index-aligned.
         stack_list.append(stacks.tuple_for(asset) if stacks is not None else None)
 
-        metadata = asset.metadata
-        city_list.append(metadata.city if metadata is not None else None)
-        country_list.append(metadata.country if metadata is not None else None)
-        latitude_list.append(
-            metadata.latitude
-            if withCoordinates is True and metadata is not None
-            else None
-        )
-        longitude_list.append(
-            metadata.longitude
-            if withCoordinates is True and metadata is not None
-            else None
-        )
+        location = resolve_asset_location(asset)
+        city_list.append(location.city)
+        country_list.append(location.country)
+        latitude_list.append(location.latitude if withCoordinates is True else None)
+        longitude_list.append(location.longitude if withCoordinates is True else None)
 
     # Build Immich's columnar timeline response with index-aligned arrays.
     response: dict[str, Any] = {

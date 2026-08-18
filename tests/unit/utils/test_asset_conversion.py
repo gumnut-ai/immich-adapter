@@ -23,7 +23,10 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_stack_id,
     uuid_to_gumnut_person_id,
 )
-from routers.api.sync.converters import gumnut_asset_to_sync_asset_v1
+from routers.api.sync.converters import (
+    gumnut_asset_to_sync_asset_v1,
+    gumnut_metadata_to_sync_exif_v1,
+)
 from routers.utils.asset_conversion import (
     build_asset_upload_ready_payload,
     convert_gumnut_asset_to_immich,
@@ -33,6 +36,7 @@ from routers.utils.asset_conversion import (
     format_duration,
     normalize_rating,
     resolve_capture_datetime,
+    resolve_asset_location,
     resolve_file_modified_at,
     resolve_immich_checksum,
 )
@@ -318,6 +322,48 @@ def _attach_metadata(
     metadata.raw_width = raw_width
     metadata.raw_height = raw_height
     asset.metadata = metadata
+
+
+class TestLocationEmission:
+    def test_resolve_asset_location_without_metadata(self, sample_gumnut_asset):
+        location = resolve_asset_location(sample_gumnut_asset)
+
+        assert location.city is None
+        assert location.country is None
+        assert location.latitude is None
+        assert location.longitude is None
+
+    def test_zero_coordinates_survive_every_asset_conversion(self, sample_gumnut_asset):
+        _attach_metadata(sample_gumnut_asset, orientation=None)
+        metadata = sample_gumnut_asset.metadata
+        metadata.asset_id = sample_gumnut_asset.id
+        metadata.city = "Quito"
+        metadata.country = "Ecuador"
+        metadata.latitude = 0.0
+        metadata.longitude = 0.0
+        metadata.fps = None
+
+        location = resolve_asset_location(sample_gumnut_asset)
+        rest_result = extract_exif_info(sample_gumnut_asset)
+        legacy_sync_result = extract_sync_exif(sample_gumnut_asset, asset_uuid=uuid4())
+        stream_sync_result = gumnut_metadata_to_sync_exif_v1(sample_gumnut_asset)
+
+        assert location.latitude == 0.0
+        assert location.longitude == 0.0
+        assert location.city == "Quito"
+        assert location.country == "Ecuador"
+        assert rest_result.latitude == 0.0
+        assert rest_result.longitude == 0.0
+        assert rest_result.city == "Quito"
+        assert rest_result.country == "Ecuador"
+        assert legacy_sync_result.latitude == 0.0
+        assert legacy_sync_result.longitude == 0.0
+        assert legacy_sync_result.city == "Quito"
+        assert legacy_sync_result.country == "Ecuador"
+        assert stream_sync_result.latitude == 0.0
+        assert stream_sync_result.longitude == 0.0
+        assert stream_sync_result.city == "Quito"
+        assert stream_sync_result.country == "Ecuador"
 
 
 class TestDimensionEmission:

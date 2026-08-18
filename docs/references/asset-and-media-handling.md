@@ -7,7 +7,7 @@ last-updated: 2026-08-18
 
 ## Derive multi-path fields through one helper
 
-A field the adapter surfaces from more than one path must be derived identically in each: the write handler, the paired read handler, **and** the sync-stream converter (`routers/api/sync/converters.py`). Route any value mapped from a Gumnut field through a shared helper instead of hardcoding it per site, or the same entity reads back differently by path — e.g. a face's `sourceType` (mapped from `FaceResponse.source`) returned by `create_face` but hardcoded in `get_faces` / the sync converter, or a face box stored in a different coordinate frame than `get_faces` reads back. When you touch one emit site for such a field, grep for every constructor of the Immich response type (`AssetFaceResponseDto`, `SyncAssetFaceV1` / `SyncAssetFaceV2`, …) before assuming it has one home.
+A field the adapter surfaces from more than one path must be derived identically in each: the write handler, the paired read handler, **and** the sync-stream converter (`routers/api/sync/converters.py`). Route any value mapped from a Gumnut field through a shared helper instead of hardcoding it per site, or the same entity reads back differently by path — use `resolve_asset_location` for asset city/country/coordinates, for example. When you touch one emit site for such a field, grep for every constructor of the Immich response type (`AssetFaceResponseDto`, `SyncAssetFaceV1` / `SyncAssetFaceV2`, …) before assuming it has one home.
 
 ## Reading Gumnut asset fields — request them via `include`
 

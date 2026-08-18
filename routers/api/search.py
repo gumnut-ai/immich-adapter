@@ -41,6 +41,7 @@ from routers.utils.asset_conversion import (
     ASSET_INCLUDE_METADATA_ONLY,
     convert_gumnut_asset_to_immich,
     mime_type_to_asset_type,
+    resolve_asset_location,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,7 @@ async def get_explore_data(
             continue
         if len(recent_ids) < EXPLORE_MAX_RECENT_ASSETS:
             recent_ids.append(asset.id)
-        city = asset.metadata.city if asset.metadata else None
+        city = resolve_asset_location(asset).city
         if city:
             city_str = str(city)
             city_counts[city_str] = city_counts.get(city_str, 0) + 1

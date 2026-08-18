@@ -14,7 +14,10 @@ from gumnut import AsyncGumnut
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.immich_models import MapMarkerResponseDto
-from routers.utils.asset_conversion import ASSET_INCLUDE_METADATA_ONLY
+from routers.utils.asset_conversion import (
+    ASSET_INCLUDE_METADATA_ONLY,
+    resolve_asset_location,
+)
 from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
 
 logger = logging.getLogger(__name__)
@@ -87,21 +90,18 @@ async def collect_geotagged_markers(
     async for asset in client.assets.list(**list_kwargs):
         assets_scanned += 1
         metadata = asset.metadata
+        location = resolve_asset_location(asset)
         # The bbox filter guarantees a coordinate, but guard defensively so an
         # unexpected null can't crash marker construction (lat/lon are required).
-        if (
-            metadata is not None
-            and metadata.latitude is not None
-            and metadata.longitude is not None
-        ):
+        if location.latitude is not None and location.longitude is not None:
             markers.append(
                 MapMarkerResponseDto(
                     id=safe_uuid_from_asset_id(asset.id),
-                    lat=metadata.latitude,
-                    lon=metadata.longitude,
-                    city=metadata.city,
-                    state=metadata.state,
-                    country=metadata.country,
+                    lat=location.latitude,
+                    lon=location.longitude,
+                    city=location.city,
+                    state=metadata.state if metadata is not None else None,
+                    country=location.country,
                 )
             )
             if len(markers) >= MAP_MARKERS_CAP:

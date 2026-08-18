@@ -40,6 +40,7 @@ from routers.utils.asset_conversion import (
     format_duration,
     mime_type_to_asset_type,
     normalize_rating,
+    resolve_asset_location,
     resolve_file_created_at,
     resolve_file_modified_at,
     resolve_immich_checksum,
@@ -250,6 +251,7 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         raise ValueError(
             f"Asset {asset.id} passed to metadata converter with no metadata"
         )
+    location = resolve_asset_location(asset)
 
     # Convert datetimes to actual UTC for Immich compatibility
     original_datetime = to_actual_utc(metadata.original_datetime)
@@ -260,8 +262,8 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
 
     return SyncAssetExifV1(
         assetId=safe_uuid_from_asset_id(metadata.asset_id),
-        city=metadata.city,
-        country=metadata.country,
+        city=location.city,
+        country=location.country,
         dateTimeOriginal=original_datetime,
         description=metadata.description or "",
         exifImageHeight=raw_height,
@@ -272,9 +274,9 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
         focalLength=metadata.focal_length,
         fps=metadata.fps,
         iso=metadata.iso,
-        latitude=metadata.latitude,
+        latitude=location.latitude,
         lensModel=metadata.lens_model,
-        longitude=metadata.longitude,
+        longitude=location.longitude,
         make=metadata.make,
         model=metadata.model,
         modifyDate=modified_datetime,
