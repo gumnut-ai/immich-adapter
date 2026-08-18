@@ -15,8 +15,10 @@ from routers.immich_models import (
     TimeBucketsResponseDto,
 )
 from routers.utils.asset_conversion import (
+    ASSET_INCLUDE_METADATA_ONLY,
     duration_ms,
     mime_type_to_asset_type,
+    resolve_asset_location,
     resolve_capture_datetime,
     resolve_created_at,
 )
@@ -173,21 +175,8 @@ async def get_time_bucket(
     bbox: str = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user_id: UUID = Depends(get_current_user_id),
-) -> Any:  # Should be TimeBucketAssetResponseDto, but using Any to bypass Pydantic validation. See comment below.
-    """
-    This endpoint retrieves assets that match the specified time bucket.
-    There seems to be an issue with how TimeBucketAssetResponseDto is generated from the OpenAPI spec.
-    The spec shows that certain fields of the DTO (such as "city" and "country") are arrays of strings
-    that can be nullable, but the generated DTO does not allow for this. I would think that the fields
-    should be defined as such:
-
-        city: Annotated[
-            List[str | None], Field(description="Array of city names extracted from EXIF GPS data")
-        ]
-
-    To work around this, we return a dict with the correct structure instead of using the DTO directly.
-    However, this causes the OpenAPI Compatibility Validator to show a warning for this endpoint.
-    """
+) -> Any:  # Preserve raw dict passthrough so optional columns stay omitted.
+    """Retrieve assets that match the specified time bucket."""
 
     # Compute month boundaries from timeBucket for server-side date filtering.
     # The Immich client may send naive ("2024-01-01T00:00:00") or UTC-aware
@@ -199,7 +188,10 @@ async def get_time_bucket(
         "local_datetime_before": before_bound,
     }
 
-    list_kwargs: dict[str, Any] = {"extra_query": date_range_query}
+    list_kwargs: dict[str, Any] = {
+        "extra_query": date_range_query,
+        "include": ASSET_INCLUDE_METADATA_ONLY,
+    }
     if isTrashed:
         list_kwargs["state"] = "trashed"
     if albumId:
@@ -277,6 +269,10 @@ async def get_time_bucket(
     duration_list: list[int | None] = []
     thumbhash_list: list[str | None] = []
     stack_list: list[list[str] | None] = []
+    city_list: list[str | None] = []
+    country_list: list[str | None] = []
+    latitude_list: list[float | None] = []
+    longitude_list: list[float | None] = []
 
     for asset in filtered_assets:
         asset_id = asset.id
@@ -326,11 +322,16 @@ async def get_time_bucket(
         # other column so the parallel arrays stay index-aligned.
         stack_list.append(stacks.tuple_for(asset) if stacks is not None else None)
 
-    # Return as dict to bypass Pydantic validation issues with None in List[str]
-    # XXX revisit this issue later
+        location = resolve_asset_location(asset)
+        city_list.append(location.city)
+        country_list.append(location.country)
+        latitude_list.append(location.latitude if withCoordinates is True else None)
+        longitude_list.append(location.longitude if withCoordinates is True else None)
+
+    # Build Immich's columnar timeline response with index-aligned arrays.
     response: dict[str, Any] = {
-        "city": [None] * asset_count,
-        "country": [None] * asset_count,
+        "city": city_list,
+        "country": country_list,
         "createdAt": created_at_list,
         "duration": duration_list,
         "fileCreatedAt": file_created_at_list,
@@ -338,10 +339,10 @@ async def get_time_bucket(
         "isFavorite": [False] * asset_count,
         "isImage": is_image_list,
         "isTrashed": is_trashed_list,
-        "latitude": [None] * asset_count,
+        "latitude": latitude_list,
         "livePhotoVideoId": [None] * asset_count,
         "localOffsetHours": local_offset_hours_list,
-        "longitude": [None] * asset_count,
+        "longitude": longitude_list,
         "ownerId": [str(current_user_id)] * asset_count,
         "projectionType": [None] * asset_count,
         "ratio": ratio_list,

@@ -7,6 +7,7 @@ to the Immich API format, including metadata (camera/EXIF/GPS/location) processi
 
 import logging
 from datetime import datetime
+from typing import NamedTuple
 from uuid import UUID
 
 from gumnut.types.asset_response import AssetResponse
@@ -62,8 +63,30 @@ ASSET_INCLUDE_NO_PEOPLE: list[str] = ["metadata", "file_data"]
 ``people`` — skipping ``people`` avoids a server-side aggregation on the scan."""
 
 ASSET_INCLUDE_METADATA_ONLY: list[str] = ["metadata"]
-"""For reads that consume only ``metadata`` fields and no ``file_data`` scalar:
-map markers (GPS) and the per-asset datetime rewrite (``original_datetime``)."""
+"""For asset reads whose consumers need only ``metadata`` fields."""
+
+
+class AssetLocationFields(NamedTuple):
+    """Immich-facing location fields shared by every asset response path."""
+
+    city: str | None
+    country: str | None
+    latitude: float | None
+    longitude: float | None
+
+
+def resolve_asset_location(gumnut_asset: AssetResponse) -> AssetLocationFields:
+    """Return one normalized location mapping for an asset's metadata."""
+    metadata = gumnut_asset.metadata
+    if metadata is None:
+        return AssetLocationFields(None, None, None, None)
+
+    return AssetLocationFields(
+        city=metadata.city,
+        country=metadata.country,
+        latitude=metadata.latitude,
+        longitude=metadata.longitude,
+    )
 
 
 def resolve_immich_checksum(gumnut_asset: AssetResponse) -> str:
@@ -283,6 +306,7 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
         return ExifResponseDto()
 
     metadata = gumnut_asset.metadata
+    location = resolve_asset_location(gumnut_asset)
 
     make = metadata.make
     model = metadata.model
@@ -291,11 +315,7 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
     focal_length = metadata.focal_length
     iso = metadata.iso
     exposure_time = metadata.exposure_time
-    latitude = metadata.latitude
-    longitude = metadata.longitude
-    city = metadata.city
     state = metadata.state
-    country = metadata.country
     description = metadata.description
     rating = metadata.rating
     projection_type = metadata.projection_type
@@ -337,11 +357,11 @@ def extract_exif_info(gumnut_asset: AssetResponse) -> ExifResponseDto:
         iso=int(float(iso)) if iso else None,
         exposureTime=str(exposure_time) if exposure_time else None,
         # Location data
-        latitude=float(latitude) if latitude else None,
-        longitude=float(longitude) if longitude else None,
-        city=str(city) if city else None,
+        latitude=location.latitude,
+        longitude=location.longitude,
+        city=location.city,
         state=str(state) if state else None,
-        country=str(country) if country else None,
+        country=location.country,
         # Metadata
         description=str(description) if description else "",
         dateTimeOriginal=date_time_original,
@@ -365,6 +385,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: UUID) -> SyncAsse
         SyncAssetExifV1 object with metadata from the asset
     """
     metadata = gumnut_asset.metadata
+    location = resolve_asset_location(gumnut_asset)
 
     if metadata is None:
         make = None
@@ -374,11 +395,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: UUID) -> SyncAsse
         focal_length = None
         iso = None
         exposure_time = None
-        latitude = None
-        longitude = None
-        city = None
         state = None
-        country = None
         description = None
         rating = None
         projection_type = None
@@ -392,11 +409,7 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: UUID) -> SyncAsse
         focal_length = metadata.focal_length
         iso = metadata.iso
         exposure_time = metadata.exposure_time
-        latitude = metadata.latitude
-        longitude = metadata.longitude
-        city = metadata.city
         state = metadata.state
-        country = metadata.country
         description = metadata.description
         rating = metadata.rating
         projection_type = metadata.projection_type
@@ -426,8 +439,8 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: UUID) -> SyncAsse
 
     return SyncAssetExifV1(
         assetId=asset_uuid,
-        city=str(city) if city else None,
-        country=str(country) if country else None,
+        city=location.city,
+        country=location.country,
         dateTimeOriginal=date_time_original,
         description=str(description) if description else None,
         exifImageHeight=int(raw_height) if raw_height else None,
@@ -438,9 +451,9 @@ def extract_sync_exif(gumnut_asset: AssetResponse, asset_uuid: UUID) -> SyncAsse
         focalLength=float(focal_length) if focal_length else None,
         fps=None,  # Not available from Gumnut metadata
         iso=int(iso) if iso else None,
-        latitude=float(latitude) if latitude else None,
+        latitude=location.latitude,
         lensModel=str(lens_model) if lens_model else None,
-        longitude=float(longitude) if longitude else None,
+        longitude=location.longitude,
         make=str(make) if make else None,
         model=str(model) if model else None,
         modifyDate=modify_date,
