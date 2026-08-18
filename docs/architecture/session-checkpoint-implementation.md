@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-07-27
+last-updated: 2026-08-15
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -132,7 +132,7 @@ The sync stream is driven by the backend events feed, with one checkpoint per en
    - `created_at_lt=sync_started_at` for a bounded point-in-time window
 6. Upserts stream first in foreign-key dependency order. Delete events are buffered and emitted afterward in reverse dependency order.
 7. `AssetEditsV1` is accepted as a no-op request type, and `AssetFacesV1` is skipped when `AssetFacesV2` is also requested so the same face events are not streamed twice.
-8. The stream finishes with `SyncCompleteV1|complete|`.
+8. On successful completion, the stream finishes with `SyncCompleteV1|complete|`. Failures during event fetch or entity hydration end the stream without a completion event, leaving the affected cursor unacknowledged for retry.
 
 This two-phase ordering is the key behavior that keeps the mobile client's SQLite foreign keys consistent while still using a single events source.
 
