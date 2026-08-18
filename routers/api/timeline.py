@@ -15,6 +15,7 @@ from routers.immich_models import (
     TimeBucketsResponseDto,
 )
 from routers.utils.asset_conversion import (
+    ASSET_INCLUDE_METADATA_ONLY,
     duration_ms,
     mime_type_to_asset_type,
     resolve_capture_datetime,
@@ -199,7 +200,10 @@ async def get_time_bucket(
         "local_datetime_before": before_bound,
     }
 
-    list_kwargs: dict[str, Any] = {"extra_query": date_range_query}
+    list_kwargs: dict[str, Any] = {
+        "extra_query": date_range_query,
+        "include": ASSET_INCLUDE_METADATA_ONLY,
+    }
     if isTrashed:
         list_kwargs["state"] = "trashed"
     if albumId:
@@ -277,6 +281,10 @@ async def get_time_bucket(
     duration_list: list[int | None] = []
     thumbhash_list: list[str | None] = []
     stack_list: list[list[str] | None] = []
+    city_list: list[str | None] = []
+    country_list: list[str | None] = []
+    latitude_list: list[float | None] = []
+    longitude_list: list[float | None] = []
 
     for asset in filtered_assets:
         asset_id = asset.id
@@ -326,11 +334,16 @@ async def get_time_bucket(
         # other column so the parallel arrays stay index-aligned.
         stack_list.append(stacks.tuple_for(asset) if stacks is not None else None)
 
+        metadata = asset.metadata
+        city_list.append(metadata.city if metadata is not None else None)
+        country_list.append(metadata.country if metadata is not None else None)
+        latitude_list.append(metadata.latitude if metadata is not None else None)
+        longitude_list.append(metadata.longitude if metadata is not None else None)
+
     # Return as dict to bypass Pydantic validation issues with None in List[str]
-    # XXX revisit this issue later
     response: dict[str, Any] = {
-        "city": [None] * asset_count,
-        "country": [None] * asset_count,
+        "city": city_list,
+        "country": country_list,
         "createdAt": created_at_list,
         "duration": duration_list,
         "fileCreatedAt": file_created_at_list,
@@ -338,10 +351,10 @@ async def get_time_bucket(
         "isFavorite": [False] * asset_count,
         "isImage": is_image_list,
         "isTrashed": is_trashed_list,
-        "latitude": [None] * asset_count,
+        "latitude": latitude_list,
         "livePhotoVideoId": [None] * asset_count,
         "localOffsetHours": local_offset_hours_list,
-        "longitude": [None] * asset_count,
+        "longitude": longitude_list,
         "ownerId": [str(current_user_id)] * asset_count,
         "projectionType": [None] * asset_count,
         "ratio": ratio_list,

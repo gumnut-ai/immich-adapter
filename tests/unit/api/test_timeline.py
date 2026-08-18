@@ -18,6 +18,7 @@ from routers.immich_models import (
     AssetOrder,
     AssetVisibility,
 )
+from routers.utils.asset_conversion import ASSET_INCLUDE_METADATA_ONLY
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     safe_uuid_from_stack_id,
@@ -520,8 +521,38 @@ class TestGetTimeBucket:
             assert all(vis == AssetVisibility.timeline for vis in result["visibility"])
 
             mock_client.assets.list.assert_called_once_with(
-                extra_query=JANUARY_2024_DATE_RANGE
+                include=ASSET_INCLUDE_METADATA_ONLY,
+                extra_query=JANUARY_2024_DATE_RANGE,
             )
+
+    @pytest.mark.anyio
+    async def test_get_time_bucket_emits_location_metadata(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
+        """Location columns remain aligned when an asset has no metadata."""
+        mock_client = Mock()
+        assets = multiple_gumnut_assets[:2]
+        for asset in assets:
+            asset.id = uuid_to_gumnut_asset_id(uuid4())
+            asset.local_datetime = datetime(2024, 1, 15, tzinfo=timezone.utc)
+            asset.created_at = asset.local_datetime
+
+        assets[0].metadata = Mock()
+        assets[0].metadata.city = "Quito"
+        assets[0].metadata.country = "Ecuador"
+        assets[0].metadata.latitude = 0.0
+        assets[0].metadata.longitude = -78.4678
+        assets[1].metadata = None
+        mock_client.assets.list.return_value = mock_sync_cursor_page(assets)
+
+        result = await call_get_time_bucket(
+            timeBucket="2024-01-01T00:00:00", client=mock_client
+        )
+
+        assert result["city"] == ["Quito", None]
+        assert result["country"] == ["Ecuador", None]
+        assert result["latitude"] == [0.0, None]
+        assert result["longitude"] == [-78.4678, None]
 
     @pytest.mark.anyio
     async def test_get_time_bucket_ratio_passes_through_asset_dims(
@@ -653,6 +684,7 @@ class TestGetTimeBucket:
             assert len(result["id"]) == 1
             mock_client.assets.list.assert_called_once_with(
                 album_id=uuid_to_gumnut_album_id(sample_uuid),
+                include=ASSET_INCLUDE_METADATA_ONLY,
                 extra_query=JANUARY_2024_DATE_RANGE,
             )
 
@@ -685,6 +717,7 @@ class TestGetTimeBucket:
             assert len(result["id"]) == 1
             mock_client.assets.list.assert_called_once_with(
                 person_ids=[uuid_to_gumnut_person_id(sample_uuid)],
+                include=ASSET_INCLUDE_METADATA_ONLY,
                 extra_query=JANUARY_2024_DATE_RANGE,
             )
 
@@ -706,7 +739,7 @@ class TestGetTimeBucket:
             assert len(result["isImage"]) == 0
 
             mock_client.assets.list.assert_called_once_with(
-                extra_query=JANUARY_2024_DATE_RANGE
+                include=ASSET_INCLUDE_METADATA_ONLY, extra_query=JANUARY_2024_DATE_RANGE
             )
 
     @pytest.mark.anyio
@@ -739,7 +772,7 @@ class TestGetTimeBucket:
             assert result["localOffsetHours"][0] == 10
             assert result["isImage"][0] is True
             mock_client.assets.list.assert_called_once_with(
-                extra_query=JANUARY_2024_DATE_RANGE
+                include=ASSET_INCLUDE_METADATA_ONLY, extra_query=JANUARY_2024_DATE_RANGE
             )
 
     @pytest.mark.anyio
@@ -1028,6 +1061,7 @@ class TestGetTimeBucket:
             assert len(result["id"]) == 2
             assert result["isTrashed"] == [True, True]
             mock_client.assets.list.assert_called_once_with(
+                include=ASSET_INCLUDE_METADATA_ONLY,
                 extra_query=JANUARY_2024_DATE_RANGE,
                 state="trashed",
             )
@@ -1091,6 +1125,7 @@ class TestGetTimeBucket:
 
             assert result["isTrashed"] == [True]
             mock_client.assets.list.assert_called_once_with(
+                include=ASSET_INCLUDE_METADATA_ONLY,
                 extra_query=JANUARY_2024_DATE_RANGE,
                 state="trashed",
                 album_id=uuid_to_gumnut_album_id(sample_uuid),
@@ -1160,10 +1195,11 @@ class TestDateRangeFiltering:
             )
 
             mock_client.assets.list.assert_called_once_with(
+                include=ASSET_INCLUDE_METADATA_ONLY,
                 extra_query={
                     "local_datetime_after": "2024-01-31T23:59:59.999999",
                     "local_datetime_before": "2024-03-01T00:00:00",
-                }
+                },
             )
 
     @pytest.mark.anyio
@@ -1179,10 +1215,11 @@ class TestDateRangeFiltering:
             )
 
             mock_client.assets.list.assert_called_once_with(
+                include=ASSET_INCLUDE_METADATA_ONLY,
                 extra_query={
                     "local_datetime_after": "2023-01-31T23:59:59.999999",
                     "local_datetime_before": "2023-03-01T00:00:00",
-                }
+                },
             )
 
     @pytest.mark.anyio
@@ -1198,10 +1235,11 @@ class TestDateRangeFiltering:
             )
 
             mock_client.assets.list.assert_called_once_with(
+                include=ASSET_INCLUDE_METADATA_ONLY,
                 extra_query={
                     "local_datetime_after": "2024-03-31T23:59:59.999999",
                     "local_datetime_before": "2024-05-01T00:00:00",
-                }
+                },
             )
 
     @pytest.mark.anyio
@@ -1217,10 +1255,11 @@ class TestDateRangeFiltering:
             )
 
             mock_client.assets.list.assert_called_once_with(
+                include=ASSET_INCLUDE_METADATA_ONLY,
                 extra_query={
                     "local_datetime_after": "2024-11-30T23:59:59.999999",
                     "local_datetime_before": "2025-01-01T00:00:00",
-                }
+                },
             )
 
     @pytest.mark.anyio
@@ -1251,6 +1290,7 @@ class TestDateRangeFiltering:
             assert len(result["id"]) == 1
             mock_client.assets.list.assert_called_once_with(
                 album_id=uuid_to_gumnut_album_id(sample_uuid),
+                include=ASSET_INCLUDE_METADATA_ONLY,
                 extra_query=JANUARY_2024_DATE_RANGE,
             )
 
@@ -1611,6 +1651,7 @@ class TestTimeBucketStacks:
         bucket_read = client.assets.list.call_args_list[0]
         assert bucket_read.kwargs == {
             "album_id": uuid_to_gumnut_album_id(album_id),
+            "include": ASSET_INCLUDE_METADATA_ONLY,
             "extra_query": JANUARY_2024_DATE_RANGE,
         }
 
@@ -1632,6 +1673,7 @@ class TestTimeBucketStacks:
         bucket_read = client.assets.list.call_args_list[0]
         assert bucket_read.kwargs == {
             "person_ids": [uuid_to_gumnut_person_id(person_id)],
+            "include": ASSET_INCLUDE_METADATA_ONLY,
             "extra_query": JANUARY_2024_DATE_RANGE,
         }
 

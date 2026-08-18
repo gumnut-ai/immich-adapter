@@ -1,6 +1,6 @@
 ---
 title: "Asset and Media Handling"
-last-updated: 2026-08-11
+last-updated: 2026-08-18
 ---
 
 # Asset and Media Handling
@@ -19,9 +19,9 @@ Use the constants in `routers/utils/asset_conversion.py`, chosen by what the con
 |----------|--------|---------|
 | `ASSET_INCLUDE` | `metadata, people, file_data` | Reads feeding `convert_gumnut_asset_to_immich` (it emits `people`): `get_asset_info`, search, memories, the upload-success retrieve. |
 | `ASSET_INCLUDE_NO_PEOPLE` | `metadata, file_data` | The sync-stream `entity_fetch` reads, whose converters read the `file_data` scalars but never `people`. |
-| `ASSET_INCLUDE_METADATA_ONLY` | `metadata` | Reads that touch only `metadata`: map markers (GPS), the bulk per-asset datetime rewrite (`original_datetime`). |
+| `ASSET_INCLUDE_METADATA_ONLY` | `metadata` | Reads that touch only `metadata`: timeline buckets (place names and GPS), map markers (GPS), the bulk per-asset datetime rewrite (`original_datetime`). |
 
-Reads that consume only **lean-core** fields (`id`, `mime_type`, `width`/`height`, `duration`, `trashed_at`, `local_datetime`, `stack_id`) request **no** `include` — those stay populated regardless (today: timeline buckets, trash-id collection, asset-count stats, and the `/faces` width/height read). `stack_id` earns its place on that list: the timeline's burst collapse keys on it off an `include`-less read, and if it ever moved behind a token the feature would degrade to no collapse and no badges with no error and no failing test. `asset_urls` is the exception when a call may stream non-thumbnail bytes: `_retrieve_and_stream_variant` now passes `include=variants`, because it serves the `small`/`preview`/`fullsize`/`original` rungs (and the video `_image` equivalents) and even a `thumbnail` request can aspect-upgrade to `small`. `faces` is never requested off the asset — the adapter reads faces from the dedicated `/faces` endpoint. The `create()` (buffered upload) and `update_asset()` (PATCH) responses keep the full shape and expose no `include` param, so they need no change.
+Reads that consume only **lean-core** fields (`id`, `mime_type`, `width`/`height`, `duration`, `trashed_at`, `local_datetime`, `stack_id`) request **no** `include` — those stay populated regardless (today: trash-id collection, asset-count stats, and the `/faces` width/height read). `stack_id` earns its place on that list: the timeline's burst collapse keys on it off an `include`-less read, and if it ever moved behind a token the feature would degrade to no collapse and no badges with no error and no failing test. `asset_urls` is the exception when a call may stream non-thumbnail bytes: `_retrieve_and_stream_variant` now passes `include=variants`, because it serves the `small`/`preview`/`fullsize`/`original` rungs (and the video `_image` equivalents) and even a `thumbnail` request can aspect-upgrade to `small`. `faces` is never requested off the asset — the adapter reads faces from the dedicated `/faces` endpoint. The `create()` (buffered upload) and `update_asset()` (PATCH) responses keep the full shape and expose no `include` param, so they need no change.
 
 Bumping `gumnut-sdk` can itself relax a previously-non-null asset field to `| None` as part of this migration (e.g. `file_modified_at` went `datetime` → `datetime | None`), which then needs a null-guard at every read site (`resolve_file_modified_at` falls back through `metadata.modified_datetime → file_data.file_modified_at → capture time` so the required Immich `fileModifiedAt` is never null). Run `uv run pyright` after any `gumnut-sdk` bump to surface newly-required guards.
 
