@@ -174,21 +174,8 @@ async def get_time_bucket(
     bbox: str = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user_id: UUID = Depends(get_current_user_id),
-) -> Any:  # Should be TimeBucketAssetResponseDto, but using Any to bypass Pydantic validation. See comment below.
-    """
-    This endpoint retrieves assets that match the specified time bucket.
-    There seems to be an issue with how TimeBucketAssetResponseDto is generated from the OpenAPI spec.
-    The spec shows that certain fields of the DTO (such as "city" and "country") are arrays of strings
-    that can be nullable, but the generated DTO does not allow for this. I would think that the fields
-    should be defined as such:
-
-        city: Annotated[
-            List[str | None], Field(description="Array of city names extracted from EXIF GPS data")
-        ]
-
-    To work around this, we return a dict with the correct structure instead of using the DTO directly.
-    However, this causes the OpenAPI Compatibility Validator to show a warning for this endpoint.
-    """
+) -> Any:
+    """Retrieve assets that match the specified time bucket."""
 
     # Compute month boundaries from timeBucket for server-side date filtering.
     # The Immich client may send naive ("2024-01-01T00:00:00") or UTC-aware
@@ -337,10 +324,18 @@ async def get_time_bucket(
         metadata = asset.metadata
         city_list.append(metadata.city if metadata is not None else None)
         country_list.append(metadata.country if metadata is not None else None)
-        latitude_list.append(metadata.latitude if metadata is not None else None)
-        longitude_list.append(metadata.longitude if metadata is not None else None)
+        latitude_list.append(
+            metadata.latitude
+            if withCoordinates is True and metadata is not None
+            else None
+        )
+        longitude_list.append(
+            metadata.longitude
+            if withCoordinates is True and metadata is not None
+            else None
+        )
 
-    # Return as dict to bypass Pydantic validation issues with None in List[str]
+    # Build Immich's columnar timeline response with index-aligned arrays.
     response: dict[str, Any] = {
         "city": city_list,
         "country": country_list,

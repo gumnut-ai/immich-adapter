@@ -525,11 +525,25 @@ class TestGetTimeBucket:
                 extra_query=JANUARY_2024_DATE_RANGE,
             )
 
+    @pytest.mark.parametrize(
+        ("with_coordinates", "expected_latitude", "expected_longitude"),
+        [
+            (None, [None, None], [None, None]),
+            (False, [None, None], [None, None]),
+            (True, [0.0, None], [-78.4678, None]),
+        ],
+        ids=["omitted", "false", "true"],
+    )
     @pytest.mark.anyio
-    async def test_get_time_bucket_emits_location_metadata(
-        self, multiple_gumnut_assets, mock_sync_cursor_page
+    async def test_get_time_bucket_gates_coordinates(
+        self,
+        multiple_gumnut_assets,
+        mock_sync_cursor_page,
+        with_coordinates,
+        expected_latitude,
+        expected_longitude,
     ):
-        """Location columns remain aligned when an asset has no metadata."""
+        """Exact coordinates require withCoordinates while all columns stay aligned."""
         mock_client = Mock()
         assets = multiple_gumnut_assets[:2]
         for asset in assets:
@@ -546,13 +560,15 @@ class TestGetTimeBucket:
         mock_client.assets.list.return_value = mock_sync_cursor_page(assets)
 
         result = await call_get_time_bucket(
-            timeBucket="2024-01-01T00:00:00", client=mock_client
+            timeBucket="2024-01-01T00:00:00",
+            withCoordinates=with_coordinates,
+            client=mock_client,
         )
 
         assert result["city"] == ["Quito", None]
         assert result["country"] == ["Ecuador", None]
-        assert result["latitude"] == [0.0, None]
-        assert result["longitude"] == [-78.4678, None]
+        assert result["latitude"] == expected_latitude
+        assert result["longitude"] == expected_longitude
 
     @pytest.mark.anyio
     async def test_get_time_bucket_ratio_passes_through_asset_dims(

@@ -62,8 +62,7 @@ ASSET_INCLUDE_NO_PEOPLE: list[str] = ["metadata", "file_data"]
 ``people`` — skipping ``people`` avoids a server-side aggregation on the scan."""
 
 ASSET_INCLUDE_METADATA_ONLY: list[str] = ["metadata"]
-"""For reads that consume only ``metadata`` fields and no ``file_data`` scalar:
-map markers (GPS) and the per-asset datetime rewrite (``original_datetime``)."""
+"""For asset reads whose consumers need only ``metadata`` fields."""
 
 
 def resolve_immich_checksum(gumnut_asset: AssetResponse) -> str:
