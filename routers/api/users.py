@@ -44,6 +44,7 @@ from routers.utils.current_user import (
     get_current_user_id,
     map_user_quota,
 )
+from routers.api.constants import DEFAULT_DOWNLOAD_ARCHIVE_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,9 @@ router = APIRouter(
 userPreferencesResponse: UserPreferencesResponseDto = UserPreferencesResponseDto(
     albums=AlbumsResponse(defaultAssetOrder=AssetOrder.desc),
     cast=CastResponse(gCastEnabled=False),
-    download=DownloadResponse(archiveSize=0, includeEmbeddedVideos=False),
+    download=DownloadResponse(
+        archiveSize=DEFAULT_DOWNLOAD_ARCHIVE_SIZE, includeEmbeddedVideos=False
+    ),
     emailNotifications=EmailNotificationsResponse(
         albumInvite=False, albumUpdate=False, enabled=False
     ),

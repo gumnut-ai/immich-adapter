@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-08-12
+last-updated: 2026-08-18
 ---
 
 # Immich Adapter Architecture
@@ -72,6 +72,9 @@ Asset converters translate Gumnut metadata, timestamps, checksums, media variant
 - outgoing checksums are base64 SHA-1 even though stronger hashes exist internally;
 - thumbnail selection depends on the requested/display aspect ratio;
 - video upload events may wait for a renderable derived image.
+- batch downloads resolve original variants and file sizes through the Gumnut API,
+  then stream the signed CDN responses into an on-the-fly ZIP without taking
+  custody of complete assets or archives.
 
 The canonical rules and source anchors are in [Asset and Media Handling](../references/asset-and-media-handling.md).
 

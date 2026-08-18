@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 
-from routers.utils.cdn_client import stream_from_cdn
+from routers.utils.cdn_client import iter_cdn_response_bytes, stream_from_cdn
 
 
 @pytest.fixture
@@ -48,6 +48,16 @@ class TestStreamFromCdn:
 
         assert result.status_code == 200
         assert result.media_type == "image/jpeg"
+
+    @pytest.mark.anyio
+    async def test_shared_body_iterator_always_closes_response(self, mock_cdn_response):
+        """Archive members and individual downloads release the connection."""
+        cdn_response = mock_cdn_response(200)
+
+        chunks = [chunk async for chunk in iter_cdn_response_bytes(cdn_response)]
+
+        assert chunks == [b"fake cdn data"]
+        cdn_response.aclose.assert_awaited_once()
 
     @pytest.mark.anyio
     async def test_accept_ranges_on_200(self, mock_cdn_response):

@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 import shortuuid
 
-from routers.api.constants import STUB_LICENSE_KEY
+from routers.api.constants import DEFAULT_DOWNLOAD_ARCHIVE_SIZE, STUB_LICENSE_KEY
 from routers.api.users import (
     get_my_calendar_heatmap,
     get_my_preferences,
@@ -246,6 +246,13 @@ class TestMyPreferences:
         dumped = (await get_my_preferences()).model_dump(by_alias=True)
 
         assert dumped["recentlyAdded"] == {"sidebarWeb": False}
+
+    @pytest.mark.anyio
+    async def test_download_archive_size_is_positive_upstream_default(self):
+        """Immich Web forwards this value to a DTO whose minimum is one."""
+        result = await get_my_preferences()
+
+        assert result.download.archiveSize == DEFAULT_DOWNLOAD_ARCHIVE_SIZE
 
     @pytest.mark.anyio
     async def test_update_ignores_the_request(self):

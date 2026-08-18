@@ -82,11 +82,49 @@ async def stream_from_cdn(
         HTTPException: 404 for CDN 403/404, 416 for range-not-satisfiable,
             502 for CDN 5xx or connection errors.
     """
-    client = await get_cdn_http_client()
+    cdn_response = await open_cdn_response(cdn_url, range_header=range_header)
 
-    headers: dict[str, str] = {}
-    if range_header is not None:
-        headers["Range"] = range_header
+    content_type = cdn_response.headers.get("content-type") or mimetype
+    response_headers: dict[str, str] = {}
+
+    # Forward allowlisted upstream headers when present
+    for h in forwarded_headers:
+        v = cdn_response.headers.get(h)
+        if v:
+            response_headers[h if h == "etag" else h.title()] = v
+
+    # iOS AVPlayer probes Accept-Ranges on the initial non-Range 200 response to
+    # decide whether the source is seekable. Without it, MP4s whose moov atom
+    # isn't at the front are not playable and the player can fail abruptly.
+    # R2 via the Cloudflare Worker supports byte ranges unconditionally, so it
+    # is safe to advertise this on every successful CDN response.
+    response_headers["Accept-Ranges"] = "bytes"
+
+    if cdn_response.status_code == 206:
+        content_range = cdn_response.headers.get("content-range")
+        if content_range:
+            response_headers["Content-Range"] = content_range
+
+    return StreamingResponse(
+        iter_cdn_response_bytes(cdn_response),
+        status_code=cdn_response.status_code,
+        media_type=content_type,
+        headers=response_headers,
+    )
+
+
+async def open_cdn_response(
+    cdn_url: str, range_header: str | None = None
+) -> httpx.Response:
+    """Open and validate one streamed CDN response without reading its body.
+
+    The caller owns the successful response and must consume it through
+    :func:`iter_cdn_response_bytes` (or close it explicitly). Keeping this
+    status mapping in one place makes archive members and individual media
+    downloads fail consistently.
+    """
+    client = await get_cdn_http_client()
+    headers = {"Range": range_header} if range_header is not None else {}
 
     try:
         cdn_response = await client.send(
@@ -116,8 +154,8 @@ async def stream_from_cdn(
     if cdn_response.status_code == 416:
         logger.warning("CDN range not satisfiable", extra={"cdn_url": cdn_url})
         error_headers: dict[str, str] = {"Accept-Ranges": "bytes"}
-        if cr := cdn_response.headers.get("content-range"):
-            error_headers["Content-Range"] = cr
+        if content_range := cdn_response.headers.get("content-range"):
+            error_headers["Content-Range"] = content_range
         await cdn_response.aclose()
         raise HTTPException(
             status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
@@ -136,37 +174,13 @@ async def stream_from_cdn(
             detail="CDN upstream error",
         )
 
-    content_type = cdn_response.headers.get("content-type") or mimetype
-    response_headers: dict[str, str] = {}
+    return cdn_response
 
-    # Forward allowlisted upstream headers when present
-    for h in forwarded_headers:
-        v = cdn_response.headers.get(h)
-        if v:
-            response_headers[h if h == "etag" else h.title()] = v
 
-    # iOS AVPlayer probes Accept-Ranges on the initial non-Range 200 response to
-    # decide whether the source is seekable. Without it, MP4s whose moov atom
-    # isn't at the front are not playable and the player can fail abruptly.
-    # R2 via the Cloudflare Worker supports byte ranges unconditionally, so it
-    # is safe to advertise this on every successful CDN response.
-    response_headers["Accept-Ranges"] = "bytes"
-
-    if cdn_response.status_code == 206:
-        content_range = cdn_response.headers.get("content-range")
-        if content_range:
-            response_headers["Content-Range"] = content_range
-
-    async def _stream_and_close():
-        try:
-            async for chunk in cdn_response.aiter_bytes(chunk_size=8192):
-                yield chunk
-        finally:
-            await cdn_response.aclose()
-
-    return StreamingResponse(
-        _stream_and_close(),
-        status_code=cdn_response.status_code,
-        media_type=content_type,
-        headers=response_headers,
-    )
+async def iter_cdn_response_bytes(cdn_response: httpx.Response):
+    """Yield a validated CDN response body and always release its connection."""
+    try:
+        async for chunk in cdn_response.aiter_bytes(chunk_size=8192):
+            yield chunk
+    finally:
+        await cdn_response.aclose()
