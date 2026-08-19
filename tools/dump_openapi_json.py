@@ -11,6 +11,7 @@
 #     "b64uuid>=0.1",
 #     "shortuuid>=1.0.13",
 #     "redis~=8.0",
+#     "stream-zip>=0.0.83",
 #     "user-agents>=2.2.0",
 # ]
 # ///

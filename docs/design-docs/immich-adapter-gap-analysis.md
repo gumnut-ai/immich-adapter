@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-08-11
+last-updated: 2026-08-18
 ---
 
 # Immich Adapter Gap Analysis
@@ -32,7 +32,6 @@ A route being present in OpenAPI does not prove a client uses it. Check the pinn
 | Shared links | Compatibility stubs; mutations do not create durable public links | Gumnut API sharing/access model plus adapter | Revisit: high value, large auth/storage design |
 | Tags | Empty/fake compatibility surface | Gumnut API tag hierarchy and asset relations plus adapter | Revisit after core data model |
 | Reverse geocoding | Empty read; map markers themselves work | Geocoding provider/storage plus adapter | Revisit independently |
-| Download/archive | Empty archive/info stubs; individual originals work | Adapter | Close: clear user value |
 | Activities/comments | Unreachable without sharing | Sharing model first | Intentional until sharing exists |
 | Memories writes | Read path is available; save/hide persistence is not | Gumnut API memory model plus adapter | Revisit |
 | Partners and album sharing | Unsupported single-user deployment model | Cross-user authorization and sharing | Revisit as a larger product capability |
@@ -71,10 +70,9 @@ These decisions are product/architecture choices, not promises that every unsupp
 
 ### Close next
 
-1. **Download/archive** — adapter-only and visible to users.
-2. **Pagination/scaling** — remove full-library reads where the Gumnut API can expose the required sort/filter/count behavior.
-3. **Memories write path** — complete only with a durable backend model.
-4. **Search limitations** — address from observed client workflows rather than broad speculative parity.
+1. **Pagination/scaling** — remove full-library reads where the Gumnut API can expose the required sort/filter/count behavior.
+2. **Memories write path** — complete only with a durable backend model.
+3. **Search limitations** — address from observed client workflows rather than broad speculative parity.
 
 ### Revisit with product capability
 

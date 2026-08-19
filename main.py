@@ -43,6 +43,7 @@ from routers.api import (
     users,
     view,
 )
+from routers.api.download import close_archive_zip_executor
 from services import websockets
 from services.streaming_upload import close_streaming_http_client
 from routers.utils.cdn_client import close_cdn_http_client
@@ -105,6 +106,7 @@ async def lifespan(app: FastAPI):
     await close_shared_http_client()
     await close_cdn_http_client()
     close_streaming_http_client()
+    await close_archive_zip_executor()
     # Close Redis client
     await close_redis_client()
 

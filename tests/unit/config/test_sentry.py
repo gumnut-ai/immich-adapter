@@ -1,6 +1,6 @@
 from typing import Any
 
-from config.sentry import _enrich_http_spans
+from config.sentry import _enrich_http_spans, _redact_error_event
 
 
 def _span_data(result: dict[str, Any], index: int) -> dict[str, Any]:
@@ -8,7 +8,124 @@ def _span_data(result: dict[str, Any], index: int) -> dict[str, Any]:
     return result["spans"][index]["data"]
 
 
+def test_error_events_redact_signed_cdn_values_without_touching_other_queries():
+    event: Any = {
+        "exception": {
+            "values": [
+                {
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "vars": {
+                                    "url": (
+                                        "'https://assets.gumnut.ai/asset.jpg"
+                                        "?w=720&verify=secret-token"
+                                        "&dl=family-photo.jpg&f=webp'"
+                                    ),
+                                    "safe_url": (
+                                        "'https://api.example.com/search"
+                                        "?page=2&dl=report.csv&query=cats'"
+                                    ),
+                                    "punctuated_url": (
+                                        "https://assets.gumnut.ai/asset.jpg"
+                                        "?verify=punctuation-secret"
+                                        "&dl=Sensitive,Family(One)'s.jpg"
+                                    ),
+                                    "filename_first_url": (
+                                        "https://assets.gumnut.ai/asset.jpg"
+                                        "?dl=Sensitive,Family.jpg"
+                                        "&verify=reordered-secret"
+                                    ),
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+        "breadcrumbs": {
+            "values": [
+                {
+                    "message": (
+                        "GET https://assets.gumnut.ai/asset.jpg"
+                        "?verify=secret-token&dl=family-photo.jpg&w=720"
+                    )
+                }
+            ]
+        },
+        "request": {"query_string": "page=2&dl=report.csv&query=cats"},
+    }
+
+    result = _redact_error_event(event, {})
+    rendered = repr(result)
+    assert "secret-token" not in rendered
+    assert "family-photo.jpg" not in rendered
+    assert "punctuation-secret" not in rendered
+    assert "reordered-secret" not in rendered
+    assert "Sensitive,Family" not in rendered
+    assert "verify=REDACTED&dl=REDACTED&w=720" in rendered
+    assert "page=2&dl=report.csv&query=cats" in rendered
+
+
 class TestEnrichHttpSpans:
+    def test_redacts_only_sensitive_cdn_query_metadata(self):
+        event = {
+            "spans": [
+                {
+                    "op": "http.client",
+                    "description": (
+                        "GET https://assets.gumnut.ai/asset.jpg"
+                        "?w=720&verify=secret-token&dl=family-photo.jpg&f=webp"
+                    ),
+                    "data": {
+                        "url": (
+                            "https://assets.gumnut.ai/asset.jpg"
+                            "?w=720&verify=secret-token&dl=family-photo.jpg&f=webp"
+                        ),
+                        "http.query": (
+                            "w=720&verify=secret-token&dl=family-photo.jpg&f=webp"
+                        ),
+                    },
+                }
+            ]
+        }
+
+        result = _enrich_http_spans(event, {})
+        span = result["spans"][0]
+        assert span["description"].endswith("?w=720&verify=REDACTED&dl=REDACTED&f=webp")
+        assert _span_data(result, 0)["url"].endswith(
+            "?w=720&verify=REDACTED&dl=REDACTED&f=webp"
+        )
+        assert _span_data(result, 0)["http.query"] == (
+            "w=720&verify=REDACTED&dl=REDACTED&f=webp"
+        )
+
+    def test_preserves_unrelated_query_metadata(self):
+        event = {
+            "spans": [
+                {
+                    "op": "http.client",
+                    "description": (
+                        "GET https://api.example.com/search"
+                        "?page=2&dl=report.csv&query=cats"
+                    ),
+                    "data": {
+                        "url": (
+                            "https://api.example.com/search"
+                            "?page=2&dl=report.csv&query=cats"
+                        ),
+                        "http.query": "page=2&dl=report.csv&query=cats",
+                    },
+                }
+            ]
+        }
+
+        result = _enrich_http_spans(event, {})
+        assert _span_data(result, 0)["http.query"] == (
+            "page=2&dl=report.csv&query=cats"
+        )
+        assert _span_data(result, 0)["url"].endswith("?page=2&dl=report.csv&query=cats")
+
     def test_adds_server_address_from_url(self):
         event = {
             "spans": [

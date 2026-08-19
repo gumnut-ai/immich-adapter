@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 from typing import List
 import logging
 
-from routers.api.constants import STUB_LICENSE_KEY
+from routers.api.constants import DEFAULT_DOWNLOAD_ARCHIVE_SIZE, STUB_LICENSE_KEY
 from routers.immich_models import (
     AlbumsResponse,
     AssetOrder,
@@ -57,7 +57,9 @@ router = APIRouter(
 userPreferencesResponse: UserPreferencesResponseDto = UserPreferencesResponseDto(
     albums=AlbumsResponse(defaultAssetOrder=AssetOrder.desc),
     cast=CastResponse(gCastEnabled=False),
-    download=DownloadResponse(archiveSize=0, includeEmbeddedVideos=False),
+    download=DownloadResponse(
+        archiveSize=DEFAULT_DOWNLOAD_ARCHIVE_SIZE, includeEmbeddedVideos=False
+    ),
     emailNotifications=EmailNotificationsResponse(
         albumInvite=False, albumUpdate=False, enabled=False
     ),
