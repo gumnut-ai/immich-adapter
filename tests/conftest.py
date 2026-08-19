@@ -154,10 +154,7 @@ def make_gumnut_asset(
     asset.metadata = None  # No metadata
     asset.trashed_at = trashed_at
     asset.stack_id = stack_id
-    # What produced the current rendering. `"original"` (the default) means the
-    # asset is unedited; anything else maps to Immich `isEdited=True` via
-    # `is_asset_edited`. Set explicitly so a Mock attribute (truthy, never equal
-    # to "original") doesn't make every fixture asset read as edited.
+    # Set explicitly because an unset Mock attribute maps as edited.
     asset.kind = kind
     return asset
 

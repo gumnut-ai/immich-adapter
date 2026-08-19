@@ -219,8 +219,7 @@ async def _retrieve_and_stream_variant(
     )
 
 
-# Headers both branches of GET /{id}/original forward — the download surface
-# additionally needs content-disposition so filenames survive proxying.
+# Preserve filenames when proxying downloads.
 _ORIGINAL_DOWNLOAD_FORWARDED_HEADERS = DEFAULT_FORWARDED_HEADERS + (
     "content-disposition",
 )
@@ -231,29 +230,15 @@ async def _stream_exact_original(
     client: AsyncGumnut,
     range_header: str | None = None,
 ) -> StreamingResponse:
-    """Stream the exact uploaded bytes — the position-0 version — from CDN.
+    """Stream the unique position-zero version's original bytes.
 
-    ``asset_urls["original"]`` follows the asset's *current* rendering, so once
-    an edit exists it can no longer serve the untouched upload. The version
-    chain's ``position == 0`` row is the only exact-original contract: its
-    ``version_urls["original"]`` (gated behind ``include=variants``, like the
-    asset-level rungs) is a signed URL for the stored upload bytes. One
-    ``versions.list`` call resolves both existence and the URL, so this path
-    needs no separate asset retrieve.
-
-    The Gumnut API guarantees every asset's chain contains exactly one root.
-    If the response violates that (no rows, no root, or duplicate roots), fail
-    closed with a 502 rather than silently substituting another rendering —
-    clients use this route for byte-exact checksum reconciliation, and a wrong
-    variant looks valid but never matches.
+    An invalid root set returns 502 rather than substituting another rendering.
     """
     gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
     versions = await client.assets.versions.list(gumnut_asset_id, include=["variants"])
 
     roots = [version for version in versions if version.position == 0]
     if len(roots) != 1:
-        # ERROR, not WARNING: the backend broke a documented guarantee and the
-        # client sees a 5xx — this must reach error-based alerting.
         logger.error(
             "Asset version chain has no unique root",
             extra={"asset_id": gumnut_asset_id, "root_count": len(roots)},
@@ -1334,22 +1319,10 @@ async def download_asset(
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> StreamingResponse:
-    """
-    Download an asset's full-quality bytes, preserving the stored format
-    (JPEG, HEIC, RAW, etc.).
+    """Stream full-quality asset bytes in their stored format.
 
-    The ``edited`` selector matches the Immich route (default ``false``):
-
-    - ``edited=true`` streams the *current* rendering —
-      ``asset_urls["original"]``, which follows the newest version when an
-      edit exists.
-    - ``edited=false`` (and omitted) streams the exact uploaded bytes via the
-      version chain's position-0 root (see ``_stream_exact_original``), the
-      only byte-exact contract once an edit is current.
-
-    For a root-only asset both selectors resolve to the same stored bytes.
-    The client's Range header is forwarded either way so partial downloads
-    resume correctly.
+    ``edited=true`` selects the current rendering; the default ``false`` selects
+    the exact uploaded bytes from the version-chain root.
     """
     range_header = request.headers.get("range")
     if edited:

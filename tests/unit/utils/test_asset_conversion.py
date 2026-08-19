@@ -961,12 +961,7 @@ class TestUploadReadyPayloadStackId:
 
 
 class TestIsEditedMapping:
-    """Every asset emit surface maps ``isEdited`` through the one shared
-    predicate (``is_asset_edited``: ``kind != "original"``), so an edit created
-    by a native Gumnut client is visible to Immich clients on REST, the
-    upload-ready WebSocket payload, and both sync generations — and an
-    unrecognized kind (the namespace is open, e.g. ``external:<service>``)
-    still reads as edited rather than silently claiming the upload."""
+    """Verify consistent edited-state mapping across asset emitters."""
 
     OWNER = UUID("22222222-2222-2222-2222-222222222222")
 
@@ -1001,6 +996,4 @@ class TestIsEditedMapping:
         assert self._is_edited_everywhere("edit") == {True}
 
     def test_unknown_non_original_kind_maps_edited(self):
-        # The kind namespace is open — an unrecognized producer is still not
-        # the upload, so it must appear edited, without adapter rejection.
         assert self._is_edited_everywhere("external:future-service") == {True}

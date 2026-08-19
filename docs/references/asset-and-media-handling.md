@@ -49,12 +49,18 @@ Emit all three tuple elements verbatim on the response. Do **not** re-derive ori
 
 ## Edited state and exact-original downloads
 
-The Gumnut asset's top-level `kind` names what produced the **current rendering** (`"original"`, `"edit"`, or an open `external:<service>` namespace). Two rules follow:
+The top-level `kind` identifies the current rendering. Map `kind != "original"`
+to Immich `isEdited` through `is_asset_edited`; the namespace is open, so every
+non-original kind is edited. Because `kind` is a lean-core field, this requires
+no additional query.
 
-- **`isEdited` derives from `kind` in exactly one place** — call `is_asset_edited` (`routers/utils/asset_conversion.py`) at every emit site that populates the flag (`AssetResponseDto`, the WebSocket `AssetUploadReadyV1Payload`, `SyncAssetV1`; V2 inherits by delegation). Its docstring owns the rationale (open kind namespace, no version-list derivation). `kind` is a lean-core top-level field, so normal DTO conversion needs no extra query and no new `include` token.
-- **`asset_urls["original"]` follows the current rendering, so it cannot serve the untouched upload once an edit exists.** The version chain's `position == 0` row is the only exact-byte contract; `GET /api/assets/{id}/original` maps Immich's `edited` selector accordingly (`edited=false` is the Immich spec default) — see `_stream_exact_original` in `routers/api/assets.py` for the mechanics and fail-closed rules. The batch archive route (`routers/api/download.py`) does not yet apply this selection and streams the current rendering for every member.
+`asset_urls["original"]` points to the current rendering. For
+`GET /api/assets/{id}/original`, `edited=true` streams that rendering, while the
+default `edited=false` streams the version-chain root (`position == 0`). The
+archive route currently streams the current rendering regardless of `edited`.
 
-Test fixtures must set `kind` explicitly on mock assets (`make_gumnut_asset` defaults it to `"original"`) — a bare `Mock` attribute is never equal to `"original"` and silently reads as edited.
+Mock assets must set `kind` explicitly; `make_gumnut_asset` defaults it to
+`"original"`.
 
 ## Thumbnail variant selection by aspect ratio
 

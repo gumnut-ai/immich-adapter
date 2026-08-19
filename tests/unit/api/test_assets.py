@@ -3278,13 +3278,7 @@ def _make_mock_version(
     mime_type: str = "image/jpeg",
     original_url: str | None = "https://cdn.example.com/v0-original.jpg",
 ):
-    """Build one mock version-chain row as ``client.assets.versions.list`` returns it.
-
-    Root selection reads only ``position`` (0 is the root), so the fixture
-    carries no ``kind``. ``original_url=None`` models a row whose
-    ``version_urls`` lacks the exact-byte ``original`` rung (e.g. the serving
-    call omitted ``include=variants``).
-    """
+    """Build a mock asset-version row."""
     version = Mock()
     version.id = f"asset_version_pos{position}"
     version.position = position
@@ -3315,21 +3309,8 @@ def _mock_request(range_header: str | None = None) -> Mock:
 
 
 class TestDownloadAsset:
-    """The ``edited`` selector on GET /assets/{id}/original.
-
-    ``edited=true`` streams the current rendering (``asset_urls["original"]``);
-    ``edited=false`` — the Immich spec default — streams the exact uploaded
-    bytes via the version chain's position-0 root.
-    """
-
     @pytest.mark.anyio
     async def test_omitted_edited_selector_streams_exact_original(self, sample_uuid):
-        """Omitting ``edited`` follows the Immich spec default (``false``): the
-        handler takes the exact-original path — listing versions, never
-        retrieving the current rendering — so param-less clients keep
-        byte-exact checksum reconciliation. Exercised through the handler
-        (the ``Annotated[..., Query()] = False`` shape makes the plain-call
-        default real) rather than by inspecting the signature."""
         mock_client = Mock()
         mock_client.assets.versions.list = AsyncMock(
             return_value=[_make_mock_version(0)]
@@ -3339,6 +3320,7 @@ class TestDownloadAsset:
             "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
+            # Omit edited to exercise the handler's actual default.
             await download_asset(sample_uuid, _mock_request(), client=mock_client)
 
         mock_client.assets.versions.list.assert_awaited_once()
@@ -3346,8 +3328,6 @@ class TestDownloadAsset:
 
     @pytest.mark.anyio
     async def test_edited_true_streams_current_rendering(self, sample_uuid):
-        """``edited=true`` streams asset_urls["original"] and never lists
-        versions — the top-level URL already follows the current rendering."""
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
@@ -3381,7 +3361,6 @@ class TestDownloadAsset:
 
     @pytest.mark.anyio
     async def test_edited_true_preserves_heic_format(self, sample_uuid):
-        """The stored format (HEIC, RAW, …) is streamed as-is, not converted."""
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
@@ -3411,10 +3390,6 @@ class TestDownloadAsset:
 
     @pytest.mark.anyio
     async def test_edited_false_streams_position_zero_bytes(self, sample_uuid):
-        """``edited=false`` lists versions once (with ``include=variants``),
-        selects the position-0 root even when an edit is current — and even
-        when the response order puts the root last — and streams its
-        exact-byte URL with the root's MIME type. No asset retrieve happens."""
         root = _make_mock_version(
             0, mime_type="image/heic", original_url="https://cdn.example.com/root.heic"
         )
@@ -3450,7 +3425,6 @@ class TestDownloadAsset:
 
     @pytest.mark.anyio
     async def test_range_header_forwarded_on_both_selectors(self, sample_uuid):
-        """Partial downloads keep working for either selector value."""
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
@@ -3487,8 +3461,6 @@ class TestDownloadAsset:
 
     @pytest.mark.anyio
     async def test_root_only_asset_same_bytes_for_both_selectors(self, sample_uuid):
-        """With no edit, the current rendering IS the upload: both selector
-        values resolve to the same stored bytes (same signed object)."""
         url = "https://cdn.example.com/only.jpg"
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
@@ -3515,8 +3487,6 @@ class TestDownloadAsset:
 
     @pytest.mark.anyio
     async def test_edited_false_missing_root_fails_closed(self, sample_uuid):
-        """A chain with no position-0 row violates the backend invariant:
-        502, never a silent substitute of another rendering."""
         mock_client = Mock()
         mock_client.assets.versions.list = AsyncMock(
             return_value=[_make_mock_version(1)]
@@ -3530,7 +3500,6 @@ class TestDownloadAsset:
 
     @pytest.mark.anyio
     async def test_edited_false_duplicate_root_fails_closed(self, sample_uuid):
-        """Two position-0 rows are equally malformed — no arbitrary pick."""
         mock_client = Mock()
         mock_client.assets.versions.list = AsyncMock(
             return_value=[_make_mock_version(0), _make_mock_version(0)]
@@ -3544,8 +3513,6 @@ class TestDownloadAsset:
 
     @pytest.mark.anyio
     async def test_edited_false_missing_original_rung_is_404(self, sample_uuid):
-        """A root without the exact-byte ``original`` rung mirrors the existing
-        variant-not-available contract."""
         mock_client = Mock()
         mock_client.assets.versions.list = AsyncMock(
             return_value=[_make_mock_version(0, original_url=None)]
@@ -3559,8 +3526,6 @@ class TestDownloadAsset:
 
     @pytest.mark.anyio
     async def test_edited_false_not_found_propagates(self, sample_uuid):
-        """An SDK NotFoundError from the version list bubbles to the global
-        handler, following the existing upstream-error contract."""
         from gumnut import NotFoundError
         from tests.conftest import make_sdk_status_error
 

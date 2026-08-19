@@ -299,8 +299,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset.metadata = None
         # Avoid a truthy auto-created Mock for an unstacked asset.
         asset.stack_id = None
-        # A bare Mock attribute is never equal to "original", which would make
-        # the asset read as edited (`is_asset_edited`).
+        # Avoid an unset Mock mapping as edited.
         asset.kind = "original"
         return asset
 
