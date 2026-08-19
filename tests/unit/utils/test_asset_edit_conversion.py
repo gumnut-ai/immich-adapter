@@ -63,13 +63,7 @@ V = MirrorAxis.vertical
 
 
 class TestOrientationNormalization:
-    """Identity plus all eight rotate/mirror states normalize deterministically."""
-
-    # Canonical Immich web serialization order is [mirrors..., rotate]. Under
-    # upstream's compose semantics the rotate applies to pixels first, then
-    # mirror vertical, then mirror horizontal.
     EIGHT_STATES = [
-        # (edits, expected_angle, expected_mirror)
         ([rotate(0)], 0, False),  # identity via explicit rotate 0
         ([rotate(90)], 90, False),
         ([rotate(180)], 180, False),
@@ -110,8 +104,6 @@ class TestOrientationNormalization:
         assert to_recipe(equivalent) == to_recipe(canonical)
 
     def test_list_order_is_semantically_honored(self):
-        # Upstream composes in list order (last element applies to pixels
-        # first), so mirror-then-rotate differs from rotate-then-mirror.
         assert to_recipe([mirror(H), rotate(90)]) == EditRecipe(
             crop=None, angle=90, mirror=True
         )
@@ -152,10 +144,7 @@ class TestRotationNormalization:
 
     @pytest.mark.parametrize("bad_angle", [True, "90", 10**400])
     def test_rejects_smuggled_angle_values(self, bad_angle):
-        # model_construct bypasses pydantic's float coercion, so the pure
-        # boundary must reject bools, non-numbers, and ints too large for a
-        # float with the stable code rather than mis-treating them as numbers
-        # or crashing on arithmetic.
+        # Bypass Pydantic to exercise the codec boundary.
         params = RotateParameters.model_construct(angle=bad_angle)
         edit = AssetEditActionItemDto.model_construct(
             action=AssetEditAction.rotate, parameters=params
@@ -184,7 +173,6 @@ class TestCropValidation:
         assert recipe.crop == CropBox(x=0, y=0, width=SOURCE_W, height=SOURCE_H)
 
     def test_crop_position_in_list_does_not_change_meaning(self):
-        # Upstream applies crop first regardless of where it sits in the list.
         first = to_recipe([crop(), mirror(H), rotate(90)])
         last = to_recipe([mirror(H), rotate(90), crop()])
         assert first == last
@@ -205,8 +193,7 @@ class TestCropValidation:
         ],
     )
     def test_rejects_bad_crops(self, x, y, width, height, code):
-        # model_construct bypasses pydantic's field constraints, proving the
-        # pure boundary revalidates rather than trusting the generated DTO.
+        # Bypass Pydantic to exercise the codec boundary.
         params = CropParameters.model_construct(x=x, y=y, width=width, height=height)
         edit = AssetEditActionItemDto.model_construct(
             action=AssetEditAction.crop, parameters=params
@@ -278,7 +265,6 @@ class TestRejections:
         assert exc_info.value.code == "duplicate_action"
 
     def test_both_mirror_axes_together_are_legal(self):
-        # Upstream uniqueness is per mirror axis, not per action name.
         assert to_recipe([mirror(H), mirror(V)]) == EditRecipe(
             crop=None, angle=180, mirror=False
         )
@@ -380,8 +366,6 @@ class TestRecipeParams:
         assert parse_recipe_params(params).crop is None
 
     def test_accepts_crop_values_at_exact_upper_bound(self):
-        # 2**53 - 1 is the largest value the generated Immich DTO accepts;
-        # a recipe at exactly that bound must parse and reverse-translate.
         bound = 2**53 - 1
         params = {
             "version": 1,
@@ -407,8 +391,7 @@ class TestRecipeParams:
             ({"version": True, "angle": 0, "mirror": False}, "malformed_recipe"),
             ({"version": 2, "angle": 0, "mirror": False}, "unsupported_recipe_version"),
             ({"version": 0, "angle": 0, "mirror": False}, "unsupported_recipe_version"),
-            # Version precedence: an unsupported version wins over other
-            # malformed/unknown fields, pinning the documented check order.
+            # Unsupported version takes precedence over malformed fields.
             (
                 {"version": 2, "angle": 45, "mirror": "no", "exposure": 0.5},
                 "unsupported_recipe_version",
@@ -568,15 +551,11 @@ class TestSynthesizedRowIds:
             assert isinstance(row.id, uuid.UUID)
 
     def test_ids_are_uuid_version_4(self):
-        # Upstream Immich validates edit-row IDs as UUIDv4 specifically, so
-        # the deterministic derivation must stamp version-4 bits.
         for row in self.rows():
             assert row.id.version == 4
             assert row.id.variant == uuid.RFC_4122
 
     def test_ids_match_golden_values(self):
-        # Golden literals pin the derivation across deployments; see
-        # _synthesized_row_id for the stability contract.
         golden = {
             AssetEditAction.crop: uuid.UUID("2265abeb-0285-4476-93c0-f245091c6255"),
             AssetEditAction.mirror: uuid.UUID("d8c22012-6ed5-406e-9cef-2e78ddb5bf01"),
@@ -601,9 +580,6 @@ class TestSynthesizedRowIds:
 
 class TestPurity:
     def test_module_pulls_in_no_network_or_pixel_io_dependencies(self):
-        # Import the codec in a fresh interpreter and assert that no SDK,
-        # HTTP, framework, or imaging package comes with it — the module's
-        # portability contract, enforced rather than assumed.
         repo_root = Path(__file__).resolve().parents[3]
         code = (
             "import sys\n"

@@ -1,13 +1,7 @@
-"""Pure codec between Immich edit-action lists and the Gumnut v1 edit recipe.
+"""Convert Immich edit actions to and from the Gumnut v1 edit recipe.
 
-Immich's editor submits an ordered list of crop / rotate / mirror actions and
-expects the server to produce the pixels. Gumnut stores one consolidated,
-normalized recipe on the `edit` version's `params` — the Gumnut API treats
-`params` as opaque JSON whose schema is defined by the producer, so this module
-*is* the schema definition for `kind="edit"`. Nothing in the adapter calls
-this module yet: both directions live here so that the planned pixel-rendering
-pipeline and the planned edit routes can share a single tested semantic
-contract when they land.
+The Gumnut API stores producer-defined `params` JSON on `edit` versions, so
+this module owns that schema:
 
 The v1 recipe JSON object::
 
@@ -18,22 +12,13 @@ The v1 recipe JSON object::
         "mirror": true | false
     }
 
-Pipeline semantics (fixed, independent of Immich's serialization order):
-crop is applied to the display-oriented source frame first, then rotation by
-`angle` (Immich's `RotateParameters.angle` convention), then a horizontal
-mirror when `mirror` is true. This matches the upstream Immich server, which
-extracts the crop first regardless of its list position and composes the
-remaining actions into one affine matrix in list order, applying the *last*
-list element to the pixels *first* (`server/src/repositories/media.repository.ts`
-and `web/src/lib/utils/editor.ts` in upstream Immich). Every duplicate-free
-rotate/mirror sequence composes to exactly one of the eight display-orientation
-states, uniquely representable as `(mirror, angle)` — so "ambiguous ordering"
-reduces to the duplicate and mismatch rejections below.
+Recipes apply crop to the display-oriented source frame, then rotation, then a
+horizontal mirror. Immich actions compose in list order, with the last action
+applied first; every valid rotate/mirror sequence reduces to one of eight
+`(mirror, angle)` orientations.
 
-Purity contract: no Gumnut SDK, FastAPI, imaging, filesystem, or network
-imports. Inputs and outputs are the generated Immich DTOs plus the small typed
-recipe value, so callers and tests need no app or client fixtures. Error
-messages carry stable codes and never echo client-supplied values.
+The module has no SDK, framework, imaging, filesystem, or network dependencies.
+Errors expose stable codes and never echo client values.
 """
 
 from __future__ import annotations
@@ -60,12 +45,10 @@ RECIPE_VERSION = 1
 # A valid list holds at most one crop, one mirror per axis, and one rotate.
 MAX_EDIT_ACTIONS = 4
 
-# Upper bound the generated Immich DTOs enforce on crop fields (2**53 - 1);
-# revalidated here so a stored recipe outside it fails with this module's
-# stable error instead of a pydantic ValidationError at DTO construction.
+# Match the generated DTO bound and keep failures inside this error domain.
 _MAX_CROP_VALUE = 9_007_199_254_740_991
 
-# Opaque domain-separation prefix for row-ID hashing; see _synthesized_row_id.
+# Changing this prefix changes every synthesized row ID.
 _EDIT_ROW_ID_KEY_PREFIX = "9c1d1f2e-5a4b-4d3c-8e6f-2b7a9d0c4e51"
 
 _RECIPE_KEYS = frozenset({"version", "crop", "angle", "mirror"})
@@ -74,11 +57,7 @@ _VALID_ANGLES = frozenset({0, 90, 180, 270})
 
 
 class AssetEditError(Exception):
-    """Base for adapter-domain edit codec failures.
-
-    Carries a stable machine-readable `code` so route code can map failures to
-    Immich-shaped responses without string-matching messages.
-    """
+    """Adapter-domain failure with a stable machine-readable code."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -90,17 +69,12 @@ class AssetEditValidationError(AssetEditError):
 
 
 class UnsupportedEditRecipeError(AssetEditError):
-    """A stored recipe cannot be represented as Immich edits.
-
-    Raised for unknown recipe versions, unsupported fields, and malformed
-    stored params. Future edit routes are expected to surface this as "edits
-    unavailable/unsupported" rather than returning misleading partial state.
-    """
+    """A stored recipe cannot be represented as Immich edits."""
 
 
 @dataclass(frozen=True)
 class CropBox:
-    """Validated crop in the display-oriented source frame."""
+    """Crop in the display-oriented source frame."""
 
     x: int
     y: int
@@ -110,7 +84,7 @@ class CropBox:
 
 @dataclass(frozen=True)
 class EditRecipe:
-    """Normalized v1 edit recipe: crop, then rotate, then horizontal mirror."""
+    """V1 edit recipe: crop, then rotate, then horizontal mirror."""
 
     crop: CropBox | None
     angle: int
@@ -118,11 +92,11 @@ class EditRecipe:
 
     @property
     def is_identity(self) -> bool:
-        """True when the recipe performs no transformation at all."""
+        """Whether the recipe performs no transformation."""
         return self.crop is None and self.angle == 0 and not self.mirror
 
     def to_params(self) -> dict[str, object]:
-        """Serialize to the v1 `params` JSON object (crop omitted when None)."""
+        """Serialize to `params`, omitting an absent crop."""
         params: dict[str, object] = {"version": RECIPE_VERSION}
         if self.crop is not None:
             params["crop"] = {
@@ -136,17 +110,11 @@ class EditRecipe:
         return params
 
     def to_params_json(self) -> str:
-        """Canonical stable serialization (sorted keys, compact separators).
-
-        Byte-stable so stored `params` can be compared for equality across
-        reads and writers without semantic JSON diffing.
-        """
+        """Serialize `params` in a byte-stable canonical form."""
         return json.dumps(self.to_params(), sort_keys=True, separators=(",", ":"))
 
 
 def _require_positive_int(value: int, name: str) -> None:
-    # The upper bound keeps the forward/reverse contract symmetric: any crop
-    # the fold accepts fits the recipe parser's (and the DTO's) field bounds.
     if type(value) is not int or value <= 0 or value > _MAX_CROP_VALUE:
         raise ValueError(f"{name} must be a positive int within the crop bounds")
 
@@ -183,13 +151,11 @@ def _normalize_angle(angle: float) -> int:
         raise AssetEditValidationError(
             "invalid_angle", "Rotation angle must be a number"
         )
-    # Only floats can be non-finite; calling isfinite on a smuggled int too
-    # large for a float would raise OverflowError instead of the stable code.
+    # Avoid converting arbitrarily large ints inside isfinite().
     if isinstance(angle, float) and not math.isfinite(angle):
         raise AssetEditValidationError("invalid_angle", "Rotation angle must be finite")
-    # Deliberately more lenient than upstream Immich's literal {0, 90, 180,
-    # 270}: any finite multiple of 90 (signed or overflowing) normalizes
-    # modulo 360, per the accepted recipe contract.
+    # The recipe contract accepts any finite multiple of 90, deliberately wider
+    # than Immich's literal input validator, and normalizes it.
     if angle % 90 != 0:
         raise AssetEditValidationError(
             "invalid_angle", "Rotation angle must be a multiple of 90 degrees"
@@ -204,16 +170,12 @@ def immich_edits_to_recipe(
 ) -> EditRecipe:
     """Fold an ordered Immich edit-action list into the normalized v1 recipe.
 
-    `source_width` / `source_height` are the display-oriented dimensions of the
-    frame the edits apply to (the parent version's display dims); crop bounds
-    are validated against them. Invalid source dims are a caller bug and raise
+    Source dimensions describe the parent version's display-oriented frame.
+    Invalid source dimensions are a caller bug and raise
     `ValueError`; invalid client input raises `AssetEditValidationError`.
 
-    The rotate/mirror composition replicates upstream Immich's matrix compose:
-    with list `[e1, ..., en]` the total transform is `M(e1)·...·M(en)`, i.e.
-    the last list element applies to the pixels first. The fold keeps the state
-    `(mirror, angle)` meaning "rotate by `angle`, then mirror horizontally if
-    `mirror`" and multiplies each action's matrix on the right.
+    The `(mirror, angle)` state means rotate, then mirror horizontally. Each
+    action's matrix is multiplied on the right to preserve Immich list order.
     """
     _require_positive_int(source_width, "source_width")
     _require_positive_int(source_height, "source_height")
@@ -229,8 +191,7 @@ def immich_edits_to_recipe(
         )
 
     crop: CropBox | None = None
-    # Duplicate keys mirror upstream Immich's uniqueness rule: one crop, one
-    # rotate, one mirror *per axis* — horizontal + vertical together is legal.
+    # Immich permits one mirror per axis, including both axes together.
     seen: set[str] = set()
     mirror = False
     angle = 0
@@ -312,9 +273,7 @@ def _crop_from_recipe_value(value: object) -> CropBox:
 def parse_recipe_params(params: object) -> EditRecipe:
     """Parse a stored `params` object into a validated `EditRecipe`.
 
-    The version marker is checked before any other field. Unknown versions,
-    unknown fields, and malformed values raise `UnsupportedEditRecipeError`
-    rather than yielding partial state.
+    Version is checked first. Invalid or unsupported params fail as a whole.
     """
     if not isinstance(params, Mapping):
         raise UnsupportedEditRecipeError(
@@ -353,17 +312,10 @@ def parse_recipe_params(params: object) -> EditRecipe:
 def _synthesized_row_id(
     asset_id: str, version_id: str, action: AssetEditAction
 ) -> uuid.UUID:
-    # Newline-joined to keep the key unambiguous under concatenation. The IDs
-    # identify the synthesized current state deterministically; they do not
-    # claim to preserve user-action history.
-    #
-    # The hash digest is stamped with RFC 4122 version-4 bits: upstream Immich
-    # validates edit-row IDs as UUIDv4 specifically, and adapter-generated IDs
-    # are v4 everywhere else in this repo, so a name-based v5 UUID would fail
-    # strict clients and break the local convention. Determinism (identical
-    # rows across repeated reads) still matters, hence hashing instead of
-    # `uuid.uuid4()`. Never change the prefix or key encoding: ID stability
-    # across deployments is part of the contract, pinned by the golden-ID test.
+    # Newlines prevent concatenation collisions. Hashing gives stable IDs;
+    # stamping UUIDv4 bits satisfies Immich's validator. The prefix and key
+    # encoding are pinned by golden tests. These IDs represent current state,
+    # not user-action history.
     key = "\n".join((_EDIT_ROW_ID_KEY_PREFIX, asset_id, version_id, action.value))
     digest = bytearray(hashlib.sha256(key.encode("utf-8")).digest()[:16])
     digest[6] = (digest[6] & 0x0F) | 0x40  # version 4
@@ -378,14 +330,8 @@ def recipe_to_immich_edits(
 ) -> list[AssetEditActionItemResponseDto]:
     """Translate a stored recipe into the canonical Immich operation list.
 
-    Emits at most one crop, one mirror, and one rotate row, in the order the
-    Immich web editor serializes them (crop, mirror, rotate) — which, under
-    upstream's compose semantics, applies rotate first and mirror second,
-    matching the recipe pipeline exactly. Row IDs are synthesized
-    deterministically from the immutable asset/version identity plus action
-    kind, so repeated reads return identical rows. That identity assumes a
-    version's `params` are write-once: a changed recipe must arrive as a new
-    version ID, or rows would reuse IDs while their parameters changed.
+    Rows use the editor's crop, mirror, rotate order. IDs are stable for an
+    asset/version/action tuple, so changed params require a new version ID.
     """
     if not asset_id or not version_id:
         raise ValueError("asset_id and version_id must be non-empty")
