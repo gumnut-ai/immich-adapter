@@ -8,6 +8,7 @@ dependencies = [
     "cryptography>=50.0.0",
     "fastapi[standard]>=0.140.0",
     "gumnut-sdk>=0.154.0",
+    "pillow>=11",
     "pydantic-settings>=2.10.1",
     "pytest>=8.4.2",
     "python-socketio>=5.13.0",

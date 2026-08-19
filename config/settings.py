@@ -49,6 +49,28 @@ class Settings(BaseSettings):
     # (note: streaming skips iOS live photo .MOV detection).
     streaming_upload_threshold_bytes: int = 100 * 1024 * 1024  # 100MB
 
+    # --- Server-side edit baking (services/asset_edit_baker.py) ---
+    # Maximum compressed byte size accepted for the position-0 source download.
+    # Enforced against Content-Length before streaming and re-enforced while
+    # streaming, so a lying header cannot bypass it.
+    edit_bake_max_input_bytes: int = 100 * 1024 * 1024  # 100MB
+    # Maximum decoded pixel count (width * height), checked from the image
+    # header before any pixel data is decoded. Kept below Pillow's default
+    # decompression-bomb warning threshold (~89.5M pixels) so images we accept
+    # never trip Pillow's global guard, which stays enabled as a backstop.
+    edit_bake_max_pixels: int = 80_000_000
+    # Maximum single-axis dimension for source images.
+    edit_bake_max_dimension: int = 30_000
+    # Maximum encoded output byte size; encoding aborts once exceeded.
+    edit_bake_max_output_bytes: int = 100 * 1024 * 1024  # 100MB
+    # Wall-clock bound for one bake (download + decode + transform + encode).
+    edit_bake_timeout_seconds: float = 60.0
+    # Concurrent bakes per process. Decode/encode are CPU-bound thread work,
+    # so this bounds both CPU and peak decoded-pixel memory.
+    edit_bake_max_concurrency: int = 4
+    # Bytes a bake temp file holds in memory before spooling to disk.
+    edit_bake_spool_max_bytes: int = 16 * 1024 * 1024  # 16MB
+
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
     oauth_mobile_redirect_uri: str = "app.immich:///oauth-callback"
 
