@@ -150,6 +150,17 @@ class TestRotationNormalization:
             to_recipe([rotate(angle)])
         assert exc_info.value.code == "invalid_angle"
 
+    def test_rejects_boolean_angle(self):
+        # model_construct bypasses pydantic's float coercion, so the pure
+        # boundary must reject a bool rather than treating it as 0/1.
+        params = RotateParameters.model_construct(angle=True)
+        edit = AssetEditActionItemDto.model_construct(
+            action=AssetEditAction.rotate, parameters=params
+        )
+        with pytest.raises(AssetEditValidationError) as exc_info:
+            to_recipe([edit])
+        assert exc_info.value.code == "invalid_angle"
+
 
 class TestCropValidation:
     def test_crop_only_preserves_exact_bounds(self):
@@ -348,6 +359,22 @@ class TestRecipeParams:
         params = {"version": 1, "crop": None, "angle": 0, "mirror": False}
         assert parse_recipe_params(params).crop is None
 
+    def test_accepts_crop_values_at_exact_upper_bound(self):
+        # 2**53 - 1 is the largest value the generated Immich DTO accepts;
+        # a recipe at exactly that bound must parse and reverse-translate.
+        bound = 2**53 - 1
+        params = {
+            "version": 1,
+            "crop": {"x": 0, "y": 0, "width": bound, "height": bound},
+            "angle": 0,
+            "mirror": False,
+        }
+        recipe = parse_recipe_params(params)
+        assert recipe.crop == CropBox(x=0, y=0, width=bound, height=bound)
+        rows = recipe_to_immich_edits(ASSET_ID, VERSION_ID, params)
+        assert isinstance(rows[0].parameters, CropParameters)
+        assert rows[0].parameters.width == bound
+
     @pytest.mark.parametrize(
         "params,code",
         [
@@ -534,9 +561,10 @@ class TestPurity:
             "bad = sorted(loaded & forbidden)\n"
             "assert not bad, f'forbidden imports: {bad}'\n"
         )
-        subprocess.run(
+        result = subprocess.run(
             [sys.executable, "-c", code],
-            check=True,
             cwd=repo_root,
             capture_output=True,
+            text=True,
         )
+        assert result.returncode == 0, result.stderr

@@ -177,16 +177,14 @@ def _normalize_angle(angle: float) -> int:
         )
     if not math.isfinite(angle):
         raise AssetEditValidationError("invalid_angle", "Rotation angle must be finite")
-    if angle != int(angle):
+    # Deliberately more lenient than upstream Immich's literal {0, 90, 180,
+    # 270}: any finite multiple of 90 (signed or overflowing) normalizes
+    # modulo 360, per the accepted recipe contract.
+    if angle % 90 != 0:
         raise AssetEditValidationError(
             "invalid_angle", "Rotation angle must be a multiple of 90 degrees"
         )
-    integral = int(angle)
-    if integral % 90 != 0:
-        raise AssetEditValidationError(
-            "invalid_angle", "Rotation angle must be a multiple of 90 degrees"
-        )
-    return integral % 360
+    return int(angle) % 360
 
 
 def immich_edits_to_recipe(
@@ -258,11 +256,7 @@ def immich_edits_to_recipe(
                     "mismatched_parameters", "Mirror action requires mirror parameters"
                 )
             axis = parameters.axis
-            if axis is MirrorAxis.horizontal:
-                angle = (-angle) % 360
-            elif axis is MirrorAxis.vertical:
-                angle = (180 - angle) % 360
-            else:
+            if axis is not MirrorAxis.horizontal and axis is not MirrorAxis.vertical:
                 raise AssetEditValidationError(
                     "invalid_mirror_axis", "Mirror axis must be horizontal or vertical"
                 )
@@ -272,6 +266,10 @@ def immich_edits_to_recipe(
                     "duplicate_action", "Duplicate mirror action for the same axis"
                 )
             seen.add(key)
+            if axis is MirrorAxis.horizontal:
+                angle = (-angle) % 360
+            else:
+                angle = (180 - angle) % 360
             mirror = not mirror
         else:
             raise AssetEditValidationError(
