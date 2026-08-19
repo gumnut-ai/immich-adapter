@@ -281,7 +281,7 @@ def _sanitize_archive_filename(filename: str) -> str:
 def _is_unusable_archive_name(filename: str) -> bool:
     """Return whether a filename is empty or aliases a Windows device."""
     reserved_windows_name = re.fullmatch(
-        r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?", filename
+        r"(?i)(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\..*)?", filename
     )
     return filename in {"", ".", ".."} or reserved_windows_name is not None
 

@@ -26,6 +26,16 @@ def test_error_events_redact_signed_cdn_values_without_touching_other_queries():
                                         "'https://api.example.com/search"
                                         "?page=2&dl=report.csv&query=cats'"
                                     ),
+                                    "punctuated_url": (
+                                        "https://assets.gumnut.ai/asset.jpg"
+                                        "?verify=punctuation-secret"
+                                        "&dl=Sensitive,Family(One)'s.jpg"
+                                    ),
+                                    "filename_first_url": (
+                                        "https://assets.gumnut.ai/asset.jpg"
+                                        "?dl=Sensitive,Family.jpg"
+                                        "&verify=reordered-secret"
+                                    ),
                                 }
                             }
                         ]
@@ -50,6 +60,9 @@ def test_error_events_redact_signed_cdn_values_without_touching_other_queries():
     rendered = repr(result)
     assert "secret-token" not in rendered
     assert "family-photo.jpg" not in rendered
+    assert "punctuation-secret" not in rendered
+    assert "reordered-secret" not in rendered
+    assert "Sensitive,Family" not in rendered
     assert "verify=REDACTED&dl=REDACTED&w=720" in rendered
     assert "page=2&dl=report.csv&query=cats" in rendered
 

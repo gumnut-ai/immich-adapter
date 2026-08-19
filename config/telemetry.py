@@ -5,7 +5,7 @@ from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 _SENSITIVE_CDN_QUERY_KEYS = frozenset({"dl", "verify"})
 _REDACTED_QUERY_VALUE = "REDACTED"
-_URL_IN_TEXT = re.compile(r"https?://[^\s'\"<>\[\]{}(),]+")
+_URL_IN_TEXT = re.compile(r"https?://\S+")
 
 
 def redact_sensitive_cdn_query(query: str) -> str:

@@ -330,6 +330,14 @@ def test_archive_names_revalidate_windows_devices_after_truncation() -> None:
     assert _archive_names([filename]) == ["unnamed"]
 
 
+@pytest.mark.parametrize(
+    "filename",
+    ["COM¹.jpg", "COM².jpg", "COM³.jpg", "LPT¹.jpg", "LPT².jpg", "LPT³.jpg"],
+)
+def test_archive_names_reject_superscript_windows_devices(filename: str) -> None:
+    assert _archive_names([filename]) == ["unnamed"]
+
+
 def test_distinct_truncated_names_share_suffix_progression() -> None:
     next_suffix: dict[str, int] = {}
     emitted: set[str] = set()
