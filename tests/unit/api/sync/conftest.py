@@ -171,6 +171,8 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     asset.trashed_at = None
     # Avoid a truthy auto-created Mock for unstacked assets.
     asset.stack_id = None
+    # Avoid an unset Mock mapping as edited.
+    asset.kind = "original"
     return asset
 
 

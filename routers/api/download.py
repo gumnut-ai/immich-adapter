@@ -485,10 +485,9 @@ async def download_archive(
     slug: Annotated[str | SkipJsonSchema[None], Query()] = None,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> StreamingResponse:
-    """Stream requested uploads as an on-the-fly ZIP archive.
+    """Stream requested assets as an on-the-fly ZIP archive.
 
-    Gumnut asset chains are currently root-only, so the accepted ``edited``
-    compatibility flag has no effect: the current rendering is the upload.
+    Members currently use the current rendering regardless of ``edited``.
     """
     assets = await _validated_archive_assets(client, request.assetIds)
     return StreamingResponse(

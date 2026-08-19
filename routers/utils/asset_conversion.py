@@ -66,6 +66,11 @@ ASSET_INCLUDE_METADATA_ONLY: list[str] = ["metadata"]
 """For asset reads whose consumers need only ``metadata`` fields."""
 
 
+def is_asset_edited(gumnut_asset: AssetResponse) -> bool:
+    """Return whether the asset's current rendering differs from its upload."""
+    return gumnut_asset.kind != "original"
+
+
 class AssetLocationFields(NamedTuple):
     """Immich-facing location fields shared by every asset response path."""
 
@@ -500,7 +505,7 @@ def build_asset_upload_ready_payload(
         fileCreatedAt=file_created_at,
         fileModifiedAt=file_modified_at,
         height=int(height) if height else None,
-        isEdited=False,
+        isEdited=is_asset_edited(gumnut_asset),
         isFavorite=False,
         libraryId=None,
         livePhotoVideoId=None,
@@ -571,7 +576,7 @@ def convert_gumnut_asset_to_immich(
         hasMetadata=True,
         height=height if height else None,
         isArchived=False,
-        isEdited=False,
+        isEdited=is_asset_edited(gumnut_asset),
         isFavorite=False,
         isOffline=False,
         isTrashed=bool(gumnut_asset.trashed_at),

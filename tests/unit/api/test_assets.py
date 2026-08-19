@@ -3272,18 +3272,68 @@ class TestViewAsset:
         )
 
 
+def _make_mock_version(
+    position: int,
+    *,
+    mime_type: str = "image/jpeg",
+    original_url: str | None = "https://cdn.example.com/v0-original.jpg",
+):
+    """Build a mock asset-version row."""
+    version = Mock()
+    version.id = f"asset_version_pos{position}"
+    version.position = position
+    version.mime_type = mime_type
+    if original_url is None:
+        version.version_urls = {}
+    else:
+        variant = Mock()
+        variant.url = original_url
+        variant.mimetype = mime_type
+        version.version_urls = {"original": variant}
+    return version
+
+
+_DOWNLOAD_FORWARDED_HEADERS = (
+    "content-length",
+    "etag",
+    "last-modified",
+    "cache-control",
+    "content-disposition",
+)
+
+
+def _mock_request(range_header: str | None = None) -> Mock:
+    request = Mock()
+    request.headers = {"range": range_header} if range_header else {}
+    return request
+
+
 class TestDownloadAsset:
-    """Test the download_asset endpoint."""
+    @pytest.mark.anyio
+    async def test_omitted_edited_selector_streams_exact_original(self, sample_uuid):
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(
+            return_value=[_make_mock_version(0)]
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            # Omit edited to exercise the handler's actual default.
+            await download_asset(sample_uuid, _mock_request(), client=mock_client)
+
+        mock_client.assets.versions.list.assert_awaited_once()
+        mock_client.assets.retrieve.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_download_asset_success(self, sample_uuid):
-        """Test successful asset download via CDN original variant."""
+    async def test_edited_true_streams_current_rendering(self, sample_uuid):
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
                 {
                     "original": {
-                        "url": "https://cdn.example.com/original.jpg",
+                        "url": "https://cdn.example.com/current.jpg",
                         "mimetype": "image/jpeg",
                     }
                 }
@@ -3295,26 +3345,22 @@ class TestDownloadAsset:
             "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
         ) as mock_cdn:
             mock_cdn.return_value = mock_streaming_response
-            result = await download_asset(sample_uuid, client=mock_client)
+            result = await download_asset(
+                sample_uuid, _mock_request(), edited=True, client=mock_client
+            )
 
         assert result is mock_streaming_response
         mock_client.assets.retrieve.assert_called_once()
+        mock_client.assets.versions.list.assert_not_called()
         mock_cdn.assert_called_once_with(
-            "https://cdn.example.com/original.jpg",
+            "https://cdn.example.com/current.jpg",
             "image/jpeg",
             range_header=None,
-            forwarded_headers=(
-                "content-length",
-                "etag",
-                "last-modified",
-                "cache-control",
-                "content-disposition",
-            ),
+            forwarded_headers=_DOWNLOAD_FORWARDED_HEADERS,
         )
 
     @pytest.mark.anyio
-    async def test_download_asset_heic_original(self, sample_uuid):
-        """Test that /original returns HEIC format (not converted)."""
+    async def test_edited_true_preserves_heic_format(self, sample_uuid):
         mock_client = Mock()
         mock_client.assets.retrieve = AsyncMock(
             return_value=_make_mock_asset_with_urls(
@@ -3331,20 +3377,167 @@ class TestDownloadAsset:
             "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
-            await download_asset(sample_uuid, client=mock_client)
+            await download_asset(
+                sample_uuid, _mock_request(), edited=True, client=mock_client
+            )
 
         mock_cdn.assert_called_once_with(
             "https://cdn.example.com/IMG_1234.heic",
             "image/heic",
             range_header=None,
-            forwarded_headers=(
-                "content-length",
-                "etag",
-                "last-modified",
-                "cache-control",
-                "content-disposition",
-            ),
+            forwarded_headers=_DOWNLOAD_FORWARDED_HEADERS,
         )
+
+    @pytest.mark.anyio
+    async def test_edited_false_streams_position_zero_bytes(self, sample_uuid):
+        root = _make_mock_version(
+            0, mime_type="image/heic", original_url="https://cdn.example.com/root.heic"
+        )
+        edit = _make_mock_version(
+            1,
+            mime_type="image/jpeg",
+            original_url="https://cdn.example.com/edit.jpg",
+        )
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(return_value=[edit, root])
+        mock_streaming_response = Mock()
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = mock_streaming_response
+            result = await download_asset(
+                sample_uuid, _mock_request(), edited=False, client=mock_client
+            )
+
+        assert result is mock_streaming_response
+        mock_client.assets.retrieve.assert_not_called()
+        mock_client.assets.versions.list.assert_awaited_once()
+        list_await_args = mock_client.assets.versions.list.await_args
+        assert list_await_args is not None
+        assert list_await_args.kwargs["include"] == ["variants"]
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/root.heic",
+            "image/heic",
+            range_header=None,
+            forwarded_headers=_DOWNLOAD_FORWARDED_HEADERS,
+        )
+
+    @pytest.mark.anyio
+    async def test_range_header_forwarded_on_both_selectors(self, sample_uuid):
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "original": {
+                        "url": "https://cdn.example.com/current.jpg",
+                        "mimetype": "image/jpeg",
+                    }
+                }
+            )
+        )
+        mock_client.assets.versions.list = AsyncMock(
+            return_value=[_make_mock_version(0)]
+        )
+
+        for edited in (True, False):
+            with patch(
+                "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+            ) as mock_cdn:
+                mock_cdn.return_value = Mock()
+                await download_asset(
+                    sample_uuid,
+                    _mock_request("bytes=1000-2000"),
+                    edited=edited,
+                    client=mock_client,
+                )
+            assert mock_cdn.call_args.kwargs["range_header"] == "bytes=1000-2000", (
+                f"edited={edited}"
+            )
+            assert (
+                mock_cdn.call_args.kwargs["forwarded_headers"]
+                == _DOWNLOAD_FORWARDED_HEADERS
+            ), f"edited={edited}"
+
+    @pytest.mark.anyio
+    async def test_root_only_asset_same_bytes_for_both_selectors(self, sample_uuid):
+        url = "https://cdn.example.com/only.jpg"
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {"original": {"url": url, "mimetype": "image/jpeg"}}
+            )
+        )
+        mock_client.assets.versions.list = AsyncMock(
+            return_value=[_make_mock_version(0, original_url=url)]
+        )
+
+        streamed_urls = []
+        for edited in (True, False):
+            with patch(
+                "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+            ) as mock_cdn:
+                mock_cdn.return_value = Mock()
+                await download_asset(
+                    sample_uuid, _mock_request(), edited=edited, client=mock_client
+                )
+            streamed_urls.append(mock_cdn.call_args.args[0])
+
+        assert streamed_urls == [url, url]
+
+    @pytest.mark.anyio
+    async def test_edited_false_missing_root_fails_closed(self, sample_uuid):
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(
+            return_value=[_make_mock_version(1)]
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await download_asset(
+                sample_uuid, _mock_request(), edited=False, client=mock_client
+            )
+        assert exc_info.value.status_code == 502
+
+    @pytest.mark.anyio
+    async def test_edited_false_duplicate_root_fails_closed(self, sample_uuid):
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(
+            return_value=[_make_mock_version(0), _make_mock_version(0)]
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await download_asset(
+                sample_uuid, _mock_request(), edited=False, client=mock_client
+            )
+        assert exc_info.value.status_code == 502
+
+    @pytest.mark.anyio
+    async def test_edited_false_missing_original_rung_is_404(self, sample_uuid):
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(
+            return_value=[_make_mock_version(0, original_url=None)]
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await download_asset(
+                sample_uuid, _mock_request(), edited=False, client=mock_client
+            )
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_edited_false_not_found_propagates(self, sample_uuid):
+        from gumnut import NotFoundError
+        from tests.conftest import make_sdk_status_error
+
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(
+            side_effect=make_sdk_status_error(404, "Not found", cls=NotFoundError)
+        )
+
+        with pytest.raises(NotFoundError):
+            await download_asset(
+                sample_uuid, _mock_request(), edited=False, client=mock_client
+            )
 
 
 class TestGetAssetMetadata:

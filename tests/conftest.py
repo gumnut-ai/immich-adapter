@@ -105,6 +105,7 @@ def make_gumnut_asset(
     trashed_at: datetime | None = None,
     stack_id: str | None = None,
     local_datetime: datetime | None = None,
+    kind: str = "original",
 ) -> Mock:
     """Build a Mock Gumnut asset carrying every field the converters read.
 
@@ -153,6 +154,8 @@ def make_gumnut_asset(
     asset.metadata = None  # No metadata
     asset.trashed_at = trashed_at
     asset.stack_id = stack_id
+    # Set explicitly because an unset Mock attribute maps as edited.
+    asset.kind = kind
     return asset
 
 

@@ -1,6 +1,6 @@
 import asyncio
 from itertools import batched
-from typing import Any, List, Literal, NamedTuple, cast
+from typing import Annotated, Any, List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 import base64
 import logging
@@ -216,6 +216,55 @@ async def _retrieve_and_stream_variant(
         variant_info.mimetype,
         range_header=range_header,
         forwarded_headers=forwarded_headers,
+    )
+
+
+# Preserve filenames when proxying downloads.
+_ORIGINAL_DOWNLOAD_FORWARDED_HEADERS = DEFAULT_FORWARDED_HEADERS + (
+    "content-disposition",
+)
+
+
+async def _stream_exact_original(
+    asset_uuid: UUID,
+    client: AsyncGumnut,
+    range_header: str | None = None,
+) -> StreamingResponse:
+    """Stream the unique position-zero version's original bytes.
+
+    An invalid root set returns 502 rather than substituting another rendering.
+    """
+    gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+    versions = await client.assets.versions.list(gumnut_asset_id, include=["variants"])
+
+    roots = [version for version in versions if version.position == 0]
+    if len(roots) != 1:
+        logger.error(
+            "Asset version chain has no unique root",
+            extra={"asset_id": gumnut_asset_id, "root_count": len(roots)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Asset version chain is invalid",
+        )
+    root = roots[0]
+
+    original = (root.version_urls or {}).get("original")
+    if original is None:
+        logger.warning(
+            "Asset original version bytes not available",
+            extra={"asset_id": gumnut_asset_id, "version_id": root.id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Asset variant 'original' not available",
+        )
+
+    return await stream_from_cdn(
+        original.url,
+        root.mime_type,
+        range_header=range_header,
+        forwarded_headers=_ORIGINAL_DOWNLOAD_FORWARDED_HEADERS,
     )
 
 
@@ -1262,22 +1311,29 @@ async def view_asset(
 )
 async def download_asset(
     id: UUID,
+    request: Request,
+    edited: Annotated[
+        bool, Query(description="Return edited asset if available")
+    ] = False,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> StreamingResponse:
-    """
-    Download the original asset file.
+    """Stream full-quality asset bytes in their stored format.
 
-    Fetches the original variant from CDN, preserving the original format
-    (JPEG, HEIC, RAW, etc.) for actual downloads.
+    ``edited=true`` selects the current rendering; the default ``false`` selects
+    the exact uploaded bytes from the version-chain root.
     """
-    return await _retrieve_and_stream_variant(
-        id,
-        client,
-        "original",
-        forwarded_headers=DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
-    )
+    range_header = request.headers.get("range")
+    if edited:
+        return await _retrieve_and_stream_variant(
+            id,
+            client,
+            "original",
+            range_header=range_header,
+            forwarded_headers=_ORIGINAL_DOWNLOAD_FORWARDED_HEADERS,
+        )
+    return await _stream_exact_original(id, client, range_header=range_header)
 
 
 @router.get("/{id}/metadata")

@@ -70,6 +70,8 @@ def _make_asset(asset_id_uuid: UUID, captured_at: datetime) -> Mock:
     asset.trashed_at = None
     asset.duration = None
     asset.library_id = "library-1"
+    # Avoid an unset Mock mapping as edited.
+    asset.kind = "original"
     return asset
 
 
