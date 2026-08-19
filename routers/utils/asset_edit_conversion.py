@@ -4,9 +4,10 @@ Immich's editor submits an ordered list of crop / rotate / mirror actions and
 expects the server to produce the pixels. Gumnut stores one consolidated,
 normalized recipe on the `edit` version's `params` — the Gumnut API treats
 `params` as opaque JSON whose schema is defined by the producer, so this module
-*is* the schema definition for `kind="edit"`. Both directions live here so the
-pipeline that renders the edited pixels and the adapter routes share a single
-tested semantic contract.
+*is* the schema definition for `kind="edit"`. Nothing in the adapter calls
+this module yet: both directions live here so that the planned pixel-rendering
+pipeline and the planned edit routes can share a single tested semantic
+contract when they land.
 
 The v1 recipe JSON object::
 
@@ -37,6 +38,7 @@ messages carry stable codes and never echo client-supplied values.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import uuid
@@ -63,9 +65,8 @@ MAX_EDIT_ACTIONS = 4
 # stable error instead of a pydantic ValidationError at DTO construction.
 _MAX_CROP_VALUE = 9_007_199_254_740_991
 
-# Fixed namespace for deterministic synthesized edit-row IDs. Never change it:
-# stability of the IDs across reads is part of the contract.
-_EDIT_ROW_ID_NAMESPACE = uuid.UUID("9c1d1f2e-5a4b-4d3c-8e6f-2b7a9d0c4e51")
+# Opaque domain-separation prefix for row-ID hashing; see _synthesized_row_id.
+_EDIT_ROW_ID_KEY_PREFIX = "9c1d1f2e-5a4b-4d3c-8e6f-2b7a9d0c4e51"
 
 _RECIPE_KEYS = frozenset({"version", "crop", "angle", "mirror"})
 _CROP_KEYS = frozenset({"x", "y", "width", "height"})
@@ -92,8 +93,8 @@ class UnsupportedEditRecipeError(AssetEditError):
     """A stored recipe cannot be represented as Immich edits.
 
     Raised for unknown recipe versions, unsupported fields, and malformed
-    stored params. Routes surface this as "edits unavailable/unsupported"
-    rather than returning misleading partial state.
+    stored params. Future edit routes are expected to surface this as "edits
+    unavailable/unsupported" rather than returning misleading partial state.
     """
 
 
@@ -135,7 +136,11 @@ class EditRecipe:
         return params
 
     def to_params_json(self) -> str:
-        """Canonical stable serialization (sorted keys, compact separators)."""
+        """Canonical stable serialization (sorted keys, compact separators).
+
+        Byte-stable so stored `params` can be compared for equality across
+        reads and writers without semantic JSON diffing.
+        """
         return json.dumps(self.to_params(), sort_keys=True, separators=(",", ":"))
 
 
@@ -178,7 +183,9 @@ def _normalize_angle(angle: float) -> int:
         raise AssetEditValidationError(
             "invalid_angle", "Rotation angle must be a number"
         )
-    if not math.isfinite(angle):
+    # Only floats can be non-finite; calling isfinite on a smuggled int too
+    # large for a float would raise OverflowError instead of the stable code.
+    if isinstance(angle, float) and not math.isfinite(angle):
         raise AssetEditValidationError("invalid_angle", "Rotation angle must be finite")
     # Deliberately more lenient than upstream Immich's literal {0, 90, 180,
     # 270}: any finite multiple of 90 (signed or overflowing) normalizes
@@ -349,9 +356,19 @@ def _synthesized_row_id(
     # Newline-joined to keep the key unambiguous under concatenation. The IDs
     # identify the synthesized current state deterministically; they do not
     # claim to preserve user-action history.
-    return uuid.uuid5(
-        _EDIT_ROW_ID_NAMESPACE, "\n".join((asset_id, version_id, action.value))
-    )
+    #
+    # The hash digest is stamped with RFC 4122 version-4 bits: upstream Immich
+    # validates edit-row IDs as UUIDv4 specifically, and adapter-generated IDs
+    # are v4 everywhere else in this repo, so a name-based v5 UUID would fail
+    # strict clients and break the local convention. Determinism (identical
+    # rows across repeated reads) still matters, hence hashing instead of
+    # `uuid.uuid4()`. Never change the prefix or key encoding: ID stability
+    # across deployments is part of the contract, pinned by the golden-ID test.
+    key = "\n".join((_EDIT_ROW_ID_KEY_PREFIX, asset_id, version_id, action.value))
+    digest = bytearray(hashlib.sha256(key.encode("utf-8")).digest()[:16])
+    digest[6] = (digest[6] & 0x0F) | 0x40  # version 4
+    digest[8] = (digest[8] & 0x3F) | 0x80  # RFC 4122 variant
+    return uuid.UUID(bytes=bytes(digest))
 
 
 def recipe_to_immich_edits(
@@ -366,7 +383,9 @@ def recipe_to_immich_edits(
     upstream's compose semantics, applies rotate first and mirror second,
     matching the recipe pipeline exactly. Row IDs are synthesized
     deterministically from the immutable asset/version identity plus action
-    kind, so repeated reads return identical rows.
+    kind, so repeated reads return identical rows. That identity assumes a
+    version's `params` are write-once: a changed recipe must arrive as a new
+    version ID, or rows would reuse IDs while their parameters changed.
     """
     if not asset_id or not version_id:
         raise ValueError("asset_id and version_id must be non-empty")

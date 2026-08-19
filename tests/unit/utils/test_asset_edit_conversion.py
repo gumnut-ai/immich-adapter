@@ -150,10 +150,13 @@ class TestRotationNormalization:
             to_recipe([rotate(angle)])
         assert exc_info.value.code == "invalid_angle"
 
-    def test_rejects_boolean_angle(self):
+    @pytest.mark.parametrize("bad_angle", [True, "90", 10**400])
+    def test_rejects_smuggled_angle_values(self, bad_angle):
         # model_construct bypasses pydantic's float coercion, so the pure
-        # boundary must reject a bool rather than treating it as 0/1.
-        params = RotateParameters.model_construct(angle=True)
+        # boundary must reject bools, non-numbers, and ints too large for a
+        # float with the stable code rather than mis-treating them as numbers
+        # or crashing on arithmetic.
+        params = RotateParameters.model_construct(angle=bad_angle)
         edit = AssetEditActionItemDto.model_construct(
             action=AssetEditAction.rotate, parameters=params
         )
@@ -231,7 +234,14 @@ class TestCropValidation:
 
     @pytest.mark.parametrize(
         "bad_dim",
-        [(0, SOURCE_H), (SOURCE_W, 0), (-1, SOURCE_H), (2**53, SOURCE_H)],
+        [
+            (0, SOURCE_H),
+            (SOURCE_W, 0),
+            (-1, SOURCE_H),
+            (2**53, SOURCE_H),
+            (4000.0, SOURCE_H),
+            (True, SOURCE_H),
+        ],
     )
     def test_invalid_source_dims_are_a_caller_bug(self, bad_dim):
         with pytest.raises(ValueError):
@@ -397,12 +407,19 @@ class TestRecipeParams:
             ({"version": True, "angle": 0, "mirror": False}, "malformed_recipe"),
             ({"version": 2, "angle": 0, "mirror": False}, "unsupported_recipe_version"),
             ({"version": 0, "angle": 0, "mirror": False}, "unsupported_recipe_version"),
+            # Version precedence: an unsupported version wins over other
+            # malformed/unknown fields, pinning the documented check order.
+            (
+                {"version": 2, "angle": 45, "mirror": "no", "exposure": 0.5},
+                "unsupported_recipe_version",
+            ),
             (
                 {"version": 1, "angle": 0, "mirror": False, "exposure": 0.5},
                 "unsupported_recipe_field",
             ),
             ({"version": 1, "mirror": False}, "malformed_recipe"),
             ({"version": 1, "angle": 45, "mirror": False}, "malformed_recipe"),
+            ({"version": 1, "angle": True, "mirror": False}, "malformed_recipe"),
             ({"version": 1, "angle": 90.0, "mirror": False}, "malformed_recipe"),
             ({"version": 1, "angle": "90", "mirror": False}, "malformed_recipe"),
             ({"version": 1, "angle": 0}, "malformed_recipe"),
@@ -549,6 +566,23 @@ class TestSynthesizedRowIds:
     def test_ids_are_valid_uuids(self):
         for row in self.rows():
             assert isinstance(row.id, uuid.UUID)
+
+    def test_ids_are_uuid_version_4(self):
+        # Upstream Immich validates edit-row IDs as UUIDv4 specifically, so
+        # the deterministic derivation must stamp version-4 bits.
+        for row in self.rows():
+            assert row.id.version == 4
+            assert row.id.variant == uuid.RFC_4122
+
+    def test_ids_match_golden_values(self):
+        # Golden literals pin the derivation across deployments; see
+        # _synthesized_row_id for the stability contract.
+        golden = {
+            AssetEditAction.crop: uuid.UUID("2265abeb-0285-4476-93c0-f245091c6255"),
+            AssetEditAction.mirror: uuid.UUID("d8c22012-6ed5-406e-9cef-2e78ddb5bf01"),
+            AssetEditAction.rotate: uuid.UUID("b1e27e4d-257c-4200-965f-a3be45979fcb"),
+        }
+        assert {row.action: row.id for row in self.rows()} == golden
 
     def test_ids_differ_by_action(self):
         ids = [row.id for row in self.rows()]

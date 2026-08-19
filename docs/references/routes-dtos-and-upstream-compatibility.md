@@ -1,6 +1,6 @@
 ---
 title: "Routes, DTOs, and Upstream Compatibility"
-last-updated: 2026-08-11
+last-updated: 2026-08-19
 ---
 
 # Routes, DTOs, and Upstream Compatibility
@@ -58,6 +58,8 @@ asset_id: Annotated[UUID | SkipJsonSchema[None], Query(alias="assetId")] = None,
 ## Verifying upstream behavior — read the Immich source, not just the spec
 
 The OpenAPI spec pins request/response *shapes*. It says nothing about the behavior clients actually depend on: which query params a given view sends, what the server filters or computes before answering, what the client does with a field once it has it. Adapter parity bugs live in that gap, and neither the spec nor recall closes it — check a local checkout of `immich-app/immich` at the tag in `.immich-container-tag`. Read it as `git show <tag>:<path>` rather than off the checkout's working tree, which tracks whatever version that clone was last left on and will answer for the wrong release without saying so (`git fetch --tags origin <tag>` first if it resolves). `server/src/repositories/` and `server/src/services/` for what the server computes; `web/src/lib/` and `web/src/routes/` for what the client sends and renders.
+
+The generated models understate upstream validation the same way: codegen can drop zod refinements, so a field typed bare `UUID` or `float` in `routers/immich_models.py` may be `z.uuidv4()` or a literal enum upstream — adapter-synthesized IDs must be UUIDv4-formatted (for deterministic IDs, hash and stamp the v4 version/variant bits rather than using `uuid5`; see `_synthesized_row_id` in `routers/utils/asset_edit_conversion.py`).
 
 Treat any claim about upstream behavior in a task description as a hypothesis until it is read there, including one you wrote yourself. The timeline stack work was specified on the premise that the Immich *client* collapses a burst using the per-asset tuple; upstream collapses server-side and the client only draws a badge, so building to the spec as written would have shipped a badge on every frame of every burst.
 
