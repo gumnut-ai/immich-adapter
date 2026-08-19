@@ -3275,20 +3275,19 @@ class TestViewAsset:
 def _make_mock_version(
     position: int,
     *,
-    kind: str = "original",
     mime_type: str = "image/jpeg",
     original_url: str | None = "https://cdn.example.com/v0-original.jpg",
 ):
     """Build one mock version-chain row as ``client.assets.versions.list`` returns it.
 
-    ``original_url=None`` models a row whose ``version_urls`` lacks the
-    exact-byte ``original`` rung (e.g. the serving call omitted
-    ``include=variants``).
+    Root selection reads only ``position`` (0 is the root), so the fixture
+    carries no ``kind``. ``original_url=None`` models a row whose
+    ``version_urls`` lacks the exact-byte ``original`` rung (e.g. the serving
+    call omitted ``include=variants``).
     """
     version = Mock()
     version.id = f"asset_version_pos{position}"
     version.position = position
-    version.kind = kind
     version.mime_type = mime_type
     if original_url is None:
         version.version_urls = {}
@@ -3323,14 +3322,27 @@ class TestDownloadAsset:
     bytes via the version chain's position-0 root.
     """
 
-    def test_edited_selector_defaults_false(self):
-        """The route's Query default matches the Immich spec (``false`` — the
-        exact-original bytes), so param-less clients keep byte-exact
-        checksum reconciliation."""
-        import inspect
+    @pytest.mark.anyio
+    async def test_omitted_edited_selector_streams_exact_original(self, sample_uuid):
+        """Omitting ``edited`` follows the Immich spec default (``false``): the
+        handler takes the exact-original path — listing versions, never
+        retrieving the current rendering — so param-less clients keep
+        byte-exact checksum reconciliation. Exercised through the handler
+        (the ``Annotated[..., Query()] = False`` shape makes the plain-call
+        default real) rather than by inspecting the signature."""
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(
+            return_value=[_make_mock_version(0)]
+        )
 
-        default = inspect.signature(download_asset).parameters["edited"].default
-        assert default.default is False
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await download_asset(sample_uuid, _mock_request(), client=mock_client)
+
+        mock_client.assets.versions.list.assert_awaited_once()
+        mock_client.assets.retrieve.assert_not_called()
 
     @pytest.mark.anyio
     async def test_edited_true_streams_current_rendering(self, sample_uuid):
@@ -3408,7 +3420,6 @@ class TestDownloadAsset:
         )
         edit = _make_mock_version(
             1,
-            kind="edit",
             mime_type="image/jpeg",
             original_url="https://cdn.example.com/edit.jpg",
         )
@@ -3508,7 +3519,7 @@ class TestDownloadAsset:
         502, never a silent substitute of another rendering."""
         mock_client = Mock()
         mock_client.assets.versions.list = AsyncMock(
-            return_value=[_make_mock_version(1, kind="edit")]
+            return_value=[_make_mock_version(1)]
         )
 
         with pytest.raises(HTTPException) as exc_info:

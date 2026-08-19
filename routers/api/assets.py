@@ -1,6 +1,6 @@
 import asyncio
 from itertools import batched
-from typing import Any, List, Literal, NamedTuple, cast
+from typing import Annotated, Any, List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 import base64
 import logging
@@ -1327,7 +1327,9 @@ async def view_asset(
 async def download_asset(
     id: UUID,
     request: Request,
-    edited: bool = Query(default=False, description="Return edited asset if available"),
+    edited: Annotated[
+        bool, Query(description="Return edited asset if available")
+    ] = False,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
