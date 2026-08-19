@@ -476,6 +476,8 @@ class TestEventDrivenStacks:
         asset_id = make_gumnut_asset().id
         asset = AssetResponse(
             id=asset_id,
+            current_version_id="asset_version_test",
+            kind="original",
             created_at=UPDATED_AT,
             local_datetime=UPDATED_AT,
             mime_type="image/jpeg",
@@ -610,6 +612,8 @@ class TestEventDrivenStacks:
         # in the asset pass actually runs — it is gated on isinstance(AssetResponse).
         freed = AssetResponse(
             id=make_gumnut_asset().id,
+            current_version_id="asset_version_test",
+            kind="original",
             created_at=UPDATED_AT,
             local_datetime=UPDATED_AT,
             mime_type="image/jpeg",

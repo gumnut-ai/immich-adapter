@@ -179,6 +179,8 @@ def create_asset_response(
     """Create an AssetResponse from test data."""
     return AssetResponse(
         id=asset_data["id"],
+        current_version_id="asset_version_test",
+        kind="original",
         mime_type=asset_data["mime_type"],
         original_file_name=asset_data["original_file_name"],
         local_datetime=parse_datetime(asset_data["local_datetime"]),
