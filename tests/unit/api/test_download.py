@@ -1,13 +1,15 @@
 """Tests for batch download planning and streamed ZIP archives."""
 
+import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime
 from io import BytesIO
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 from zipfile import ZipFile
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
@@ -15,6 +17,7 @@ from gumnut.types.asset_response import AssetResponse
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.download import (
+    _ArchiveAsset,
     _assets_by_ids,
     _assets_for_info,
     _build_download_info,
@@ -55,11 +58,6 @@ async def _collect_response_body(response: StreamingResponse) -> bytes:
     return b"".join([cast(bytes, chunk) async for chunk in response.body_iterator])
 
 
-async def _asset_stream(assets: list[AssetResponse]) -> AsyncIterator[AssetResponse]:
-    for asset in assets:
-        yield asset
-
-
 def _archive_names(filenames: list[str]) -> list[str]:
     next_suffix: dict[str, int] = {}
     emitted: set[str] = set()
@@ -67,6 +65,17 @@ def _archive_names(filenames: list[str]) -> list[str]:
         _deduplicated_archive_name(filename, next_suffix, emitted)
         for filename in filenames
     ]
+
+
+def _compact_archive_asset(asset: AssetResponse) -> _ArchiveAsset:
+    assert asset.file_data is not None
+    assert asset.asset_urls is not None
+    return _ArchiveAsset(
+        filename=asset.original_file_name,
+        modified_at=asset.file_data.file_modified_at,
+        size=asset.file_data.file_size_bytes,
+        url=asset.asset_urls["original"].url,
+    )
 
 
 @pytest.mark.anyio
@@ -259,6 +268,21 @@ def test_archive_names_avoid_collisions_with_generated_suffixes() -> None:
     ]
 
 
+def test_archive_names_avoid_case_insensitive_collisions() -> None:
+    assert _archive_names(["Photo.jpg", "photo.jpg", "PHOTO+1.JPG"]) == [
+        "Photo.jpg",
+        "photo+1.jpg",
+        "PHOTO+1+1.JPG",
+    ]
+
+
+def test_archive_names_avoid_windows_trailing_character_collisions() -> None:
+    assert _archive_names(["photo.jpg", "photo.jpg ."]) == [
+        "photo.jpg",
+        "photo+1.jpg",
+    ]
+
+
 @pytest.mark.anyio
 async def test_info_requests_only_file_data_without_signing_original_urls() -> None:
     current_user_id = uuid4()
@@ -307,6 +331,21 @@ async def test_get_download_info_composes_default_and_explicit_thresholds(
 
 
 @pytest.mark.anyio
+async def test_info_rejects_missing_requested_asset() -> None:
+    asset_ids = [uuid4(), uuid4()]
+    client = Mock()
+    client.assets.list = Mock(
+        return_value=MockSyncCursorPage([_download_asset(asset_ids[0])])
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_download_info(DownloadInfoDto(assetIds=asset_ids), client=client)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Not found or no asset.download access"
+
+
+@pytest.mark.anyio
 async def test_closing_partial_archive_immediately_closes_active_cdn_response() -> None:
     asset = _download_asset(uuid4(), size=1_000_004)
     response = Mock()
@@ -319,7 +358,7 @@ async def test_closing_partial_archive_immediately_closes_active_cdn_response() 
         yield b"rest"
 
     response.aiter_bytes = aiter_bytes
-    archive = _stream_archive(_asset_stream([asset]))
+    archive = _stream_archive([_compact_archive_asset(asset)])
 
     with patch(
         "routers.api.download.open_cdn_response",
@@ -335,6 +374,91 @@ async def test_closing_partial_archive_immediately_closes_active_cdn_response() 
 
     response.aclose.assert_awaited()
     assert chunk_sizes == [64 * 1024]
+
+
+@pytest.mark.anyio
+async def test_archive_emits_output_before_requesting_all_source_bytes() -> None:
+    asset = _download_asset(uuid4(), size=1_000_004)
+    response = Mock()
+    response.aclose = AsyncMock()
+    first_chunk_provided = asyncio.Event()
+    second_chunk_requested = asyncio.Event()
+    allow_second_chunk = asyncio.Event()
+
+    async def aiter_bytes(chunk_size: int | None = None) -> AsyncIterator[bytes]:
+        first_chunk_provided.set()
+        yield b"x" * 1_000_000
+        second_chunk_requested.set()
+        await allow_second_chunk.wait()
+        yield b"rest"
+
+    response.aiter_bytes = aiter_bytes
+    archive = _stream_archive([_compact_archive_asset(asset)])
+
+    with patch(
+        "routers.api.download.open_cdn_response",
+        new_callable=AsyncMock,
+        return_value=response,
+    ):
+        for _ in range(50):
+            output = await asyncio.wait_for(anext(archive), timeout=1)
+            if first_chunk_provided.is_set():
+                break
+        assert first_chunk_provided.is_set()
+        assert output
+        assert not second_chunk_requested.is_set()
+        allow_second_chunk.set()
+        await archive.aclose()
+
+    response.aclose.assert_awaited()
+
+
+@pytest.mark.anyio
+async def test_archive_propagates_cdn_read_failure_and_closes_response() -> None:
+    asset = _download_asset(uuid4(), size=10)
+    response = Mock()
+    response.aclose = AsyncMock()
+
+    async def aiter_bytes(chunk_size: int | None = None) -> AsyncIterator[bytes]:
+        yield b"partial"
+        raise httpx.ReadError("CDN connection lost")
+
+    response.aiter_bytes = aiter_bytes
+    archive = _stream_archive([_compact_archive_asset(asset)])
+
+    with patch(
+        "routers.api.download.open_cdn_response",
+        new_callable=AsyncMock,
+        return_value=response,
+    ):
+        with pytest.raises(httpx.ReadError, match="CDN connection lost"):
+            _ = [chunk async for chunk in archive]
+
+    response.aclose.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_archive_zip_generation_uses_a_dedicated_executor() -> None:
+    asset = _download_asset(uuid4(), size=1)
+    loop = asyncio.get_running_loop()
+    run_in_executor = loop.run_in_executor
+    executors: list[object | None] = []
+
+    def record_executor(executor: Any, function: Any, *args: Any):
+        executors.append(executor)
+        return run_in_executor(executor, function, *args)
+
+    async def fake_cdn_chunks(url: str, state: object) -> AsyncIterator[bytes]:
+        yield b"x"
+
+    with (
+        patch.object(loop, "run_in_executor", side_effect=record_executor),
+        patch("routers.api.download._cdn_asset_chunks", side_effect=fake_cdn_chunks),
+    ):
+        _ = [chunk async for chunk in _stream_archive([_compact_archive_asset(asset)])]
+
+    assert executors
+    assert all(executor is not None for executor in executors)
 
 
 @pytest.mark.anyio
@@ -438,7 +562,12 @@ async def test_archive_clamps_timestamps_to_zip_range() -> None:
 
     with patch("routers.api.download._cdn_asset_chunks", side_effect=fake_cdn_chunks):
         archive = b"".join(
-            [chunk async for chunk in _stream_archive(_asset_stream(assets))]
+            [
+                chunk
+                async for chunk in _stream_archive(
+                    [_compact_archive_asset(asset) for asset in assets]
+                )
+            ]
         )
 
     with ZipFile(BytesIO(archive)) as zip_file:

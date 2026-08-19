@@ -1,13 +1,17 @@
 """Immich-compatible batch download planning and streaming ZIP archives."""
 
+import asyncio
 import posixpath
 import re
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterable
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import batched
 from stat import S_IFREG
-from typing import Annotated
+from threading import Lock
+from typing import Annotated, TypeVar, cast
 from uuid import UUID
 
 import httpx
@@ -16,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from gumnut import AsyncGumnut
 from gumnut.types.asset_response import AssetResponse
 from pydantic.json_schema import SkipJsonSchema
-from stream_zip import ZIP_AUTO, AsyncMemberFile, async_stream_zip
+from stream_zip import ZIP_AUTO, AsyncMemberFile, stream_zip
 
 from routers.api.constants import (
     DEFAULT_DOWNLOAD_ARCHIVE_SIZE,
@@ -49,7 +53,11 @@ _DOWNLOAD_ARCHIVE_INCLUDE = ["file_data", "variants"]
 _ZIP_MIN_TIMESTAMP = datetime(1980, 1, 1)
 _ZIP_MAX_TIMESTAMP = datetime(2107, 12, 31, 23, 59, 58)
 _ARCHIVE_CDN_CHUNK_SIZE = 64 * 1024
+_ARCHIVE_ZIP_MAX_WORKERS = 8
 _UNSAFE_FILENAME_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_archive_zip_executor: ThreadPoolExecutor | None = None
+_archive_zip_executor_lock = Lock()
+_T = TypeVar("_T")
 
 
 @dataclass(slots=True)
@@ -57,6 +65,43 @@ class _ArchiveStreamState:
     """Per-response ownership of the currently open CDN connection."""
 
     response: httpx.Response | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ArchiveAsset:
+    """Compact metadata retained after archive preflight validation."""
+
+    filename: str
+    modified_at: datetime
+    size: int
+    url: str
+
+
+def _get_archive_zip_executor() -> ThreadPoolExecutor:
+    """Return the bounded executor reserved for ZIP generation."""
+    global _archive_zip_executor
+    if _archive_zip_executor is None:
+        with _archive_zip_executor_lock:
+            if _archive_zip_executor is None:
+                _archive_zip_executor = ThreadPoolExecutor(
+                    max_workers=_ARCHIVE_ZIP_MAX_WORKERS,
+                    thread_name_prefix="archive-zip",
+                )
+    return _archive_zip_executor
+
+
+async def close_archive_zip_executor() -> None:
+    """Shut down the archive executor during application teardown."""
+    global _archive_zip_executor
+    with _archive_zip_executor_lock:
+        executor = _archive_zip_executor
+        _archive_zip_executor = None
+    if executor is not None:
+        await asyncio.to_thread(
+            executor.shutdown,
+            wait=True,
+            cancel_futures=True,
+        )
 
 
 async def _assets_by_ids(
@@ -80,25 +125,23 @@ async def _assets_by_ids(
                 yield asset
 
 
-async def _validated_archive_assets(
-    client: AsyncGumnut, asset_ids: list[UUID]
+async def _validated_info_assets_by_ids(
+    client: AsyncGumnut,
+    asset_ids: list[UUID],
 ) -> list[AssetResponse]:
-    """Resolve every requested asset before starting an archive response."""
+    """Resolve every requested asset and its download-info metadata."""
     assets = [
         asset
         async for asset in _assets_by_ids(
-            client, asset_ids, include=_DOWNLOAD_ARCHIVE_INCLUDE
+            client,
+            asset_ids,
+            include=_DOWNLOAD_INFO_INCLUDE,
         )
     ]
     requested_ids = {uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_ids}
     resolved_ids = {asset.id for asset in assets}
-    originals_available = all(
-        asset.file_data is not None
-        and asset.asset_urls is not None
-        and "original" in asset.asset_urls
-        for asset in assets
-    )
-    if requested_ids != resolved_ids or not originals_available:
+    metadata_available = all(asset.file_data is not None for asset in assets)
+    if requested_ids != resolved_ids or not metadata_available:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Not found or no asset.download access",
@@ -106,9 +149,42 @@ async def _validated_archive_assets(
     return assets
 
 
-async def _iterate_assets(assets: list[AssetResponse]) -> AsyncIterator[AssetResponse]:
-    for asset in assets:
-        yield asset
+async def _validated_archive_assets(
+    client: AsyncGumnut,
+    asset_ids: list[UUID],
+) -> list[_ArchiveAsset]:
+    """Preflight every archive member while retaining only streaming metadata."""
+    assets: list[_ArchiveAsset] = []
+    resolved_ids: set[str] = set()
+    async for asset in _assets_by_ids(
+        client,
+        asset_ids,
+        include=_DOWNLOAD_ARCHIVE_INCLUDE,
+    ):
+        file_data = asset.file_data
+        asset_urls = asset.asset_urls
+        if file_data is None or not asset_urls or "original" not in asset_urls:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Not found or no asset.download access",
+            )
+        resolved_ids.add(asset.id)
+        assets.append(
+            _ArchiveAsset(
+                filename=asset.original_file_name,
+                modified_at=file_data.file_modified_at,
+                size=file_data.file_size_bytes,
+                url=asset_urls["original"].url,
+            )
+        )
+
+    requested_ids = {uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_ids}
+    if requested_ids != resolved_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Not found or no asset.download access",
+        )
+    return assets
 
 
 async def _assets_for_info(
@@ -117,9 +193,8 @@ async def _assets_for_info(
 ) -> AsyncIterator[AssetResponse]:
     """Resolve the selector precedence used by Immich's download service."""
     if request.assetIds is not None:
-        async for asset in _assets_by_ids(
-            client, request.assetIds, include=_DOWNLOAD_INFO_INCLUDE
-        ):
+        assets = await _validated_info_assets_by_ids(client, request.assetIds)
+        for asset in assets:
             yield asset
         return
     elif request.albumId is not None:
@@ -188,7 +263,7 @@ async def _build_download_info(
 
 def _sanitize_archive_filename(filename: str) -> str:
     """Return a safe, flat ZIP member filename with no traversal semantics."""
-    sanitized = _UNSAFE_FILENAME_CHARACTERS.sub("", filename).strip().rstrip(".")
+    sanitized = _UNSAFE_FILENAME_CHARACTERS.sub("", filename).strip().rstrip(" .")
     reserved_windows_name = re.fullmatch(
         r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?", sanitized
     )
@@ -200,18 +275,19 @@ def _sanitize_archive_filename(filename: str) -> str:
 def _deduplicated_archive_name(
     original_file_name: str,
     next_suffix: dict[str, int],
-    emitted: set[str],
+    emitted_keys: set[str],
 ) -> str:
-    """Return a globally unique member name and reserve it."""
+    """Return a case-insensitively unique member name and reserve it."""
     base = _sanitize_archive_filename(original_file_name)
-    suffix = next_suffix.get(base, 0)
+    base_key = base.casefold()
+    suffix = next_suffix.get(base_key, 0)
     stem, extension = posixpath.splitext(base)
     candidate = base if suffix == 0 else f"{stem}+{suffix}{extension}"
-    while candidate in emitted:
+    while candidate.casefold() in emitted_keys:
         suffix += 1
         candidate = f"{stem}+{suffix}{extension}"
-    next_suffix[base] = suffix + 1
-    emitted.add(candidate)
+    next_suffix[base_key] = suffix + 1
+    emitted_keys.add(candidate.casefold())
     return candidate
 
 
@@ -240,38 +316,70 @@ async def _cdn_asset_chunks(
 
 
 async def _archive_members(
-    assets: AsyncIterable[AssetResponse],
+    assets: Iterable[_ArchiveAsset],
     state: _ArchiveStreamState,
 ) -> AsyncIterator[AsyncMemberFile]:
     next_suffix: dict[str, int] = {}
-    emitted_names: set[str] = set()
-    async for asset in assets:
-        asset_urls = asset.asset_urls
-        file_data = asset.file_data
-        if file_data is None or not asset_urls or "original" not in asset_urls:
-            raise RuntimeError("archive asset was not validated before streaming")
-        variant = asset_urls["original"]
+    emitted_name_keys: set[str] = set()
+    for asset in assets:
         yield (
-            _deduplicated_archive_name(
-                asset.original_file_name, next_suffix, emitted_names
-            ),
-            _zip_modified_at(file_data.file_modified_at),
+            _deduplicated_archive_name(asset.filename, next_suffix, emitted_name_keys),
+            _zip_modified_at(asset.modified_at),
             S_IFREG | 0o600,
-            ZIP_AUTO(file_data.file_size_bytes, level=0),
-            _cdn_asset_chunks(variant.url, state),
+            ZIP_AUTO(asset.size, level=0),
+            _cdn_asset_chunks(asset.url, state),
         )
 
 
+async def _async_archive_zip(
+    files: AsyncIterable[AsyncMemberFile],
+) -> AsyncIterator[bytes]:
+    """Bridge stream-zip through the archive-only bounded executor."""
+    loop = asyncio.get_running_loop()
+
+    def to_sync_iterable(async_iterable: AsyncIterable[_T]) -> Iterable[_T]:
+        async_iterator = async_iterable.__aiter__()
+
+        async def get_next() -> _T:
+            return await anext(async_iterator)
+
+        while True:
+            try:
+                yield asyncio.run_coroutine_threadsafe(get_next(), loop).result()
+            except StopAsyncIteration:
+                break
+
+    sync_member_files = (
+        member_file[0:4] + (to_sync_iterable(member_file[4]),)
+        for member_file in to_sync_iterable(files)
+    )
+    chunks = iter(
+        stream_zip(
+            files=sync_member_files,
+            extended_timestamps=False,
+        )
+    )
+    done = object()
+    executor = _get_archive_zip_executor()
+    while True:
+        context = copy_context()
+
+        def next_chunk() -> bytes | object:
+            return next(chunks, done)
+
+        value = await loop.run_in_executor(executor, context.run, next_chunk)
+        if value is done:
+            break
+        yield cast(bytes, value)
+
+
 async def _stream_archive(
-    assets: AsyncIterable[AssetResponse],
+    assets: Iterable[_ArchiveAsset],
 ) -> AsyncGenerator[bytes]:
     """Yield ZIP bytes and close the active CDN response on cancellation."""
     state = _ArchiveStreamState()
     try:
-        async for chunk in async_stream_zip(
-            _archive_members(assets, state),
-            extended_timestamps=False,
-        ):
+        async for chunk in _async_archive_zip(_archive_members(assets, state)):
             yield chunk
     finally:
         if state.response is not None:
@@ -286,14 +394,14 @@ async def download_archive(
     slug: Annotated[str | SkipJsonSchema[None], Query()] = None,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> StreamingResponse:
-    """Stream requested original assets as an on-the-fly ZIP archive.
+    """Stream requested uploads as an on-the-fly ZIP archive.
 
-    Gumnut does not currently expose edited variants, so the accepted
-    ``edited`` compatibility flag falls back to each asset's original.
+    Gumnut asset chains are currently root-only, so the accepted ``edited``
+    compatibility flag has no effect: the current rendering is the upload.
     """
     assets = await _validated_archive_assets(client, request.assetIds)
     return StreamingResponse(
-        _stream_archive(_iterate_assets(assets)),
+        _stream_archive(assets),
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="assets.zip"'},
     )

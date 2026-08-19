@@ -1,11 +1,57 @@
 from typing import Any
 
-from config.sentry import _enrich_http_spans
+from config.sentry import _enrich_http_spans, _redact_error_event
 
 
 def _span_data(result: dict[str, Any], index: int) -> dict[str, Any]:
     """Extract span data dict with proper typing for test assertions."""
     return result["spans"][index]["data"]
+
+
+def test_error_events_redact_signed_cdn_values_without_touching_other_queries():
+    event: Any = {
+        "exception": {
+            "values": [
+                {
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "vars": {
+                                    "url": (
+                                        "'https://assets.gumnut.ai/asset.jpg"
+                                        "?w=720&verify=secret-token"
+                                        "&dl=family-photo.jpg&f=webp'"
+                                    ),
+                                    "safe_url": (
+                                        "'https://api.example.com/search"
+                                        "?page=2&dl=report.csv&query=cats'"
+                                    ),
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+        "breadcrumbs": {
+            "values": [
+                {
+                    "message": (
+                        "GET https://assets.gumnut.ai/asset.jpg"
+                        "?verify=secret-token&dl=family-photo.jpg&w=720"
+                    )
+                }
+            ]
+        },
+        "request": {"query_string": "page=2&dl=report.csv&query=cats"},
+    }
+
+    result = _redact_error_event(event, {})
+    rendered = repr(result)
+    assert "secret-token" not in rendered
+    assert "family-photo.jpg" not in rendered
+    assert "verify=REDACTED&dl=REDACTED&w=720" in rendered
+    assert "page=2&dl=report.csv&query=cats" in rendered
 
 
 class TestEnrichHttpSpans:

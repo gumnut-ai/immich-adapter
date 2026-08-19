@@ -1,13 +1,41 @@
 import logging
 import os
+from typing import Any
 from urllib.parse import urlparse
 
 import sentry_sdk
+from sentry_sdk.types import Event, Hint
 
 from config.settings import get_settings
-from config.telemetry import redact_sensitive_cdn_query, redact_sensitive_cdn_url
+from config.telemetry import (
+    redact_sensitive_cdn_query,
+    redact_sensitive_cdn_text,
+    redact_sensitive_cdn_url,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_error_event(event: Event, _hint: Hint) -> Event:
+    """Remove signed-CDN credentials and filenames from error event values."""
+
+    def redact(value: Any) -> Any:
+        if isinstance(value, str):
+            return redact_sensitive_cdn_text(value)
+        if isinstance(value, dict):
+            for key, item in value.items():
+                value[key] = redact(item)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                value[index] = redact(item)
+        return value
+
+    try:
+        redact(event)
+        return event
+    except Exception:
+        # before_send must never drop an otherwise useful error event.
+        return event
 
 
 def _enrich_http_spans(event, _hint):
@@ -87,6 +115,7 @@ def init_sentry():
             # there is an active span.
             profile_lifecycle="trace",
             environment=get_settings().environment,
+            before_send=_redact_error_event,
             before_send_transaction=_enrich_http_spans,
         )
     else:

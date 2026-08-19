@@ -1,9 +1,11 @@
 """Targeted redaction for signed CDN telemetry."""
 
+import re
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 _SENSITIVE_CDN_QUERY_KEYS = frozenset({"dl", "verify"})
 _REDACTED_QUERY_VALUE = "REDACTED"
+_URL_IN_TEXT = re.compile(r"https?://[^\s'\"<>\[\]{}(),]+")
 
 
 def redact_sensitive_cdn_query(query: str) -> str:
@@ -31,3 +33,13 @@ def redact_sensitive_cdn_url(url: str) -> str:
         return urlunsplit(parsed._replace(query=redacted_query))
     except (TypeError, ValueError):
         return url
+
+
+def redact_sensitive_cdn_text(text: str) -> str:
+    """Redact signed-CDN URLs or bare queries embedded in telemetry text."""
+    redacted = _URL_IN_TEXT.sub(
+        lambda match: redact_sensitive_cdn_url(match.group(0)), text
+    )
+    if redacted != text:
+        return redacted
+    return redact_sensitive_cdn_query(text)

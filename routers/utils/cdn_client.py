@@ -127,8 +127,9 @@ async def open_cdn_response(
 
     The caller owns the successful response and must consume it through
     :func:`iter_cdn_response_bytes` (or close it explicitly). Keeping this
-    status mapping in one place makes archive members and individual media
-    downloads fail consistently.
+    status classification in one place keeps callers from interpreting CDN
+    responses differently. Archive failures can still surface after the ZIP
+    response headers have been sent, while individual downloads open first.
     """
     client = await get_cdn_http_client()
     headers = {"Range": range_header} if range_header is not None else {}
