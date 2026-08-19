@@ -212,8 +212,9 @@ class TestCropValidation:
             to_recipe([edit])
         assert exc_info.value.code == code
 
-    def test_rejects_non_integer_crop_values(self):
-        params = CropParameters.model_construct(x=0.5, y=0, width=100, height=100)
+    @pytest.mark.parametrize("bad_value", [0.5, True])
+    def test_rejects_non_integer_crop_values(self, bad_value):
+        params = CropParameters.model_construct(x=bad_value, y=0, width=100, height=100)
         edit = AssetEditActionItemDto.model_construct(
             action=AssetEditAction.crop, parameters=params
         )
@@ -221,7 +222,10 @@ class TestCropValidation:
             to_recipe([edit])
         assert exc_info.value.code == "invalid_crop"
 
-    @pytest.mark.parametrize("bad_dim", [(0, SOURCE_H), (SOURCE_W, 0), (-1, SOURCE_H)])
+    @pytest.mark.parametrize(
+        "bad_dim",
+        [(0, SOURCE_H), (SOURCE_W, 0), (-1, SOURCE_H), (2**53, SOURCE_H)],
+    )
     def test_invalid_source_dims_are_a_caller_bug(self, bad_dim):
         with pytest.raises(ValueError):
             immich_edits_to_recipe([crop()], *bad_dim)
@@ -335,7 +339,6 @@ class TestRecipeParams:
             '"mirror":false,"version":1}'
         )
         assert recipe.to_params_json() == expected
-        assert recipe.to_params_json() == recipe.to_params_json()
 
     @pytest.mark.parametrize(
         "recipe",
@@ -421,6 +424,15 @@ class TestRecipeParams:
                     "angle": 0,
                     "mirror": False,
                     "crop": {"x": -1, "y": 0, "width": 1, "height": 1},
+                },
+                "malformed_recipe",
+            ),
+            (
+                {
+                    "version": 1,
+                    "angle": 0,
+                    "mirror": False,
+                    "crop": {"x": True, "y": 0, "width": 1, "height": 1},
                 },
                 "malformed_recipe",
             ),

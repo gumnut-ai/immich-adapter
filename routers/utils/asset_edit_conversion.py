@@ -5,7 +5,8 @@ expects the server to produce the pixels. Gumnut stores one consolidated,
 normalized recipe on the `edit` version's `params` — the Gumnut API treats
 `params` as opaque JSON whose schema is defined by the producer, so this module
 *is* the schema definition for `kind="edit"`. Both directions live here so the
-baker and the routes share a single tested semantic contract.
+pipeline that renders the edited pixels and the adapter routes share a single
+tested semantic contract.
 
 The v1 recipe JSON object::
 
@@ -139,8 +140,10 @@ class EditRecipe:
 
 
 def _require_positive_int(value: int, name: str) -> None:
-    if type(value) is not int or value <= 0:
-        raise ValueError(f"{name} must be a positive int")
+    # The upper bound keeps the forward/reverse contract symmetric: any crop
+    # the fold accepts fits the recipe parser's (and the DTO's) field bounds.
+    if type(value) is not int or value <= 0 or value > _MAX_CROP_VALUE:
+        raise ValueError(f"{name} must be a positive int within the crop bounds")
 
 
 def _validate_crop(
