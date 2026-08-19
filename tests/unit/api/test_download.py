@@ -2,8 +2,10 @@
 
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from io import BytesIO
+from threading import Event
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
@@ -22,7 +24,9 @@ from routers.api.download import (
     _assets_for_info,
     _build_download_info,
     _deduplicated_archive_name,
+    _get_archive_zip_executor,
     _stream_archive,
+    close_archive_zip_executor,
     download_archive,
     get_download_info,
 )
@@ -130,21 +134,30 @@ async def test_assets_by_ids_chunks_backend_filter_and_preserves_duplicates() ->
     asset_ids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
     selected = _download_asset(asset_ids[0])
     client = Mock()
-    client.assets.list = Mock(
-        side_effect=[MockSyncCursorPage([selected]), MockSyncCursorPage([selected])]
-    )
+    pages = iter([MockSyncCursorPage([selected]), MockSyncCursorPage([selected])])
+    conversion_counts: list[int] = []
 
-    result = [
-        asset
-        async for asset in _assets_by_ids(
-            client,
-            [*asset_ids, asset_ids[0]],
-            include=["file_data", "variants"],
-        )
-    ]
+    def list_assets(**kwargs: Any) -> MockSyncCursorPage:
+        conversion_counts.append(convert.call_count)
+        return next(pages)
+
+    with patch(
+        "routers.api.download.uuid_to_gumnut_asset_id",
+        wraps=uuid_to_gumnut_asset_id,
+    ) as convert:
+        client.assets.list = Mock(side_effect=list_assets)
+        result = [
+            asset
+            async for asset in _assets_by_ids(
+                client,
+                [*asset_ids, asset_ids[0]],
+                include=["file_data", "variants"],
+            )
+        ]
 
     assert result == [selected, selected]
     assert client.assets.list.call_count == 2
+    assert conversion_counts == [GUMNUT_API_MAX_BULK_IDS, len(asset_ids) + 1]
     first_call, second_call = client.assets.list.call_args_list
     assert len(first_call.kwargs["ids"]) == GUMNUT_API_MAX_BULK_IDS
     assert len(second_call.kwargs["ids"]) == 2
@@ -291,6 +304,52 @@ def test_archive_names_avoid_canonically_equivalent_unicode_collisions() -> None
     ]
 
 
+def test_archive_names_reserve_component_bytes_for_duplicate_suffixes() -> None:
+    filename = f"{'a' * 251}.jpg"
+
+    first, duplicate = _archive_names([filename, filename])
+
+    assert first == filename
+    assert duplicate.endswith("+1.jpg")
+    assert len(first.encode("utf-8")) == 255
+    assert len(duplicate.encode("utf-8")) == 255
+
+
+def test_archive_names_truncate_multibyte_components_on_codepoint_boundaries() -> None:
+    first, duplicate = _archive_names([f"{'é' * 200}.jpg"] * 2)
+
+    assert first.endswith(".jpg")
+    assert duplicate.endswith("+1.jpg")
+    assert len(first.encode("utf-8")) <= 255
+    assert len(duplicate.encode("utf-8")) <= 255
+
+
+def test_archive_names_revalidate_windows_devices_after_truncation() -> None:
+    filename = f"CONextra.{'a' * 251}"
+
+    assert _archive_names([filename]) == ["unnamed"]
+
+
+def test_distinct_truncated_names_share_suffix_progression() -> None:
+    next_suffix: dict[str, int] = {}
+    emitted: set[str] = set()
+    filenames = [f"{'a' * 255}{index}" for index in range(4)]
+
+    names = [
+        _deduplicated_archive_name(filename, next_suffix, emitted)
+        for filename in filenames
+    ]
+
+    assert names == [
+        f"{'a' * 255}",
+        f"{'a' * 253}+1",
+        f"{'a' * 253}+2",
+        f"{'a' * 253}+3",
+    ]
+    assert len(next_suffix) == 1
+    assert list(next_suffix.values()) == [4]
+
+
 @pytest.mark.anyio
 async def test_info_requests_only_file_data_without_signing_original_urls() -> None:
     current_user_id = uuid4()
@@ -407,6 +466,92 @@ async def test_closing_partial_archive_immediately_closes_active_cdn_response() 
 
 
 @pytest.mark.anyio
+async def test_cancelling_archive_read_unwinds_pending_cdn_open() -> None:
+    asset = _download_asset(uuid4(), size=10)
+    open_started = asyncio.Event()
+    open_cancelled = asyncio.Event()
+
+    async def blocked_open(url: str) -> httpx.Response:
+        open_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            open_cancelled.set()
+            raise
+        raise AssertionError("unreachable")
+
+    archive = _stream_archive([_compact_archive_asset(asset)])
+    pending_read: asyncio.Task[bytes] | None = None
+
+    with patch("routers.api.download.open_cdn_response", side_effect=blocked_open):
+        async with asyncio.timeout(2):
+            for _ in range(50):
+                next_chunk = asyncio.create_task(anext(archive))
+                open_wait = asyncio.create_task(open_started.wait())
+                completed, _ = await asyncio.wait(
+                    {next_chunk, open_wait},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if open_wait in completed:
+                    assert not next_chunk.done()
+                    pending_read = next_chunk
+                    break
+                await next_chunk
+                open_wait.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await open_wait
+
+        assert pending_read is not None
+        pending_read.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(pending_read, timeout=1)
+
+        assert open_cancelled.is_set()
+        await archive.aclose()
+
+
+@pytest.mark.anyio
+async def test_cancelling_queued_archive_read_does_not_wait_for_worker() -> None:
+    asset = _download_asset(uuid4(), size=10)
+    worker_started = Event()
+    release_worker = Event()
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    def occupy_worker() -> None:
+        worker_started.set()
+        release_worker.wait()
+
+    blocker = executor.submit(occupy_worker)
+    assert await asyncio.to_thread(worker_started.wait, 1)
+    archive_submitted = asyncio.Event()
+    original_submit = executor.submit
+
+    def record_submit(function: Any, *args: Any, **kwargs: Any):
+        future = original_submit(function, *args, **kwargs)
+        archive_submitted.set()
+        return future
+
+    archive = _stream_archive([_compact_archive_asset(asset)])
+    try:
+        with (
+            patch(
+                "routers.api.download._get_archive_zip_executor", return_value=executor
+            ),
+            patch.object(executor, "submit", side_effect=record_submit),
+        ):
+            pending_read = asyncio.create_task(anext(archive))
+            await asyncio.wait_for(archive_submitted.wait(), timeout=1)
+            pending_read.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(pending_read, timeout=1)
+            await archive.aclose()
+    finally:
+        release_worker.set()
+        await asyncio.to_thread(blocker.result, 1)
+        executor.shutdown(wait=True)
+
+
+@pytest.mark.anyio
 async def test_archive_emits_output_before_requesting_all_source_bytes() -> None:
     asset = _download_asset(uuid4(), size=1_000_004)
     response = Mock()
@@ -470,25 +615,33 @@ async def test_archive_propagates_cdn_read_failure_and_closes_response() -> None
 @pytest.mark.anyio
 async def test_archive_zip_generation_uses_a_dedicated_executor() -> None:
     asset = _download_asset(uuid4(), size=1)
-    loop = asyncio.get_running_loop()
-    run_in_executor = loop.run_in_executor
-    executors: list[object | None] = []
-
-    def record_executor(executor: Any, function: Any, *args: Any):
-        executors.append(executor)
-        return run_in_executor(executor, function, *args)
+    executor = _get_archive_zip_executor()
 
     async def fake_cdn_chunks(url: str, state: object) -> AsyncIterator[bytes]:
         yield b"x"
 
     with (
-        patch.object(loop, "run_in_executor", side_effect=record_executor),
+        patch.object(executor, "submit", wraps=executor.submit) as submit,
         patch("routers.api.download._cdn_asset_chunks", side_effect=fake_cdn_chunks),
     ):
         _ = [chunk async for chunk in _stream_archive([_compact_archive_asset(asset)])]
 
-    assert executors
-    assert all(executor is not None for executor in executors)
+    assert submit.call_count > 0
+
+
+@pytest.mark.anyio
+async def test_archive_executor_shutdown_resets_and_is_idempotent() -> None:
+    executor = _get_archive_zip_executor()
+
+    await close_archive_zip_executor()
+
+    with pytest.raises(RuntimeError, match="cannot schedule new futures"):
+        executor.submit(lambda: None)
+    replacement = _get_archive_zip_executor()
+    assert replacement is not executor
+
+    await close_archive_zip_executor()
+    await close_archive_zip_executor()
 
 
 @pytest.mark.anyio

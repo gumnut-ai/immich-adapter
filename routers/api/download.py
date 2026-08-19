@@ -4,14 +4,14 @@ import asyncio
 import posixpath
 import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import batched
 from stat import S_IFREG
-from threading import Lock
-from typing import Annotated, TypeVar, cast
+from threading import Event, Lock
+from typing import Annotated, Any, TypeVar, cast
 from unicodedata import normalize
 from uuid import UUID
 
@@ -56,6 +56,7 @@ _ZIP_MIN_TIMESTAMP = datetime(1980, 1, 1)
 _ZIP_MAX_TIMESTAMP = datetime(2107, 12, 31, 23, 59, 58)
 _ARCHIVE_CDN_CHUNK_SIZE = 64 * 1024
 _ARCHIVE_ZIP_MAX_WORKERS = 8
+_MAX_ARCHIVE_COMPONENT_BYTES = 255
 _UNSAFE_FILENAME_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _archive_zip_executor: ThreadPoolExecutor | None = None
 _archive_zip_executor_lock = Lock()
@@ -113,8 +114,8 @@ async def _assets_by_ids(
     include: list[str],
 ) -> AsyncIterator[AssetResponse]:
     """Yield asset metadata in request order, one backend-sized chunk at a time."""
-    gumnut_ids = [uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_ids]
-    for chunk in batched(gumnut_ids, GUMNUT_API_MAX_BULK_IDS):
+    for asset_id_chunk in batched(asset_ids, GUMNUT_API_MAX_BULK_IDS):
+        chunk = [uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_id_chunk]
         assets_by_id: dict[str, AssetResponse] = {}
         async for asset in client.assets.list(
             ids=chunk,
@@ -140,9 +141,7 @@ async def _validated_info_assets_by_ids(
             include=_DOWNLOAD_INFO_INCLUDE,
         )
     ]
-    requested_ids = {uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_ids}
-    resolved_ids = {asset.id for asset in assets}
-    if requested_ids != resolved_ids:
+    if len(assets) != len(asset_ids):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Not found or no asset.download access",
@@ -156,7 +155,6 @@ async def _validated_archive_assets(
 ) -> list[_ArchiveAsset]:
     """Preflight every archive member while retaining only streaming metadata."""
     assets: list[_ArchiveAsset] = []
-    resolved_ids: set[str] = set()
     async for asset in _assets_by_ids(
         client,
         asset_ids,
@@ -174,7 +172,6 @@ async def _validated_archive_assets(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Not found or no asset.download access",
             )
-        resolved_ids.add(asset.id)
         assets.append(
             _ArchiveAsset(
                 filename=asset.original_file_name,
@@ -184,8 +181,7 @@ async def _validated_archive_assets(
             )
         )
 
-    requested_ids = {uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_ids}
-    if requested_ids != resolved_ids:
+    if len(assets) != len(asset_ids):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Not found or no asset.download access",
@@ -276,12 +272,46 @@ async def _build_download_info(
 def _sanitize_archive_filename(filename: str) -> str:
     """Return a safe, flat ZIP member filename with no traversal semantics."""
     sanitized = _UNSAFE_FILENAME_CHARACTERS.sub("", filename).strip().rstrip(" .")
-    reserved_windows_name = re.fullmatch(
-        r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?", sanitized
-    )
-    if sanitized in {"", ".", ".."} or reserved_windows_name:
+
+    if _is_unusable_archive_name(sanitized):
         return "unnamed"
     return sanitized
+
+
+def _is_unusable_archive_name(filename: str) -> bool:
+    """Return whether a filename is empty or aliases a Windows device."""
+    reserved_windows_name = re.fullmatch(
+        r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?", filename
+    )
+    return filename in {"", ".", ".."} or reserved_windows_name is not None
+
+
+def _truncate_utf8(value: str, max_bytes: int) -> str:
+    """Truncate text without splitting a UTF-8 code point."""
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def _archive_name_candidate(base: str, suffix: int) -> str:
+    """Build a ZIP member name within common filesystem component limits."""
+    stem, extension = posixpath.splitext(base)
+    suffix_text = "" if suffix == 0 else f"+{suffix}"
+    suffix_size = len(suffix_text.encode("utf-8"))
+    extension = _truncate_utf8(
+        extension,
+        max(0, _MAX_ARCHIVE_COMPONENT_BYTES - suffix_size),
+    )
+    stem = _truncate_utf8(
+        stem,
+        max(
+            0,
+            _MAX_ARCHIVE_COMPONENT_BYTES - suffix_size - len(extension.encode("utf-8")),
+        ),
+    )
+    candidate = f"{stem}{suffix_text}{extension}".rstrip(" .")
+    return "unnamed" if _is_unusable_archive_name(candidate) else candidate
 
 
 def _deduplicated_archive_name(
@@ -295,13 +325,13 @@ def _deduplicated_archive_name(
         return normalize("NFC", name).casefold()
 
     base = _sanitize_archive_filename(original_file_name)
-    base_key = name_key(base)
+    base_candidate = _archive_name_candidate(base, 0)
+    base_key = name_key(base_candidate)
     suffix = next_suffix.get(base_key, 0)
-    stem, extension = posixpath.splitext(base)
-    candidate = base if suffix == 0 else f"{stem}+{suffix}{extension}"
+    candidate = base_candidate if suffix == 0 else _archive_name_candidate(base, suffix)
     while name_key(candidate) in emitted_keys:
         suffix += 1
-        candidate = f"{stem}+{suffix}{extension}"
+        candidate = _archive_name_candidate(base, suffix)
     next_suffix[base_key] = suffix + 1
     emitted_keys.add(name_key(candidate))
     return candidate
@@ -350,20 +380,46 @@ async def _archive_members(
 async def _async_archive_zip(
     files: AsyncIterable[AsyncMemberFile],
 ) -> AsyncIterator[bytes]:
-    """Bridge stream-zip through the archive-only bounded executor."""
+    """Bridge stream-zip through the archive-only bounded executor.
+
+    The synchronous ZIP worker blocks on event-loop reads. Shield its executor
+    future so task cancellation can first cancel that read, then wait for a
+    running worker to unwind before the caller closes the active CDN response.
+    """
     loop = asyncio.get_running_loop()
+    bridge_cancelled = Event()
+    pending_lock = Lock()
+    pending_read: Future[Any] | None = None
+
+    def cancel_pending_read() -> None:
+        bridge_cancelled.set()
+        with pending_lock:
+            future = pending_read
+        if future is not None:
+            future.cancel()
 
     def to_sync_iterable(async_iterable: AsyncIterable[_T]) -> Iterable[_T]:
+        nonlocal pending_read
         async_iterator = async_iterable.__aiter__()
 
         async def get_next() -> _T:
             return await anext(async_iterator)
 
         while True:
+            future = asyncio.run_coroutine_threadsafe(get_next(), loop)
+            with pending_lock:
+                pending_read = future
+                cancelled = bridge_cancelled.is_set()
+            if cancelled:
+                future.cancel()
             try:
-                yield asyncio.run_coroutine_threadsafe(get_next(), loop).result()
+                yield future.result()
             except StopAsyncIteration:
                 break
+            finally:
+                with pending_lock:
+                    if pending_read is future:
+                        pending_read = None
 
     sync_member_files = (
         member_file[0:4] + (to_sync_iterable(member_file[4]),)
@@ -383,7 +439,26 @@ async def _async_archive_zip(
         def next_chunk() -> bytes | object:
             return next(chunks, done)
 
-        value = await loop.run_in_executor(executor, context.run, next_chunk)
+        concurrent_call = executor.submit(context.run, next_chunk)
+        executor_call = asyncio.wrap_future(concurrent_call, loop=loop)
+        try:
+            value = await asyncio.shield(executor_call)
+        except BaseException:
+            cancel_pending_read()
+            if not concurrent_call.cancel():
+                while not executor_call.done():
+                    try:
+                        await asyncio.shield(executor_call)
+                    except asyncio.CancelledError:
+                        continue
+                    except BaseException:
+                        break
+                if executor_call.done() and not executor_call.cancelled():
+                    try:
+                        executor_call.result()
+                    except BaseException:
+                        pass
+            raise
         if value is done:
             break
         yield cast(bytes, value)
