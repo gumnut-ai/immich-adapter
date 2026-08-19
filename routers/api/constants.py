@@ -7,10 +7,11 @@ GUMNUT_API_MAX_PAGE_SIZE = 200
 # endpoints. Keep all adapter-side chunking tied to this single upstream limit.
 GUMNUT_API_MAX_BULK_IDS = 200
 
-# Immich's default maximum uncompressed size for one download archive. The web
-# client forwards this preference to POST /download/info, whose DTO requires a
-# positive value, so the compatibility response must not use the old stub's 0.
-DEFAULT_DOWNLOAD_ARCHIVE_SIZE = 4 * 1024**3
+# Immich Web buffers each archive into an XHR Blob before saving it. Use a
+# positive compatibility default that keeps typical browser-side blobs well
+# below upstream's 4 GiB default; one individually larger asset can still make
+# an archive exceed this grouping target.
+DEFAULT_DOWNLOAD_ARCHIVE_SIZE = 512 * 1024**2
 
 # Placeholder device_id the adapter sends to the Gumnut API on upload. The
 # Gumnut API requires device_asset_id/device_id, but Immich v3 dropped both

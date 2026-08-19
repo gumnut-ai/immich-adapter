@@ -1,20 +1,22 @@
 """Immich-compatible batch download planning and streaming ZIP archives."""
 
-import logging
 import posixpath
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from dataclasses import dataclass
+from datetime import datetime
 from itertools import batched
 from stat import S_IFREG
 from typing import Annotated
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from gumnut import AsyncGumnut
 from gumnut.types.asset_response import AssetResponse
 from pydantic.json_schema import SkipJsonSchema
-from stream_zip import ZIP_AUTO, async_stream_zip
+from stream_zip import ZIP_AUTO, AsyncMemberFile, async_stream_zip
 
 from routers.api.constants import (
     DEFAULT_DOWNLOAD_ARCHIVE_SIZE,
@@ -36,64 +38,100 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
 )
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter(
     prefix="/api/download",
     tags=["download"],
     responses={404: {"description": "Not found"}},
 )
 
-_DOWNLOAD_ASSET_INCLUDE = ["file_data", "variants"]
+_DOWNLOAD_INFO_INCLUDE = ["file_data"]
+_DOWNLOAD_ARCHIVE_INCLUDE = ["file_data", "variants"]
+_ZIP_MIN_TIMESTAMP = datetime(1980, 1, 1)
+_ZIP_MAX_TIMESTAMP = datetime(2107, 12, 31, 23, 59, 58)
+_ARCHIVE_CDN_CHUNK_SIZE = 64 * 1024
 _UNSAFE_FILENAME_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
-def _is_downloadable(asset: AssetResponse) -> bool:
-    return bool(
-        asset.file_data is not None
-        and asset.asset_urls
-        and "original" in asset.asset_urls
-    )
+@dataclass(slots=True)
+class _ArchiveStreamState:
+    """Per-response ownership of the currently open CDN connection."""
+
+    response: httpx.Response | None = None
 
 
 async def _assets_by_ids(
-    client: AsyncGumnut, asset_ids: list[UUID]
-) -> list[AssetResponse]:
-    """Fetch asset metadata in backend-sized chunks and restore request order."""
+    client: AsyncGumnut,
+    asset_ids: list[UUID],
+    *,
+    include: list[str],
+) -> AsyncIterator[AssetResponse]:
+    """Yield asset metadata in request order, one backend-sized chunk at a time."""
     gumnut_ids = [uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_ids]
-    assets_by_id: dict[str, AssetResponse] = {}
     for chunk in batched(gumnut_ids, GUMNUT_API_MAX_BULK_IDS):
+        assets_by_id: dict[str, AssetResponse] = {}
         async for asset in client.assets.list(
             ids=chunk,
-            include=_DOWNLOAD_ASSET_INCLUDE,
+            include=include,
             limit=GUMNUT_API_MAX_PAGE_SIZE,
         ):
             assets_by_id[asset.id] = asset
-    return [
-        assets_by_id[asset_id] for asset_id in gumnut_ids if asset_id in assets_by_id
+        for asset_id in chunk:
+            if asset := assets_by_id.get(asset_id):
+                yield asset
+
+
+async def _validated_archive_assets(
+    client: AsyncGumnut, asset_ids: list[UUID]
+) -> list[AssetResponse]:
+    """Resolve every requested asset before starting an archive response."""
+    assets = [
+        asset
+        async for asset in _assets_by_ids(
+            client, asset_ids, include=_DOWNLOAD_ARCHIVE_INCLUDE
+        )
     ]
+    requested_ids = {uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_ids}
+    resolved_ids = {asset.id for asset in assets}
+    originals_available = all(
+        asset.file_data is not None
+        and asset.asset_urls is not None
+        and "original" in asset.asset_urls
+        for asset in assets
+    )
+    if requested_ids != resolved_ids or not originals_available:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Not found or no asset.download access",
+        )
+    return assets
+
+
+async def _iterate_assets(assets: list[AssetResponse]) -> AsyncIterator[AssetResponse]:
+    for asset in assets:
+        yield asset
 
 
 async def _assets_for_info(
     request: DownloadInfoDto,
     client: AsyncGumnut,
-) -> list[AssetResponse]:
+) -> AsyncIterator[AssetResponse]:
     """Resolve the selector precedence used by Immich's download service."""
     if request.assetIds is not None:
-        assets = await _assets_by_ids(client, request.assetIds)
+        async for asset in _assets_by_ids(
+            client, request.assetIds, include=_DOWNLOAD_INFO_INCLUDE
+        ):
+            yield asset
+        return
     elif request.albumId is not None:
         album_id = uuid_to_gumnut_album_id(request.albumId)
         # Preserve Immich's not-found behavior for an invalid/inaccessible album
         # instead of silently returning an empty successful download.
         await client.albums.retrieve(album_id)
-        assets = [
-            asset
-            async for asset in client.assets.list(
-                album_id=album_id,
-                include=_DOWNLOAD_ASSET_INCLUDE,
-                limit=GUMNUT_API_MAX_PAGE_SIZE,
-            )
-        ]
+        assets = client.assets.list(
+            album_id=album_id,
+            include=_DOWNLOAD_INFO_INCLUDE,
+            limit=GUMNUT_API_MAX_PAGE_SIZE,
+        )
     elif request.userId is not None:
         current_user = await client.users.me()
         current_user_id = safe_uuid_from_user_id(current_user.id)
@@ -102,34 +140,32 @@ async def _assets_for_info(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Cannot download another user's library",
             )
-        assets = [
-            asset
-            async for asset in client.assets.list(
-                include=_DOWNLOAD_ASSET_INCLUDE,
-                limit=GUMNUT_API_MAX_PAGE_SIZE,
-            )
-        ]
+        assets = client.assets.list(
+            include=_DOWNLOAD_INFO_INCLUDE,
+            limit=GUMNUT_API_MAX_PAGE_SIZE,
+        )
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="assetIds, albumId, or userId is required",
         )
 
-    return [asset for asset in assets if _is_downloadable(asset)]
+    async for asset in assets:
+        yield asset
 
 
 def _asset_size(asset: AssetResponse) -> int:
     return asset.file_data.file_size_bytes if asset.file_data is not None else 0
 
 
-def _build_download_info(
-    assets: list[AssetResponse], target_size: int
+async def _build_download_info(
+    assets: AsyncIterable[AssetResponse], target_size: int
 ) -> DownloadResponseDto:
     archives: list[DownloadArchiveInfo] = []
     archive_ids: list[UUID] = []
     archive_size = 0
 
-    for asset in assets:
+    async for asset in assets:
         archive_ids.append(safe_uuid_from_asset_id(asset.id))
         archive_size += _asset_size(asset)
         # Match Immich: the asset that crosses the threshold remains in the
@@ -161,49 +197,86 @@ def _sanitize_archive_filename(filename: str) -> str:
     return sanitized
 
 
-def _deduplicated_archive_names(assets: list[AssetResponse]) -> list[str]:
-    seen: dict[str, int] = {}
-    names: list[str] = []
-    for asset in assets:
-        filename = _sanitize_archive_filename(asset.original_file_name)
-        count = seen.get(filename, 0)
-        seen[filename] = count + 1
-        if count:
-            stem, extension = posixpath.splitext(filename)
-            filename = f"{stem}+{count}{extension}"
-        names.append(filename)
-    return names
+def _deduplicated_archive_name(
+    original_file_name: str,
+    next_suffix: dict[str, int],
+    emitted: set[str],
+) -> str:
+    """Return a globally unique member name and reserve it."""
+    base = _sanitize_archive_filename(original_file_name)
+    suffix = next_suffix.get(base, 0)
+    stem, extension = posixpath.splitext(base)
+    candidate = base if suffix == 0 else f"{stem}+{suffix}{extension}"
+    while candidate in emitted:
+        suffix += 1
+        candidate = f"{stem}+{suffix}{extension}"
+    next_suffix[base] = suffix + 1
+    emitted.add(candidate)
+    return candidate
 
 
-async def _cdn_asset_chunks(url: str) -> AsyncIterator[bytes]:
+def _zip_modified_at(modified_at: datetime) -> datetime:
+    """Clamp timestamps to the range representable by a DOS ZIP header."""
+    if modified_at.year < _ZIP_MIN_TIMESTAMP.year:
+        return _ZIP_MIN_TIMESTAMP.replace(tzinfo=modified_at.tzinfo)
+    if modified_at.year > _ZIP_MAX_TIMESTAMP.year:
+        return _ZIP_MAX_TIMESTAMP.replace(tzinfo=modified_at.tzinfo)
+    return modified_at
+
+
+async def _cdn_asset_chunks(
+    url: str, state: _ArchiveStreamState
+) -> AsyncGenerator[bytes]:
     response = await open_cdn_response(url)
-    async for chunk in iter_cdn_response_bytes(response):
-        yield chunk
+    state.response = response
+    body = iter_cdn_response_bytes(response, chunk_size=_ARCHIVE_CDN_CHUNK_SIZE)
+    try:
+        async for chunk in body:
+            yield chunk
+    finally:
+        await body.aclose()
+        if state.response is response:
+            state.response = None
 
 
-async def _archive_members(assets: list[AssetResponse]):
-    names = _deduplicated_archive_names(assets)
-    for asset, filename in zip(assets, names, strict=True):
+async def _archive_members(
+    assets: AsyncIterable[AssetResponse],
+    state: _ArchiveStreamState,
+) -> AsyncIterator[AsyncMemberFile]:
+    next_suffix: dict[str, int] = {}
+    emitted_names: set[str] = set()
+    async for asset in assets:
         asset_urls = asset.asset_urls
         file_data = asset.file_data
         if file_data is None or not asset_urls or "original" not in asset_urls:
-            # Direct archive requests can bypass /download/info. Match Immich's
-            # missing-asset tolerance and omit an unavailable original.
-            logger.warning(
-                "Skipping unavailable original in download archive",
-                extra={"asset_id": asset.id},
-            )
-            continue
+            raise RuntimeError("archive asset was not validated before streaming")
         variant = asset_urls["original"]
-        size = file_data.file_size_bytes
-        modified_at = file_data.file_modified_at
         yield (
-            filename,
-            modified_at,
+            _deduplicated_archive_name(
+                asset.original_file_name, next_suffix, emitted_names
+            ),
+            _zip_modified_at(file_data.file_modified_at),
             S_IFREG | 0o600,
-            ZIP_AUTO(size, level=0),
-            _cdn_asset_chunks(variant.url),
+            ZIP_AUTO(file_data.file_size_bytes, level=0),
+            _cdn_asset_chunks(variant.url, state),
         )
+
+
+async def _stream_archive(
+    assets: AsyncIterable[AssetResponse],
+) -> AsyncGenerator[bytes]:
+    """Yield ZIP bytes and close the active CDN response on cancellation."""
+    state = _ArchiveStreamState()
+    try:
+        async for chunk in async_stream_zip(
+            _archive_members(assets, state),
+            extended_timestamps=False,
+        ):
+            yield chunk
+    finally:
+        if state.response is not None:
+            await state.response.aclose()
+            state.response = None
 
 
 @router.post("/archive")
@@ -218,21 +291,9 @@ async def download_archive(
     Gumnut does not currently expose edited variants, so the accepted
     ``edited`` compatibility flag falls back to each asset's original.
     """
-    requested_assets = await _assets_by_ids(client, request.assetIds)
-    assets: list[AssetResponse] = []
-    for asset in requested_assets:
-        if _is_downloadable(asset):
-            assets.append(asset)
-        else:
-            # Direct archive requests can bypass /download/info. Match Immich's
-            # missing-asset tolerance and omit an unavailable original before
-            # assigning duplicate-name suffixes to the remaining members.
-            logger.warning(
-                "Skipping unavailable original in download archive",
-                extra={"asset_id": asset.id},
-            )
+    assets = await _validated_archive_assets(client, request.assetIds)
     return StreamingResponse(
-        async_stream_zip(_archive_members(assets)),
+        _stream_archive(_iterate_assets(assets)),
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="assets.zip"'},
     )
@@ -246,7 +307,7 @@ async def get_download_info(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> DownloadResponseDto:
     """Return archive groups and original byte sizes for a batch download."""
-    assets = await _assets_for_info(request, client)
-    return _build_download_info(
-        assets, request.archiveSize or DEFAULT_DOWNLOAD_ARCHIVE_SIZE
+    return await _build_download_info(
+        _assets_for_info(request, client),
+        request.archiveSize or DEFAULT_DOWNLOAD_ARCHIVE_SIZE,
     )

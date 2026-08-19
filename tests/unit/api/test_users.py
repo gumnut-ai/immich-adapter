@@ -248,11 +248,11 @@ class TestMyPreferences:
         assert dumped["recentlyAdded"] == {"sidebarWeb": False}
 
     @pytest.mark.anyio
-    async def test_download_archive_size_is_positive_upstream_default(self):
-        """Immich Web forwards this value to a DTO whose minimum is one."""
+    async def test_download_archive_size_limits_typical_browser_blob(self):
         result = await get_my_preferences()
 
         assert result.download.archiveSize == DEFAULT_DOWNLOAD_ARCHIVE_SIZE
+        assert result.download.archiveSize == 512 * 1024**2
 
     @pytest.mark.anyio
     async def test_update_ignores_the_request(self):

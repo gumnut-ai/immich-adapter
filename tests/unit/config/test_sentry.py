@@ -9,6 +9,64 @@ def _span_data(result: dict[str, Any], index: int) -> dict[str, Any]:
 
 
 class TestEnrichHttpSpans:
+    def test_redacts_only_sensitive_cdn_query_metadata(self):
+        event = {
+            "spans": [
+                {
+                    "op": "http.client",
+                    "description": (
+                        "GET https://assets.gumnut.ai/asset.jpg"
+                        "?w=720&verify=secret-token&dl=family-photo.jpg&f=webp"
+                    ),
+                    "data": {
+                        "url": (
+                            "https://assets.gumnut.ai/asset.jpg"
+                            "?w=720&verify=secret-token&dl=family-photo.jpg&f=webp"
+                        ),
+                        "http.query": (
+                            "w=720&verify=secret-token&dl=family-photo.jpg&f=webp"
+                        ),
+                    },
+                }
+            ]
+        }
+
+        result = _enrich_http_spans(event, {})
+        span = result["spans"][0]
+        assert span["description"].endswith("?w=720&verify=REDACTED&dl=REDACTED&f=webp")
+        assert _span_data(result, 0)["url"].endswith(
+            "?w=720&verify=REDACTED&dl=REDACTED&f=webp"
+        )
+        assert _span_data(result, 0)["http.query"] == (
+            "w=720&verify=REDACTED&dl=REDACTED&f=webp"
+        )
+
+    def test_preserves_unrelated_query_metadata(self):
+        event = {
+            "spans": [
+                {
+                    "op": "http.client",
+                    "description": (
+                        "GET https://api.example.com/search"
+                        "?page=2&dl=report.csv&query=cats"
+                    ),
+                    "data": {
+                        "url": (
+                            "https://api.example.com/search"
+                            "?page=2&dl=report.csv&query=cats"
+                        ),
+                        "http.query": "page=2&dl=report.csv&query=cats",
+                    },
+                }
+            ]
+        }
+
+        result = _enrich_http_spans(event, {})
+        assert _span_data(result, 0)["http.query"] == (
+            "page=2&dl=report.csv&query=cats"
+        )
+        assert _span_data(result, 0)["url"].endswith("?page=2&dl=report.csv&query=cats")
+
     def test_adds_server_address_from_url(self):
         event = {
             "spans": [

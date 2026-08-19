@@ -7,6 +7,8 @@ and a streaming helper that maps CDN errors to adapter HTTP exceptions.
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException, status
@@ -57,6 +59,11 @@ DEFAULT_FORWARDED_HEADERS = (
     "last-modified",
     "cache-control",
 )
+
+
+def _cdn_log_context(cdn_url: str) -> dict[str, str]:
+    """Return non-sensitive CDN context safe for structured logs."""
+    return {"cdn_host": urlsplit(cdn_url).hostname or "unknown"}
 
 
 async def stream_from_cdn(
@@ -133,7 +140,8 @@ async def open_cdn_response(
         )
     except httpx.HTTPError as exc:
         logger.warning(
-            "CDN connection error", extra={"cdn_url": cdn_url, "error": str(exc)}
+            "CDN connection error",
+            extra={**_cdn_log_context(cdn_url), "error_type": type(exc).__name__},
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -143,7 +151,10 @@ async def open_cdn_response(
     if cdn_response.status_code in (403, 404):
         logger.warning(
             "CDN asset not found",
-            extra={"cdn_url": cdn_url, "status_code": cdn_response.status_code},
+            extra={
+                **_cdn_log_context(cdn_url),
+                "status_code": cdn_response.status_code,
+            },
         )
         await cdn_response.aclose()
         raise HTTPException(
@@ -152,7 +163,7 @@ async def open_cdn_response(
         )
 
     if cdn_response.status_code == 416:
-        logger.warning("CDN range not satisfiable", extra={"cdn_url": cdn_url})
+        logger.warning("CDN range not satisfiable", extra=_cdn_log_context(cdn_url))
         error_headers: dict[str, str] = {"Accept-Ranges": "bytes"}
         if content_range := cdn_response.headers.get("content-range"):
             error_headers["Content-Range"] = content_range
@@ -166,7 +177,10 @@ async def open_cdn_response(
     if cdn_response.status_code >= 400:
         logger.warning(
             "CDN upstream error",
-            extra={"cdn_url": cdn_url, "status_code": cdn_response.status_code},
+            extra={
+                **_cdn_log_context(cdn_url),
+                "status_code": cdn_response.status_code,
+            },
         )
         await cdn_response.aclose()
         raise HTTPException(
@@ -177,10 +191,14 @@ async def open_cdn_response(
     return cdn_response
 
 
-async def iter_cdn_response_bytes(cdn_response: httpx.Response):
+async def iter_cdn_response_bytes(
+    cdn_response: httpx.Response,
+    *,
+    chunk_size: int = 8192,
+) -> AsyncGenerator[bytes]:
     """Yield a validated CDN response body and always release its connection."""
     try:
-        async for chunk in cdn_response.aiter_bytes(chunk_size=8192):
+        async for chunk in cdn_response.aiter_bytes(chunk_size=chunk_size):
             yield chunk
     finally:
         await cdn_response.aclose()

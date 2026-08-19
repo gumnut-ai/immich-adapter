@@ -1,5 +1,8 @@
 """Tests for cdn_client.py CDN streaming helper."""
 
+import logging
+
+import httpx
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
@@ -57,6 +60,23 @@ class TestStreamFromCdn:
         chunks = [chunk async for chunk in iter_cdn_response_bytes(cdn_response)]
 
         assert chunks == [b"fake cdn data"]
+        cdn_response.aclose.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_shared_body_iterator_closes_response_after_read_error(
+        self, mock_cdn_response
+    ):
+        cdn_response = mock_cdn_response(200)
+
+        async def failing_body(chunk_size=None):
+            yield b"partial"
+            raise httpx.ReadError("connection interrupted")
+
+        cdn_response.aiter_bytes = failing_body
+
+        with pytest.raises(httpx.ReadError, match="connection interrupted"):
+            _ = [chunk async for chunk in iter_cdn_response_bytes(cdn_response)]
+
         cdn_response.aclose.assert_awaited_once()
 
     @pytest.mark.anyio
@@ -137,6 +157,31 @@ class TestStreamFromCdn:
 
         assert exc_info.value.status_code == 404
         cdn_response.aclose.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_signed_cdn_query_is_never_logged(self, mock_cdn_response, caplog):
+        """Signed query parameters are asset-access credentials."""
+        cdn_response = mock_cdn_response(403)
+        mock_client = AsyncMock()
+        mock_client.build_request = Mock(return_value=Mock())
+        mock_client.send = AsyncMock(return_value=cdn_response)
+        signed_url = "https://cdn.example.com/asset.jpg?verify=secret-token&dl=name"
+
+        with (
+            patch(
+                "routers.utils.cdn_client.get_cdn_http_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            caplog.at_level(logging.WARNING),
+            pytest.raises(HTTPException),
+        ):
+            await stream_from_cdn(signed_url, "image/jpeg")
+
+        log_data = " ".join(str(record.__dict__) for record in caplog.records)
+        assert "secret-token" not in log_data
+        assert "verify=" not in log_data
+        assert caplog.records[-1].cdn_host == "cdn.example.com"
 
     @pytest.mark.anyio
     async def test_cdn_404_maps_to_404(self, mock_cdn_response):

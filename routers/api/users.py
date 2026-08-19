@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 from typing import List
 import logging
 
-from routers.api.constants import STUB_LICENSE_KEY
+from routers.api.constants import DEFAULT_DOWNLOAD_ARCHIVE_SIZE, STUB_LICENSE_KEY
 from routers.immich_models import (
     AlbumsResponse,
     AssetOrder,
@@ -44,7 +44,6 @@ from routers.utils.current_user import (
     get_current_user_id,
     map_user_quota,
 )
-from routers.api.constants import DEFAULT_DOWNLOAD_ARCHIVE_SIZE
 
 logger = logging.getLogger(__name__)
 
