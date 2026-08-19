@@ -45,10 +45,15 @@ RECIPE_VERSION = 1
 # A valid list holds at most one crop, one mirror per axis, and one rotate.
 MAX_EDIT_ACTIONS = 4
 
-# Match the generated DTO bound and keep failures inside this error domain.
-_MAX_CROP_VALUE = 9_007_199_254_740_991
+# Immich's Zod/OpenAPI integer fields use JavaScript's maximum safe integer.
+# This is a wire-format ceiling, not a supported image dimension; crop bounds
+# must still be checked against the actual source dimensions.
+_IMMICH_MAX_INTEGER = 9_007_199_254_740_991
 
-# Changing this prefix changes every synthesized row ID.
+# Fixed, arbitrary domain separator for the asset/version/action SHA-256 key.
+# It originated as this codec's UUID namespace, isolates these hashes from
+# other deterministic IDs, and is now part of the stable row-ID contract:
+# changing it changes every synthesized row ID.
 _EDIT_ROW_ID_KEY_PREFIX = "9c1d1f2e-5a4b-4d3c-8e6f-2b7a9d0c4e51"
 
 _RECIPE_KEYS = frozenset({"version", "crop", "angle", "mirror"})
@@ -115,8 +120,8 @@ class EditRecipe:
 
 
 def _require_positive_int(value: int, name: str) -> None:
-    if type(value) is not int or value <= 0 or value > _MAX_CROP_VALUE:
-        raise ValueError(f"{name} must be a positive int within the crop bounds")
+    if type(value) is not int or value <= 0 or value > _IMMICH_MAX_INTEGER:
+        raise ValueError(f"{name} must be a positive int within Immich's integer range")
 
 
 def _validate_crop(
@@ -258,7 +263,7 @@ def _crop_from_recipe_value(value: object) -> CropBox:
     fields: dict[str, int] = {}
     for key in ("x", "y", "width", "height"):
         field = value[key]
-        if type(field) is not int or field < 0 or field > _MAX_CROP_VALUE:
+        if type(field) is not int or field < 0 or field > _IMMICH_MAX_INTEGER:
             raise UnsupportedEditRecipeError(
                 "malformed_recipe", "Recipe crop is malformed"
             )

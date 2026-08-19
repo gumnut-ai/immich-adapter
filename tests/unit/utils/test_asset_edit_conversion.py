@@ -30,6 +30,7 @@ from routers.utils.asset_edit_conversion import (
 
 SOURCE_W = 4000
 SOURCE_H = 3000
+OUT_OF_RANGE_IMMICH_INTEGER = 2**53
 
 ASSET_ID = "asset_01hzxyzexampleaaaaaaaaaaaa"
 VERSION_ID = "asset_version_01hzxyzexamplebbbbbbbbbb"
@@ -212,20 +213,13 @@ class TestCropValidation:
             to_recipe([edit])
         assert exc_info.value.code == "invalid_crop"
 
-    def test_fold_accepts_source_dims_at_exact_upper_bound(self):
-        bound = 2**53 - 1
-        recipe = immich_edits_to_recipe(
-            [crop(x=0, y=0, width=bound, height=1)], bound, 1
-        )
-        assert recipe.crop == CropBox(x=0, y=0, width=bound, height=1)
-
     @pytest.mark.parametrize(
         "bad_dim",
         [
             (0, SOURCE_H),
             (SOURCE_W, 0),
             (-1, SOURCE_H),
-            (2**53, SOURCE_H),
+            (OUT_OF_RANGE_IMMICH_INTEGER, SOURCE_H),
             (4000.0, SOURCE_H),
             (True, SOURCE_H),
         ],
@@ -365,20 +359,6 @@ class TestRecipeParams:
         params = {"version": 1, "crop": None, "angle": 0, "mirror": False}
         assert parse_recipe_params(params).crop is None
 
-    def test_accepts_crop_values_at_exact_upper_bound(self):
-        bound = 2**53 - 1
-        params = {
-            "version": 1,
-            "crop": {"x": 0, "y": 0, "width": bound, "height": bound},
-            "angle": 0,
-            "mirror": False,
-        }
-        recipe = parse_recipe_params(params)
-        assert recipe.crop == CropBox(x=0, y=0, width=bound, height=bound)
-        rows = recipe_to_immich_edits(ASSET_ID, VERSION_ID, params)
-        assert isinstance(rows[0].parameters, CropParameters)
-        assert rows[0].parameters.width == bound
-
     @pytest.mark.parametrize(
         "params,code",
         [
@@ -448,7 +428,12 @@ class TestRecipeParams:
                     "version": 1,
                     "angle": 0,
                     "mirror": False,
-                    "crop": {"x": 0, "y": 0, "width": 2**53, "height": 1},
+                    "crop": {
+                        "x": 0,
+                        "y": 0,
+                        "width": OUT_OF_RANGE_IMMICH_INTEGER,
+                        "height": 1,
+                    },
                 },
                 "malformed_recipe",
             ),
