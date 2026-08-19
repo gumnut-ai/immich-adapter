@@ -68,15 +68,12 @@ them there across edits, so emitting them alongside derived pixels would draw
 boxes in the wrong frame. `should_expose_face_geometry`
 (`routers/utils/asset_conversion.py`) is the single home for the rule — gate
 any new face-geometry emit or write site on it instead of re-deriving from
-`kind`. Today that gates three sites: `GET /api/faces` returns `[]` for edited
-assets (before spending face/person calls), `POST /api/faces` rejects with 409
-before any coordinate math, and the face sync pass skips
-`SyncAssetFaceV1/V2` rows via `fetch_suppressed_face_ids` — one lean bulk
-asset read per event page, never one retrieve per face, suppressing
-fail-safe when the owning asset can't be fetched. Suppression hides rows; it
-never mutates stored faces, and people associations, person thumbnails, and
-`AssetResponseDto.people` stay intact. Reverting to the original restores the
-same geometry with no reconstruction.
+`kind`. Today that gates three sites: `GET /api/faces` (empty list),
+`POST /api/faces` (409), and the face sync pass
+(`fetch_suppressed_face_ids`, which owns the bulk-read and fail-safe
+mechanics). Suppression hides rows only — stored faces, people associations,
+person thumbnails, and `AssetResponseDto.people` stay intact, and reverting
+to the original restores the same geometry with no reconstruction.
 
 ## Thumbnail variant selection by aspect ratio
 

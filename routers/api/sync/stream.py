@@ -346,10 +346,8 @@ async def _stream_entity_type(
             gumnut_client, gumnut_entity_type, upsert_ids
         )
 
-        # Face rows carry original-space bounding boxes, which must not sync
-        # while the owning asset's current rendering is edited. Resolve the
-        # owning assets' kinds in bulk (never per face) and skip the gated
-        # rows below — see fetch_suppressed_face_ids for the fail-safe rules.
+        # Gate face rows on the owning asset's current kind (resolved in bulk,
+        # never per face) — see fetch_suppressed_face_ids for the rules.
         suppressed_face_ids: set[str] = set()
         if gumnut_entity_type == "face" and entities_map:
             suppressed_face_ids = await fetch_suppressed_face_ids(
@@ -443,9 +441,7 @@ async def _stream_entity_type(
                     stats.delete_event_skips += 1
             else:
                 # Geometry-gated face row — advance the cursor without
-                # emitting. Nothing is deleted or mutated: once the original
-                # rendering is current again, the row syncs normally from its
-                # next face event.
+                # emitting or mutating anything.
                 if event.entity_id in suppressed_face_ids:
                     stats.suppressed_face_geometry += 1
                     continue

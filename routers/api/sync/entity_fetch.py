@@ -221,19 +221,33 @@ async def fetch_suppressed_face_ids(
     asset's faces are gated by its kind rather than by its absence.
 
     Fail safe: a face whose owning asset the bulk read does not return is also
-    suppressed — geometry is only emitted once the original is confirmed
-    current. Suppression hides rows from the stream; it never mutates stored
-    faces, and the same rows emit again once the original is current.
+    suppressed (with a warning — usually the asset was deleted between event
+    and fetch, and its face_deleted events follow) — geometry is only emitted
+    once the original is confirmed current. Suppression hides rows from the
+    stream and never mutates stored faces; the cursor advances past a
+    suppressed event, so the row reaches the client again via a later face
+    event or a full resync once the original is current.
     """
     asset_ids = list(dict.fromkeys(face.asset_id for face in faces))
     if not asset_ids:
         return set()
 
-    exposable_asset_ids: set[str] = set()
+    fetched_assets: dict[str, AssetResponse] = {}
     for chunk in _batched(asset_ids, GUMNUT_API_MAX_BULK_IDS):
         page = await gumnut_client.assets.list(state="all", ids=chunk, limit=len(chunk))
-        exposable_asset_ids.update(
-            asset.id for asset in page.data if should_expose_face_geometry(asset)
+        fetched_assets.update({asset.id: asset for asset in page.data})
+
+    unfetched = set(asset_ids) - fetched_assets.keys()
+    if unfetched:
+        logger.warning(
+            "Owning assets missing during face-geometry gating; suppressing "
+            "their face rows fail-safe",
+            extra={"asset_ids": sorted(unfetched)},
         )
 
+    exposable_asset_ids = {
+        asset.id
+        for asset in fetched_assets.values()
+        if should_expose_face_geometry(asset)
+    }
     return {face.id for face in faces if face.asset_id not in exposable_asset_ids}

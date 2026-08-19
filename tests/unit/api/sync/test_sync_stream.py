@@ -25,6 +25,7 @@ from routers.immich_models import (
     SyncStreamDto,
 )
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_face_id,
@@ -616,6 +617,64 @@ class TestGenerateSyncStream:
         assert kwargs["ids"] == [face1.asset_id]
         assert kwargs["state"] == "all"
         assert "include" not in kwargs
+
+    @pytest.mark.anyio
+    async def test_mixed_page_suppresses_only_edited_assets_faces(self):
+        """Suppression partitions per owning asset within one event page: the
+        edited asset's face is skipped while the original asset's face on the
+        same page still emits — the gate must key on set membership, never on
+        "the page contains an edited asset"."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        original_asset = Mock()
+        original_asset.id = uuid_to_gumnut_asset_id(TEST_UUID)
+        original_asset.kind = "original"
+        edited_asset = Mock()
+        edited_asset.id = uuid_to_gumnut_asset_id(uuid4())
+        edited_asset.kind = "edit"
+
+        face_on_original = create_mock_face_data(updated_at)
+        face_on_edited = face_on_original.model_copy(
+            update={
+                "id": uuid_to_gumnut_face_id(uuid4()),
+                "asset_id": edited_asset.id,
+            }
+        )
+        events_in = [
+            create_mock_event(
+                entity_type="face",
+                entity_id=face.id,
+                event_type="face_created",
+                created_at=updated_at,
+                cursor=f"cursor_face_{i}",
+            )
+            for i, face in enumerate([face_on_original, face_on_edited])
+        ]
+        mock_client.events.get.return_value = create_mock_events_response(events_in)
+        mock_client.faces.list.return_value = create_mock_entity_page(
+            [face_on_original, face_on_edited]
+        )
+        mock_client.assets.list.return_value = create_mock_entity_page(
+            [original_asset, edited_asset]
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["AssetFaceV1", "SyncCompleteV1"]
+        assert events[0]["data"]["assetId"] == str(
+            safe_uuid_from_asset_id(original_asset.id)
+        )
+        # One bulk read carrying both deduplicated owning-asset ids.
+        mock_client.assets.list.assert_called_once()
+        assert sorted(mock_client.assets.list.call_args.kwargs["ids"]) == sorted(
+            [original_asset.id, edited_asset.id]
+        )
 
     @pytest.mark.anyio
     async def test_unknown_non_original_kind_suppresses_face_rows(self):
