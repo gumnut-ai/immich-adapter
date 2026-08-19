@@ -222,6 +222,13 @@ class TestCropValidation:
             to_recipe([edit])
         assert exc_info.value.code == "invalid_crop"
 
+    def test_fold_accepts_source_dims_at_exact_upper_bound(self):
+        bound = 2**53 - 1
+        recipe = immich_edits_to_recipe(
+            [crop(x=0, y=0, width=bound, height=1)], bound, 1
+        )
+        assert recipe.crop == CropBox(x=0, y=0, width=bound, height=1)
+
     @pytest.mark.parametrize(
         "bad_dim",
         [(0, SOURCE_H), (SOURCE_W, 0), (-1, SOURCE_H), (2**53, SOURCE_H)],
