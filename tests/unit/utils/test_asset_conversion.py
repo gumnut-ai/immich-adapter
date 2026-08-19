@@ -901,6 +901,8 @@ class TestFileDataSourcing:
     def _asset(self, file_data: FileDataResponse | None) -> AssetResponse:
         return AssetResponse(
             id="asset_test",
+            current_version_id="asset_version_test",
+            kind="original",
             mime_type="image/jpeg",
             original_file_name="test.jpg",
             local_datetime=self.DT,
