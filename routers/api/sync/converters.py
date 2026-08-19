@@ -38,6 +38,7 @@ from routers.utils.asset_conversion import (
     duration_ms,
     exif_dims_and_orientation,
     format_duration,
+    is_asset_edited,
     mime_type_to_asset_type,
     normalize_rating,
     resolve_asset_location,
@@ -199,7 +200,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: UUID) -> SyncA
         # "Uploaded to Immich at" — required on SyncAssetV1 in Immich v3.
         createdAt=asset.created_at,
         isFavorite=False,  # Gumnut doesn't track favorites
-        isEdited=False,
+        isEdited=is_asset_edited(asset),
         originalFileName=asset.original_file_name,
         ownerId=owner_id,
         type=asset_type,

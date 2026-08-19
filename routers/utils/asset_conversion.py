@@ -66,6 +66,23 @@ ASSET_INCLUDE_METADATA_ONLY: list[str] = ["metadata"]
 """For asset reads whose consumers need only ``metadata`` fields."""
 
 
+def is_asset_edited(gumnut_asset: AssetResponse) -> bool:
+    """Return the Immich-facing ``isEdited`` flag for an asset.
+
+    The Gumnut asset's ``kind`` names what produced the *current* rendering:
+    ``"original"`` (the upload), ``"edit"``, or an open ``external:<service>``
+    namespace. Immich's ``isEdited`` means "the current rendering is not the
+    uploaded original," so the one contract is ``kind != "original"`` — an
+    unrecognized kind is not the original and therefore still reads as edited.
+    Never compare against specific non-original kinds (``kind == "edit"``
+    breaks the moment an ``external:*`` tip exists), and never derive this from
+    the version list (length/position): the top-level field is authoritative
+    and costs no extra query. Every emit site that populates ``isEdited`` must
+    call this helper so the derivation exists in exactly one place.
+    """
+    return gumnut_asset.kind != "original"
+
+
 class AssetLocationFields(NamedTuple):
     """Immich-facing location fields shared by every asset response path."""
 
@@ -500,7 +517,7 @@ def build_asset_upload_ready_payload(
         fileCreatedAt=file_created_at,
         fileModifiedAt=file_modified_at,
         height=int(height) if height else None,
-        isEdited=False,
+        isEdited=is_asset_edited(gumnut_asset),
         isFavorite=False,
         libraryId=None,
         livePhotoVideoId=None,
@@ -571,7 +588,7 @@ def convert_gumnut_asset_to_immich(
         hasMetadata=True,
         height=height if height else None,
         isArchived=False,
-        isEdited=False,
+        isEdited=is_asset_edited(gumnut_asset),
         isFavorite=False,
         isOffline=False,
         isTrashed=bool(gumnut_asset.trashed_at),

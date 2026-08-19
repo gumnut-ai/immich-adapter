@@ -219,6 +219,61 @@ async def _retrieve_and_stream_variant(
     )
 
 
+async def _stream_exact_original(
+    asset_uuid: UUID,
+    client: AsyncGumnut,
+    range_header: str | None = None,
+) -> StreamingResponse:
+    """Stream the exact uploaded bytes — the position-0 version — from CDN.
+
+    ``asset_urls["original"]`` follows the asset's *current* rendering, so once
+    an edit exists it can no longer serve the untouched upload. The version
+    chain's ``position == 0`` row is the only exact-original contract: its
+    ``version_urls["original"]`` (gated behind ``include=variants``, like the
+    asset-level rungs) is a signed URL for the stored upload bytes. One
+    ``versions.list`` call resolves both existence and the URL, so this path
+    needs no separate asset retrieve.
+
+    The Gumnut API guarantees every asset's chain contains exactly one root.
+    If the response violates that (no rows, no root, or duplicate roots), fail
+    closed with a 502 rather than silently substituting another rendering —
+    clients use this route for byte-exact checksum reconciliation, and a wrong
+    variant looks valid but never matches.
+    """
+    gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+    versions = await client.assets.versions.list(gumnut_asset_id, include=["variants"])
+
+    roots = [version for version in versions if version.position == 0]
+    if len(roots) != 1:
+        logger.warning(
+            "Asset version chain has no unique root",
+            extra={"asset_id": gumnut_asset_id, "root_count": len(roots)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Asset version chain is invalid",
+        )
+    root = roots[0]
+
+    original = (root.version_urls or {}).get("original")
+    if original is None:
+        logger.warning(
+            "Asset original version bytes not available",
+            extra={"asset_id": gumnut_asset_id, "version_id": root.id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Asset variant 'original' not available",
+        )
+
+    return await stream_from_cdn(
+        original.url,
+        root.mime_type,
+        range_header=range_header,
+        forwarded_headers=DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
+    )
+
+
 def _immich_checksum_to_base64(checksum: str) -> str:
     """
     Convert an Immich checksum (hex or base64) to base64 format for Gumnut.
@@ -1262,22 +1317,39 @@ async def view_asset(
 )
 async def download_asset(
     id: UUID,
+    request: Request,
+    edited: bool = Query(default=False, description="Return edited asset if available"),
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> StreamingResponse:
     """
-    Download the original asset file.
+    Download an asset's full-quality bytes, preserving the stored format
+    (JPEG, HEIC, RAW, etc.).
 
-    Fetches the original variant from CDN, preserving the original format
-    (JPEG, HEIC, RAW, etc.) for actual downloads.
+    The ``edited`` selector matches the Immich route (default ``false``):
+
+    - ``edited=true`` streams the *current* rendering —
+      ``asset_urls["original"]``, which follows the newest version when an
+      edit exists.
+    - ``edited=false`` (and omitted) streams the exact uploaded bytes via the
+      version chain's position-0 root (see ``_stream_exact_original``), the
+      only byte-exact contract once an edit is current.
+
+    For a root-only asset both selectors resolve to the same stored bytes.
+    The client's Range header is forwarded either way so partial downloads
+    resume correctly.
     """
-    return await _retrieve_and_stream_variant(
-        id,
-        client,
-        "original",
-        forwarded_headers=DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
-    )
+    range_header = request.headers.get("range")
+    if edited:
+        return await _retrieve_and_stream_variant(
+            id,
+            client,
+            "original",
+            range_header=range_header,
+            forwarded_headers=DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
+        )
+    return await _stream_exact_original(id, client, range_header=range_header)
 
 
 @router.get("/{id}/metadata")

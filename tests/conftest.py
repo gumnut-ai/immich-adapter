@@ -105,6 +105,7 @@ def make_gumnut_asset(
     trashed_at: datetime | None = None,
     stack_id: str | None = None,
     local_datetime: datetime | None = None,
+    kind: str = "original",
 ) -> Mock:
     """Build a Mock Gumnut asset carrying every field the converters read.
 
@@ -153,6 +154,12 @@ def make_gumnut_asset(
     asset.metadata = None  # No metadata
     asset.trashed_at = trashed_at
     asset.stack_id = stack_id
+    # What produced the current rendering. `"original"` (the default) means the
+    # asset is unedited; anything else maps to Immich `isEdited=True` via
+    # `is_asset_edited`. Set explicitly so a Mock attribute (truthy, never equal
+    # to "original") doesn't make every fixture asset read as edited.
+    asset.kind = kind
+    asset.current_version_id = f"asset_version_{asset.id}"
     return asset
 
 

@@ -18,13 +18,19 @@ import pytest
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.file_data_response import FileDataResponse
 
-from routers.immich_models import AssetStackResponseDto, PersonResponseDto
+from routers.immich_models import (
+    AssetStackResponseDto,
+    PersonResponseDto,
+    UserAvatarColor,
+    UserResponseDto,
+)
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_stack_id,
     uuid_to_gumnut_person_id,
 )
 from routers.api.sync.converters import (
     gumnut_asset_to_sync_asset_v1,
+    gumnut_asset_to_sync_asset_v2,
     gumnut_metadata_to_sync_exif_v1,
 )
 from routers.utils.asset_conversion import (
@@ -952,3 +958,49 @@ class TestUploadReadyPayloadStackId:
         payload = build_asset_upload_ready_payload(asset, self.OWNER)
 
         assert payload.asset.stackId is None
+
+
+class TestIsEditedMapping:
+    """Every asset emit surface maps ``isEdited`` through the one shared
+    predicate (``is_asset_edited``: ``kind != "original"``), so an edit created
+    by a native Gumnut client is visible to Immich clients on REST, the
+    upload-ready WebSocket payload, and both sync generations — and an
+    unrecognized kind (the namespace is open, e.g. ``external:<service>``)
+    still reads as edited rather than silently claiming the upload."""
+
+    OWNER = UUID("22222222-2222-2222-2222-222222222222")
+
+    def _user(self) -> UserResponseDto:
+        return UserResponseDto(
+            id=uuid4(),
+            email="test@example.com",
+            name="Test User",
+            avatarColor=UserAvatarColor.primary,
+            profileImagePath="",
+            profileChangedAt=datetime.now(timezone.utc),
+        )
+
+    def _is_edited_everywhere(self, kind: str) -> set[bool]:
+        """Collect the flag from all four emit surfaces for one asset kind."""
+        asset = make_gumnut_asset(kind=kind)
+        rest = convert_gumnut_asset_to_immich(asset, self._user())
+        upload_ready = build_asset_upload_ready_payload(asset, self.OWNER)
+        sync_v1 = gumnut_asset_to_sync_asset_v1(asset, self.OWNER)
+        sync_v2 = gumnut_asset_to_sync_asset_v2(asset, self.OWNER)
+        return {
+            rest.isEdited,
+            upload_ready.asset.isEdited,
+            sync_v1.isEdited,
+            sync_v2.isEdited,
+        }
+
+    def test_original_current_maps_unedited(self):
+        assert self._is_edited_everywhere("original") == {False}
+
+    def test_edit_current_maps_edited(self):
+        assert self._is_edited_everywhere("edit") == {True}
+
+    def test_unknown_non_original_kind_maps_edited(self):
+        # The kind namespace is open — an unrecognized producer is still not
+        # the upload, so it must appear edited, without adapter rejection.
+        assert self._is_edited_everywhere("external:future-service") == {True}

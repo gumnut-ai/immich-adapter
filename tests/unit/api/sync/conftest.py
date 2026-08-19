@@ -171,6 +171,9 @@ def create_mock_asset_data(updated_at: datetime) -> Mock:
     asset.trashed_at = None
     # Avoid a truthy auto-created Mock for unstacked assets.
     asset.stack_id = None
+    # A bare Mock attribute is never equal to "original", which would make the
+    # asset read as edited (`is_asset_edited`); default to the unedited kind.
+    asset.kind = "original"
     return asset
 
 
