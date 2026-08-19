@@ -354,6 +354,28 @@ async def test_info_rejects_missing_requested_asset() -> None:
 
 
 @pytest.mark.anyio
+async def test_info_rejects_unavailable_file_size() -> None:
+    missing_file_data = _download_asset(uuid4())
+    missing_file_data.file_data = None
+    missing_size = _download_asset(uuid4())
+    assert missing_size.file_data is not None
+    cast(Any, missing_size.file_data).file_size_bytes = None
+
+    for unavailable in (missing_file_data, missing_size):
+        client = Mock()
+        client.assets.list = Mock(return_value=MockSyncCursorPage([unavailable]))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_download_info(
+                DownloadInfoDto(assetIds=[safe_uuid_from_asset_id(unavailable.id)]),
+                client=client,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Not found or no asset.download access"
+
+
+@pytest.mark.anyio
 async def test_closing_partial_archive_immediately_closes_active_cdn_response() -> None:
     asset = _download_asset(uuid4(), size=1_000_004)
     response = Mock()
@@ -534,11 +556,19 @@ async def test_archive_rejects_missing_asset_in_later_backend_chunk() -> None:
 async def test_archive_rejects_unavailable_original_before_streaming() -> None:
     missing_file_data = _download_asset(uuid4())
     missing_file_data.file_data = None
+    missing_size = _download_asset(uuid4())
+    assert missing_size.file_data is not None
+    cast(Any, missing_size.file_data).file_size_bytes = None
     missing_urls = _download_asset(uuid4())
     missing_urls.asset_urls = None
     missing_original = _download_asset(uuid4())
     missing_original.asset_urls = {"thumbnail": Mock(url="https://cdn.example.com/x")}
-    for unavailable in (missing_file_data, missing_urls, missing_original):
+    for unavailable in (
+        missing_file_data,
+        missing_size,
+        missing_urls,
+        missing_original,
+    ):
         client = Mock()
         client.assets.list = Mock(return_value=MockSyncCursorPage([unavailable]))
 
@@ -550,6 +580,34 @@ async def test_archive_rejects_unavailable_original_before_streaming() -> None:
 
         assert exc_info.value.status_code == 400
         assert exc_info.value.detail == "Not found or no asset.download access"
+
+
+@pytest.mark.anyio
+async def test_archive_resolves_nullable_file_modified_at_before_streaming() -> None:
+    asset_id = uuid4()
+    asset = _download_asset(asset_id, size=7)
+    assert asset.file_data is not None
+    cast(Any, asset.file_data).file_modified_at = None
+    asset.metadata = Mock(modified_datetime=datetime(2024, 5, 6, 7, 8, 10))
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage([asset]))
+
+    async def fake_cdn_chunks(url: str, state: object) -> AsyncIterator[bytes]:
+        yield b"content"
+
+    with patch("routers.api.download._cdn_asset_chunks", side_effect=fake_cdn_chunks):
+        response = await download_archive(
+            DownloadArchiveDto(assetIds=[asset_id]), client=client
+        )
+        archive = await _collect_response_body(response)
+
+    assert client.assets.list.call_args.kwargs["include"] == [
+        "file_data",
+        "metadata",
+        "variants",
+    ]
+    with ZipFile(BytesIO(archive)) as zip_file:
+        assert zip_file.infolist()[0].date_time == (2024, 5, 6, 7, 8, 10)
 
 
 @pytest.mark.anyio

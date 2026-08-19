@@ -34,6 +34,7 @@ from routers.immich_models import (
     DownloadInfoDto,
     DownloadResponseDto,
 )
+from routers.utils.asset_conversion import resolve_file_modified_at
 from routers.utils.cdn_client import iter_cdn_response_bytes, open_cdn_response
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
@@ -50,7 +51,7 @@ router = APIRouter(
 )
 
 _DOWNLOAD_INFO_INCLUDE = ["file_data"]
-_DOWNLOAD_ARCHIVE_INCLUDE = ["file_data", "variants"]
+_DOWNLOAD_ARCHIVE_INCLUDE = ["file_data", "metadata", "variants"]
 _ZIP_MIN_TIMESTAMP = datetime(1980, 1, 1)
 _ZIP_MAX_TIMESTAMP = datetime(2107, 12, 31, 23, 59, 58)
 _ARCHIVE_CDN_CHUNK_SIZE = 64 * 1024
@@ -130,7 +131,7 @@ async def _validated_info_assets_by_ids(
     client: AsyncGumnut,
     asset_ids: list[UUID],
 ) -> list[AssetResponse]:
-    """Resolve every requested asset and its download-info metadata."""
+    """Resolve every requested asset before building download info."""
     assets = [
         asset
         async for asset in _assets_by_ids(
@@ -141,8 +142,7 @@ async def _validated_info_assets_by_ids(
     ]
     requested_ids = {uuid_to_gumnut_asset_id(asset_id) for asset_id in asset_ids}
     resolved_ids = {asset.id for asset in assets}
-    metadata_available = all(asset.file_data is not None for asset in assets)
-    if requested_ids != resolved_ids or not metadata_available:
+    if requested_ids != resolved_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Not found or no asset.download access",
@@ -164,7 +164,12 @@ async def _validated_archive_assets(
     ):
         file_data = asset.file_data
         asset_urls = asset.asset_urls
-        if file_data is None or not asset_urls or "original" not in asset_urls:
+        if (
+            file_data is None
+            or file_data.file_size_bytes is None
+            or not asset_urls
+            or "original" not in asset_urls
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Not found or no asset.download access",
@@ -173,7 +178,7 @@ async def _validated_archive_assets(
         assets.append(
             _ArchiveAsset(
                 filename=asset.original_file_name,
-                modified_at=file_data.file_modified_at,
+                modified_at=resolve_file_modified_at(asset),
                 size=file_data.file_size_bytes,
                 url=asset_urls["original"].url,
             )
@@ -231,7 +236,13 @@ async def _assets_for_info(
 
 
 def _asset_size(asset: AssetResponse) -> int:
-    return asset.file_data.file_size_bytes if asset.file_data is not None else 0
+    file_data = asset.file_data
+    if file_data is None or file_data.file_size_bytes is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Not found or no asset.download access",
+        )
+    return file_data.file_size_bytes
 
 
 async def _build_download_info(
