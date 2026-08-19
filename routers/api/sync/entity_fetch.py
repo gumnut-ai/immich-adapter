@@ -6,11 +6,15 @@ from uuid import UUID
 
 from gumnut import AsyncGumnut
 from gumnut.types.asset_response import AssetResponse
+from gumnut.types.face_response import FaceResponse
 from gumnut.types.stack_list_stacks_response import StackListStacksResponse
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.sync.types import EntityType, FetchedStack
-from routers.utils.asset_conversion import ASSET_INCLUDE_NO_PEOPLE
+from routers.utils.asset_conversion import (
+    ASSET_INCLUDE_NO_PEOPLE,
+    should_expose_face_geometry,
+)
 from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
@@ -199,3 +203,37 @@ async def fetch_entities_map(
                     )
 
     return result, missing_ids
+
+
+async def fetch_suppressed_face_ids(
+    gumnut_client: AsyncGumnut,
+    faces: list[FaceResponse],
+) -> set[str]:
+    """Return the ids of faces whose geometry rows must not be synced.
+
+    Face rows carry original-space bounding boxes, so they are suppressed while
+    the owning asset's current rendering is edited (see
+    ``should_expose_face_geometry``). The face hydration read returns no asset
+    context, so this resolves the owning assets in one lean bulk read per
+    ``GUMNUT_API_MAX_BULK_IDS`` chunk of unique asset ids — never one retrieve
+    per face. No ``include`` is needed: the gate reads only ``kind``, a
+    lean-core field. ``state="all"`` matches the hydration read so a trashed
+    asset's faces are gated by its kind rather than by its absence.
+
+    Fail safe: a face whose owning asset the bulk read does not return is also
+    suppressed — geometry is only emitted once the original is confirmed
+    current. Suppression hides rows from the stream; it never mutates stored
+    faces, and the same rows emit again once the original is current.
+    """
+    asset_ids = list(dict.fromkeys(face.asset_id for face in faces))
+    if not asset_ids:
+        return set()
+
+    exposable_asset_ids: set[str] = set()
+    for chunk in _batched(asset_ids, GUMNUT_API_MAX_BULK_IDS):
+        page = await gumnut_client.assets.list(state="all", ids=chunk, limit=len(chunk))
+        exposable_asset_ids.update(
+            asset.id for asset in page.data if should_expose_face_geometry(asset)
+        )
+
+    return {face.id for face in faces if face.asset_id not in exposable_asset_ids}

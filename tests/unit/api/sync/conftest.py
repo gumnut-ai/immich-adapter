@@ -247,6 +247,21 @@ def create_mock_face_data(updated_at: datetime) -> FaceResponse:
     )
 
 
+def create_mock_face_owning_asset_page(kind: str = "original"):
+    """Owning-asset page for the face-geometry gate.
+
+    The face sync pass resolves each event page's owning assets in one bulk
+    ``assets.list`` read (``fetch_suppressed_face_ids``) and suppresses face
+    rows whose asset is edited **or absent** — so any test that expects face
+    rows to emit must return the owning asset (original kind) from
+    ``mock_client.assets.list``.
+    """
+    asset = Mock()
+    asset.id = uuid_to_gumnut_asset_id(TEST_UUID)
+    asset.kind = kind
+    return create_mock_entity_page([asset])
+
+
 def create_mock_album_asset_data(updated_at: datetime) -> Mock:
     """Create mock album_asset data for entity fetch."""
     album_asset = Mock()
@@ -282,5 +297,6 @@ __all__ = [
     "create_mock_metadata_data",
     "create_mock_person_data",
     "create_mock_face_data",
+    "create_mock_face_owning_asset_page",
     "create_mock_entity_page",
 ]

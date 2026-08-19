@@ -2,7 +2,7 @@ import logging
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from gumnut import AsyncGumnut
 
 from routers.immich_models import (
@@ -20,6 +20,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_face_id,
     uuid_to_gumnut_person_id,
 )
+from routers.utils.asset_conversion import should_expose_face_geometry
 from routers.utils.person_conversion import convert_gumnut_person_to_immich
 
 
@@ -82,11 +83,17 @@ async def get_faces(
     """Get all faces detected in an asset."""
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
 
+    # Resolve the owning asset before touching faces: while an edited rendering
+    # is current, stored boxes live in the original's pixel space and must not
+    # be paired with derived pixels (see should_expose_face_geometry). Checking
+    # first also keeps the suppression path from spending face/person calls.
+    asset = await client.assets.retrieve(gumnut_asset_id)
+    if not should_expose_face_geometry(asset):
+        return []
+
     faces = [f async for f in client.faces.list(asset_id=gumnut_asset_id)]
     if not faces:
         return []
-
-    asset = await client.assets.retrieve(gumnut_asset_id)
 
     image_width = asset.width or 0
     image_height = asset.height or 0
@@ -150,6 +157,21 @@ async def create_face(
     # 3024-wide asset, landing shrunk in the top-left corner. Scale the box up
     # to the asset's real dimensions before storing.
     asset = await client.assets.retrieve(gumnut_asset_id)
+
+    # A box drawn while an edited rendering is current would be captured in the
+    # derived image's pixel space, but Gumnut stores boxes in the original's
+    # space — reject before any coordinate math rather than store geometry in
+    # the wrong frame. The backend enforces the same invariant; failing here
+    # gives Immich a stable client error instead of a doomed upstream call.
+    if not should_expose_face_geometry(asset):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This asset currently shows an edited version. Restore the "
+                "original before drawing a face."
+            ),
+        )
+
     scale_x = (
         asset.width / request.imageWidth if asset.width and request.imageWidth else 1.0
     )

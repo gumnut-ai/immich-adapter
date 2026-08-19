@@ -46,17 +46,22 @@ def _make_face(
 
 
 def _make_asset(
-    asset_id: str, width: int | None = 1920, height: int | None = 1080
+    asset_id: str,
+    width: int | None = 1920,
+    height: int | None = 1080,
+    kind: str = "original",
 ) -> Mock:
     """Create a mock Gumnut AssetResponse with dimensions.
 
     ``width``/``height`` are ``Optional[int]`` in the SDK; pass ``None`` to model
-    an asset whose dimensions have not been extracted yet.
+    an asset whose dimensions have not been extracted yet. ``kind`` must be set
+    explicitly — an auto-created Mock attribute would read as edited.
     """
     asset = Mock()
     asset.id = asset_id
     asset.width = width
     asset.height = height
+    asset.kind = kind
     return asset
 
 
@@ -249,10 +254,49 @@ class TestGetFaces:
 
         asset_uuid = uuid4()
         mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(uuid_to_gumnut_asset_id(asset_uuid))
+        )
         mock_client.faces.list = Mock(side_effect=make_sdk_status_error(500, "boom"))
 
         with pytest.raises(APIStatusError):
             await get_faces(id=asset_uuid, client=mock_client)
+
+    @pytest.mark.anyio
+    async def test_edited_asset_returns_empty_without_face_or_person_calls(self):
+        """An edited-current asset returns no geometry, and the suppression path
+        spends no face or person calls — stored boxes live in the original's
+        pixel space and must not pair with derived pixels."""
+        asset_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, kind="edit")
+        )
+
+        result = await get_faces(id=asset_uuid, client=mock_client)
+
+        assert result == []
+        mock_client.faces.list.assert_not_called()
+        mock_client.people.retrieve.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_unknown_non_original_kind_suppresses_like_edit(self):
+        """The kind namespace is open: any non-original current kind suppresses
+        geometry exactly like an edit — never branch on ``kind == "edit"``."""
+        asset_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, kind="restyle")
+        )
+
+        result = await get_faces(id=asset_uuid, client=mock_client)
+
+        assert result == []
+        mock_client.faces.list.assert_not_called()
 
 
 class TestDeleteFace:
@@ -429,6 +473,53 @@ class TestCreateFace:
         assert result.person is not None
         assert result.person.name == "Calvin"
         assert result.person.id == safe_uuid_from_person_id(gumnut_person_id)
+
+    @pytest.mark.anyio
+    async def test_edited_asset_rejected_with_409_before_coordinate_math(self):
+        """Drawing a face while an edited rendering is current is rejected with
+        a 409 before any scaling, and the doomed upstream create is never sent
+        — the box would be captured in the derived image's pixel space while
+        Gumnut stores boxes in the original's."""
+        from fastapi import HTTPException
+
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, kind="edit")
+        )
+
+        request = self._make_request(asset_uuid, person_uuid)
+        with pytest.raises(HTTPException) as exc_info:
+            await create_face(request=request, client=mock_client)
+
+        assert exc_info.value.status_code == 409
+        assert "original" in exc_info.value.detail
+        mock_client.faces.create.assert_not_called()
+        mock_client.people.retrieve.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_unknown_non_original_kind_rejected_like_edit(self):
+        """Any non-original current kind rejects creation, not just ``edit``."""
+        from fastapi import HTTPException
+
+        asset_uuid = uuid4()
+        person_uuid = uuid4()
+        gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_asset(gumnut_asset_id, kind="restyle")
+        )
+
+        request = self._make_request(asset_uuid, person_uuid)
+        with pytest.raises(HTTPException) as exc_info:
+            await create_face(request=request, client=mock_client)
+
+        assert exc_info.value.status_code == 409
+        mock_client.faces.create.assert_not_called()
 
     @pytest.mark.anyio
     async def test_box_passes_through_when_preview_matches_asset(self):

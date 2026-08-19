@@ -34,7 +34,10 @@ from routers.api.sync.converters import (
     gumnut_user_to_sync_user_metadata_v1,
     gumnut_user_to_sync_user_v1,
 )
-from routers.api.sync.entity_fetch import fetch_entities_map
+from routers.api.sync.entity_fetch import (
+    fetch_entities_map,
+    fetch_suppressed_face_ids,
+)
 from routers.api.sync.events import (
     convert_entity_to_sync_event,
     make_delete_sync_event,
@@ -343,6 +346,17 @@ async def _stream_entity_type(
             gumnut_client, gumnut_entity_type, upsert_ids
         )
 
+        # Face rows carry original-space bounding boxes, which must not sync
+        # while the owning asset's current rendering is edited. Resolve the
+        # owning assets' kinds in bulk (never per face) and skip the gated
+        # rows below — see fetch_suppressed_face_ids for the fail-safe rules.
+        suppressed_face_ids: set[str] = set()
+        if gumnut_entity_type == "face" and entities_map:
+            suppressed_face_ids = await fetch_suppressed_face_ids(
+                gumnut_client,
+                [e for e in entities_map.values() if isinstance(e, FaceResponse)],
+            )
+
         # Track entity IDs that were requested but not returned (deleted/404)
         not_returned = set(upsert_ids) - entities_map.keys()
         if not_returned:
@@ -428,6 +442,14 @@ async def _stream_entity_type(
                 else:
                     stats.delete_event_skips += 1
             else:
+                # Geometry-gated face row — advance the cursor without
+                # emitting. Nothing is deleted or mutated: once the original
+                # rendering is current again, the row syncs normally from its
+                # next face event.
+                if event.entity_id in suppressed_face_ids:
+                    stats.suppressed_face_geometry += 1
+                    continue
+
                 # Upsert event — look up fetched entity
                 entity = entities_map.get(event.entity_id)
                 if entity is None:
@@ -815,6 +837,8 @@ async def generate_sync_stream(
             summary_extra["buffered_deletes"] = stats.buffered_deletes
         if stats.fk_warnings > 0:
             summary_extra["fk_reference_warnings"] = stats.fk_warnings
+        if stats.suppressed_face_geometry > 0:
+            summary_extra["suppressed_face_geometry"] = stats.suppressed_face_geometry
 
         logger.info("Sync stream summary", extra=summary_extra)
 

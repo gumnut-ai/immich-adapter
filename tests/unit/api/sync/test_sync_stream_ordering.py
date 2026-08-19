@@ -28,6 +28,7 @@ from tests.unit.api.sync.conftest import (
     create_mock_event,
     create_mock_events_response,
     create_mock_face_data,
+    create_mock_face_owning_asset_page,
     create_mock_gumnut_client,
     create_mock_person_data,
     create_mock_user,
@@ -104,6 +105,7 @@ class TestUpsertsBeforeDeletes:
         mock_client.events.get.side_effect = mock_events_get
         mock_client.people.list.return_value = create_mock_entity_page([person_data])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         request = SyncStreamDto(
             types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
@@ -512,6 +514,7 @@ class TestFaceV1V2DedupGuard:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         request = SyncStreamDto(
             types=[SyncRequestType.AssetFacesV1, SyncRequestType.AssetFacesV2]
@@ -544,6 +547,7 @@ class TestFaceV1V2DedupGuard:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
         events = await collect_stream(
@@ -572,6 +576,7 @@ class TestFaceV1V2DedupGuard:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         request = SyncStreamDto(types=[SyncRequestType.AssetFacesV2])
         events = await collect_stream(
