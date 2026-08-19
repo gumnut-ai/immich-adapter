@@ -70,6 +70,9 @@ def _make_asset(asset_id_uuid: UUID, captured_at: datetime) -> Mock:
     asset.trashed_at = None
     asset.duration = None
     asset.library_id = "library-1"
+    # A bare Mock attribute is never equal to "original", which would make the
+    # asset read as edited (`is_asset_edited`); default to the unedited kind.
+    asset.kind = "original"
     return asset
 
 

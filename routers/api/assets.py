@@ -219,6 +219,13 @@ async def _retrieve_and_stream_variant(
     )
 
 
+# Headers both branches of GET /{id}/original forward — the download surface
+# additionally needs content-disposition so filenames survive proxying.
+_ORIGINAL_DOWNLOAD_FORWARDED_HEADERS = DEFAULT_FORWARDED_HEADERS + (
+    "content-disposition",
+)
+
+
 async def _stream_exact_original(
     asset_uuid: UUID,
     client: AsyncGumnut,
@@ -245,7 +252,9 @@ async def _stream_exact_original(
 
     roots = [version for version in versions if version.position == 0]
     if len(roots) != 1:
-        logger.warning(
+        # ERROR, not WARNING: the backend broke a documented guarantee and the
+        # client sees a 5xx — this must reach error-based alerting.
+        logger.error(
             "Asset version chain has no unique root",
             extra={"asset_id": gumnut_asset_id, "root_count": len(roots)},
         )
@@ -270,7 +279,7 @@ async def _stream_exact_original(
         original.url,
         root.mime_type,
         range_header=range_header,
-        forwarded_headers=DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
+        forwarded_headers=_ORIGINAL_DOWNLOAD_FORWARDED_HEADERS,
     )
 
 
@@ -1347,7 +1356,7 @@ async def download_asset(
             client,
             "original",
             range_header=range_header,
-            forwarded_headers=DEFAULT_FORWARDED_HEADERS + ("content-disposition",),
+            forwarded_headers=_ORIGINAL_DOWNLOAD_FORWARDED_HEADERS,
         )
     return await _stream_exact_original(id, client, range_header=range_header)
 

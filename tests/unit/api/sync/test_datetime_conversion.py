@@ -299,6 +299,9 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         asset.metadata = None
         # Avoid a truthy auto-created Mock for an unstacked asset.
         asset.stack_id = None
+        # A bare Mock attribute is never equal to "original", which would make
+        # the asset read as edited (`is_asset_edited`).
+        asset.kind = "original"
         return asset
 
     def test_file_created_at_uses_local_datetime_not_file_created_at(self):

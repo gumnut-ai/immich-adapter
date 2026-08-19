@@ -485,10 +485,14 @@ async def download_archive(
     slug: Annotated[str | SkipJsonSchema[None], Query()] = None,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> StreamingResponse:
-    """Stream requested uploads as an on-the-fly ZIP archive.
+    """Stream requested assets as an on-the-fly ZIP archive.
 
-    Gumnut asset chains are currently root-only, so the accepted ``edited``
-    compatibility flag has no effect: the current rendering is the upload.
+    Archive members stream the *current* rendering (``asset_urls["original"]``)
+    regardless of the accepted ``edited`` flag: the exact-original position-0
+    selection implemented for ``GET /api/assets/{id}/original`` is not yet
+    applied here, so once an asset has an edit, a ZIP export contains the
+    edited bytes even when ``edited`` is false/omitted. For root-only assets
+    the current rendering is the upload and the flag is moot.
     """
     assets = await _validated_archive_assets(client, request.assetIds)
     return StreamingResponse(

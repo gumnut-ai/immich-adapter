@@ -159,7 +159,6 @@ def make_gumnut_asset(
     # `is_asset_edited`. Set explicitly so a Mock attribute (truthy, never equal
     # to "original") doesn't make every fixture asset read as edited.
     asset.kind = kind
-    asset.current_version_id = f"asset_version_{asset.id}"
     return asset
 
 
