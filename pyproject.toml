@@ -19,7 +19,7 @@ dependencies = [
     # uvicorn 0.44.0 added keepalive pings for the websockets-sansio impl,
     # which is what we run via `--ws websockets-sansio` to avoid the legacy
     # `websockets` shielded-future leak. See docs/references/uvicorn-settings.md.
-    "uvicorn[standard]>=0.44.0",
+    "uvicorn[standard]>=0.52.1",
 ]
 
 [tool.uv]
