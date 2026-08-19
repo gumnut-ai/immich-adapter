@@ -283,6 +283,14 @@ def test_archive_names_avoid_windows_trailing_character_collisions() -> None:
     ]
 
 
+def test_archive_names_avoid_canonically_equivalent_unicode_collisions() -> None:
+    assert _archive_names(["café.jpg", "café.jpg", "CAFÉ+1.JPG"]) == [
+        "café.jpg",
+        "café+1.jpg",
+        "CAFÉ+1+1.JPG",
+    ]
+
+
 @pytest.mark.anyio
 async def test_info_requests_only_file_data_without_signing_original_urls() -> None:
     current_user_id = uuid4()

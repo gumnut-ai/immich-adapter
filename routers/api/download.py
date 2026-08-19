@@ -12,6 +12,7 @@ from itertools import batched
 from stat import S_IFREG
 from threading import Lock
 from typing import Annotated, TypeVar, cast
+from unicodedata import normalize
 from uuid import UUID
 
 import httpx
@@ -277,17 +278,21 @@ def _deduplicated_archive_name(
     next_suffix: dict[str, int],
     emitted_keys: set[str],
 ) -> str:
-    """Return a case-insensitively unique member name and reserve it."""
+    """Return a filesystem-equivalent unique member name and reserve it."""
+
+    def name_key(name: str) -> str:
+        return normalize("NFC", name).casefold()
+
     base = _sanitize_archive_filename(original_file_name)
-    base_key = base.casefold()
+    base_key = name_key(base)
     suffix = next_suffix.get(base_key, 0)
     stem, extension = posixpath.splitext(base)
     candidate = base if suffix == 0 else f"{stem}+{suffix}{extension}"
-    while candidate.casefold() in emitted_keys:
+    while name_key(candidate) in emitted_keys:
         suffix += 1
         candidate = f"{stem}+{suffix}{extension}"
     next_suffix[base_key] = suffix + 1
-    emitted_keys.add(candidate.casefold())
+    emitted_keys.add(name_key(candidate))
     return candidate
 
 
