@@ -15,6 +15,7 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from PIL import Image, ImageOps
@@ -483,6 +484,35 @@ class TestInputValidationAndLimits:
         assert exc_info.value.code == "input_too_large"
         assert response.closed
 
+    async def test_mid_stream_cdn_failure_classified(self, bake_settings):
+        """A stream that dies mid-body maps to a stable bake error code."""
+
+        class DyingCdnResponse:
+            def __init__(self):
+                self.headers = {}
+                self.closed = False
+
+            async def aiter_bytes(self, chunk_size: int):
+                yield b"partial"
+                raise httpx.ReadError("connection lost")
+
+            async def aclose(self):
+                self.closed = True
+
+        response = DyingCdnResponse()
+        client = make_client([make_version()])
+        with (
+            patch.object(
+                baker_module, "open_cdn_response", AsyncMock(return_value=response)
+            ),
+            patch.object(baker_module, "get_settings", return_value=bake_settings),
+        ):
+            with pytest.raises(EditBakeSourceError) as exc_info:
+                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+                    pass  # pragma: no cover
+        assert exc_info.value.code == "source_fetch_failed"
+        assert response.closed
+
     async def test_stream_over_cap_without_content_length(self, bake_settings):
         settings = bake_settings.model_copy(update={"edit_bake_max_input_bytes": 1000})
         response = FakeCdnResponse(b"x" * 5000, headers={})
@@ -749,11 +779,13 @@ class TestLifetimeAndCleanup:
                 # The single worker is now blocked; the second bake queues.
                 second = asyncio.create_task(run_one())
                 async with asyncio.timeout(10):
-                    while len(factory.files) < 2:
+                    # Wait until the second bake's work item is actually
+                    # sitting in the executor queue, so the cancel provably
+                    # lands on the queued-future await and not mid-download.
+                    executor = baker_module._bake_executor
+                    assert executor is not None
+                    while executor._work_queue.qsize() < 1:  # pyright: ignore[reportAttributeAccessIssue]
                         await asyncio.sleep(0.01)
-                    # After its download completes the second bake's only
-                    # remaining await is the queued executor future.
-                    await asyncio.sleep(0.1)
                 second.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await second

@@ -40,6 +40,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import IO, Any, cast
 
+import httpx
 from gumnut import AsyncGumnut
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -135,9 +136,11 @@ async def bake_asset_edit(
     outcome (success, validation failure, cancellation, or a caller failure
     such as version-create).
 
-    Raises :class:`EditBakeError` subclasses for bake-domain failures. CDN
-    failures propagate as the CDN client's ``HTTPException`` and SDK failures
-    as the SDK's exceptions, both after temp cleanup.
+    Raises :class:`EditBakeError` subclasses for bake-domain failures,
+    including mid-stream CDN interruptions (``source_fetch_failed``).
+    Failures opening the CDN response propagate as the CDN client's
+    ``HTTPException`` and SDK failures as the SDK's exceptions, all after
+    temp cleanup.
     """
     settings = get_settings()
     try:
@@ -280,13 +283,25 @@ async def _download_source(
                 "input_too_large", "Source image exceeds the input byte cap"
             )
         received = 0
-        async for chunk in response.aiter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
-            received += len(chunk)
-            if received > max_bytes:
-                raise EditBakeLimitError(
-                    "input_too_large", "Source image exceeds the input byte cap"
-                )
-            destination.write(chunk)
+        try:
+            async for chunk in response.aiter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
+                received += len(chunk)
+                if received > max_bytes:
+                    raise EditBakeLimitError(
+                        "input_too_large", "Source image exceeds the input byte cap"
+                    )
+                destination.write(chunk)
+        except httpx.HTTPError as exc:
+            # open_cdn_response classifies only the initial send; a failure
+            # mid-stream (read timeout, dropped connection) surfaces here
+            # and needs the same stable classification.
+            logger.warning(
+                "CDN stream failed while downloading source bytes",
+                extra={"error_type": type(exc).__name__},
+            )
+            raise EditBakeSourceError(
+                "source_fetch_failed", "Failed to fetch source image bytes"
+            ) from exc
     finally:
         await response.aclose()
     destination.seek(0)
