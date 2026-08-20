@@ -83,10 +83,9 @@ async def get_faces(
     """Get all faces detected in an asset."""
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
 
-    # Resolve the owning asset before touching faces: while an edited rendering
-    # is current, stored boxes live in the original's pixel space and must not
-    # be paired with derived pixels (see should_expose_face_geometry). Checking
-    # first also keeps the suppression path from spending face/person calls.
+    # Gate on the owning asset before touching faces (see
+    # should_expose_face_geometry); checking first also keeps the suppression
+    # path from spending face/person calls.
     asset = await client.assets.retrieve(gumnut_asset_id)
     if not should_expose_face_geometry(asset):
         return []
@@ -158,11 +157,9 @@ async def create_face(
     # to the asset's real dimensions before storing.
     asset = await client.assets.retrieve(gumnut_asset_id)
 
-    # A box drawn while an edited rendering is current would be captured in the
-    # derived image's pixel space, but Gumnut stores boxes in the original's
-    # space — reject before any coordinate math rather than store geometry in
-    # the wrong frame. The backend enforces the same invariant; failing here
-    # gives Immich a stable client error instead of a doomed upstream call.
+    # Reject before any coordinate math (see should_expose_face_geometry).
+    # The backend enforces the same invariant; failing here gives Immich a
+    # stable client error instead of a doomed upstream call.
     if not should_expose_face_geometry(asset):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
