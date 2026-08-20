@@ -14,7 +14,8 @@ The bake pipeline, per the normalized v1 recipe
    bounded before (Content-Length) and while streaming.
 3. Decode into display orientation exactly once via the embedded EXIF
    orientation, under explicit dimension/pixel caps (Pillow's global
-   decompression-bomb guard stays enabled as a backstop).
+   decompression-bomb guard stays enabled as a backstop). Multi-frame
+   (animated) sources are rejected rather than silently flattened.
 4. Apply crop (display-oriented frame), then clockwise rotation, then a
    horizontal mirror, asserting intermediate and output dimensions.
 5. Encode PNG when transparency must survive, deterministic JPEG otherwise,
@@ -330,6 +331,13 @@ def _decode_display_oriented(input_file: IO[bytes], settings: Settings) -> Image
             "corrupt_image", "Source image could not be decoded"
         ) from exc
 
+    if getattr(image, "is_animated", False):
+        # Baking would silently flatten a multi-frame source to frame 0;
+        # reject explicitly instead of degrading the derivative.
+        raise EditBakeInputError(
+            "unsupported_image", "Animated images cannot be edited"
+        )
+
     width, height = image.size
     if width < 1 or height < 1:
         raise EditBakeInputError(
@@ -377,7 +385,15 @@ def _apply_recipe(image: Image.Image, recipe: EditRecipe) -> Image.Image:
 
     if recipe.crop is not None:
         crop = recipe.crop
-        if crop.x + crop.width > width or crop.y + crop.height > height:
+        # Both edges are re-validated against the actually-decoded frame:
+        # PIL pads (rather than rejects) out-of-frame crop boxes, which
+        # would silently fabricate pixels.
+        if (
+            crop.x < 0
+            or crop.y < 0
+            or crop.x + crop.width > width
+            or crop.y + crop.height > height
+        ):
             raise EditBakeInputError(
                 "crop_out_of_bounds", "Crop exceeds the source image frame"
             )
@@ -403,7 +419,12 @@ def _has_transparency(image: Image.Image) -> bool:
 
 
 class _CappedFile:
-    """Write-through file wrapper that aborts once the byte cap is exceeded."""
+    """Write-through file wrapper that aborts once the byte cap is exceeded.
+
+    Deliberately exposes no ``fileno()``: a spool rolled to disk would
+    otherwise hand PIL a file descriptor to write through directly,
+    bypassing the cap.
+    """
 
     def __init__(self, file: IO[bytes], max_bytes: int) -> None:
         self._file = file

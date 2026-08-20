@@ -9,6 +9,7 @@ reference transforms defined here, independent of the baker's PIL pipeline.
 
 import asyncio
 import io
+import logging
 import tempfile
 import threading
 from types import SimpleNamespace
@@ -435,6 +436,28 @@ class TestInputValidationAndLimits:
             await bake(b"definitely not an image", IDENTITY, bake_settings)
         assert exc_info.value.code == "unsupported_image"
 
+    async def test_animated_source_rejected(self, bake_settings):
+        frames = [Image.new("RGB", (4, 2), color) for color in ("red", "blue")]
+        buffer = io.BytesIO()
+        frames[0].save(buffer, format="GIF", save_all=True, append_images=frames[1:])
+        with pytest.raises(EditBakeInputError) as exc_info:
+            await bake(
+                buffer.getvalue(),
+                IDENTITY,
+                bake_settings,
+                versions=[make_version(mime_type="image/gif")],
+            )
+        assert exc_info.value.code == "unsupported_image"
+
+    async def test_negative_crop_origin_rejected(self, bake_settings):
+        """PIL would pad a negative origin with fabricated pixels; reject it."""
+        recipe = EditRecipe(
+            crop=CropBox(x=-2, y=0, width=4, height=2), angle=0, mirror=False
+        )
+        with pytest.raises(EditBakeInputError) as exc_info:
+            await bake(rgb_jpeg_bytes(8, 4), recipe, bake_settings)
+        assert exc_info.value.code == "crop_out_of_bounds"
+
     async def test_truncated_image_rejected(self, bake_settings):
         source_bytes = rgb_jpeg_bytes(32, 32)
         with pytest.raises(EditBakeInputError) as exc_info:
@@ -640,19 +663,22 @@ class TestLifetimeAndCleanup:
         assert len(factory.files) == 1  # only the input spool was created
         assert all(file.closed for file in factory.files)
 
-    async def test_timeout_swallows_abandoned_bake_failure(self, bake_settings):
-        """An abandoned worker that then fails must not surface an exception."""
+    async def test_timeout_swallows_abandoned_bake_failure(self, bake_settings, caplog):
+        """An abandoned worker that then fails logs a warning, not a crash.
+
+        The warning is the swallow mechanism's whole observable contract
+        (the exception must not surface anywhere), so asserting on it is
+        the log-level-as-contract exception to the no-log-assertions rule.
+        """
         settings = bake_settings.model_copy(update={"edit_bake_timeout_seconds": 0.05})
         client = make_client([make_version()])
         response = FakeCdnResponse(rgb_jpeg_bytes())
-        failed = threading.Event()
 
         def failing_bake_sync(input_file, recipe, settings_arg):
             input_file.close()
             import time
 
             time.sleep(0.2)
-            failed.set()
             raise RuntimeError("decode blew up after abandonment")
 
         with (
@@ -661,16 +687,84 @@ class TestLifetimeAndCleanup:
                 baker_module, "open_cdn_response", AsyncMock(return_value=response)
             ),
             patch.object(baker_module, "get_settings", return_value=settings),
+            caplog.at_level(logging.WARNING, logger="services.asset_edit_baker"),
         ):
             with pytest.raises(EditBakeTimeoutError):
                 async with bake_asset_edit(client, ASSET_ID, IDENTITY):
                     pass  # pragma: no cover
-            # Wait for the abandoned worker to reach its failure so the
-            # swallow branch actually runs before the test ends.
+            # The abandoned worker must reach the swallow branch and emit
+            # its warning rather than surfacing the RuntimeError.
             async with asyncio.timeout(5):
-                while not failed.is_set():
+                while not any(
+                    record.getMessage() == "Abandoned edit bake failed"
+                    for record in caplog.records
+                ):
                     await asyncio.sleep(0.01)
-                await asyncio.sleep(0.05)
+
+    async def test_cancellation_while_queued_for_a_worker_cleans_up(
+        self, bake_settings
+    ):
+        """A bake cancelled while queued behind a full pool closes its spool.
+
+        The queued runner never starts, so _bake_sync's finally can never
+        close the input file — the awaiting side must.
+        """
+        factory = RecordingTempFactory()
+        settings = bake_settings.model_copy(
+            update={
+                "edit_bake_max_concurrency": 1,
+                "edit_bake_timeout_seconds": 30.0,
+            }
+        )
+        release = threading.Event()
+        entered = []
+
+        def blocking_bake_sync(input_file, recipe, settings_arg):
+            input_file.close()
+            entered.append(threading.current_thread().name)
+            release.wait(timeout=10)
+            return BakedEdit(
+                body=Mock(), mime_type="image/jpeg", width=1, height=1, size_bytes=1
+            )
+
+        async def run_one():
+            client = make_client([make_version()])
+            response = FakeCdnResponse(rgb_jpeg_bytes())
+            with patch.object(
+                baker_module, "open_cdn_response", AsyncMock(return_value=response)
+            ):
+                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+                    pass
+
+        with (
+            patch.object(baker_module, "tempfile", factory),
+            patch.object(baker_module, "_bake_sync", blocking_bake_sync),
+            patch.object(baker_module, "get_settings", return_value=settings),
+        ):
+            try:
+                first = asyncio.create_task(run_one())
+                async with asyncio.timeout(10):
+                    while not entered:
+                        await asyncio.sleep(0.01)
+                # The single worker is now blocked; the second bake queues.
+                second = asyncio.create_task(run_one())
+                async with asyncio.timeout(10):
+                    while len(factory.files) < 2:
+                        await asyncio.sleep(0.01)
+                    # After its download completes the second bake's only
+                    # remaining await is the queued executor future.
+                    await asyncio.sleep(0.1)
+                second.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await second
+                assert factory.files[1].closed
+            finally:
+                release.set()
+            async with asyncio.timeout(10):
+                await first
+        # The queued runner must never have started.
+        assert len(entered) == 1
+        assert all(file.closed for file in factory.files)
 
     async def test_cancellation_during_download_cleans_up(self, bake_settings):
         factory = RecordingTempFactory()
