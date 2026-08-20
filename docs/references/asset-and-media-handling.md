@@ -1,6 +1,6 @@
 ---
 title: "Asset and Media Handling"
-last-updated: 2026-08-18
+last-updated: 2026-08-19
 ---
 
 # Asset and Media Handling
@@ -61,6 +61,11 @@ archive route currently streams the current rendering regardless of `edited`.
 
 Mock assets must set `kind` explicitly; `make_gumnut_asset` defaults it to
 `"original"`.
+
+Any server-side Pillow decode path must register `pillow-heif`
+(`register_heif_opener()`): the adapter accepts HEIC/HEIF originals and plain
+Pillow ships no HEIF codec, so unregistered decodes reject every iPhone HEIC as
+`UnidentifiedImageError`. `services/asset_edit_baker.py` is the pattern.
 
 ## Thumbnail variant selection by aspect ratio
 

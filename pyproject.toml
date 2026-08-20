@@ -9,6 +9,7 @@ dependencies = [
     "fastapi[standard]>=0.140.0",
     "gumnut-sdk>=0.154.0",
     "pillow>=11",
+    "pillow-heif>=1.1",
     "pydantic-settings>=2.10.1",
     "pytest>=8.4.2",
     "python-socketio>=5.13.0",

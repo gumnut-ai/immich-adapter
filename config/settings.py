@@ -63,12 +63,16 @@ class Settings(BaseSettings):
     edit_bake_max_dimension: int = 30_000
     # Maximum encoded output byte size; encoding aborts once exceeded.
     edit_bake_max_output_bytes: int = 100 * 1024 * 1024  # 100MB
-    # Wall-clock bound for one bake, including time queued for a bake worker;
-    # see services/asset_edit_baker.py::bake_asset_edit.
+    # Wall-clock bound for one bake, including time spent waiting for
+    # admission under saturation; see services/asset_edit_baker.py::bake_asset_edit.
     edit_bake_timeout_seconds: float = 60.0
-    # Workers in the dedicated bake thread pool, bounding CPU and peak
-    # decoded-pixel memory; see asset_edit_baker._get_bake_executor for why
-    # this is a pool rather than a semaphore.
+    # Bound on concurrent bakes: sizes both the dedicated bake thread pool
+    # (CPU and peak decoded-pixel memory) and the admission semaphore that
+    # caps how many downloaded inputs are retained at once; see
+    # asset_edit_baker._get_bake_executor and _get_bake_admission. When
+    # tuning, size the product with edit_bake_max_pixels: a worst-case bake
+    # peaks near max_pixels * 4 bytes * ~2 transient copies of decoded
+    # memory, multiplied by this concurrency.
     edit_bake_max_concurrency: int = 4
     # Bytes a bake temp file holds in memory before spooling to disk.
     edit_bake_spool_max_bytes: int = 16 * 1024 * 1024  # 16MB

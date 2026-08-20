@@ -43,10 +43,16 @@ from typing import IO, Any, cast
 import httpx
 from gumnut import AsyncGumnut
 from PIL import Image, ImageOps, UnidentifiedImageError
+from pillow_heif import register_heif_opener
 
 from config.settings import Settings, get_settings
 from routers.utils.asset_edit_conversion import AssetEditError, EditRecipe
 from routers.utils.cdn_client import open_cdn_response
+
+# The adapter accepts HEIC/HEIF originals (typical iPhone captures), but
+# plain Pillow ships no HEIF codec — without this registration their bytes
+# fail to open and every HEIC bake would reject as unsupported_image.
+register_heif_opener()
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +109,7 @@ class BakedEdit:
 
 
 _bake_executor: ThreadPoolExecutor | None = None
+_bake_admission: asyncio.Semaphore | None = None
 
 
 def _get_bake_executor() -> ThreadPoolExecutor:
@@ -121,6 +128,24 @@ def _get_bake_executor() -> ThreadPoolExecutor:
             thread_name_prefix="edit-bake",
         )
     return _bake_executor
+
+
+def _get_bake_admission() -> asyncio.Semaphore:
+    """Lazily create the admission bound guarding per-bake input resources.
+
+    The worker pool bounds decode work, but its submission queue is
+    unbounded — without admission control every queued request would already
+    hold a downloaded source (up to the spool/input caps each). Acquiring a
+    slot *before* the download keeps total retained inputs at
+    ``edit_bake_max_concurrency``: a bake abandoned by timeout keeps its slot
+    until its worker actually exits (mirroring the pool's over-subscription
+    guarantee), while requests still waiting for admission time out under the
+    overall bake budget without having downloaded or spooled anything.
+    """
+    global _bake_admission
+    if _bake_admission is None:
+        _bake_admission = asyncio.Semaphore(get_settings().edit_bake_max_concurrency)
+    return _bake_admission
 
 
 @asynccontextmanager
@@ -144,8 +169,8 @@ async def bake_asset_edit(
     """
     settings = get_settings()
     try:
-        # The budget covers the whole bake including time spent queued for a
-        # pool worker, so saturation surfaces as bake_timeout rather than
+        # The budget covers the whole bake including time spent waiting for
+        # admission, so saturation surfaces as bake_timeout rather than
         # unbounded queueing.
         async with asyncio.timeout(settings.edit_bake_timeout_seconds):
             baked = await _bake(client, gumnut_asset_id, recipe, settings)
@@ -167,57 +192,75 @@ async def _bake(
 ) -> BakedEdit:
     source_url = await _select_root_original_url(client, gumnut_asset_id)
 
-    input_file: IO[bytes] = tempfile.SpooledTemporaryFile(
-        max_size=settings.edit_bake_spool_max_bytes
-    )
-    try:
-        await _download_source(source_url, input_file, settings)
-    except BaseException:
-        input_file.close()
-        raise
+    # Admission is acquired before any per-bake resource (spool, download)
+    # is allocated, so saturation queues requests that hold nothing.
+    loop = asyncio.get_running_loop()
+    admission = _get_bake_admission()
+    await admission.acquire()
 
-    # The decode/transform/encode worker owns input_file once it starts.
-    # Shared state (guarded by the lock) makes cleanup airtight when the
-    # awaiting task is cancelled or times out in any interleaving: whichever
-    # side sees both "abandoned" and a produced result closes it, and an
-    # abandoned bake whose worker never started still closes input_file.
+    # The decode/transform/encode worker owns input_file — and the admission
+    # slot — once it starts. Shared state (guarded by the lock) makes cleanup
+    # airtight when the awaiting task is cancelled or times out in any
+    # interleaving: whichever side sees both "abandoned" and a produced
+    # result closes it, an abandoned bake whose worker never started still
+    # closes input_file, and the slot is released exactly once (by the
+    # runner's finally when it started, by the awaiting side otherwise).
     state_lock = threading.Lock()
     state: dict[str, Any] = {"abandoned": False, "started": False, "result": None}
+    input_file: IO[bytes] | None = None
+
+    def release_admission_threadsafe() -> None:
+        try:
+            loop.call_soon_threadsafe(admission.release)
+        except RuntimeError:
+            # The event loop already closed (process shutdown); the slot no
+            # longer gates anything.
+            pass
 
     def runner() -> BakedEdit | None:
         with state_lock:
             if state["abandoned"]:
                 # Cancelled in the window between the executor marking this
                 # work item running and it actually entering here; the
-                # awaiting side saw started=False and owns input_file.
+                # awaiting side saw started=False and owns input_file and
+                # the admission slot.
                 return None
             state["started"] = True
         try:
-            result = _bake_sync(input_file, recipe, settings)
-        except BaseException:
+            assert input_file is not None
+            try:
+                result = _bake_sync(input_file, recipe, settings)
+            except BaseException:
+                with state_lock:
+                    abandoned = state["abandoned"]
+                if abandoned:
+                    # Nobody is awaiting this thread; swallow so the executor
+                    # future doesn't surface an unretrieved exception.
+                    logger.warning(
+                        "Abandoned edit bake failed",
+                        exc_info=True,
+                        extra={"asset_id": gumnut_asset_id},
+                    )
+                    return None
+                raise
             with state_lock:
-                abandoned = state["abandoned"]
-            if abandoned:
-                # Nobody is awaiting this thread; swallow so the executor
-                # future doesn't surface an unretrieved exception.
-                logger.warning(
-                    "Abandoned edit bake failed",
-                    exc_info=True,
-                    extra={"asset_id": gumnut_asset_id},
-                )
-                return None
-            raise
-        with state_lock:
-            if state["abandoned"]:
-                result.body.close()
-                return None
-            state["result"] = result
-        return result
+                if state["abandoned"]:
+                    result.body.close()
+                    return None
+                state["result"] = result
+            return result
+        finally:
+            # A started bake retains its slot until the worker exits, even
+            # when the awaiting task timed out long ago — new bakes must not
+            # over-subscribe input retention past the configured bound.
+            release_admission_threadsafe()
 
     try:
-        result = await asyncio.get_running_loop().run_in_executor(
-            _get_bake_executor(), runner
+        input_file = tempfile.SpooledTemporaryFile(
+            max_size=settings.edit_bake_spool_max_bytes
         )
+        await _download_source(source_url, input_file, settings, gumnut_asset_id)
+        result = await loop.run_in_executor(_get_bake_executor(), runner)
     except BaseException:
         with state_lock:
             state["abandoned"] = True
@@ -227,9 +270,12 @@ async def _bake(
         if orphan is not None:
             orphan.body.close()
         if not started:
-            # Cancelled while still queued: the worker will never run, so
-            # _bake_sync's finally can't close the input spool.
-            input_file.close()
+            # Failed or cancelled before the worker ran (download failure,
+            # or cancelled while still queued): the worker will never run,
+            # so its finally can't close the input spool or free the slot.
+            if input_file is not None:
+                input_file.close()
+            admission.release()
         raise
     if result is None:  # pragma: no cover - only reachable via the race above
         raise EditBakeTimeoutError("bake_timeout", "Edit bake was abandoned")
@@ -266,7 +312,7 @@ async def _select_root_original_url(client: AsyncGumnut, gumnut_asset_id: str) -
 
 
 async def _download_source(
-    source_url: str, destination: IO[bytes], settings: Settings
+    source_url: str, destination: IO[bytes], settings: Settings, gumnut_asset_id: str
 ) -> None:
     """Stream the source bytes into ``destination`` under the input byte cap.
 
@@ -294,10 +340,16 @@ async def _download_source(
         except httpx.HTTPError as exc:
             # open_cdn_response classifies only the initial send; a failure
             # mid-stream (read timeout, dropped connection) surfaces here
-            # and needs the same stable classification.
+            # and needs the same stable classification. The asset id and
+            # bare CDN hostname are safe correlation keys; the signed URL
+            # itself stays out of the logs.
             logger.warning(
                 "CDN stream failed while downloading source bytes",
-                extra={"error_type": type(exc).__name__},
+                extra={
+                    "error_type": type(exc).__name__,
+                    "asset_id": gumnut_asset_id,
+                    "cdn_host": httpx.URL(source_url).host,
+                },
             )
             raise EditBakeSourceError(
                 "source_fetch_failed", "Failed to fetch source image bytes"

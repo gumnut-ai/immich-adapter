@@ -1,6 +1,6 @@
 ---
 title: "Testing and Logging"
-last-updated: 2026-08-11
+last-updated: 2026-08-19
 ---
 
 # Testing and Logging
@@ -36,6 +36,8 @@ logger.info("WebSocket connected", extra={"sid": sid, "user_id": user_id, "devic
 ```
 
 This enables better searching and correlation in Sentry.
+
+Never log signed URLs (CDN `original`/variant URLs — the query string is a bearer credential). Correlate with `asset_id` and the bare hostname instead; `services/asset_edit_baker.py`'s mid-stream CDN warning is the pattern.
 
 ## Upstream response log levels
 

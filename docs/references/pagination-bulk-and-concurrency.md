@@ -1,6 +1,6 @@
 ---
 title: "Pagination, Bulk Operations, and Concurrency"
-last-updated: 2026-08-11
+last-updated: 2026-08-19
 ---
 
 # Pagination, Bulk Operations, and Concurrency
@@ -33,7 +33,7 @@ Test the cap **before** admitting an item, not after appending it, and set the f
 
 Name the boolean after the truncation, not after one bound (`stack_search_truncated`, not `stack_cap_hit`) once a second bound can set it, and record which bound fired in its own field. A flag named for the cap that also fires for a member budget sends an operator to the wrong constant.
 
-Neither a concurrency bound nor an item cap is a *work* bound. `gather_with_concurrency` caps in-flight calls, not total round-trips or peak memory; and an item cap only bounds work when the per-item cost is bounded too — 500 stacks of 3 frames and 500 stacks of 10,000 both satisfy `SEARCH_STACKS_CAP`. Where the listing row carries its own size (`asset_count` on a stack row), budget the *total* alongside the item count (`SEARCH_STACKS_MEMBER_BUDGET`), stop on whichever binds first, and log which one did. Check that the budgeted unit matches what the hydration read actually fetches — a stack row counts live members only while `fetch_stack_members` reads `state="all"`, so trashed frames are hydrated unbudgeted. Where the two can't be made to agree, log the realized total next to the budgeted one (`stack_members_hydrated` vs `stack_members_budgeted`) so the gap is measurable instead of assumed. Keep admission all-or-nothing per item rather than truncating an item's own collection: clients read `assets.length` as the stack's size, so a short array is a wrong answer where a missing stack is merely an incomplete one.
+Neither a concurrency bound nor an item cap is a *work* bound. `gather_with_concurrency` caps in-flight calls, not total round-trips or peak memory; and an item cap only bounds work when the per-item cost is bounded too — 500 stacks of 3 frames and 500 stacks of 10,000 both satisfy `SEARCH_STACKS_CAP`. Where the listing row carries its own size (`asset_count` on a stack row), budget the *total* alongside the item count (`SEARCH_STACKS_MEMBER_BUDGET`), stop on whichever binds first, and log which one did. Check that the budgeted unit matches what the hydration read actually fetches — a stack row counts live members only while `fetch_stack_members` reads `state="all"`, so trashed frames are hydrated unbudgeted. Where the two can't be made to agree, log the realized total next to the budgeted one (`stack_members_hydrated` vs `stack_members_budgeted`) so the gap is measurable instead of assumed. Keep admission all-or-nothing per item rather than truncating an item's own collection: clients read `assets.length` as the stack's size, so a short array is a wrong answer where a missing stack is merely an incomplete one. A worker-pool bound is likewise not an *input-retention* bound: when each request stages resources before submission (a downloaded spool) and the pool's queue is unbounded, every queued request still holds its staged input — bound admission before staging instead (`asset_edit_baker._get_bake_admission` is the pattern).
 
 ## Counts and Aggregates
 
