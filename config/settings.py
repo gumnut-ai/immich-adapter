@@ -63,10 +63,15 @@ class Settings(BaseSettings):
     edit_bake_max_dimension: int = 30_000
     # Maximum encoded output byte size; encoding aborts once exceeded.
     edit_bake_max_output_bytes: int = 100 * 1024 * 1024  # 100MB
-    # Wall-clock bound for one bake (download + decode + transform + encode).
+    # Wall-clock bound for one bake, including time spent queued for a bake
+    # worker under saturation as well as download + decode + transform +
+    # encode. A bake that times out while queued fails with the same
+    # bake_timeout code as a genuinely slow one.
     edit_bake_timeout_seconds: float = 60.0
-    # Concurrent bakes per process. Decode/encode are CPU-bound thread work,
-    # so this bounds both CPU and peak decoded-pixel memory.
+    # Workers in the dedicated bake thread pool. Decode/encode are CPU-bound,
+    # so this bounds CPU and peak decoded-pixel memory even for bakes whose
+    # awaiting request already timed out — an abandoned bake keeps occupying
+    # its worker until it finishes.
     edit_bake_max_concurrency: int = 4
     # Bytes a bake temp file holds in memory before spooling to disk.
     edit_bake_spool_max_bytes: int = 16 * 1024 * 1024  # 16MB

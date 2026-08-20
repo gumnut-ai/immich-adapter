@@ -10,10 +10,12 @@ reference transforms defined here, independent of the baker's PIL pipeline.
 import asyncio
 import io
 import tempfile
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from fastapi import HTTPException
 from PIL import Image, ImageOps
 
 import services.asset_edit_baker as baker_module
@@ -153,10 +155,12 @@ IDENTITY = EditRecipe(crop=None, angle=0, mirror=False)
 
 
 @pytest.fixture(autouse=True)
-def reset_bake_semaphore():
-    baker_module._bake_semaphore = None
+def reset_bake_executor():
+    baker_module._bake_executor = None
     yield
-    baker_module._bake_semaphore = None
+    if baker_module._bake_executor is not None:
+        baker_module._bake_executor.shutdown(wait=False)
+    baker_module._bake_executor = None
 
 
 @pytest.fixture
@@ -490,6 +494,35 @@ class TestInputValidationAndLimits:
             await bake(rgb_jpeg_bytes(4, 2), recipe, bake_settings)
         assert exc_info.value.code == "crop_out_of_bounds"
 
+    async def test_dimension_mismatch_is_internal_error(self):
+        """The invariant check trips if PIL output diverges from the recipe."""
+        image = Image.new("RGB", (4, 2))
+        with pytest.raises(EditBakeError) as exc_info:
+            baker_module._require_dimensions(image, 2, 4, "rotate")
+        assert exc_info.value.code == "dimension_mismatch"
+
+    async def test_inputs_exactly_at_each_cap_succeed(self, bake_settings):
+        """The caps are exclusive: a value equal to the cap passes."""
+        source_bytes = rgb_jpeg_bytes(20, 10)
+        settings = bake_settings.model_copy(
+            update={
+                "edit_bake_max_input_bytes": len(source_bytes),
+                "edit_bake_max_pixels": 20 * 10,
+                "edit_bake_max_dimension": 20,
+            }
+        )
+        metadata, _, _, _ = await bake(source_bytes, IDENTITY, settings)
+        assert (metadata.width, metadata.height) == (20, 10)
+
+    async def test_output_exactly_at_cap_succeeds(self, bake_settings):
+        source_bytes = rgb_jpeg_bytes(20, 10)
+        first, _, _, _ = await bake(source_bytes, IDENTITY, bake_settings)
+        settings = bake_settings.model_copy(
+            update={"edit_bake_max_output_bytes": first.size_bytes}
+        )
+        second, _, _, _ = await bake(source_bytes, IDENTITY, settings)
+        assert second.size_bytes == first.size_bytes
+
 
 class RecordingTempFactory:
     """tempfile shim that records every spooled temp file it hands out."""
@@ -588,6 +621,57 @@ class TestLifetimeAndCleanup:
                 while not abandoned_body.close.called:
                     await asyncio.sleep(0.01)
 
+    async def test_cdn_failure_propagates_after_cleanup(self, bake_settings):
+        """The CDN client's HTTPException passes through; spools still close."""
+        factory = RecordingTempFactory()
+        client = make_client([make_version()])
+        cdn_error = HTTPException(status_code=502, detail="CDN upstream error")
+        with (
+            patch.object(baker_module, "tempfile", factory),
+            patch.object(
+                baker_module, "open_cdn_response", AsyncMock(side_effect=cdn_error)
+            ),
+            patch.object(baker_module, "get_settings", return_value=bake_settings),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+                    pass  # pragma: no cover
+        assert exc_info.value is cdn_error
+        assert len(factory.files) == 1  # only the input spool was created
+        assert all(file.closed for file in factory.files)
+
+    async def test_timeout_swallows_abandoned_bake_failure(self, bake_settings):
+        """An abandoned worker that then fails must not surface an exception."""
+        settings = bake_settings.model_copy(update={"edit_bake_timeout_seconds": 0.05})
+        client = make_client([make_version()])
+        response = FakeCdnResponse(rgb_jpeg_bytes())
+        failed = threading.Event()
+
+        def failing_bake_sync(input_file, recipe, settings_arg):
+            input_file.close()
+            import time
+
+            time.sleep(0.2)
+            failed.set()
+            raise RuntimeError("decode blew up after abandonment")
+
+        with (
+            patch.object(baker_module, "_bake_sync", failing_bake_sync),
+            patch.object(
+                baker_module, "open_cdn_response", AsyncMock(return_value=response)
+            ),
+            patch.object(baker_module, "get_settings", return_value=settings),
+        ):
+            with pytest.raises(EditBakeTimeoutError):
+                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+                    pass  # pragma: no cover
+            # Wait for the abandoned worker to reach its failure so the
+            # swallow branch actually runs before the test ends.
+            async with asyncio.timeout(5):
+                while not failed.is_set():
+                    await asyncio.sleep(0.01)
+                await asyncio.sleep(0.05)
+
     async def test_cancellation_during_download_cleans_up(self, bake_settings):
         factory = RecordingTempFactory()
         client = make_client([make_version()])
@@ -630,15 +714,54 @@ class TestLifetimeAndCleanup:
 
 
 class TestConcurrencyBound:
-    async def test_semaphore_sized_from_settings(self, bake_settings):
+    async def test_executor_sized_from_settings(self, bake_settings):
         settings = bake_settings.model_copy(update={"edit_bake_max_concurrency": 2})
         with patch.object(baker_module, "get_settings", return_value=settings):
-            semaphore = baker_module._get_bake_semaphore()
-        assert semaphore._value == 2  # pyright: ignore[reportAttributeAccessIssue]
+            executor = baker_module._get_bake_executor()
+        assert executor._max_workers == 2  # pyright: ignore[reportAttributeAccessIssue]
 
-    async def test_dimension_mismatch_is_internal_error(self):
-        """The invariant check trips if PIL output diverges from the recipe."""
-        image = Image.new("RGB", (4, 2))
-        with pytest.raises(EditBakeError) as exc_info:
-            baker_module._require_dimensions(image, 2, 4, "rotate")
-        assert exc_info.value.code == "dimension_mismatch"
+    async def test_at_most_max_concurrency_bakes_run_at_once(self, bake_settings):
+        """The pool, not just its size, is what bounds concurrent bakes."""
+        settings = bake_settings.model_copy(
+            update={
+                "edit_bake_max_concurrency": 1,
+                "edit_bake_timeout_seconds": 30.0,
+            }
+        )
+        release = threading.Event()
+        entered = []
+
+        def blocking_bake_sync(input_file, recipe, settings_arg):
+            input_file.close()
+            entered.append(threading.current_thread().name)
+            release.wait(timeout=10)
+            return BakedEdit(
+                body=Mock(), mime_type="image/jpeg", width=1, height=1, size_bytes=1
+            )
+
+        async def run_one():
+            client = make_client([make_version()])
+            response = FakeCdnResponse(rgb_jpeg_bytes())
+            with patch.object(
+                baker_module, "open_cdn_response", AsyncMock(return_value=response)
+            ):
+                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+                    pass
+
+        with patch.object(baker_module, "_bake_sync", blocking_bake_sync):
+            with patch.object(baker_module, "get_settings", return_value=settings):
+                try:
+                    first = asyncio.create_task(run_one())
+                    second = asyncio.create_task(run_one())
+                    async with asyncio.timeout(10):
+                        while not entered:
+                            await asyncio.sleep(0.01)
+                        # Give the second bake every chance to start; the
+                        # single-worker pool must hold it back.
+                        await asyncio.sleep(0.1)
+                        assert len(entered) == 1
+                finally:
+                    release.set()
+                async with asyncio.timeout(10):
+                    await asyncio.gather(first, second)
+        assert len(entered) == 2

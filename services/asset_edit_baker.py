@@ -34,6 +34,7 @@ import logging
 import tempfile
 import threading
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import IO, Any, cast
@@ -99,15 +100,25 @@ class BakedEdit:
     size_bytes: int
 
 
-_bake_semaphore: asyncio.Semaphore | None = None
+_bake_executor: ThreadPoolExecutor | None = None
 
 
-def _get_bake_semaphore() -> asyncio.Semaphore:
-    """Lazily create the process-wide bake concurrency bound."""
-    global _bake_semaphore
-    if _bake_semaphore is None:
-        _bake_semaphore = asyncio.Semaphore(get_settings().edit_bake_max_concurrency)
-    return _bake_semaphore
+def _get_bake_executor() -> ThreadPoolExecutor:
+    """Lazily create the dedicated, bounded bake worker pool.
+
+    A dedicated pool (rather than a semaphore around the shared default
+    executor) keeps the CPU/decoded-pixel-memory bound honest under timeouts:
+    an abandoned bake keeps occupying its own worker until it actually
+    finishes, so new bakes cannot over-subscribe, and bake work never starves
+    other ``asyncio.to_thread`` users in the process.
+    """
+    global _bake_executor
+    if _bake_executor is None:
+        _bake_executor = ThreadPoolExecutor(
+            max_workers=get_settings().edit_bake_max_concurrency,
+            thread_name_prefix="edit-bake",
+        )
+    return _bake_executor
 
 
 @asynccontextmanager
@@ -129,9 +140,11 @@ async def bake_asset_edit(
     """
     settings = get_settings()
     try:
+        # The budget covers the whole bake including time spent queued for a
+        # pool worker, so saturation surfaces as bake_timeout rather than
+        # unbounded queueing.
         async with asyncio.timeout(settings.edit_bake_timeout_seconds):
-            async with _get_bake_semaphore():
-                baked = await _bake(client, gumnut_asset_id, recipe, settings)
+            baked = await _bake(client, gumnut_asset_id, recipe, settings)
     except TimeoutError as exc:
         raise EditBakeTimeoutError(
             "bake_timeout", "Edit bake exceeded its time budget"
@@ -159,14 +172,22 @@ async def _bake(
         input_file.close()
         raise
 
-    # The decode/transform/encode thread owns input_file from here. Shared
-    # state (guarded by the lock) makes cleanup airtight when the awaiting
-    # task is cancelled or times out in any interleaving: whichever side sees
-    # both "abandoned" and a produced result closes it.
+    # The decode/transform/encode worker owns input_file once it starts.
+    # Shared state (guarded by the lock) makes cleanup airtight when the
+    # awaiting task is cancelled or times out in any interleaving: whichever
+    # side sees both "abandoned" and a produced result closes it, and an
+    # abandoned bake whose worker never started still closes input_file.
     state_lock = threading.Lock()
-    state: dict[str, Any] = {"abandoned": False, "result": None}
+    state: dict[str, Any] = {"abandoned": False, "started": False, "result": None}
 
     def runner() -> BakedEdit | None:
+        with state_lock:
+            if state["abandoned"]:
+                # Cancelled in the window between the executor marking this
+                # work item running and it actually entering here; the
+                # awaiting side saw started=False and owns input_file.
+                return None
+            state["started"] = True
         try:
             result = _bake_sync(input_file, recipe, settings)
         except BaseException:
@@ -175,7 +196,11 @@ async def _bake(
             if abandoned:
                 # Nobody is awaiting this thread; swallow so the executor
                 # future doesn't surface an unretrieved exception.
-                logger.warning("Abandoned edit bake failed", exc_info=True)
+                logger.warning(
+                    "Abandoned edit bake failed",
+                    exc_info=True,
+                    extra={"asset_id": gumnut_asset_id},
+                )
                 return None
             raise
         with state_lock:
@@ -186,14 +211,21 @@ async def _bake(
         return result
 
     try:
-        result = await asyncio.to_thread(runner)
+        result = await asyncio.get_running_loop().run_in_executor(
+            _get_bake_executor(), runner
+        )
     except BaseException:
         with state_lock:
             state["abandoned"] = True
+            started: bool = state["started"]
             orphan: BakedEdit | None = state["result"]
             state["result"] = None
         if orphan is not None:
             orphan.body.close()
+        if not started:
+            # Cancelled while still queued: the worker will never run, so
+            # _bake_sync's finally can't close the input spool.
+            input_file.close()
         raise
     if result is None:  # pragma: no cover - only reachable via the race above
         raise EditBakeTimeoutError("bake_timeout", "Edit bake was abandoned")
@@ -309,7 +341,7 @@ def _decode_display_oriented(input_file: IO[bytes], settings: Settings) -> Image
         or width * height > settings.edit_bake_max_pixels
     ):
         raise EditBakeLimitError(
-            "image_too_large", "Source image exceeds the decoded pixel cap"
+            "image_too_large", "Source image exceeds the dimension or pixel caps"
         )
 
     try:
