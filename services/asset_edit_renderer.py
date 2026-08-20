@@ -1,8 +1,9 @@
 """Render normalized Immich edits into derived JPEG/PNG bytes.
 
-Every render starts from the asset's position-0 exact original, keeping repeated
-adjustments non-cumulative. The service returns upload-ready bytes and metadata
-but does not create a Gumnut version or emit a websocket event.
+Every render starts from the asset's edit base — the latest non-edit version,
+selected by ``select_edit_base`` — so repeated adjustments are non-cumulative.
+The service returns upload-ready bytes and metadata but does not create a
+Gumnut version or emit a websocket event.
 """
 
 from __future__ import annotations
@@ -24,6 +25,10 @@ from pillow_heif import register_heif_opener
 
 from config.settings import Settings, get_settings
 from routers.utils.asset_edit_conversion import AssetEditError, EditRecipe
+from routers.utils.asset_version_chain import (
+    InvalidVersionChainError,
+    select_edit_base,
+)
 from routers.utils.cdn_client import open_cdn_response
 
 # Pillow needs this opener to decode HEIC/HEIF originals.
@@ -120,7 +125,7 @@ async def render_asset_edit(
     gumnut_asset_id: str,
     recipe: EditRecipe,
 ) -> AsyncIterator[RenderdEdit]:
-    """Yield a render from the position-0 original, closing its body on exit.
+    """Yield a render from the asset's edit base, closing its body on exit.
 
     Render failures use :class:`EditRenderError`; CDN-open and SDK failures retain
     their original exception types.
@@ -146,7 +151,7 @@ async def _render(
     recipe: EditRecipe,
     settings: Settings,
 ) -> RenderdEdit:
-    source_url = await _select_root_original_url(client, gumnut_asset_id)
+    source_url = await _select_edit_base_url(client, gumnut_asset_id)
 
     # Waiting requests must not retain a spool or downloaded source.
     loop = asyncio.get_running_loop()
@@ -224,33 +229,29 @@ async def _render(
     return result
 
 
-async def _select_root_original_url(client: AsyncGumnut, gumnut_asset_id: str) -> str:
-    """List versions once and return the unique root's exact-byte URL."""
+async def _select_edit_base_url(client: AsyncGumnut, gumnut_asset_id: str) -> str:
+    """List versions once and return the edit base's exact-byte URL."""
     versions = await client.assets.versions.list(gumnut_asset_id, include=["variants"])
-    roots = [version for version in versions if version.position == 0]
-    if len(roots) != 1:
-        logger.error(
-            "Asset version chain has no unique root",
-            extra={"asset_id": gumnut_asset_id, "root_count": len(roots)},
-        )
+    try:
+        base = select_edit_base(versions, asset_id=gumnut_asset_id)
+    except InvalidVersionChainError as exc:
         raise EditRenderSourceError(
             "invalid_version_chain", "Asset version chain is invalid"
-        )
-    root = roots[0]
+        ) from exc
 
-    if not root.mime_type.startswith("image/"):
+    if not base.mime_type.startswith("image/"):
         raise EditRenderInputError(
             "unsupported_image", "Only image assets can be edited"
         )
 
-    original = (root.version_urls or {}).get("original")
+    original = (base.version_urls or {}).get("original")
     if original is None:
         logger.warning(
-            "Asset original version bytes not available",
-            extra={"asset_id": gumnut_asset_id, "version_id": root.id},
+            "Asset edit base bytes not available",
+            extra={"asset_id": gumnut_asset_id, "version_id": base.id},
         )
         raise EditRenderSourceError(
-            "source_bytes_unavailable", "Original version bytes are not available"
+            "source_bytes_unavailable", "Edit base version bytes are not available"
         )
     return original.url
 

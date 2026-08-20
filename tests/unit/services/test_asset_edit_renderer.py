@@ -137,7 +137,10 @@ def make_version(
     mime_type: str = "image/jpeg",
     url: str | None = ORIGINAL_URL,
     version_id: str = "asset_version_root",
+    kind: str | None = None,
 ) -> SimpleNamespace:
+    if kind is None:
+        kind = "original" if position == 0 else "edit"
     version_urls = {}
     if url is not None:
         version_urls["original"] = SimpleNamespace(url=url, mimetype=mime_type)
@@ -147,6 +150,7 @@ def make_version(
     return SimpleNamespace(
         id=version_id,
         position=position,
+        kind=kind,
         mime_type=mime_type,
         version_urls=version_urls,
     )
@@ -502,7 +506,7 @@ class TestSourceAcquisition:
         assert metadata.size_bytes == len(output_bytes)
         assert metadata.mime_type == "image/jpeg"
 
-    async def test_renders_from_root_not_current_version(
+    async def test_renders_from_root_not_prior_edit(
         self, render_settings: Settings
     ) -> None:
         root = make_version(position=0, url=ORIGINAL_URL)
@@ -519,6 +523,52 @@ class TestSourceAcquisition:
         )
         open_mock.assert_awaited_once_with(ORIGINAL_URL)
 
+    async def test_renders_from_latest_external_rendering(
+        self, render_settings: Settings
+    ) -> None:
+        external_url = "https://cdn.example.test/signed/external"
+        versions = [
+            make_version(position=0, url=ORIGINAL_URL),
+            make_version(
+                position=1,
+                url=external_url,
+                version_id="asset_version_external",
+                kind="external:enhancer",
+            ),
+            make_version(
+                position=2,
+                url="https://cdn.example.test/signed/prior-edit",
+                version_id="asset_version_edit",
+            ),
+        ]
+        _, _, _, open_mock = await render(
+            rgb_jpeg_bytes(), IDENTITY, render_settings, versions=versions
+        )
+        open_mock.assert_awaited_once_with(external_url)
+
+    async def test_edit_below_external_base_still_renders_from_external(
+        self, render_settings: Settings
+    ) -> None:
+        external_url = "https://cdn.example.test/signed/external"
+        versions = [
+            make_version(position=0, url=ORIGINAL_URL),
+            make_version(
+                position=1,
+                url="https://cdn.example.test/signed/prior-edit",
+                version_id="asset_version_edit",
+            ),
+            make_version(
+                position=2,
+                url=external_url,
+                version_id="asset_version_external",
+                kind="external:enhancer",
+            ),
+        ]
+        _, _, _, open_mock = await render(
+            rgb_jpeg_bytes(), IDENTITY, render_settings, versions=versions
+        )
+        open_mock.assert_awaited_once_with(external_url)
+
     @pytest.mark.parametrize("positions", [[], [1], [0, 0]])
     async def test_missing_or_duplicate_root_rejected(
         self, render_settings: Settings, positions: list[int]
@@ -526,6 +576,18 @@ class TestSourceAcquisition:
         versions = [make_version(position=p) for p in positions]
         with pytest.raises(EditRenderSourceError) as exc_info:
             await render(rgb_jpeg_bytes(), IDENTITY, render_settings, versions=versions)
+        assert exc_info.value.code == "invalid_version_chain"
+
+    async def test_chain_without_non_edit_version_rejected(
+        self, render_settings: Settings
+    ) -> None:
+        with pytest.raises(EditRenderSourceError) as exc_info:
+            await render(
+                rgb_jpeg_bytes(),
+                IDENTITY,
+                render_settings,
+                versions=[make_version(position=0, kind="edit")],
+            )
         assert exc_info.value.code == "invalid_version_chain"
 
     async def test_root_without_original_url_rejected(

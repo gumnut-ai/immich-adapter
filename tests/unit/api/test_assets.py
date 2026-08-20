@@ -3277,11 +3277,15 @@ def _make_mock_version(
     *,
     mime_type: str = "image/jpeg",
     original_url: str | None = "https://cdn.example.com/v0-original.jpg",
+    kind: str | None = None,
 ):
     """Build a mock asset-version row."""
     version = Mock()
     version.id = f"asset_version_pos{position}"
     version.position = position
+    version.kind = (
+        kind if kind is not None else ("original" if position == 0 else "edit")
+    )
     version.mime_type = mime_type
     if original_url is None:
         version.version_urls = {}
@@ -3389,7 +3393,7 @@ class TestDownloadAsset:
         )
 
     @pytest.mark.anyio
-    async def test_edited_false_streams_position_zero_bytes(self, sample_uuid):
+    async def test_edited_false_streams_edit_base_bytes(self, sample_uuid):
         root = _make_mock_version(
             0, mime_type="image/heic", original_url="https://cdn.example.com/root.heic"
         )
@@ -3484,6 +3488,29 @@ class TestDownloadAsset:
             streamed_urls.append(mock_cdn.call_args.args[0])
 
         assert streamed_urls == [url, url]
+
+    @pytest.mark.anyio
+    async def test_edited_false_streams_latest_external_rendering(self, sample_uuid):
+        root = _make_mock_version(0, original_url="https://cdn.example.com/root.jpg")
+        external = _make_mock_version(
+            1,
+            original_url="https://cdn.example.com/external.jpg",
+            kind="external:enhancer",
+        )
+        edit = _make_mock_version(2, original_url="https://cdn.example.com/edit.jpg")
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(
+            return_value=[edit, root, external]
+        )
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            await download_asset(
+                sample_uuid, _mock_request(), edited=False, client=mock_client
+            )
+
+        assert mock_cdn.call_args.args[0] == "https://cdn.example.com/external.jpg"
 
     @pytest.mark.anyio
     async def test_edited_false_missing_root_fails_closed(self, sample_uuid):

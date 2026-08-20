@@ -32,6 +32,10 @@ from routers.api.constants import (
     GUMNUT_API_MAX_PAGE_SIZE,
     GUMNUT_UPLOAD_DEVICE_ID,
 )
+from routers.utils.asset_version_chain import (
+    InvalidVersionChainError,
+    select_edit_base,
+)
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error
@@ -230,30 +234,29 @@ async def _stream_exact_original(
     client: AsyncGumnut,
     range_header: str | None = None,
 ) -> StreamingResponse:
-    """Stream the unique position-zero version's original bytes.
+    """Stream the edit base's exact bytes.
 
-    An invalid root set returns 502 rather than substituting another rendering.
+    The edit base is the latest non-edit version (see
+    ``routers.utils.asset_version_chain``), the same selection the edit
+    renderer uses. An invalid chain returns 502 rather than substituting
+    another rendering.
     """
     gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
     versions = await client.assets.versions.list(gumnut_asset_id, include=["variants"])
 
-    roots = [version for version in versions if version.position == 0]
-    if len(roots) != 1:
-        logger.error(
-            "Asset version chain has no unique root",
-            extra={"asset_id": gumnut_asset_id, "root_count": len(roots)},
-        )
+    try:
+        base = select_edit_base(versions, asset_id=gumnut_asset_id)
+    except InvalidVersionChainError:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Asset version chain is invalid",
         )
-    root = roots[0]
 
-    original = (root.version_urls or {}).get("original")
+    original = (base.version_urls or {}).get("original")
     if original is None:
         logger.warning(
-            "Asset original version bytes not available",
-            extra={"asset_id": gumnut_asset_id, "version_id": root.id},
+            "Asset edit base bytes not available",
+            extra={"asset_id": gumnut_asset_id, "version_id": base.id},
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -262,7 +265,7 @@ async def _stream_exact_original(
 
     return await stream_from_cdn(
         original.url,
-        root.mime_type,
+        base.mime_type,
         range_header=range_header,
         forwarded_headers=_ORIGINAL_DOWNLOAD_FORWARDED_HEADERS,
     )
@@ -1322,7 +1325,8 @@ async def download_asset(
     """Stream full-quality asset bytes in their stored format.
 
     ``edited=true`` selects the current rendering; the default ``false`` selects
-    the exact uploaded bytes from the version-chain root.
+    the edit base — the latest non-edit version, which is the uploaded bytes
+    until an external rendering exists.
     """
     range_header = request.headers.get("range")
     if edited:
