@@ -172,16 +172,15 @@ async def _render(
             # The loop is already shutting down.
             pass
 
-    def runner() -> RenderdEdit | None:
+    def runner(source: IO[bytes]) -> RenderdEdit | None:
         with state_lock:
             if state["abandoned"]:
                 # Cancellation won the submit-to-start race; the awaiter owns cleanup.
                 return None
             state["started"] = True
         try:
-            assert input_file is not None
             try:
-                result = _render_sync(input_file, recipe, settings)
+                result = _render_sync(source, recipe, settings)
             except BaseException:
                 with state_lock:
                     abandoned = state["abandoned"]
@@ -209,7 +208,7 @@ async def _render(
             max_size=settings.edit_render_spool_max_bytes
         )
         await _download_source(source_url, input_file, settings, gumnut_asset_id)
-        result = await loop.run_in_executor(_get_render_executor(), runner)
+        result = await loop.run_in_executor(_get_render_executor(), runner, input_file)
     except BaseException:
         with state_lock:
             state["abandoned"] = True
@@ -362,7 +361,6 @@ def _decode_display_oriented(input_file: IO[bytes], settings: Settings) -> Image
         raise EditRenderInputError(
             "corrupt_image", "Source image could not be decoded"
         ) from exc
-    assert oriented is not None
     return oriented
 
 
