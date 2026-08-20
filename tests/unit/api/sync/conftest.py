@@ -250,10 +250,9 @@ def create_mock_face_data(updated_at: datetime) -> FaceResponse:
 def create_mock_face_owning_asset_page(kind: str = "original"):
     """Owning-asset page for the face-geometry gate.
 
-    The face sync pass resolves each event page's owning assets in one bulk
-    ``assets.list`` read (``fetch_suppressed_face_ids``) and suppresses face
-    rows whose asset is edited **or absent** — so any test that expects face
-    rows to emit must return the owning asset (original kind) from
+    The face sync pass gates face rows whose owning asset is edited **or
+    absent** (``fetch_suppressed_face_ids``) — so any test that expects
+    visible face rows must return the owning asset (original kind) from
     ``mock_client.assets.list``.
     """
     asset = Mock()

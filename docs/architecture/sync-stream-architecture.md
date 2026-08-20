@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-08-12
+last-updated: 2026-08-19
 ---
 
 # Sync Stream Architecture
@@ -25,6 +25,15 @@ Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync eve
 ## Deletion Events
 
 `_make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted.
+
+## Gating Rows Is a State Transition, Never an Omission
+
+A pass that must hide rows from clients (e.g., the face-geometry gate — see
+`docs/references/asset-and-media-handling.md`) cannot just skip the upsert: a
+client that synced the row before the condition arose keeps its stale copy
+forever, and the cursor advances past the discarded event. Emit the hidden
+state instead — a visibility flag where the sync type has one, a retraction
+delete where it doesn't.
 
 ## Face person_id Handling
 

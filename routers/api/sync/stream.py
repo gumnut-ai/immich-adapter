@@ -21,11 +21,15 @@ from gumnut.types.face_response import FaceResponse
 from gumnut.types.user_response import UserResponse
 
 from routers.immich_models import (
+    SyncAssetFaceDeleteV1,
     SyncEntityType,
     SyncRequestType,
     SyncStreamDto,
 )
-from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_face_id,
+    safe_uuid_from_user_id,
+)
 from services.checkpoint_store import Checkpoint
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
@@ -440,11 +444,34 @@ async def _stream_entity_type(
                 else:
                     stats.delete_event_skips += 1
             else:
-                # Geometry-gated face row — advance the cursor without
-                # emitting or mutating anything.
-                if event.entity_id in suppressed_face_ids:
+                # Geometry-gated face row — emit a state transition, never an
+                # omission (see "Face geometry is suppressed while an edited
+                # rendering is current" in
+                # docs/references/asset-and-media-handling.md): V2 re-emits
+                # the row hidden below, V1 has no visibility flag and
+                # retracts it here.
+                suppress_geometry = event.entity_id in suppressed_face_ids
+                if suppress_geometry:
                     stats.suppressed_face_geometry += 1
-                    continue
+                    if sync_entity_type == SyncEntityType.AssetFaceV1:
+                        # Emitted inline, not via delete_buffer: a face
+                        # delete is FK-safe anywhere before the buffered
+                        # parent deletes flush, and buffering could reorder
+                        # this retraction after a same-stream restore upsert
+                        # of the same face id.
+                        delete_data = SyncAssetFaceDeleteV1(
+                            assetFaceId=safe_uuid_from_face_id(event.entity_id)
+                        )
+                        yield (
+                            make_sync_event(
+                                SyncEntityType.AssetFaceDeleteV1,
+                                delete_data.model_dump(mode="json"),
+                                event.cursor,
+                            ),
+                            1,
+                        )
+                        count += 1
+                        continue
 
                 # Upsert event — look up fetched entity
                 entity = entities_map.get(event.entity_id)
@@ -573,7 +600,12 @@ async def _stream_entity_type(
                 )
 
                 json_line = convert_entity_to_sync_event(
-                    gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type
+                    gumnut_entity_type,
+                    entity,
+                    owner_id,
+                    event.cursor,
+                    sync_entity_type,
+                    face_visible=not suppress_geometry,
                 )
                 yield json_line, 1
                 count += 1

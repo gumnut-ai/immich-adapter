@@ -74,16 +74,11 @@ def is_asset_edited(gumnut_asset: AssetResponse) -> bool:
 def should_expose_face_geometry(gumnut_asset: AssetResponse) -> bool:
     """Return whether Immich face bounding boxes may be emitted for this asset.
 
-    Gumnut stores face boxes in the *original* upload's pixel space and keeps
-    them there across edits. While a derived rendering is current, those
-    coordinates no longer correspond to the pixels clients display, so every
-    geometry emit/write path (REST ``/faces``, face sync rows) must suppress
-    boxes rather than pair original-space coordinates with derived pixels.
-    People associations and person thumbnails stay untouched — only geometry
-    is hidden, and it reappears once the original is current again.
-
-    This is the single home for the rule; gate any new face-geometry emit site
-    on it rather than re-deriving from ``kind``.
+    Gate any new face-geometry emit or write site on this predicate rather
+    than re-deriving from ``kind``. For the pixel-space rationale and the
+    per-surface suppression behavior, see "Face geometry is suppressed while
+    an edited rendering is current" in
+    ``docs/references/asset-and-media-handling.md``.
     """
     return not is_asset_edited(gumnut_asset)
 

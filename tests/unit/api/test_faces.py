@@ -1,6 +1,7 @@
 """Tests for faces.py endpoints."""
 
 import pytest
+from fastapi import HTTPException
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 from datetime import datetime, timezone
@@ -265,8 +266,7 @@ class TestGetFaces:
     @pytest.mark.anyio
     async def test_edited_asset_returns_empty_without_face_or_person_calls(self):
         """An edited-current asset returns no geometry, and the suppression path
-        spends no face or person calls — stored boxes live in the original's
-        pixel space and must not pair with derived pixels."""
+        spends no face or person calls."""
         asset_uuid = uuid4()
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
@@ -477,11 +477,8 @@ class TestCreateFace:
     @pytest.mark.anyio
     async def test_edited_asset_rejected_with_409_before_coordinate_math(self):
         """Drawing a face while an edited rendering is current is rejected with
-        a 409 before any scaling, and the doomed upstream create is never sent
-        — the box would be captured in the derived image's pixel space while
-        Gumnut stores boxes in the original's."""
-        from fastapi import HTTPException
-
+        a 409 before any scaling, and the doomed upstream create is never
+        sent."""
         asset_uuid = uuid4()
         person_uuid = uuid4()
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
@@ -503,8 +500,6 @@ class TestCreateFace:
     @pytest.mark.anyio
     async def test_unknown_non_original_kind_rejected_like_edit(self):
         """Any non-original current kind rejects creation, not just ``edit``."""
-        from fastapi import HTTPException
-
         asset_uuid = uuid4()
         person_uuid = uuid4()
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)

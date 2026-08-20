@@ -67,13 +67,20 @@ stores face bounding boxes in the *original* upload's pixel space and keeps
 them there across edits, so emitting them alongside derived pixels would draw
 boxes in the wrong frame. `should_expose_face_geometry`
 (`routers/utils/asset_conversion.py`) is the single home for the rule — gate
-any new face-geometry emit or write site on it instead of re-deriving from
-`kind`. Today that gates three sites: `GET /api/faces` (empty list),
-`POST /api/faces` (409), and the face sync pass
-(`fetch_suppressed_face_ids`, which owns the bulk-read and fail-safe
-mechanics). Suppression hides rows only — stored faces, people associations,
-person thumbnails, and `AssetResponseDto.people` stay intact, and reverting
-to the original restores the same geometry with no reconstruction.
+every face-geometry emit or write site on it instead of re-deriving from
+`kind` (search its callers for the gated surfaces). REST reads return no
+geometry and writes are rejected while gated. The sync stream represents the
+gate as a **state transition, never an omission**, because a client may
+already hold a face row synced before the edit: a gated face event re-emits
+the row with `isVisible=false` on `AssetFaceV2` and retracts it
+(`AssetFaceDeleteV1`) on `AssetFaceV1`, and the next face event after the
+original is restored re-emits the visible row. An edit or restore with no
+subsequent face event reaches checkpointed clients only on the next face
+event or full resync — closing that gap needs upstream face events emitted
+on rendering changes. Suppression never mutates stored state — faces, people
+associations, person thumbnails, and `AssetResponseDto.people` stay intact,
+and reverting to the original restores the same geometry with no
+reconstruction.
 
 ## Thumbnail variant selection by aspect ratio
 

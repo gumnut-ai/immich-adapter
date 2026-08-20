@@ -397,14 +397,18 @@ def gumnut_face_to_sync_face_v1(face: FaceResponse) -> SyncAssetFaceV1:
     )
 
 
-def gumnut_face_to_sync_face_v2(face: FaceResponse) -> SyncAssetFaceV2:
+def gumnut_face_to_sync_face_v2(
+    face: FaceResponse, *, visible: bool = True
+) -> SyncAssetFaceV2:
     """Convert Gumnut FaceResponse to Immich SyncAssetFaceV2 format.
 
     Delegates to V1 and adds deletedAt (always None — Gumnut has no soft-delete
-    on faces) and isVisible (always True — Gumnut has no face visibility control).
+    on faces) and isVisible. ``visible=False`` marks a geometry-gated row
+    (see ``should_expose_face_geometry``) so a pre-edit client copy
+    reconciles hidden.
     """
     v1 = gumnut_face_to_sync_face_v1(face)
-    return SyncAssetFaceV2(**v1.model_dump(), deletedAt=None, isVisible=True)
+    return SyncAssetFaceV2(**v1.model_dump(), deletedAt=None, isVisible=visible)
 
 
 def gumnut_album_asset_to_sync_album_to_asset_v1(
