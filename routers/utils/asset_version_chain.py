@@ -1,17 +1,23 @@
-"""Select the version an Immich edit is based on.
+"""Select versions from an asset's chain: the uploaded root and the edit base.
 
 The Gumnut version chain is ordered by ``position``: 0 is the upload, the
 highest is the current rendering. Each version's ``kind`` says what produced
 it — ``original``, ``edit`` (a rendered Immich edit), ``external:<service>``,
 or any future value, since the namespace is open.
 
-Immich's editor assumes a single base image and expresses recipes against it,
-so the adapter keeps one definition of the *edit base*, shared by the renderer
-and by ``GET /api/assets/{id}/original?edited=false``: the highest-position
-version that is not an edit. Basing on the latest non-edit rendering keeps
-repeated adjustments non-cumulative (a prior edit is never a base) while
-preserving whatever an external rendering layered onto the upload.
-Until an external rendering exists, this is the position-0 original.
+Two selections serve two contracts:
+
+* ``select_root`` returns the position-0 upload. ``GET
+  /api/assets/{id}/original?edited=false`` — Immich's *Download original* and
+  the path backups rely on — always streams these exact bytes, so anything
+  Immich reports as edited (every non-``original`` kind) can be undone to the
+  upload.
+* ``select_edit_base`` returns the highest-position version that is not an
+  edit. Immich's editor expresses recipes against a single base image; basing
+  on the latest non-edit rendering keeps repeated adjustments non-cumulative
+  (a prior edit is never a base) while preserving whatever an external
+  rendering layered onto the upload. Until an external rendering exists, this
+  is the root.
 
 External renderings are produced from the full chain below them, so an
 ``edit`` sitting below an ``external:*`` version (``original -> edit ->
@@ -39,6 +45,22 @@ class InvalidVersionChainError(Exception):
     """The chain has no unique root or no non-edit version to base on."""
 
 
+def select_root[V: VersionLike](versions: Sequence[V], *, asset_id: str) -> V:
+    """Return the unique position-0 version.
+
+    Raises :class:`InvalidVersionChainError` when the chain has no root or more
+    than one; callers map that to their own error type.
+    """
+    roots = [version for version in versions if version.position == 0]
+    if len(roots) != 1:
+        logger.error(
+            "Asset version chain has no unique root",
+            extra={"asset_id": asset_id, "root_count": len(roots)},
+        )
+        raise InvalidVersionChainError("no unique root")
+    return roots[0]
+
+
 def is_edit_version(version: VersionLike) -> bool:
     """True for renderings the adapter must never use as an edit base.
 
@@ -55,13 +77,7 @@ def select_edit_base[V: VersionLike](versions: Sequence[V], *, asset_id: str) ->
     position-0 root or contains no non-edit version. Callers map that to their
     own error type.
     """
-    root_count = sum(1 for version in versions if version.position == 0)
-    if root_count != 1:
-        logger.error(
-            "Asset version chain has no unique root",
-            extra={"asset_id": asset_id, "root_count": root_count},
-        )
-        raise InvalidVersionChainError("no unique root")
+    select_root(versions, asset_id=asset_id)
 
     ordered = sorted(versions, key=lambda version: version.position)
     bases = [version for version in ordered if not is_edit_version(version)]

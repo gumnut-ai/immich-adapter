@@ -3393,7 +3393,7 @@ class TestDownloadAsset:
         )
 
     @pytest.mark.anyio
-    async def test_edited_false_streams_edit_base_bytes(self, sample_uuid):
+    async def test_edited_false_streams_position_zero_bytes(self, sample_uuid):
         root = _make_mock_version(
             0, mime_type="image/heic", original_url="https://cdn.example.com/root.heic"
         )
@@ -3490,7 +3490,9 @@ class TestDownloadAsset:
         assert streamed_urls == [url, url]
 
     @pytest.mark.anyio
-    async def test_edited_false_streams_latest_external_rendering(self, sample_uuid):
+    async def test_edited_false_ignores_external_rendering(self, sample_uuid):
+        # Download original must return the upload even when an external
+        # rendering (which the edit renderer would base on) exists.
         root = _make_mock_version(0, original_url="https://cdn.example.com/root.jpg")
         external = _make_mock_version(
             1,
@@ -3510,7 +3512,7 @@ class TestDownloadAsset:
                 sample_uuid, _mock_request(), edited=False, client=mock_client
             )
 
-        assert mock_cdn.call_args.args[0] == "https://cdn.example.com/external.jpg"
+        assert mock_cdn.call_args.args[0] == "https://cdn.example.com/root.jpg"
 
     @pytest.mark.anyio
     async def test_edited_false_missing_root_fails_closed(self, sample_uuid):

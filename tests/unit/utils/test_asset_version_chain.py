@@ -9,6 +9,7 @@ from routers.utils.asset_version_chain import (
     InvalidVersionChainError,
     is_edit_version,
     select_edit_base,
+    select_root,
 )
 
 
@@ -36,6 +37,27 @@ def version(position: int, kind: str) -> Version:
 )
 def test_is_edit_version(kind: str, expected: bool) -> None:
     assert is_edit_version(version(1, kind)) is expected
+
+
+def test_select_root_ignores_later_versions() -> None:
+    root = version(0, "original")
+    chain = [version(2, "edit"), version(1, "external:enhancer"), root]
+    assert select_root(chain, asset_id="asset_1") is root
+
+
+@pytest.mark.parametrize(
+    "chain",
+    [
+        [],
+        [version(1, "original")],
+        [version(0, "original"), version(0, "original")],
+    ],
+)
+def test_select_root_rejects_missing_or_duplicate_root(
+    chain: list[Version],
+) -> None:
+    with pytest.raises(InvalidVersionChainError):
+        select_root(chain, asset_id="asset_1")
 
 
 def test_root_only_chain_selects_root() -> None:

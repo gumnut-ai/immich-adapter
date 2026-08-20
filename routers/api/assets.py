@@ -34,7 +34,7 @@ from routers.api.constants import (
 )
 from routers.utils.asset_version_chain import (
     InvalidVersionChainError,
-    select_edit_base,
+    select_root,
 )
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
@@ -234,29 +234,29 @@ async def _stream_exact_original(
     client: AsyncGumnut,
     range_header: str | None = None,
 ) -> StreamingResponse:
-    """Stream the edit base's exact bytes.
+    """Stream the unique position-zero version's uploaded bytes.
 
-    The edit base is the latest non-edit version (see
-    ``routers.utils.asset_version_chain``), the same selection the edit
-    renderer uses. An invalid chain returns 502 rather than substituting
+    This is deliberately the root, not the edit renderer's base: Immich's
+    *Download original* and backup tools expect the upload for every asset it
+    reports as edited. An invalid chain returns 502 rather than substituting
     another rendering.
     """
     gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
     versions = await client.assets.versions.list(gumnut_asset_id, include=["variants"])
 
     try:
-        base = select_edit_base(versions, asset_id=gumnut_asset_id)
+        root = select_root(versions, asset_id=gumnut_asset_id)
     except InvalidVersionChainError:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Asset version chain is invalid",
         )
 
-    original = (base.version_urls or {}).get("original")
+    original = (root.version_urls or {}).get("original")
     if original is None:
         logger.warning(
-            "Asset edit base bytes not available",
-            extra={"asset_id": gumnut_asset_id, "version_id": base.id},
+            "Asset original version bytes not available",
+            extra={"asset_id": gumnut_asset_id, "version_id": root.id},
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -265,7 +265,7 @@ async def _stream_exact_original(
 
     return await stream_from_cdn(
         original.url,
-        base.mime_type,
+        root.mime_type,
         range_header=range_header,
         forwarded_headers=_ORIGINAL_DOWNLOAD_FORWARDED_HEADERS,
     )
@@ -1325,8 +1325,7 @@ async def download_asset(
     """Stream full-quality asset bytes in their stored format.
 
     ``edited=true`` selects the current rendering; the default ``false`` selects
-    the edit base — the latest non-edit version, which is the uploaded bytes
-    until an external rendering exists.
+    the exact uploaded bytes from the version-chain root.
     """
     range_header = request.headers.get("range")
     if edited:
