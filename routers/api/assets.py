@@ -32,6 +32,10 @@ from routers.api.constants import (
     GUMNUT_API_MAX_PAGE_SIZE,
     GUMNUT_UPLOAD_DEVICE_ID,
 )
+from routers.utils.asset_version_chain import (
+    InvalidVersionChainError,
+    select_root,
+)
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.error_mapping import map_gumnut_error
@@ -230,24 +234,23 @@ async def _stream_exact_original(
     client: AsyncGumnut,
     range_header: str | None = None,
 ) -> StreamingResponse:
-    """Stream the unique position-zero version's original bytes.
+    """Stream the unique position-zero version's uploaded bytes.
 
-    An invalid root set returns 502 rather than substituting another rendering.
+    This is deliberately the root, not the edit renderer's base: Immich's
+    *Download original* and backup tools expect the upload for every asset it
+    reports as edited. An invalid chain returns 502 rather than substituting
+    another rendering.
     """
     gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
     versions = await client.assets.versions.list(gumnut_asset_id, include=["variants"])
 
-    roots = [version for version in versions if version.position == 0]
-    if len(roots) != 1:
-        logger.error(
-            "Asset version chain has no unique root",
-            extra={"asset_id": gumnut_asset_id, "root_count": len(roots)},
-        )
+    try:
+        root = select_root(versions, asset_id=gumnut_asset_id)
+    except InvalidVersionChainError:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Asset version chain is invalid",
         )
-    root = roots[0]
 
     original = (root.version_urls or {}).get("original")
     if original is None:

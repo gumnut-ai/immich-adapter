@@ -1,6 +1,6 @@
 ---
 title: "Asset and Media Handling"
-last-updated: 2026-08-18
+last-updated: 2026-08-19
 ---
 
 # Asset and Media Handling
@@ -56,8 +56,24 @@ no additional query.
 
 `asset_urls["original"]` points to the current rendering. For
 `GET /api/assets/{id}/original`, `edited=true` streams that rendering, while the
-default `edited=false` streams the version-chain root (`position == 0`). The
-archive route currently streams the current rendering regardless of `edited`.
+default `edited=false` streams the version-chain root (`position == 0`) via
+`select_root` in `routers/utils/asset_version_chain.py`. Keep it on the root:
+Immich shows *Download original* for every asset it reports as edited, and
+backup tools expect the upload, so this path must never substitute a derived
+rendering. The archive route currently streams the current rendering regardless
+of `edited`.
+
+The **edit base** is a different selection: the highest-position version whose
+`kind` is not `edit` (or `edit:*`), from `select_edit_base` in the same module.
+`services/asset_edit_renderer.py` renders every recipe from it. Skipping `edit`
+versions keeps repeated adjustments non-cumulative; preferring the latest
+non-edit version keeps an `external:*` rendering layered on the upload. External
+renderings are produced from the full chain below them, so an edit below an
+`external:*` version is already baked in and the latest non-edit is always the
+correct base. Until an external rendering exists, the base is the root. The
+Immich web editor previews `GET /api/assets/{id}/thumbnail?size=preview&edited=false`,
+and `view_asset` does not yet honor `edited`, so that preview still shows the
+current rendering.
 
 Mock assets must set `kind` explicitly; `make_gumnut_asset` defaults it to
 `"original"`.
@@ -72,6 +88,9 @@ face event after restoration re-emits the visible row. Edits and restores do
 not themselves emit face events, so checkpointed clients converge only after
 the next face event or full resync. Suppression does not mutate faces, people
 associations, person thumbnails, or `AssetResponseDto.people`.
+
+Register `pillow-heif` before server-side Pillow decodes; otherwise HEIC/HEIF
+originals are unidentified. `services/asset_edit_renderer.py` is the pattern.
 
 ## Thumbnail variant selection by aspect ratio
 

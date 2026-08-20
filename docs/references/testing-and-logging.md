@@ -1,6 +1,6 @@
 ---
 title: "Testing and Logging"
-last-updated: 2026-08-11
+last-updated: 2026-08-19
 ---
 
 # Testing and Logging
@@ -36,6 +36,9 @@ logger.info("WebSocket connected", extra={"sid": sid, "user_id": user_id, "devic
 ```
 
 This enables better searching and correlation in Sentry.
+
+Never log signed CDN URLs: their query strings are bearer credentials. Use the
+`asset_id` and bare hostname for correlation.
 
 ## Upstream response log levels
 

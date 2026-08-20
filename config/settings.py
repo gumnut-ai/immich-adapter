@@ -49,6 +49,24 @@ class Settings(BaseSettings):
     # (note: streaming skips iOS live photo .MOV detection).
     streaming_upload_threshold_bytes: int = 100 * 1024 * 1024  # 100MB
 
+    # --- Server-side edit rendering (services/asset_edit_renderer.py) ---
+    # Maximum source bytes; enforced against Content-Length and streamed bytes.
+    edit_render_max_input_bytes: int = 100 * 1024 * 1024  # 100MB
+    # Checked from the header before decode. This stays below Pillow's ~89.5 MP
+    # warning threshold; Pillow's decompression-bomb guard remains a backstop.
+    edit_render_max_pixels: int = 80_000_000
+    # Maximum width or height.
+    edit_render_max_dimension: int = 30_000
+    # Encoding aborts above this size.
+    edit_render_max_output_bytes: int = 100 * 1024 * 1024  # 100MB
+    # Includes time waiting for admission.
+    edit_render_timeout_seconds: float = 60.0
+    # Sizes both the worker pool and input-admission semaphore. Budget roughly
+    # max_pixels * 4 bytes * 2 transient decoded copies per concurrent render.
+    edit_render_max_concurrency: int = 4
+    # Bytes a render temp file holds in memory before spooling to disk.
+    edit_render_spool_max_bytes: int = 16 * 1024 * 1024  # 16MB
+
     # Mobile app OAuth redirect URL (custom URL scheme for mobile deep linking)
     oauth_mobile_redirect_uri: str = "app.immich:///oauth-callback"
 
