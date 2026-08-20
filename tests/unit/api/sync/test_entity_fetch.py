@@ -75,8 +75,6 @@ async def test_suppressed_face_ids_empty_input_skips_the_read():
 
 @pytest.mark.anyio
 async def test_suppressed_face_ids_partitions_per_asset_and_fails_safe():
-    """One deduplicated bulk read; only edited-owned and unfetchable-owned
-    faces are suppressed."""
     faces = [
         _face("face_original", "asset_original"),
         _face("face_original_2", "asset_original"),
@@ -102,8 +100,6 @@ async def test_suppressed_face_ids_partitions_per_asset_and_fails_safe():
 
 @pytest.mark.anyio
 async def test_suppressed_face_ids_chunk_at_bulk_id_limit():
-    """Owning-asset resolution chunks like the sibling hydration read, and
-    assets returned by every chunk count as exposable."""
     total = GUMNUT_API_MAX_BULK_IDS + 1
     faces = [_face(f"face_{index}", f"asset_{index}") for index in range(total)]
     client = Mock()

@@ -83,9 +83,7 @@ async def get_faces(
     """Get all faces detected in an asset."""
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
 
-    # Gate on the owning asset before touching faces (see
-    # should_expose_face_geometry); checking first also keeps the suppression
-    # path from spending face/person calls.
+    # Fetch the owner first to avoid face/person reads when geometry is gated.
     asset = await client.assets.retrieve(gumnut_asset_id)
     if not should_expose_face_geometry(asset):
         return []
@@ -157,9 +155,7 @@ async def create_face(
     # to the asset's real dimensions before storing.
     asset = await client.assets.retrieve(gumnut_asset_id)
 
-    # Reject before any coordinate math (see should_expose_face_geometry).
-    # The backend enforces the same invariant; failing here gives Immich a
-    # stable client error instead of a doomed upstream call.
+    # Reject before scaling so Immich receives a stable 409.
     if not should_expose_face_geometry(asset):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

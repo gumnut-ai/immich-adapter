@@ -300,9 +300,7 @@ def convert_entity_to_sync_event(
         owner_id: UUID of the owner
         cursor: The event cursor for the ack string
         sync_entity_type: The Immich sync entity type
-        face_visible: For AssetFaceV2 rows only — False emits the row with
-            ``isVisible=False`` (geometry gated while the owning asset's
-            rendering is edited)
+        face_visible: Whether an AssetFaceV2 row is visible
 
     Returns:
         JSON line string with newline

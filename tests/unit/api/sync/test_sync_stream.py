@@ -577,11 +577,6 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_edited_asset_suppresses_face_rows_without_n_plus_one(self, caplog):
-        """While the owning asset's current rendering is edited, V1 face rows
-        are retracted (AssetFaceDeleteV1) instead of upserted, so a client
-        that synced the row before the edit doesn't keep stale geometry. The
-        gate resolves owning assets in ONE bulk read per event page, never
-        one retrieve per face, and reports gated rows in the summary log."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -621,15 +616,11 @@ class TestGenerateSyncStream:
             str(safe_uuid_from_face_id(face1.id)),
             str(safe_uuid_from_face_id(face2.id)),
         }
-        # Both faces share one owning asset: exactly one lean bulk read, with
-        # the deduplicated id, all-state, and no include (kind is lean-core).
         mock_client.assets.list.assert_called_once()
         kwargs = mock_client.assets.list.call_args.kwargs
         assert kwargs["ids"] == [face1.asset_id]
         assert kwargs["state"] == "all"
         assert "include" not in kwargs
-        # The summary counter is the operator-visible evidence that rows were
-        # intentionally gated.
         summary = next(
             r for r in caplog.records if r.getMessage() == "Sync stream summary"
         )
@@ -637,10 +628,6 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_mixed_page_suppresses_only_edited_assets_faces(self):
-        """Suppression partitions per owning asset within one event page: the
-        edited asset's face is retracted while the original asset's face on
-        the same page still upserts — the gate must key on set membership,
-        never on "the page contains an edited asset"."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -694,7 +681,6 @@ class TestGenerateSyncStream:
         assert events[1]["data"]["assetFaceId"] == str(
             safe_uuid_from_face_id(face_on_edited.id)
         )
-        # One bulk read carrying both deduplicated owning-asset ids.
         mock_client.assets.list.assert_called_once()
         assert sorted(mock_client.assets.list.call_args.kwargs["ids"]) == sorted(
             [original_asset.id, edited_asset.id]
@@ -702,8 +688,6 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_unknown_non_original_kind_suppresses_face_rows(self):
-        """The kind namespace is open: any non-original kind gates (retracts
-        the V1 row) exactly like an edit."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -732,9 +716,6 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_missing_owning_asset_suppresses_face_rows(self):
-        """Fail safe: a face whose owning asset the bulk read does not return
-        is gated (retracted on V1) — geometry only syncs once the original is
-        confirmed current."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -749,8 +730,6 @@ class TestGenerateSyncStream:
         )
         mock_client.events.get.return_value = create_mock_events_response([mock_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
-        # Default assets.list mock returns an empty page — asset unfetchable.
-
         request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
 
         events = await collect_stream(
@@ -761,8 +740,6 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_face_v2_rows_suppressed_for_edited_assets(self):
-        """The V2 gate is a visibility transition: the row still syncs (so a
-        client holding a pre-edit copy reconciles) but with isVisible false."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -792,12 +769,6 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_face_v2_edit_then_restore_transitions_checkpointed(self):
-        """Both directions of the gate are observable, checkpointed state
-        transitions: a face event while the rendering is edited re-emits the
-        row hidden (isVisible false), and the next face event after the
-        original is restored re-emits it visible — each under its own acked
-        cursor, so a checkpointed client resumes past the transition instead
-        of replaying it."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -805,7 +776,6 @@ class TestGenerateSyncStream:
         face_data = create_mock_face_data(updated_at)
         request = SyncStreamDto(types=[SyncRequestType.AssetFacesV2])
 
-        # Round 1: the owning asset's current rendering is edited.
         edit_event = create_mock_event(
             entity_type="face",
             entity_id=face_data.id,
@@ -827,8 +797,6 @@ class TestGenerateSyncStream:
         assert events[0]["data"]["isVisible"] is False
         assert events[0]["ack"] == "AssetFaceV2|cursor_edit|"
 
-        # Round 2: the client acked round 1's cursor; the original is restored
-        # and a later face event re-emits the visible row.
         restore_event = create_mock_event(
             entity_type="face",
             entity_id=face_data.id,
@@ -858,15 +826,11 @@ class TestGenerateSyncStream:
         assert [e["type"] for e in events] == ["AssetFaceV2", "SyncCompleteV1"]
         assert events[0]["data"]["isVisible"] is True
         assert events[0]["ack"] == "AssetFaceV2|cursor_restore|"
-        # The checkpointed cursor bounds round 2's event read.
         assert mock_client.events.get.call_args.kwargs["after_cursor"] == "cursor_edit"
 
     @pytest.mark.anyio
     async def test_v1_retraction_emits_inline_before_same_stream_restore_upsert(self):
-        """The V1 retraction must yield inline, not via the end-of-stream
-        delete buffer: when a later page of the SAME stream carries a restore
-        upsert for the same face id, a buffered retraction would flush after
-        it and leave the client with the face deleted post-restore."""
+        """Keep retractions inline so a later-page restore upsert wins."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -891,7 +855,6 @@ class TestGenerateSyncStream:
             create_mock_events_response([page2_event]),
         ]
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
-        # Page 1 resolves the owning asset as edited; page 2 as restored.
         mock_client.assets.list.side_effect = [
             create_mock_face_owning_asset_page(kind="edit"),
             create_mock_face_owning_asset_page(kind="original"),
@@ -914,9 +877,6 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_people_still_stream_for_edited_assets(self):
-        """The gate touches face rows only: person rows still sync while the
-        owning asset is edited (the V1 face row is retracted alongside), so
-        the person and its thumbnail survive edits server-side."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -969,9 +929,6 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_face_delete_events_still_emitted_for_edited_assets(self):
-        """Deletes bypass the geometry gate: a face_deleted event must reach
-        the client even while the owning asset is edited, or stored rows go
-        stale. Deletes carry no geometry, so nothing leaks."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)

@@ -45,7 +45,7 @@ The sections below follow that order, with design docs split by their `status:` 
 |-------|----------|-----------------|
 | Project conventions | `docs/references/project-conventions.md` | Python style, repository organization, public-repository wording, and pull requests |
 | Routes and compatibility | `docs/references/routes-dtos-and-upstream-compatibility.md` | Route parameters, DTOs, errors, generated models, upstream behavior, and version bumps |
-| Asset and media handling | `docs/references/asset-and-media-handling.md` | Asset fields, media variants, checksums, edited-state and face-geometry suppression, and asset-operation WebSocket emission |
+| Asset and media handling | `docs/references/asset-and-media-handling.md` | Asset fields, media variants, checksums, face geometry, and asset-operation WebSocket emission |
 | Pagination, bulk, and concurrency | `docs/references/pagination-bulk-and-concurrency.md` | Cursor/offset translation, bounded enumeration, aggregates, fan-out, and bulk-ID operations |
 | Testing and logging | `docs/references/testing-and-logging.md` | Test fixtures, async test traps, structured logging, and upstream severity policy |
 | Documentation conventions | `docs/references/documentation-conventions.md` | Writing or maintaining docs — frontmatter, map rows, lifecycle, freshness, path citations |

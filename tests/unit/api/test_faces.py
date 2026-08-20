@@ -54,9 +54,8 @@ def _make_asset(
 ) -> Mock:
     """Create a mock Gumnut AssetResponse with dimensions.
 
-    ``width``/``height`` are ``Optional[int]`` in the SDK; pass ``None`` to model
-    an asset whose dimensions have not been extracted yet. ``kind`` must be set
-    explicitly — an auto-created Mock attribute would read as edited.
+    ``width``/``height`` may be ``None`` before extraction. Set ``kind``
+    explicitly because an auto-created Mock attribute would read as edited.
     """
     asset = Mock()
     asset.id = asset_id
@@ -265,8 +264,6 @@ class TestGetFaces:
 
     @pytest.mark.anyio
     async def test_edited_asset_returns_empty_without_face_or_person_calls(self):
-        """An edited-current asset returns no geometry, and the suppression path
-        spends no face or person calls."""
         asset_uuid = uuid4()
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
@@ -283,8 +280,6 @@ class TestGetFaces:
 
     @pytest.mark.anyio
     async def test_unknown_non_original_kind_suppresses_like_edit(self):
-        """The kind namespace is open: any non-original current kind suppresses
-        geometry exactly like an edit — never branch on ``kind == "edit"``."""
         asset_uuid = uuid4()
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
 
@@ -476,9 +471,6 @@ class TestCreateFace:
 
     @pytest.mark.anyio
     async def test_edited_asset_rejected_with_409_before_coordinate_math(self):
-        """Drawing a face while an edited rendering is current is rejected with
-        a 409 before any scaling, and the doomed upstream create is never
-        sent."""
         asset_uuid = uuid4()
         person_uuid = uuid4()
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
@@ -499,7 +491,6 @@ class TestCreateFace:
 
     @pytest.mark.anyio
     async def test_unknown_non_original_kind_rejected_like_edit(self):
-        """Any non-original current kind rejects creation, not just ``edit``."""
         asset_uuid = uuid4()
         person_uuid = uuid4()
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)

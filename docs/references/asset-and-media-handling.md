@@ -62,25 +62,16 @@ archive route currently streams the current rendering regardless of `edited`.
 Mock assets must set `kind` explicitly; `make_gumnut_asset` defaults it to
 `"original"`.
 
-**Face geometry is suppressed while an edited rendering is current.** Gumnut
-stores face bounding boxes in the *original* upload's pixel space and keeps
-them there across edits, so emitting them alongside derived pixels would draw
-boxes in the wrong frame. `should_expose_face_geometry`
-(`routers/utils/asset_conversion.py`) is the single home for the rule — gate
-every face-geometry emit or write site on it instead of re-deriving from
-`kind` (search its callers for the gated surfaces). REST reads return no
-geometry and writes are rejected while gated. The sync stream represents the
-gate as a **state transition, never an omission**, because a client may
-already hold a face row synced before the edit: a gated face event re-emits
-the row with `isVisible=false` on `AssetFaceV2` and retracts it
-(`AssetFaceDeleteV1`) on `AssetFaceV1`, and the next face event after the
-original is restored re-emits the visible row. An edit or restore with no
-subsequent face event reaches checkpointed clients only on the next face
-event or full resync — closing that gap needs upstream face events emitted
-on rendering changes. Suppression never mutates stored state — faces, people
-associations, person thumbnails, and `AssetResponseDto.people` stay intact,
-and reverting to the original restores the same geometry with no
-reconstruction.
+**Suppress face geometry while an edited rendering is current.** Gumnut stores
+face boxes in the original upload's pixel space, so they are invalid over
+derived pixels. Gate every REST and sync emit or write site through
+`should_expose_face_geometry`: REST reads return no geometry and writes return
+409. Sync must transition existing rows rather than omit them — `AssetFaceV2`
+emits `isVisible=false`, while `AssetFaceV1` emits `AssetFaceDeleteV1`; a later
+face event after restoration re-emits the visible row. Edits and restores do
+not themselves emit face events, so checkpointed clients converge only after
+the next face event or full resync. Suppression does not mutate faces, people
+associations, person thumbnails, or `AssetResponseDto.people`.
 
 ## Thumbnail variant selection by aspect ratio
 

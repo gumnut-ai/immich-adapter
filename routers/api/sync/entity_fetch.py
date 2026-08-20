@@ -209,23 +209,11 @@ async def fetch_suppressed_face_ids(
     gumnut_client: AsyncGumnut,
     faces: list[FaceResponse],
 ) -> set[str]:
-    """Return the ids of faces whose geometry must not be exposed when synced.
+    """Return face ids whose owning assets do not expose geometry.
 
-    The gate is ``should_expose_face_geometry`` (see its docstring for the
-    pixel-space rationale); the stream turns membership in this set into a
-    visibility state transition rather than an omission. The face hydration
-    read returns no asset context, so this resolves the owning assets in one
-    bulk read per ``GUMNUT_API_MAX_BULK_IDS`` chunk of unique asset ids —
-    never one retrieve per face. No ``include`` is requested: the gate reads
-    only ``kind``, a lean-core field, so the read becomes lean once the API's
-    lean-include default lands (see the ``ASSET_INCLUDE`` comment in
-    ``routers/utils/asset_conversion.py``). ``state="all"`` matches the
-    hydration read so a trashed asset's faces are gated by its kind rather
-    than by its absence.
-
-    Fail safe: a face whose owning asset the bulk read does not return is also
-    gated (with a warning — usually the asset was deleted between event and
-    fetch, and its face_deleted events follow).
+    Owners are deduplicated and fetched with ``state="all"``, chunked at
+    ``GUMNUT_API_MAX_BULK_IDS``. Missing owners are suppressed fail-safe. No
+    ``include`` is needed because the predicate reads lean-core ``kind``.
     """
     asset_ids = list(dict.fromkeys(face.asset_id for face in faces))
     if not asset_ids:

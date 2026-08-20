@@ -74,11 +74,8 @@ def is_asset_edited(gumnut_asset: AssetResponse) -> bool:
 def should_expose_face_geometry(gumnut_asset: AssetResponse) -> bool:
     """Return whether Immich face bounding boxes may be emitted for this asset.
 
-    Gate any new face-geometry emit or write site on this predicate rather
-    than re-deriving from ``kind``. For the pixel-space rationale and the
-    per-surface suppression behavior, see "Face geometry is suppressed while
-    an edited rendering is current" in
-    ``docs/references/asset-and-media-handling.md``.
+    Use this predicate at every face-geometry emit or write site. The rationale
+    and surface behavior live in ``docs/references/asset-and-media-handling.md``.
     """
     return not is_asset_edited(gumnut_asset)
 

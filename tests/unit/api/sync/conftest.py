@@ -248,13 +248,7 @@ def create_mock_face_data(updated_at: datetime) -> FaceResponse:
 
 
 def create_mock_face_owning_asset_page(kind: str = "original"):
-    """Owning-asset page for the face-geometry gate.
-
-    The face sync pass gates face rows whose owning asset is edited **or
-    absent** (``fetch_suppressed_face_ids``) — so any test that expects
-    visible face rows must return the owning asset (original kind) from
-    ``mock_client.assets.list``.
-    """
+    """Return the owner page required by visible-face sync tests."""
     asset = Mock()
     asset.id = uuid_to_gumnut_asset_id(TEST_UUID)
     asset.kind = kind

@@ -1001,9 +1001,6 @@ class TestIsEditedMapping:
 
 
 class TestShouldExposeFaceGeometry:
-    """Pin the single-home face-geometry predicate directly, so a call site
-    quietly re-deriving from ``kind`` locally still leaves the rule tested."""
-
     def test_original_current_exposes_geometry(self):
         assert should_expose_face_geometry(make_gumnut_asset(kind="original"))
 

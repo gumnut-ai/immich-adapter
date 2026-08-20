@@ -350,8 +350,7 @@ async def _stream_entity_type(
             gumnut_client, gumnut_entity_type, upsert_ids
         )
 
-        # Gate face rows on the owning asset's current kind (resolved in bulk,
-        # never per face) — see fetch_suppressed_face_ids for the rules.
+        # Resolve face gates in bulk from their owning assets.
         suppressed_face_ids: set[str] = set()
         if gumnut_entity_type == "face" and entities_map:
             suppressed_face_ids = await fetch_suppressed_face_ids(
@@ -444,21 +443,14 @@ async def _stream_entity_type(
                 else:
                     stats.delete_event_skips += 1
             else:
-                # Geometry-gated face row — emit a state transition, never an
-                # omission (see "Face geometry is suppressed while an edited
-                # rendering is current" in
-                # docs/references/asset-and-media-handling.md): V2 re-emits
-                # the row hidden below, V1 has no visibility flag and
-                # retracts it here.
+                # Do not omit gated rows: existing clients need V2 hidden
+                # upserts or V1 retractions.
                 suppress_geometry = event.entity_id in suppressed_face_ids
                 if suppress_geometry:
                     stats.suppressed_face_geometry += 1
                     if sync_entity_type == SyncEntityType.AssetFaceV1:
-                        # Emitted inline, not via delete_buffer: a face
-                        # delete is FK-safe anywhere before the buffered
-                        # parent deletes flush, and buffering could reorder
-                        # this retraction after a same-stream restore upsert
-                        # of the same face id.
+                        # Emit inline so a later-page restore upsert wins;
+                        # buffering would reverse them.
                         delete_data = SyncAssetFaceDeleteV1(
                             assetFaceId=safe_uuid_from_face_id(event.entity_id)
                         )
