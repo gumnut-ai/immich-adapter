@@ -1,4 +1,4 @@
-"""Asset edit baker tests using independent pixel-grid reference transforms."""
+"""Asset edit renderer tests using independent pixel-grid reference transforms."""
 
 import asyncio
 import io
@@ -16,22 +16,22 @@ import pytest
 from fastapi import HTTPException
 from PIL import Image, ImageOps
 
-import services.asset_edit_baker as baker_module
+import services.asset_edit_renderer as renderer_module
 from config.settings import Settings, get_settings
 from routers.utils.asset_edit_conversion import CropBox, EditRecipe
-from services.asset_edit_baker import (
-    BakedEdit,
-    EditBakeError,
-    EditBakeInputError,
-    EditBakeLimitError,
-    EditBakeSourceError,
-    EditBakeTimeoutError,
-    bake_asset_edit,
+from services.asset_edit_renderer import (
+    RenderdEdit,
+    EditRenderError,
+    EditRenderInputError,
+    EditRenderLimitError,
+    EditRenderSourceError,
+    EditRenderTimeoutError,
+    render_asset_edit,
 )
 
 pytestmark = pytest.mark.anyio
 
-ASSET_ID = "asset_editbaketest"
+ASSET_ID = "asset_editrendertest"
 ORIGINAL_URL = "https://cdn.example.test/signed/original"
 
 _EXIF_ORIENTATION_TAG = 0x0112
@@ -162,86 +162,86 @@ IDENTITY = EditRecipe(crop=None, angle=0, mirror=False)
 
 
 @pytest.fixture(autouse=True)
-def reset_bake_globals() -> Iterator[None]:
-    baker_module._bake_executor = None
-    baker_module._bake_admission = None
+def reset_render_globals() -> Iterator[None]:
+    renderer_module._render_executor = None
+    renderer_module._render_admission = None
     yield
-    if baker_module._bake_executor is not None:
-        baker_module._bake_executor.shutdown(wait=False)
-    baker_module._bake_executor = None
-    baker_module._bake_admission = None
+    if renderer_module._render_executor is not None:
+        renderer_module._render_executor.shutdown(wait=False)
+    renderer_module._render_executor = None
+    renderer_module._render_admission = None
 
 
 @pytest.fixture
-def bake_settings() -> Settings:
+def render_settings() -> Settings:
     return get_settings().model_copy()
 
 
-async def bake(
+async def render(
     source_bytes: bytes,
     recipe: EditRecipe,
     settings: Settings,
     *,
     versions: list[SimpleNamespace] | None = None,
     cdn_response: FakeCdnResponse | None = None,
-) -> tuple[BakedEdit, bytes, Mock, AsyncMock]:
-    """Run one bake and return (metadata copy, output bytes, client, cdn mock)."""
+) -> tuple[RenderdEdit, bytes, Mock, AsyncMock]:
+    """Run one render and return (metadata copy, output bytes, client, cdn mock)."""
     if versions is None:
         versions = [make_version()]
     client = make_client(versions)
     response = cdn_response or FakeCdnResponse(source_bytes)
     open_mock = AsyncMock(return_value=response)
     with (
-        patch.object(baker_module, "open_cdn_response", open_mock),
-        patch.object(baker_module, "get_settings", return_value=settings),
+        patch.object(renderer_module, "open_cdn_response", open_mock),
+        patch.object(renderer_module, "get_settings", return_value=settings),
     ):
-        async with bake_asset_edit(client, ASSET_ID, recipe) as baked:
-            output_bytes = baked.body.read()
-            metadata = BakedEdit(
-                body=baked.body,
-                mime_type=baked.mime_type,
-                width=baked.width,
-                height=baked.height,
-                size_bytes=baked.size_bytes,
+        async with render_asset_edit(client, ASSET_ID, recipe) as renderd:
+            output_bytes = renderd.body.read()
+            metadata = RenderdEdit(
+                body=renderd.body,
+                mime_type=renderd.mime_type,
+                width=renderd.width,
+                height=renderd.height,
+                size_bytes=renderd.size_bytes,
             )
     return metadata, output_bytes, client, open_mock
 
 
-def make_blocking_bake_sync(
+def make_blocking_render_sync(
     release: threading.Event, entered: list[str]
-) -> Callable[[IO[bytes], EditRecipe, Settings], BakedEdit]:
+) -> Callable[[IO[bytes], EditRecipe, Settings], RenderdEdit]:
     """Worker stub that records its thread name, then blocks until ``release``."""
 
-    def blocking_bake_sync(
+    def blocking_render_sync(
         input_file: IO[bytes], recipe: EditRecipe, settings_arg: Settings
-    ) -> BakedEdit:
+    ) -> RenderdEdit:
         input_file.close()
         entered.append(threading.current_thread().name)
         release.wait(timeout=10)
-        return BakedEdit(
+        return RenderdEdit(
             body=Mock(), mime_type="image/jpeg", width=1, height=1, size_bytes=1
         )
 
-    return blocking_bake_sync
+    return blocking_render_sync
 
 
-async def run_stub_bake(*, patch_cdn: bool = True) -> None:
-    """One identity bake against a fresh mock client (for concurrency tests).
+async def run_stub_render(*, patch_cdn: bool = True) -> None:
+    """One identity render against a fresh mock client (for concurrency tests).
 
     With ``patch_cdn`` (the default) the CDN opener is patched per call with
     a fresh response; pass ``False`` when the test already patched it — e.g.
-    with a shared mock that counts opens across bakes.
+    with a shared mock that counts opens across renders.
     """
     client = make_client([make_version()])
     if patch_cdn:
         response = FakeCdnResponse(rgb_jpeg_bytes())
         with patch.object(
-            baker_module, "open_cdn_response", AsyncMock(return_value=response)
+            renderer_module, "open_cdn_response", AsyncMock(return_value=response)
         ):
-            async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+            async with render_asset_edit(client, ASSET_ID, IDENTITY):
                 pass
     else:
-        async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+        async with render_asset_edit(client, ASSET_ID, IDENTITY):
             pass
 
 
@@ -260,16 +260,16 @@ class TestGoldenTransforms:
         ],
     )
     async def test_single_operations(
-        self, bake_settings: Settings, recipe: EditRecipe
+        self, render_settings: Settings, recipe: EditRecipe
     ) -> None:
         source = make_rgba_image(6, 4)
-        metadata, output_bytes, _, _ = await bake(
-            encode_image(source, "PNG"), recipe, bake_settings
+        metadata, output_bytes, _, _ = await render(
+            encode_image(source, "PNG"), recipe, render_settings
         )
         expected = apply_recipe_reference(grid_of(source), recipe)
-        baked_image = Image.open(io.BytesIO(output_bytes))
+        renderd_image = Image.open(io.BytesIO(output_bytes))
         assert metadata.mime_type == "image/png"
-        assert grid_of(baked_image) == expected
+        assert grid_of(renderd_image) == expected
         assert (metadata.width, metadata.height) == (
             len(expected[0]),
             len(expected),
@@ -278,34 +278,34 @@ class TestGoldenTransforms:
     @pytest.mark.parametrize("angle", [0, 90, 180, 270])
     @pytest.mark.parametrize("mirror", [False, True])
     async def test_all_eight_composed_orientation_states(
-        self, bake_settings: Settings, angle: int, mirror: bool
+        self, render_settings: Settings, angle: int, mirror: bool
     ) -> None:
         source = make_rgba_image(4, 2)
         recipe = EditRecipe(crop=None, angle=angle, mirror=mirror)
-        _, output_bytes, _, _ = await bake(
-            encode_image(source, "PNG"), recipe, bake_settings
+        _, output_bytes, _, _ = await render(
+            encode_image(source, "PNG"), recipe, render_settings
         )
         expected = apply_recipe_reference(grid_of(source), recipe)
         assert grid_of(Image.open(io.BytesIO(output_bytes))) == expected
 
     async def test_crop_then_rotate_pipeline_order(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         """Edge pixels prove crop happens in the pre-rotation frame."""
         source = make_rgba_image(6, 4)
         recipe = EditRecipe(
             crop=CropBox(x=0, y=0, width=3, height=2), angle=90, mirror=False
         )
-        _, output_bytes, _, _ = await bake(
-            encode_image(source, "PNG"), recipe, bake_settings
+        _, output_bytes, _, _ = await render(
+            encode_image(source, "PNG"), recipe, render_settings
         )
         expected = rotate_cw([row[0:3] for row in grid_of(source)[0:2]])
-        baked_grid = grid_of(Image.open(io.BytesIO(output_bytes)))
-        assert baked_grid == expected
-        assert baked_grid[0][0] == source.getpixel((0, 1))
+        renderd_grid = grid_of(Image.open(io.BytesIO(output_bytes)))
+        assert renderd_grid == expected
+        assert renderd_grid[0][0] == source.getpixel((0, 1))
 
     async def test_crop_applies_to_display_oriented_frame(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         """With EXIF orientation 6, crop coordinates address display space."""
         stored = make_rgba_image(4, 6)
@@ -315,145 +315,157 @@ class TestGoldenTransforms:
         recipe = EditRecipe(
             crop=CropBox(x=1, y=0, width=2, height=3), angle=0, mirror=False
         )
-        _, output_bytes, _, _ = await bake(source_bytes, recipe, bake_settings)
+        _, output_bytes, _, _ = await render(source_bytes, recipe, render_settings)
         expected = [row[1:3] for row in display_grid[0:3]]
         assert grid_of(Image.open(io.BytesIO(output_bytes))) == expected
 
 
 class TestExifOrientation:
     @pytest.mark.parametrize("orientation", [2, 3, 4, 5, 6, 7, 8])
-    async def test_orientation_baked_exactly_once(
-        self, bake_settings: Settings, orientation: int
+    async def test_orientation_renderd_exactly_once(
+        self, render_settings: Settings, orientation: int
     ) -> None:
         stored = make_rgba_image(4, 2)
         source_bytes = encode_image(stored, "PNG", orientation=orientation)
-        metadata, output_bytes, _, _ = await bake(source_bytes, IDENTITY, bake_settings)
+        metadata, output_bytes, _, _ = await render(
+            source_bytes, IDENTITY, render_settings
+        )
 
         reference = ImageOps.exif_transpose(Image.open(io.BytesIO(source_bytes)))
         assert reference is not None
-        baked_image = Image.open(io.BytesIO(output_bytes))
-        assert grid_of(baked_image) == grid_of(reference)
+        renderd_image = Image.open(io.BytesIO(output_bytes))
+        assert grid_of(renderd_image) == grid_of(reference)
         assert (metadata.width, metadata.height) == reference.size
-        assert baked_image.getexif().get(_EXIF_ORIENTATION_TAG) is None
+        assert renderd_image.getexif().get(_EXIF_ORIENTATION_TAG) is None
 
     async def test_output_has_no_orientation_tag_for_jpeg(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         stored = make_rgba_image(4, 2).convert("RGB")
         source_bytes = encode_image(stored, "JPEG", orientation=6)
-        metadata, output_bytes, _, _ = await bake(source_bytes, IDENTITY, bake_settings)
-        baked_image = Image.open(io.BytesIO(output_bytes))
+        metadata, output_bytes, _, _ = await render(
+            source_bytes, IDENTITY, render_settings
+        )
+        renderd_image = Image.open(io.BytesIO(output_bytes))
         assert metadata.mime_type == "image/jpeg"
         assert (metadata.width, metadata.height) == (2, 4)
-        assert baked_image.getexif().get(_EXIF_ORIENTATION_TAG) is None
+        assert renderd_image.getexif().get(_EXIF_ORIENTATION_TAG) is None
 
 
 class TestFormatSelection:
-    async def test_jpeg_input_encodes_jpeg(self, bake_settings: Settings) -> None:
-        metadata, output_bytes, _, _ = await bake(
-            rgb_jpeg_bytes(), IDENTITY, bake_settings
+    async def test_jpeg_input_encodes_jpeg(self, render_settings: Settings) -> None:
+        metadata, output_bytes, _, _ = await render(
+            rgb_jpeg_bytes(), IDENTITY, render_settings
         )
         assert metadata.mime_type == "image/jpeg"
         assert Image.open(io.BytesIO(output_bytes)).format == "JPEG"
 
-    async def test_opaque_png_input_encodes_jpeg(self, bake_settings: Settings) -> None:
+    async def test_opaque_png_input_encodes_jpeg(
+        self, render_settings: Settings
+    ) -> None:
         source_bytes = encode_image(make_rgba_image(4, 2).convert("RGB"), "PNG")
-        metadata, output_bytes, _, _ = await bake(source_bytes, IDENTITY, bake_settings)
+        metadata, output_bytes, _, _ = await render(
+            source_bytes, IDENTITY, render_settings
+        )
         assert metadata.mime_type == "image/jpeg"
         assert Image.open(io.BytesIO(output_bytes)).format == "JPEG"
 
     async def test_transparent_png_survives_as_png(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         source = make_rgba_image(4, 2, alpha=128)
-        metadata, output_bytes, _, _ = await bake(
-            encode_image(source, "PNG"), IDENTITY, bake_settings
+        metadata, output_bytes, _, _ = await render(
+            encode_image(source, "PNG"), IDENTITY, render_settings
         )
-        baked_image = Image.open(io.BytesIO(output_bytes))
+        renderd_image = Image.open(io.BytesIO(output_bytes))
         assert metadata.mime_type == "image/png"
-        assert baked_image.format == "PNG"
-        corner = baked_image.getpixel((0, 0))
+        assert renderd_image.format == "PNG"
+        corner = renderd_image.getpixel((0, 0))
         assert isinstance(corner, tuple)
         assert corner[3] == 128
 
     async def test_palette_transparency_survives_as_png(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         source = make_rgba_image(4, 2, alpha=0).quantize(colors=4)
         source_bytes = encode_image(source, "PNG")
         assert "transparency" in Image.open(io.BytesIO(source_bytes)).info
-        metadata, _, _, _ = await bake(source_bytes, IDENTITY, bake_settings)
+        metadata, _, _, _ = await render(source_bytes, IDENTITY, render_settings)
         assert metadata.mime_type == "image/png"
 
     async def test_grayscale_jpeg_preserves_l_mode(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         source = Image.new("L", (4, 2))
         for y in range(2):
             for x in range(4):
                 source.putpixel((x, y), 20 + x * 30 + y * 40)
         source_bytes = encode_image(source, "JPEG")
-        metadata, output_bytes, _, _ = await bake(source_bytes, IDENTITY, bake_settings)
-        baked_image = Image.open(io.BytesIO(output_bytes))
+        metadata, output_bytes, _, _ = await render(
+            source_bytes, IDENTITY, render_settings
+        )
+        renderd_image = Image.open(io.BytesIO(output_bytes))
         assert metadata.mime_type == "image/jpeg"
-        assert baked_image.format == "JPEG"
-        assert baked_image.mode == "L"
+        assert renderd_image.format == "JPEG"
+        assert renderd_image.mode == "L"
 
     async def test_grayscale_alpha_png_preserves_la_mode(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         source = Image.new("LA", (4, 2), (100, 128))
         source_bytes = encode_image(source, "PNG")
-        metadata, output_bytes, _, _ = await bake(source_bytes, IDENTITY, bake_settings)
-        baked_image = Image.open(io.BytesIO(output_bytes))
+        metadata, output_bytes, _, _ = await render(
+            source_bytes, IDENTITY, render_settings
+        )
+        renderd_image = Image.open(io.BytesIO(output_bytes))
         assert metadata.mime_type == "image/png"
-        assert baked_image.format == "PNG"
-        assert baked_image.mode == "LA"
-        pixel = baked_image.getpixel((0, 0))
+        assert renderd_image.format == "PNG"
+        assert renderd_image.mode == "LA"
+        pixel = renderd_image.getpixel((0, 0))
         assert isinstance(pixel, tuple)
         assert pixel[1] == 128
 
-    async def test_deterministic_output(self, bake_settings: Settings) -> None:
+    async def test_deterministic_output(self, render_settings: Settings) -> None:
         recipe = EditRecipe(
             crop=CropBox(x=0, y=0, width=3, height=2), angle=90, mirror=True
         )
         source_bytes = rgb_jpeg_bytes(6, 4)
-        _, first, _, _ = await bake(source_bytes, recipe, bake_settings)
-        _, second, _, _ = await bake(source_bytes, recipe, bake_settings)
+        _, first, _, _ = await render(source_bytes, recipe, render_settings)
+        _, second, _, _ = await render(source_bytes, recipe, render_settings)
         assert first == second
 
 
 class TestHeicSources:
     """Real-file HEIC coverage against a display-space reference decode."""
 
-    async def test_real_iphone_heic_identity_bake(
-        self, bake_settings: Settings
+    async def test_real_iphone_heic_identity_render(
+        self, render_settings: Settings
     ) -> None:
         source_bytes = HEIC_FIXTURE_PATH.read_bytes()
-        metadata, output_bytes, _, _ = await bake(
+        metadata, output_bytes, _, _ = await render(
             source_bytes,
             IDENTITY,
-            bake_settings,
+            render_settings,
             versions=[make_version(mime_type="image/heic")],
         )
         reference = ImageOps.exif_transpose(Image.open(io.BytesIO(source_bytes)))
         assert reference is not None
-        baked_image = Image.open(io.BytesIO(output_bytes))
+        renderd_image = Image.open(io.BytesIO(output_bytes))
         assert metadata.mime_type == "image/jpeg"
-        assert baked_image.format == "JPEG"
+        assert renderd_image.format == "JPEG"
         assert (metadata.width, metadata.height) == reference.size
-        assert baked_image.getexif().get(_EXIF_ORIENTATION_TAG) is None
+        assert renderd_image.getexif().get(_EXIF_ORIENTATION_TAG) is None
 
     async def test_real_iphone_heic_crop_rotate_mirror(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         source_bytes = HEIC_FIXTURE_PATH.read_bytes()
         crop = CropBox(x=1500, y=2000, width=8, height=6)
         recipe = EditRecipe(crop=crop, angle=90, mirror=True)
-        metadata, output_bytes, _, _ = await bake(
+        metadata, output_bytes, _, _ = await render(
             source_bytes,
             recipe,
-            bake_settings,
+            render_settings,
             versions=[make_version(mime_type="image/heic")],
         )
         assert (metadata.width, metadata.height) == (6, 8)
@@ -467,16 +479,16 @@ class TestHeicSources:
         # or mirror cannot pass within the JPEG tolerance below.
         assert len({pixel for row in region for pixel in row}) > 8
         expected = mirror_h(rotate_cw(region))
-        baked_grid = grid_of(Image.open(io.BytesIO(output_bytes)))
-        assert_grids_close(baked_grid, expected, tolerance=16)
+        renderd_grid = grid_of(Image.open(io.BytesIO(output_bytes)))
+        assert_grids_close(renderd_grid, expected, tolerance=16)
 
 
 class TestSourceAcquisition:
     async def test_lists_versions_once_and_fetches_root_original(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
-        metadata, output_bytes, client, open_mock = await bake(
-            rgb_jpeg_bytes(), IDENTITY, bake_settings
+        metadata, output_bytes, client, open_mock = await render(
+            rgb_jpeg_bytes(), IDENTITY, render_settings
         )
         client.assets.versions.list.assert_awaited_once_with(
             ASSET_ID, include=["variants"]
@@ -485,13 +497,13 @@ class TestSourceAcquisition:
         client.assets.versions.delete.assert_not_called()
         client.assets.versions.revert.assert_not_called()
         client.assets.retrieve.assert_not_called()
-        baked_image = Image.open(io.BytesIO(output_bytes))
-        assert (metadata.width, metadata.height) == baked_image.size
+        renderd_image = Image.open(io.BytesIO(output_bytes))
+        assert (metadata.width, metadata.height) == renderd_image.size
         assert metadata.size_bytes == len(output_bytes)
         assert metadata.mime_type == "image/jpeg"
 
-    async def test_bakes_from_root_not_current_version(
-        self, bake_settings: Settings
+    async def test_renders_from_root_not_current_version(
+        self, render_settings: Settings
     ) -> None:
         root = make_version(position=0, url=ORIGINAL_URL)
         current = make_version(
@@ -499,52 +511,52 @@ class TestSourceAcquisition:
             url="https://cdn.example.test/signed/prior-edit",
             version_id="asset_version_edit",
         )
-        _, _, _, open_mock = await bake(
+        _, _, _, open_mock = await render(
             rgb_jpeg_bytes(),
             IDENTITY,
-            bake_settings,
+            render_settings,
             versions=[root, current],
         )
         open_mock.assert_awaited_once_with(ORIGINAL_URL)
 
     @pytest.mark.parametrize("positions", [[], [1], [0, 0]])
     async def test_missing_or_duplicate_root_rejected(
-        self, bake_settings: Settings, positions: list[int]
+        self, render_settings: Settings, positions: list[int]
     ) -> None:
         versions = [make_version(position=p) for p in positions]
-        with pytest.raises(EditBakeSourceError) as exc_info:
-            await bake(rgb_jpeg_bytes(), IDENTITY, bake_settings, versions=versions)
+        with pytest.raises(EditRenderSourceError) as exc_info:
+            await render(rgb_jpeg_bytes(), IDENTITY, render_settings, versions=versions)
         assert exc_info.value.code == "invalid_version_chain"
 
     async def test_root_without_original_url_rejected(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
-        with pytest.raises(EditBakeSourceError) as exc_info:
-            await bake(
+        with pytest.raises(EditRenderSourceError) as exc_info:
+            await render(
                 rgb_jpeg_bytes(),
                 IDENTITY,
-                bake_settings,
+                render_settings,
                 versions=[make_version(url=None)],
             )
         assert exc_info.value.code == "source_bytes_unavailable"
 
     async def test_non_image_root_rejected_before_download(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         client = make_client([make_version(mime_type="video/mp4")])
         open_mock = AsyncMock()
         with (
-            patch.object(baker_module, "open_cdn_response", open_mock),
-            patch.object(baker_module, "get_settings", return_value=bake_settings),
+            patch.object(renderer_module, "open_cdn_response", open_mock),
+            patch.object(renderer_module, "get_settings", return_value=render_settings),
         ):
-            with pytest.raises(EditBakeInputError) as exc_info:
-                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+            with pytest.raises(EditRenderInputError) as exc_info:
+                async with render_asset_edit(client, ASSET_ID, IDENTITY):
                     pass
         assert exc_info.value.code == "unsupported_image"
         open_mock.assert_not_awaited()
 
-    async def test_repeat_adjustment_rebakes_from_position_zero(
-        self, bake_settings: Settings
+    async def test_repeat_adjustment_rerenders_from_position_zero(
+        self, render_settings: Settings
     ) -> None:
         source_bytes = rgb_jpeg_bytes(6, 4)
         first_recipe = EditRecipe(
@@ -553,72 +565,80 @@ class TestSourceAcquisition:
         second_recipe = EditRecipe(
             crop=CropBox(x=1, y=1, width=4, height=2), angle=0, mirror=False
         )
-        _, _, _, first_open = await bake(source_bytes, first_recipe, bake_settings)
-        _, adjusted, _, second_open = await bake(
-            source_bytes, second_recipe, bake_settings
+        _, _, _, first_open = await render(source_bytes, first_recipe, render_settings)
+        _, adjusted, _, second_open = await render(
+            source_bytes, second_recipe, render_settings
         )
-        _, fresh, _, _ = await bake(source_bytes, second_recipe, bake_settings)
+        _, fresh, _, _ = await render(source_bytes, second_recipe, render_settings)
         assert adjusted == fresh
         first_open.assert_awaited_once_with(ORIGINAL_URL)
         second_open.assert_awaited_once_with(ORIGINAL_URL)
 
 
 class TestInputValidationAndLimits:
-    async def test_corrupt_bytes_rejected(self, bake_settings: Settings) -> None:
-        with pytest.raises(EditBakeInputError) as exc_info:
-            await bake(b"definitely not an image", IDENTITY, bake_settings)
+    async def test_corrupt_bytes_rejected(self, render_settings: Settings) -> None:
+        with pytest.raises(EditRenderInputError) as exc_info:
+            await render(b"definitely not an image", IDENTITY, render_settings)
         assert exc_info.value.code == "unsupported_image"
 
-    async def test_animated_source_rejected(self, bake_settings: Settings) -> None:
+    async def test_animated_source_rejected(self, render_settings: Settings) -> None:
         frames = [Image.new("RGB", (4, 2), color) for color in ("red", "blue")]
         buffer = io.BytesIO()
         frames[0].save(buffer, format="GIF", save_all=True, append_images=frames[1:])
-        with pytest.raises(EditBakeInputError) as exc_info:
-            await bake(
+        with pytest.raises(EditRenderInputError) as exc_info:
+            await render(
                 buffer.getvalue(),
                 IDENTITY,
-                bake_settings,
+                render_settings,
                 versions=[make_version(mime_type="image/gif")],
             )
         assert exc_info.value.code == "unsupported_image"
 
-    async def test_negative_crop_origin_rejected(self, bake_settings: Settings) -> None:
+    async def test_negative_crop_origin_rejected(
+        self, render_settings: Settings
+    ) -> None:
         recipe = EditRecipe(
             crop=CropBox(x=-2, y=0, width=4, height=2), angle=0, mirror=False
         )
-        with pytest.raises(EditBakeInputError) as exc_info:
-            await bake(rgb_jpeg_bytes(8, 4), recipe, bake_settings)
+        with pytest.raises(EditRenderInputError) as exc_info:
+            await render(rgb_jpeg_bytes(8, 4), recipe, render_settings)
         assert exc_info.value.code == "crop_out_of_bounds"
 
-    async def test_truncated_image_rejected(self, bake_settings: Settings) -> None:
+    async def test_truncated_image_rejected(self, render_settings: Settings) -> None:
         source_bytes = rgb_jpeg_bytes(32, 32)
-        with pytest.raises(EditBakeInputError) as exc_info:
-            await bake(source_bytes[: len(source_bytes) // 2], IDENTITY, bake_settings)
+        with pytest.raises(EditRenderInputError) as exc_info:
+            await render(
+                source_bytes[: len(source_bytes) // 2], IDENTITY, render_settings
+            )
         assert exc_info.value.code == "corrupt_image"
 
     async def test_declared_content_length_over_cap_rejected_before_read(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
-        settings = bake_settings.model_copy(update={"edit_bake_max_input_bytes": 1000})
+        settings = render_settings.model_copy(
+            update={"edit_render_max_input_bytes": 1000}
+        )
         response = FakeCdnResponse(rgb_jpeg_bytes(), headers={"content-length": "5000"})
-        with pytest.raises(EditBakeLimitError) as exc_info:
-            await bake(b"", IDENTITY, settings, cdn_response=response)
+        with pytest.raises(EditRenderLimitError) as exc_info:
+            await render(b"", IDENTITY, settings, cdn_response=response)
         assert exc_info.value.code == "input_too_large"
         assert not response.body_read
         assert response.closed
 
     async def test_content_length_lie_caught_while_streaming(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
-        settings = bake_settings.model_copy(update={"edit_bake_max_input_bytes": 1000})
+        settings = render_settings.model_copy(
+            update={"edit_render_max_input_bytes": 1000}
+        )
         response = FakeCdnResponse(b"x" * 5000, headers={"content-length": "10"})
-        with pytest.raises(EditBakeLimitError) as exc_info:
-            await bake(b"", IDENTITY, settings, cdn_response=response)
+        with pytest.raises(EditRenderLimitError) as exc_info:
+            await render(b"", IDENTITY, settings, cdn_response=response)
         assert exc_info.value.code == "input_too_large"
         assert response.closed
 
     async def test_mid_stream_cdn_failure_classified(
-        self, bake_settings: Settings, caplog: pytest.LogCaptureFixture
+        self, render_settings: Settings, caplog: pytest.LogCaptureFixture
     ) -> None:
         class DyingCdnResponse:
             def __init__(self) -> None:
@@ -636,13 +656,13 @@ class TestInputValidationAndLimits:
         client = make_client([make_version()])
         with (
             patch.object(
-                baker_module, "open_cdn_response", AsyncMock(return_value=response)
+                renderer_module, "open_cdn_response", AsyncMock(return_value=response)
             ),
-            patch.object(baker_module, "get_settings", return_value=bake_settings),
-            caplog.at_level(logging.WARNING, logger="services.asset_edit_baker"),
+            patch.object(renderer_module, "get_settings", return_value=render_settings),
+            caplog.at_level(logging.WARNING, logger="services.asset_edit_renderer"),
         ):
-            with pytest.raises(EditBakeSourceError) as exc_info:
-                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+            with pytest.raises(EditRenderSourceError) as exc_info:
+                async with render_asset_edit(client, ASSET_ID, IDENTITY):
                     pass  # pragma: no cover
         assert exc_info.value.code == "source_fetch_failed"
         assert response.closed
@@ -656,74 +676,80 @@ class TestInputValidationAndLimits:
         assert ORIGINAL_URL not in str(record.__dict__)
 
     async def test_stream_over_cap_without_content_length(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
-        settings = bake_settings.model_copy(update={"edit_bake_max_input_bytes": 1000})
+        settings = render_settings.model_copy(
+            update={"edit_render_max_input_bytes": 1000}
+        )
         response = FakeCdnResponse(b"x" * 5000, headers={})
-        with pytest.raises(EditBakeLimitError) as exc_info:
-            await bake(b"", IDENTITY, settings, cdn_response=response)
+        with pytest.raises(EditRenderLimitError) as exc_info:
+            await render(b"", IDENTITY, settings, cdn_response=response)
         assert exc_info.value.code == "input_too_large"
         assert response.closed
 
     async def test_decompression_bomb_pixel_count_rejected(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
-        settings = bake_settings.model_copy(update={"edit_bake_max_pixels": 100})
-        with pytest.raises(EditBakeLimitError) as exc_info:
-            await bake(rgb_jpeg_bytes(20, 20), IDENTITY, settings)
+        settings = render_settings.model_copy(update={"edit_render_max_pixels": 100})
+        with pytest.raises(EditRenderLimitError) as exc_info:
+            await render(rgb_jpeg_bytes(20, 20), IDENTITY, settings)
         assert exc_info.value.code == "image_too_large"
 
-    async def test_oversized_dimension_rejected(self, bake_settings: Settings) -> None:
-        settings = bake_settings.model_copy(update={"edit_bake_max_dimension": 10})
-        with pytest.raises(EditBakeLimitError) as exc_info:
-            await bake(rgb_jpeg_bytes(20, 4), IDENTITY, settings)
+    async def test_oversized_dimension_rejected(
+        self, render_settings: Settings
+    ) -> None:
+        settings = render_settings.model_copy(update={"edit_render_max_dimension": 10})
+        with pytest.raises(EditRenderLimitError) as exc_info:
+            await render(rgb_jpeg_bytes(20, 4), IDENTITY, settings)
         assert exc_info.value.code == "image_too_large"
 
-    async def test_output_over_cap_rejected(self, bake_settings: Settings) -> None:
-        settings = bake_settings.model_copy(update={"edit_bake_max_output_bytes": 64})
-        with pytest.raises(EditBakeLimitError) as exc_info:
-            await bake(rgb_jpeg_bytes(32, 32), IDENTITY, settings)
+    async def test_output_over_cap_rejected(self, render_settings: Settings) -> None:
+        settings = render_settings.model_copy(
+            update={"edit_render_max_output_bytes": 64}
+        )
+        with pytest.raises(EditRenderLimitError) as exc_info:
+            await render(rgb_jpeg_bytes(32, 32), IDENTITY, settings)
         assert exc_info.value.code == "output_too_large"
 
     async def test_crop_beyond_decoded_frame_rejected(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         recipe = EditRecipe(
             crop=CropBox(x=0, y=0, width=10, height=10), angle=0, mirror=False
         )
-        with pytest.raises(EditBakeInputError) as exc_info:
-            await bake(rgb_jpeg_bytes(4, 2), recipe, bake_settings)
+        with pytest.raises(EditRenderInputError) as exc_info:
+            await render(rgb_jpeg_bytes(4, 2), recipe, render_settings)
         assert exc_info.value.code == "crop_out_of_bounds"
 
     async def test_dimension_mismatch_is_internal_error(self) -> None:
         image = Image.new("RGB", (4, 2))
-        with pytest.raises(EditBakeError) as exc_info:
-            baker_module._require_dimensions(image, 2, 4, "rotate")
+        with pytest.raises(EditRenderError) as exc_info:
+            renderer_module._require_dimensions(image, 2, 4, "rotate")
         assert exc_info.value.code == "dimension_mismatch"
 
     async def test_inputs_exactly_at_each_cap_succeed(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         source_bytes = rgb_jpeg_bytes(20, 10)
-        settings = bake_settings.model_copy(
+        settings = render_settings.model_copy(
             update={
-                "edit_bake_max_input_bytes": len(source_bytes),
-                "edit_bake_max_pixels": 20 * 10,
-                "edit_bake_max_dimension": 20,
+                "edit_render_max_input_bytes": len(source_bytes),
+                "edit_render_max_pixels": 20 * 10,
+                "edit_render_max_dimension": 20,
             }
         )
-        metadata, _, _, _ = await bake(source_bytes, IDENTITY, settings)
+        metadata, _, _, _ = await render(source_bytes, IDENTITY, settings)
         assert (metadata.width, metadata.height) == (20, 10)
 
     async def test_output_exactly_at_cap_succeeds(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         source_bytes = rgb_jpeg_bytes(20, 10)
-        first, _, _, _ = await bake(source_bytes, IDENTITY, bake_settings)
-        settings = bake_settings.model_copy(
-            update={"edit_bake_max_output_bytes": first.size_bytes}
+        first, _, _, _ = await render(source_bytes, IDENTITY, render_settings)
+        settings = render_settings.model_copy(
+            update={"edit_render_max_output_bytes": first.size_bytes}
         )
-        second, _, _, _ = await bake(source_bytes, IDENTITY, settings)
+        second, _, _, _ = await render(source_bytes, IDENTITY, settings)
         assert second.size_bytes == first.size_bytes
 
 
@@ -740,75 +766,79 @@ class RecordingTempFactory:
 
 
 class TestLifetimeAndCleanup:
-    async def test_temp_files_cleaned_on_success(self, bake_settings: Settings) -> None:
-        factory = RecordingTempFactory()
-        client = make_client([make_version()])
-        response = FakeCdnResponse(rgb_jpeg_bytes())
-        with (
-            patch.object(baker_module, "tempfile", factory),
-            patch.object(
-                baker_module, "open_cdn_response", AsyncMock(return_value=response)
-            ),
-            patch.object(baker_module, "get_settings", return_value=bake_settings),
-        ):
-            async with bake_asset_edit(client, ASSET_ID, IDENTITY) as baked:
-                assert not baked.body.closed
-        assert len(factory.files) == 2  # input spool + output spool
-        assert all(file.closed for file in factory.files)
-
-    async def test_temp_files_cleaned_when_caller_fails(
-        self, bake_settings: Settings
+    async def test_temp_files_cleaned_on_success(
+        self, render_settings: Settings
     ) -> None:
         factory = RecordingTempFactory()
         client = make_client([make_version()])
         response = FakeCdnResponse(rgb_jpeg_bytes())
         with (
-            patch.object(baker_module, "tempfile", factory),
+            patch.object(renderer_module, "tempfile", factory),
             patch.object(
-                baker_module, "open_cdn_response", AsyncMock(return_value=response)
+                renderer_module, "open_cdn_response", AsyncMock(return_value=response)
             ),
-            patch.object(baker_module, "get_settings", return_value=bake_settings),
+            patch.object(renderer_module, "get_settings", return_value=render_settings),
+        ):
+            async with render_asset_edit(client, ASSET_ID, IDENTITY) as renderd:
+                assert not renderd.body.closed
+        assert len(factory.files) == 2  # input spool + output spool
+        assert all(file.closed for file in factory.files)
+
+    async def test_temp_files_cleaned_when_caller_fails(
+        self, render_settings: Settings
+    ) -> None:
+        factory = RecordingTempFactory()
+        client = make_client([make_version()])
+        response = FakeCdnResponse(rgb_jpeg_bytes())
+        with (
+            patch.object(renderer_module, "tempfile", factory),
+            patch.object(
+                renderer_module, "open_cdn_response", AsyncMock(return_value=response)
+            ),
+            patch.object(renderer_module, "get_settings", return_value=render_settings),
         ):
             with pytest.raises(RuntimeError, match="version create failed"):
-                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+                async with render_asset_edit(client, ASSET_ID, IDENTITY):
                     raise RuntimeError("version create failed")
         assert all(file.closed for file in factory.files)
 
     async def test_temp_files_cleaned_on_validation_failure(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         factory = RecordingTempFactory()
         client = make_client([make_version()])
         response = FakeCdnResponse(b"definitely not an image")
         with (
-            patch.object(baker_module, "tempfile", factory),
+            patch.object(renderer_module, "tempfile", factory),
             patch.object(
-                baker_module, "open_cdn_response", AsyncMock(return_value=response)
+                renderer_module, "open_cdn_response", AsyncMock(return_value=response)
             ),
-            patch.object(baker_module, "get_settings", return_value=bake_settings),
+            patch.object(renderer_module, "get_settings", return_value=render_settings),
         ):
-            with pytest.raises(EditBakeInputError):
-                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+            with pytest.raises(EditRenderInputError):
+                async with render_asset_edit(client, ASSET_ID, IDENTITY):
                     pass
         assert all(file.closed for file in factory.files)
 
     async def test_timeout_raises_and_reaps_abandoned_result(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
-        settings = bake_settings.model_copy(update={"edit_bake_timeout_seconds": 0.25})
+        settings = render_settings.model_copy(
+            update={"edit_render_timeout_seconds": 0.25}
+        )
         client = make_client([make_version()])
         response = FakeCdnResponse(rgb_jpeg_bytes())
         abandoned_body = Mock()
         release = threading.Event()
 
-        def slow_bake_sync(
+        def slow_render_sync(
             input_file: IO[bytes], recipe: EditRecipe, settings_arg: Settings
-        ) -> BakedEdit:
+        ) -> RenderdEdit:
             input_file.close()
             # Event-gated (not a sleep) so the worker can never finish
-            # before the bake timeout fires.
+            # before the render timeout fires.
             release.wait(timeout=10)
-            return BakedEdit(
+            return RenderdEdit(
                 body=abandoned_body,
                 mime_type="image/jpeg",
                 width=1,
@@ -817,17 +847,17 @@ class TestLifetimeAndCleanup:
             )
 
         with (
-            patch.object(baker_module, "_bake_sync", slow_bake_sync),
+            patch.object(renderer_module, "_render_sync", slow_render_sync),
             patch.object(
-                baker_module, "open_cdn_response", AsyncMock(return_value=response)
+                renderer_module, "open_cdn_response", AsyncMock(return_value=response)
             ),
-            patch.object(baker_module, "get_settings", return_value=settings),
+            patch.object(renderer_module, "get_settings", return_value=settings),
         ):
             try:
-                with pytest.raises(EditBakeTimeoutError) as exc_info:
-                    async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+                with pytest.raises(EditRenderTimeoutError) as exc_info:
+                    async with render_asset_edit(client, ASSET_ID, IDENTITY):
                         pass
-                assert exc_info.value.code == "bake_timeout"
+                assert exc_info.value.code == "render_timeout"
             finally:
                 release.set()
             # The abandoned worker thread must close its orphaned output.
@@ -836,27 +866,27 @@ class TestLifetimeAndCleanup:
                     await asyncio.sleep(0.01)
 
     async def test_cdn_failure_propagates_after_cleanup(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         factory = RecordingTempFactory()
         client = make_client([make_version()])
         cdn_error = HTTPException(status_code=502, detail="CDN upstream error")
         with (
-            patch.object(baker_module, "tempfile", factory),
+            patch.object(renderer_module, "tempfile", factory),
             patch.object(
-                baker_module, "open_cdn_response", AsyncMock(side_effect=cdn_error)
+                renderer_module, "open_cdn_response", AsyncMock(side_effect=cdn_error)
             ),
-            patch.object(baker_module, "get_settings", return_value=bake_settings),
+            patch.object(renderer_module, "get_settings", return_value=render_settings),
         ):
             with pytest.raises(HTTPException) as exc_info:
-                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+                async with render_asset_edit(client, ASSET_ID, IDENTITY):
                     pass  # pragma: no cover
         assert exc_info.value is cdn_error
         assert len(factory.files) == 1  # only the input spool was created
         assert all(file.closed for file in factory.files)
 
-    async def test_timeout_swallows_abandoned_bake_failure(
-        self, bake_settings: Settings, caplog: pytest.LogCaptureFixture
+    async def test_timeout_swallows_abandoned_render_failure(
+        self, render_settings: Settings, caplog: pytest.LogCaptureFixture
     ) -> None:
         """An abandoned worker that then fails logs a warning, not a crash.
 
@@ -864,31 +894,33 @@ class TestLifetimeAndCleanup:
         (the exception must not surface anywhere), so asserting on it is
         the log-level-as-contract exception to the no-log-assertions rule.
         """
-        settings = bake_settings.model_copy(update={"edit_bake_timeout_seconds": 0.25})
+        settings = render_settings.model_copy(
+            update={"edit_render_timeout_seconds": 0.25}
+        )
         client = make_client([make_version()])
         response = FakeCdnResponse(rgb_jpeg_bytes())
         release = threading.Event()
 
-        def failing_bake_sync(
+        def failing_render_sync(
             input_file: IO[bytes], recipe: EditRecipe, settings_arg: Settings
-        ) -> BakedEdit:
+        ) -> RenderdEdit:
             input_file.close()
             # Event-gated (not a sleep) so the failure can never surface
-            # before the bake timeout abandons this worker.
+            # before the render timeout abandons this worker.
             release.wait(timeout=10)
             raise RuntimeError("decode blew up after abandonment")
 
         with (
-            patch.object(baker_module, "_bake_sync", failing_bake_sync),
+            patch.object(renderer_module, "_render_sync", failing_render_sync),
             patch.object(
-                baker_module, "open_cdn_response", AsyncMock(return_value=response)
+                renderer_module, "open_cdn_response", AsyncMock(return_value=response)
             ),
-            patch.object(baker_module, "get_settings", return_value=settings),
-            caplog.at_level(logging.WARNING, logger="services.asset_edit_baker"),
+            patch.object(renderer_module, "get_settings", return_value=settings),
+            caplog.at_level(logging.WARNING, logger="services.asset_edit_renderer"),
         ):
             try:
-                with pytest.raises(EditBakeTimeoutError):
-                    async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+                with pytest.raises(EditRenderTimeoutError):
+                    async with render_asset_edit(client, ASSET_ID, IDENTITY):
                         pass  # pragma: no cover
             finally:
                 release.set()
@@ -896,52 +928,54 @@ class TestLifetimeAndCleanup:
             # its warning rather than surfacing the RuntimeError.
             async with asyncio.timeout(5):
                 while not any(
-                    record.getMessage() == "Abandoned edit bake failed"
+                    record.getMessage() == "Abandoned edit render failed"
                     for record in caplog.records
                 ):
                     await asyncio.sleep(0.01)
 
     async def test_cancellation_while_queued_for_a_worker_cleans_up(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
-        """A bake cancelled while queued behind a full pool closes its spool.
+        """A render cancelled while queued behind a full pool closes its spool.
 
-        The queued runner never starts, so _bake_sync's finally can never
+        The queued runner never starts, so _render_sync's finally can never
         close the input file — the awaiting side must. Admission normally
-        keeps bakes out of the executor queue entirely (slots == workers),
+        keeps renders out of the executor queue entirely (slots == workers),
         so the bound is deliberately widened here to pin the submit-to-start
         cancellation window's cleanup path.
         """
         factory = RecordingTempFactory()
-        settings = bake_settings.model_copy(
+        settings = render_settings.model_copy(
             update={
-                "edit_bake_max_concurrency": 1,
-                "edit_bake_timeout_seconds": 30.0,
+                "edit_render_max_concurrency": 1,
+                "edit_render_timeout_seconds": 30.0,
             }
         )
         release = threading.Event()
         entered: list[str] = []
 
         with (
-            patch.object(baker_module, "tempfile", factory),
+            patch.object(renderer_module, "tempfile", factory),
             patch.object(
-                baker_module, "_bake_sync", make_blocking_bake_sync(release, entered)
+                renderer_module,
+                "_render_sync",
+                make_blocking_render_sync(release, entered),
             ),
-            patch.object(baker_module, "get_settings", return_value=settings),
+            patch.object(renderer_module, "get_settings", return_value=settings),
         ):
-            baker_module._bake_admission = asyncio.Semaphore(2)
+            renderer_module._render_admission = asyncio.Semaphore(2)
             try:
-                first = asyncio.create_task(run_stub_bake())
+                first = asyncio.create_task(run_stub_render())
                 async with asyncio.timeout(10):
                     while not entered:
                         await asyncio.sleep(0.01)
-                # The single worker is now blocked; the second bake queues.
-                second = asyncio.create_task(run_stub_bake())
+                # The single worker is now blocked; the second render queues.
+                second = asyncio.create_task(run_stub_render())
                 async with asyncio.timeout(10):
-                    # Wait until the second bake's work item is actually
+                    # Wait until the second render's work item is actually
                     # sitting in the executor queue, so the cancel provably
                     # lands on the queued-future await and not mid-download.
-                    executor = baker_module._bake_executor
+                    executor = renderer_module._render_executor
                     assert executor is not None
                     while executor._work_queue.qsize() < 1:  # pyright: ignore[reportAttributeAccessIssue]
                         await asyncio.sleep(0.01)
@@ -958,7 +992,7 @@ class TestLifetimeAndCleanup:
         assert all(file.closed for file in factory.files)
 
     async def test_cancellation_during_download_cleans_up(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
         factory = RecordingTempFactory()
         client = make_client([make_version()])
@@ -979,15 +1013,15 @@ class TestLifetimeAndCleanup:
 
         response = HangingCdnResponse()
         with (
-            patch.object(baker_module, "tempfile", factory),
+            patch.object(renderer_module, "tempfile", factory),
             patch.object(
-                baker_module, "open_cdn_response", AsyncMock(return_value=response)
+                renderer_module, "open_cdn_response", AsyncMock(return_value=response)
             ),
-            patch.object(baker_module, "get_settings", return_value=bake_settings),
+            patch.object(renderer_module, "get_settings", return_value=render_settings),
         ):
 
             async def run() -> None:
-                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+                async with render_asset_edit(client, ASSET_ID, IDENTITY):
                     pass  # pragma: no cover
 
             task = asyncio.create_task(run())
@@ -1001,35 +1035,37 @@ class TestLifetimeAndCleanup:
 
 
 class TestConcurrencyBound:
-    async def test_executor_sized_from_settings(self, bake_settings: Settings) -> None:
-        settings = bake_settings.model_copy(update={"edit_bake_max_concurrency": 2})
-        with patch.object(baker_module, "get_settings", return_value=settings):
-            executor = baker_module._get_bake_executor()
+    async def test_executor_sized_from_settings(
+        self, render_settings: Settings
+    ) -> None:
+        settings = render_settings.model_copy(update={"edit_render_max_concurrency": 2})
+        with patch.object(renderer_module, "get_settings", return_value=settings):
+            executor = renderer_module._get_render_executor()
         assert executor._max_workers == 2  # pyright: ignore[reportAttributeAccessIssue]
 
-    async def test_at_most_max_concurrency_bakes_run_at_once(
-        self, bake_settings: Settings
+    async def test_at_most_max_concurrency_renders_run_at_once(
+        self, render_settings: Settings
     ) -> None:
-        settings = bake_settings.model_copy(
+        settings = render_settings.model_copy(
             update={
-                "edit_bake_max_concurrency": 1,
-                "edit_bake_timeout_seconds": 30.0,
+                "edit_render_max_concurrency": 1,
+                "edit_render_timeout_seconds": 30.0,
             }
         )
         release = threading.Event()
         entered: list[str] = []
 
         with patch.object(
-            baker_module, "_bake_sync", make_blocking_bake_sync(release, entered)
+            renderer_module, "_render_sync", make_blocking_render_sync(release, entered)
         ):
-            with patch.object(baker_module, "get_settings", return_value=settings):
+            with patch.object(renderer_module, "get_settings", return_value=settings):
                 try:
-                    first = asyncio.create_task(run_stub_bake())
-                    second = asyncio.create_task(run_stub_bake())
+                    first = asyncio.create_task(run_stub_render())
+                    second = asyncio.create_task(run_stub_render())
                     async with asyncio.timeout(10):
                         while not entered:
                             await asyncio.sleep(0.01)
-                        # Give the second bake every chance to start; the
+                        # Give the second render every chance to start; the
                         # single-worker pool must hold it back.
                         await asyncio.sleep(0.1)
                         assert len(entered) == 1
@@ -1039,14 +1075,14 @@ class TestConcurrencyBound:
                     await asyncio.gather(first, second)
         assert len(entered) == 2
 
-    async def test_waiting_bake_downloads_nothing_until_admitted(
-        self, bake_settings: Settings
+    async def test_waiting_render_downloads_nothing_until_admitted(
+        self, render_settings: Settings
     ) -> None:
         factory = RecordingTempFactory()
-        settings = bake_settings.model_copy(
+        settings = render_settings.model_copy(
             update={
-                "edit_bake_max_concurrency": 1,
-                "edit_bake_timeout_seconds": 30.0,
+                "edit_render_max_concurrency": 1,
+                "edit_render_timeout_seconds": 30.0,
             }
         )
         release = threading.Event()
@@ -1054,20 +1090,22 @@ class TestConcurrencyBound:
         open_mock = AsyncMock(side_effect=lambda url: FakeCdnResponse(rgb_jpeg_bytes()))
 
         with (
-            patch.object(baker_module, "tempfile", factory),
+            patch.object(renderer_module, "tempfile", factory),
             patch.object(
-                baker_module, "_bake_sync", make_blocking_bake_sync(release, entered)
+                renderer_module,
+                "_render_sync",
+                make_blocking_render_sync(release, entered),
             ),
-            patch.object(baker_module, "open_cdn_response", open_mock),
-            patch.object(baker_module, "get_settings", return_value=settings),
+            patch.object(renderer_module, "open_cdn_response", open_mock),
+            patch.object(renderer_module, "get_settings", return_value=settings),
         ):
             try:
-                first = asyncio.create_task(run_stub_bake(patch_cdn=False))
+                first = asyncio.create_task(run_stub_render(patch_cdn=False))
                 async with asyncio.timeout(10):
                     while not entered:
                         await asyncio.sleep(0.01)
-                second = asyncio.create_task(run_stub_bake(patch_cdn=False))
-                # Give the second bake every chance to run ahead; admission
+                second = asyncio.create_task(run_stub_render(patch_cdn=False))
+                # Give the second render every chance to run ahead; admission
                 # must hold it back before any spool or download exists.
                 await asyncio.sleep(0.1)
                 assert open_mock.await_count == 1
@@ -1079,17 +1117,17 @@ class TestConcurrencyBound:
         assert open_mock.await_count == 2
         assert len(entered) == 2
 
-    async def test_timed_out_bakes_hold_then_free_their_admission_slot(
-        self, bake_settings: Settings
+    async def test_timed_out_renders_hold_then_free_their_admission_slot(
+        self, render_settings: Settings
     ) -> None:
-        """A timed-out running bake retains its slot until its worker exits;
+        """A timed-out running render retains its slot until its worker exits;
         a request timing out while waiting for admission downloads nothing;
         and the slot is recovered afterwards rather than leaked."""
         factory = RecordingTempFactory()
-        settings = bake_settings.model_copy(
+        settings = render_settings.model_copy(
             update={
-                "edit_bake_max_concurrency": 1,
-                "edit_bake_timeout_seconds": 0.1,
+                "edit_render_max_concurrency": 1,
+                "edit_render_timeout_seconds": 0.1,
             }
         )
         release = threading.Event()
@@ -1097,43 +1135,48 @@ class TestConcurrencyBound:
         open_mock = AsyncMock(side_effect=lambda url: FakeCdnResponse(rgb_jpeg_bytes()))
 
         with (
-            patch.object(baker_module, "tempfile", factory),
+            patch.object(renderer_module, "tempfile", factory),
             patch.object(
-                baker_module, "_bake_sync", make_blocking_bake_sync(release, entered)
+                renderer_module,
+                "_render_sync",
+                make_blocking_render_sync(release, entered),
             ),
-            patch.object(baker_module, "open_cdn_response", open_mock),
-            patch.object(baker_module, "get_settings", return_value=settings),
+            patch.object(renderer_module, "open_cdn_response", open_mock),
+            patch.object(renderer_module, "get_settings", return_value=settings),
         ):
             try:
-                first = asyncio.create_task(run_stub_bake(patch_cdn=False))
+                first = asyncio.create_task(run_stub_render(patch_cdn=False))
                 async with asyncio.timeout(10):
                     while not entered:
                         await asyncio.sleep(0.01)
-                # The first bake times out but its worker is still running,
+                # The first render times out but its worker is still running,
                 # so the slot must remain occupied...
-                with pytest.raises(EditBakeTimeoutError):
+                with pytest.raises(EditRenderTimeoutError):
                     await first
                 # ...which forces the second to time out while waiting for
                 # admission, without downloading or spooling anything.
-                with pytest.raises(EditBakeTimeoutError) as exc_info:
-                    await run_stub_bake(patch_cdn=False)
-                assert exc_info.value.code == "bake_timeout"
+                with pytest.raises(EditRenderTimeoutError) as exc_info:
+                    await run_stub_render(patch_cdn=False)
+                assert exc_info.value.code == "render_timeout"
                 assert open_mock.await_count == 1
                 assert len(factory.files) == 1
             finally:
                 release.set()
             # Once the abandoned worker exits it releases the slot, so a
-            # fresh bake is admitted and completes.
+            # fresh render is admitted and completes.
             async with asyncio.timeout(10):
-                await run_stub_bake(patch_cdn=False)
+                await run_stub_render(patch_cdn=False)
         assert open_mock.await_count == 2
         assert len(entered) == 2
 
     async def test_failed_download_releases_admission_slot(
-        self, bake_settings: Settings
+        self, render_settings: Settings
     ) -> None:
-        settings = bake_settings.model_copy(
-            update={"edit_bake_max_concurrency": 1, "edit_bake_timeout_seconds": 5.0}
+        settings = render_settings.model_copy(
+            update={
+                "edit_render_max_concurrency": 1,
+                "edit_render_timeout_seconds": 5.0,
+            }
         )
         cdn_error = HTTPException(status_code=502, detail="CDN upstream error")
         open_mock = AsyncMock(
@@ -1141,11 +1184,11 @@ class TestConcurrencyBound:
         )
         client = make_client([make_version()])
         with (
-            patch.object(baker_module, "open_cdn_response", open_mock),
-            patch.object(baker_module, "get_settings", return_value=settings),
+            patch.object(renderer_module, "open_cdn_response", open_mock),
+            patch.object(renderer_module, "get_settings", return_value=settings),
         ):
             with pytest.raises(HTTPException):
-                async with bake_asset_edit(client, ASSET_ID, IDENTITY):
+                async with render_asset_edit(client, ASSET_ID, IDENTITY):
                     pass  # pragma: no cover
-            async with bake_asset_edit(client, ASSET_ID, IDENTITY) as baked:
-                assert baked.mime_type == "image/jpeg"
+            async with render_asset_edit(client, ASSET_ID, IDENTITY) as renderd:
+                assert renderd.mime_type == "image/jpeg"
