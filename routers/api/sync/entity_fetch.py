@@ -6,11 +6,15 @@ from uuid import UUID
 
 from gumnut import AsyncGumnut
 from gumnut.types.asset_response import AssetResponse
+from gumnut.types.face_response import FaceResponse
 from gumnut.types.stack_list_stacks_response import StackListStacksResponse
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.sync.types import EntityType, FetchedStack
-from routers.utils.asset_conversion import ASSET_INCLUDE_NO_PEOPLE
+from routers.utils.asset_conversion import (
+    ASSET_INCLUDE_NO_PEOPLE,
+    should_expose_face_geometry,
+)
 from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
@@ -199,3 +203,38 @@ async def fetch_entities_map(
                     )
 
     return result, missing_ids
+
+
+async def fetch_suppressed_face_ids(
+    gumnut_client: AsyncGumnut,
+    faces: list[FaceResponse],
+) -> set[str]:
+    """Return face ids whose owning assets do not expose geometry.
+
+    Owners are deduplicated and fetched with ``state="all"``, chunked at
+    ``GUMNUT_API_MAX_BULK_IDS``. Missing owners are suppressed fail-safe. No
+    ``include`` is needed because the predicate reads lean-core ``kind``.
+    """
+    asset_ids = list(dict.fromkeys(face.asset_id for face in faces))
+    if not asset_ids:
+        return set()
+
+    fetched_assets: dict[str, AssetResponse] = {}
+    for chunk in _batched(asset_ids, GUMNUT_API_MAX_BULK_IDS):
+        page = await gumnut_client.assets.list(state="all", ids=chunk, limit=len(chunk))
+        fetched_assets.update({asset.id: asset for asset in page.data})
+
+    unfetched = set(asset_ids) - fetched_assets.keys()
+    if unfetched:
+        logger.warning(
+            "Owning assets missing during face-geometry gating; suppressing "
+            "their face rows fail-safe",
+            extra={"asset_ids": sorted(unfetched)},
+        )
+
+    exposable_asset_ids = {
+        asset.id
+        for asset in fetched_assets.values()
+        if should_expose_face_geometry(asset)
+    }
+    return {face.id for face in faces if face.asset_id not in exposable_asset_ids}

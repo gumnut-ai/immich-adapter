@@ -247,6 +247,14 @@ def create_mock_face_data(updated_at: datetime) -> FaceResponse:
     )
 
 
+def create_mock_face_owning_asset_page(kind: str = "original"):
+    """Return the owner page required by visible-face sync tests."""
+    asset = Mock()
+    asset.id = uuid_to_gumnut_asset_id(TEST_UUID)
+    asset.kind = kind
+    return create_mock_entity_page([asset])
+
+
 def create_mock_album_asset_data(updated_at: datetime) -> Mock:
     """Create mock album_asset data for entity fetch."""
     album_asset = Mock()
@@ -282,5 +290,6 @@ __all__ = [
     "create_mock_metadata_data",
     "create_mock_person_data",
     "create_mock_face_data",
+    "create_mock_face_owning_asset_page",
     "create_mock_entity_page",
 ]

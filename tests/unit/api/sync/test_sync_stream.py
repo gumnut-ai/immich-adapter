@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, Mock, call
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -25,6 +25,8 @@ from routers.immich_models import (
     SyncStreamDto,
 )
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
+    safe_uuid_from_face_id,
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_face_id,
@@ -43,6 +45,7 @@ from tests.unit.api.sync.conftest import (
     create_mock_event,
     create_mock_events_response,
     create_mock_face_data,
+    create_mock_face_owning_asset_page,
     create_mock_metadata_data,
     create_mock_gumnut_client,
     create_mock_person_data,
@@ -558,6 +561,7 @@ class TestGenerateSyncStream:
         )
         mock_client.events.get.return_value = create_mock_events_response([mock_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
@@ -570,6 +574,387 @@ class TestGenerateSyncStream:
         assert events[0]["type"] == "AssetFaceV1"
         assert "boundingBoxX1" in events[0]["data"]
         assert events[1]["type"] == "SyncCompleteV1"
+
+    @pytest.mark.anyio
+    async def test_edited_asset_suppresses_face_rows_without_n_plus_one(self, caplog):
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face1 = create_mock_face_data(updated_at)
+        face2 = face1.model_copy(update={"id": uuid_to_gumnut_face_id(uuid4())})
+        events_in = [
+            create_mock_event(
+                entity_type="face",
+                entity_id=face.id,
+                event_type="face_created",
+                created_at=updated_at,
+                cursor=f"cursor_face_{i}",
+            )
+            for i, face in enumerate([face1, face2])
+        ]
+        mock_client.events.get.return_value = create_mock_events_response(events_in)
+        mock_client.faces.list.return_value = create_mock_entity_page([face1, face2])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page(
+            kind="edit"
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
+        checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
+
+        with caplog.at_level(logging.INFO, logger="routers.api.sync.stream"):
+            events = await collect_stream(
+                generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+            )
+
+        assert [e["type"] for e in events] == [
+            "AssetFaceDeleteV1",
+            "AssetFaceDeleteV1",
+            "SyncCompleteV1",
+        ]
+        assert {e["data"]["assetFaceId"] for e in events[:2]} == {
+            str(safe_uuid_from_face_id(face1.id)),
+            str(safe_uuid_from_face_id(face2.id)),
+        }
+        mock_client.assets.list.assert_called_once()
+        kwargs = mock_client.assets.list.call_args.kwargs
+        assert kwargs["ids"] == [face1.asset_id]
+        assert kwargs["state"] == "all"
+        assert "include" not in kwargs
+        summary = next(
+            r for r in caplog.records if r.getMessage() == "Sync stream summary"
+        )
+        assert summary.suppressed_face_geometry == 2
+
+    @pytest.mark.anyio
+    async def test_mixed_page_suppresses_only_edited_assets_faces(self):
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        original_asset = Mock()
+        original_asset.id = uuid_to_gumnut_asset_id(TEST_UUID)
+        original_asset.kind = "original"
+        edited_asset = Mock()
+        edited_asset.id = uuid_to_gumnut_asset_id(uuid4())
+        edited_asset.kind = "edit"
+
+        face_on_original = create_mock_face_data(updated_at)
+        face_on_edited = face_on_original.model_copy(
+            update={
+                "id": uuid_to_gumnut_face_id(uuid4()),
+                "asset_id": edited_asset.id,
+            }
+        )
+        events_in = [
+            create_mock_event(
+                entity_type="face",
+                entity_id=face.id,
+                event_type="face_created",
+                created_at=updated_at,
+                cursor=f"cursor_face_{i}",
+            )
+            for i, face in enumerate([face_on_original, face_on_edited])
+        ]
+        mock_client.events.get.return_value = create_mock_events_response(events_in)
+        mock_client.faces.list.return_value = create_mock_entity_page(
+            [face_on_original, face_on_edited]
+        )
+        mock_client.assets.list.return_value = create_mock_entity_page(
+            [original_asset, edited_asset]
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        assert [e["type"] for e in events] == [
+            "AssetFaceV1",
+            "AssetFaceDeleteV1",
+            "SyncCompleteV1",
+        ]
+        assert events[0]["data"]["assetId"] == str(
+            safe_uuid_from_asset_id(original_asset.id)
+        )
+        assert events[1]["data"]["assetFaceId"] == str(
+            safe_uuid_from_face_id(face_on_edited.id)
+        )
+        mock_client.assets.list.assert_called_once()
+        assert sorted(mock_client.assets.list.call_args.kwargs["ids"]) == sorted(
+            [original_asset.id, edited_asset.id]
+        )
+
+    @pytest.mark.anyio
+    async def test_unknown_non_original_kind_suppresses_face_rows(self):
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+        mock_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_created",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page(
+            kind="restyle"
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["AssetFaceDeleteV1", "SyncCompleteV1"]
+
+    @pytest.mark.anyio
+    async def test_missing_owning_asset_suppresses_face_rows(self):
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+        mock_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_created",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["AssetFaceDeleteV1", "SyncCompleteV1"]
+
+    @pytest.mark.anyio
+    async def test_face_v2_rows_suppressed_for_edited_assets(self):
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+        mock_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_created",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page(
+            kind="edit"
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV2])
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["AssetFaceV2", "SyncCompleteV1"]
+        assert events[0]["data"]["isVisible"] is False
+
+    @pytest.mark.anyio
+    async def test_face_v2_edit_then_restore_transitions_checkpointed(self):
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV2])
+
+        edit_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_edit",
+        )
+        mock_client.events.get.return_value = create_mock_events_response([edit_event])
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page(
+            kind="edit"
+        )
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["AssetFaceV2", "SyncCompleteV1"]
+        assert events[0]["data"]["isVisible"] is False
+        assert events[0]["ack"] == "AssetFaceV2|cursor_edit|"
+
+        restore_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_restore",
+        )
+        mock_client.events.get.return_value = create_mock_events_response(
+            [restore_event]
+        )
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page(
+            kind="original"
+        )
+        checkpoint_map = {
+            SyncEntityType.AssetFaceV2: Checkpoint(
+                entity_type=SyncEntityType.AssetFaceV2,
+                updated_at=updated_at,
+                cursor="cursor_edit",
+            )
+        }
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, checkpoint_map, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["AssetFaceV2", "SyncCompleteV1"]
+        assert events[0]["data"]["isVisible"] is True
+        assert events[0]["ack"] == "AssetFaceV2|cursor_restore|"
+        assert mock_client.events.get.call_args.kwargs["after_cursor"] == "cursor_edit"
+
+    @pytest.mark.anyio
+    async def test_v1_retraction_emits_inline_before_same_stream_restore_upsert(self):
+        """Keep retractions inline so a later-page restore upsert wins."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+        page1_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_edit",
+        )
+        page2_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_updated",
+            created_at=updated_at,
+            cursor="cursor_restore",
+        )
+        mock_client.events.get.side_effect = [
+            create_mock_events_response([page1_event], has_more=True),
+            create_mock_events_response([page2_event]),
+        ]
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.side_effect = [
+            create_mock_face_owning_asset_page(kind="edit"),
+            create_mock_face_owning_asset_page(kind="original"),
+        ]
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        assert [e["type"] for e in events] == [
+            "AssetFaceDeleteV1",
+            "AssetFaceV1",
+            "SyncCompleteV1",
+        ]
+        assert events[0]["data"]["assetFaceId"] == str(
+            safe_uuid_from_face_id(face_data.id)
+        )
+
+    @pytest.mark.anyio
+    async def test_people_still_stream_for_edited_assets(self):
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        face_data = create_mock_face_data(updated_at)
+        person_data = create_mock_person_data(updated_at)
+        face_event = create_mock_event(
+            entity_type="face",
+            entity_id=face_data.id,
+            event_type="face_created",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+        person_event = create_mock_event(
+            entity_type="person",
+            entity_id=person_data.id,
+            event_type="person_created",
+            created_at=updated_at,
+            cursor="cursor_person_1",
+        )
+
+        def mock_events_get(**kwargs: Any) -> Any:
+            entity_types = kwargs.get("entity_types", "")
+            if entity_types == "person":
+                return create_mock_events_response([person_event])
+            if entity_types == "face":
+                return create_mock_events_response([face_event])
+            return create_mock_events_response([])
+
+        mock_client.events.get.side_effect = mock_events_get
+        mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.people.list.return_value = create_mock_entity_page([person_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page(
+            kind="edit"
+        )
+
+        request = SyncStreamDto(
+            types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
+        )
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        assert [e["type"] for e in events] == [
+            "PersonV1",
+            "AssetFaceDeleteV1",
+            "SyncCompleteV1",
+        ]
+
+    @pytest.mark.anyio
+    async def test_face_delete_events_still_emitted_for_edited_assets(self):
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        mock_event = create_mock_event(
+            entity_type="face",
+            entity_id=uuid_to_gumnut_face_id(TEST_UUID),
+            event_type="face_deleted",
+            created_at=updated_at,
+            cursor="cursor_face_1",
+        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page(
+            kind="edit"
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        assert [e["type"] for e in events] == [
+            "AssetFaceDeleteV1",
+            "SyncCompleteV1",
+        ]
 
     @pytest.mark.anyio
     async def test_streams_user_metadata_preferences_with_min_faces(self):

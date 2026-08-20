@@ -62,6 +62,17 @@ archive route currently streams the current rendering regardless of `edited`.
 Mock assets must set `kind` explicitly; `make_gumnut_asset` defaults it to
 `"original"`.
 
+**Suppress face geometry while an edited rendering is current.** Gumnut stores
+face boxes in the original upload's pixel space, so they are invalid over
+derived pixels. Gate every REST and sync emit or write site through
+`should_expose_face_geometry`: REST reads return no geometry and writes return
+409. Sync must transition existing rows rather than omit them — `AssetFaceV2`
+emits `isVisible=false`, while `AssetFaceV1` emits `AssetFaceDeleteV1`; a later
+face event after restoration re-emits the visible row. Edits and restores do
+not themselves emit face events, so checkpointed clients converge only after
+the next face event or full resync. Suppression does not mutate faces, people
+associations, person thumbnails, or `AssetResponseDto.people`.
+
 ## Thumbnail variant selection by aspect ratio
 
 `GET /api/assets/{id}/thumbnail?size=thumbnail` normally streams the 360px `thumbnail` variant, but `_retrieve_and_stream_variant` (`routers/api/assets.py`) upgrades it to the 720px `small` variant for **wide-landscape** assets — `width > height` AND aspect ratio above `_LANDSCAPE_SMALL_ASPECT_THRESHOLD` (see the constant for the value). The Immich web timeline is a justified-rows grid that renders every row at a fixed height; a 360px-longest-edge thumbnail of a landscape asset has a height of only `360/aspect`, so the wider the asset the shorter the tile and the more visibly it softens when upscaled to fill the row. Only assets past the threshold — where the upscale is visible — get bumped. The 720px `small` keeps those panorama/ultrawide cells crisp at roughly a quarter of the pixels of the 1440px `preview`, which is far more resolution than a timeline tile needs. Portrait assets are deliberately excluded — 360px lands on their height, which already meets the row height, so they stay crisp without the extra bandwidth. `small`/`preview`/`fullsize`/`original` requests and missing/zero dims pass through unchanged (the `width`/`height` `0`-means-unknown guard from *Asset dimensions and orientation* applies here too). Video upgrades resolve to `small_image` via the existing `_image`-suffix logic — so any variant the bump can target must be a member of both the `AssetVariant` type and `_VIDEO_IMAGE_VARIANTS`, or a video upgrade resolves to a bare (non-`_image`) key that isn't in `asset_urls` and 404s. The threshold is tunable.

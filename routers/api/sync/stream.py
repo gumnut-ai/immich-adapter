@@ -21,11 +21,15 @@ from gumnut.types.face_response import FaceResponse
 from gumnut.types.user_response import UserResponse
 
 from routers.immich_models import (
+    SyncAssetFaceDeleteV1,
     SyncEntityType,
     SyncRequestType,
     SyncStreamDto,
 )
-from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_face_id,
+    safe_uuid_from_user_id,
+)
 from services.checkpoint_store import Checkpoint
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
@@ -34,7 +38,10 @@ from routers.api.sync.converters import (
     gumnut_user_to_sync_user_metadata_v1,
     gumnut_user_to_sync_user_v1,
 )
-from routers.api.sync.entity_fetch import fetch_entities_map
+from routers.api.sync.entity_fetch import (
+    fetch_entities_map,
+    fetch_suppressed_face_ids,
+)
 from routers.api.sync.events import (
     convert_entity_to_sync_event,
     make_delete_sync_event,
@@ -343,6 +350,14 @@ async def _stream_entity_type(
             gumnut_client, gumnut_entity_type, upsert_ids
         )
 
+        # Resolve face gates in bulk from their owning assets.
+        suppressed_face_ids: set[str] = set()
+        if gumnut_entity_type == "face" and entities_map:
+            suppressed_face_ids = await fetch_suppressed_face_ids(
+                gumnut_client,
+                [e for e in entities_map.values() if isinstance(e, FaceResponse)],
+            )
+
         # Track entity IDs that were requested but not returned (deleted/404)
         not_returned = set(upsert_ids) - entities_map.keys()
         if not_returned:
@@ -428,6 +443,28 @@ async def _stream_entity_type(
                 else:
                     stats.delete_event_skips += 1
             else:
+                # Do not omit gated rows: existing clients need V2 hidden
+                # upserts or V1 retractions.
+                suppress_geometry = event.entity_id in suppressed_face_ids
+                if suppress_geometry:
+                    stats.suppressed_face_geometry += 1
+                    if sync_entity_type == SyncEntityType.AssetFaceV1:
+                        # Emit inline so a later-page restore upsert wins;
+                        # buffering would reverse them.
+                        delete_data = SyncAssetFaceDeleteV1(
+                            assetFaceId=safe_uuid_from_face_id(event.entity_id)
+                        )
+                        yield (
+                            make_sync_event(
+                                SyncEntityType.AssetFaceDeleteV1,
+                                delete_data.model_dump(mode="json"),
+                                event.cursor,
+                            ),
+                            1,
+                        )
+                        count += 1
+                        continue
+
                 # Upsert event — look up fetched entity
                 entity = entities_map.get(event.entity_id)
                 if entity is None:
@@ -555,7 +592,12 @@ async def _stream_entity_type(
                 )
 
                 json_line = convert_entity_to_sync_event(
-                    gumnut_entity_type, entity, owner_id, event.cursor, sync_entity_type
+                    gumnut_entity_type,
+                    entity,
+                    owner_id,
+                    event.cursor,
+                    sync_entity_type,
+                    face_visible=not suppress_geometry,
                 )
                 yield json_line, 1
                 count += 1
@@ -815,6 +857,8 @@ async def generate_sync_stream(
             summary_extra["buffered_deletes"] = stats.buffered_deletes
         if stats.fk_warnings > 0:
             summary_extra["fk_reference_warnings"] = stats.fk_warnings
+        if stats.suppressed_face_geometry > 0:
+            summary_extra["suppressed_face_geometry"] = stats.suppressed_face_geometry
 
         logger.info("Sync stream summary", extra=summary_extra)
 
