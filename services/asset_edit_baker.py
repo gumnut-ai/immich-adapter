@@ -1,31 +1,8 @@
-"""Bake an Immich edit recipe into derived JPEG/PNG bytes, server-side.
+"""Bake normalized Immich edits into derived JPEG/PNG bytes.
 
-Immich sends edit operations rather than baked bytes, so the adapter must
-materialize the derived image before calling the Gumnut API's generic version
-creation. Every bake starts from the asset's position-0 exact original bytes —
-never the current rendering, a thumbnail, or a prior edit — so repeated
-adjustments are non-cumulative and suffer no generational encode loss.
-
-The bake pipeline, per the normalized v1 recipe
-(`routers/utils/asset_edit_conversion.EditRecipe`):
-
-1. List the asset's versions once and select the unique ``position == 0`` row.
-2. Stream its signed exact-byte ``original`` URL to a spooled temp file,
-   bounded before (Content-Length) and while streaming.
-3. Decode into display orientation exactly once via the embedded EXIF
-   orientation, under explicit dimension/pixel caps (Pillow's global
-   decompression-bomb guard stays enabled as a backstop). Multi-frame
-   (animated) sources are rejected rather than silently flattened.
-4. Apply crop (display-oriented frame), then clockwise rotation, then a
-   horizontal mirror, asserting intermediate and output dimensions.
-5. Encode PNG when transparency must survive, deterministic JPEG otherwise,
-   with orientation baked into pixels and no orientation tag in the output.
-
-The service performs no Gumnut version mutation and emits no websocket event.
-The Gumnut API remains authoritative for declared-vs-detected format,
-dimensions, byte size, and metadata finalization — the returned metadata is
-for route decisions and diagnostics only. Signed URLs and raw image bytes are
-never logged.
+Every bake starts from the asset's position-0 exact original, keeping repeated
+adjustments non-cumulative. The service returns upload-ready bytes and metadata
+but does not create a Gumnut version or emit a websocket event.
 """
 
 from __future__ import annotations
@@ -49,23 +26,18 @@ from config.settings import Settings, get_settings
 from routers.utils.asset_edit_conversion import AssetEditError, EditRecipe
 from routers.utils.cdn_client import open_cdn_response
 
-# The adapter accepts HEIC/HEIF originals (typical iPhone captures), but
-# plain Pillow ships no HEIF codec — without this registration their bytes
-# fail to open and every HEIC bake would reject as unsupported_image.
+# Pillow needs this opener to decode HEIC/HEIF originals.
 register_heif_opener()
 
 logger = logging.getLogger(__name__)
 
-# Deterministic JPEG encode settings: fixed quality with 4:4:4 chroma
-# (no subsampling), matching upstream Immich's high-quality encode choice.
+# Deterministic JPEG settings: quality 90 with 4:4:4 chroma.
 JPEG_QUALITY = 90
 JPEG_SUBSAMPLING = 0
 
 _DOWNLOAD_CHUNK_BYTES = 64 * 1024
 
-# Recipe angles are clockwise in display space (pinned by the codec's golden
-# tests against upstream Immich); PIL's ROTATE_* transposes are
-# counterclockwise, so the mapping inverts.
+# Recipe angles are clockwise; Pillow's ROTATE_* values are counterclockwise.
 _CLOCKWISE_ANGLE_TO_TRANSPOSE = {
     90: Image.Transpose.ROTATE_270,
     180: Image.Transpose.ROTATE_180,
@@ -113,13 +85,10 @@ _bake_admission: asyncio.Semaphore | None = None
 
 
 def _get_bake_executor() -> ThreadPoolExecutor:
-    """Lazily create the dedicated, bounded bake worker pool.
+    """Return the dedicated pool that bounds CPU and decoded-pixel memory.
 
-    A dedicated pool (rather than a semaphore around the shared default
-    executor) keeps the CPU/decoded-pixel-memory bound honest under timeouts:
-    an abandoned bake keeps occupying its own worker until it actually
-    finishes, so new bakes cannot over-subscribe, and bake work never starves
-    other ``asyncio.to_thread`` users in the process.
+    Timed-out work keeps its worker until it exits, preventing oversubscription
+    without consuming the shared asyncio executor.
     """
     global _bake_executor
     if _bake_executor is None:
@@ -131,16 +100,11 @@ def _get_bake_executor() -> ThreadPoolExecutor:
 
 
 def _get_bake_admission() -> asyncio.Semaphore:
-    """Lazily create the admission bound guarding per-bake input resources.
+    """Bound source inputs retained before executor submission.
 
-    The worker pool bounds decode work, but its submission queue is
-    unbounded — without admission control every queued request would already
-    hold a downloaded source (up to the spool/input caps each). Acquiring a
-    slot *before* the download keeps total retained inputs at
-    ``edit_bake_max_concurrency``: a bake abandoned by timeout keeps its slot
-    until its worker actually exits (mirroring the pool's over-subscription
-    guarantee), while requests still waiting for admission time out under the
-    overall bake budget without having downloaded or spooled anything.
+    Admission precedes download because the executor queue is unbounded.
+    Timed-out work retains its slot until its worker exits; requests waiting
+    for admission hold no downloaded source.
     """
     global _bake_admission
     if _bake_admission is None:
@@ -154,24 +118,14 @@ async def bake_asset_edit(
     gumnut_asset_id: str,
     recipe: EditRecipe,
 ) -> AsyncIterator[BakedEdit]:
-    """Bake ``recipe`` from the asset's position-0 original bytes.
+    """Yield a bake from the position-0 original, closing its body on exit.
 
-    Yields a :class:`BakedEdit` whose ``body`` stays valid for the
-    ``async with`` block; every temp file is deleted on exit regardless of
-    outcome (success, validation failure, cancellation, or a caller failure
-    such as version-create).
-
-    Raises :class:`EditBakeError` subclasses for bake-domain failures,
-    including mid-stream CDN interruptions (``source_fetch_failed``).
-    Failures opening the CDN response propagate as the CDN client's
-    ``HTTPException`` and SDK failures as the SDK's exceptions, all after
-    temp cleanup.
+    Bake failures use :class:`EditBakeError`; CDN-open and SDK failures retain
+    their original exception types.
     """
     settings = get_settings()
     try:
-        # The budget covers the whole bake including time spent waiting for
-        # admission, so saturation surfaces as bake_timeout rather than
-        # unbounded queueing.
+        # Include admission waits so saturation times out instead of queueing.
         async with asyncio.timeout(settings.edit_bake_timeout_seconds):
             baked = await _bake(client, gumnut_asset_id, recipe, settings)
     except TimeoutError as exc:
@@ -192,19 +146,14 @@ async def _bake(
 ) -> BakedEdit:
     source_url = await _select_root_original_url(client, gumnut_asset_id)
 
-    # Admission is acquired before any per-bake resource (spool, download)
-    # is allocated, so saturation queues requests that hold nothing.
+    # Waiting requests must not retain a spool or downloaded source.
     loop = asyncio.get_running_loop()
     admission = _get_bake_admission()
     await admission.acquire()
 
-    # The decode/transform/encode worker owns input_file — and the admission
-    # slot — once it starts. Shared state (guarded by the lock) makes cleanup
-    # airtight when the awaiting task is cancelled or times out in any
-    # interleaving: whichever side sees both "abandoned" and a produced
-    # result closes it, an abandoned bake whose worker never started still
-    # closes input_file, and the slot is released exactly once (by the
-    # runner's finally when it started, by the awaiting side otherwise).
+    # Once started, the worker owns the input and admission slot. The lock
+    # ensures that cancellation closes any orphaned result and that either the
+    # worker or awaiter—not both—closes the input and releases admission.
     state_lock = threading.Lock()
     state: dict[str, Any] = {"abandoned": False, "started": False, "result": None}
     input_file: IO[bytes] | None = None
@@ -213,17 +162,13 @@ async def _bake(
         try:
             loop.call_soon_threadsafe(admission.release)
         except RuntimeError:
-            # The event loop already closed (process shutdown); the slot no
-            # longer gates anything.
+            # The loop is already shutting down.
             pass
 
     def runner() -> BakedEdit | None:
         with state_lock:
             if state["abandoned"]:
-                # Cancelled in the window between the executor marking this
-                # work item running and it actually entering here; the
-                # awaiting side saw started=False and owns input_file and
-                # the admission slot.
+                # Cancellation won the submit-to-start race; the awaiter owns cleanup.
                 return None
             state["started"] = True
         try:
@@ -234,8 +179,7 @@ async def _bake(
                 with state_lock:
                     abandoned = state["abandoned"]
                 if abandoned:
-                    # Nobody is awaiting this thread; swallow so the executor
-                    # future doesn't surface an unretrieved exception.
+                    # Avoid an unretrieved exception after the awaiter left.
                     logger.warning(
                         "Abandoned edit bake failed",
                         exc_info=True,
@@ -250,9 +194,7 @@ async def _bake(
                 state["result"] = result
             return result
         finally:
-            # A started bake retains its slot until the worker exits, even
-            # when the awaiting task timed out long ago — new bakes must not
-            # over-subscribe input retention past the configured bound.
+            # Timed-out work retains its slot until the worker exits.
             release_admission_threadsafe()
 
     try:
@@ -270,9 +212,7 @@ async def _bake(
         if orphan is not None:
             orphan.body.close()
         if not started:
-            # Failed or cancelled before the worker ran (download failure,
-            # or cancelled while still queued): the worker will never run,
-            # so its finally can't close the input spool or free the slot.
+            # No worker will run its cleanup for this input or slot.
             if input_file is not None:
                 input_file.close()
             admission.release()
@@ -338,11 +278,7 @@ async def _download_source(
                     )
                 destination.write(chunk)
         except httpx.HTTPError as exc:
-            # open_cdn_response classifies only the initial send; a failure
-            # mid-stream (read timeout, dropped connection) surfaces here
-            # and needs the same stable classification. The asset id and
-            # bare CDN hostname are safe correlation keys; the signed URL
-            # itself stays out of the logs.
+            # Classify failures after the initial response without logging the URL.
             logger.warning(
                 "CDN stream failed while downloading source bytes",
                 extra={
@@ -372,14 +308,7 @@ def _bake_sync(
 
 
 def _decode_display_oriented(input_file: IO[bytes], settings: Settings) -> Image.Image:
-    """Decode the source into display orientation, exactly once.
-
-    Dimension and pixel caps are checked from the header before any pixel
-    data is decoded. EXIF orientation is applied to pixels here and nowhere
-    else; stale embedded thumbnails are irrelevant to the transform because
-    only the primary image's pixels are read, and the Gumnut API performs
-    authoritative metadata finalization after upload.
-    """
+    """Decode once into display orientation after header-level size checks."""
     try:
         image = Image.open(input_file)
     except Image.DecompressionBombError as exc:
@@ -391,16 +320,13 @@ def _decode_display_oriented(input_file: IO[bytes], settings: Settings) -> Image
             "unsupported_image", "Source bytes are not a supported image"
         ) from exc
     except (OSError, SyntaxError, ValueError) as exc:
-        # A recognized container that fails while its header/segments are
-        # parsed (e.g. a truncated stream) surfaces here rather than as
-        # UnidentifiedImageError, which the clause above already consumed.
+        # Recognized but malformed containers can fail during header parsing.
         raise EditBakeInputError(
             "corrupt_image", "Source image could not be decoded"
         ) from exc
 
     if getattr(image, "is_animated", False):
-        # Baking would silently flatten a multi-frame source to frame 0;
-        # reject explicitly instead of degrading the derivative.
+        # Pillow would silently flatten the source to frame 0.
         raise EditBakeInputError(
             "unsupported_image", "Animated images cannot be edited"
         )
@@ -420,8 +346,7 @@ def _decode_display_oriented(input_file: IO[bytes], settings: Settings) -> Image
         )
 
     try:
-        # Force the full pixel decode here so corrupt streams fail with a
-        # stable code instead of surfacing mid-transform or mid-encode.
+        # Decode now so corrupt streams receive a stable error code.
         image.load()
         oriented = ImageOps.exif_transpose(image)
     except Image.DecompressionBombError as exc:
@@ -452,9 +377,7 @@ def _apply_recipe(image: Image.Image, recipe: EditRecipe) -> Image.Image:
 
     if recipe.crop is not None:
         crop = recipe.crop
-        # Both edges are re-validated against the actually-decoded frame:
-        # PIL pads (rather than rejects) out-of-frame crop boxes, which
-        # would silently fabricate pixels.
+        # Pillow pads out-of-frame crops, so validate against decoded dimensions.
         if (
             crop.x < 0
             or crop.y < 0
@@ -516,14 +439,7 @@ class _CappedFile:
 
 
 def _encode(image: Image.Image, settings: Settings) -> BakedEdit:
-    """Encode the transformed image to PNG (transparency) or JPEG (otherwise).
-
-    The alpha policy is fixed: any transparency routes to PNG, so the JPEG
-    path never flattens — there is no implicit background composite. The
-    output container carries no orientation tag (orientation is baked into
-    pixels) and no copied EXIF; the Gumnut API finalizes metadata after
-    upload.
-    """
+    """Encode transparency as PNG and opaque pixels as JPEG, without EXIF."""
     output: IO[bytes] = tempfile.SpooledTemporaryFile(
         max_size=settings.edit_bake_spool_max_bytes
     )

@@ -50,29 +50,19 @@ class Settings(BaseSettings):
     streaming_upload_threshold_bytes: int = 100 * 1024 * 1024  # 100MB
 
     # --- Server-side edit baking (services/asset_edit_baker.py) ---
-    # Maximum compressed byte size accepted for the position-0 source download.
-    # Enforced against Content-Length before streaming and re-enforced while
-    # streaming, so a lying header cannot bypass it.
+    # Maximum source bytes; enforced against Content-Length and streamed bytes.
     edit_bake_max_input_bytes: int = 100 * 1024 * 1024  # 100MB
-    # Maximum decoded pixel count (width * height), checked from the image
-    # header before any pixel data is decoded. Kept below Pillow's default
-    # decompression-bomb warning threshold (~89.5M pixels) so images we accept
-    # never trip Pillow's global guard, which stays enabled as a backstop.
+    # Checked from the header before decode. This stays below Pillow's ~89.5 MP
+    # warning threshold; Pillow's decompression-bomb guard remains a backstop.
     edit_bake_max_pixels: int = 80_000_000
-    # Maximum single-axis dimension for source images.
+    # Maximum width or height.
     edit_bake_max_dimension: int = 30_000
-    # Maximum encoded output byte size; encoding aborts once exceeded.
+    # Encoding aborts above this size.
     edit_bake_max_output_bytes: int = 100 * 1024 * 1024  # 100MB
-    # Wall-clock bound for one bake, including time spent waiting for
-    # admission under saturation; see services/asset_edit_baker.py::bake_asset_edit.
+    # Includes time waiting for admission.
     edit_bake_timeout_seconds: float = 60.0
-    # Bound on concurrent bakes: sizes both the dedicated bake thread pool
-    # (CPU and peak decoded-pixel memory) and the admission semaphore that
-    # caps how many downloaded inputs are retained at once; see
-    # asset_edit_baker._get_bake_executor and _get_bake_admission. When
-    # tuning, size the product with edit_bake_max_pixels: a worst-case bake
-    # peaks near max_pixels * 4 bytes * ~2 transient copies of decoded
-    # memory, multiplied by this concurrency.
+    # Sizes both the worker pool and input-admission semaphore. Budget roughly
+    # max_pixels * 4 bytes * 2 transient decoded copies per concurrent bake.
     edit_bake_max_concurrency: int = 4
     # Bytes a bake temp file holds in memory before spooling to disk.
     edit_bake_spool_max_bytes: int = 16 * 1024 * 1024  # 16MB

@@ -1,13 +1,4 @@
-"""Tests for the asset edit baker service.
-
-Fixtures are small generated images rather than committed binaries — except
-the HEIC coverage, which reuses the real iPhone capture committed for the
-live-photo tests. Golden pixel tests use RGBA PNG sources so the output is
-PNG and pixel comparisons are exact; JPEG-path tests assert format selection,
-dimensions, and metadata rather than exact pixels. Expected grids come from
-small pure-Python reference transforms defined here, independent of the
-baker's PIL pipeline.
-"""
+"""Asset edit baker tests using independent pixel-grid reference transforms."""
 
 import asyncio
 import io
@@ -49,22 +40,16 @@ HEIC_FIXTURE_PATH = (
     Path(__file__).parents[2] / "fixtures" / "livephoto" / "IMG_1309.HEIC"
 )
 
-# A pixel as PIL's getpixel reports it; grids are row-major.
 Pixel = float | tuple[int, ...] | None
 Grid = list[list[Pixel]]
 
 
-# --- reference transforms (pure Python, independent of the baker) ---
-
-
 def rotate_cw(grid: Grid) -> Grid:
-    """Rotate a row-major pixel grid 90 degrees clockwise."""
     h, w = len(grid), len(grid[0])
     return [[grid[h - 1 - x][y] for x in range(h)] for y in range(w)]
 
 
 def mirror_h(grid: Grid) -> Grid:
-    """Mirror a row-major pixel grid horizontally (flip left-right)."""
     return [row[::-1] for row in grid]
 
 
@@ -100,11 +85,7 @@ def assert_grids_close(actual: Grid, expected: Grid, tolerance: int) -> None:
             )
 
 
-# --- fixture builders ---
-
-
 def make_rgba_image(width: int, height: int, alpha: int = 255) -> Image.Image:
-    """RGBA image with a distinct color at every pixel position."""
     image = Image.new("RGBA", (width, height))
     for y in range(height):
         for x in range(width):
@@ -134,8 +115,6 @@ def rgb_jpeg_bytes(width: int = 4, height: int = 2) -> bytes:
 
 
 class FakeCdnResponse:
-    """Minimal stand-in for the streamed httpx CDN response."""
-
     def __init__(self, body: bytes, headers: dict[str, str] | None = None) -> None:
         self._body = body
         self.headers = (
@@ -267,8 +246,6 @@ async def run_stub_bake(*, patch_cdn: bool = True) -> None:
 
 
 class TestGoldenTransforms:
-    """Exact pixel/dimension tests via RGBA PNG (lossless output)."""
-
     @pytest.mark.parametrize(
         "recipe",
         [
@@ -278,9 +255,7 @@ class TestGoldenTransforms:
             EditRecipe(crop=None, angle=90, mirror=False),
             EditRecipe(crop=None, angle=180, mirror=False),
             EditRecipe(crop=None, angle=270, mirror=False),
-            # Horizontal mirror.
             EditRecipe(crop=None, angle=0, mirror=True),
-            # Vertical mirror folds to rotate 180 + mirror.
             EditRecipe(crop=None, angle=180, mirror=True),
         ],
     )
@@ -324,13 +299,9 @@ class TestGoldenTransforms:
         _, output_bytes, _, _ = await bake(
             encode_image(source, "PNG"), recipe, bake_settings
         )
-        # Reference: crop first, then rotate. Rotating first would instead
-        # put source (5, 0)-adjacent pixels in frame; the corner assertion
-        # below fails for that order.
         expected = rotate_cw([row[0:3] for row in grid_of(source)[0:2]])
         baked_grid = grid_of(Image.open(io.BytesIO(output_bytes)))
         assert baked_grid == expected
-        # Rotated top-left must be the crop's bottom-left source pixel.
         assert baked_grid[0][0] == source.getpixel((0, 1))
 
     async def test_crop_applies_to_display_oriented_frame(
@@ -361,12 +332,8 @@ class TestExifOrientation:
         reference = ImageOps.exif_transpose(Image.open(io.BytesIO(source_bytes)))
         assert reference is not None
         baked_image = Image.open(io.BytesIO(output_bytes))
-        # Pixels match a single orientation application (a double bake of
-        # e.g. orientation 6 would rotate 180 in total and not match).
         assert grid_of(baked_image) == grid_of(reference)
-        # Output reports display-space dimensions...
         assert (metadata.width, metadata.height) == reference.size
-        # ...and carries no stale rotation tag.
         assert baked_image.getexif().get(_EXIF_ORIENTATION_TAG) is None
 
     async def test_output_has_no_orientation_tag_for_jpeg(
@@ -421,7 +388,6 @@ class TestFormatSelection:
     async def test_grayscale_jpeg_preserves_l_mode(
         self, bake_settings: Settings
     ) -> None:
-        """An L-mode source encodes as grayscale JPEG, not converted to RGB."""
         source = Image.new("L", (4, 2))
         for y in range(2):
             for x in range(4):
@@ -436,7 +402,6 @@ class TestFormatSelection:
     async def test_grayscale_alpha_png_preserves_la_mode(
         self, bake_settings: Settings
     ) -> None:
-        """An LA-mode source keeps grayscale+alpha, not converted to RGBA."""
         source = Image.new("LA", (4, 2), (100, 128))
         source_bytes = encode_image(source, "PNG")
         metadata, output_bytes, _, _ = await bake(source_bytes, IDENTITY, bake_settings)
@@ -459,14 +424,7 @@ class TestFormatSelection:
 
 
 class TestHeicSources:
-    """Real-file coverage for HEIC originals (typical iPhone captures).
-
-    pillow-heif applies the container's display transforms while decoding
-    (the opened image reports EXIF orientation 1), so orientation
-    correctness for HEIC is asserted against a display-space reference
-    decode of the same bytes; the exhaustive orientation matrix stays on
-    the lossless PNG tests above.
-    """
+    """Real-file HEIC coverage against a display-space reference decode."""
 
     async def test_real_iphone_heic_identity_bake(
         self, bake_settings: Settings
@@ -483,7 +441,6 @@ class TestHeicSources:
         baked_image = Image.open(io.BytesIO(output_bytes))
         assert metadata.mime_type == "image/jpeg"
         assert baked_image.format == "JPEG"
-        # Display-space dimensions, orientation baked into pixels, no tag.
         assert (metadata.width, metadata.height) == reference.size
         assert baked_image.getexif().get(_EXIF_ORIENTATION_TAG) is None
 
@@ -525,11 +482,9 @@ class TestSourceAcquisition:
             ASSET_ID, include=["variants"]
         )
         open_mock.assert_awaited_once_with(ORIGINAL_URL)
-        # No version mutation, no other asset reads.
         client.assets.versions.delete.assert_not_called()
         client.assets.versions.revert.assert_not_called()
         client.assets.retrieve.assert_not_called()
-        # Detected metadata matches the encoded output.
         baked_image = Image.open(io.BytesIO(output_bytes))
         assert (metadata.width, metadata.height) == baked_image.size
         assert metadata.size_bytes == len(output_bytes)
@@ -591,7 +546,6 @@ class TestSourceAcquisition:
     async def test_repeat_adjustment_rebakes_from_position_zero(
         self, bake_settings: Settings
     ) -> None:
-        """A second recipe over the same asset equals a fresh bake of it."""
         source_bytes = rgb_jpeg_bytes(6, 4)
         first_recipe = EditRecipe(
             crop=CropBox(x=1, y=1, width=4, height=2), angle=90, mirror=False
@@ -629,7 +583,6 @@ class TestInputValidationAndLimits:
         assert exc_info.value.code == "unsupported_image"
 
     async def test_negative_crop_origin_rejected(self, bake_settings: Settings) -> None:
-        """PIL would pad a negative origin with fabricated pixels; reject it."""
         recipe = EditRecipe(
             crop=CropBox(x=-2, y=0, width=4, height=2), angle=0, mirror=False
         )
@@ -667,8 +620,6 @@ class TestInputValidationAndLimits:
     async def test_mid_stream_cdn_failure_classified(
         self, bake_settings: Settings, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A stream that dies mid-body maps to a stable bake error code."""
-
         class DyingCdnResponse:
             def __init__(self) -> None:
                 self.headers: dict[str, str] = {}
@@ -695,8 +646,6 @@ class TestInputValidationAndLimits:
                     pass  # pragma: no cover
         assert exc_info.value.code == "source_fetch_failed"
         assert response.closed
-        # The warning carries safe correlation keys — asset id and bare CDN
-        # host — and never the signed URL itself.
         record = next(
             r
             for r in caplog.records
@@ -747,7 +696,6 @@ class TestInputValidationAndLimits:
         assert exc_info.value.code == "crop_out_of_bounds"
 
     async def test_dimension_mismatch_is_internal_error(self) -> None:
-        """The invariant check trips if PIL output diverges from the recipe."""
         image = Image.new("RGB", (4, 2))
         with pytest.raises(EditBakeError) as exc_info:
             baker_module._require_dimensions(image, 2, 4, "rotate")
@@ -756,7 +704,6 @@ class TestInputValidationAndLimits:
     async def test_inputs_exactly_at_each_cap_succeed(
         self, bake_settings: Settings
     ) -> None:
-        """The caps are exclusive: a value equal to the cap passes."""
         source_bytes = rgb_jpeg_bytes(20, 10)
         settings = bake_settings.model_copy(
             update={
@@ -812,7 +759,6 @@ class TestLifetimeAndCleanup:
     async def test_temp_files_cleaned_when_caller_fails(
         self, bake_settings: Settings
     ) -> None:
-        """A version-create failure inside the context still cleans up."""
         factory = RecordingTempFactory()
         client = make_client([make_version()])
         response = FakeCdnResponse(rgb_jpeg_bytes())
@@ -892,7 +838,6 @@ class TestLifetimeAndCleanup:
     async def test_cdn_failure_propagates_after_cleanup(
         self, bake_settings: Settings
     ) -> None:
-        """The CDN client's HTTPException passes through; spools still close."""
         factory = RecordingTempFactory()
         client = make_client([make_version()])
         cdn_error = HTTPException(status_code=502, detail="CDN upstream error")
@@ -1065,7 +1010,6 @@ class TestConcurrencyBound:
     async def test_at_most_max_concurrency_bakes_run_at_once(
         self, bake_settings: Settings
     ) -> None:
-        """The pool, not just its size, is what bounds concurrent bakes."""
         settings = bake_settings.model_copy(
             update={
                 "edit_bake_max_concurrency": 1,
@@ -1098,7 +1042,6 @@ class TestConcurrencyBound:
     async def test_waiting_bake_downloads_nothing_until_admitted(
         self, bake_settings: Settings
     ) -> None:
-        """Admission, not just the pool, bounds retained downloaded inputs."""
         factory = RecordingTempFactory()
         settings = bake_settings.model_copy(
             update={
@@ -1189,7 +1132,6 @@ class TestConcurrencyBound:
     async def test_failed_download_releases_admission_slot(
         self, bake_settings: Settings
     ) -> None:
-        """A bake failing before its worker starts must free its slot."""
         settings = bake_settings.model_copy(
             update={"edit_bake_max_concurrency": 1, "edit_bake_timeout_seconds": 5.0}
         )
@@ -1205,7 +1147,5 @@ class TestConcurrencyBound:
             with pytest.raises(HTTPException):
                 async with bake_asset_edit(client, ASSET_ID, IDENTITY):
                     pass  # pragma: no cover
-            # If the failed bake leaked its slot, this one would hit the
-            # 5-second bake timeout instead of completing.
             async with bake_asset_edit(client, ASSET_ID, IDENTITY) as baked:
                 assert baked.mime_type == "image/jpeg"

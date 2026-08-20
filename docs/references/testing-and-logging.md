@@ -37,7 +37,8 @@ logger.info("WebSocket connected", extra={"sid": sid, "user_id": user_id, "devic
 
 This enables better searching and correlation in Sentry.
 
-Never log signed URLs (CDN `original`/variant URLs — the query string is a bearer credential). Correlate with `asset_id` and the bare hostname instead; `services/asset_edit_baker.py`'s mid-stream CDN warning is the pattern.
+Never log signed CDN URLs: their query strings are bearer credentials. Use the
+`asset_id` and bare hostname for correlation.
 
 ## Upstream response log levels
 
