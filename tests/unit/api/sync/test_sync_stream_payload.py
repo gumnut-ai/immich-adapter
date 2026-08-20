@@ -30,6 +30,7 @@ from tests.unit.api.sync.conftest import (
     create_mock_event,
     create_mock_events_response,
     create_mock_face_data,
+    create_mock_face_owning_asset_page,
     create_mock_gumnut_client,
     create_mock_person_data,
     create_mock_user,
@@ -85,6 +86,7 @@ class TestFacePersonIdOverride:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
@@ -161,6 +163,7 @@ class TestFacePersonIdOverride:
 
         mock_client.events.get.side_effect = mock_events_get
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         request = SyncStreamDto(
             types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
@@ -230,6 +233,7 @@ class TestFacePersonIdOverride:
         mock_client.events.get.side_effect = mock_events_get
         mock_client.people.list.return_value = create_mock_entity_page([person_data])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         request = SyncStreamDto(
             types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
@@ -293,6 +297,7 @@ class TestFacePersonIdOverride:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
         mock_client.people.list.return_value = create_mock_entity_page(
             [payload_person_data]
         )
@@ -355,6 +360,7 @@ class TestFacePersonIdOverride:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
@@ -405,6 +411,7 @@ class TestFacePersonIdOverride:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
@@ -454,6 +461,7 @@ class TestFacePersonIdOverride:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
@@ -712,6 +720,7 @@ class TestFacePayloadOverrideDeletedPerson:
         # Person fetch returns empty -- person was deleted
         mock_client.people.list.return_value = create_mock_entity_page([])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         request = SyncStreamDto(
             types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
@@ -772,6 +781,7 @@ class TestFacePayloadOverrideDeletedPerson:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
         mock_client.people.list.return_value = create_mock_entity_page(
             [payload_person_data]
         )
@@ -924,6 +934,7 @@ class TestFacePayloadOverrideDeletedPerson:
         # Person P1 is deleted (404), P2 exists
         mock_client.people.list.return_value = create_mock_entity_page([p2_data])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         request = SyncStreamDto(
             types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
@@ -1041,6 +1052,7 @@ class TestFacePayloadOverrideDeletedPerson:
         mock_client.faces.list.return_value = create_mock_entity_page(
             [face1_data, face2_data]
         )
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         request = SyncStreamDto(
             types=[SyncRequestType.PeopleV1, SyncRequestType.AssetFacesV1]
@@ -1108,6 +1120,7 @@ class TestFacePayloadOverrideDeletedPerson:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
         # Verification fetch returns empty — person is deleted in prod
         mock_client.people.list.return_value = create_mock_entity_page([])
 
@@ -1330,6 +1343,7 @@ class TestAssetFaceV2Converter:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
         sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
@@ -1384,6 +1398,7 @@ class TestAssetFaceV2Converter:
 
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
+        mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
         mock_client.people.list.return_value = create_mock_entity_page(
             [payload_person_data]
         )

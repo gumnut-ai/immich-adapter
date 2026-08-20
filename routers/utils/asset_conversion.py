@@ -71,6 +71,15 @@ def is_asset_edited(gumnut_asset: AssetResponse) -> bool:
     return gumnut_asset.kind != "original"
 
 
+def should_expose_face_geometry(gumnut_asset: AssetResponse) -> bool:
+    """Return whether Immich face bounding boxes may be emitted for this asset.
+
+    Use this predicate at every face-geometry emit or write site. The rationale
+    and surface behavior live in ``docs/references/asset-and-media-handling.md``.
+    """
+    return not is_asset_edited(gumnut_asset)
+
+
 class AssetLocationFields(NamedTuple):
     """Immich-facing location fields shared by every asset response path."""
 

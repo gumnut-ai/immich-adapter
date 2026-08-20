@@ -288,6 +288,8 @@ def convert_entity_to_sync_event(
     owner_id: UUID,
     cursor: str,
     sync_entity_type: SyncEntityType,
+    *,
+    face_visible: bool = True,
 ) -> str:
     """
     Convert a fetched entity to an Immich sync event JSON line.
@@ -298,6 +300,7 @@ def convert_entity_to_sync_event(
         owner_id: UUID of the owner
         cursor: The event cursor for the ack string
         sync_entity_type: The Immich sync entity type
+        face_visible: Whether an AssetFaceV2 row is visible
 
     Returns:
         JSON line string with newline
@@ -339,7 +342,9 @@ def convert_entity_to_sync_event(
         )
     elif gumnut_entity_type == "face":
         if sync_entity_type == SyncEntityType.AssetFaceV2:
-            sync_model = gumnut_face_to_sync_face_v2(cast(FaceResponse, entity))
+            sync_model = gumnut_face_to_sync_face_v2(
+                cast(FaceResponse, entity), visible=face_visible
+            )
         else:
             sync_model = gumnut_face_to_sync_face_v1(cast(FaceResponse, entity))
     elif gumnut_entity_type == "metadata":

@@ -45,6 +45,7 @@ from routers.utils.asset_conversion import (
     resolve_asset_location,
     resolve_file_modified_at,
     resolve_immich_checksum,
+    should_expose_face_geometry,
 )
 from routers.utils.datetime_utils import to_actual_utc
 from tests.conftest import make_gumnut_asset, make_gumnut_stack
@@ -997,3 +998,16 @@ class TestIsEditedMapping:
 
     def test_unknown_non_original_kind_maps_edited(self):
         assert self._is_edited_everywhere("external:future-service") == {True}
+
+
+class TestShouldExposeFaceGeometry:
+    def test_original_current_exposes_geometry(self):
+        assert should_expose_face_geometry(make_gumnut_asset(kind="original"))
+
+    def test_edit_current_suppresses_geometry(self):
+        assert not should_expose_face_geometry(make_gumnut_asset(kind="edit"))
+
+    def test_unknown_non_original_kind_suppresses_geometry(self):
+        assert not should_expose_face_geometry(
+            make_gumnut_asset(kind="external:future-service")
+        )
