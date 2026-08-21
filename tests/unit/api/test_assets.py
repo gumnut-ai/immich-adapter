@@ -3868,8 +3868,8 @@ class TestAssetEdits:
         calls: list[tuple] = []
 
         @asynccontextmanager
-        async def fake(client, gumnut_asset_id, recipe):
-            calls.append((client, gumnut_asset_id, recipe))
+        async def fake(client, gumnut_asset_id, recipe, versions=None):
+            calls.append((client, gumnut_asset_id, recipe, versions))
             if error is not None:
                 raise error
             yield SimpleNamespace(
@@ -4353,4 +4353,116 @@ class TestAssetEdits:
                     id=sample_uuid, client=client, current_user=mock_current_user
                 )
         client.assets.versions.delete.assert_awaited_once()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_single_chain_snapshot_shared_with_renderer(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        versions = [self._version(position=0)]
+        client = self._client(versions)
+        fake_render, render_calls = self._fake_render()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", AsyncMock()),
+        ):
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+        # The route lists once with variants and hands that snapshot to the
+        # renderer, which must not re-list.
+        client.assets.versions.list.assert_awaited_once()
+        assert client.assets.versions.list.call_args.kwargs["include"] == ["variants"]
+        assert render_calls[0][3] is versions
+
+    @pytest.mark.anyio
+    async def test_put_identity_edit_list_returns_400(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import (
+            AssetEditAction,
+            AssetEditActionItemDto,
+            AssetEditsCreateDto,
+            RotateParameters,
+        )
+
+        client = self._client([self._version(position=0)])
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            with pytest.raises(HTTPException) as exc_info:
+                await apply_asset_edits(
+                    id=sample_uuid,
+                    request=AssetEditsCreateDto(
+                        edits=[
+                            AssetEditActionItemDto(
+                                action=AssetEditAction.rotate,
+                                parameters=RotateParameters(angle=360.0),
+                            )
+                        ]
+                    ),
+                    client=client,
+                    current_user=mock_current_user,
+                )
+        # A non-empty list reducing to no transformation must not commit a
+        # lossy re-encode that reads back as zero edits; "remove all edits"
+        # is DELETE on this route.
+        assert exc_info.value.status_code == 400
+        client.assets.versions.append.assert_not_awaited()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_cdn_open_failure_maps_to_502(
+        self, sample_uuid, mock_current_user
+    ):
+        import httpx
+
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        client = self._client([self._version(position=0)])
+        fake_render, _ = self._fake_render(error=httpx.ConnectError("boom"))
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await apply_asset_edits(
+                    id=sample_uuid,
+                    request=AssetEditsCreateDto(edits=self._crop_edits()),
+                    client=client,
+                    current_user=mock_current_user,
+                )
+        assert exc_info.value.status_code == 502
+        client.assets.versions.append.assert_not_awaited()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_chain_without_edit_base_returns_502(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        # A root whose kind claims "edit" leaves the chain with no non-edit
+        # base: tip selection succeeds but select_edit_base cannot.
+        client = self._client([self._version(position=0, kind="edit")])
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            with pytest.raises(HTTPException) as exc_info:
+                await apply_asset_edits(
+                    id=sample_uuid,
+                    request=AssetEditsCreateDto(edits=self._crop_edits()),
+                    client=client,
+                    current_user=mock_current_user,
+                )
+        assert exc_info.value.status_code == 502
+        client.assets.versions.append.assert_not_awaited()
         emit.assert_not_awaited()

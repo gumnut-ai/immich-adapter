@@ -93,10 +93,8 @@ snapshotted tip, so a tip moved by a concurrent writer returns 409 and is never
 retried against a refetched chain. DELETE removes the current edit and restores
 the predecessor (root current is an idempotent success; an opaque tip is 409 —
 an edit-specific route must not expose a generic external-version delete).
-Every committed write — including the idempotent root-current DELETE — emits
-`AssetEditReadyV2` plus `on_asset_update` (see
-`docs/references/websocket-events-reference.md`); failed or CAS-losing writes
-emit nothing.
+The emission contract for committed writes is owned by
+`docs/references/websocket-events-reference.md` § `AssetEditReadyV2`.
 
 **Suppress face geometry while an edited rendering is current.** Gumnut stores
 face boxes in the original upload's pixel space, so they are invalid over

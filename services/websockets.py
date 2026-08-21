@@ -44,10 +44,9 @@ class WebSocketEvent(Enum):
     # Phase 1: Can implement now
     UPLOAD_SUCCESS = "on_upload_success"
     ASSET_UPLOAD_READY_V1 = "AssetUploadReadyV1"
-    # Emitted after an edit-route write commits (PUT and DELETE alike). Immich
-    # web's editor sets up a 10-second wait for this event, filtered on
-    # ``payload.asset.id``, before sending the request, and treats a timeout as
-    # a failed apply — so every successful edit write must emit exactly one.
+    # Emitted after an edit-route write commits (PUT and DELETE alike); the
+    # client-wait contract lives in
+    # docs/references/websocket-events-reference.md § AssetEditReadyV2.
     ASSET_EDIT_READY_V2 = "AssetEditReadyV2"
     # ASSET_DELETE carries a single id per event; ASSET_TRASH/ASSET_RESTORE
     # carry an array of ids per event — matches Immich's wire contract:

@@ -8,6 +8,7 @@ import pytest
 from routers.utils.asset_version_chain import (
     InvalidVersionChainError,
     is_edit_version,
+    select_current,
     select_edit_base,
     select_root,
 )
@@ -110,3 +111,26 @@ def test_missing_or_duplicate_root_rejected(chain: list[Version]) -> None:
 def test_chain_with_no_non_edit_version_rejected() -> None:
     with pytest.raises(InvalidVersionChainError):
         select_edit_base([version(0, "edit")], asset_id="asset_1")
+
+
+def test_select_current_returns_highest_position() -> None:
+    chain = [version(0, "original"), version(2, "edit"), version(1, "external:x")]
+    assert select_current(chain, asset_id="asset_1").position == 2
+
+
+def test_select_current_root_only_chain_returns_root() -> None:
+    chain = [version(0, "original")]
+    assert select_current(chain, asset_id="asset_1").position == 0
+
+
+@pytest.mark.parametrize(
+    "chain",
+    [
+        [],
+        [version(1, "edit")],
+        [version(0, "original"), Version(id="dup", position=0, kind="original")],
+    ],
+)
+def test_select_current_rejects_invalid_chain(chain: list[Version]) -> None:
+    with pytest.raises(InvalidVersionChainError):
+        select_current(chain, asset_id="asset_1")

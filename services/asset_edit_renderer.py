@@ -12,7 +12,7 @@ import asyncio
 import logging
 import tempfile
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -20,6 +20,7 @@ from typing import IO, Any, cast
 
 import httpx
 from gumnut import AsyncGumnut
+from gumnut.types.assets import AssetVersionResponse
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 
@@ -124,8 +125,14 @@ async def render_asset_edit(
     client: AsyncGumnut,
     gumnut_asset_id: str,
     recipe: EditRecipe,
+    versions: Sequence[AssetVersionResponse] | None = None,
 ) -> AsyncIterator[RenderdEdit]:
     """Yield a render from the asset's edit base, closing its body on exit.
+
+    ``versions`` is an optional pre-listed chain snapshot fetched with
+    ``include=["variants"]``; passing it lets a caller that already listed the
+    chain (e.g. to validate recipe dimensions) share one snapshot instead of
+    paying a second upstream list. Without it, the chain is listed here.
 
     Render failures use :class:`EditRenderError`; CDN-open and SDK failures retain
     their original exception types.
@@ -134,7 +141,7 @@ async def render_asset_edit(
     try:
         # Include admission waits so saturation times out instead of queueing.
         async with asyncio.timeout(settings.edit_render_timeout_seconds):
-            renderd = await _render(client, gumnut_asset_id, recipe, settings)
+            renderd = await _render(client, gumnut_asset_id, recipe, settings, versions)
     except TimeoutError as exc:
         raise EditRenderTimeoutError(
             "render_timeout", "Edit render exceeded its time budget"
@@ -150,8 +157,9 @@ async def _render(
     gumnut_asset_id: str,
     recipe: EditRecipe,
     settings: Settings,
+    versions: Sequence[AssetVersionResponse] | None,
 ) -> RenderdEdit:
-    source_url = await _select_edit_base_url(client, gumnut_asset_id)
+    source_url = await _select_edit_base_url(client, gumnut_asset_id, versions)
 
     # Waiting requests must not retain a spool or downloaded source.
     loop = asyncio.get_running_loop()
@@ -228,9 +236,16 @@ async def _render(
     return result
 
 
-async def _select_edit_base_url(client: AsyncGumnut, gumnut_asset_id: str) -> str:
-    """List versions once and return the edit base's exact-byte URL."""
-    versions = await client.assets.versions.list(gumnut_asset_id, include=["variants"])
+async def _select_edit_base_url(
+    client: AsyncGumnut,
+    gumnut_asset_id: str,
+    versions: Sequence[AssetVersionResponse] | None,
+) -> str:
+    """Return the edit base's exact-byte URL, listing versions when not given."""
+    if versions is None:
+        versions = await client.assets.versions.list(
+            gumnut_asset_id, include=["variants"]
+        )
     try:
         base = select_edit_base(versions, asset_id=gumnut_asset_id)
     except InvalidVersionChainError as exc:

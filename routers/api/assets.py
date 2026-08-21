@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Sequence
 from itertools import batched
 from typing import Annotated, Any, List, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
@@ -40,7 +41,9 @@ from routers.utils.asset_edit_conversion import (
 )
 from routers.utils.asset_version_chain import (
     InvalidVersionChainError,
+    VersionLike,
     is_edit_version,
+    select_current,
     select_edit_base,
     select_root,
 )
@@ -1361,46 +1364,37 @@ async def download_asset(
 
 # --- Immich web editor: /api/assets/{id}/edits ------------------------------
 #
-# The chain stores one consolidated recipe state on the current `edit` version,
-# not a history of user actions, so GET/PUT/DELETE all operate on the tip:
-#
-# * tip is the original      -> no edits: GET returns [], PUT appends, DELETE
-#   is an idempotent success.
-# * tip is an `edit` version -> GET decodes its recipe, PUT re-renders from the
-#   edit base and replaces it in place, DELETE removes it (restoring the
-#   predecessor).
-# * tip is any other kind (`external:*`, unknown) -> the adapter never
-#   pretends opaque output is an adjustable Immich edit: GET reports no edits,
-#   PUT and DELETE conflict with 409 rather than replace or discard it.
-#
-# Concurrency is compare-and-swap by construction: append is accepted upstream
-# only while the original is current, and replace/delete name the exact
-# version snapshotted here — if another writer moved the tip in between, the
-# Gumnut API returns 409 and the client must reopen the editor. A losing CAS
-# is never retried against a newly fetched tip.
+# The chain stores one consolidated recipe on the current `edit` version, so
+# GET/PUT/DELETE all operate on the tip. The tip-state contract (root vs edit
+# vs opaque tip) and the CAS/no-retry concurrency model are documented in
+# docs/references/asset-and-media-handling.md § Edited state; the emission
+# contract lives in docs/references/websocket-events-reference.md
+# § AssetEditReadyV2.
 
 # Upload filename by rendered MIME type; the Gumnut API detects the actual
 # format from the bytes, this only labels the multipart file part.
 _EDIT_UPLOAD_FILENAMES = {"image/jpeg": "edit.jpg", "image/png": "edit.png"}
 
 
-def _edits_chain_tip(versions: Any, *, gumnut_asset_id: str) -> Any:
-    """Validate the chain and return its current (highest-position) version.
+def _invalid_chain_error() -> HTTPException:
+    """The edits routes' 502 invalid-chain contract (matches ``_stream_exact_original``)."""
+    return HTTPException(
+        status.HTTP_502_BAD_GATEWAY,
+        detail="Asset version chain is invalid",
+    )
 
-    Raises the edits routes' 502 invalid-chain contract, matching
-    ``_stream_exact_original``.
-    """
+
+def _edits_chain_tip[V: VersionLike](
+    versions: Sequence[V], *, gumnut_asset_id: str
+) -> V:
+    """Validate the chain and return its current (highest-position) version."""
     try:
-        select_root(versions, asset_id=gumnut_asset_id)
+        return select_current(versions, asset_id=gumnut_asset_id)
     except InvalidVersionChainError:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            detail="Asset version chain is invalid",
-        )
-    return max(versions, key=lambda version: version.position)
+        raise _invalid_chain_error()
 
 
-def _require_editable_tip(tip: Any) -> None:
+def _require_editable_tip(tip: VersionLike) -> None:
     """409 when the current version is an opaque non-edit rendering."""
     if tip.position != 0 and not is_edit_version(tip):
         raise HTTPException(
@@ -1433,10 +1427,10 @@ async def _emit_edit_committed_events(
 ) -> None:
     """Emit AssetEditReadyV2 plus the asset refresh for a committed edit write.
 
-    Immich web awaits AssetEditReadyV2 (10s, filtered on ``asset.id``) after
-    both PUT and DELETE; the editor panel and timeline separately refresh from
-    ``on_asset_update``. Emission failure is non-fatal inside
-    ``emit_user_event`` and must never fail the committed write.
+    Immich web awaits AssetEditReadyV2 after every edit write — see
+    ``docs/references/websocket-events-reference.md`` § AssetEditReadyV2.
+    Emission failure is non-fatal inside ``emit_user_event`` and must never
+    fail the committed write.
     """
     payload = AssetEditReadyV2Payload(
         asset=gumnut_asset_to_sync_asset_v2(gumnut_asset, current_user.id),
@@ -1500,19 +1494,18 @@ async def apply_asset_edits(
     the upstream 409 and is never retried against a refreshed tip.
     """
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
-    versions = await client.assets.versions.list(gumnut_asset_id)
+    # One snapshot serves tip selection, recipe validation, and the render:
+    # `include=variants` carries the byte URLs the renderer needs, so it can
+    # skip its own list call and work from the same chain state.
+    versions = await client.assets.versions.list(gumnut_asset_id, include=["variants"])
     tip = _edits_chain_tip(versions, gumnut_asset_id=gumnut_asset_id)
     _require_editable_tip(tip)
 
-    # The recipe frame is the edit base's display-oriented frame — the same
-    # base the renderer re-selects when it re-renders from scratch.
+    # The recipe frame is the edit base's display-oriented frame.
     try:
         base = select_edit_base(versions, asset_id=gumnut_asset_id)
     except InvalidVersionChainError:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            detail="Asset version chain is invalid",
-        )
+        raise _invalid_chain_error()
     if not base.width or not base.height:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -1523,9 +1516,19 @@ async def apply_asset_edits(
         recipe = immich_edits_to_recipe(request.edits, base.width, base.height)
     except AssetEditValidationError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if recipe.is_identity:
+        # "Remove all edits" is DELETE on this route (that is what Immich web
+        # sends); a non-empty list that reduces to no transformation would
+        # commit a lossy re-encode that reads back as zero edits.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Edit actions perform no transformation",
+        )
 
     try:
-        async with render_asset_edit(client, gumnut_asset_id, recipe) as rendered:
+        async with render_asset_edit(
+            client, gumnut_asset_id, recipe, versions
+        ) as rendered:
             file = (
                 _EDIT_UPLOAD_FILENAMES.get(rendered.mime_type, "edit.bin"),
                 rendered.body,
@@ -1582,24 +1585,17 @@ async def remove_asset_edits(
 ) -> None:
     """Remove the current Immich edit, restoring the predecessor version.
 
-    Root current is an idempotent success — but still emits AssetEditReadyV2,
-    because Immich web awaits that event after an empty-edits apply and would
-    otherwise time out. An opaque non-edit tip conflicts: deletion must not
-    expose a generic external-version delete through an edit-specific route.
+    Root current is an idempotent success that still emits AssetEditReadyV2
+    (see the event reference); an opaque non-edit tip conflicts rather than
+    exposing a generic external-version delete through an edit route.
     """
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
     versions = await client.assets.versions.list(gumnut_asset_id)
     tip = _edits_chain_tip(versions, gumnut_asset_id=gumnut_asset_id)
     _require_editable_tip(tip)
 
-    if tip.position == 0:
-        gumnut_asset = await client.assets.retrieve(
-            gumnut_asset_id, include=ASSET_INCLUDE
-        )
-        await _emit_edit_committed_events(gumnut_asset, current_user, [])
-        return
-
-    await client.assets.versions.delete(tip.id, asset_id=gumnut_asset_id)
+    if tip.position != 0:
+        await client.assets.versions.delete(tip.id, asset_id=gumnut_asset_id)
     gumnut_asset = await client.assets.retrieve(gumnut_asset_id, include=ASSET_INCLUDE)
     await _emit_edit_committed_events(gumnut_asset, current_user, [])
 
