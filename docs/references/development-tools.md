@@ -102,6 +102,8 @@ uv run tools/dump_openapi_json.py | sed -n '/^{/,$p' > /tmp/spec.json
 
 Importing the app emits log lines to **stdout** ahead of the JSON, so a bare `> /tmp/spec.json` yields a file the validator rejects (`Extra data: line 1 column 5`). Strip everything before the first `{`, then feed the result to the compatibility validator via `--adapter-spec=/tmp/spec.json`.
 
+The script runs in its own isolated PEP 723 environment, not the project venv, so its inline `dependencies` header is a **parallel copy** of every package the app pulls in at import time. Adding a `pyproject.toml` dependency that any module imports at import time (directly or transitively from `main`) requires adding it to the script header too — otherwise the check-compatibility CI job fails with `Error importing main app: No module named '...'` while every other check passes.
+
 ## Gumnut SDK Release Lag
 
 The generated `gumnut-sdk` can trail the deployed Gumnut API. When an endpoint

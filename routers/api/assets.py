@@ -270,10 +270,7 @@ async def _stream_exact_original(
     try:
         root = select_root(versions, asset_id=gumnut_asset_id)
     except InvalidVersionChainError:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Asset version chain is invalid",
-        )
+        raise _invalid_chain_error()
 
     original = (root.version_urls or {}).get("original")
     if original is None:
@@ -1377,7 +1374,7 @@ _EDIT_UPLOAD_FILENAMES = {"image/jpeg": "edit.jpg", "image/png": "edit.png"}
 
 
 def _invalid_chain_error() -> HTTPException:
-    """The edits routes' 502 invalid-chain contract (matches ``_stream_exact_original``)."""
+    """The shared 502 invalid-chain contract (exact-original download and edits routes)."""
     return HTTPException(
         status.HTTP_502_BAD_GATEWAY,
         detail="Asset version chain is invalid",
@@ -1424,6 +1421,8 @@ async def _emit_edit_committed_events(
     gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
     rows: list[AssetEditActionItemResponseDto],
+    *,
+    committed_version_id: str,
 ) -> None:
     """Emit AssetEditReadyV2 plus the asset refresh for a committed edit write.
 
@@ -1431,7 +1430,25 @@ async def _emit_edit_committed_events(
     ``docs/references/websocket-events-reference.md`` § AssetEditReadyV2.
     Emission failure is non-fatal inside ``emit_user_event`` and must never
     fail the committed write.
+
+    ``committed_version_id`` is the version this write left current (the new
+    edit version, or the survivor a delete restored). When the refreshed asset
+    shows a different current version, another write won between this commit
+    and the retrieve — emitting would pair the newer asset row with this
+    request's edit rows, so the stale event is suppressed instead. The winning
+    write emits the current state itself, and Immich web's event wait filters
+    on ``asset.id`` alone, so that event also resolves this client's wait.
     """
+    if gumnut_asset.current_version_id != committed_version_id:
+        logger.info(
+            "Suppressing edit-committed events superseded by a newer write",
+            extra={
+                "asset_id": gumnut_asset.id,
+                "committed_version_id": committed_version_id,
+                "current_version_id": gumnut_asset.current_version_id,
+            },
+        )
+        return
     payload = AssetEditReadyV2Payload(
         asset=gumnut_asset_to_sync_asset_v2(gumnut_asset, current_user.id),
         edit=_edit_rows_to_sync_edits(gumnut_asset, rows),
@@ -1573,7 +1590,9 @@ async def apply_asset_edits(
 
     gumnut_asset = await client.assets.retrieve(gumnut_asset_id, include=ASSET_INCLUDE)
     rows = recipe_to_immich_edits(gumnut_asset_id, new_version.id, recipe.to_params())
-    await _emit_edit_committed_events(gumnut_asset, current_user, rows)
+    await _emit_edit_committed_events(
+        gumnut_asset, current_user, rows, committed_version_id=new_version.id
+    )
     return AssetEditsResponseDto(assetId=id, edits=rows)
 
 
@@ -1596,8 +1615,19 @@ async def remove_asset_edits(
 
     if tip.position != 0:
         await client.assets.versions.delete(tip.id, asset_id=gumnut_asset_id)
+        # The delete restores the highest remaining version from the snapshot
+        # (non-empty: the validated chain always has a root besides the tip).
+        survivor = max(
+            (version for version in versions if version.id != tip.id),
+            key=lambda version: version.position,
+        )
+        restored_version_id = survivor.id
+    else:
+        restored_version_id = tip.id
     gumnut_asset = await client.assets.retrieve(gumnut_asset_id, include=ASSET_INCLUDE)
-    await _emit_edit_committed_events(gumnut_asset, current_user, [])
+    await _emit_edit_committed_events(
+        gumnut_asset, current_user, [], committed_version_id=restored_version_id
+    )
 
 
 @router.get("/{id}/metadata")

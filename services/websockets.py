@@ -261,8 +261,8 @@ async def emit_user_event(
     that string here — socket.io matches rooms by exact value, so an
     un-normalized ``UUID`` would silently emit to an empty room.
 
-    Fire-and-forget: ``SocketIOError`` from the underlying transport is
-    caught and logged at WARN. Callers must not wrap this in try/except for
+    Awaited but best-effort: ``SocketIOError`` from the underlying transport
+    is caught and logged at WARN. Callers must not wrap this in try/except for
     ``SocketIOError`` — emission failures should never break the request
     they are paired with.
 
@@ -318,8 +318,8 @@ async def emit_session_event(
     Use this for events that should reach only one session:
     SESSION_DELETE, etc.
 
-    Fire-and-forget: ``SocketIOError`` from the underlying transport is
-    caught and logged at WARN. Callers must not wrap this in try/except for
+    Awaited but best-effort: ``SocketIOError`` from the underlying transport
+    is caught and logged at WARN. Callers must not wrap this in try/except for
     ``SocketIOError`` — emission failures should never break the request
     they are paired with.
 

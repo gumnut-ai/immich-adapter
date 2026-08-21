@@ -3854,8 +3854,12 @@ class TestAssetEdits:
             return_value=SimpleNamespace(id="asset_version_new")
         )
         client.assets.versions.delete = AsyncMock(return_value=Mock())
+        # The default retrieve result matches the id append/replace return, so
+        # the superseded-write guard sees this request's commit as current.
         client.assets.retrieve = AsyncMock(
-            return_value=asset if asset is not None else make_gumnut_asset(kind="edit")
+            return_value=asset
+            if asset is not None
+            else make_gumnut_asset(kind="edit", current_version_id="asset_version_new")
         )
         return client
 
@@ -4261,7 +4265,10 @@ class TestAssetEdits:
         from services.websockets import WebSocketEvent
 
         client = self._client(
-            [self._version(position=0)], asset=make_gumnut_asset(kind="original")
+            [self._version(position=0)],
+            asset=make_gumnut_asset(
+                kind="original", current_version_id="asset_version_0"
+            ),
         )
         emit = AsyncMock()
         with patch("routers.api.assets.emit_user_event", emit):
@@ -4294,7 +4301,12 @@ class TestAssetEdits:
                 params=self.RECIPE_PARAMS,
             ),
         ]
-        client = self._client(versions, asset=make_gumnut_asset(kind="original"))
+        client = self._client(
+            versions,
+            asset=make_gumnut_asset(
+                kind="original", current_version_id="asset_version_0"
+            ),
+        )
         emit = AsyncMock()
         with patch("routers.api.assets.emit_user_event", emit):
             await remove_asset_edits(
@@ -4352,6 +4364,103 @@ class TestAssetEdits:
                 await remove_asset_edits(
                     id=sample_uuid, client=client, current_user=mock_current_user
                 )
+        client.assets.versions.delete.assert_awaited_once()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_superseded_commit_suppresses_events(
+        self, sample_uuid, mock_current_user
+    ):
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        # Another write won between this request's append and the retrieve:
+        # the refreshed asset's current version is no longer this commit.
+        client = self._client(
+            [self._version(position=0)],
+            asset=make_gumnut_asset(
+                kind="edit", current_version_id="asset_version_other"
+            ),
+        )
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            result = await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+        # The commit stands and the response reports it; only the stale
+        # events are suppressed (the winning write emits the current state).
+        client.assets.versions.append.assert_awaited_once()
+        assert result.assetId == sample_uuid
+        assert len(result.edits) == 1
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_delete_restores_buried_external_survivor_and_emits(
+        self, sample_uuid, mock_current_user
+    ):
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import remove_asset_edits
+        from services.websockets import WebSocketEvent
+
+        # An external rendering buried under the edit tip is the survivor —
+        # the suppression guard must key on it, not on the root.
+        versions = [
+            self._version(position=0),
+            self._version(position=1, kind="external:acme"),
+            self._version(position=2, kind="edit", params=self.RECIPE_PARAMS),
+        ]
+        client = self._client(
+            versions,
+            asset=make_gumnut_asset(
+                kind="external:acme", current_version_id="asset_version_1"
+            ),
+        )
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            await remove_asset_edits(
+                id=sample_uuid, client=client, current_user=mock_current_user
+            )
+        delete_call = client.assets.versions.delete.call_args
+        assert delete_call.args[0] == "asset_version_2"
+        events = [call.args[0] for call in emit.await_args_list]
+        assert events == [
+            WebSocketEvent.ASSET_EDIT_READY_V2,
+            WebSocketEvent.ASSET_UPDATE,
+        ]
+
+    @pytest.mark.anyio
+    async def test_delete_superseded_restore_suppresses_events(
+        self, sample_uuid, mock_current_user
+    ):
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import remove_asset_edits
+
+        versions = [
+            self._version(position=0),
+            self._version(position=1, kind="edit", params=self.RECIPE_PARAMS),
+        ]
+        # After this delete restored the root, another write appended a new
+        # version before the retrieve — the expected survivor is not current.
+        client = self._client(
+            versions,
+            asset=make_gumnut_asset(
+                kind="edit", current_version_id="asset_version_other"
+            ),
+        )
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            result = await remove_asset_edits(
+                id=sample_uuid, client=client, current_user=mock_current_user
+            )
+        assert result is None
         client.assets.versions.delete.assert_awaited_once()
         emit.assert_not_awaited()
 

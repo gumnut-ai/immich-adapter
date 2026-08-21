@@ -506,6 +506,26 @@ class TestSourceAcquisition:
         assert metadata.size_bytes == len(output_bytes)
         assert metadata.mime_type == "image/jpeg"
 
+    async def test_supplied_snapshot_skips_listing(
+        self, render_settings: Settings
+    ) -> None:
+        """A pre-listed chain snapshot is honored: no second list call."""
+        snapshot_url = "https://cdn.example.test/signed/from-snapshot"
+        snapshot: Any = [make_version(url=snapshot_url)]
+        # The client's own list would resolve a different chain; the renderer
+        # must never consult it when a snapshot is supplied.
+        client = make_client([make_version(url="https://cdn.example.test/wrong")])
+        response = FakeCdnResponse(rgb_jpeg_bytes())
+        open_mock = AsyncMock(return_value=response)
+        with (
+            patch.object(renderer_module, "open_cdn_response", open_mock),
+            patch.object(renderer_module, "get_settings", return_value=render_settings),
+        ):
+            async with render_asset_edit(client, ASSET_ID, IDENTITY, snapshot):
+                pass
+        client.assets.versions.list.assert_not_called()
+        open_mock.assert_awaited_once_with(snapshot_url)
+
     async def test_renders_from_root_not_prior_edit(
         self, render_settings: Settings
     ) -> None:
