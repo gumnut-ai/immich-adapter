@@ -4375,8 +4375,9 @@ class TestAssetEdits:
         from routers.api.assets import apply_asset_edits
         from routers.immich_models import AssetEditsCreateDto
 
-        # Another write won between this request's append and the retrieve:
-        # the refreshed asset's current version is no longer this commit.
+        # Another edit-route write won between this request's append and the
+        # retrieve (current kind is "edit"): that winner emits its own event,
+        # so this request's stale one is suppressed.
         client = self._client(
             [self._version(position=0)],
             asset=make_gumnut_asset(
@@ -4401,6 +4402,50 @@ class TestAssetEdits:
         assert result.assetId == sample_uuid
         assert len(result.edits) == 1
         emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_superseded_by_external_writer_emits_refreshed_state(
+        self, sample_uuid, mock_current_user
+    ):
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+        from services.websockets import AssetEditReadyV2Payload, WebSocketEvent
+
+        # An external (non-edit-route) writer won between this request's
+        # append and the retrieve. Nothing else emits AssetEditReadyV2, so
+        # suppressing would leave the web editor's 10s wait to time out on a
+        # write that succeeded — emit the refreshed state (empty edit list,
+        # matching how GET reads an opaque tip) instead.
+        client = self._client(
+            [self._version(position=0)],
+            asset=make_gumnut_asset(
+                kind="external:acme", current_version_id="asset_version_other"
+            ),
+        )
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            result = await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+        # The response still reports this request's committed rows.
+        assert len(result.edits) == 1
+        events = [call.args[0] for call in emit.await_args_list]
+        assert events == [
+            WebSocketEvent.ASSET_EDIT_READY_V2,
+            WebSocketEvent.ASSET_UPDATE,
+        ]
+        ready_payload = emit.await_args_list[0].args[2]
+        assert isinstance(ready_payload, AssetEditReadyV2Payload)
+        assert ready_payload.edit == []
+        assert ready_payload.asset.isEdited is True
 
     @pytest.mark.anyio
     async def test_delete_restores_buried_external_survivor_and_emits(

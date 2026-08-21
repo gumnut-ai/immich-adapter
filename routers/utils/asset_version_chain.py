@@ -74,13 +74,18 @@ def select_current[V: VersionLike](versions: Sequence[V], *, asset_id: str) -> V
     return max(versions, key=lambda version: version.position)
 
 
-def is_edit_version(version: VersionLike) -> bool:
-    """True for renderings the adapter must never use as an edit base.
+def is_edit_kind(kind: str) -> bool:
+    """True for the documented ``edit`` kind and any namespaced ``edit:*`` variant.
 
-    Matches the documented ``edit`` kind and any namespaced ``edit:*`` variant.
+    Also usable against ``AssetResponse.kind``, which names what produced the
+    asset's *current* rendering.
     """
-    kind = version.kind
     return kind == "edit" or kind.startswith("edit:")
+
+
+def is_edit_version(version: VersionLike) -> bool:
+    """True for renderings the adapter must never use as an edit base."""
+    return is_edit_kind(version.kind)
 
 
 def select_edit_base[V: VersionLike](versions: Sequence[V], *, asset_id: str) -> V:

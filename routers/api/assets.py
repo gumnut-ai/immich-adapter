@@ -42,6 +42,7 @@ from routers.utils.asset_edit_conversion import (
 from routers.utils.asset_version_chain import (
     InvalidVersionChainError,
     VersionLike,
+    is_edit_kind,
     is_edit_version,
     select_current,
     select_edit_base,
@@ -1434,21 +1435,39 @@ async def _emit_edit_committed_events(
     ``committed_version_id`` is the version this write left current (the new
     edit version, or the survivor a delete restored). When the refreshed asset
     shows a different current version, another write won between this commit
-    and the retrieve — emitting would pair the newer asset row with this
-    request's edit rows, so the stale event is suppressed instead. The winning
-    write emits the current state itself, and Immich web's event wait filters
-    on ``asset.id`` alone, so that event also resolves this client's wait.
+    and the retrieve — emitting as planned would pair the newer asset row with
+    this request's edit rows. What happens instead depends on who won
+    (``AssetResponse.kind`` names what produced the current rendering):
+
+    * An ``edit``/``edit:*`` winner came through these routes — the only
+      emitter of AssetEditReadyV2 — and emits its own consistent event, which
+      also resolves this client's wait (Immich web filters on ``asset.id``
+      alone). This request's stale event is suppressed.
+    * Any other winner (``original``, ``external:*``) never emits, so this
+      request emits the refreshed current state instead: the newer asset row
+      with an empty edit list, matching how GET reads root and opaque tips.
     """
     if gumnut_asset.current_version_id != committed_version_id:
+        if is_edit_kind(gumnut_asset.kind):
+            logger.info(
+                "Suppressing edit-committed events superseded by a newer edit",
+                extra={
+                    "asset_id": gumnut_asset.id,
+                    "committed_version_id": committed_version_id,
+                    "current_version_id": gumnut_asset.current_version_id,
+                },
+            )
+            return
         logger.info(
-            "Suppressing edit-committed events superseded by a newer write",
+            "Edit write superseded by a non-emitting writer; emitting refreshed state",
             extra={
                 "asset_id": gumnut_asset.id,
                 "committed_version_id": committed_version_id,
                 "current_version_id": gumnut_asset.current_version_id,
+                "current_kind": gumnut_asset.kind,
             },
         )
-        return
+        rows = []
     payload = AssetEditReadyV2Payload(
         asset=gumnut_asset_to_sync_asset_v2(gumnut_asset, current_user.id),
         edit=_edit_rows_to_sync_edits(gumnut_asset, rows),
