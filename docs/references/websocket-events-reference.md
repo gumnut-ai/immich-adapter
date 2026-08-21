@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-08-12
+last-updated: 2026-08-21
 ---
 
 # Immich WebSocket Events Reference
@@ -11,6 +11,7 @@ last-updated: 2026-08-12
 |-------|---------|---------|------------|---------------|
 | `on_upload_success` | Images: upload write completes; videos: deferred emit to wait for still-image variants | `AssetResponseDto` | Global listener | Legacy listener |
 | `AssetUploadReadyV1` | Emitted alongside `on_upload_success` with the same image/video timing split | `SyncAssetV1` + `SyncAssetExifV1` | Not used | v2 sync protocol |
+| `AssetEditReadyV2` | Edit-route write commits (PUT and DELETE on `/api/assets/{id}/edits`) | `SyncAssetV2` + `SyncAssetEditV1[]` | Editor apply/remove wait | Not used |
 | `on_asset_delete` | Asset permanently deleted | `assetId: string` | Global listener | Listener |
 | `on_asset_trash` | Asset moved to trash | `assetIds: string[]` | Global listener | Listener |
 | `on_asset_restore` | Asset restored from trash | `assetIds: string[]` | Global listener | Listener |
@@ -63,6 +64,23 @@ last-updated: 2026-08-12
 **Client handling**:
 - **Web**: Not used
 - **Mobile**: v2 sync protocol. Batches events and updates local SQLite database for real-time multi-device sync.
+
+---
+
+### `AssetEditReadyV2`
+
+**Upstream trigger**: Emitted when the `AssetEditThumbnailGeneration` job finishes re-rendering an edited asset (`job.service.ts`), for both edit apply and edit removal.
+
+**Adapter trigger**: Emitted from `_emit_edit_committed_events` in `routers/api/assets.py` after an edits-route write commits — a successful `PUT /api/assets/{id}/edits` (append or in-place replace) or `DELETE /api/assets/{id}/edits` (including the idempotent root-current delete, which changes nothing but must still emit). Never emitted on a failed or CAS-losing write. The adapter bakes synchronously inside the request, so the event follows the HTTP response immediately rather than after a background job.
+
+**Sent to**: Asset owner (by userId)
+**Payload**: `{ asset: SyncAssetV2, edit: SyncAssetEditV1[] }` — the refreshed sync asset row plus the complete current edit-action list (empty after a delete). See `AssetEditReadyV2Payload` in `services/websockets.py`.
+
+**Client handling**:
+- **Web**: The editor's apply flow registers a one-shot 10-second wait for this event, filtered on `payload.asset.id`, *before* sending the PUT/DELETE, and treats a timeout as a failed apply — every successful edit write must emit exactly one.
+- **Mobile**: Not used.
+
+**Companion event**: the same commit also emits `on_asset_update` with the full refreshed `AssetResponseDto`, which the editor panel and timeline use to refresh `isEdited`, dimensions, MIME type, and URLs without a reload.
 
 ---
 

@@ -32,9 +32,23 @@ from routers.api.constants import (
     GUMNUT_API_MAX_PAGE_SIZE,
     GUMNUT_UPLOAD_DEVICE_ID,
 )
+from routers.utils.asset_edit_conversion import (
+    AssetEditValidationError,
+    UnsupportedEditRecipeError,
+    immich_edits_to_recipe,
+    recipe_to_immich_edits,
+)
 from routers.utils.asset_version_chain import (
     InvalidVersionChainError,
+    is_edit_version,
+    select_edit_base,
     select_root,
+)
+from services.asset_edit_renderer import (
+    EditRenderError,
+    EditRenderInputError,
+    EditRenderLimitError,
+    render_asset_edit,
 )
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
@@ -44,12 +58,17 @@ from pydantic import ValidationError
 
 from services.streaming_upload import StreamingUploadPipeline
 from services.websockets import (
+    AssetEditReadyV2Payload,
     emit_user_event,
     emit_user_event_per_id,
     WebSocketEvent,
 )
+from routers.api.sync.converters import gumnut_asset_to_sync_asset_v2
 from routers.immich_models import (
     AssetBulkDeleteDto,
+    AssetEditActionItemResponseDto,
+    AssetEditsCreateDto,
+    AssetEditsResponseDto,
     AssetBulkUpdateDto,
     AssetBulkUploadCheckDto,
     AssetBulkUploadCheckResponseDto,
@@ -64,6 +83,7 @@ from routers.immich_models import (
     AssetResponseDto,
     AssetStatsResponseDto,
     AssetVisibility,
+    SyncAssetEditV1,
     UserResponseDto,
     UpdateAssetDto,
 )
@@ -1337,6 +1357,251 @@ async def download_asset(
             forwarded_headers=_ORIGINAL_DOWNLOAD_FORWARDED_HEADERS,
         )
     return await _stream_exact_original(id, client, range_header=range_header)
+
+
+# --- Immich web editor: /api/assets/{id}/edits ------------------------------
+#
+# The chain stores one consolidated recipe state on the current `edit` version,
+# not a history of user actions, so GET/PUT/DELETE all operate on the tip:
+#
+# * tip is the original      -> no edits: GET returns [], PUT appends, DELETE
+#   is an idempotent success.
+# * tip is an `edit` version -> GET decodes its recipe, PUT re-renders from the
+#   edit base and replaces it in place, DELETE removes it (restoring the
+#   predecessor).
+# * tip is any other kind (`external:*`, unknown) -> the adapter never
+#   pretends opaque output is an adjustable Immich edit: GET reports no edits,
+#   PUT and DELETE conflict with 409 rather than replace or discard it.
+#
+# Concurrency is compare-and-swap by construction: append is accepted upstream
+# only while the original is current, and replace/delete name the exact
+# version snapshotted here — if another writer moved the tip in between, the
+# Gumnut API returns 409 and the client must reopen the editor. A losing CAS
+# is never retried against a newly fetched tip.
+
+# Upload filename by rendered MIME type; the Gumnut API detects the actual
+# format from the bytes, this only labels the multipart file part.
+_EDIT_UPLOAD_FILENAMES = {"image/jpeg": "edit.jpg", "image/png": "edit.png"}
+
+
+def _edits_chain_tip(versions: Any, *, gumnut_asset_id: str) -> Any:
+    """Validate the chain and return its current (highest-position) version.
+
+    Raises the edits routes' 502 invalid-chain contract, matching
+    ``_stream_exact_original``.
+    """
+    try:
+        select_root(versions, asset_id=gumnut_asset_id)
+    except InvalidVersionChainError:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="Asset version chain is invalid",
+        )
+    return max(versions, key=lambda version: version.position)
+
+
+def _require_editable_tip(tip: Any) -> None:
+    """409 when the current version is an opaque non-edit rendering."""
+    if tip.position != 0 and not is_edit_version(tip):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="The current asset version was not produced by the Immich editor",
+        )
+
+
+def _edit_rows_to_sync_edits(
+    gumnut_asset: AssetResponse,
+    rows: list[AssetEditActionItemResponseDto],
+) -> list[SyncAssetEditV1]:
+    asset_uuid = safe_uuid_from_asset_id(gumnut_asset.id)
+    return [
+        SyncAssetEditV1(
+            id=row.id,
+            assetId=asset_uuid,
+            action=row.action,
+            parameters=row.parameters.model_dump(mode="json"),
+            sequence=sequence,
+        )
+        for sequence, row in enumerate(rows)
+    ]
+
+
+async def _emit_edit_committed_events(
+    gumnut_asset: AssetResponse,
+    current_user: UserResponseDto,
+    rows: list[AssetEditActionItemResponseDto],
+) -> None:
+    """Emit AssetEditReadyV2 plus the asset refresh for a committed edit write.
+
+    Immich web awaits AssetEditReadyV2 (10s, filtered on ``asset.id``) after
+    both PUT and DELETE; the editor panel and timeline separately refresh from
+    ``on_asset_update``. Emission failure is non-fatal inside
+    ``emit_user_event`` and must never fail the committed write.
+    """
+    payload = AssetEditReadyV2Payload(
+        asset=gumnut_asset_to_sync_asset_v2(gumnut_asset, current_user.id),
+        edit=_edit_rows_to_sync_edits(gumnut_asset, rows),
+    )
+    await emit_user_event(WebSocketEvent.ASSET_EDIT_READY_V2, current_user.id, payload)
+    await emit_user_event(
+        WebSocketEvent.ASSET_UPDATE,
+        current_user.id,
+        convert_gumnut_asset_to_immich(gumnut_asset, current_user),
+    )
+
+
+@router.get("/{id}/edits")
+async def get_asset_edits(
+    id: UUID,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+) -> AssetEditsResponseDto:
+    """Return the asset's current Immich edit-action list.
+
+    The chain stores one consolidated recipe, so the response is the decoded
+    current state, not an action history. Opaque tips (``external:*``) and
+    undecodable recipes read as "no adjustable edits" — the latter logs, and a
+    subsequent PUT self-heals it by replacing the malformed recipe outright.
+    """
+    gumnut_asset_id = uuid_to_gumnut_asset_id(id)
+    versions = await client.assets.versions.list(gumnut_asset_id)
+    tip = _edits_chain_tip(versions, gumnut_asset_id=gumnut_asset_id)
+
+    if tip.position == 0 or not is_edit_version(tip):
+        return AssetEditsResponseDto(assetId=id, edits=[])
+
+    try:
+        rows = recipe_to_immich_edits(gumnut_asset_id, tip.id, tip.params)
+    except UnsupportedEditRecipeError as exc:
+        logger.warning(
+            "Stored edit recipe cannot be represented as Immich edits",
+            extra={
+                "asset_id": gumnut_asset_id,
+                "version_id": tip.id,
+                "error_code": exc.code,
+            },
+        )
+        return AssetEditsResponseDto(assetId=id, edits=[])
+    return AssetEditsResponseDto(assetId=id, edits=rows)
+
+
+@router.put("/{id}/edits")
+async def apply_asset_edits(
+    id: UUID,
+    request: AssetEditsCreateDto,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
+) -> AssetEditsResponseDto:
+    """Apply the complete Immich edit list as one rendered `edit` version.
+
+    The list replaces the current edit state wholesale: it is normalized to
+    the v1 recipe, rendered server-side from the edit base, and committed via
+    append (original current) or in-place replace (edit current). Typed SDK
+    errors reach the global mapping — a CAS loss or depth conflict surfaces as
+    the upstream 409 and is never retried against a refreshed tip.
+    """
+    gumnut_asset_id = uuid_to_gumnut_asset_id(id)
+    versions = await client.assets.versions.list(gumnut_asset_id)
+    tip = _edits_chain_tip(versions, gumnut_asset_id=gumnut_asset_id)
+    _require_editable_tip(tip)
+
+    # The recipe frame is the edit base's display-oriented frame — the same
+    # base the renderer re-selects when it re-renders from scratch.
+    try:
+        base = select_edit_base(versions, asset_id=gumnut_asset_id)
+    except InvalidVersionChainError:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="Asset version chain is invalid",
+        )
+    if not base.width or not base.height:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Asset dimensions are not available for editing",
+        )
+
+    try:
+        recipe = immich_edits_to_recipe(request.edits, base.width, base.height)
+    except AssetEditValidationError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    try:
+        async with render_asset_edit(client, gumnut_asset_id, recipe) as rendered:
+            file = (
+                _EDIT_UPLOAD_FILENAMES.get(rendered.mime_type, "edit.bin"),
+                rendered.body,
+                rendered.mime_type,
+            )
+            params_json = recipe.to_params_json()
+            if tip.position == 0:
+                new_version = await client.assets.versions.append(
+                    gumnut_asset_id, file=file, kind="edit", params=params_json
+                )
+            else:
+                new_version = await client.assets.versions.replace(
+                    tip.id,
+                    asset_id=gumnut_asset_id,
+                    file=file,
+                    kind="edit",
+                    params=params_json,
+                )
+    except (EditRenderInputError, EditRenderLimitError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except EditRenderError as exc:
+        # Source, timeout, and internal render failures are server-side.
+        logger.warning(
+            "Edit render failed",
+            extra={"asset_id": gumnut_asset_id, "error_code": exc.code},
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to render the edited asset",
+        )
+    except httpx.HTTPError as exc:
+        # The renderer's CDN open retains its original exception type
+        # (post-open stream failures are already EditRenderSourceError).
+        logger.warning(
+            "Edit render source fetch failed",
+            extra={"asset_id": gumnut_asset_id, "error_type": type(exc).__name__},
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to fetch source image bytes",
+        )
+
+    gumnut_asset = await client.assets.retrieve(gumnut_asset_id, include=ASSET_INCLUDE)
+    rows = recipe_to_immich_edits(gumnut_asset_id, new_version.id, recipe.to_params())
+    await _emit_edit_committed_events(gumnut_asset, current_user, rows)
+    return AssetEditsResponseDto(assetId=id, edits=rows)
+
+
+@router.delete("/{id}/edits", status_code=204)
+async def remove_asset_edits(
+    id: UUID,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    current_user: UserResponseDto = Depends(get_current_user),
+) -> None:
+    """Remove the current Immich edit, restoring the predecessor version.
+
+    Root current is an idempotent success — but still emits AssetEditReadyV2,
+    because Immich web awaits that event after an empty-edits apply and would
+    otherwise time out. An opaque non-edit tip conflicts: deletion must not
+    expose a generic external-version delete through an edit-specific route.
+    """
+    gumnut_asset_id = uuid_to_gumnut_asset_id(id)
+    versions = await client.assets.versions.list(gumnut_asset_id)
+    tip = _edits_chain_tip(versions, gumnut_asset_id=gumnut_asset_id)
+    _require_editable_tip(tip)
+
+    if tip.position == 0:
+        gumnut_asset = await client.assets.retrieve(
+            gumnut_asset_id, include=ASSET_INCLUDE
+        )
+        await _emit_edit_committed_events(gumnut_asset, current_user, [])
+        return
+
+    await client.assets.versions.delete(tip.id, asset_id=gumnut_asset_id)
+    gumnut_asset = await client.assets.retrieve(gumnut_asset_id, include=ASSET_INCLUDE)
+    await _emit_edit_committed_events(gumnut_asset, current_user, [])
 
 
 @router.get("/{id}/metadata")

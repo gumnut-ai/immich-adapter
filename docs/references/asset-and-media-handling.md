@@ -1,6 +1,6 @@
 ---
 title: "Asset and Media Handling"
-last-updated: 2026-08-19
+last-updated: 2026-08-21
 ---
 
 # Asset and Media Handling
@@ -77,6 +77,26 @@ current rendering.
 
 Mock assets must set `kind` explicitly; `make_gumnut_asset` defaults it to
 `"original"`.
+
+**Immich edit routes.** `GET`/`PUT`/`DELETE /api/assets/{id}/edits` (in
+`routers/api/assets.py`) adapt the unmodified Immich web editor to the version
+chain. The chain stores one consolidated recipe on the current `edit` version,
+not an action history. GET decodes the tip's recipe through
+`recipe_to_immich_edits` — root current, an opaque (`external:*`) tip, or an
+undecodable recipe all read as an empty edit list; opaque output is never
+presented as adjustable. PUT normalizes the complete Immich action list against
+the edit base's display dimensions, renders via `render_asset_edit`, and
+commits with `versions.append` (original current) or `versions.replace` (edit
+current). Concurrency is compare-and-swap by construction: append is accepted
+upstream only while the original is current, and replace/delete name the
+snapshotted tip, so a tip moved by a concurrent writer returns 409 and is never
+retried against a refetched chain. DELETE removes the current edit and restores
+the predecessor (root current is an idempotent success; an opaque tip is 409 —
+an edit-specific route must not expose a generic external-version delete).
+Every committed write — including the idempotent root-current DELETE — emits
+`AssetEditReadyV2` plus `on_asset_update` (see
+`docs/references/websocket-events-reference.md`); failed or CAS-losing writes
+emit nothing.
 
 **Suppress face geometry while an edited rendering is current.** Gumnut stores
 face boxes in the original upload's pixel space, so they are invalid over
