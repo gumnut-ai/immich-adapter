@@ -3936,6 +3936,17 @@ class TestExtractUploadFields:
 class TestAssetEdits:
     """Tests for the GET/PUT/DELETE /api/assets/{id}/edits routes."""
 
+    @pytest.fixture(autouse=True)
+    def _no_artifact_wait(self, monkeypatch):
+        """Zero the thumbhash-rotation wait.
+
+        The shared mock client returns the same asset (same thumbhash) on
+        every retrieve, so a live deadline would make every edit test poll to
+        timeout. Tests for the wait itself restore a real deadline locally.
+        """
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_WAIT_SECONDS", 0.0)
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_POLL_SECONDS", 0.0)
+
     @staticmethod
     def _version(
         position: int = 0,
@@ -4138,6 +4149,118 @@ class TestAssetEdits:
         assert ready_payload.asset.isEdited is True
         assert [edit.sequence for edit in ready_payload.edit] == [0]
         assert ready_payload.edit[0].assetId == safe_uuid_from_asset_id(retrieved.id)
+
+    @pytest.mark.anyio
+    async def test_put_waits_for_thumbhash_rotation_before_emitting(
+        self, sample_uuid, mock_current_user, monkeypatch
+    ):
+        """The committed events wait for the refreshed cache key.
+
+        Immich web re-reads the asset when AssetEditReadyV2 arrives and keys
+        its image URLs on ``thumbhash``; emitting before the Gumnut API's
+        background task rotates it would hand the client its pre-edit cache
+        key and leave the viewer on the browser-cached old rendering.
+        """
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_WAIT_SECONDS", 5.0)
+
+        def asset_with_thumbhash(value):
+            asset = make_gumnut_asset(
+                kind="edit", current_version_id="asset_version_new"
+            )
+            asset.thumbhash = value
+            return asset
+
+        client = self._client([self._version(position=0)])
+        client.assets.retrieve = AsyncMock(
+            side_effect=[
+                asset_with_thumbhash("stale"),  # pre-commit capture
+                asset_with_thumbhash("stale"),  # artifact not refreshed yet
+                asset_with_thumbhash("fresh"),  # refreshed; emit with this
+            ]
+        )
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        assert client.assets.retrieve.await_count == 3
+        ready_payload = emit.await_args_list[0].args[2]
+        assert ready_payload.asset.thumbhash == "fresh"
+
+    @pytest.mark.anyio
+    async def test_put_emits_with_stale_thumbhash_at_deadline(
+        self, sample_uuid, mock_current_user
+    ):
+        """A never-rotating thumbhash still emits at the deadline (bounded,
+        best-effort — the commit is durable and a later read heals the
+        display). The class fixture zeroes the deadline, so the default
+        client's constant thumbhash exercises exactly this path."""
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+        from services.websockets import WebSocketEvent
+
+        client = self._client([self._version(position=0)])
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        # Pre-commit capture plus the single deadline-bounded poll.
+        assert client.assets.retrieve.await_count == 2
+        events = [call.args[0] for call in emit.await_args_list]
+        assert events == [
+            WebSocketEvent.ASSET_EDIT_READY_V2,
+            WebSocketEvent.ASSET_UPDATE,
+        ]
+
+    @pytest.mark.anyio
+    async def test_delete_root_noop_skips_artifact_wait(
+        self, sample_uuid, mock_current_user
+    ):
+        """The idempotent root-current delete commits nothing, so it emits
+        from a single plain retrieve without capturing a pre-commit key."""
+        from routers.api.assets import remove_asset_edits
+
+        client = self._client(
+            [self._version(position=0)],
+            asset=None,
+        )
+        from tests.conftest import make_gumnut_asset
+
+        client.assets.retrieve = AsyncMock(
+            return_value=make_gumnut_asset(
+                kind="original", current_version_id="asset_version_0"
+            )
+        )
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            await remove_asset_edits(
+                id=sample_uuid, client=client, current_user=mock_current_user
+            )
+
+        client.assets.versions.delete.assert_not_awaited()
+        assert client.assets.retrieve.await_count == 1
+        assert emit.await_count == 2
 
     @pytest.mark.anyio
     async def test_put_adjustment_replaces_current_edit(

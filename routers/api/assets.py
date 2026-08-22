@@ -1472,6 +1472,51 @@ def _edit_rows_to_sync_edits(
     ]
 
 
+# AssetEditReadyV2 means "the edited renders are ready to fetch", so its
+# retrieve waits for the refreshed thumbhash (the client's image cache key)
+# to land. The deadline must stay well inside Immich web's 10-second event
+# wait, which also covers the render/upload time already spent this request.
+_EDIT_EVENT_ARTIFACT_WAIT_SECONDS = 6.0
+_EDIT_EVENT_ARTIFACT_POLL_SECONDS = 0.5
+
+
+async def _retrieve_asset_for_edit_event(
+    client: AsyncGumnut,
+    gumnut_asset_id: str,
+    *,
+    previous_thumbhash: str | None,
+) -> AssetResponse:
+    """Retrieve the refreshed asset, waiting for its thumbhash to rotate.
+
+    Upstream Immich emits AssetEditReadyV2 only when thumbnail regeneration
+    completes, and Immich web re-reads the asset on receipt, minting image
+    URLs keyed by ``thumbhash`` (`c=`). The Gumnut API recomputes
+    ``thumbhash`` from the new current version in a background task, so
+    emitting at commit time would hand the client its pre-edit cache key and
+    the viewer would keep showing the browser-cached old rendering until a
+    manual reload. Poll until the hash rotates away from the pre-commit
+    value; on deadline, emit anyway — the commit is durable, the client's
+    wait still resolves, and the next asset read heals the display. The
+    deadline path also covers edits whose recomputed hash is legitimately
+    identical (thumbhash is a coarse blur placeholder).
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _EDIT_EVENT_ARTIFACT_WAIT_SECONDS
+    while True:
+        gumnut_asset = await client.assets.retrieve(
+            gumnut_asset_id, include=ASSET_INCLUDE
+        )
+        if gumnut_asset.thumbhash != previous_thumbhash:
+            return gumnut_asset
+        if loop.time() >= deadline:
+            logger.warning(
+                "Edit-committed event emitting before the thumbhash refreshed",
+                extra={"asset_id": gumnut_asset_id},
+            )
+            return gumnut_asset
+        await asyncio.sleep(_EDIT_EVENT_ARTIFACT_POLL_SECONDS)
+
+
 async def _emit_edit_committed_events(
     gumnut_asset: AssetResponse,
     current_user: UserResponseDto,
@@ -1615,6 +1660,10 @@ async def apply_asset_edits(
             detail="Edit actions perform no transformation",
         )
 
+    # Capture the pre-commit cache key; `_retrieve_asset_for_edit_event`
+    # waits for it to rotate away before the committed events are emitted.
+    previous_thumbhash = (await client.assets.retrieve(gumnut_asset_id)).thumbhash
+
     try:
         async with render_asset_edit(
             client, gumnut_asset_id, recipe, versions
@@ -1661,7 +1710,9 @@ async def apply_asset_edits(
             detail="Failed to fetch source image bytes",
         )
 
-    gumnut_asset = await client.assets.retrieve(gumnut_asset_id, include=ASSET_INCLUDE)
+    gumnut_asset = await _retrieve_asset_for_edit_event(
+        client, gumnut_asset_id, previous_thumbhash=previous_thumbhash
+    )
     rows = recipe_to_immich_edits(gumnut_asset_id, new_version.id, recipe.to_params())
     await _emit_edit_committed_events(
         gumnut_asset, current_user, rows, committed_version_id=new_version.id
@@ -1687,6 +1738,7 @@ async def remove_asset_edits(
     _require_editable_tip(tip)
 
     if tip.position != 0:
+        previous_thumbhash = (await client.assets.retrieve(gumnut_asset_id)).thumbhash
         await client.assets.versions.delete(tip.id, asset_id=gumnut_asset_id)
         # The delete restores the highest remaining version from the snapshot
         # (non-empty: the validated chain always has a root besides the tip).
@@ -1695,9 +1747,16 @@ async def remove_asset_edits(
             key=lambda version: version.position,
         )
         restored_version_id = survivor.id
+        gumnut_asset = await _retrieve_asset_for_edit_event(
+            client, gumnut_asset_id, previous_thumbhash=previous_thumbhash
+        )
     else:
+        # Idempotent no-op: nothing was committed, so there is no artifact
+        # refresh to wait for.
         restored_version_id = tip.id
-    gumnut_asset = await client.assets.retrieve(gumnut_asset_id, include=ASSET_INCLUDE)
+        gumnut_asset = await client.assets.retrieve(
+            gumnut_asset_id, include=ASSET_INCLUDE
+        )
     await _emit_edit_committed_events(
         gumnut_asset, current_user, [], committed_version_id=restored_version_id
     )
