@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-08-18
+last-updated: 2026-08-19
 ---
 
 # Immich Adapter Architecture
@@ -75,9 +75,30 @@ Asset converters translate Gumnut metadata, timestamps, checksums, media variant
 
 The canonical rules and source anchors are in [Asset and Media Handling](../references/asset-and-media-handling.md).
 
-Batch downloads resolve original variants and file sizes through the Gumnut API,
-then stream the signed CDN responses into an on-the-fly ZIP without taking
-custody of complete assets or archives.
+### Batch downloads
+
+`POST /api/download/info` accepts an asset, album, or current-user selector and
+returns archive groups based on original file sizes. When more than one selector
+is present, the adapter gives precedence to `assetIds`, then `albumId`, then
+`userId`; the default grouping target is `512 MiB`, unless the request supplies
+another positive `archiveSize`. The asset that crosses the target remains in the
+current group, so one large asset can form an archive larger than the target.
+
+`POST /api/download/archive` preflights every requested asset before returning a
+response. The preflight requests the file metadata, asset metadata, and variants
+needed to verify an accessible original URL, a non-null file size, and a usable
+modified-time fallback; one missing or inaccessible item rejects the whole
+archive. Successful requests stream the signed CDN originals into an on-the-fly
+ZIP in request order without taking custody of complete assets or archives. CDN
+bodies are consumed in bounded chunks, ZIP generation uses a dedicated bounded
+executor, and cancellation closes the active CDN response and pending archive
+work.
+
+Archive member names are flattened, sanitized, kept unique under
+case-insensitive and Unicode-equivalent comparisons, and bounded to a filesystem
+component's UTF-8 size limit. ZIP timestamps are clamped to the DOS header range.
+The generated contract still accepts Immich's `edited` flag, but Gumnut currently
+has root-only asset chains, so the flag has no effect.
 
 ## Collection translation
 
