@@ -106,6 +106,7 @@ def make_gumnut_asset(
     stack_id: str | None = None,
     local_datetime: datetime | None = None,
     kind: str = "original",
+    current_version_id: str = "asset_version_current",
 ) -> Mock:
     """Build a Mock Gumnut asset carrying every field the converters read.
 
@@ -156,6 +157,10 @@ def make_gumnut_asset(
     asset.stack_id = stack_id
     # Set explicitly because an unset Mock attribute maps as edited.
     asset.kind = kind
+    # Set explicitly because the edit routes compare it against the version a
+    # write committed; an unset Mock attribute never matches and suppresses
+    # the AssetEditReadyV2 emission.
+    asset.current_version_id = current_version_id
     return asset
 
 

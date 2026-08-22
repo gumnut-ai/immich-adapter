@@ -1,17 +1,19 @@
-"""Select versions from an asset's chain: the uploaded root and the edit base.
+"""Select versions from an asset's chain: root, current rendering, edit base.
 
 The Gumnut version chain is ordered by ``position``: 0 is the upload, the
 highest is the current rendering. Each version's ``kind`` says what produced
 it — ``original``, ``edit`` (a rendered Immich edit), ``external:<service>``,
 or any future value, since the namespace is open.
 
-Two selections serve two contracts:
+The selections serve distinct contracts:
 
 * ``select_root`` returns the position-0 upload. ``GET
   /api/assets/{id}/original?edited=false`` — Immich's *Download original* and
   the path backups rely on — always streams these exact bytes, so anything
   Immich reports as edited (every non-``original`` kind) can be undone to the
   upload.
+* ``select_current`` returns the highest-position version — the current
+  rendering. The Immich edit routes read and mutate the chain through it.
 * ``select_edit_base`` returns the highest-position version that is not an
   edit. Immich's editor expresses recipes against a single base image; basing
   on the latest non-edit rendering keeps repeated adjustments non-cumulative
@@ -61,13 +63,29 @@ def select_root[V: VersionLike](versions: Sequence[V], *, asset_id: str) -> V:
     return roots[0]
 
 
-def is_edit_version(version: VersionLike) -> bool:
-    """True for renderings the adapter must never use as an edit base.
+def select_current[V: VersionLike](versions: Sequence[V], *, asset_id: str) -> V:
+    """Return the current rendering: the highest-position version.
 
-    Matches the documented ``edit`` kind and any namespaced ``edit:*`` variant.
+    Validates the chain has a unique root first, raising
+    :class:`InvalidVersionChainError` otherwise (which also covers an empty
+    chain); callers map that to their own error type.
     """
-    kind = version.kind
+    select_root(versions, asset_id=asset_id)
+    return max(versions, key=lambda version: version.position)
+
+
+def is_edit_kind(kind: str) -> bool:
+    """True for the documented ``edit`` kind and any namespaced ``edit:*`` variant.
+
+    Also usable against ``AssetResponse.kind``, which names what produced the
+    asset's *current* rendering.
+    """
     return kind == "edit" or kind.startswith("edit:")
+
+
+def is_edit_version(version: VersionLike) -> bool:
+    """True for renderings the adapter must never use as an edit base."""
+    return is_edit_kind(version.kind)
 
 
 def select_edit_base[V: VersionLike](versions: Sequence[V], *, asset_id: str) -> V:

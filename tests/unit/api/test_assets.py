@@ -2847,7 +2847,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = mock_streaming_response
             result = await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         assert result is mock_streaming_response
@@ -2890,7 +2893,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         await_args = mock_client.assets.retrieve.await_args
@@ -2917,7 +2923,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.fullsize, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.fullsize,
+                edited=True,
+                client=mock_client,
             )
 
         mock_cdn.assert_called_once_with(
@@ -2944,7 +2953,7 @@ class TestViewAsset:
         )
 
         with pytest.raises(NotFoundError):
-            await view_asset(sample_uuid, client=mock_client)
+            await view_asset(sample_uuid, edited=True, client=mock_client)
 
     @pytest.mark.anyio
     async def test_view_asset_missing_variant(self, sample_uuid):
@@ -2963,7 +2972,10 @@ class TestViewAsset:
 
         with pytest.raises(HTTPException) as exc_info:
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         assert exc_info.value.status_code == 404
@@ -2998,7 +3010,9 @@ class TestViewAsset:
             "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
-            await view_asset(sample_uuid, size=requested_size, client=mock_client)
+            await view_asset(
+                sample_uuid, size=requested_size, edited=True, client=mock_client
+            )
 
         mock_cdn.assert_called_once_with(
             f"https://cdn.example.com/{expected_key}.webp",
@@ -3032,7 +3046,10 @@ class TestViewAsset:
 
         with pytest.raises(HTTPException) as exc_info:
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         assert exc_info.value.status_code == 404
@@ -3071,7 +3088,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         # The 720px small (JPEG) is streamed in place of the 360px thumbnail —
@@ -3121,7 +3141,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         mock_cdn.assert_called_once_with(
@@ -3168,7 +3191,10 @@ class TestViewAsset:
 
         with pytest.raises(HTTPException) as exc_info:
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         assert exc_info.value.status_code == 404
@@ -3216,7 +3242,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         mock_cdn.assert_called_once_with(
@@ -3256,7 +3285,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.preview, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.preview,
+                edited=True,
+                client=mock_client,
             )
 
         mock_cdn.assert_called_once_with(
@@ -3278,8 +3310,16 @@ def _make_mock_version(
     mime_type: str = "image/jpeg",
     original_url: str | None = "https://cdn.example.com/v0-original.jpg",
     kind: str | None = None,
+    width: int = 1000,
+    height: int = 1500,
+    variant_map: dict[str, dict[str, str]] | None = None,
 ):
-    """Build a mock asset-version row."""
+    """Build a mock asset-version row.
+
+    ``variant_map`` adds display rungs (key -> {url, mimetype}) alongside the
+    ``original`` rung. Width/height are real ints (portrait by default) because
+    the base-variant path runs them through the aspect-upgrade comparison.
+    """
     version = Mock()
     version.id = f"asset_version_pos{position}"
     version.position = position
@@ -3287,14 +3327,94 @@ def _make_mock_version(
         kind if kind is not None else ("original" if position == 0 else "edit")
     )
     version.mime_type = mime_type
-    if original_url is None:
-        version.version_urls = {}
-    else:
+    version.width = width
+    version.height = height
+    version_urls = {}
+    if original_url is not None:
         variant = Mock()
         variant.url = original_url
         variant.mimetype = mime_type
-        version.version_urls = {"original": variant}
+        version_urls["original"] = variant
+    for rung, val in (variant_map or {}).items():
+        variant = Mock()
+        variant.url = val["url"]
+        variant.mimetype = val["mimetype"]
+        version_urls[rung] = variant
+    version.version_urls = version_urls
     return version
+
+
+class TestViewAssetEditBase:
+    """The default edited=false thumbnail path streams the edit-base variant."""
+
+    @pytest.mark.anyio
+    async def test_default_streams_edit_base_variant(self, sample_uuid):
+        """Omitting ``edited`` serves the base rendering the recipe was
+        authored against — not the current edit — so the editor's client-side
+        recipe replay doesn't double-apply."""
+        root = _make_mock_version(
+            0,
+            variant_map={
+                "preview": {
+                    "url": "https://cdn.example.com/v0-preview.webp",
+                    "mimetype": "image/webp",
+                }
+            },
+        )
+        edit = _make_mock_version(
+            1,
+            variant_map={
+                "preview": {
+                    "url": "https://cdn.example.com/v1-preview.webp",
+                    "mimetype": "image/webp",
+                }
+            },
+        )
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(return_value=[root, edit])
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.preview, client=mock_client
+            )
+
+        mock_client.assets.retrieve.assert_not_called()
+        list_await_args = mock_client.assets.versions.list.await_args
+        assert list_await_args is not None
+        assert list_await_args.kwargs["include"] == ["variants"]
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/v0-preview.webp", "image/webp"
+        )
+
+    @pytest.mark.anyio
+    async def test_base_variant_missing_returns_404(self, sample_uuid):
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(
+            return_value=[_make_mock_version(0)]  # only the original rung
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.preview, client=mock_client
+            )
+
+        assert exc_info.value.status_code == 404
+        assert "preview" in exc_info.value.detail
+
+    @pytest.mark.anyio
+    async def test_invalid_chain_returns_502(self, sample_uuid):
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(return_value=[])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        assert exc_info.value.status_code == 502
 
 
 _DOWNLOAD_FORWARDED_HEADERS = (
@@ -3811,3 +3931,935 @@ class TestExtractUploadFields:
         }
         result = _extract_upload_fields(fields)
         assert result.file_modified_at == result.file_created_at
+
+
+class TestAssetEdits:
+    """Tests for the GET/PUT/DELETE /api/assets/{id}/edits routes."""
+
+    @pytest.fixture(autouse=True)
+    def _no_artifact_wait(self, monkeypatch):
+        """Zero the thumbhash-rotation wait.
+
+        The shared mock client returns the same asset (same thumbhash) on
+        every retrieve, so a live deadline would make every edit test poll to
+        timeout. Tests for the wait itself restore a real deadline locally.
+        """
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_WAIT_SECONDS", 0.0)
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_POLL_SECONDS", 0.0)
+
+    @staticmethod
+    def _version(
+        position: int = 0,
+        kind: str | None = None,
+        version_id: str | None = None,
+        params: object | None = None,
+        width: int = 1920,
+        height: int = 1080,
+    ):
+        from types import SimpleNamespace
+
+        if kind is None:
+            kind = "original" if position == 0 else "edit"
+        return SimpleNamespace(
+            id=version_id or f"asset_version_{position}",
+            position=position,
+            kind=kind,
+            params=params,
+            width=width,
+            height=height,
+            mime_type="image/jpeg",
+        )
+
+    @staticmethod
+    def _client(versions, asset=None):
+        from types import SimpleNamespace
+
+        from tests.conftest import make_gumnut_asset
+
+        client = Mock()
+        client.assets.versions.list = AsyncMock(return_value=versions)
+        client.assets.versions.append = AsyncMock(
+            return_value=SimpleNamespace(id="asset_version_new")
+        )
+        client.assets.versions.replace = AsyncMock(
+            return_value=SimpleNamespace(id="asset_version_new")
+        )
+        client.assets.versions.delete = AsyncMock(return_value=Mock())
+        # The default retrieve result matches the id append/replace return, so
+        # the superseded-write guard sees this request's commit as current.
+        client.assets.retrieve = AsyncMock(
+            return_value=asset
+            if asset is not None
+            else make_gumnut_asset(kind="edit", current_version_id="asset_version_new")
+        )
+        return client
+
+    @staticmethod
+    def _fake_render(error: Exception | None = None):
+        """A render_asset_edit stand-in recording its calls."""
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+
+        calls: list[tuple] = []
+
+        @asynccontextmanager
+        async def fake(client, gumnut_asset_id, recipe, versions=None):
+            calls.append((client, gumnut_asset_id, recipe, versions))
+            if error is not None:
+                raise error
+            yield SimpleNamespace(
+                body=BytesIO(b"rendered-bytes"),
+                mime_type="image/jpeg",
+                width=100,
+                height=50,
+                size_bytes=14,
+            )
+
+        return fake, calls
+
+    @staticmethod
+    def _crop_edits(x=10, y=20, width=100, height=50):
+        from routers.immich_models import (
+            AssetEditAction,
+            AssetEditActionItemDto,
+            CropParameters,
+        )
+
+        return [
+            AssetEditActionItemDto(
+                action=AssetEditAction.crop,
+                parameters=CropParameters(x=x, y=y, width=width, height=height),
+            )
+        ]
+
+    RECIPE_PARAMS = {"version": 1, "angle": 90, "mirror": False}
+
+    # --- GET ---------------------------------------------------------------
+
+    @pytest.mark.anyio
+    async def test_get_edits_root_only_returns_empty(self, sample_uuid):
+        from routers.api.assets import get_asset_edits
+
+        client = self._client([self._version(position=0)])
+        result = await get_asset_edits(id=sample_uuid, client=client)
+        assert result.assetId == sample_uuid
+        assert result.edits == []
+
+    @pytest.mark.anyio
+    async def test_get_edits_decodes_current_edit_with_stable_ids(self, sample_uuid):
+        from routers.api.assets import get_asset_edits
+        from routers.immich_models import AssetEditAction, RotateParameters
+
+        versions = [
+            self._version(position=0),
+            self._version(position=1, kind="edit", params=self.RECIPE_PARAMS),
+        ]
+        client = self._client(versions)
+        first = await get_asset_edits(id=sample_uuid, client=client)
+        second = await get_asset_edits(id=sample_uuid, client=client)
+        assert [row.action for row in first.edits] == [AssetEditAction.rotate]
+        rotate_parameters = first.edits[0].parameters
+        assert isinstance(rotate_parameters, RotateParameters)
+        assert rotate_parameters.angle == 90.0
+        # Synthesized row IDs are stable for the same asset/version/action.
+        assert [row.id for row in first.edits] == [row.id for row in second.edits]
+
+    @pytest.mark.anyio
+    async def test_get_edits_malformed_recipe_reads_as_no_edits(self, sample_uuid):
+        from routers.api.assets import get_asset_edits
+
+        versions = [
+            self._version(position=0),
+            self._version(position=1, kind="edit", params={"version": 999}),
+        ]
+        result = await get_asset_edits(id=sample_uuid, client=self._client(versions))
+        assert result.edits == []
+
+    @pytest.mark.anyio
+    async def test_get_edits_opaque_tip_reads_as_no_edits(self, sample_uuid):
+        from routers.api.assets import get_asset_edits
+
+        versions = [
+            self._version(position=0),
+            self._version(position=1, kind="external:acme", params={"model": "x"}),
+        ]
+        result = await get_asset_edits(id=sample_uuid, client=self._client(versions))
+        assert result.edits == []
+
+    @pytest.mark.anyio
+    async def test_get_edits_invalid_chain_returns_502(self, sample_uuid):
+        from routers.api.assets import get_asset_edits
+
+        client = self._client([self._version(position=1, kind="edit")])
+        with pytest.raises(HTTPException) as exc_info:
+            await get_asset_edits(id=sample_uuid, client=client)
+        assert exc_info.value.status_code == 502
+
+    # --- PUT ---------------------------------------------------------------
+
+    @pytest.mark.anyio
+    async def test_put_first_edit_appends_and_emits(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto, AssetEditAction
+        from services.websockets import AssetEditReadyV2Payload, WebSocketEvent
+
+        client = self._client([self._version(position=0)])
+        fake_render, render_calls = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            result = await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        # One list call, one render from the snapshotted chain, one append.
+        client.assets.versions.list.assert_awaited_once()
+        assert len(render_calls) == 1
+        client.assets.versions.append.assert_awaited_once()
+        client.assets.versions.replace.assert_not_awaited()
+        append_kwargs = client.assets.versions.append.call_args.kwargs
+        assert append_kwargs["kind"] == "edit"
+        assert json.loads(append_kwargs["params"]) == {
+            "version": 1,
+            "crop": {"x": 10, "y": 20, "width": 100, "height": 50},
+            "angle": 0,
+            "mirror": False,
+        }
+
+        assert result.assetId == sample_uuid
+        assert [row.action for row in result.edits] == [AssetEditAction.crop]
+
+        # Exactly one AssetEditReadyV2 followed by the asset refresh.
+        events = [call.args[0] for call in emit.await_args_list]
+        assert events == [
+            WebSocketEvent.ASSET_EDIT_READY_V2,
+            WebSocketEvent.ASSET_UPDATE,
+        ]
+        ready_payload = emit.await_args_list[0].args[2]
+        assert isinstance(ready_payload, AssetEditReadyV2Payload)
+        retrieved = client.assets.retrieve.return_value
+        assert ready_payload.asset.id == safe_uuid_from_asset_id(retrieved.id)
+        assert ready_payload.asset.isEdited is True
+        assert [edit.sequence for edit in ready_payload.edit] == [0]
+        assert ready_payload.edit[0].assetId == safe_uuid_from_asset_id(retrieved.id)
+
+    @pytest.mark.anyio
+    async def test_put_waits_for_thumbhash_rotation_before_emitting(
+        self, sample_uuid, mock_current_user, monkeypatch
+    ):
+        """The committed events wait for the refreshed cache key.
+
+        Immich web re-reads the asset when AssetEditReadyV2 arrives and keys
+        its image URLs on ``thumbhash``; emitting before the Gumnut API's
+        background task rotates it would hand the client its pre-edit cache
+        key and leave the viewer on the browser-cached old rendering.
+        """
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_WAIT_SECONDS", 5.0)
+
+        def asset_with_thumbhash(value):
+            asset = make_gumnut_asset(
+                kind="edit", current_version_id="asset_version_new"
+            )
+            asset.thumbhash = value
+            return asset
+
+        client = self._client([self._version(position=0)])
+        client.assets.retrieve = AsyncMock(
+            side_effect=[
+                asset_with_thumbhash("stale"),  # pre-commit capture
+                asset_with_thumbhash("stale"),  # artifact not refreshed yet
+                asset_with_thumbhash("fresh"),  # refreshed; emit with this
+            ]
+        )
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        assert client.assets.retrieve.await_count == 3
+        ready_payload = emit.await_args_list[0].args[2]
+        assert ready_payload.asset.thumbhash == "fresh"
+
+    @pytest.mark.anyio
+    async def test_put_emits_with_stale_thumbhash_at_deadline(
+        self, sample_uuid, mock_current_user
+    ):
+        """A never-rotating thumbhash still emits at the deadline (bounded,
+        best-effort — the commit is durable and a later read heals the
+        display). The class fixture zeroes the deadline, so the default
+        client's constant thumbhash exercises exactly this path."""
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+        from services.websockets import WebSocketEvent
+
+        client = self._client([self._version(position=0)])
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        # Pre-commit capture plus the single deadline-bounded poll.
+        assert client.assets.retrieve.await_count == 2
+        events = [call.args[0] for call in emit.await_args_list]
+        assert events == [
+            WebSocketEvent.ASSET_EDIT_READY_V2,
+            WebSocketEvent.ASSET_UPDATE,
+        ]
+
+    @pytest.mark.anyio
+    async def test_delete_root_noop_skips_artifact_wait(
+        self, sample_uuid, mock_current_user
+    ):
+        """The idempotent root-current delete commits nothing, so it emits
+        from a single plain retrieve without capturing a pre-commit key."""
+        from routers.api.assets import remove_asset_edits
+
+        client = self._client(
+            [self._version(position=0)],
+            asset=None,
+        )
+        from tests.conftest import make_gumnut_asset
+
+        client.assets.retrieve = AsyncMock(
+            return_value=make_gumnut_asset(
+                kind="original", current_version_id="asset_version_0"
+            )
+        )
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            await remove_asset_edits(
+                id=sample_uuid, client=client, current_user=mock_current_user
+            )
+
+        client.assets.versions.delete.assert_not_awaited()
+        assert client.assets.retrieve.await_count == 1
+        assert emit.await_count == 2
+
+    @pytest.mark.anyio
+    async def test_put_adjustment_replaces_current_edit(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        versions = [
+            self._version(position=0),
+            self._version(
+                position=1,
+                kind="edit",
+                version_id="asset_version_cur",
+                params=self.RECIPE_PARAMS,
+            ),
+        ]
+        client = self._client(versions)
+        fake_render, render_calls = self._fake_render()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", AsyncMock()),
+        ):
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        client.assets.versions.append.assert_not_awaited()
+        client.assets.versions.replace.assert_awaited_once()
+        replace_call = client.assets.versions.replace.call_args
+        # Replaces exactly the snapshotted current edit at the same depth.
+        assert replace_call.args[0] == "asset_version_cur"
+        assert replace_call.kwargs["kind"] == "edit"
+        # The render is handed the recipe, never the prior edit's bytes.
+        assert len(render_calls) == 1
+
+    @pytest.mark.anyio
+    async def test_put_opaque_tip_conflicts_before_rendering(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        versions = [
+            self._version(position=0),
+            self._version(position=1, kind="external:acme"),
+        ]
+        client = self._client(versions)
+        fake_render, render_calls = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await apply_asset_edits(
+                    id=sample_uuid,
+                    request=AssetEditsCreateDto(edits=self._crop_edits()),
+                    client=client,
+                    current_user=mock_current_user,
+                )
+        assert exc_info.value.status_code == 409
+        assert render_calls == []
+        client.assets.versions.append.assert_not_awaited()
+        client.assets.versions.replace.assert_not_awaited()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_invalid_crop_returns_400_without_writing(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        client = self._client([self._version(position=0, width=50, height=50)])
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            with pytest.raises(HTTPException) as exc_info:
+                await apply_asset_edits(
+                    id=sample_uuid,
+                    request=AssetEditsCreateDto(
+                        edits=self._crop_edits(x=0, y=0, width=100, height=100)
+                    ),
+                    client=client,
+                    current_user=mock_current_user,
+                )
+        assert exc_info.value.status_code == 400
+        client.assets.versions.append.assert_not_awaited()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_missing_base_dimensions_returns_400(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        client = self._client([self._version(position=0, width=0, height=0)])
+        with pytest.raises(HTTPException) as exc_info:
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_put_cas_loss_propagates_409_without_retry_or_emit(
+        self, sample_uuid, mock_current_user
+    ):
+        from gumnut import APIStatusError
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        client = self._client([self._version(position=0)])
+        conflict = make_sdk_status_error(409, "version conflict")
+        client.assets.versions.append = AsyncMock(side_effect=conflict)
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            with pytest.raises(APIStatusError):
+                await apply_asset_edits(
+                    id=sample_uuid,
+                    request=AssetEditsCreateDto(edits=self._crop_edits()),
+                    client=client,
+                    current_user=mock_current_user,
+                )
+        # A losing CAS is never retried against a newly fetched tip.
+        client.assets.versions.list.assert_awaited_once()
+        client.assets.versions.append.assert_awaited_once()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_quota_and_storage_errors_reach_global_mapping(
+        self, sample_uuid, mock_current_user
+    ):
+        from gumnut import APIStatusError
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        for status_code in (507, 502):
+            client = self._client([self._version(position=0)])
+            client.assets.versions.append = AsyncMock(
+                side_effect=make_sdk_status_error(status_code, "upstream failure")
+            )
+            fake_render, _ = self._fake_render()
+            emit = AsyncMock()
+            with (
+                patch("routers.api.assets.render_asset_edit", fake_render),
+                patch("routers.api.assets.emit_user_event", emit),
+            ):
+                with pytest.raises(APIStatusError) as exc_info:
+                    await apply_asset_edits(
+                        id=sample_uuid,
+                        request=AssetEditsCreateDto(edits=self._crop_edits()),
+                        client=client,
+                        current_user=mock_current_user,
+                    )
+            # Untouched by the route: the global GumnutError handler owns the
+            # Immich-shaped response (including the 507 -> 400 quota remap).
+            assert exc_info.value.response.status_code == status_code
+            emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_render_errors_map_to_stable_statuses(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+        from services.asset_edit_renderer import (
+            EditRenderInputError,
+            EditRenderLimitError,
+            EditRenderSourceError,
+            EditRenderTimeoutError,
+        )
+
+        cases = [
+            (EditRenderInputError("corrupt_image", "corrupt"), 400),
+            (EditRenderLimitError("image_too_large", "too large"), 400),
+            (EditRenderSourceError("source_bytes_unavailable", "no bytes"), 502),
+            (EditRenderTimeoutError("render_timeout", "timed out"), 502),
+        ]
+        for error, expected_status in cases:
+            client = self._client([self._version(position=0)])
+            fake_render, _ = self._fake_render(error=error)
+            emit = AsyncMock()
+            with (
+                patch("routers.api.assets.render_asset_edit", fake_render),
+                patch("routers.api.assets.emit_user_event", emit),
+            ):
+                with pytest.raises(HTTPException) as exc_info:
+                    await apply_asset_edits(
+                        id=sample_uuid,
+                        request=AssetEditsCreateDto(edits=self._crop_edits()),
+                        client=client,
+                        current_user=mock_current_user,
+                    )
+            assert exc_info.value.status_code == expected_status, error.code
+            client.assets.versions.append.assert_not_awaited()
+            emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_websocket_failure_does_not_fail_committed_edit(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        client = self._client([self._version(position=0)])
+        fake_render, _ = self._fake_render()
+        # Use the real emit_user_event and fail the transport underneath it:
+        # its contract is to swallow SocketIOError, so the committed edit
+        # must still return 200.
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch(
+                "services.websockets._emit_event",
+                AsyncMock(side_effect=SocketIOError("transport down")),
+            ),
+        ):
+            result = await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+        assert result.assetId == sample_uuid
+        client.assets.versions.append.assert_awaited_once()
+
+    # --- DELETE ------------------------------------------------------------
+
+    @pytest.mark.anyio
+    async def test_delete_root_is_idempotent_but_still_emits_ready(
+        self, sample_uuid, mock_current_user
+    ):
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import remove_asset_edits
+        from services.websockets import WebSocketEvent
+
+        client = self._client(
+            [self._version(position=0)],
+            asset=make_gumnut_asset(
+                kind="original", current_version_id="asset_version_0"
+            ),
+        )
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            result = await remove_asset_edits(
+                id=sample_uuid, client=client, current_user=mock_current_user
+            )
+        assert result is None
+        client.assets.versions.delete.assert_not_awaited()
+        # Immich web awaits AssetEditReadyV2 after an empty-edits apply, so
+        # the idempotent no-op still emits it (with no edit rows).
+        ready_call = emit.await_args_list[0]
+        assert ready_call.args[0] == WebSocketEvent.ASSET_EDIT_READY_V2
+        assert ready_call.args[2].edit == []
+        assert ready_call.args[2].asset.isEdited is False
+
+    @pytest.mark.anyio
+    async def test_delete_edit_sends_exact_tip_and_restores(
+        self, sample_uuid, mock_current_user
+    ):
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import remove_asset_edits
+        from services.websockets import WebSocketEvent
+
+        versions = [
+            self._version(position=0),
+            self._version(
+                position=1,
+                kind="edit",
+                version_id="asset_version_cur",
+                params=self.RECIPE_PARAMS,
+            ),
+        ]
+        client = self._client(
+            versions,
+            asset=make_gumnut_asset(
+                kind="original", current_version_id="asset_version_0"
+            ),
+        )
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            await remove_asset_edits(
+                id=sample_uuid, client=client, current_user=mock_current_user
+            )
+        client.assets.versions.delete.assert_awaited_once()
+        delete_call = client.assets.versions.delete.call_args
+        assert delete_call.args[0] == "asset_version_cur"
+        events = [call.args[0] for call in emit.await_args_list]
+        assert events == [
+            WebSocketEvent.ASSET_EDIT_READY_V2,
+            WebSocketEvent.ASSET_UPDATE,
+        ]
+        # The refreshed payload reflects the restored original.
+        assert emit.await_args_list[0].args[2].asset.isEdited is False
+        assert emit.await_args_list[0].args[2].edit == []
+
+    @pytest.mark.anyio
+    async def test_delete_opaque_tip_conflicts(self, sample_uuid, mock_current_user):
+        from routers.api.assets import remove_asset_edits
+
+        versions = [
+            self._version(position=0),
+            self._version(position=1, kind="external:acme"),
+        ]
+        client = self._client(versions)
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            with pytest.raises(HTTPException) as exc_info:
+                await remove_asset_edits(
+                    id=sample_uuid, client=client, current_user=mock_current_user
+                )
+        assert exc_info.value.status_code == 409
+        client.assets.versions.delete.assert_not_awaited()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_delete_cas_loss_propagates_without_emit(
+        self, sample_uuid, mock_current_user
+    ):
+        from gumnut import APIStatusError
+        from routers.api.assets import remove_asset_edits
+
+        versions = [
+            self._version(position=0),
+            self._version(position=1, kind="edit", params=self.RECIPE_PARAMS),
+        ]
+        client = self._client(versions)
+        client.assets.versions.delete = AsyncMock(
+            side_effect=make_sdk_status_error(409, "buried version")
+        )
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            with pytest.raises(APIStatusError):
+                await remove_asset_edits(
+                    id=sample_uuid, client=client, current_user=mock_current_user
+                )
+        client.assets.versions.delete.assert_awaited_once()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_superseded_commit_suppresses_events(
+        self, sample_uuid, mock_current_user
+    ):
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        # Another edit-route write won between this request's append and the
+        # retrieve (current kind is "edit"): that winner emits its own event,
+        # so this request's stale one is suppressed.
+        client = self._client(
+            [self._version(position=0)],
+            asset=make_gumnut_asset(
+                kind="edit", current_version_id="asset_version_other"
+            ),
+        )
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            result = await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+        # The commit stands and the response reports it; only the stale
+        # events are suppressed (the winning write emits the current state).
+        client.assets.versions.append.assert_awaited_once()
+        assert result.assetId == sample_uuid
+        assert len(result.edits) == 1
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_superseded_by_external_writer_emits_refreshed_state(
+        self, sample_uuid, mock_current_user
+    ):
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+        from services.websockets import AssetEditReadyV2Payload, WebSocketEvent
+
+        # An external (non-edit-route) writer won between this request's
+        # append and the retrieve. Nothing else emits AssetEditReadyV2, so
+        # suppressing would leave the web editor's 10s wait to time out on a
+        # write that succeeded — emit the refreshed state (empty edit list,
+        # matching how GET reads an opaque tip) instead.
+        client = self._client(
+            [self._version(position=0)],
+            asset=make_gumnut_asset(
+                kind="external:acme", current_version_id="asset_version_other"
+            ),
+        )
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            result = await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+        # The response still reports this request's committed rows.
+        assert len(result.edits) == 1
+        events = [call.args[0] for call in emit.await_args_list]
+        assert events == [
+            WebSocketEvent.ASSET_EDIT_READY_V2,
+            WebSocketEvent.ASSET_UPDATE,
+        ]
+        ready_payload = emit.await_args_list[0].args[2]
+        assert isinstance(ready_payload, AssetEditReadyV2Payload)
+        assert ready_payload.edit == []
+        assert ready_payload.asset.isEdited is True
+
+    @pytest.mark.anyio
+    async def test_delete_restores_buried_external_survivor_and_emits(
+        self, sample_uuid, mock_current_user
+    ):
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import remove_asset_edits
+        from services.websockets import WebSocketEvent
+
+        # An external rendering buried under the edit tip is the survivor —
+        # the suppression guard must key on it, not on the root.
+        versions = [
+            self._version(position=0),
+            self._version(position=1, kind="external:acme"),
+            self._version(position=2, kind="edit", params=self.RECIPE_PARAMS),
+        ]
+        client = self._client(
+            versions,
+            asset=make_gumnut_asset(
+                kind="external:acme", current_version_id="asset_version_1"
+            ),
+        )
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            await remove_asset_edits(
+                id=sample_uuid, client=client, current_user=mock_current_user
+            )
+        delete_call = client.assets.versions.delete.call_args
+        assert delete_call.args[0] == "asset_version_2"
+        events = [call.args[0] for call in emit.await_args_list]
+        assert events == [
+            WebSocketEvent.ASSET_EDIT_READY_V2,
+            WebSocketEvent.ASSET_UPDATE,
+        ]
+
+    @pytest.mark.anyio
+    async def test_delete_superseded_restore_suppresses_events(
+        self, sample_uuid, mock_current_user
+    ):
+        from tests.conftest import make_gumnut_asset
+        from routers.api.assets import remove_asset_edits
+
+        versions = [
+            self._version(position=0),
+            self._version(position=1, kind="edit", params=self.RECIPE_PARAMS),
+        ]
+        # After this delete restored the root, another write appended a new
+        # version before the retrieve — the expected survivor is not current.
+        client = self._client(
+            versions,
+            asset=make_gumnut_asset(
+                kind="edit", current_version_id="asset_version_other"
+            ),
+        )
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            result = await remove_asset_edits(
+                id=sample_uuid, client=client, current_user=mock_current_user
+            )
+        assert result is None
+        client.assets.versions.delete.assert_awaited_once()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_single_chain_snapshot_shared_with_renderer(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        versions = [self._version(position=0)]
+        client = self._client(versions)
+        fake_render, render_calls = self._fake_render()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", AsyncMock()),
+        ):
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+        # The route lists once with variants and hands that snapshot to the
+        # renderer, which must not re-list.
+        client.assets.versions.list.assert_awaited_once()
+        assert client.assets.versions.list.call_args.kwargs["include"] == ["variants"]
+        assert render_calls[0][3] is versions
+
+    @pytest.mark.anyio
+    async def test_put_identity_edit_list_returns_400(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import (
+            AssetEditAction,
+            AssetEditActionItemDto,
+            AssetEditsCreateDto,
+            RotateParameters,
+        )
+
+        client = self._client([self._version(position=0)])
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            with pytest.raises(HTTPException) as exc_info:
+                await apply_asset_edits(
+                    id=sample_uuid,
+                    request=AssetEditsCreateDto(
+                        edits=[
+                            AssetEditActionItemDto(
+                                action=AssetEditAction.rotate,
+                                parameters=RotateParameters(angle=360.0),
+                            )
+                        ]
+                    ),
+                    client=client,
+                    current_user=mock_current_user,
+                )
+        # A non-empty list reducing to no transformation must not commit a
+        # lossy re-encode that reads back as zero edits; "remove all edits"
+        # is DELETE on this route.
+        assert exc_info.value.status_code == 400
+        client.assets.versions.append.assert_not_awaited()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_cdn_open_failure_maps_to_502(
+        self, sample_uuid, mock_current_user
+    ):
+        import httpx
+
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        client = self._client([self._version(position=0)])
+        fake_render, _ = self._fake_render(error=httpx.ConnectError("boom"))
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await apply_asset_edits(
+                    id=sample_uuid,
+                    request=AssetEditsCreateDto(edits=self._crop_edits()),
+                    client=client,
+                    current_user=mock_current_user,
+                )
+        assert exc_info.value.status_code == 502
+        client.assets.versions.append.assert_not_awaited()
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_chain_without_edit_base_returns_502(
+        self, sample_uuid, mock_current_user
+    ):
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        # A root whose kind claims "edit" leaves the chain with no non-edit
+        # base: tip selection succeeds but select_edit_base cannot.
+        client = self._client([self._version(position=0, kind="edit")])
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            with pytest.raises(HTTPException) as exc_info:
+                await apply_asset_edits(
+                    id=sample_uuid,
+                    request=AssetEditsCreateDto(edits=self._crop_edits()),
+                    client=client,
+                    current_user=mock_current_user,
+                )
+        assert exc_info.value.status_code == 502
+        client.assets.versions.append.assert_not_awaited()
+        emit.assert_not_awaited()

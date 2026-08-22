@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation"
-last-updated: 2026-08-11
+last-updated: 2026-08-21
 ---
 
 # WebSocket Implementation
@@ -59,7 +59,7 @@ Event payload and trigger details deliberately live in the [event reference](../
 
 ## Delivery and failure semantics
 
-Realtime emission is fire-and-forget relative to the HTTP mutation. `emit_user_event` and `emit_session_event` catch `SocketIOError`, log at warning with exception context, and return normally.
+Realtime emission is best-effort relative to the HTTP mutation: the emit helpers are awaited by their caller — at nearly all call sites this happens inside the request, so emission precedes the HTTP response, though the video-upload path deliberately defers it to a background task (see the event reference) — but `emit_user_event` and `emit_session_event` catch `SocketIOError`, log at warning with exception context, and return normally.
 
 This boundary is load-bearing: a photo mutation that committed in the Gumnut API must not be reported as failed merely because a client disconnected during notification. Call sites must not add duplicate `try/except SocketIOError` wrappers.
 
