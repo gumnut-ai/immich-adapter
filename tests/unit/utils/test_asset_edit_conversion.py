@@ -70,9 +70,12 @@ class TestOrientationNormalization:
         ([rotate(180)], 180, False),
         ([rotate(270)], 270, False),
         ([mirror(H)], 0, True),
-        ([mirror(H), rotate(90)], 90, True),
+        # Mirror listed first is applied first; the rotation lands outside the
+        # mirror and folds into the rotate-then-mirror canon with its sign
+        # flipped: M.R(-90) == R(90).M.
+        ([mirror(H), rotate(90)], 270, True),
         ([mirror(V)], 180, True),  # vertical = horizontal mirror + 180
-        ([mirror(V), rotate(90)], 270, True),
+        ([mirror(V), rotate(90)], 90, True),
     ]
 
     @pytest.mark.parametrize("edits,angle,mirrored", EIGHT_STATES)
@@ -104,12 +107,28 @@ class TestOrientationNormalization:
     def test_equivalent_sequences_normalize_identically(self, equivalent, canonical):
         assert to_recipe(equivalent) == to_recipe(canonical)
 
+    def test_flip_of_rotated_state_round_trips_the_rotation(self):
+        """Regression: flipping an already-rotated edit must not shift the
+        rotation by 180.
+
+        The web editor at rotation 270 maps the horizontal-flip button to a
+        base-frame vertical mirror and saves ``[mirror(V), rotate(270)]``.
+        Folding that with reversed application order stored ``angle=90`` and
+        the rendered edit came out 180 degrees off its editor preview.
+        """
+        assert to_recipe([mirror(V), rotate(270)]) == EditRecipe(
+            crop=None, angle=270, mirror=True
+        )
+
     def test_list_order_is_semantically_honored(self):
+        # Rotating after mirroring (the editor's canonical order) flips the
+        # rotation's sign in the rotate-then-mirror canon; rotating first
+        # keeps it.
         assert to_recipe([mirror(H), rotate(90)]) == EditRecipe(
-            crop=None, angle=90, mirror=True
+            crop=None, angle=270, mirror=True
         )
         assert to_recipe([rotate(90), mirror(H)]) == EditRecipe(
-            crop=None, angle=270, mirror=True
+            crop=None, angle=90, mirror=True
         )
 
 
@@ -470,7 +489,9 @@ class TestReverseTranslation:
         assert isinstance(rows[1].parameters, MirrorParameters)
         assert rows[1].parameters.axis == MirrorAxis.horizontal
         assert isinstance(rows[2].parameters, RotateParameters)
-        assert rows[2].parameters.angle == 90.0
+        # Stored angle 90 with mirror set emits wire rotate 270: the wire list
+        # mirrors first, so the rotation's sign flips crossing the mirror.
+        assert rows[2].parameters.angle == 270.0
         assert all(isinstance(row, AssetEditActionItemResponseDto) for row in rows)
 
     def test_identity_recipe_yields_no_rows(self):

@@ -13,8 +13,11 @@ The v1 recipe JSON object::
     }
 
 Recipes apply crop to the display-oriented source frame, then rotation, then a
-horizontal mirror. Immich actions compose in list order, with the last action
-applied first; every valid rotate/mirror sequence reduces to one of eight
+horizontal mirror. Immich actions apply to the image in list order — first
+listed, first applied. The web editor's CSS model makes this concrete: the
+child ``img`` carries the mirror (base frame) and the parent carries the
+rotation, so its canonical ``[mirror, rotate]`` list mirrors first and rotates
+the mirrored image. Every valid rotate/mirror sequence reduces to one of eight
 `(mirror, angle)` orientations.
 
 The module has no SDK, framework, imaging, filesystem, or network dependencies.
@@ -179,8 +182,18 @@ def immich_edits_to_recipe(
     Invalid source dimensions are a caller bug and raise
     `ValueError`; invalid client input raises `AssetEditValidationError`.
 
-    The `(mirror, angle)` state means rotate, then mirror horizontally. Each
-    action's matrix is multiplied on the right to preserve Immich list order.
+    The `(mirror, angle)` state means rotate, then mirror horizontally — as
+    image operations, ``M^mirror . R(angle)``. Actions apply to the image in
+    list order (first listed, first applied), so each new action composes on
+    the outside of the accumulated state and is rewritten into the canonical
+    rotate-then-mirror form:
+
+    * rotate(r):  ``R(r) . M^m . R(a)`` — the rotation passes through an odd
+      mirror with its sign flipped, so ``a`` gains ``r`` unmirrored and loses
+      ``r`` mirrored.
+    * mirror-h:   ``M . M^m . R(a)`` — toggles ``mirror``, leaves ``a`` alone.
+    * mirror-v:   ``M . R(180) . M^m . R(a)`` — toggles ``mirror`` and adds
+      180 to ``a`` (the sign of 180 is irrelevant mod 360).
     """
     _require_positive_int(source_width, "source_width")
     _require_positive_int(source_height, "source_height")
@@ -225,7 +238,8 @@ def immich_edits_to_recipe(
                     "duplicate_action", "Duplicate rotate action"
                 )
             seen.add("rotate")
-            angle = (angle + _normalize_angle(parameters.angle)) % 360
+            rotation = _normalize_angle(parameters.angle)
+            angle = (angle - rotation if mirror else angle + rotation) % 360
         elif action is AssetEditAction.mirror:
             if not isinstance(parameters, MirrorParameters):
                 raise AssetEditValidationError(
@@ -242,10 +256,8 @@ def immich_edits_to_recipe(
                     "duplicate_action", "Duplicate mirror action for the same axis"
                 )
             seen.add(key)
-            if axis is MirrorAxis.horizontal:
-                angle = (-angle) % 360
-            else:
-                angle = (180 - angle) % 360
+            if axis is MirrorAxis.vertical:
+                angle = (angle + 180) % 360
             mirror = not mirror
         else:
             raise AssetEditValidationError(
@@ -335,8 +347,13 @@ def recipe_to_immich_edits(
 ) -> list[AssetEditActionItemResponseDto]:
     """Translate a stored recipe into the canonical Immich operation list.
 
-    Rows use the editor's crop, mirror, rotate order. IDs are stable for an
-    asset/version/action tuple, so changed params require a new version ID.
+    Rows use the editor's crop, mirror, rotate order. Because wire lists apply
+    first-listed-first while the recipe mirrors *after* rotating, a mirrored
+    recipe's rotation is emitted with its sign flipped:
+    ``M . R(a) == R(-a) . M``, i.e. mirror first (as listed), then rotate by
+    ``-a``. `immich_edits_to_recipe` inverts this exactly, so the pair
+    round-trips. IDs are stable for an asset/version/action tuple, so changed
+    params require a new version ID.
     """
     if not asset_id or not version_id:
         raise ValueError("asset_id and version_id must be non-empty")
@@ -364,12 +381,13 @@ def recipe_to_immich_edits(
                 parameters=MirrorParameters(axis=MirrorAxis.horizontal),
             )
         )
-    if recipe.angle != 0:
+    wire_angle = (-recipe.angle) % 360 if recipe.mirror else recipe.angle
+    if wire_angle != 0:
         rows.append(
             AssetEditActionItemResponseDto(
                 action=AssetEditAction.rotate,
                 id=_synthesized_row_id(asset_id, version_id, AssetEditAction.rotate),
-                parameters=RotateParameters(angle=float(recipe.angle)),
+                parameters=RotateParameters(angle=float(wire_angle)),
             )
         )
     return rows
