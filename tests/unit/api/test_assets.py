@@ -2847,7 +2847,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = mock_streaming_response
             result = await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         assert result is mock_streaming_response
@@ -2890,7 +2893,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         await_args = mock_client.assets.retrieve.await_args
@@ -2917,7 +2923,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.fullsize, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.fullsize,
+                edited=True,
+                client=mock_client,
             )
 
         mock_cdn.assert_called_once_with(
@@ -2944,7 +2953,7 @@ class TestViewAsset:
         )
 
         with pytest.raises(NotFoundError):
-            await view_asset(sample_uuid, client=mock_client)
+            await view_asset(sample_uuid, edited=True, client=mock_client)
 
     @pytest.mark.anyio
     async def test_view_asset_missing_variant(self, sample_uuid):
@@ -2963,7 +2972,10 @@ class TestViewAsset:
 
         with pytest.raises(HTTPException) as exc_info:
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         assert exc_info.value.status_code == 404
@@ -2998,7 +3010,9 @@ class TestViewAsset:
             "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
-            await view_asset(sample_uuid, size=requested_size, client=mock_client)
+            await view_asset(
+                sample_uuid, size=requested_size, edited=True, client=mock_client
+            )
 
         mock_cdn.assert_called_once_with(
             f"https://cdn.example.com/{expected_key}.webp",
@@ -3032,7 +3046,10 @@ class TestViewAsset:
 
         with pytest.raises(HTTPException) as exc_info:
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         assert exc_info.value.status_code == 404
@@ -3071,7 +3088,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         # The 720px small (JPEG) is streamed in place of the 360px thumbnail —
@@ -3121,7 +3141,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         mock_cdn.assert_called_once_with(
@@ -3168,7 +3191,10 @@ class TestViewAsset:
 
         with pytest.raises(HTTPException) as exc_info:
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         assert exc_info.value.status_code == 404
@@ -3216,7 +3242,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=mock_client,
             )
 
         mock_cdn.assert_called_once_with(
@@ -3256,7 +3285,10 @@ class TestViewAsset:
         ) as mock_cdn:
             mock_cdn.return_value = Mock()
             await view_asset(
-                sample_uuid, size=AssetMediaSize.preview, client=mock_client
+                sample_uuid,
+                size=AssetMediaSize.preview,
+                edited=True,
+                client=mock_client,
             )
 
         mock_cdn.assert_called_once_with(
@@ -3278,8 +3310,16 @@ def _make_mock_version(
     mime_type: str = "image/jpeg",
     original_url: str | None = "https://cdn.example.com/v0-original.jpg",
     kind: str | None = None,
+    width: int = 1000,
+    height: int = 1500,
+    variant_map: dict[str, dict[str, str]] | None = None,
 ):
-    """Build a mock asset-version row."""
+    """Build a mock asset-version row.
+
+    ``variant_map`` adds display rungs (key -> {url, mimetype}) alongside the
+    ``original`` rung. Width/height are real ints (portrait by default) because
+    the base-variant path runs them through the aspect-upgrade comparison.
+    """
     version = Mock()
     version.id = f"asset_version_pos{position}"
     version.position = position
@@ -3287,14 +3327,94 @@ def _make_mock_version(
         kind if kind is not None else ("original" if position == 0 else "edit")
     )
     version.mime_type = mime_type
-    if original_url is None:
-        version.version_urls = {}
-    else:
+    version.width = width
+    version.height = height
+    version_urls = {}
+    if original_url is not None:
         variant = Mock()
         variant.url = original_url
         variant.mimetype = mime_type
-        version.version_urls = {"original": variant}
+        version_urls["original"] = variant
+    for rung, val in (variant_map or {}).items():
+        variant = Mock()
+        variant.url = val["url"]
+        variant.mimetype = val["mimetype"]
+        version_urls[rung] = variant
+    version.version_urls = version_urls
     return version
+
+
+class TestViewAssetEditBase:
+    """The default edited=false thumbnail path streams the edit-base variant."""
+
+    @pytest.mark.anyio
+    async def test_default_streams_edit_base_variant(self, sample_uuid):
+        """Omitting ``edited`` serves the base rendering the recipe was
+        authored against — not the current edit — so the editor's client-side
+        recipe replay doesn't double-apply."""
+        root = _make_mock_version(
+            0,
+            variant_map={
+                "preview": {
+                    "url": "https://cdn.example.com/v0-preview.webp",
+                    "mimetype": "image/webp",
+                }
+            },
+        )
+        edit = _make_mock_version(
+            1,
+            variant_map={
+                "preview": {
+                    "url": "https://cdn.example.com/v1-preview.webp",
+                    "mimetype": "image/webp",
+                }
+            },
+        )
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(return_value=[root, edit])
+
+        with patch(
+            "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+        ) as mock_cdn:
+            mock_cdn.return_value = Mock()
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.preview, client=mock_client
+            )
+
+        mock_client.assets.retrieve.assert_not_called()
+        list_await_args = mock_client.assets.versions.list.await_args
+        assert list_await_args is not None
+        assert list_await_args.kwargs["include"] == ["variants"]
+        mock_cdn.assert_called_once_with(
+            "https://cdn.example.com/v0-preview.webp", "image/webp"
+        )
+
+    @pytest.mark.anyio
+    async def test_base_variant_missing_returns_404(self, sample_uuid):
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(
+            return_value=[_make_mock_version(0)]  # only the original rung
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.preview, client=mock_client
+            )
+
+        assert exc_info.value.status_code == 404
+        assert "preview" in exc_info.value.detail
+
+    @pytest.mark.anyio
+    async def test_invalid_chain_returns_502(self, sample_uuid):
+        mock_client = Mock()
+        mock_client.assets.versions.list = AsyncMock(return_value=[])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await view_asset(
+                sample_uuid, size=AssetMediaSize.thumbnail, client=mock_client
+            )
+
+        assert exc_info.value.status_code == 502
 
 
 _DOWNLOAD_FORWARDED_HEADERS = (

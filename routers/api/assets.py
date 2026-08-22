@@ -292,6 +292,51 @@ async def _stream_exact_original(
     )
 
 
+async def _stream_edit_base_variant(
+    asset_uuid: UUID,
+    client: AsyncGumnut,
+    variant: AssetVariant,
+) -> StreamingResponse:
+    """Stream a display variant of the edit-base version (the un-edited rendering).
+
+    An ``edited=false`` media request must serve the rendering the saved edit
+    recipe was authored against: Immich's editor loads it as the canvas base
+    and re-applies the recipe client-side, so serving the current (already
+    rendered) edit would double-apply the recipe on screen. The base is
+    ``select_edit_base``'s highest-position non-edit version — for an asset
+    with no edit that is the current rendering, so the response matches the
+    ``edited=true`` path. An invalid chain returns 502 rather than
+    substituting another rendering.
+    """
+    gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+    versions = await client.assets.versions.list(gumnut_asset_id, include=["variants"])
+
+    try:
+        base = select_edit_base(versions, asset_id=gumnut_asset_id)
+    except InvalidVersionChainError:
+        raise _invalid_chain_error()
+
+    variant = _upgrade_variant_for_aspect(variant, base.width, base.height)
+    variant_key = _resolve_variant_key(base.mime_type, variant)
+
+    variant_info = (base.version_urls or {}).get(variant_key)
+    if variant_info is None:
+        logger.warning(
+            "Asset base-version variant not available",
+            extra={
+                "variant": variant_key,
+                "asset_id": gumnut_asset_id,
+                "version_id": base.id,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Asset variant '{variant_key}' not available",
+        )
+
+    return await stream_from_cdn(variant_info.url, variant_info.mimetype)
+
+
 def _immich_checksum_to_base64(checksum: str) -> str:
     """
     Convert an Immich checksum (hex or base64) to base64 format for Gumnut.
@@ -1307,17 +1352,26 @@ async def get_asset_info(
 async def view_asset(
     id: UUID,
     size: AssetMediaSize = Query(default=None, alias="size"),
+    edited: Annotated[
+        bool, Query(description="Return edited asset if available")
+    ] = False,
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> StreamingResponse:
     """
     Get a thumbnail for an asset.
-    Retrieves asset metadata and streams the requested variant from CDN.
+
+    ``edited=true`` streams the requested variant of the current rendering;
+    the default ``false`` streams the edit-base version's variant — the
+    rendering Immich's editor re-applies the saved recipe against (Immich web
+    sends ``edited=true`` everywhere except the editor's canvas base load).
     """
     preferred_size = size if size is not None else AssetMediaSize.thumbnail
     variant = _IMMICH_SIZE_TO_VARIANT.get(preferred_size, "thumbnail")
-    return await _retrieve_and_stream_variant(id, client, variant)
+    if edited:
+        return await _retrieve_and_stream_variant(id, client, variant)
+    return await _stream_edit_base_variant(id, client, variant)
 
 
 @router.get(

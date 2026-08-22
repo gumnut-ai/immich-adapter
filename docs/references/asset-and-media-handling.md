@@ -71,9 +71,12 @@ non-edit version keeps an `external:*` rendering layered on the upload. External
 renderings are produced from the full chain below them, so an edit below an
 `external:*` version is already baked in and the latest non-edit is always the
 correct base. Until an external rendering exists, the base is the root. The
-Immich web editor previews `GET /api/assets/{id}/thumbnail?size=preview&edited=false`,
-and `view_asset` does not yet honor `edited`, so that preview still shows the
-current rendering.
+edit base also serves `GET /api/assets/{id}/thumbnail` when `edited=false`
+(the default): the Immich web editor loads that preview as its canvas base and
+re-applies the saved recipe client-side, so serving the current rendering there
+would double-apply the recipe on screen. Immich web sends `edited=true` on
+every other media request, which keeps the fast `asset_urls` path; the
+`edited=false` path streams the base version's `version_urls` display rung.
 
 Mock assets must set `kind` explicitly; `make_gumnut_asset` defaults it to
 `"original"`.
