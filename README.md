@@ -124,6 +124,7 @@ This invokes `uvicorn` directly because the `fastapi` CLI doesn't expose `--ws`,
 - **API**: http://localhost:3001 or http://localhost:8080 if using Docker
 - **API Docs**: http://localhost:3001/docs and http://localhost:3001/redoc
 - **OpenAPI Spec**: http://localhost:3001/openapi.json
+- **Immich discovery**: `GET /.well-known/immich` returns the `/api` endpoint for mobile client discovery
 
 ## Development Commands
 
