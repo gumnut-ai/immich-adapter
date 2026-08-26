@@ -254,10 +254,10 @@ def test_requested_empty_v3_types_are_explicit_noops():
 # --- UserMetadataV1 preferences (minimumFaces override) ------------------------
 
 
-def test_user_metadata_converter_sets_min_faces_one():
-    """The synthesized preferences row nests minimumFaces=1 under people, matching
-    the shape the client's Preferences.fromMap reads."""
+def test_user_metadata_converter_sets_supported_preferences():
+    """The synthesized preferences row carries client-facing feature gates."""
     md = converters.gumnut_user_to_sync_user_metadata_v1(TEST_UUID)
     assert md.key == UserMetadataKey.preferences
     assert md.userId == TEST_UUID
     assert md.value["people"]["minimumFaces"] == 1
+    assert md.value["ratings"]["enabled"] is True

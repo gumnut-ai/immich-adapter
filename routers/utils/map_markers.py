@@ -19,6 +19,7 @@ from routers.utils.asset_conversion import (
     resolve_asset_location,
 )
 from routers.utils.gumnut_id_conversion import safe_uuid_from_asset_id
+from routers.utils.rating import RatingFilter, rating_extra_query
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ async def collect_geotagged_markers(
     client: AsyncGumnut,
     *,
     album_id: str | None = None,
+    ratings: RatingFilter | None = None,
     local_datetime_after: str | None = None,
     local_datetime_before: str | None = None,
 ) -> list[MapMarkerResponseDto]:
@@ -69,7 +71,7 @@ async def collect_geotagged_markers(
     library. When `album_id` is given it further restricts to one album's assets
     (AND-combined with the bbox — the two are independent filters). Optional
     `local_datetime_after` / `local_datetime_before` are ISO-8601 strings that
-    narrow by capture time.
+    narrow by capture time. `ratings` is the exact favorite/rating dial set.
     """
     list_kwargs: dict[str, Any] = {
         "limit": GUMNUT_API_MAX_PAGE_SIZE,
@@ -79,6 +81,9 @@ async def collect_geotagged_markers(
     }
     if album_id is not None:
         list_kwargs["album_id"] = album_id
+    extra_query = rating_extra_query(ratings)
+    if extra_query is not None:
+        list_kwargs["extra_query"] = extra_query
     if local_datetime_after is not None:
         list_kwargs["local_datetime_after"] = local_datetime_after
     if local_datetime_before is not None:

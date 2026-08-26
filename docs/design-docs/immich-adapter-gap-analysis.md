@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-08-18
+last-updated: 2026-08-26
 ---
 
 # Immich Adapter Gap Analysis
@@ -45,7 +45,7 @@ A route being present in OpenAPI does not prove a client uses it. Check the pinn
 | Jobs/queues | Compatibility stubs | Gumnut owns its task system | Intentional |
 | API keys | Compatibility stubs; API-key authentication itself is supported | Gumnut API key-management surface plus adapter | Revisit for developer workflows |
 | Custom asset metadata | Compatibility stubs | Gumnut metadata model plus adapter | Revisit |
-| Asset edits and OCR | Compatibility stubs/no-op sync families | Gumnut edit/OCR data plus adapter | Revisit |
+| Remaining asset edits and OCR | Favorite/rating edits are implemented; other unsupported edit fields and OCR sync families remain compatibility stubs/no-ops | Remaining Gumnut edit/OCR data plus adapter | Revisit remaining gaps |
 | Database backup/maintenance | Unreachable admin surfaces | Gumnut operations | Intentional |
 | Plugins/workflows | Unsupported optional utility | Gumnut extension/task model | Intentional |
 | Folder view | Empty compatibility surface | Folder/path product model | Revisit |
@@ -80,7 +80,7 @@ These decisions are product/architecture choices, not promises that every unsupp
 - tags;
 - reverse geocoding;
 - API-key management;
-- custom metadata, edits, OCR, and folder view.
+- custom metadata, remaining asset edits, OCR, and folder view.
 
 ### Intentional gaps
 

@@ -248,6 +248,13 @@ class TestMyPreferences:
         assert dumped["recentlyAdded"] == {"sidebarWeb": False}
 
     @pytest.mark.anyio
+    async def test_ratings_enabled(self):
+        """Advertise the rating capability so Immich renders its controls."""
+        result = await get_my_preferences()
+
+        assert result.ratings.enabled is True
+
+    @pytest.mark.anyio
     async def test_download_archive_size_limits_typical_browser_blob(self):
         result = await get_my_preferences()
 

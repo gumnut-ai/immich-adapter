@@ -1,9 +1,17 @@
 ---
 title: "Asset and Media Handling"
-last-updated: 2026-08-19
+last-updated: 2026-08-26
 ---
 
 # Asset and Media Handling
+
+## Favorite and rating are one dial
+
+The adapter exposes the Gumnut API's resolved metadata rating through Immich's two fields: `isFavorite` is true exactly when `metadata.rating == 5`, while EXIF/sync `rating` emits 1–5 and normalizes 0, null, or an out-of-range legacy value to null. Every asset read feeding `AssetResponseDto`, `SyncAssetV1`/`V2`, or the upload-ready WebSocket payload must request `include=metadata` and derive the heart through `is_asset_favorite`; hardcoded false values recreate the silent-revert bug after the next sync.
+
+Writes land on the same USER-layer dial. `isFavorite: true/false` writes 5/0. An explicitly-present `rating` writes 0–5 and wins when both fields are present. Immich uses explicit `rating: null` for unrated, so the adapter maps it to USER 0; forwarding backend null would instead clear the USER override and reveal an embedded FILE-layer rating. Values outside 0–5 return 422.
+
+When replaying rating changes to already-checkpointed clients, emit both `ASSET_UPDATED` and `METADATA_UPDATED` events without rewriting current ratings. Rewriting would turn a FILE-derived value into a persistent USER override.
 
 ## Derive multi-path fields through one helper
 

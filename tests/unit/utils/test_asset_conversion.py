@@ -313,6 +313,7 @@ def _attach_metadata(
     metadata.lens_model = None
     metadata.f_number = None
     metadata.focal_length = None
+    metadata.fps = None
     metadata.iso = None
     metadata.exposure_time = None
     metadata.latitude = None
@@ -328,6 +329,7 @@ def _attach_metadata(
     metadata.modified_datetime = None
     metadata.raw_width = raw_width
     metadata.raw_height = raw_height
+    metadata.asset_id = asset.id
     asset.metadata = metadata
 
 
@@ -749,6 +751,54 @@ class TestNormalizeRating:
         sample_gumnut_asset.metadata.rating = 0
 
         assert extract_sync_exif(sample_gumnut_asset, asset_uuid=uuid4()).rating is None
+
+
+class TestFavoriteRatingEmission:
+    """Every asset delivery path derives both Immich rating surfaces from the
+    same resolved Gumnut metadata rating.
+
+    Immich's favorite flag is the five-star projection of the one rating dial,
+    while EXIF rating preserves valid 1-5 values and normalizes unrated to null.
+    """
+
+    OWNER_UUID = UUID("22222222-2222-2222-2222-222222222222")
+
+    @pytest.mark.parametrize(
+        ("rating", "expected_favorite", "expected_rating"),
+        [
+            (None, False, None),
+            (0, False, None),
+            (3, False, 3),
+            (5, True, 5),
+        ],
+    )
+    def test_all_asset_delivery_paths_share_rating_semantics(
+        self,
+        sample_gumnut_asset,
+        mock_current_user,
+        rating,
+        expected_favorite,
+        expected_rating,
+    ):
+        _attach_metadata(sample_gumnut_asset, orientation=1)
+        sample_gumnut_asset.metadata.rating = rating
+
+        rest = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
+        websocket = build_asset_upload_ready_payload(
+            sample_gumnut_asset, owner_id=self.OWNER_UUID
+        )
+        sync = gumnut_asset_to_sync_asset_v1(
+            sample_gumnut_asset, owner_id=self.OWNER_UUID
+        )
+        sync_exif = gumnut_metadata_to_sync_exif_v1(sample_gumnut_asset)
+
+        assert rest.isFavorite is expected_favorite
+        assert websocket.asset.isFavorite is expected_favorite
+        assert sync.isFavorite is expected_favorite
+        assert rest.exifInfo is not None
+        assert rest.exifInfo.rating == expected_rating
+        assert websocket.exif.rating == expected_rating
+        assert sync_exif.rating == expected_rating
 
 
 class TestFormatDuration:

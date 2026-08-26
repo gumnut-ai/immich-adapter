@@ -61,7 +61,7 @@ _USER_PREFERENCES_RESPONSE: UserPreferencesResponseDto = UserPreferencesResponse
     memories=MemoriesResponse(duration=7, enabled=False),
     people=PeopleResponse(enabled=False, sidebarWeb=False),
     purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
-    ratings=RatingsResponse(enabled=False),
+    ratings=RatingsResponse(enabled=True),
     recentlyAdded=RecentlyAddedResponse(sidebarWeb=False),
     sharedLinks=SharedLinksResponse(enabled=False, sidebarWeb=False),
     tags=TagsResponse(enabled=False, sidebarWeb=False),

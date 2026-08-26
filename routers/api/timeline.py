@@ -17,11 +17,13 @@ from routers.immich_models import (
 from routers.utils.asset_conversion import (
     ASSET_INCLUDE_METADATA_ONLY,
     duration_ms,
+    is_asset_favorite,
     mime_type_to_asset_type,
     resolve_asset_location,
     resolve_capture_datetime,
     resolve_created_at,
 )
+from routers.utils.rating import RatingFilter, rating_extra_query, rating_filter_values
 from routers.utils.current_user import get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
@@ -45,6 +47,7 @@ async def fetch_asset_counts(
     *,
     album_id: str | None = None,
     person_id: str | None = None,
+    ratings: RatingFilter | None = None,
     state: Literal["live", "trashed", "all"] | None = None,
 ) -> list[Data]:
     """Fetch all monthly asset counts from the Gumnut API, paginating if needed."""
@@ -53,6 +56,9 @@ async def fetch_asset_counts(
         kwargs["album_id"] = album_id
     if person_id is not None:
         kwargs["person_id"] = person_id
+    extra_query = rating_extra_query(ratings)
+    if extra_query is not None:
+        kwargs["extra_query"] = extra_query
     if state is not None:
         kwargs["state"] = state
 
@@ -124,10 +130,8 @@ async def get_time_buckets(
     bbox: str = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> List[TimeBucketsResponseDto]:
-    if isFavorite or (
-        visibility is not None and visibility != AssetVisibility.timeline
-    ):
-        return []  # Gumnut does not support favorites, hidden, archived or locked assets, so return empty list
+    if visibility is not None and visibility != AssetVisibility.timeline:
+        return []  # Gumnut does not support hidden, archived, or locked assets.
 
     album_id = uuid_to_gumnut_album_id(albumId) if albumId else None
     person_id = uuid_to_gumnut_person_id(personId) if personId else None
@@ -136,6 +140,7 @@ async def get_time_buckets(
         client,
         album_id=album_id,
         person_id=person_id,
+        ratings=rating_filter_values(is_favorite=isFavorite),
         state="trashed" if isTrashed else None,
     )
 
@@ -189,7 +194,9 @@ async def get_time_bucket(
     }
 
     list_kwargs: dict[str, Any] = {
-        "extra_query": date_range_query,
+        "extra_query": rating_extra_query(
+            rating_filter_values(is_favorite=isFavorite), date_range_query
+        ),
         "include": ASSET_INCLUDE_METADATA_ONLY,
     }
     if isTrashed:
@@ -266,6 +273,7 @@ async def get_time_bucket(
     visibility_list = []
     local_offset_hours_list = []
     is_trashed_list = []
+    is_favorite_list = []
     duration_list: list[int | None] = []
     thumbhash_list: list[str | None] = []
     stack_list: list[list[str] | None] = []
@@ -306,6 +314,7 @@ async def get_time_bucket(
         local_offset_hours_list.append(local_datetime_offset)
 
         is_trashed_list.append(bool(asset.trashed_at))
+        is_favorite_list.append(is_asset_favorite(asset))
 
         # Forward each asset's duration: duration_ms returns integer
         # milliseconds (Immich v3), or None on NULL upstream — preserving this
@@ -336,7 +345,7 @@ async def get_time_bucket(
         "duration": duration_list,
         "fileCreatedAt": file_created_at_list,
         "id": asset_ids,
-        "isFavorite": [False] * asset_count,
+        "isFavorite": is_favorite_list,
         "isImage": is_image_list,
         "isTrashed": is_trashed_list,
         "latitude": latitude_list,
