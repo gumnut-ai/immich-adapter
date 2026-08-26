@@ -82,7 +82,7 @@ from routers.utils.stack_conversion import build_asset_stack_summary, hydrate_st
 from routers.utils.rating import (
     FAVORITE_RATING,
     rating_extra_query,
-    rating_filter_value,
+    rating_filter_values,
 )
 from utils.livephoto import is_live_photo_video
 from routers.immich_models import AssetTypeEnum
@@ -1107,7 +1107,7 @@ async def get_asset_statistics(
     list_kwargs: dict[str, Any] = {"limit": GUMNUT_API_MAX_PAGE_SIZE}
     if isTrashed:
         list_kwargs["state"] = "trashed"
-    extra_query = rating_extra_query(rating_filter_value(is_favorite=isFavorite))
+    extra_query = rating_extra_query(rating_filter_values(is_favorite=isFavorite))
     if extra_query is not None:
         list_kwargs["extra_query"] = extra_query
 

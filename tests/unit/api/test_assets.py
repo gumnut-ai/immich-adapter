@@ -2786,7 +2786,7 @@ class TestGetAssetStatistics:
         )
 
     @pytest.mark.anyio
-    async def test_get_asset_statistics_false_favorite_omits_filter(
+    async def test_get_asset_statistics_false_favorite_filters_non_favorites(
         self, multiple_gumnut_assets, mock_sync_cursor_page
     ):
         mock_client = Mock()
@@ -2798,7 +2798,10 @@ class TestGetAssetStatistics:
             isFavorite=False, isTrashed=False, client=mock_client
         )
 
-        mock_client.assets.list.assert_called_once_with(limit=GUMNUT_API_MAX_PAGE_SIZE)
+        mock_client.assets.list.assert_called_once_with(
+            limit=GUMNUT_API_MAX_PAGE_SIZE,
+            extra_query={"ratings": "0,1,2,3,4"},
+        )
 
 
 class TestRunAssetJobs:

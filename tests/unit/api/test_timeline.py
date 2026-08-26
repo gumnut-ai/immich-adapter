@@ -352,18 +352,24 @@ class TestGetTimeBuckets:
         assert result == []
 
     @pytest.mark.anyio
-    async def test_get_time_buckets_forwards_favorite_rating(self):
+    @pytest.mark.parametrize(
+        ("is_favorite", "expected_ratings"),
+        [(True, "5"), (False, "0,1,2,3,4")],
+    )
+    async def test_get_time_buckets_forwards_favorite_filter(
+        self, is_favorite, expected_ratings
+    ):
         mock_client = Mock()
         mock_client.assets.counts = AsyncMock(
             return_value=_make_counts_response([_make_data(datetime(2024, 1, 1), 2)])
         )
 
-        result = await call_get_time_buckets(isFavorite=True, client=mock_client)
+        result = await call_get_time_buckets(isFavorite=is_favorite, client=mock_client)
 
         assert result[0].count == 2
         counts_call = mock_client.assets.counts.await_args
         assert counts_call is not None
-        assert counts_call.kwargs["extra_query"] == {"ratings": "5"}
+        assert counts_call.kwargs["extra_query"] == {"ratings": expected_ratings}
 
     @pytest.mark.anyio
     async def test_get_time_buckets_is_trashed_passes_state(self):
@@ -539,25 +545,37 @@ class TestGetTimeBucket:
             )
 
     @pytest.mark.anyio
-    async def test_get_time_bucket_forwards_favorite_rating(
-        self, multiple_gumnut_assets, mock_sync_cursor_page
+    @pytest.mark.parametrize(
+        ("is_favorite", "asset_rating", "expected_ratings"),
+        [(True, 5, "5"), (False, 3, "0,1,2,3,4")],
+    )
+    async def test_get_time_bucket_forwards_favorite_filter(
+        self,
+        multiple_gumnut_assets,
+        mock_sync_cursor_page,
+        is_favorite,
+        asset_rating,
+        expected_ratings,
     ):
         asset = multiple_gumnut_assets[0]
         asset.id = uuid_to_gumnut_asset_id(uuid4())
-        asset.metadata = Mock(rating=5)
+        asset.metadata = Mock(rating=asset_rating)
         mock_client = Mock()
         mock_client.assets.list.return_value = mock_sync_cursor_page([asset])
 
         result = await call_get_time_bucket(
             timeBucket="2024-01-01T00:00:00",
-            isFavorite=True,
+            isFavorite=is_favorite,
             client=mock_client,
         )
 
-        assert result["isFavorite"] == [True]
+        assert result["isFavorite"] == [is_favorite]
         mock_client.assets.list.assert_called_once_with(
             include=ASSET_INCLUDE_METADATA_ONLY,
-            extra_query={**JANUARY_2024_DATE_RANGE, "ratings": "5"},
+            extra_query={
+                **JANUARY_2024_DATE_RANGE,
+                "ratings": expected_ratings,
+            },
         )
 
     @pytest.mark.parametrize(

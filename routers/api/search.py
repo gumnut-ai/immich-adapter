@@ -43,7 +43,7 @@ from routers.utils.asset_conversion import (
     mime_type_to_asset_type,
     resolve_asset_location,
 )
-from routers.utils.rating import rating_extra_query, rating_filter_value
+from routers.utils.rating import RatingFilter, rating_extra_query, rating_filter_values
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +247,7 @@ async def search_asset_statistics(
     """Get asset count statistics."""
     buckets = await fetch_asset_counts(
         client,
-        rating=rating_filter_value(
+        ratings=rating_filter_values(
             rating=request.rating,
             rating_provided="rating" in request.model_fields_set,
             is_favorite=request.isFavorite,
@@ -425,7 +425,7 @@ async def _list_asset_page(
         "order": request.order.value,
     }
     extra_query = rating_extra_query(
-        rating_filter_value(
+        rating_filter_values(
             rating=request.rating,
             rating_provided="rating" in request.model_fields_set,
             is_favorite=request.isFavorite,
@@ -513,7 +513,7 @@ async def search_assets(
         "include": ASSET_INCLUDE,
     }
     extra_query = rating_extra_query(
-        rating_filter_value(
+        rating_filter_values(
             rating=request.rating,
             rating_provided="rating" in request.model_fields_set,
             is_favorite=request.isFavorite,
@@ -565,7 +565,7 @@ async def search_smart(
         "include": ASSET_INCLUDE,
     }
     extra_query = rating_extra_query(
-        rating_filter_value(
+        rating_filter_values(
             rating=request.rating,
             rating_provided="rating" in request.model_fields_set,
             is_favorite=request.isFavorite,
@@ -619,7 +619,7 @@ async def _fetch_month_assets_at_offsets(
     *,
     album_id: str | None,
     person_id: str | None,
-    rating: int | None = None,
+    ratings: RatingFilter | None = None,
 ) -> list[AssetResponse]:
     """Fetch the assets at the given newest-first offsets within a month bucket.
 
@@ -643,7 +643,7 @@ async def _fetch_month_assets_at_offsets(
         list_kwargs["album_id"] = album_id
     if person_id is not None:
         list_kwargs["person_ids"] = [person_id]
-    extra_query = rating_extra_query(rating)
+    extra_query = rating_extra_query(ratings)
     if extra_query is not None:
         list_kwargs["extra_query"] = extra_query
 
@@ -744,14 +744,14 @@ async def search_random(
     person_id = (
         uuid_to_gumnut_person_id(request.personIds[0]) if request.personIds else None
     )
-    rating = rating_filter_value(
+    ratings = rating_filter_values(
         rating=request.rating,
         rating_provided="rating" in request.model_fields_set,
         is_favorite=request.isFavorite,
     )
 
     buckets = await fetch_asset_counts(
-        client, album_id=album_id, person_id=person_id, rating=rating
+        client, album_id=album_id, person_id=person_id, ratings=ratings
     )
     total = sum(bucket.count for bucket in buckets)
     if total == 0:
@@ -788,7 +788,7 @@ async def search_random(
                 offsets,
                 album_id=album_id,
                 person_id=person_id,
-                rating=rating,
+                ratings=ratings,
             )
             for time_bucket, offsets in months_with_offsets
         ]

@@ -184,6 +184,7 @@ class TestSearchStatistics:
         ("payload", "expected_rating"),
         [
             ({"isFavorite": True}, "5"),
+            ({"isFavorite": False}, "0,1,2,3,4"),
             ({"rating": 4}, "4"),
             ({"rating": None}, "0"),
             ({"isFavorite": True, "rating": None}, "0"),
@@ -650,8 +651,9 @@ class TestCriterionLessEnumeration:
             _is_criterion_less_enumeration(MetadataSearchDto(withDeleted=True)) is True
         )
 
-    def test_false_flags_do_not_disqualify(self):
-        # A false boolean narrows nothing, so it stays an enumeration.
+    def test_supported_or_non_restricting_false_flags_do_not_disqualify(self):
+        # Favorite false is translated by the listing path; unsupported false
+        # flags narrow nothing. Neither needs the search path.
         assert (
             _is_criterion_less_enumeration(
                 MetadataSearchDto(isFavorite=False, isNotInAlbum=False)
@@ -753,6 +755,23 @@ class TestSearchMetadataEnumeration:
         mock_client.search.search.assert_not_called()
         assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
             "ratings": "0"
+        }
+
+    @pytest.mark.anyio
+    async def test_false_favorite_routes_to_non_favorite_listing(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page([]))
+
+        await search_assets(
+            request=MetadataSearchDto(isFavorite=False),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
+            "ratings": "0,1,2,3,4"
         }
 
     @pytest.mark.anyio
@@ -1425,6 +1444,29 @@ class TestSearchRandom:
         }
 
     @pytest.mark.anyio
+    async def test_false_favorite_reaches_counts_and_month_listing(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        non_favorite = _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+        buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
+        months = {JAN_2024_AFTER_BOUND: [non_favorite]}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        result = await search_random(
+            request=RandomSearchDto(isFavorite=False),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert len(result) == 1
+        assert mock_client.assets.counts.await_args.kwargs["extra_query"] == {
+            "ratings": "0,1,2,3,4"
+        }
+        assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
+            "ratings": "0,1,2,3,4"
+        }
+
+    @pytest.mark.anyio
     async def test_returns_empty_for_non_timeline_visibility(self, mock_current_user):
         """Gumnut has no hidden/archived/locked assets."""
         mock_client = Mock()
@@ -1578,7 +1620,6 @@ class TestSearchRandom:
                 withDeleted=True,
                 isMotion=False,
                 isEncoded=False,
-                isFavorite=False,
             ),
             client=mock_client,
             current_user=mock_current_user,

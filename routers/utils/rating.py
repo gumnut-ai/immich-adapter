@@ -5,35 +5,40 @@ from typing import Any
 
 
 FAVORITE_RATING = 5
+NON_FAVORITE_RATINGS = frozenset(range(FAVORITE_RATING))
+RatingFilter = frozenset[int]
 
 
-def rating_filter_value(
+def rating_filter_values(
     *,
     rating: int | None = None,
     rating_provided: bool = False,
     is_favorite: bool | None = None,
-) -> int | None:
-    """Return the exact Gumnut rating selected by an Immich request.
+) -> RatingFilter | None:
+    """Return the exact Gumnut rating set selected by an Immich request.
 
     Immich's finer-grained ``rating`` filter wins when both fields are present.
     An explicitly-present null selects unrated assets, represented by backend
     rating 0; an omitted rating adds no restriction.
-    ``isFavorite=False`` is the clients' normal unfiltered/default shape, so only
-    true selects the favorite rating.
+    Explicit favorite true selects rating 5; false selects every non-favorite
+    rating, including backend rating 0's unrated cohort. Omission adds no
+    favorite restriction.
     """
     if rating is not None:
-        return rating
+        return frozenset({rating})
     if rating_provided:
-        return 0
+        return frozenset({0})
     if is_favorite is True:
-        return FAVORITE_RATING
+        return frozenset({FAVORITE_RATING})
+    if is_favorite is False:
+        return NON_FAVORITE_RATINGS
     return None
 
 
 def rating_extra_query(
-    rating: int | None, base: Mapping[str, Any] | None = None
+    ratings: RatingFilter | None, base: Mapping[str, Any] | None = None
 ) -> dict[str, Any] | None:
-    """Merge a rating into SDK ``extra_query`` request options.
+    """Merge exact ratings into SDK ``extra_query`` request options.
 
     The deployed Gumnut API accepts ``ratings`` on asset list/count/search, but
     the generated Python SDK does not yet expose those typed parameters. Keep
@@ -41,6 +46,6 @@ def rating_extra_query(
     catches up.
     """
     query = dict(base or {})
-    if rating is not None:
-        query["ratings"] = str(rating)
+    if ratings is not None:
+        query["ratings"] = ",".join(str(rating) for rating in sorted(ratings))
     return query or None

@@ -8,7 +8,7 @@ from pydantic.json_schema import SkipJsonSchema
 from routers.immich_models import MapMarkerResponseDto, MapReverseGeocodeResponseDto
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.map_markers import collect_geotagged_markers
-from routers.utils.rating import rating_filter_value
+from routers.utils.rating import rating_filter_values
 
 
 router = APIRouter(
@@ -32,9 +32,10 @@ async def get_map_markers(
 
     `withPartners` / `withSharedAlbums` are accepted for client-compatibility
     (Immich clients send them) but have no Gumnut analog, so they're dropped
-    at the adapter. `isFavorite=True` maps to the backend's exact rating-5
-    filter. `isArchived=True` still short-circuits to `[]` because Gumnut has
-    no archived state — returning unfiltered markers would be a wrong answer.
+    at the adapter. `isFavorite=True` maps to exact rating 5, while false maps
+    to ratings 0-4. `isArchived=True` still short-circuits to `[]` because
+    Gumnut has no archived state — returning unfiltered markers would be a
+    wrong answer.
 
     The paging loop, marker/scan caps, and logging live in
     `collect_geotagged_markers` (shared with the album-scoped map endpoint).
@@ -46,7 +47,7 @@ async def get_map_markers(
 
     return await collect_geotagged_markers(
         client,
-        rating=rating_filter_value(is_favorite=isFavorite),
+        ratings=rating_filter_values(is_favorite=isFavorite),
         local_datetime_after=(
             fileCreatedAfter.isoformat() if fileCreatedAfter is not None else None
         ),

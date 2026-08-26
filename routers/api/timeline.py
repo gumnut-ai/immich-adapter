@@ -23,7 +23,7 @@ from routers.utils.asset_conversion import (
     resolve_capture_datetime,
     resolve_created_at,
 )
-from routers.utils.rating import rating_extra_query, rating_filter_value
+from routers.utils.rating import RatingFilter, rating_extra_query, rating_filter_values
 from routers.utils.current_user import get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
@@ -47,7 +47,7 @@ async def fetch_asset_counts(
     *,
     album_id: str | None = None,
     person_id: str | None = None,
-    rating: int | None = None,
+    ratings: RatingFilter | None = None,
     state: Literal["live", "trashed", "all"] | None = None,
 ) -> list[Data]:
     """Fetch all monthly asset counts from the Gumnut API, paginating if needed."""
@@ -56,7 +56,7 @@ async def fetch_asset_counts(
         kwargs["album_id"] = album_id
     if person_id is not None:
         kwargs["person_id"] = person_id
-    extra_query = rating_extra_query(rating)
+    extra_query = rating_extra_query(ratings)
     if extra_query is not None:
         kwargs["extra_query"] = extra_query
     if state is not None:
@@ -140,7 +140,7 @@ async def get_time_buckets(
         client,
         album_id=album_id,
         person_id=person_id,
-        rating=rating_filter_value(is_favorite=isFavorite),
+        ratings=rating_filter_values(is_favorite=isFavorite),
         state="trashed" if isTrashed else None,
     )
 
@@ -195,7 +195,7 @@ async def get_time_bucket(
 
     list_kwargs: dict[str, Any] = {
         "extra_query": rating_extra_query(
-            rating_filter_value(is_favorite=isFavorite), date_range_query
+            rating_filter_values(is_favorite=isFavorite), date_range_query
         ),
         "include": ASSET_INCLUDE_METADATA_ONLY,
     }
