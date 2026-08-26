@@ -192,10 +192,21 @@ class TestCropValidation:
         recipe = to_recipe([crop(x=0, y=0, width=SOURCE_W, height=SOURCE_H)])
         assert recipe.crop == CropBox(x=0, y=0, width=SOURCE_W, height=SOURCE_H)
 
-    def test_crop_position_in_list_does_not_change_meaning(self):
-        first = to_recipe([crop(), mirror(H), rotate(90)])
-        last = to_recipe([mirror(H), rotate(90), crop()])
-        assert first == last
+    @pytest.mark.parametrize(
+        "edits",
+        [
+            [rotate(90), crop()],
+            [mirror(H), crop()],
+            [mirror(H), rotate(90), crop()],
+            [rotate(90), crop(), mirror(H)],
+        ],
+    )
+    def test_rejects_crop_that_is_not_first(self, edits):
+        # Upstream Immich v3.1.0 rejects any list whose crop is not edits[0];
+        # folding it would silently apply crop before the listed rotation.
+        with pytest.raises(AssetEditValidationError) as exc_info:
+            to_recipe(edits)
+        assert exc_info.value.code == "crop_not_first"
 
     @pytest.mark.parametrize(
         "x,y,width,height,code",

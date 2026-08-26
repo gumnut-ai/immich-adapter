@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-08-19
+last-updated: 2026-08-25
 ---
 
 # Immich Adapter Architecture
@@ -97,8 +97,11 @@ work.
 Archive member names are flattened, sanitized, kept unique under
 case-insensitive and Unicode-equivalent comparisons, and bounded to a filesystem
 component's UTF-8 size limit. ZIP timestamps are clamped to the DOS header range.
-The generated contract still accepts Immich's `edited` flag, but Gumnut currently
-has root-only asset chains, so the flag has no effect.
+Immich's `edited` flag selects a rung of the asset's version chain: `edited=true`
+serves the current rendering; `edited=false` serves the edit base for display
+variants and the exact uploaded bytes for `/original`. Selection rules and the
+`/edits` routes that append, replace, and remove `edit` versions are in
+[Asset and Media Handling](../references/asset-and-media-handling.md).
 
 ## Collection translation
 

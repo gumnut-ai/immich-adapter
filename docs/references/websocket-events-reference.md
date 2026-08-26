@@ -1,21 +1,23 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-08-21
+last-updated: 2026-08-25
 ---
 
 # Immich WebSocket Events Reference
 
 ## Summary Table
 
+Client columns are read from the pinned upstream source for **both** clients (`web/src/lib/` and `mobile/lib/` at the tag in `.immich-container-tag`); "Not used" means neither registers a handler, not that web alone doesn't.
+
 | Event | Trigger | Payload | Web Client | Mobile Client |
 |-------|---------|---------|------------|---------------|
 | `on_upload_success` | Images: upload write completes; videos: deferred emit to wait for still-image variants | `AssetResponseDto` | Global listener | Legacy listener |
 | `AssetUploadReadyV1` | Emitted alongside `on_upload_success` with the same image/video timing split | `SyncAssetV1` + `SyncAssetExifV1` | Not used | v2 sync protocol |
-| `AssetEditReadyV2` | Edit-route write commits (PUT and DELETE on `/api/assets/{id}/edits`) | `SyncAssetV2` + `SyncAssetEditV1[]` | Editor apply/remove wait | Not used |
+| `AssetEditReadyV2` | Edit-route write commits (PUT and DELETE on `/api/assets/{id}/edits`) | `SyncAssetV2` + `SyncAssetEditV1[]` | Editor apply/remove wait | Upserts asset + edit rows |
 | `on_asset_delete` | Asset permanently deleted | `assetId: string` | Global listener | Listener |
 | `on_asset_trash` | Asset moved to trash | `assetIds: string[]` | Global listener | Listener |
 | `on_asset_restore` | Asset restored from trash | `assetIds: string[]` | Global listener | Listener |
-| `on_asset_update` | Sidecar metadata extracted (upstream) / asset metadata edited (adapter) | `AssetResponseDto` | Global listener | Listener |
+| `on_asset_update` | Sidecar metadata extracted (upstream) / asset metadata edited or edit-route write committed (adapter) | `AssetResponseDto` | Global listener | Listener |
 | `on_asset_stack_update` | Stack created/updated/deleted | None | Declared, not subscribed | Not referenced |
 | `on_asset_hidden` | Asset visibility changed | `assetId: string` | Global listener | Listener |
 | `on_person_thumbnail` | Person thumbnail generated | `personId: string` | Page-specific | Not used |
@@ -71,14 +73,19 @@ last-updated: 2026-08-21
 
 **Upstream trigger**: Emitted when the `AssetEditThumbnailGeneration` job finishes re-rendering an edited asset (`job.service.ts`), for both edit apply and edit removal.
 
-**Adapter trigger**: Emitted from `_emit_edit_committed_events` in `routers/api/assets.py` after an edits-route write commits — a successful `PUT /api/assets/{id}/edits` (append or in-place replace) or `DELETE /api/assets/{id}/edits` (including the idempotent root-current delete, which changes nothing but must still emit). Never emitted on a failed or CAS-losing write. When the post-commit retrieve shows another write already superseded this one, the outcome depends on the winner's kind: a newer `edit`/`edit:*` current version means the winner came through these routes — the event's only emitter — and emits its own consistent event (the web client's wait filters on `asset.id` alone, so that event still resolves it), so this request's stale event is suppressed; any other winner (`original`, `external:*`) never emits, so this request emits the refreshed asset row with an empty edit list instead, matching how GET reads root and opaque tips. The adapter bakes synchronously inside the request, but the event's meaning is "the edited renders are ready to fetch": on receipt Immich web re-reads the asset and keys its image URLs on `thumbhash` (the `c=` cache param), which the Gumnut API recomputes from the new current version in a background task. So before emitting, the adapter polls the asset until `thumbhash` rotates away from its pre-commit value (`_retrieve_asset_for_edit_event`, deadline bounded well inside the web client's 10-second wait); at the deadline it emits anyway — the commit is durable and the next asset read heals the display. The idempotent root-current delete commits nothing and skips the wait. The emission is then awaited just before returning, so the event precedes the HTTP response; it is best-effort (transport failures are swallowed) and never fails the committed write.
+**Adapter trigger**: Emitted from `_emit_edit_committed_events` in `routers/api/assets.py` after an edits-route write commits — a successful `PUT /api/assets/{id}/edits` (append or in-place replace) or `DELETE /api/assets/{id}/edits` (including the idempotent root-current delete, which changes nothing but must still emit). Never emitted on a failed or CAS-losing write.
+
+- **Superseded before the refresh**: when the post-commit retrieve shows another write already replaced this one (`current_version_id` differs), the outcome depends on the winner's kind. A newer `edit`/`edit:*` current version came through these routes — the event's only emitter — and emits its own consistent event, which still resolves this client's wait (it filters on `asset.id` alone), so this request's stale event is suppressed. Any other winner (`original`, `external:*`) never emits, so this request emits the refreshed asset row with an empty edit list instead, matching how GET reads root and opaque tips.
+- **Readiness wait**: the adapter bakes synchronously inside the request, but the event means "the edited renders are ready to fetch": on receipt the clients re-read the asset and key image URLs on `thumbhash` (the `c=` cache param), which the Gumnut API recomputes from the new current version in a background task. So before emitting, the adapter polls the asset until `thumbhash` rotates away from its pre-commit value (`_retrieve_asset_for_edit_event`, deadline bounded well inside the 10-second client wait); at the deadline it emits anyway — the commit is durable and the next asset read heals the display. Writes that store nothing skip the wait: the idempotent root-current delete, and a PUT whose rendered bytes and params exactly duplicate the current version (an unchanged re-save; the Gumnut API answers `200` with the existing version instead of `201`).
+- **Ordering**: the emission is awaited just before returning, so the event precedes the HTTP response.
+- **Failure semantics**: everything after the durable write is best-effort — transport failures are swallowed, and if the post-commit asset read or payload conversion fails, the route logs, returns success, and emits neither event. The client's wait then times out, and its retry re-applies the same wholesale recipe idempotently, whereas a 5xx would misreport a committed write as failed.
 
 **Sent to**: Asset owner (by userId)
 **Payload**: `{ asset: SyncAssetV2, edit: SyncAssetEditV1[] }` — the refreshed sync asset row plus the complete current edit-action list (empty after a delete). See `AssetEditReadyV2Payload` in `services/websockets.py`.
 
 **Client handling**:
 - **Web**: The editor's apply flow registers a one-shot 10-second wait for this event, filtered on `payload.asset.id`, *before* sending the PUT/DELETE, and treats a timeout as a failed apply — every successful edit write must emit exactly one.
-- **Mobile**: Not used.
+- **Mobile**: Its editor's `applyEdits` arms the same 10-second `asset.id`-filtered wait before the PUT/DELETE. On receipt the event is dispatched to `syncWebsocketEditV2`, which upserts `payload.asset` through the v2 asset-sync path and replaces the asset's local edit rows with `payload.edit` (an event arriving while one is still processing is dropped, not queued). A malformed payload (non-object, missing `asset`) is logged and dropped, so the adapter must always send both fields.
 
 **Companion event**: the same commit also emits `on_asset_update` with the full refreshed `AssetResponseDto`, which the editor panel and timeline use to refresh `isEdited`, dimensions, MIME type, and URLs without a reload.
 
@@ -112,7 +119,7 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`, and t
 
 **Trigger**:
 - **Upstream Immich**: Emitted when metadata extracted from sidecar files (`notification.service.ts`). Only triggered by sidecar processing, NOT by direct user edits.
-- **immich-adapter**: Emitted after a successful single-asset metadata edit via `PUT /api/assets/{id}` (description / paired latitude+longitude / dateTimeOriginal). The adapter has no sidecar processing, so this is the only emission path here.
+- **immich-adapter**: Emitted after a successful single-asset metadata edit via `PUT /api/assets/{id}` (description / paired latitude+longitude / dateTimeOriginal), and as the companion of `AssetEditReadyV2` after every committed edit-route write (`PUT`/`DELETE /api/assets/{id}/edits`, including the idempotent root-current delete — see that event). The adapter has no sidecar processing.
 
 **Sent to**: Asset owner (by userId)
 **Payload**: Full `AssetResponseDto`

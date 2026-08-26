@@ -184,7 +184,9 @@ def immich_edits_to_recipe(
 
     The `(mirror, angle)` state means rotate, then mirror horizontally — as
     image operations, ``M^mirror . R(angle)``. Actions apply to the image in
-    list order (first listed, first applied), so each new action composes on
+    list order (first listed, first applied). A crop is accepted only as the
+    first action, matching upstream Immich, because the recipe applies crop
+    before any orientation change. Each orientation action then composes on
     the outside of the accumulated state and is rewritten into the canonical
     rotate-then-mirror form:
 
@@ -214,7 +216,7 @@ def immich_edits_to_recipe(
     mirror = False
     angle = 0
 
-    for edit in edits:
+    for index, edit in enumerate(edits):
         action = edit.action
         parameters = edit.parameters
         if action is AssetEditAction.crop:
@@ -225,6 +227,11 @@ def immich_edits_to_recipe(
             if "crop" in seen:
                 raise AssetEditValidationError(
                     "duplicate_action", "Duplicate crop action"
+                )
+            if index != 0:
+                # Upstream rejects a crop that is not edits[0].
+                raise AssetEditValidationError(
+                    "crop_not_first", "Crop action must be the first edit action"
                 )
             seen.add("crop")
             crop = _validate_crop(parameters, source_width, source_height)

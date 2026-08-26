@@ -1,6 +1,6 @@
 ---
 title: "Asset and Media Handling"
-last-updated: 2026-08-21
+last-updated: 2026-08-25
 ---
 
 # Asset and Media Handling
@@ -88,7 +88,8 @@ not an action history. GET decodes the tip's recipe through
 `recipe_to_immich_edits` — root current, an opaque (`external:*`) tip, or an
 undecodable recipe all read as an empty edit list; opaque output is never
 presented as adjustable. PUT normalizes the complete Immich action list against
-the edit base's display dimensions, renders via `render_asset_edit`, and
+the edit base's display dimensions (a crop must be the first action, as
+upstream requires), renders via `render_asset_edit`, and
 commits with `versions.append` (original current) or `versions.replace` (edit
 current). Concurrency is compare-and-swap by construction: append is accepted
 upstream only while the original is current, and replace/delete name the
@@ -127,7 +128,7 @@ Use `resolve_immich_checksum(gumnut_asset)` from `routers/utils/asset_conversion
 
 ## WebSocket Emission
 
-`emit_user_event` and `emit_session_event` (in `services/websockets.py`) are **awaited but best-effort**: callers await them — in-request at nearly all call sites, so emission normally precedes the HTTP response, though the video-upload path defers it to a background task (see the [event reference](websocket-events-reference.md)) — and they catch `SocketIOError` from the underlying transport, log at WARN with `exc_info=True`, and return normally. **Do not wrap call sites in `try/except SocketIOError`** — the central swallow is the contract, and per-site catches are duplication. If the surrounding block needs to handle other exception types (e.g., DTO conversion before the emit, like `_emit_upload_events` in `routers/api/assets.py`), the broader try/except can stay; just don't add a separate `except SocketIOError` branch.
+`emit_user_event` and `emit_session_event` (in `services/websockets.py`) are **awaited but best-effort**: callers await them — in-request at nearly all call sites, so emission normally precedes the HTTP response, though the video-upload path defers it to a background task (see the [event reference](websocket-events-reference.md)) — and they catch `SocketIOError` from the underlying transport, log at WARN with `exc_info=True`, and return normally. **Do not wrap call sites in `try/except SocketIOError`** — the central swallow is the contract, and per-site catches are duplication. If the surrounding block needs to handle other exception types (e.g., DTO conversion before the emit, like `_emit_upload_events` in `routers/api/assets.py`), the broader try/except can stay; just don't add a separate `except SocketIOError` branch. That broader wrap is the rule for everything that runs after a durable write — a post-commit re-read, DTO conversion, the emit itself: it degrades to a WARN, never a 5xx, because the client would otherwise retry a mutation that already committed (`_emit_edit_committed_events` and `_retrieve_asset_for_edit_event` are the edit-route shape).
 
 For chunks that fire one event per id (e.g. `ASSET_DELETE`'s single-id wire shape), use `emit_user_event_per_id(event, user_id, payload_ids)` instead of rolling an inline `asyncio.gather(*(emit_user_event(...) for ... in chunk))` — the helper centralizes the per-id gather wave so callers don't duplicate it. Pass a generator or list of pre-stringified ids; the helper consumes the iterable once.
 

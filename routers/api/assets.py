@@ -1474,7 +1474,7 @@ def _edit_rows_to_sync_edits(
 
 # AssetEditReadyV2 means "the edited renders are ready to fetch", so its
 # retrieve waits for the refreshed thumbhash (the client's image cache key)
-# to land. The deadline must stay well inside Immich web's 10-second event
+# to land. The deadline must stay well inside the clients' 10-second event
 # wait, which also covers the render/upload time already spent this request.
 _EDIT_EVENT_ARTIFACT_WAIT_SECONDS = 6.0
 _EDIT_EVENT_ARTIFACT_POLL_SECONDS = 0.5
@@ -1485,67 +1485,65 @@ async def _retrieve_asset_for_edit_event(
     gumnut_asset_id: str,
     *,
     previous_thumbhash: str | None,
-) -> AssetResponse:
-    """Retrieve the refreshed asset, waiting for its thumbhash to rotate.
+    wait_for_refresh: bool = True,
+) -> AssetResponse | None:
+    """Retrieve the refreshed asset for the edit-committed events.
 
-    Upstream Immich emits AssetEditReadyV2 only when thumbnail regeneration
-    completes, and Immich web re-reads the asset on receipt, minting image
-    URLs keyed by ``thumbhash`` (`c=`). The Gumnut API recomputes
-    ``thumbhash`` from the new current version in a background task, so
-    emitting at commit time would hand the client its pre-edit cache key and
-    the viewer would keep showing the browser-cached old rendering until a
-    manual reload. Poll until the hash rotates away from the pre-commit
-    value; on deadline, emit anyway — the commit is durable, the client's
-    wait still resolves, and the next asset read heals the display. The
-    deadline path also covers edits whose recomputed hash is legitimately
-    identical (thumbhash is a coarse blur placeholder).
+    Polls until ``thumbhash`` differs from ``previous_thumbhash`` (Immich
+    clients key image URLs on it, and the Gumnut API recomputes it in the
+    background) or the bounded deadline passes, which logs and emits anyway;
+    ``wait_for_refresh=False`` reads once, for a write that stored nothing.
+
+    Returns ``None`` when the read fails: the write is already durable, so
+    the caller skips emission rather than failing the request. Rationale:
+    ``docs/references/websocket-events-reference.md`` § AssetEditReadyV2.
     """
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + _EDIT_EVENT_ARTIFACT_WAIT_SECONDS
-    while True:
-        gumnut_asset = await client.assets.retrieve(
-            gumnut_asset_id, include=ASSET_INCLUDE
-        )
-        if gumnut_asset.thumbhash != previous_thumbhash:
-            return gumnut_asset
-        if loop.time() >= deadline:
-            logger.warning(
-                "Edit-committed event emitting before the thumbhash refreshed",
-                extra={"asset_id": gumnut_asset_id},
+    try:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _EDIT_EVENT_ARTIFACT_WAIT_SECONDS
+        while True:
+            gumnut_asset = await client.assets.retrieve(
+                gumnut_asset_id, include=ASSET_INCLUDE
             )
-            return gumnut_asset
-        await asyncio.sleep(_EDIT_EVENT_ARTIFACT_POLL_SECONDS)
+            if not wait_for_refresh or gumnut_asset.thumbhash != previous_thumbhash:
+                return gumnut_asset
+            if loop.time() >= deadline:
+                logger.warning(
+                    "Edit-committed event emitting before the thumbhash refreshed",
+                    extra={"asset_id": gumnut_asset_id},
+                )
+                return gumnut_asset
+            await asyncio.sleep(_EDIT_EVENT_ARTIFACT_POLL_SECONDS)
+    except Exception as exc:
+        logger.warning(
+            "Post-commit asset refresh failed; skipping edit-committed events",
+            extra={"asset_id": gumnut_asset_id, "error_type": type(exc).__name__},
+            exc_info=True,
+        )
+        return None
 
 
 async def _emit_edit_committed_events(
-    gumnut_asset: AssetResponse,
+    gumnut_asset: AssetResponse | None,
     current_user: UserResponseDto,
     rows: list[AssetEditActionItemResponseDto],
     *,
     committed_version_id: str,
 ) -> None:
-    """Emit AssetEditReadyV2 plus the asset refresh for a committed edit write.
-
-    Immich web awaits AssetEditReadyV2 after every edit write — see
-    ``docs/references/websocket-events-reference.md`` § AssetEditReadyV2.
-    Emission failure is non-fatal inside ``emit_user_event`` and must never
-    fail the committed write.
+    """Emit AssetEditReadyV2 plus on_asset_update for a committed edit write.
 
     ``committed_version_id`` is the version this write left current (the new
-    edit version, or the survivor a delete restored). When the refreshed asset
-    shows a different current version, another write won between this commit
-    and the retrieve — emitting as planned would pair the newer asset row with
-    this request's edit rows. What happens instead depends on who won
-    (``AssetResponse.kind`` names what produced the current rendering):
-
-    * An ``edit``/``edit:*`` winner came through these routes — the only
-      emitter of AssetEditReadyV2 — and emits its own consistent event, which
-      also resolves this client's wait (Immich web filters on ``asset.id``
-      alone). This request's stale event is suppressed.
-    * Any other winner (``original``, ``external:*``) never emits, so this
-      request emits the refreshed current state instead: the newer asset row
-      with an empty edit list, matching how GET reads root and opaque tips.
+    edit, or the survivor a delete restored). If the refreshed asset shows a
+    different current version, another write won in between: an ``edit`` /
+    ``edit:*`` winner came through these routes and emits its own event, so
+    this one is suppressed; any other winner never emits, so this request
+    emits the refreshed state with an empty edit list instead. A ``None``
+    asset (refresh failed, already logged) emits nothing. Never fails the
+    committed write. Rationale:
+    ``docs/references/websocket-events-reference.md`` § AssetEditReadyV2.
     """
+    if gumnut_asset is None:
+        return
     if gumnut_asset.current_version_id != committed_version_id:
         if is_edit_kind(gumnut_asset.kind):
             logger.info(
@@ -1567,16 +1565,27 @@ async def _emit_edit_committed_events(
             },
         )
         rows = []
-    payload = AssetEditReadyV2Payload(
-        asset=gumnut_asset_to_sync_asset_v2(gumnut_asset, current_user.id),
-        edit=_edit_rows_to_sync_edits(gumnut_asset, rows),
-    )
-    await emit_user_event(WebSocketEvent.ASSET_EDIT_READY_V2, current_user.id, payload)
-    await emit_user_event(
-        WebSocketEvent.ASSET_UPDATE,
-        current_user.id,
-        convert_gumnut_asset_to_immich(gumnut_asset, current_user),
-    )
+    try:
+        payload = AssetEditReadyV2Payload(
+            asset=gumnut_asset_to_sync_asset_v2(gumnut_asset, current_user.id),
+            edit=_edit_rows_to_sync_edits(gumnut_asset, rows),
+        )
+        await emit_user_event(
+            WebSocketEvent.ASSET_EDIT_READY_V2, current_user.id, payload
+        )
+        await emit_user_event(
+            WebSocketEvent.ASSET_UPDATE,
+            current_user.id,
+            convert_gumnut_asset_to_immich(gumnut_asset, current_user),
+        )
+    except Exception as exc:
+        # Same shape as the upload path: payload conversion runs after the
+        # durable write, so it must degrade to a log, not a 5xx.
+        logger.warning(
+            "Failed to emit edit-committed events",
+            extra={"asset_id": gumnut_asset.id, "error_type": type(exc).__name__},
+            exc_info=True,
+        )
 
 
 @router.get("/{id}/edits")
@@ -1660,10 +1669,6 @@ async def apply_asset_edits(
             detail="Edit actions perform no transformation",
         )
 
-    # Capture the pre-commit cache key; `_retrieve_asset_for_edit_event`
-    # waits for it to rotate away before the committed events are emitted.
-    previous_thumbhash = (await client.assets.retrieve(gumnut_asset_id)).thumbhash
-
     try:
         async with render_asset_edit(
             client, gumnut_asset_id, recipe, versions
@@ -1674,18 +1679,29 @@ async def apply_asset_edits(
                 rendered.mime_type,
             )
             params_json = recipe.to_params_json()
+            # Capture the pre-commit cache key after the (possibly slow)
+            # render so an earlier write's background refresh landing
+            # mid-render is not mistaken for this write's.
+            previous_thumbhash = (
+                await client.assets.retrieve(gumnut_asset_id)
+            ).thumbhash
+            versions_api = client.assets.versions.with_raw_response
             if tip.position == 0:
-                new_version = await client.assets.versions.append(
+                raw = await versions_api.append(
                     gumnut_asset_id, file=file, kind="edit", params=params_json
                 )
             else:
-                new_version = await client.assets.versions.replace(
+                raw = await versions_api.replace(
                     tip.id,
                     asset_id=gumnut_asset_id,
                     file=file,
                     kind="edit",
                     params=params_json,
                 )
+            new_version = await raw.parse()
+            # 200 is an exact duplicate of the current version (an unchanged
+            # re-save): nothing was stored, so no artifact refresh follows.
+            stored = raw.status_code == status.HTTP_201_CREATED
     except (EditRenderInputError, EditRenderLimitError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except EditRenderError as exc:
@@ -1711,7 +1727,10 @@ async def apply_asset_edits(
         )
 
     gumnut_asset = await _retrieve_asset_for_edit_event(
-        client, gumnut_asset_id, previous_thumbhash=previous_thumbhash
+        client,
+        gumnut_asset_id,
+        previous_thumbhash=previous_thumbhash,
+        wait_for_refresh=stored,
     )
     rows = recipe_to_immich_edits(gumnut_asset_id, new_version.id, recipe.to_params())
     await _emit_edit_committed_events(
@@ -1737,7 +1756,12 @@ async def remove_asset_edits(
     tip = _edits_chain_tip(versions, gumnut_asset_id=gumnut_asset_id)
     _require_editable_tip(tip)
 
-    if tip.position != 0:
+    # Root current is an idempotent no-op: nothing is committed, so there is
+    # no artifact refresh to wait for.
+    committed = tip.position != 0
+    previous_thumbhash = None
+    restored_version_id = tip.id
+    if committed:
         previous_thumbhash = (await client.assets.retrieve(gumnut_asset_id)).thumbhash
         await client.assets.versions.delete(tip.id, asset_id=gumnut_asset_id)
         # The delete restores the highest remaining version from the snapshot
@@ -1747,16 +1771,12 @@ async def remove_asset_edits(
             key=lambda version: version.position,
         )
         restored_version_id = survivor.id
-        gumnut_asset = await _retrieve_asset_for_edit_event(
-            client, gumnut_asset_id, previous_thumbhash=previous_thumbhash
-        )
-    else:
-        # Idempotent no-op: nothing was committed, so there is no artifact
-        # refresh to wait for.
-        restored_version_id = tip.id
-        gumnut_asset = await client.assets.retrieve(
-            gumnut_asset_id, include=ASSET_INCLUDE
-        )
+    gumnut_asset = await _retrieve_asset_for_edit_event(
+        client,
+        gumnut_asset_id,
+        previous_thumbhash=previous_thumbhash,
+        wait_for_refresh=committed,
+    )
     await _emit_edit_committed_events(
         gumnut_asset, current_user, [], committed_version_id=restored_version_id
     )

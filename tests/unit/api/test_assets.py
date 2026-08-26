@@ -3971,18 +3971,28 @@ class TestAssetEdits:
         )
 
     @staticmethod
-    def _client(versions, asset=None):
+    def _raw_version(status_code: int = 201, version_id: str = "asset_version_new"):
+        """A `with_raw_response` result: status plus an awaitable `parse()`."""
         from types import SimpleNamespace
 
+        return SimpleNamespace(
+            status_code=status_code,
+            parse=AsyncMock(return_value=SimpleNamespace(id=version_id)),
+        )
+
+    @classmethod
+    def _client(cls, versions, asset=None):
         from tests.conftest import make_gumnut_asset
 
         client = Mock()
         client.assets.versions.list = AsyncMock(return_value=versions)
-        client.assets.versions.append = AsyncMock(
-            return_value=SimpleNamespace(id="asset_version_new")
+        # append/replace go through the raw-response wrapper so the route can
+        # read 201 (stored) vs 200 (exact duplicate, nothing stored).
+        client.assets.versions.with_raw_response.append = AsyncMock(
+            return_value=cls._raw_version()
         )
-        client.assets.versions.replace = AsyncMock(
-            return_value=SimpleNamespace(id="asset_version_new")
+        client.assets.versions.with_raw_response.replace = AsyncMock(
+            return_value=cls._raw_version()
         )
         client.assets.versions.delete = AsyncMock(return_value=Mock())
         # The default retrieve result matches the id append/replace return, so
@@ -4102,7 +4112,7 @@ class TestAssetEdits:
         self, sample_uuid, mock_current_user
     ):
         from routers.api.assets import apply_asset_edits
-        from routers.immich_models import AssetEditsCreateDto, AssetEditAction
+        from routers.immich_models import AssetEditsCreateDto
         from services.websockets import AssetEditReadyV2Payload, WebSocketEvent
 
         client = self._client([self._version(position=0)])
@@ -4122,9 +4132,9 @@ class TestAssetEdits:
         # One list call, one render from the snapshotted chain, one append.
         client.assets.versions.list.assert_awaited_once()
         assert len(render_calls) == 1
-        client.assets.versions.append.assert_awaited_once()
-        client.assets.versions.replace.assert_not_awaited()
-        append_kwargs = client.assets.versions.append.call_args.kwargs
+        client.assets.versions.with_raw_response.append.assert_awaited_once()
+        client.assets.versions.with_raw_response.replace.assert_not_awaited()
+        append_kwargs = client.assets.versions.with_raw_response.append.call_args.kwargs
         assert append_kwargs["kind"] == "edit"
         assert json.loads(append_kwargs["params"]) == {
             "version": 1,
@@ -4134,7 +4144,7 @@ class TestAssetEdits:
         }
 
         assert result.assetId == sample_uuid
-        assert [row.action for row in result.edits] == [AssetEditAction.crop]
+        assert [row.action.value for row in result.edits] == ["crop"]
 
         # Exactly one AssetEditReadyV2 followed by the asset refresh.
         events = [call.args[0] for call in emit.await_args_list]
@@ -4234,8 +4244,65 @@ class TestAssetEdits:
         ]
 
     @pytest.mark.anyio
+    async def test_put_duplicate_resave_skips_artifact_wait(
+        self, sample_uuid, mock_current_user, monkeypatch
+    ):
+        """An unchanged re-save duplicates the current version: the API
+        answers 200 and stores nothing, so no thumbhash refresh will follow
+        and the route must emit from a single retrieve instead of polling to
+        the deadline."""
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+        from tests.conftest import make_gumnut_asset
+
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_WAIT_SECONDS", 5.0)
+        versions = [
+            self._version(position=0),
+            self._version(
+                position=1,
+                kind="edit",
+                version_id="asset_version_cur",
+                params=self.RECIPE_PARAMS,
+            ),
+        ]
+        client = self._client(
+            versions,
+            asset=make_gumnut_asset(
+                kind="edit", current_version_id="asset_version_cur"
+            ),
+        )
+        client.assets.versions.with_raw_response.replace = AsyncMock(
+            return_value=self._raw_version(
+                status_code=200, version_id="asset_version_cur"
+            )
+        )
+        # Pre-commit capture plus exactly one post-commit read.
+        client.assets.retrieve = AsyncMock(
+            side_effect=[
+                make_gumnut_asset(kind="edit", current_version_id="asset_version_cur"),
+                make_gumnut_asset(kind="edit", current_version_id="asset_version_cur"),
+            ]
+        )
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            result = await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        assert client.assets.retrieve.await_count == 2
+        assert emit.await_count == 2
+        assert [row.action.value for row in result.edits] == ["crop"]
+
+    @pytest.mark.anyio
     async def test_delete_root_noop_skips_artifact_wait(
-        self, sample_uuid, mock_current_user
+        self, sample_uuid, mock_current_user, monkeypatch
     ):
         """The idempotent root-current delete commits nothing, so it emits
         from a single plain retrieve without capturing a pre-commit key."""
@@ -4247,10 +4314,14 @@ class TestAssetEdits:
         )
         from tests.conftest import make_gumnut_asset
 
+        # A live deadline plus a single-shot retrieve: if the no-op path ever
+        # polled (thumbhash None == None never rotates), the second retrieve
+        # would exhaust the side_effect and emission would be skipped.
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_WAIT_SECONDS", 5.0)
         client.assets.retrieve = AsyncMock(
-            return_value=make_gumnut_asset(
-                kind="original", current_version_id="asset_version_0"
-            )
+            side_effect=[
+                make_gumnut_asset(kind="original", current_version_id="asset_version_0")
+            ]
         )
         emit = AsyncMock()
         with patch("routers.api.assets.emit_user_event", emit):
@@ -4261,6 +4332,37 @@ class TestAssetEdits:
         client.assets.versions.delete.assert_not_awaited()
         assert client.assets.retrieve.await_count == 1
         assert emit.await_count == 2
+
+    @pytest.mark.anyio
+    async def test_delete_refresh_failure_returns_success_without_events(
+        self, sample_uuid, mock_current_user
+    ):
+        """A failed post-delete refresh keeps the 204: the edit version is
+        already gone, so a 5xx would misreport the restore as failed."""
+        from gumnut import APIConnectionError
+        from routers.api.assets import remove_asset_edits
+        from tests.conftest import make_gumnut_asset
+
+        versions = [
+            self._version(position=0),
+            self._version(position=1, kind="edit", params=self.RECIPE_PARAMS),
+        ]
+        client = self._client(versions)
+        client.assets.retrieve = AsyncMock(
+            side_effect=[
+                make_gumnut_asset(kind="edit"),  # pre-commit capture
+                APIConnectionError(request=Mock()),  # post-commit refresh
+            ]
+        )
+        emit = AsyncMock()
+        with patch("routers.api.assets.emit_user_event", emit):
+            result = await remove_asset_edits(
+                id=sample_uuid, client=client, current_user=mock_current_user
+            )
+
+        assert result is None
+        client.assets.versions.delete.assert_awaited_once()
+        emit.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_put_adjustment_replaces_current_edit(
@@ -4291,9 +4393,9 @@ class TestAssetEdits:
                 current_user=mock_current_user,
             )
 
-        client.assets.versions.append.assert_not_awaited()
-        client.assets.versions.replace.assert_awaited_once()
-        replace_call = client.assets.versions.replace.call_args
+        client.assets.versions.with_raw_response.append.assert_not_awaited()
+        client.assets.versions.with_raw_response.replace.assert_awaited_once()
+        replace_call = client.assets.versions.with_raw_response.replace.call_args
         # Replaces exactly the snapshotted current edit at the same depth.
         assert replace_call.args[0] == "asset_version_cur"
         assert replace_call.kwargs["kind"] == "edit"
@@ -4327,8 +4429,8 @@ class TestAssetEdits:
                 )
         assert exc_info.value.status_code == 409
         assert render_calls == []
-        client.assets.versions.append.assert_not_awaited()
-        client.assets.versions.replace.assert_not_awaited()
+        client.assets.versions.with_raw_response.append.assert_not_awaited()
+        client.assets.versions.with_raw_response.replace.assert_not_awaited()
         emit.assert_not_awaited()
 
     @pytest.mark.anyio
@@ -4351,7 +4453,7 @@ class TestAssetEdits:
                     current_user=mock_current_user,
                 )
         assert exc_info.value.status_code == 400
-        client.assets.versions.append.assert_not_awaited()
+        client.assets.versions.with_raw_response.append.assert_not_awaited()
         emit.assert_not_awaited()
 
     @pytest.mark.anyio
@@ -4381,7 +4483,9 @@ class TestAssetEdits:
 
         client = self._client([self._version(position=0)])
         conflict = make_sdk_status_error(409, "version conflict")
-        client.assets.versions.append = AsyncMock(side_effect=conflict)
+        client.assets.versions.with_raw_response.append = AsyncMock(
+            side_effect=conflict
+        )
         fake_render, _ = self._fake_render()
         emit = AsyncMock()
         with (
@@ -4397,7 +4501,7 @@ class TestAssetEdits:
                 )
         # A losing CAS is never retried against a newly fetched tip.
         client.assets.versions.list.assert_awaited_once()
-        client.assets.versions.append.assert_awaited_once()
+        client.assets.versions.with_raw_response.append.assert_awaited_once()
         emit.assert_not_awaited()
 
     @pytest.mark.anyio
@@ -4410,7 +4514,7 @@ class TestAssetEdits:
 
         for status_code in (507, 502):
             client = self._client([self._version(position=0)])
-            client.assets.versions.append = AsyncMock(
+            client.assets.versions.with_raw_response.append = AsyncMock(
                 side_effect=make_sdk_status_error(status_code, "upstream failure")
             )
             fake_render, _ = self._fake_render()
@@ -4466,7 +4570,7 @@ class TestAssetEdits:
                         current_user=mock_current_user,
                     )
             assert exc_info.value.status_code == expected_status, error.code
-            client.assets.versions.append.assert_not_awaited()
+            client.assets.versions.with_raw_response.append.assert_not_awaited()
             emit.assert_not_awaited()
 
     @pytest.mark.anyio
@@ -4495,7 +4599,76 @@ class TestAssetEdits:
                 current_user=mock_current_user,
             )
         assert result.assetId == sample_uuid
-        client.assets.versions.append.assert_awaited_once()
+        client.assets.versions.with_raw_response.append.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_put_refresh_failure_returns_success_without_events(
+        self, sample_uuid, mock_current_user
+    ):
+        """The post-commit retrieve runs after the write is durable, so its
+        failure must not surface as a 5xx (which would misreport a committed
+        edit as failed and invite a retry); it logs and skips emission."""
+        from gumnut import APIConnectionError
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+        from tests.conftest import make_gumnut_asset
+
+        client = self._client([self._version(position=0)])
+        client.assets.retrieve = AsyncMock(
+            side_effect=[
+                make_gumnut_asset(kind="original"),  # pre-commit capture
+                APIConnectionError(request=Mock()),  # post-commit refresh
+            ]
+        )
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            result = await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        client.assets.versions.with_raw_response.append.assert_awaited_once()
+        assert result.assetId == sample_uuid
+        assert [row.action.value for row in result.edits] == ["crop"]
+        emit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_put_payload_conversion_failure_returns_success_without_events(
+        self, sample_uuid, mock_current_user
+    ):
+        """Payload conversion runs after the durable write, so a converter
+        error must degrade to a log rather than a 5xx."""
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+
+        client = self._client([self._version(position=0)])
+        fake_render, _ = self._fake_render()
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+            patch(
+                "routers.api.assets.gumnut_asset_to_sync_asset_v2",
+                side_effect=RuntimeError("boom"),
+            ),
+        ):
+            result = await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        client.assets.versions.with_raw_response.append.assert_awaited_once()
+        assert result.assetId == sample_uuid
+        assert [row.action.value for row in result.edits] == ["crop"]
+        emit.assert_not_awaited()
 
     # --- DELETE ------------------------------------------------------------
 
@@ -4641,7 +4814,7 @@ class TestAssetEdits:
             )
         # The commit stands and the response reports it; only the stale
         # events are suppressed (the winning write emits the current state).
-        client.assets.versions.append.assert_awaited_once()
+        client.assets.versions.with_raw_response.append.assert_awaited_once()
         assert result.assetId == sample_uuid
         assert len(result.edits) == 1
         emit.assert_not_awaited()
@@ -4811,7 +4984,7 @@ class TestAssetEdits:
         # lossy re-encode that reads back as zero edits; "remove all edits"
         # is DELETE on this route.
         assert exc_info.value.status_code == 400
-        client.assets.versions.append.assert_not_awaited()
+        client.assets.versions.with_raw_response.append.assert_not_awaited()
         emit.assert_not_awaited()
 
     @pytest.mark.anyio
@@ -4838,7 +5011,7 @@ class TestAssetEdits:
                     current_user=mock_current_user,
                 )
         assert exc_info.value.status_code == 502
-        client.assets.versions.append.assert_not_awaited()
+        client.assets.versions.with_raw_response.append.assert_not_awaited()
         emit.assert_not_awaited()
 
     @pytest.mark.anyio
@@ -4861,5 +5034,5 @@ class TestAssetEdits:
                     current_user=mock_current_user,
                 )
         assert exc_info.value.status_code == 502
-        client.assets.versions.append.assert_not_awaited()
+        client.assets.versions.with_raw_response.append.assert_not_awaited()
         emit.assert_not_awaited()
