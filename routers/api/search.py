@@ -245,7 +245,14 @@ async def search_asset_statistics(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> SearchStatisticsResponseDto:
     """Get asset count statistics."""
-    buckets = await fetch_asset_counts(client)
+    buckets = await fetch_asset_counts(
+        client,
+        rating=rating_filter_value(
+            rating=request.rating,
+            rating_provided="rating" in request.model_fields_set,
+            is_favorite=request.isFavorite,
+        ),
+    )
     total = sum(bucket.count for bucket in buckets)
     return SearchStatisticsResponseDto(total=total)
 
@@ -353,10 +360,9 @@ def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
     for field_name, value in request:
         if field_name in _ENUMERATION_HONORABLE_FIELDS:
             continue
-        # Boolean filters (isFavorite/isMotion/…) restrict only when explicitly
-        # true: `False` narrows nothing (the backing features don't exist in the
-        # Gumnut API), so it doesn't disqualify the enumeration — same posture as
-        # `search_random`.
+        # Unsupported boolean filters (isMotion/isEncoded/…) restrict only when
+        # explicitly true; false narrows nothing, so it does not disqualify the
+        # enumeration.
         if isinstance(value, bool):
             if value:
                 return False
@@ -419,7 +425,11 @@ async def _list_asset_page(
         "order": request.order.value,
     }
     extra_query = rating_extra_query(
-        rating_filter_value(rating=request.rating, is_favorite=request.isFavorite)
+        rating_filter_value(
+            rating=request.rating,
+            rating_provided="rating" in request.model_fields_set,
+            is_favorite=request.isFavorite,
+        )
     )
     if extra_query is not None:
         list_kwargs["extra_query"] = extra_query
@@ -503,7 +513,11 @@ async def search_assets(
         "include": ASSET_INCLUDE,
     }
     extra_query = rating_extra_query(
-        rating_filter_value(rating=request.rating, is_favorite=request.isFavorite)
+        rating_filter_value(
+            rating=request.rating,
+            rating_provided="rating" in request.model_fields_set,
+            is_favorite=request.isFavorite,
+        )
     )
     if extra_query is not None:
         search_kwargs["extra_query"] = extra_query
@@ -551,7 +565,11 @@ async def search_smart(
         "include": ASSET_INCLUDE,
     }
     extra_query = rating_extra_query(
-        rating_filter_value(rating=request.rating, is_favorite=request.isFavorite)
+        rating_filter_value(
+            rating=request.rating,
+            rating_provided="rating" in request.model_fields_set,
+            is_favorite=request.isFavorite,
+        )
     )
     if extra_query is not None:
         search_kwargs["extra_query"] = extra_query
@@ -669,8 +687,8 @@ async def search_random(
     that type. Any other restricting filter (date bounds, location/camera
     metadata, tags, etc.) has no Gumnut API translation and returns
     an empty list rather than silently sampling assets the caller filtered
-    out — the same posture the timeline endpoint takes for favorites and
-    non-timeline visibility. Response-shape hints (`withExif`, `withPeople`,
+    out — the same posture the timeline endpoint takes for non-timeline
+    visibility. Response-shape hints (`withExif`, `withPeople`,
     `withStacked`) are always satisfied (the sample converts with the full
     include set), and `withDeleted` is ignored: it *widens* the requested set
     to include trashed assets, so a live-only sample still matches the filter.
@@ -726,7 +744,11 @@ async def search_random(
     person_id = (
         uuid_to_gumnut_person_id(request.personIds[0]) if request.personIds else None
     )
-    rating = rating_filter_value(rating=request.rating, is_favorite=request.isFavorite)
+    rating = rating_filter_value(
+        rating=request.rating,
+        rating_provided="rating" in request.model_fields_set,
+        is_favorite=request.isFavorite,
+    )
 
     buckets = await fetch_asset_counts(
         client, album_id=album_id, person_id=person_id, rating=rating

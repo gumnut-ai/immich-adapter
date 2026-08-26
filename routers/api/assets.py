@@ -79,6 +79,11 @@ from routers.utils.asset_conversion import (
     mime_type_to_asset_type,
 )
 from routers.utils.stack_conversion import build_asset_stack_summary, hydrate_stack
+from routers.utils.rating import (
+    FAVORITE_RATING,
+    rating_extra_query,
+    rating_filter_value,
+)
 from utils.livephoto import is_live_photo_video
 from routers.immich_models import AssetTypeEnum
 
@@ -1099,11 +1104,14 @@ async def get_asset_statistics(
     Counts total assets and categorizes them by type (images vs videos) using mime_type.
     """
 
-    gumnut_assets = (
-        client.assets.list(state="trashed", limit=GUMNUT_API_MAX_PAGE_SIZE)
-        if isTrashed
-        else client.assets.list(limit=GUMNUT_API_MAX_PAGE_SIZE)
-    )
+    list_kwargs: dict[str, Any] = {"limit": GUMNUT_API_MAX_PAGE_SIZE}
+    if isTrashed:
+        list_kwargs["state"] = "trashed"
+    extra_query = rating_extra_query(rating_filter_value(is_favorite=isFavorite))
+    if extra_query is not None:
+        list_kwargs["extra_query"] = extra_query
+
+    gumnut_assets = client.assets.list(**list_kwargs)
 
     total_assets = 0
     image_count = 0
@@ -1192,7 +1200,7 @@ def _rating_change(
         return True, rating
 
     if "isFavorite" in provided and request.isFavorite is not None:
-        return True, 5 if request.isFavorite else 0
+        return True, FAVORITE_RATING if request.isFavorite else 0
 
     return False, 0
 

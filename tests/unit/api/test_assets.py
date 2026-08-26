@@ -1926,7 +1926,7 @@ class TestUpdateAssets:
 class TestUpdateAsset:
     """Test the single-asset metadata edit endpoint.
 
-    `PUT /api/assets/{id}` forwards a subset of `UpdateAssetDto` to the Photos
+    `PUT /api/assets/{id}` forwards a subset of `UpdateAssetDto` to the Gumnut
     API `update_asset` PATCH: `description`, favorite/rating, paired `latitude`
     + `longitude`, and `dateTimeOriginal`. Out-of-scope fields (`visibility`,
     `livePhotoVideoId`) are silently ignored — the request
@@ -2766,6 +2766,37 @@ class TestGetAssetStatistics:
         )
 
         await get_asset_statistics(isTrashed=False, client=mock_client)
+
+        mock_client.assets.list.assert_called_once_with(limit=GUMNUT_API_MAX_PAGE_SIZE)
+
+    @pytest.mark.anyio
+    async def test_get_asset_statistics_favorite_forwards_rating_filter(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
+        mock_client = Mock()
+        mock_client.assets.list.return_value = mock_sync_cursor_page(
+            multiple_gumnut_assets
+        )
+
+        await get_asset_statistics(isFavorite=True, isTrashed=False, client=mock_client)
+
+        mock_client.assets.list.assert_called_once_with(
+            limit=GUMNUT_API_MAX_PAGE_SIZE,
+            extra_query={"ratings": "5"},
+        )
+
+    @pytest.mark.anyio
+    async def test_get_asset_statistics_false_favorite_omits_filter(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
+        mock_client = Mock()
+        mock_client.assets.list.return_value = mock_sync_cursor_page(
+            multiple_gumnut_assets
+        )
+
+        await get_asset_statistics(
+            isFavorite=False, isTrashed=False, client=mock_client
+        )
 
         mock_client.assets.list.assert_called_once_with(limit=GUMNUT_API_MAX_PAGE_SIZE)
 

@@ -150,17 +150,16 @@ def gumnut_user_to_sync_user_metadata_v1(owner_id: UUID) -> SyncUserMetadataV1:
     ``people.minimumFaces`` threshold from this stream to decide which people
     appear in the People tab — defaulting to 3 when absent, which would hide
     Gumnut clusters of 1–2 faces. We emit ``minimumFaces=1`` so every person
-    with at least one face is shown; all other fields mirror the client's own
-    defaults.
+    with at least one face is shown. We also enable ``ratings`` so the client
+    exposes its rating controls; all other fields mirror the client's defaults.
 
     ``value`` is the server's nested ``UserPreferences`` JSON shape, which the
     client parses via ``Preferences.fromMap`` (reads
     ``value["people"]["minimumFaces"]`` etc.) and stores verbatim.
     ``Preferences.fromMap`` reads every section null-safely and falls back to its
-    own default for anything absent, so ``people.minimumFaces`` is the only
-    load-bearing field here. The other sections each restate the client's own
-    default and are included solely to mirror the full canonical shape a real
-    Immich server emits — none of them are required by ``Preferences.fromMap``.
+    own default for anything absent, so ``people.minimumFaces`` and
+    ``ratings.enabled`` are the load-bearing fields here. The other sections
+    restate client defaults solely to mirror the canonical server shape.
     """
     return SyncUserMetadataV1(
         key=UserMetadataKey.preferences,

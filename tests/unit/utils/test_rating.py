@@ -19,6 +19,11 @@ def test_rating_filter_value(rating, is_favorite, expected):
     assert rating_filter_value(rating=rating, is_favorite=is_favorite) == expected
 
 
+def test_explicit_null_rating_selects_unrated_and_wins_over_favorite():
+    assert rating_filter_value(rating_provided=True) == 0
+    assert rating_filter_value(rating_provided=True, is_favorite=True) == 0
+
+
 def test_rating_extra_query_merges_without_mutating_base():
     base = {"local_datetime_after": "2024-01-01"}
 

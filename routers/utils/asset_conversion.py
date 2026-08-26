@@ -31,6 +31,7 @@ from routers.utils.gumnut_id_conversion import (
     immich_stack_id,
     safe_uuid_from_asset_id,
 )
+from routers.utils.rating import FAVORITE_RATING
 from routers.utils.person_conversion import convert_gumnut_person_to_immich
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,7 @@ def normalize_rating(rating: float | int | None) -> int | None:
 def is_asset_favorite(gumnut_asset: AssetResponse) -> bool:
     """Return whether the resolved metadata rating represents a favorite."""
     metadata = gumnut_asset.metadata
-    return metadata is not None and metadata.rating == 5
+    return metadata is not None and metadata.rating == FAVORITE_RATING
 
 
 def format_duration(seconds: float | None) -> str | None:

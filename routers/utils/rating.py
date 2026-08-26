@@ -8,16 +8,23 @@ FAVORITE_RATING = 5
 
 
 def rating_filter_value(
-    *, rating: int | None = None, is_favorite: bool | None = None
+    *,
+    rating: int | None = None,
+    rating_provided: bool = False,
+    is_favorite: bool | None = None,
 ) -> int | None:
     """Return the exact Gumnut rating selected by an Immich request.
 
     Immich's finer-grained ``rating`` filter wins when both fields are present.
+    An explicitly-present null selects unrated assets, represented by backend
+    rating 0; an omitted rating adds no restriction.
     ``isFavorite=False`` is the clients' normal unfiltered/default shape, so only
     true selects the favorite rating.
     """
     if rating is not None:
         return rating
+    if rating_provided:
+        return 0
     if is_favorite is True:
         return FAVORITE_RATING
     return None

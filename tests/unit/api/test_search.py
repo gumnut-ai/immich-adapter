@@ -175,6 +175,34 @@ class TestSearchStatistics:
         result = await search_asset_statistics(request=request, client=mock_client)
 
         assert result.total == 350
+        counts_call = mock_client.assets.counts.await_args
+        assert counts_call is not None
+        assert "extra_query" not in counts_call.kwargs
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("payload", "expected_rating"),
+        [
+            ({"isFavorite": True}, "5"),
+            ({"rating": 4}, "4"),
+            ({"rating": None}, "0"),
+            ({"isFavorite": True, "rating": None}, "0"),
+        ],
+    )
+    async def test_forwards_favorite_and_rating_filters(self, payload, expected_rating):
+        mock_client = Mock()
+        mock_client.assets.counts = AsyncMock(
+            return_value=_counts_response([_make_count_bucket(2, datetime(2024, 1, 1))])
+        )
+
+        result = await search_asset_statistics(
+            request=StatisticsSearchDto.model_validate(payload), client=mock_client
+        )
+
+        assert result.total == 2
+        counts_call = mock_client.assets.counts.await_args
+        assert counts_call is not None
+        assert counts_call.kwargs["extra_query"] == {"ratings": expected_rating}
 
     @pytest.mark.anyio
     async def test_returns_zero_when_no_buckets(self):
@@ -257,6 +285,24 @@ class TestSearchMetadata:
 
         assert mock_client.search.search.call_args.kwargs["extra_query"] == {
             "ratings": "5"
+        }
+
+    @pytest.mark.anyio
+    async def test_combines_text_with_explicit_unrated_filter(self, mock_current_user):
+        search_response = Mock(data=[])
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        await search_assets(
+            request=MetadataSearchDto.model_validate(
+                {"description": "sunset", "isFavorite": True, "rating": None}
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert mock_client.search.search.call_args.kwargs["extra_query"] == {
+            "ratings": "0"
         }
 
     @pytest.mark.anyio
@@ -466,6 +512,24 @@ class TestSearchSmart:
         }
 
     @pytest.mark.anyio
+    async def test_explicit_null_rating_selects_unrated(self, mock_current_user):
+        search_response = Mock(data=[])
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        await search_smart(
+            request=SmartSearchDto.model_validate(
+                {"query": "sunset", "isFavorite": True, "rating": None}
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert mock_client.search.search.call_args.kwargs["extra_query"] == {
+            "ratings": "0"
+        }
+
+    @pytest.mark.anyio
     async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
         """When size/page are absent, the SDK is called without them so the Gumnut API
         applies its own defaults. Substituting our own defaults would fragment the
@@ -668,6 +732,27 @@ class TestSearchMetadataEnumeration:
         # Rating wins over the coarser favorite bit when clients populate both.
         assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
             "ratings": "3"
+        }
+
+    @pytest.mark.anyio
+    async def test_explicit_null_rating_routes_to_unrated_listing(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page([]))
+        mock_client.search.search = AsyncMock()
+
+        await search_assets(
+            request=MetadataSearchDto.model_validate(
+                {"isFavorite": True, "rating": None}
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        mock_client.search.search.assert_not_called()
+        assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
+            "ratings": "0"
         }
 
     @pytest.mark.anyio
@@ -1312,6 +1397,31 @@ class TestSearchRandom:
         }
         assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
             "ratings": "5"
+        }
+
+    @pytest.mark.anyio
+    async def test_explicit_null_rating_reaches_counts_and_month_listing(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        unrated = _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+        buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
+        months = {JAN_2024_AFTER_BOUND: [unrated]}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
+
+        result = await search_random(
+            request=RandomSearchDto.model_validate(
+                {"isFavorite": True, "rating": None}
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert len(result) == 1
+        assert mock_client.assets.counts.await_args.kwargs["extra_query"] == {
+            "ratings": "0"
+        }
+        assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
+            "ratings": "0"
         }
 
     @pytest.mark.anyio

@@ -11,7 +11,7 @@ The adapter exposes the Gumnut API's resolved metadata rating through Immich's t
 
 Writes land on the same USER-layer dial. `isFavorite: true/false` writes 5/0. An explicitly-present `rating` writes 0–5 and wins when both fields are present. Immich uses explicit `rating: null` for unrated, so the adapter maps it to USER 0; forwarding backend null would instead clear the USER override and reveal an embedded FILE-layer rating. Values outside 0–5 return 422.
 
-The first adapter deployment with this mapping needs a one-time backend event replay for every currently nonzero-rated asset: one `ASSET_UPDATED` and one `METADATA_UPDATED`. Run it only after the light-up is live so already-checkpointed clients hydrate the new heart and rating values. Do not produce those events by rewriting current ratings—the write would turn a FILE-derived value into a persistent USER override.
+When replaying rating changes to already-checkpointed clients, emit both `ASSET_UPDATED` and `METADATA_UPDATED` events without rewriting current ratings. Rewriting would turn a FILE-derived value into a persistent USER override.
 
 ## Derive multi-path fields through one helper
 
