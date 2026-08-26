@@ -211,13 +211,12 @@ class TestGetMapMarkers:
     @pytest.mark.anyio
     @pytest.mark.parametrize(
         "isFavorite,isArchived",
-        [(True, None), (None, True), (True, True)],
+        [(None, True), (True, True)],
     )
     async def test_short_circuits_when_filter_unsupported(self, isFavorite, isArchived):
-        """`isFavorite=True` / `isArchived=True` return [] without hitting the SDK.
+        """`isArchived=True` returns [] without hitting the SDK.
 
-        Gumnut doesn't track favorites or archived state, so a request that
-        filters on either would never match. Silently ignoring the filter
+        Gumnut doesn't track archived state, so silently ignoring the filter
         and returning unfiltered markers would be a wrong answer.
         """
         client = Mock()
@@ -231,6 +230,18 @@ class TestGetMapMarkers:
 
         assert result == []
         client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_favorite_filter_forwards_rating_five(self):
+        client = Mock()
+        client.assets.list = Mock(
+            return_value=MockSyncCursorPage([_make_asset(lat=10.0, lon=20.0)])
+        )
+
+        result = await _call_markers(client=client, isFavorite=True)
+
+        assert len(result) == 1
+        assert client.assets.list.call_args.kwargs["extra_query"] == {"ratings": "5"}
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(

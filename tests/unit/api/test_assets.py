@@ -1107,13 +1107,13 @@ class TestUpdateAssets:
 
     `PUT /api/assets` forwards a subset of `AssetBulkUpdateDto` to the
     Gumnut API `bulk_update_assets` call. In-scope fields: `description`,
-    paired `latitude` + `longitude`, and the capture time via one of three
+    favorite/rating, paired `latitude` + `longitude`, and the capture time via one of three
     mutually exclusive datetime modes — absolute `dateTimeOriginal` (with
     optional `timeZone`), per-asset `dateTimeRelative` shift, or standalone
     `timeZone` reinterpret. The two per-asset modes read each asset's current
     `original_datetime` first (`client.assets.list(ids=...)`), then write a
-    heterogeneous per-item change. Out-of-scope fields (`isFavorite`,
-    `rating`, `visibility`, `duplicateId`) are silently ignored. Conflicting
+    heterogeneous per-item change. Out-of-scope fields (`visibility`,
+    `duplicateId`) are silently ignored. Conflicting
     datetime modes are rejected with 422.
     """
 
@@ -1642,8 +1642,6 @@ class TestUpdateAssets:
         mock_client.assets.bulk_update_assets = AsyncMock()
         request = AssetBulkUpdateDto(
             ids=[uuid4()],
-            isFavorite=True,
-            rating=4,
             visibility=AssetVisibility.archive,
             duplicateId=str(uuid4()),
         )
@@ -1654,9 +1652,8 @@ class TestUpdateAssets:
         mock_client.assets.bulk_update_assets.assert_not_awaited()
 
     @pytest.mark.anyio
-    async def test_update_assets_out_of_scope_fields_dropped_when_mixed(self):
-        # When in-scope and out-of-scope fields are mixed, only in-scope
-        # values appear in the bulk-update body.
+    async def test_update_assets_rating_wins_when_mixed(self):
+        # Rating is the finer-grained signal, so it wins over isFavorite.
         mock_client = Mock()
         mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
         ids = [uuid4()]
@@ -1670,8 +1667,47 @@ class TestUpdateAssets:
         await update_assets(request, client=mock_client)
 
         self._assert_calls_homogeneous_change(
-            mock_client.assets.bulk_update_assets, ids, {"description": "caption"}
+            mock_client.assets.bulk_update_assets,
+            ids,
+            {"description": "caption", "rating": 4},
         )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("payload", "expected"),
+        [
+            ({"isFavorite": True}, 5),
+            ({"isFavorite": False}, 0),
+            ({"rating": 3}, 3),
+            ({"rating": 0}, 0),
+            ({"rating": None}, 0),
+            ({"isFavorite": True, "rating": None}, 0),
+        ],
+    )
+    async def test_update_assets_maps_favorite_and_rating(self, payload, expected):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
+        ids = [uuid4()]
+        request = AssetBulkUpdateDto.model_validate({"ids": [str(ids[0])], **payload})
+
+        await update_assets(request, client=mock_client)
+
+        self._assert_calls_homogeneous_change(
+            mock_client.assets.bulk_update_assets, ids, {"rating": expected}
+        )
+
+    @pytest.mark.anyio
+    async def test_update_assets_rejects_negative_rating(self):
+        mock_client = Mock()
+        mock_client.assets.bulk_update_assets = AsyncMock()
+        request = AssetBulkUpdateDto(ids=[uuid4()], rating=-1)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_assets(request, client=mock_client)
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail == "rating must be between 0 and 5"
+        mock_client.assets.bulk_update_assets.assert_not_awaited()
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(
@@ -1891,9 +1927,9 @@ class TestUpdateAsset:
     """Test the single-asset metadata edit endpoint.
 
     `PUT /api/assets/{id}` forwards a subset of `UpdateAssetDto` to the Photos
-    API `update_asset` PATCH: `description`, paired `latitude` + `longitude`,
-    and `dateTimeOriginal`. Out-of-scope fields (`isFavorite`, `rating`,
-    `visibility`, `livePhotoVideoId`) are silently ignored — the request
+    API `update_asset` PATCH: `description`, favorite/rating, paired `latitude`
+    + `longitude`, and `dateTimeOriginal`. Out-of-scope fields (`visibility`,
+    `livePhotoVideoId`) are silently ignored — the request
     succeeds, the adapter just doesn't act on parts the Gumnut API doesn't
     model. An empty payload returns the asset unchanged without an SDK call.
     """
@@ -2242,7 +2278,7 @@ class TestUpdateAsset:
     async def test_update_asset_out_of_scope_fields_no_sdk_call(
         self, sample_uuid, sample_gumnut_asset, mock_current_user
     ):
-        # Out-of-scope fields (favorite/rating/visibility/livePhotoVideoId)
+        # Out-of-scope fields (visibility/livePhotoVideoId)
         # by themselves don't trigger a PATCH — the request still succeeds
         # via the retrieve path so client UIs don't show errors.
         sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
@@ -2251,8 +2287,6 @@ class TestUpdateAsset:
         mock_client.assets.retrieve = AsyncMock(return_value=sample_gumnut_asset)
 
         request = UpdateAssetDto(
-            isFavorite=True,
-            rating=5,
             visibility=AssetVisibility.archive,
             livePhotoVideoId=uuid4(),
         )
@@ -2271,11 +2305,10 @@ class TestUpdateAsset:
         mock_emit.assert_not_awaited()
 
     @pytest.mark.anyio
-    async def test_update_asset_out_of_scope_fields_ignored_when_mixed(
+    async def test_update_asset_rating_wins_when_mixed(
         self, sample_uuid, sample_gumnut_asset, mock_current_user
     ):
-        # When a mix of in-scope and out-of-scope fields is sent, only the
-        # in-scope kwargs reach the SDK.
+        # Rating is the finer-grained signal, so it wins over isFavorite.
         sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
         mock_client = Mock()
         mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
@@ -2295,8 +2328,65 @@ class TestUpdateAsset:
             )
 
         mock_client.assets.update_asset.assert_awaited_once_with(
-            uuid_to_gumnut_asset_id(sample_uuid), description="caption"
+            uuid_to_gumnut_asset_id(sample_uuid), description="caption", rating=4
         )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("payload", "expected"),
+        [
+            ({"isFavorite": True}, 5),
+            ({"isFavorite": False}, 0),
+            ({"rating": 3}, 3),
+            ({"rating": 0}, 0),
+            ({"rating": None}, 0),
+            ({"isFavorite": True, "rating": None}, 0),
+        ],
+    )
+    async def test_update_asset_maps_favorite_and_rating(
+        self,
+        sample_uuid,
+        sample_gumnut_asset,
+        mock_current_user,
+        payload,
+        expected,
+    ):
+        sample_gumnut_asset.id = uuid_to_gumnut_asset_id(sample_uuid)
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock(return_value=sample_gumnut_asset)
+        request = UpdateAssetDto.model_validate(payload)
+
+        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        mock_client.assets.update_asset.assert_awaited_once_with(
+            uuid_to_gumnut_asset_id(sample_uuid), rating=expected
+        )
+
+    @pytest.mark.anyio
+    async def test_update_asset_rejects_negative_rating(
+        self, sample_uuid, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.assets.update_asset = AsyncMock()
+        request = UpdateAssetDto(rating=-1)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail == "rating must be between 0 and 5"
+        mock_client.assets.update_asset.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_update_asset_emits_websocket_event(

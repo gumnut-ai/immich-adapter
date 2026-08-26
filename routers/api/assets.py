@@ -836,9 +836,9 @@ def _build_bulk_metadata_change(
     Returns a `_BulkMetadataChange(base, transform)`:
 
     - `base` — fields identical across every id (homogeneous):
-      `description`, paired `latitude` + `longitude`, and an absolute
-      `original_datetime` (from `dateTimeOriginal`, optionally localized by a
-      paired `timeZone`). May be empty.
+      `description`, favorite/rating, paired `latitude` + `longitude`, and an
+      absolute `original_datetime` (from `dateTimeOriginal`, optionally
+      localized by a paired `timeZone`). May be empty.
     - `transform` — a per-asset `original_datetime` rewrite that needs each
       asset's current value read first (`dateTimeRelative`, or standalone
       `timeZone` without `dateTimeOriginal`), or `None`. See
@@ -851,9 +851,9 @@ def _build_bulk_metadata_change(
     send null for fields they don't intend to change — so the per-asset
     rewrites only trigger on non-null values.
 
-    Out-of-scope DTO fields (`isFavorite`, `rating`, `visibility`,
-    `duplicateId`) are silently ignored — the request still succeeds, the
-    adapter just doesn't act on parts the Gumnut API doesn't model.
+    Favorite and rating map onto the same backend rating dial; explicit rating
+    wins when both are present. Out-of-scope DTO fields (`visibility`,
+    `duplicateId`) are silently ignored.
 
     The three datetime modes (absolute `dateTimeOriginal`, relative
     `dateTimeRelative`, standalone `timeZone` reinterpret) are mutually
@@ -898,6 +898,10 @@ def _build_bulk_metadata_change(
     if "description" in provided:
         base["description"] = request.description
 
+    has_rating, rating = _rating_change(request)
+    if has_rating:
+        base["rating"] = rating
+
     lat_set = "latitude" in provided
     lon_set = "longitude" in provided
     if lat_set != lon_set:
@@ -927,8 +931,9 @@ async def update_assets(
     Wires Immich's `PUT /api/assets` to the Gumnut API `bulk_update_assets`
     call, which accepts heterogeneous per-item `change` dicts.
 
-    In-scope fields: `description`, paired `latitude` + `longitude`, and the
-    capture time via one of three mutually exclusive datetime modes:
+    In-scope fields: `description`, favorite/rating, paired `latitude` +
+    `longitude`, and the capture time via one of three mutually exclusive
+    datetime modes:
 
     - absolute `dateTimeOriginal` (optionally localized by a paired
       `timeZone`) — identical for every id, so it's replicated as a single
@@ -951,9 +956,10 @@ async def update_assets(
     they drop out of the write entirely. There is a small read-then-write
     window in which an asset's datetime could change between the two calls.
 
-    Out-of-scope DTO fields (`isFavorite`, `rating`, `visibility`,
-    `duplicateId`) are silently ignored. Conflicting datetime modes are
-    rejected with 422 — see `_build_bulk_metadata_change`.
+    Favorite writes 5/0; explicit rating writes 0-5 and wins when both fields
+    are present. `visibility` and `duplicateId` remain accepted no-ops.
+    Conflicting datetime modes are rejected with 422 — see
+    `_build_bulk_metadata_change`.
 
     No WebSocket events are emitted on success: `bulk_update_assets` returns
     no per-asset payload, so we don't have post-update assets to mirror the
@@ -1163,16 +1169,44 @@ def _parse_update_original_datetime(value: str | None) -> datetime | None:
         ) from exc
 
 
+def _rating_change(
+    request: UpdateAssetDto | AssetBulkUpdateDto,
+) -> tuple[bool, int]:
+    """Resolve Immich's favorite/rating fields onto one 0-5 rating value.
+
+    The DTOs default both fields to ``None``, so ``model_fields_set`` is
+    required to distinguish omission from an explicit ``rating: null``. Immich
+    uses null for unrated; the Gumnut USER layer uses ``0`` for that deliberate
+    state (whereas backend null would clear the override and reveal a FILE-layer
+    rating). When both fields are present, rating wins as the finer-grained
+    signal.
+    """
+    provided = request.model_fields_set
+    if "rating" in provided:
+        rating = request.rating if request.rating is not None else 0
+        if not 0 <= rating <= 5:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="rating must be between 0 and 5",
+            )
+        return True, rating
+
+    if "isFavorite" in provided and request.isFavorite is not None:
+        return True, 5 if request.isFavorite else 0
+
+    return False, 0
+
+
 def _build_metadata_patch(request: UpdateAssetDto) -> dict[str, Any] | None:
     """Build the SDK `update_asset` kwargs from an `UpdateAssetDto`.
 
     Uses `model_fields_set` to distinguish "field omitted" from "field
     explicitly null" — both look like `None` on the model because the DTO
-    defaults every field to `None`. Out-of-scope DTO fields
-    (`isFavorite`, `rating`, `visibility`, `livePhotoVideoId`) are silently
-    ignored; the request still succeeds, we just don't act on parts the
-    Gumnut API doesn't model. Returns `None` when no in-scope fields were
-    set, signalling the caller to skip the PATCH entirely.
+    defaults every field to `None`. Favorite and rating map onto the same
+    backend rating dial; explicit `rating` wins over `isFavorite` when both are
+    present. Out-of-scope DTO fields (`visibility`, `livePhotoVideoId`) are
+    silently ignored. Returns `None` when no in-scope fields were set,
+    signalling the caller to skip the PATCH entirely.
 
     Validates paired lat/lon adapter-side so the request 422s before the
     network call when the client sends half-set or half-cleared coords.
@@ -1182,6 +1216,10 @@ def _build_metadata_patch(request: UpdateAssetDto) -> dict[str, Any] | None:
 
     if "description" in provided:
         patch["description"] = request.description
+
+    has_rating, rating = _rating_change(request)
+    if has_rating:
+        patch["rating"] = rating
 
     lat_set = "latitude" in provided
     lon_set = "longitude" in provided
@@ -1217,11 +1255,10 @@ async def update_asset(
     """Update single-asset metadata.
 
     Wires Immich's `PUT /api/assets/{id}` to the Gumnut API
-    `update_asset` PATCH. In-scope DTO fields: `description`,
-    `latitude` + `longitude`, `dateTimeOriginal`. Out-of-scope fields
-    (`isFavorite`, `rating`, `visibility`, `livePhotoVideoId`) are
-    silently ignored — the request still succeeds, but the adapter
-    doesn't act on parts the Gumnut API doesn't model.
+    `update_asset` PATCH. In-scope DTO fields: `description`, favorite/rating,
+    `latitude` + `longitude`, and `dateTimeOriginal`. Favorite writes 5/0;
+    explicit rating writes 0-5 and wins when both fields are present.
+    `visibility` and `livePhotoVideoId` remain accepted no-ops.
     """
     payload = _build_metadata_patch(request)
     if payload is None:

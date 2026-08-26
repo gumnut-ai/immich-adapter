@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-08-19
+last-updated: 2026-08-26
 ---
 
 # Immich Adapter Architecture
@@ -67,6 +67,7 @@ Route parameter, error-envelope, generated-model, upstream-source, and version-b
 
 Asset converters translate Gumnut metadata, timestamps, checksums, media variants, dimensions, ratings, and visibility into Immich response models. Several fields are not identity mappings:
 
+- favorite and rating are one dial: rating 5 is favorite, favorite writes 5/0, and explicit rating wins when both write fields are present;
 - capture-time and modified-time fallbacks differ;
 - Immich's local datetime transport can carry local wall-clock components with a fictitious UTC marker;
 - outgoing checksums are base64 SHA-1 even though stronger hashes exist internally;

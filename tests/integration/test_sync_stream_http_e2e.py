@@ -334,6 +334,7 @@ def mock_gumnut_user():
         email="test@example.com",
         first_name="Test",
         last_name="User",
+        favorite_display_mode="rating",
         is_superuser=False,
         is_active=True,
         is_verified=True,

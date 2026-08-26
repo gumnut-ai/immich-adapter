@@ -149,6 +149,12 @@ def normalize_rating(rating: float | int | None) -> int | None:
     return value if 1 <= value <= 5 else None
 
 
+def is_asset_favorite(gumnut_asset: AssetResponse) -> bool:
+    """Return whether the resolved metadata rating represents a favorite."""
+    metadata = gumnut_asset.metadata
+    return metadata is not None and metadata.rating == 5
+
+
 def format_duration(seconds: float | None) -> str | None:
     """Format a video duration (float seconds) as Immich's ``HH:MM:SS.ffffff`` interval string.
 
@@ -515,7 +521,7 @@ def build_asset_upload_ready_payload(
         fileModifiedAt=file_modified_at,
         height=int(height) if height else None,
         isEdited=is_asset_edited(gumnut_asset),
-        isFavorite=False,
+        isFavorite=is_asset_favorite(gumnut_asset),
         libraryId=None,
         livePhotoVideoId=None,
         localDateTime=local_date_time,
@@ -586,7 +592,7 @@ def convert_gumnut_asset_to_immich(
         height=height if height else None,
         isArchived=False,
         isEdited=is_asset_edited(gumnut_asset),
-        isFavorite=False,
+        isFavorite=is_asset_favorite(gumnut_asset),
         isOffline=False,
         isTrashed=bool(gumnut_asset.trashed_at),
         originalPath=f"/gumnut/assets/{asset_id}",

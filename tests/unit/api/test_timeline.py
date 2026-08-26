@@ -348,11 +348,22 @@ class TestGetTimeBuckets:
     @pytest.mark.anyio
     async def test_get_time_buckets_filtered_out_conditions(self):
         """Test that certain conditions return empty list immediately."""
-        result = await call_get_time_buckets(isFavorite=True)
-        assert result == []
-
         result = await call_get_time_buckets(visibility=AssetVisibility.archive)
         assert result == []
+
+    @pytest.mark.anyio
+    async def test_get_time_buckets_forwards_favorite_rating(self):
+        mock_client = Mock()
+        mock_client.assets.counts = AsyncMock(
+            return_value=_make_counts_response([_make_data(datetime(2024, 1, 1), 2)])
+        )
+
+        result = await call_get_time_buckets(isFavorite=True, client=mock_client)
+
+        assert result[0].count == 2
+        counts_call = mock_client.assets.counts.await_args
+        assert counts_call is not None
+        assert counts_call.kwargs["extra_query"] == {"ratings": "5"}
 
     @pytest.mark.anyio
     async def test_get_time_buckets_is_trashed_passes_state(self):
@@ -475,6 +486,7 @@ class TestGetTimeBucket:
         assets[0].mime_type = "image/jpeg"
         assets[0].width = 1920
         assets[0].height = 1280
+        assets[0].metadata = Mock(rating=5)
 
         assets[1].id = uuid_to_gumnut_asset_id(uuid4())
         assets[1].local_datetime = datetime(
@@ -484,6 +496,7 @@ class TestGetTimeBucket:
         assets[1].mime_type = "image/png"
         assets[1].width = 1080
         assets[1].height = 1080
+        assets[1].metadata = Mock(rating=3)
 
         mock_client.assets.list.return_value = mock_sync_cursor_page(assets[:2])
 
@@ -516,7 +529,7 @@ class TestGetTimeBucket:
             assert result["createdAt"][0] == "2024-01-15T15:00:00.000"
             assert result["createdAt"][1] == "2024-01-25T14:00:00.000"
 
-            assert all(fav is False for fav in result["isFavorite"])
+            assert result["isFavorite"] == [True, False]
             assert all(trash is False for trash in result["isTrashed"])
             assert all(vis == AssetVisibility.timeline for vis in result["visibility"])
 
@@ -524,6 +537,28 @@ class TestGetTimeBucket:
                 include=ASSET_INCLUDE_METADATA_ONLY,
                 extra_query=JANUARY_2024_DATE_RANGE,
             )
+
+    @pytest.mark.anyio
+    async def test_get_time_bucket_forwards_favorite_rating(
+        self, multiple_gumnut_assets, mock_sync_cursor_page
+    ):
+        asset = multiple_gumnut_assets[0]
+        asset.id = uuid_to_gumnut_asset_id(uuid4())
+        asset.metadata = Mock(rating=5)
+        mock_client = Mock()
+        mock_client.assets.list.return_value = mock_sync_cursor_page([asset])
+
+        result = await call_get_time_bucket(
+            timeBucket="2024-01-01T00:00:00",
+            isFavorite=True,
+            client=mock_client,
+        )
+
+        assert result["isFavorite"] == [True]
+        mock_client.assets.list.assert_called_once_with(
+            include=ASSET_INCLUDE_METADATA_ONLY,
+            extra_query={**JANUARY_2024_DATE_RANGE, "ratings": "5"},
+        )
 
     @pytest.mark.parametrize(
         ("with_coordinates", "expected_latitude", "expected_longitude"),

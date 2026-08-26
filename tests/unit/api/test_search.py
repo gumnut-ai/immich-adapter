@@ -244,6 +244,22 @@ class TestSearchMetadata:
         )
 
     @pytest.mark.anyio
+    async def test_combines_text_with_favorite_filter(self, mock_current_user):
+        search_response = Mock(data=[])
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        await search_assets(
+            request=MetadataSearchDto(description="sunset", isFavorite=True),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert mock_client.search.search.call_args.kwargs["extra_query"] == {
+            "ratings": "5"
+        }
+
+    @pytest.mark.anyio
     async def test_returns_empty_results(self, mock_current_user):
         """Test that empty results are handled correctly."""
         search_response = Mock()
@@ -434,6 +450,22 @@ class TestSearchSmart:
         assert result.assets.nextPage is None
 
     @pytest.mark.anyio
+    async def test_passes_rating_filter(self, mock_current_user):
+        search_response = Mock(data=[])
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        await search_smart(
+            request=SmartSearchDto(query="sunset", rating=4),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert mock_client.search.search.call_args.kwargs["extra_query"] == {
+            "ratings": "4"
+        }
+
+    @pytest.mark.anyio
     async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
         """When size/page are absent, the SDK is called without them so the Gumnut API
         applies its own defaults. Substituting our own defaults would fragment the
@@ -544,6 +576,8 @@ class TestCriterionLessEnumeration:
                     order=AssetOrder.asc,
                     visibility=AssetVisibility.timeline,
                     trashedAfter=datetime(1, 1, 1, tzinfo=timezone.utc),
+                    isFavorite=True,
+                    rating=5,
                 )
             )
             is True
@@ -573,10 +607,8 @@ class TestCriterionLessEnumeration:
             {"city": "Paris"},
             {"make": "Canon"},
             {"checksum": "abc123"},
-            {"rating": 5},
             {"type": AssetTypeEnum.IMAGE},
             {"state": "California"},
-            {"isFavorite": True},
             {"isNotInAlbum": True},
         ],
     )
@@ -617,6 +649,26 @@ class TestSearchMetadataEnumeration:
         assert result.assets.total == 3
         assert result.assets.nextPage is None
         assert len(result.assets.items) == 3
+
+    @pytest.mark.anyio
+    async def test_favorite_and_rating_filters_route_to_listing(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page([]))
+        mock_client.search.search = AsyncMock()
+
+        await search_assets(
+            request=MetadataSearchDto(isFavorite=True, rating=3),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        mock_client.search.search.assert_not_called()
+        # Rating wins over the coarser favorite bit when clients populate both.
+        assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
+            "ratings": "3"
+        }
 
     @pytest.mark.anyio
     async def test_paginates_with_string_next_page(
@@ -1240,9 +1292,13 @@ class TestSearchRandom:
         return mock_client
 
     @pytest.mark.anyio
-    async def test_returns_empty_for_favorites(self, mock_current_user):
-        """Gumnut has no favorites, so isFavorite=True returns an empty list."""
-        mock_client = Mock()
+    async def test_favorite_filter_reaches_counts_and_month_listing(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        favorite = _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+        buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
+        months = {JAN_2024_AFTER_BOUND: [favorite]}
+        mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
 
         result = await search_random(
             request=RandomSearchDto(isFavorite=True),
@@ -1250,8 +1306,13 @@ class TestSearchRandom:
             current_user=mock_current_user,
         )
 
-        assert result == []
-        mock_client.assets.counts.assert_not_called()
+        assert len(result) == 1
+        assert mock_client.assets.counts.await_args.kwargs["extra_query"] == {
+            "ratings": "5"
+        }
+        assert mock_client.assets.list.call_args.kwargs["extra_query"] == {
+            "ratings": "5"
+        }
 
     @pytest.mark.anyio
     async def test_returns_empty_for_non_timeline_visibility(self, mock_current_user):
@@ -1294,7 +1355,6 @@ class TestSearchRandom:
         for request in (
             RandomSearchDto(takenAfter=datetime(2024, 1, 1, tzinfo=timezone.utc)),
             RandomSearchDto(city="Sydney"),
-            RandomSearchDto(rating=1),
             RandomSearchDto(isMotion=True),
             RandomSearchDto(tagIds=[uuid4()]),
         ):
@@ -1351,9 +1411,15 @@ class TestSearchRandom:
         silently ignored and the endpoint would sample assets the caller
         filtered out.
         """
-        translated = {"size", "albumIds", "personIds", "type"}
-        guarded = {
+        translated = {
+            "size",
+            "albumIds",
+            "personIds",
+            "type",
             "isFavorite",
+            "rating",
+        }
+        guarded = {
             "visibility",
             "city",
             "country",
@@ -1371,7 +1437,6 @@ class TestSearchRandom:
             "make",
             "model",
             "ocr",
-            "rating",
             "tagIds",
             "isEncoded",
             "isMotion",

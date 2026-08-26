@@ -39,6 +39,7 @@ from routers.utils.asset_conversion import (
     exif_dims_and_orientation,
     format_duration,
     is_asset_edited,
+    is_asset_favorite,
     mime_type_to_asset_type,
     normalize_rating,
     resolve_asset_location,
@@ -168,7 +169,7 @@ def gumnut_user_to_sync_user_metadata_v1(owner_id: UUID) -> SyncUserMetadataV1:
             "folders": {"enabled": False},
             "memories": {"enabled": True},
             "people": {"enabled": True, "minimumFaces": 1},
-            "ratings": {"enabled": False},
+            "ratings": {"enabled": True},
             "sharedLinks": {"enabled": True},
             "tags": {"enabled": False},
             "purchase": {"showSupportBadge": True},
@@ -199,7 +200,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: UUID) -> SyncA
         checksum=resolve_immich_checksum(asset),
         # "Uploaded to Immich at" — required on SyncAssetV1 in Immich v3.
         createdAt=asset.created_at,
-        isFavorite=False,  # Gumnut doesn't track favorites
+        isFavorite=is_asset_favorite(asset),
         isEdited=is_asset_edited(asset),
         originalFileName=asset.original_file_name,
         ownerId=owner_id,
