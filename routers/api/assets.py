@@ -1474,10 +1474,16 @@ def _edit_rows_to_sync_edits(
 
 # AssetEditReadyV2 means "the edited renders are ready to fetch", so its
 # retrieve waits for the refreshed thumbhash (the client's image cache key)
-# to land. The deadline must stay well inside the clients' 10-second event
-# wait, which also covers the render/upload time already spent this request.
-_EDIT_EVENT_ARTIFACT_WAIT_SECONDS = 6.0
+# to land. Both clients arm a 10-second wait for the event *before* sending
+# the request, so the deadline is measured from route entry — the render and
+# upload spend from the same budget — with margin for request latency.
+_EDIT_EVENT_DEADLINE_SECONDS = 8.5
 _EDIT_EVENT_ARTIFACT_POLL_SECONDS = 0.5
+
+
+def _edit_event_deadline() -> float:
+    """Absolute loop time by which the edit-committed events must emit."""
+    return asyncio.get_running_loop().time() + _EDIT_EVENT_DEADLINE_SECONDS
 
 
 async def _retrieve_asset_for_edit_event(
@@ -1485,13 +1491,16 @@ async def _retrieve_asset_for_edit_event(
     gumnut_asset_id: str,
     *,
     previous_thumbhash: str | None,
+    deadline: float,
     wait_for_refresh: bool = True,
 ) -> AssetResponse | None:
     """Retrieve the refreshed asset for the edit-committed events.
 
     Polls until ``thumbhash`` differs from ``previous_thumbhash`` (Immich
     clients key image URLs on it, and the Gumnut API recomputes it in the
-    background) or the bounded deadline passes, which logs and emits anyway;
+    background) or ``deadline`` (an absolute loop time from
+    ``_edit_event_deadline`` at route entry) passes, which logs and emits
+    anyway; a slow render leaves less budget but never skips the first read.
     ``wait_for_refresh=False`` reads once, for a write that stored nothing.
 
     Returns ``None`` when the read fails: the write is already durable, so
@@ -1500,7 +1509,6 @@ async def _retrieve_asset_for_edit_event(
     """
     try:
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + _EDIT_EVENT_ARTIFACT_WAIT_SECONDS
         while True:
             gumnut_asset = await client.assets.retrieve(
                 gumnut_asset_id, include=ASSET_INCLUDE
@@ -1637,6 +1645,7 @@ async def apply_asset_edits(
     errors reach the global mapping — a CAS loss or depth conflict surfaces as
     the upstream 409 and is never retried against a refreshed tip.
     """
+    deadline = _edit_event_deadline()
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
     # One snapshot serves tip selection, recipe validation, and the render:
     # `include=variants` carries the byte URLs the renderer needs, so it can
@@ -1730,6 +1739,7 @@ async def apply_asset_edits(
         client,
         gumnut_asset_id,
         previous_thumbhash=previous_thumbhash,
+        deadline=deadline,
         wait_for_refresh=stored,
     )
     rows = recipe_to_immich_edits(gumnut_asset_id, new_version.id, recipe.to_params())
@@ -1751,6 +1761,7 @@ async def remove_asset_edits(
     (see the event reference); an opaque non-edit tip conflicts rather than
     exposing a generic external-version delete through an edit route.
     """
+    deadline = _edit_event_deadline()
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
     versions = await client.assets.versions.list(gumnut_asset_id)
     tip = _edits_chain_tip(versions, gumnut_asset_id=gumnut_asset_id)
@@ -1775,6 +1786,7 @@ async def remove_asset_edits(
         client,
         gumnut_asset_id,
         previous_thumbhash=previous_thumbhash,
+        deadline=deadline,
         wait_for_refresh=committed,
     )
     await _emit_edit_committed_events(

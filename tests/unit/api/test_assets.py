@@ -3938,13 +3938,13 @@ class TestAssetEdits:
 
     @pytest.fixture(autouse=True)
     def _no_artifact_wait(self, monkeypatch):
-        """Zero the thumbhash-rotation wait.
+        """Zero the thumbhash-rotation deadline.
 
         The shared mock client returns the same asset (same thumbhash) on
         every retrieve, so a live deadline would make every edit test poll to
         timeout. Tests for the wait itself restore a real deadline locally.
         """
-        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_WAIT_SECONDS", 0.0)
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_DEADLINE_SECONDS", 0.0)
         monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_POLL_SECONDS", 0.0)
 
     @staticmethod
@@ -4005,7 +4005,7 @@ class TestAssetEdits:
         return client
 
     @staticmethod
-    def _fake_render(error: Exception | None = None):
+    def _fake_render(error: Exception | None = None, delay: float = 0.0):
         """A render_asset_edit stand-in recording its calls."""
         from contextlib import asynccontextmanager
         from types import SimpleNamespace
@@ -4017,6 +4017,8 @@ class TestAssetEdits:
             calls.append((client, gumnut_asset_id, recipe, versions))
             if error is not None:
                 raise error
+            if delay:
+                await asyncio.sleep(delay)
             yield SimpleNamespace(
                 body=BytesIO(b"rendered-bytes"),
                 mime_type="image/jpeg",
@@ -4175,7 +4177,7 @@ class TestAssetEdits:
         from routers.api.assets import apply_asset_edits
         from routers.immich_models import AssetEditsCreateDto
 
-        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_WAIT_SECONDS", 5.0)
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_DEADLINE_SECONDS", 5.0)
 
         def asset_with_thumbhash(value):
             asset = make_gumnut_asset(
@@ -4244,6 +4246,43 @@ class TestAssetEdits:
         ]
 
     @pytest.mark.anyio
+    async def test_put_slow_render_spends_the_event_deadline(
+        self, sample_uuid, mock_current_user, monkeypatch
+    ):
+        """The clients arm their 10-second wait before sending, so the poll
+        deadline is measured from route entry: a render that outlives it
+        still gets one post-commit read, then emits with whatever thumbhash
+        that read returns instead of starting a fresh wait."""
+        from routers.api.assets import apply_asset_edits
+        from routers.immich_models import AssetEditsCreateDto
+        from services.websockets import WebSocketEvent
+
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_DEADLINE_SECONDS", 0.05)
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_POLL_SECONDS", 5.0)
+        # The default client never rotates its thumbhash, so any poll after
+        # the first read would sleep the (huge) poll interval and time out.
+        client = self._client([self._version(position=0)])
+        fake_render, _ = self._fake_render(delay=0.1)
+        emit = AsyncMock()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", emit),
+        ):
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        # Pre-commit capture plus exactly one post-commit read.
+        assert client.assets.retrieve.await_count == 2
+        assert [call.args[0] for call in emit.await_args_list] == [
+            WebSocketEvent.ASSET_EDIT_READY_V2,
+            WebSocketEvent.ASSET_UPDATE,
+        ]
+
+    @pytest.mark.anyio
     async def test_put_duplicate_resave_skips_artifact_wait(
         self, sample_uuid, mock_current_user, monkeypatch
     ):
@@ -4255,7 +4294,7 @@ class TestAssetEdits:
         from routers.immich_models import AssetEditsCreateDto
         from tests.conftest import make_gumnut_asset
 
-        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_WAIT_SECONDS", 5.0)
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_DEADLINE_SECONDS", 5.0)
         versions = [
             self._version(position=0),
             self._version(
@@ -4317,7 +4356,7 @@ class TestAssetEdits:
         # A live deadline plus a single-shot retrieve: if the no-op path ever
         # polled (thumbhash None == None never rotates), the second retrieve
         # would exhaust the side_effect and emission would be skipped.
-        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_ARTIFACT_WAIT_SECONDS", 5.0)
+        monkeypatch.setattr("routers.api.assets._EDIT_EVENT_DEADLINE_SECONDS", 5.0)
         client.assets.retrieve = AsyncMock(
             side_effect=[
                 make_gumnut_asset(kind="original", current_version_id="asset_version_0")
