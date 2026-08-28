@@ -1,6 +1,6 @@
 ---
 title: "Routes, DTOs, and Upstream Compatibility"
-last-updated: 2026-08-19
+last-updated: 2026-08-26
 ---
 
 # Routes, DTOs, and Upstream Compatibility
@@ -120,14 +120,18 @@ Rule of thumb: a stub may safely return success when it represents a feature the
 
 ## Restrictive filters the backend can't honor — short-circuit, don't drop
 
-When an Immich endpoint accepts query filters that Gumnut doesn't model (e.g., `isFavorite`, `isArchived`, partner-shared assets), silently dropping the filter and returning unfiltered results is a wrong answer — the client asked to *restrict* results and got everything instead. For filters with that semantic, short-circuit to `[]` when the restrictive value is set:
+When an Immich endpoint accepts query filters that Gumnut doesn't model (e.g., `isArchived` or locked visibility), silently dropping the filter and returning unfiltered results is a wrong answer — the client asked to *restrict* results and got everything instead. For filters with that semantic, short-circuit to `[]` when the restrictive value is set:
 
 ```python
-if isFavorite is True or isArchived is True:
+if isArchived is True:
     return []
 ```
 
-Use `is True` rather than truthiness so `False` / `None` (which mean "no restriction") still return normal results — only the explicit `True` value asked for filtering. See `routers/api/timeline.py::get_time_buckets` and `routers/api/map.py::get_map_markers` for the established pattern.
+Use `is True` rather than truthiness so `False` / `None` (which mean "no restriction") still return normal results — only the explicit `True` value asked for filtering. `routers/api/map.py::get_map_markers` retains this pattern for archived state.
+
+Favorites are no longer an example of an unsupported filter. Through `routers/utils/rating.py`, explicit true maps to exact set `{5}`, explicit false maps to `{0,1,2,3,4}`, numeric rating filters map to their exact value, and an explicitly-present null rating maps to `{0}` (unrated). Omission alone means no favorite/rating restriction. Apply the same set to every data source a route composes: timeline counts and bucket listing, random-search counts and month pages, search statistics, asset statistics, and map marker listing. Filtering only one half creates internally inconsistent results even when each individual SDK call succeeds.
+
+The deployed API accepts a `ratings` query parameter, but the generated Python SDK currently omits it from the typed list/count/search signatures. Use `rating_extra_query` for this narrow compatibility gap. When bumping the SDK, inspect those signatures and replace the shim once `ratings` is typed; do not leave both forms in one request.
 
 This applies only to *restrictive* filters. Filters that ask for a broader result set (e.g., `withPartners=True` saying "also include partner-shared assets") can safely be dropped — the unfiltered result is a superset, not a wrong answer. Document in the docstring which filters are dropped and which short-circuit.
 

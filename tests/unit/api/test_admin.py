@@ -57,3 +57,10 @@ class TestUserPreferencesAdmin:
         result = await get_user_preferences_admin(uuid4())
 
         assert result.recentlyAdded.sidebarWeb is False
+
+    @pytest.mark.anyio
+    async def test_ratings_enabled(self):
+        """Admin preference reads expose the same rating capability."""
+        result = await get_user_preferences_admin(uuid4())
+
+        assert result.ratings.enabled is True

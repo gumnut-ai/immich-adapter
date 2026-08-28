@@ -43,6 +43,7 @@ from routers.utils.asset_conversion import (
     mime_type_to_asset_type,
     resolve_asset_location,
 )
+from routers.utils.rating import RatingFilter, rating_extra_query, rating_filter_values
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +245,14 @@ async def search_asset_statistics(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> SearchStatisticsResponseDto:
     """Get asset count statistics."""
-    buckets = await fetch_asset_counts(client)
+    buckets = await fetch_asset_counts(
+        client,
+        ratings=rating_filter_values(
+            rating=request.rating,
+            rating_provided="rating" in request.model_fields_set,
+            is_favorite=request.isFavorite,
+        ),
+    )
     total = sum(bucket.count for bucket in buckets)
     return SearchStatisticsResponseDto(total=total)
 
@@ -270,6 +278,8 @@ _ENUMERATION_HONORABLE_FIELDS = frozenset(
         "withExif",
         "withPeople",
         "withStacked",
+        "isFavorite",
+        "rating",
     }
 )
 
@@ -350,10 +360,9 @@ def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
     for field_name, value in request:
         if field_name in _ENUMERATION_HONORABLE_FIELDS:
             continue
-        # Boolean filters (isFavorite/isMotion/…) restrict only when explicitly
-        # true: `False` narrows nothing (the backing features don't exist in the
-        # Gumnut API), so it doesn't disqualify the enumeration — same posture as
-        # `search_random`.
+        # Unsupported boolean filters (isMotion/isEncoded/…) restrict only when
+        # explicitly true; false narrows nothing, so it does not disqualify the
+        # enumeration.
         if isinstance(value, bool):
             if value:
                 return False
@@ -409,14 +418,25 @@ async def _list_asset_page(
     page = int(request.page) if request.page is not None else 1
     start = (page - 1) * size
 
+    list_kwargs: dict[str, Any] = {
+        "state": state,
+        "limit": GUMNUT_API_MAX_PAGE_SIZE,
+        "include": ASSET_INCLUDE,
+        "order": request.order.value,
+    }
+    extra_query = rating_extra_query(
+        rating_filter_values(
+            rating=request.rating,
+            rating_provided="rating" in request.model_fields_set,
+            is_favorite=request.isFavorite,
+        )
+    )
+    if extra_query is not None:
+        list_kwargs["extra_query"] = extra_query
+
     page_assets: list[AssetResponse] = []
     matching_index = 0
-    async for asset in client.assets.list(
-        state=state,
-        limit=GUMNUT_API_MAX_PAGE_SIZE,
-        include=ASSET_INCLUDE,
-        order=request.order.value,
-    ):
+    async for asset in client.assets.list(**list_kwargs):
         # The Gumnut API cannot express a trash-time lower bound. Apply it before
         # counting positions so numeric pages contain only matching assets. Live
         # assets remain eligible when `withDeleted` selects live + trash.
@@ -492,6 +512,15 @@ async def search_assets(
         "person_ids": person_ids,
         "include": ASSET_INCLUDE,
     }
+    extra_query = rating_extra_query(
+        rating_filter_values(
+            rating=request.rating,
+            rating_provided="rating" in request.model_fields_set,
+            is_favorite=request.isFavorite,
+        )
+    )
+    if extra_query is not None:
+        search_kwargs["extra_query"] = extra_query
     if request.size is not None:
         # Clamp at the Gumnut API per-page ceiling. The Immich client default
         # is 1000; without this, the Gumnut API 422s.
@@ -535,6 +564,15 @@ async def search_smart(
         "query": _compose_free_text_query(request.query, request),
         "include": ASSET_INCLUDE,
     }
+    extra_query = rating_extra_query(
+        rating_filter_values(
+            rating=request.rating,
+            rating_provided="rating" in request.model_fields_set,
+            is_favorite=request.isFavorite,
+        )
+    )
+    if extra_query is not None:
+        search_kwargs["extra_query"] = extra_query
     if request.size is not None:
         # Clamp at the Gumnut API per-page ceiling. The Immich client default
         # is 1000; without this, the Gumnut API 422s.
@@ -581,6 +619,7 @@ async def _fetch_month_assets_at_offsets(
     *,
     album_id: str | None,
     person_id: str | None,
+    ratings: RatingFilter | None = None,
 ) -> list[AssetResponse]:
     """Fetch the assets at the given newest-first offsets within a month bucket.
 
@@ -604,6 +643,9 @@ async def _fetch_month_assets_at_offsets(
         list_kwargs["album_id"] = album_id
     if person_id is not None:
         list_kwargs["person_ids"] = [person_id]
+    extra_query = rating_extra_query(ratings)
+    if extra_query is not None:
+        list_kwargs["extra_query"] = extra_query
 
     picked: list[AssetResponse] = []
     index = 0
@@ -637,20 +679,21 @@ async def search_random(
     only the months containing sampled indices.
 
     Supported filters: `size` (defaults to `RANDOM_DEFAULT_SIZE`, matching the
-    Immich server), single-element `albumIds` / `personIds`, and `type`.
+    Immich server), single-element `albumIds` / `personIds`, favorite/rating,
+    and `type`.
     `type` is applied to the drawn sample (the Gumnut API cannot filter by
     asset type server-side), so each matching asset is equally likely but the
     response may hold fewer than `size` items when the library is sparse in
     that type. Any other restricting filter (date bounds, location/camera
-    metadata, tags, rating, etc.) has no Gumnut API translation and returns
+    metadata, tags, etc.) has no Gumnut API translation and returns
     an empty list rather than silently sampling assets the caller filtered
-    out — the same posture the timeline endpoint takes for favorites and
-    non-timeline visibility. Response-shape hints (`withExif`, `withPeople`,
+    out — the same posture the timeline endpoint takes for non-timeline
+    visibility. Response-shape hints (`withExif`, `withPeople`,
     `withStacked`) are always satisfied (the sample converts with the full
     include set), and `withDeleted` is ignored: it *widens* the requested set
     to include trashed assets, so a live-only sample still matches the filter.
     """
-    if request.isFavorite or (
+    if (
         request.visibility is not None
         and request.visibility != AssetVisibility.timeline
     ):
@@ -681,7 +724,6 @@ async def search_random(
         request.make,
         request.model,
         request.ocr,
-        request.rating,
     )
     unsupported_flag_filters = (
         request.isEncoded,
@@ -702,8 +744,15 @@ async def search_random(
     person_id = (
         uuid_to_gumnut_person_id(request.personIds[0]) if request.personIds else None
     )
+    ratings = rating_filter_values(
+        rating=request.rating,
+        rating_provided="rating" in request.model_fields_set,
+        is_favorite=request.isFavorite,
+    )
 
-    buckets = await fetch_asset_counts(client, album_id=album_id, person_id=person_id)
+    buckets = await fetch_asset_counts(
+        client, album_id=album_id, person_id=person_id, ratings=ratings
+    )
     total = sum(bucket.count for bucket in buckets)
     if total == 0:
         return []
@@ -734,7 +783,12 @@ async def search_random(
     month_results = await gather_with_concurrency(
         [
             _fetch_month_assets_at_offsets(
-                client, time_bucket, offsets, album_id=album_id, person_id=person_id
+                client,
+                time_bucket,
+                offsets,
+                album_id=album_id,
+                person_id=person_id,
+                ratings=ratings,
             )
             for time_bucket, offsets in months_with_offsets
         ]

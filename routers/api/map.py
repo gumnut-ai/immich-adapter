@@ -8,6 +8,7 @@ from pydantic.json_schema import SkipJsonSchema
 from routers.immich_models import MapMarkerResponseDto, MapReverseGeocodeResponseDto
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.map_markers import collect_geotagged_markers
+from routers.utils.rating import rating_filter_values
 
 
 router = APIRouter(
@@ -31,26 +32,22 @@ async def get_map_markers(
 
     `withPartners` / `withSharedAlbums` are accepted for client-compatibility
     (Immich clients send them) but have no Gumnut analog, so they're dropped
-    at the adapter. `isFavorite=True` / `isArchived=True` short-circuit to
-    `[]` because Gumnut doesn't track favorites or archived state — returning
-    unfiltered markers would be a wrong answer to a restrictive filter. The
-    timeline endpoints handle `isFavorite` the same way; they don't accept
-    an `isArchived` filter at all (archived state is folded into `visibility`
-    there), so `isArchived` short-circuiting here is map-specific.
+    at the adapter. `isFavorite=True` maps to exact rating 5, while false maps
+    to ratings 0-4. `isArchived=True` still short-circuits to `[]` because
+    Gumnut has no archived state — returning unfiltered markers would be a
+    wrong answer.
 
     The paging loop, marker/scan caps, and logging live in
     `collect_geotagged_markers` (shared with the album-scoped map endpoint).
     """
     _ = withPartners, withSharedAlbums  # accepted, dropped
 
-    # Gumnut doesn't track favorites or archived state, so a filter on
-    # either can never match. Short-circuit instead of silently ignoring
-    # the filter and returning unfiltered markers.
-    if isFavorite is True or isArchived is True:
+    if isArchived is True:
         return []
 
     return await collect_geotagged_markers(
         client,
+        ratings=rating_filter_values(is_favorite=isFavorite),
         local_datetime_after=(
             fileCreatedAfter.isoformat() if fileCreatedAfter is not None else None
         ),

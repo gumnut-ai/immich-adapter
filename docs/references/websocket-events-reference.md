@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-08-25
+last-updated: 2026-08-26
 ---
 
 # Immich WebSocket Events Reference
@@ -17,7 +17,7 @@ Client columns are read from the pinned upstream source for **both** clients (`w
 | `on_asset_delete` | Asset permanently deleted | `assetId: string` | Global listener | Listener |
 | `on_asset_trash` | Asset moved to trash | `assetIds: string[]` | Global listener | Listener |
 | `on_asset_restore` | Asset restored from trash | `assetIds: string[]` | Global listener | Listener |
-| `on_asset_update` | Sidecar metadata extracted (upstream) / asset metadata edited or edit-route write committed (adapter) | `AssetResponseDto` | Global listener | Listener |
+| `on_asset_update` | Sidecar metadata extracted (upstream) / description, location, datetime, favorite, or rating edited, or edit-route write committed (adapter) | `AssetResponseDto` | Global listener | Listener |
 | `on_asset_stack_update` | Stack created/updated/deleted | None | Declared, not subscribed | Not referenced |
 | `on_asset_hidden` | Asset visibility changed | `assetId: string` | Global listener | Listener |
 | `on_person_thumbnail` | Person thumbnail generated | `personId: string` | Page-specific | Not used |
@@ -119,7 +119,7 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`, and t
 
 **Trigger**:
 - **Upstream Immich**: Emitted when metadata extracted from sidecar files (`notification.service.ts`). Only triggered by sidecar processing, NOT by direct user edits.
-- **immich-adapter**: Emitted after a successful single-asset metadata edit via `PUT /api/assets/{id}` (description / paired latitude+longitude / dateTimeOriginal), and as the companion of `AssetEditReadyV2` after every committed edit-route write (`PUT`/`DELETE /api/assets/{id}/edits`, including the idempotent root-current delete — see that event). The adapter has no sidecar processing.
+- **immich-adapter**: Emitted after a successful single-asset metadata edit via `PUT /api/assets/{id}` (description / paired latitude+longitude / dateTimeOriginal / favorite or rating), and as the companion of `AssetEditReadyV2` after every committed edit-route write (`PUT`/`DELETE /api/assets/{id}/edits`, including the idempotent root-current delete — see that event). The adapter has no sidecar processing.
 
 **Sent to**: Asset owner (by userId)
 **Payload**: Full `AssetResponseDto`

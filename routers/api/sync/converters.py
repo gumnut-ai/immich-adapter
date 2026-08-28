@@ -39,6 +39,7 @@ from routers.utils.asset_conversion import (
     exif_dims_and_orientation,
     format_duration,
     is_asset_edited,
+    is_asset_favorite,
     mime_type_to_asset_type,
     normalize_rating,
     resolve_asset_location,
@@ -149,17 +150,16 @@ def gumnut_user_to_sync_user_metadata_v1(owner_id: UUID) -> SyncUserMetadataV1:
     ``people.minimumFaces`` threshold from this stream to decide which people
     appear in the People tab — defaulting to 3 when absent, which would hide
     Gumnut clusters of 1–2 faces. We emit ``minimumFaces=1`` so every person
-    with at least one face is shown; all other fields mirror the client's own
-    defaults.
+    with at least one face is shown. We also enable ``ratings`` so the client
+    exposes its rating controls; all other fields mirror the client's defaults.
 
     ``value`` is the server's nested ``UserPreferences`` JSON shape, which the
     client parses via ``Preferences.fromMap`` (reads
     ``value["people"]["minimumFaces"]`` etc.) and stores verbatim.
     ``Preferences.fromMap`` reads every section null-safely and falls back to its
-    own default for anything absent, so ``people.minimumFaces`` is the only
-    load-bearing field here. The other sections each restate the client's own
-    default and are included solely to mirror the full canonical shape a real
-    Immich server emits — none of them are required by ``Preferences.fromMap``.
+    own default for anything absent, so ``people.minimumFaces`` and
+    ``ratings.enabled`` are the load-bearing fields here. The other sections
+    restate client defaults solely to mirror the canonical server shape.
     """
     return SyncUserMetadataV1(
         key=UserMetadataKey.preferences,
@@ -168,7 +168,7 @@ def gumnut_user_to_sync_user_metadata_v1(owner_id: UUID) -> SyncUserMetadataV1:
             "folders": {"enabled": False},
             "memories": {"enabled": True},
             "people": {"enabled": True, "minimumFaces": 1},
-            "ratings": {"enabled": False},
+            "ratings": {"enabled": True},
             "sharedLinks": {"enabled": True},
             "tags": {"enabled": False},
             "purchase": {"showSupportBadge": True},
@@ -199,7 +199,7 @@ def gumnut_asset_to_sync_asset_v1(asset: AssetResponse, owner_id: UUID) -> SyncA
         checksum=resolve_immich_checksum(asset),
         # "Uploaded to Immich at" — required on SyncAssetV1 in Immich v3.
         createdAt=asset.created_at,
-        isFavorite=False,  # Gumnut doesn't track favorites
+        isFavorite=is_asset_favorite(asset),
         isEdited=is_asset_edited(asset),
         originalFileName=asset.original_file_name,
         ownerId=owner_id,

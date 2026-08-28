@@ -31,6 +31,7 @@ from routers.utils.gumnut_id_conversion import (
     immich_stack_id,
     safe_uuid_from_asset_id,
 )
+from routers.utils.rating import FAVORITE_RATING
 from routers.utils.person_conversion import convert_gumnut_person_to_immich
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,12 @@ def normalize_rating(rating: float | int | None) -> int | None:
         return None
     value = int(float(rating))
     return value if 1 <= value <= 5 else None
+
+
+def is_asset_favorite(gumnut_asset: AssetResponse) -> bool:
+    """Return whether the resolved metadata rating represents a favorite."""
+    metadata = gumnut_asset.metadata
+    return metadata is not None and metadata.rating == FAVORITE_RATING
 
 
 def format_duration(seconds: float | None) -> str | None:
@@ -515,7 +522,7 @@ def build_asset_upload_ready_payload(
         fileModifiedAt=file_modified_at,
         height=int(height) if height else None,
         isEdited=is_asset_edited(gumnut_asset),
-        isFavorite=False,
+        isFavorite=is_asset_favorite(gumnut_asset),
         libraryId=None,
         livePhotoVideoId=None,
         localDateTime=local_date_time,
@@ -586,7 +593,7 @@ def convert_gumnut_asset_to_immich(
         height=height if height else None,
         isArchived=False,
         isEdited=is_asset_edited(gumnut_asset),
-        isFavorite=False,
+        isFavorite=is_asset_favorite(gumnut_asset),
         isOffline=False,
         isTrashed=bool(gumnut_asset.trashed_at),
         originalPath=f"/gumnut/assets/{asset_id}",
