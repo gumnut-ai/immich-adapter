@@ -1521,7 +1521,11 @@ async def _retrieve_asset_for_edit_event(
                     extra={"asset_id": gumnut_asset_id},
                 )
                 return gumnut_asset
-            await asyncio.sleep(_EDIT_EVENT_ARTIFACT_POLL_SECONDS)
+            # Clamp so the loop wakes by the deadline instead of overshooting
+            # it by a full poll interval (loop.time() < deadline, just checked).
+            await asyncio.sleep(
+                min(_EDIT_EVENT_ARTIFACT_POLL_SECONDS, deadline - loop.time())
+            )
     except Exception as exc:
         logger.warning(
             "Post-commit asset refresh failed; skipping edit-committed events",
