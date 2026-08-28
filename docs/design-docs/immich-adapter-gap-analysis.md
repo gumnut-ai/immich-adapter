@@ -9,7 +9,7 @@ last-updated: 2026-08-26
 
 ## Context
 
-The adapter targets the Immich version pinned in `.immich-container-tag`, currently **v3.1.0**. Core upload, timeline, albums, people/faces, search, map markers, stacks, trash, video playback, and mobile sync workflows are implemented. The remaining work is concentrated in features whose product model does not yet exist in the Gumnut API, a few adapter-only compatibility surfaces, and scaling limits caused by protocol mismatch.
+The adapter targets the Immich version pinned in `.immich-container-tag`, currently **v3.1.0**. Core upload, timeline, albums, people/faces, search, map markers, stacks, trash, video playback, the Immich web editor's crop/rotate/mirror edits (`/api/assets/{id}/edits` over Gumnut version chains), and mobile sync workflows are implemented. The remaining work is concentrated in features whose product model does not yet exist in the Gumnut API, a few adapter-only compatibility surfaces, and scaling limits caused by protocol mismatch.
 
 This is an active prioritization record, not an endpoint catalog. Generated models and the running FastAPI application own the exact route/schema surface. Re-run `tools/validate_api_compatibility.py` for a new target rather than updating copied counts here.
 
@@ -45,7 +45,7 @@ A route being present in OpenAPI does not prove a client uses it. Check the pinn
 | Jobs/queues | Compatibility stubs | Gumnut owns its task system | Intentional |
 | API keys | Compatibility stubs; API-key authentication itself is supported | Gumnut API key-management surface plus adapter | Revisit for developer workflows |
 | Custom asset metadata | Compatibility stubs | Gumnut metadata model plus adapter | Revisit |
-| Remaining asset edits and OCR | Favorite/rating edits are implemented; other unsupported edit fields and OCR sync families remain compatibility stubs/no-ops | Remaining Gumnut edit/OCR data plus adapter | Revisit remaining gaps |
+| Remaining asset edits and OCR | Favorite/rating edits and the web editor's crop/rotate/mirror edits are implemented; other unsupported edit fields and OCR sync families remain compatibility stubs/no-ops | Remaining Gumnut edit/OCR data plus adapter | Revisit remaining gaps |
 | Database backup/maintenance | Unreachable admin surfaces | Gumnut operations | Intentional |
 | Plugins/workflows | Unsupported optional utility | Gumnut extension/task model | Intentional |
 | Folder view | Empty compatibility surface | Folder/path product model | Revisit |

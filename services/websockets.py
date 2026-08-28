@@ -11,7 +11,12 @@ from pydantic import BaseModel
 from socketio.exceptions import SocketIOError
 
 from config.settings import get_settings
-from routers.immich_models import SyncAssetExifV1, SyncAssetV1
+from routers.immich_models import (
+    SyncAssetEditV1,
+    SyncAssetExifV1,
+    SyncAssetV1,
+    SyncAssetV2,
+)
 from services.session_store import (
     SessionDataError,
     SessionStoreError,
@@ -39,6 +44,10 @@ class WebSocketEvent(Enum):
     # Phase 1: Can implement now
     UPLOAD_SUCCESS = "on_upload_success"
     ASSET_UPLOAD_READY_V1 = "AssetUploadReadyV1"
+    # Emitted after an edit-route write commits (PUT and DELETE alike); the
+    # client-wait contract lives in
+    # docs/references/websocket-events-reference.md § AssetEditReadyV2.
+    ASSET_EDIT_READY_V2 = "AssetEditReadyV2"
     # ASSET_DELETE carries a single id per event; ASSET_TRASH/ASSET_RESTORE
     # carry an array of ids per event — matches Immich's wire contract:
     # on_asset_delete: [string], on_asset_trash/on_asset_restore: [string[]].
@@ -71,6 +80,17 @@ class AssetUploadReadyV1Payload(BaseModel):
 
     asset: SyncAssetV1
     exif: SyncAssetExifV1
+
+
+class AssetEditReadyV2Payload(BaseModel):
+    """Payload for the AssetEditReadyV2 WebSocket event (Immich web editor).
+
+    Mirrors upstream Immich's shape: the refreshed sync asset row plus the
+    complete current edit-action list (empty after a delete/restore).
+    """
+
+    asset: SyncAssetV2
+    edit: list[SyncAssetEditV1]
 
 
 # Maps socket ID -> (user_id, session_id) for disconnect cleanup
@@ -241,8 +261,8 @@ async def emit_user_event(
     that string here — socket.io matches rooms by exact value, so an
     un-normalized ``UUID`` would silently emit to an empty room.
 
-    Fire-and-forget: ``SocketIOError`` from the underlying transport is
-    caught and logged at WARN. Callers must not wrap this in try/except for
+    Awaited but best-effort: ``SocketIOError`` from the underlying transport
+    is caught and logged at WARN. Callers must not wrap this in try/except for
     ``SocketIOError`` — emission failures should never break the request
     they are paired with.
 
@@ -298,8 +318,8 @@ async def emit_session_event(
     Use this for events that should reach only one session:
     SESSION_DELETE, etc.
 
-    Fire-and-forget: ``SocketIOError`` from the underlying transport is
-    caught and logged at WARN. Callers must not wrap this in try/except for
+    Awaited but best-effort: ``SocketIOError`` from the underlying transport
+    is caught and logged at WARN. Callers must not wrap this in try/except for
     ``SocketIOError`` — emission failures should never break the request
     they are paired with.
 

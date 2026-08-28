@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-08-11
+last-updated: 2026-08-21
 ---
 
 # Development Tools
@@ -101,6 +101,17 @@ uv run tools/dump_openapi_json.py | sed -n '/^{/,$p' > /tmp/spec.json
 ```
 
 Importing the app emits log lines to **stdout** ahead of the JSON, so a bare `> /tmp/spec.json` yields a file the validator rejects (`Extra data: line 1 column 5`). Strip everything before the first `{`, then feed the result to the compatibility validator via `--adapter-spec=/tmp/spec.json`.
+
+The script runs in its own isolated PEP 723 environment, not the project venv, so its inline `dependencies` header is a **parallel copy** of every package the app pulls in at import time. Adding a `pyproject.toml` dependency that any module imports at import time (directly or transitively from `main`) requires adding it to the script header too — otherwise the check-compatibility CI job fails with `Error importing main app: No module named '...'` while every other check passes.
+
+## Gumnut SDK Release Lag
+
+The generated `gumnut-sdk` can trail the deployed Gumnut API. When an endpoint
+documented in the live spec (`https://api.gumnut.ai/openapi.json`) is missing
+from the installed SDK, check the latest release on PyPI before designing a
+raw-client workaround — the typed method may have shipped in a version this
+repo hasn't picked up yet (asset-version `append`/`replace` landed in 0.159.0
+this way).
 
 ## Dependency Update Automation
 
