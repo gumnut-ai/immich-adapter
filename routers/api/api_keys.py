@@ -41,7 +41,17 @@ async def create_api_key(request: ApiKeyCreateDto) -> ApiKeyCreateResponseDto:
         createdAt=datetime.now(tz=timezone.utc),
         updatedAt=datetime.now(tz=timezone.utc),
     )
-    return ApiKeyCreateResponseDto(apiKey=api_key, secret="fake-secret-key-12345")
+    # v3.2 flattens the key fields to the top level; the nested `apiKey` is
+    # kept but deprecated. Serve both so old and new clients read the same key.
+    return ApiKeyCreateResponseDto(
+        apiKey=api_key,
+        id=api_key.id,
+        name=api_key.name,
+        permissions=api_key.permissions,
+        createdAt=api_key.createdAt,
+        updatedAt=api_key.updatedAt,
+        secret="fake-secret-key-12345",
+    )
 
 
 @router.get("/me")

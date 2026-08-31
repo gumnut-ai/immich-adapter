@@ -259,6 +259,7 @@ class TestGetCurrentUser:
         now = datetime.now(timezone.utc)
         user_admin = UserAdminResponseDto(
             id=UUID("123e4567-e89b-12d3-a456-426614174000"),
+            clusterGroupId=UUID("123e4567-e89b-12d3-a456-426614174000"),
             email="test@example.com",
             name="Test User",
             isAdmin=True,
@@ -305,6 +306,7 @@ class TestGetCurrentUserId:
         test_uuid = UUID("123e4567-e89b-12d3-a456-426614174000")
         user_admin = UserAdminResponseDto(
             id=test_uuid,
+            clusterGroupId=test_uuid,
             email="test@example.com",
             name="Test User",
             isAdmin=True,

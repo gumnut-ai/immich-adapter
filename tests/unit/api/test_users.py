@@ -40,6 +40,7 @@ class TestGetMyUser:
         # Create a mock UserAdminResponseDto (simulating what get_current_user_admin would return)
         mock_user_admin = UserAdminResponseDto(
             id=test_uuid,
+            clusterGroupId=test_uuid,
             email="test@example.com",
             name="John Doe",
             isAdmin=True,
@@ -94,6 +95,7 @@ class TestGetMyUser:
         # Create a mock UserAdminResponseDto (simulating what get_current_user_admin would return)
         mock_user_admin = UserAdminResponseDto(
             id=test_uuid,
+            clusterGroupId=test_uuid,
             email="admin@example.com",
             name="Admin User",
             isAdmin=True,
@@ -131,6 +133,7 @@ class TestGetMyUser:
         # Create a mock UserAdminResponseDto for an inactive user
         mock_user_admin = UserAdminResponseDto(
             id=test_uuid,
+            clusterGroupId=test_uuid,
             email="inactive@example.com",
             name="Inactive User",
             isAdmin=True,

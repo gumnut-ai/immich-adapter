@@ -21,6 +21,7 @@ from routers.immich_models import (
     AssetVisibility,
     MetadataSearchDto,
     RandomSearchDto,
+    SearchFilter,
     SmartSearchDto,
     StatisticsSearchDto,
 )
@@ -346,6 +347,23 @@ class TestSearchMetadata:
         assert "page" not in call_kwargs
 
     @pytest.mark.anyio
+    async def test_structured_filter_returns_empty(self, mock_current_user):
+        """v3.2's structured `filter` (alpha) has no Gumnut translation; it only
+        restricts, so the route returns empty rather than over-matching."""
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock()
+
+        result = await search_assets(
+            request=MetadataSearchDto(description="anything", filter=SearchFilter()),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.count == 0
+        assert result.assets.items == []
+        mock_client.search.search.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_clamps_size_to_gumnut_api_ceiling(self, mock_current_user):
         """The Immich client sends size=1000 by default; the Gumnut API caps at 200.
         The adapter must clamp before forwarding, otherwise the Gumnut API 422s."""
@@ -550,6 +568,23 @@ class TestSearchSmart:
         call_kwargs = mock_client.search.search.call_args.kwargs
         assert "limit" not in call_kwargs
         assert "page" not in call_kwargs
+
+    @pytest.mark.anyio
+    async def test_structured_filter_returns_empty(self, mock_current_user):
+        """v3.2's structured `filter` (alpha) has no Gumnut translation; it only
+        restricts, so the route returns empty rather than over-matching."""
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock()
+
+        result = await search_smart(
+            request=SmartSearchDto(query="anything", filter=SearchFilter()),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.count == 0
+        assert result.assets.items == []
+        mock_client.search.search.assert_not_called()
 
     @pytest.mark.anyio
     async def test_clamps_size_to_gumnut_api_ceiling(self, mock_current_user):
@@ -1509,6 +1544,7 @@ class TestSearchRandom:
             RandomSearchDto(city="Sydney"),
             RandomSearchDto(isMotion=True),
             RandomSearchDto(tagIds=[uuid4()]),
+            RandomSearchDto(filter=SearchFilter()),
         ):
             result = await search_random(
                 request=request, client=mock_client, current_user=mock_current_user
@@ -1594,6 +1630,7 @@ class TestSearchRandom:
             "isMotion",
             "isNotInAlbum",
             "isOffline",
+            "filter",
         }
         non_restricting = {"withDeleted", "withExif", "withPeople", "withStacked"}
 
