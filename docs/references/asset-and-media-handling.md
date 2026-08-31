@@ -68,8 +68,19 @@ default `edited=false` streams the version-chain root (`position == 0`) via
 `select_root` in `routers/utils/asset_version_chain.py`. Keep it on the root:
 Immich shows *Download original* for every asset it reports as edited, and
 backup tools expect the upload, so this path must never substitute a derived
-rendering. The archive route currently streams the current rendering regardless
-of `edited`.
+rendering.
+
+The batch routes in `routers/api/download.py` honor `edited` the same way.
+`POST /api/download/archive` defaults `edited` to `False` (matching upstream's
+`dto.edited ?? false`): false/omitted streams each member's `select_root`
+upload, `edited=true` streams the current rendering. `POST /api/download/info`
+has no `edited` field, so its reported sizes are always position-0 original
+(so `/info` and `/archive` agree for `edited=false`). Because the top-level
+`kind` is lean-core, a version-chain fetch is only needed for edited members
+(`kind != "original"`); root-only members resolve straight from the
+`assets.list` payload. An invalid chain fails closed with the same 502 as the
+single-asset route (`_invalid_chain_error`); a member with no downloadable
+bytes keeps the batch route's existing 400.
 
 The **edit base** is a different selection: the highest-position version whose
 `kind` is not `edit` (or `edit:*`), from `select_edit_base` in the same module.

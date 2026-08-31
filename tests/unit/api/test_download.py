@@ -46,16 +46,33 @@ def _download_asset(
     filename: str = "photo.jpg",
     size: int = 10,
     url: str | None = None,
+    kind: str = "original",
 ) -> AssetResponse:
     asset = make_gumnut_asset(
         asset_id=uuid_to_gumnut_asset_id(asset_id),
         original_file_name=filename,
+        kind=kind,
     )
     asset.file_data.file_size_bytes = size
     asset.asset_urls = {
         "original": Mock(url=url or f"https://cdn.example.com/{asset_id}")
     }
     return cast(AssetResponse, asset)
+
+
+def _make_version(position: int, *, url: str | None = None, size: int = 10) -> Mock:
+    """Build a mock asset-version row for the version-chain resolver."""
+    version = Mock()
+    version.id = f"asset_version_pos{position}"
+    version.position = position
+    version.kind = "original" if position == 0 else "edit"
+    version.mime_type = "image/jpeg"
+    version.file_size_bytes = size
+    version_urls: dict[str, Mock] = {}
+    if url is not None:
+        version_urls["original"] = Mock(url=url, mimetype="image/jpeg")
+    version.version_urls = version_urls
+    return version
 
 
 async def _collect_response_body(response: StreamingResponse) -> bytes:
@@ -205,7 +222,7 @@ async def test_download_info_matches_immich_threshold_grouping() -> None:
         for asset in assets:
             yield asset
 
-    result = await _build_download_info(asset_stream(), 30_000)
+    result = await _build_download_info(asset_stream(), 30_000, Mock())
 
     assert result.totalSize == 251_456
     assert [archive.size for archive in result.archives] == [105_000, 146_456]
@@ -803,3 +820,216 @@ async def test_archive_clamps_timestamps_to_zip_range() -> None:
             (2040, 2, 3, 4, 5, 6),
             (2107, 12, 31, 23, 59, 58),
         ]
+
+
+# --- Honoring `edited` on the batch download routes -------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("edited", "expected_url", "expected_size", "expected_bytes"),
+    [
+        (False, "https://cdn.example.com/upload", 10, b"u" * 10),
+        (True, "https://cdn.example.com/edited", 20, b"e" * 20),
+    ],
+)
+async def test_archive_honors_edited_for_edited_asset(
+    edited: bool, expected_url: str, expected_size: int, expected_bytes: bytes
+) -> None:
+    asset_id = uuid4()
+    # The current rendering (assets.list payload) is the edited file.
+    asset = _download_asset(
+        asset_id, size=20, url="https://cdn.example.com/edited", kind="edit"
+    )
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage([asset]))
+    client.assets.versions.list = AsyncMock(
+        return_value=[
+            _make_version(0, url="https://cdn.example.com/upload", size=10),
+            _make_version(1, url="https://cdn.example.com/edited", size=20),
+        ]
+    )
+    payloads = {
+        "https://cdn.example.com/upload": b"u" * 10,
+        "https://cdn.example.com/edited": b"e" * 20,
+    }
+    requested: list[str] = []
+
+    async def fake_cdn_chunks(url: str, state: object) -> AsyncIterator[bytes]:
+        requested.append(url)
+        yield payloads[url]
+
+    with patch("routers.api.download._cdn_asset_chunks", side_effect=fake_cdn_chunks):
+        response = await download_archive(
+            DownloadArchiveDto(assetIds=[asset_id], edited=edited), client=client
+        )
+        archive = await _collect_response_body(response)
+
+    assert requested == [expected_url]
+    with ZipFile(BytesIO(archive)) as zip_file:
+        assert zip_file.namelist() == ["photo.jpg"]
+        assert zip_file.read("photo.jpg") == expected_bytes
+        assert zip_file.getinfo("photo.jpg").file_size == expected_size
+
+    if edited:
+        # The current rendering is served directly; no version-chain fetch.
+        client.assets.versions.list.assert_not_called()
+    else:
+        client.assets.versions.list.assert_awaited_once()
+        await_args = client.assets.versions.list.await_args
+        assert await_args is not None
+        assert await_args.kwargs["include"] == ["variants"]
+
+
+@pytest.mark.anyio
+async def test_archive_defaults_to_original_when_edited_omitted() -> None:
+    asset_id = uuid4()
+    asset = _download_asset(
+        asset_id, size=20, url="https://cdn.example.com/edited", kind="edit"
+    )
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage([asset]))
+    client.assets.versions.list = AsyncMock(
+        return_value=[
+            _make_version(0, url="https://cdn.example.com/upload", size=10),
+            _make_version(1, url="https://cdn.example.com/edited", size=20),
+        ]
+    )
+
+    async def fake_cdn_chunks(url: str, state: object) -> AsyncIterator[bytes]:
+        assert url == "https://cdn.example.com/upload"
+        yield b"u" * 10
+
+    with patch("routers.api.download._cdn_asset_chunks", side_effect=fake_cdn_chunks):
+        response = await download_archive(
+            DownloadArchiveDto(assetIds=[asset_id]), client=client
+        )
+        archive = await _collect_response_body(response)
+
+    client.assets.versions.list.assert_awaited_once()
+    with ZipFile(BytesIO(archive)) as zip_file:
+        assert zip_file.read("photo.jpg") == b"u" * 10
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("edited", [False, True])
+async def test_archive_root_only_asset_is_identical_for_both_edited_values(
+    edited: bool,
+) -> None:
+    asset_id = uuid4()
+    asset = _download_asset(
+        asset_id, size=7, url="https://cdn.example.com/root", kind="original"
+    )
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage([asset]))
+    client.assets.versions.list = AsyncMock()
+
+    async def fake_cdn_chunks(url: str, state: object) -> AsyncIterator[bytes]:
+        assert url == "https://cdn.example.com/root"
+        yield b"content"
+
+    with patch("routers.api.download._cdn_asset_chunks", side_effect=fake_cdn_chunks):
+        response = await download_archive(
+            DownloadArchiveDto(assetIds=[asset_id], edited=edited), client=client
+        )
+        archive = await _collect_response_body(response)
+
+    # A root-only asset's current rendering is the upload, so no chain fetch.
+    client.assets.versions.list.assert_not_called()
+    with ZipFile(BytesIO(archive)) as zip_file:
+        assert zip_file.read("photo.jpg") == b"content"
+        assert zip_file.getinfo("photo.jpg").file_size == 7
+
+
+@pytest.mark.anyio
+async def test_archive_invalid_chain_for_edited_asset_returns_502() -> None:
+    asset_id = uuid4()
+    asset = _download_asset(asset_id, kind="edit")
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage([asset]))
+    client.assets.versions.list = AsyncMock(return_value=[])  # no unique root
+
+    with pytest.raises(HTTPException) as exc_info:
+        await download_archive(
+            DownloadArchiveDto(assetIds=[asset_id], edited=False), client=client
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "Asset version chain is invalid"
+
+
+@pytest.mark.anyio
+async def test_archive_edited_asset_missing_root_original_returns_400() -> None:
+    asset_id = uuid4()
+    asset = _download_asset(asset_id, kind="edit")
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage([asset]))
+    client.assets.versions.list = AsyncMock(
+        return_value=[_make_version(0, url=None), _make_version(1)]
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await download_archive(
+            DownloadArchiveDto(assetIds=[asset_id], edited=False), client=client
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Not found or no asset.download access"
+
+
+@pytest.mark.anyio
+async def test_info_reports_original_size_for_edited_asset() -> None:
+    asset_id = uuid4()
+    # Current rendering is 20 bytes; the position-0 upload is 10.
+    asset = _download_asset(asset_id, size=20, kind="edit")
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage([asset]))
+    client.assets.versions.list = AsyncMock(
+        return_value=[
+            _make_version(0, url="https://cdn.example.com/upload", size=10),
+            _make_version(1, size=20),
+        ]
+    )
+
+    result = await get_download_info(
+        DownloadInfoDto(assetIds=[asset_id]), client=client
+    )
+
+    assert result.totalSize == 10
+    assert [archive.size for archive in result.archives] == [10]
+    client.assets.versions.list.assert_awaited_once()
+    # /info reads only file_size_bytes, so it must not sign version URLs.
+    await_args = client.assets.versions.list.await_args
+    assert await_args is not None
+    assert "include" not in await_args.kwargs
+
+
+@pytest.mark.anyio
+async def test_info_root_only_asset_skips_version_chain() -> None:
+    asset_id = uuid4()
+    asset = _download_asset(asset_id, size=7, kind="original")
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage([asset]))
+    client.assets.versions.list = AsyncMock()
+
+    result = await get_download_info(
+        DownloadInfoDto(assetIds=[asset_id]), client=client
+    )
+
+    assert result.totalSize == 7
+    client.assets.versions.list.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_info_invalid_chain_for_edited_asset_returns_502() -> None:
+    asset_id = uuid4()
+    asset = _download_asset(asset_id, kind="edit")
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage([asset]))
+    client.assets.versions.list = AsyncMock(return_value=[])  # no unique root
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_download_info(DownloadInfoDto(assetIds=[asset_id]), client=client)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "Asset version chain is invalid"
