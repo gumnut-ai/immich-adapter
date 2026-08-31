@@ -1033,3 +1033,64 @@ async def test_info_invalid_chain_for_edited_asset_returns_502() -> None:
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "Asset version chain is invalid"
+
+
+@pytest.mark.anyio
+async def test_archive_preserves_request_order_across_mixed_edited_members() -> None:
+    # An edited member's root resolves through an async version-chain fetch; a
+    # root-only member resolves inline. The ZIP must follow request order even
+    # when the earlier edited member's fetch finishes last.
+    edited_a, root_b, edited_c = uuid4(), uuid4(), uuid4()
+    assets = [
+        _download_asset(edited_a, filename="a.jpg", size=20, kind="edit"),
+        _download_asset(root_b, filename="b.jpg", size=7, kind="original"),
+        _download_asset(edited_c, filename="c.jpg", size=30, kind="edit"),
+    ]
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage(assets))
+
+    roots = {
+        uuid_to_gumnut_asset_id(edited_a): [
+            _make_version(0, url="https://cdn.example.com/upload-a", size=10),
+            _make_version(1, size=20),
+        ],
+        uuid_to_gumnut_asset_id(edited_c): [
+            _make_version(0, url="https://cdn.example.com/upload-c", size=15),
+            _make_version(1, size=30),
+        ],
+    }
+
+    async def versions_list(gumnut_asset_id: str, **kwargs: Any) -> list[Mock]:
+        # Delay the first edited member so it completes after the later one;
+        # order preservation must not depend on completion order.
+        if gumnut_asset_id == uuid_to_gumnut_asset_id(edited_a):
+            await asyncio.sleep(0.05)
+        return roots[gumnut_asset_id]
+
+    client.assets.versions.list = AsyncMock(side_effect=versions_list)
+
+    payloads = {
+        "https://cdn.example.com/upload-a": b"a" * 10,
+        f"https://cdn.example.com/{root_b}": b"b" * 7,
+        "https://cdn.example.com/upload-c": b"c" * 15,
+    }
+
+    async def fake_cdn_chunks(url: str, state: object) -> AsyncIterator[bytes]:
+        yield payloads[url]
+
+    with patch("routers.api.download._cdn_asset_chunks", side_effect=fake_cdn_chunks):
+        response = await download_archive(
+            DownloadArchiveDto(assetIds=[edited_a, root_b, edited_c], edited=False),
+            client=client,
+        )
+        archive = await _collect_response_body(response)
+
+    with ZipFile(BytesIO(archive)) as zip_file:
+        assert zip_file.namelist() == ["a.jpg", "b.jpg", "c.jpg"]
+        assert zip_file.read("a.jpg") == b"a" * 10
+        assert zip_file.read("b.jpg") == b"b" * 7
+        assert zip_file.read("c.jpg") == b"c" * 15
+        assert [info.file_size for info in zip_file.infolist()] == [10, 7, 15]
+
+    # Root-only member takes no version-chain fetch.
+    assert client.assets.versions.list.await_count == 2

@@ -37,7 +37,7 @@ from routers.immich_models import (
     DownloadInfoDto,
     DownloadResponseDto,
 )
-from routers.utils.asset_conversion import resolve_file_modified_at
+from routers.utils.asset_conversion import is_asset_edited, resolve_file_modified_at
 from routers.utils.asset_version_chain import InvalidVersionChainError, select_root
 from routers.utils.cdn_client import iter_cdn_response_bytes, open_cdn_response
 from routers.utils.concurrency import gather_with_concurrency
@@ -135,6 +135,14 @@ async def _assets_by_ids(
                 yield asset
 
 
+def _member_unavailable_error() -> HTTPException:
+    """The batch route's 400 for a member with no downloadable bytes."""
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Not found or no asset.download access",
+    )
+
+
 async def _validated_info_assets_by_ids(
     client: AsyncGumnut,
     asset_ids: list[UUID],
@@ -149,19 +157,8 @@ async def _validated_info_assets_by_ids(
         )
     ]
     if len(assets) != len(asset_ids):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Not found or no asset.download access",
-        )
+        raise _member_unavailable_error()
     return assets
-
-
-def _member_unavailable_error() -> HTTPException:
-    """The batch route's 400 for a member with no downloadable bytes."""
-    return HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Not found or no asset.download access",
-    )
 
 
 async def _select_asset_root(
@@ -206,7 +203,7 @@ async def _resolve_archive_member(
     filename = asset.original_file_name
     modified_at = resolve_file_modified_at(asset)
 
-    if edited or asset.kind == "original":
+    if edited or not is_asset_edited(asset):
         file_data = asset.file_data
         asset_urls = asset.asset_urls
         if (
@@ -318,7 +315,7 @@ async def _download_original_size(client: AsyncGumnut, asset: AssetResponse) -> 
     ``assets.list`` payload, while an edited asset resolves the root through the
     version chain (only ``file_size_bytes`` is needed, so URLs are not signed).
     """
-    if asset.kind == "original":
+    if not is_asset_edited(asset):
         file_data = asset.file_data
         if file_data is None or file_data.file_size_bytes is None:
             raise _member_unavailable_error()
@@ -332,22 +329,17 @@ async def _build_download_info(
     target_size: int,
     client: AsyncGumnut,
 ) -> DownloadResponseDto:
-    # Materialize the selector's assets, then resolve original sizes under a
-    # bounded semaphore. The size grouping already accumulates every id, so
-    # this holds no more than that walk did, and it avoids a serial
-    # version-chain round-trip per edited asset on large album/user downloads.
-    collected = [asset async for asset in assets]
-    sizes = await gather_with_concurrency(
-        [_download_original_size(client, asset) for asset in collected]
-    )
-
     archives: list[DownloadArchiveInfo] = []
     archive_ids: list[UUID] = []
     archive_size = 0
 
-    for asset, size in zip(collected, sizes, strict=True):
+    # Resolve sizes while streaming the selector: the album/user selectors can
+    # enumerate the whole library, so materializing every asset is avoided. Only
+    # an edited asset costs a version-chain round-trip; a root-only asset (the
+    # common case) resolves inline, so the walk stays as light as before.
+    async for asset in assets:
         archive_ids.append(safe_uuid_from_asset_id(asset.id))
-        archive_size += size
+        archive_size += await _download_original_size(client, asset)
         # Match Immich: the asset that crosses the threshold remains in the
         # current archive, so one oversized asset naturally forms one archive.
         if archive_size > target_size:
@@ -605,11 +597,7 @@ async def get_download_info(
     slug: Annotated[str | SkipJsonSchema[None], Query()] = None,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> DownloadResponseDto:
-    """Return archive groups and position-0 original byte sizes for a batch download.
-
-    Sizes are always original-based (matching upstream, which has no ``edited``
-    field on ``/info``), so ``/info`` and ``/archive`` agree for ``edited=false``.
-    """
+    """Return archive groups and position-0 original byte sizes for a batch download."""
     return await _build_download_info(
         _assets_for_info(request, client),
         request.archiveSize or DEFAULT_DOWNLOAD_ARCHIVE_SIZE,
