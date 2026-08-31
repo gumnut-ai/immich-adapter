@@ -20,6 +20,7 @@ from routers.immich_models import (
     SearchAlbumResponseDto,
     SearchExploreItem,
     SearchExploreResponseDto,
+    SearchFilter,
     AssetOrder,
     AssetResponseDto,
     AssetTypeEnum,
@@ -246,6 +247,9 @@ async def search_asset_statistics(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> SearchStatisticsResponseDto:
     """Get asset count statistics."""
+    if _filter_restricts(request.filter):
+        return SearchStatisticsResponseDto(total=0)
+
     buckets = await fetch_asset_counts(
         client,
         ratings=rating_filter_values(
@@ -338,8 +342,18 @@ def _compose_free_text_query(
     return " ".join(terms) or None
 
 
+def _filter_restricts(filter_: SearchFilter | None) -> bool:
+    """True when v3.2's structured `filter` (alpha) actually restricts results.
+
+    It has no Gumnut translation, so the search routes honor the convention
+    for unsupported restrictive filters and return empty rather than
+    over-matching. An empty `{}` filter restricts nothing and is ignored.
+    """
+    return filter_ is not None and bool(filter_.model_fields_set)
+
+
 def _empty_search_response() -> SearchResponseDto:
-    """An empty result page, used by unsupported-restrictive-filter guards."""
+    """An empty search result page."""
     return SearchResponseDto(
         albums=SearchAlbumResponseDto(count=0, facets=[], items=[], total=0),
         assets=SearchAssetResponseDto(
@@ -402,12 +416,7 @@ async def _list_asset_page(
         request.visibility is not None
         and request.visibility != AssetVisibility.timeline
     ):
-        return SearchResponseDto(
-            albums=SearchAlbumResponseDto(count=0, facets=[], items=[], total=0),
-            assets=SearchAssetResponseDto(
-                count=0, facets=[], items=[], nextCursor=None, nextPage=None, total=0
-            ),
-        )
+        return _empty_search_response()
 
     # `withDeleted` widens to live+trashed. A `trashedAfter` request selects the
     # trashed listing; because the Gumnut API has no trash-date filter, the loop
@@ -421,11 +430,9 @@ async def _list_asset_page(
 
     # Clamp at the Gumnut API per-page ceiling. The Immich client default is
     # 1000; the adapter pages the client through the library at 200 per page.
-    size = (
-        min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
-        if request.size is not None
-        else GUMNUT_API_MAX_PAGE_SIZE
-    )
+    # v3.2 gives `size` a schema default (250), so it is never None; the
+    # default clamps to the same 200-per-page walk as the old None fallback.
+    size = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
     page = int(request.page) if request.page is not None else 1
     start = (page - 1) * size
 
@@ -502,10 +509,7 @@ async def search_assets(
     folded into the free-text query rather than applied as filters — see
     `_compose_free_text_query` for what that costs.
     """
-    # v3.2's structured `filter` (alpha) has no Gumnut translation; it only
-    # restricts, so honor the convention for unsupported restrictive filters
-    # and return empty rather than over-matching results.
-    if request.filter is not None:
+    if _filter_restricts(request.filter):
         return _empty_search_response()
 
     if _is_criterion_less_enumeration(request):
@@ -583,8 +587,7 @@ async def search_smart(
     Camera and place filters are folded into the query alongside the caller's
     text — see `_compose_free_text_query` for what that costs.
     """
-    # See search_assets: unsupported restrictive structured filter.
-    if request.filter is not None:
+    if _filter_restricts(request.filter):
         return _empty_search_response()
 
     search_kwargs: dict[str, Any] = {
@@ -754,7 +757,6 @@ async def search_random(
         request.make,
         request.model,
         request.ocr,
-        request.filter,
     )
     unsupported_flag_filters = (
         request.isEncoded,
@@ -766,6 +768,7 @@ async def search_random(
         any(value is not None for value in unsupported_value_filters)
         or any(unsupported_flag_filters)
         or request.tagIds
+        or _filter_restricts(request.filter)
     ):
         return []
 

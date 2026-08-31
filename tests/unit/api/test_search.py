@@ -20,6 +20,7 @@ from routers.immich_models import (
     AssetTypeEnum,
     AssetVisibility,
     MetadataSearchDto,
+    BoolFilter,
     RandomSearchDto,
     SearchFilter,
     SmartSearchDto,
@@ -156,6 +157,22 @@ class TestSearchPerson:
 
 class TestSearchStatistics:
     """Test the search_asset_statistics endpoint."""
+
+    @pytest.mark.anyio
+    async def test_structured_filter_returns_zero(self):
+        """A restricting structured `filter` has no translation; counting the
+        whole library would over-count, so the route reports zero."""
+        mock_client = Mock()
+
+        result = await search_asset_statistics(
+            request=StatisticsSearchDto(
+                filter=SearchFilter(isFavorite=BoolFilter(eq=True))
+            ),
+            client=mock_client,
+        )
+
+        assert result.total == 0
+        mock_client.assets.counts.assert_not_called()
 
     @pytest.mark.anyio
     async def test_returns_total_from_counts(self):
@@ -354,7 +371,10 @@ class TestSearchMetadata:
         mock_client.search.search = AsyncMock()
 
         result = await search_assets(
-            request=MetadataSearchDto(description="anything", filter=SearchFilter()),
+            request=MetadataSearchDto(
+                description="anything",
+                filter=SearchFilter(isFavorite=BoolFilter(eq=True)),
+            ),
             client=mock_client,
             current_user=mock_current_user,
         )
@@ -362,6 +382,21 @@ class TestSearchMetadata:
         assert result.assets.count == 0
         assert result.assets.items == []
         mock_client.search.search.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_empty_structured_filter_does_not_restrict(self, mock_current_user):
+        """`filter: {}` restricts nothing, so the search proceeds normally."""
+        search_response = Mock(data=[])
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        await search_assets(
+            request=MetadataSearchDto(description="anything", filter=SearchFilter()),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        mock_client.search.search.assert_called_once()
 
     @pytest.mark.anyio
     async def test_clamps_size_to_gumnut_api_ceiling(self, mock_current_user):
@@ -577,7 +612,9 @@ class TestSearchSmart:
         mock_client.search.search = AsyncMock()
 
         result = await search_smart(
-            request=SmartSearchDto(query="anything", filter=SearchFilter()),
+            request=SmartSearchDto(
+                query="anything", filter=SearchFilter(isFavorite=BoolFilter(eq=True))
+            ),
             client=mock_client,
             current_user=mock_current_user,
         )
@@ -1544,7 +1581,7 @@ class TestSearchRandom:
             RandomSearchDto(city="Sydney"),
             RandomSearchDto(isMotion=True),
             RandomSearchDto(tagIds=[uuid4()]),
-            RandomSearchDto(filter=SearchFilter()),
+            RandomSearchDto(filter=SearchFilter(isFavorite=BoolFilter(eq=True))),
         ):
             result = await search_random(
                 request=request, client=mock_client, current_user=mock_current_user
