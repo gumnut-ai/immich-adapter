@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-08-21
+last-updated: 2026-08-31
 ---
 
 # Development Tools
@@ -47,6 +47,8 @@ Always run linting and formatting on the generated model file before committing;
 
 When fetching the OpenAPI spec from a GitHub blob URL, the generator substitutes the Immich version tag from the `.immich-container-tag` file so the generated models match the specific Immich version you're targeting. If the file is missing or empty, it falls back to `main`. The generated file's comment header records which version was used.
 
+The models may deliberately *lead* the container tag: pre-GA prep for a version bump (e.g. implementing endpoints a release candidate's web build depends on) regenerates from the upcoming release's spec while `.immich-container-tag` stays on the shipped version. Blob-URL substitution can't express that — pass the explicit `raw.githubusercontent.com/immich-app/immich/<tag>/open-api/immich-openapi-specs.json` URL instead, which records that tag in the header.
+
 The generator's `datamodel-code-generator` dependency is unpinned (`>=0.25.0`, resolved fresh by `uv run`), so a regeneration can carry codegen-version stylistic churn (e.g. the `date`→`date_aliased` import alias) independent of any spec change — expected, not a wire change. Validate a regeneration diff against the targeted spec's known changes, not against an assumption that every hunk is spec-driven.
 
 ### Constraint Preprocessing
@@ -58,6 +60,8 @@ Before handing the spec to `datamodel-code-generator`, the generator drops const
 A regeneration that **retypes** a field (e.g. `str` → `UUID` ids) silently turns hardcoded literals in stub endpoints into latent 500s — stubs have no test coverage, so the suite stays green while the endpoint fails response validation on every call. Don't hunt these by grep (partial sweeps have missed sites repeatedly); enumerate them from pyright's error list — `Literal['...'] cannot be assigned to parameter ... of type UUID` pinpoints every offending literal. Dynamic `str(...)`-of-UUID values coerce fine at runtime and are style cleanup, not defects; invalid *literals* are the class that 500s.
 
 A regen that makes a field **required** breaks the same stubs through a different error — `Argument missing for parameter "<name>"` at every hand-construction site. Sweep it the same way: for a stub with no smoke test yet, pyright is the only pre-runtime signal. Note the limits of that signal — it catches a missing required argument and an *incompatible* retype (`str` → `UUID`), but **not** a *widening* one (`int` → `float` still accepts an int literal) and **not** a tightened `Field(pattern=…/min_length=…/ge=…/le=…)` constraint. A widening retype is harmless by itself; the hazard is a constraint an existing literal now violates, which fails only at value validation — so the construction smoke test [routes and compatibility reference](./routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version) prescribes is the backstop. The v3.0.3 retarget's `percentageLimit` (`int` → `float`, `le=9007199254740991` → `le=1.0`) is the near-miss that shows why: pyright saw nothing, and the stub's `percentageLimit=1` stayed valid only because upstream's default sits exactly on the new bound.
+
+Pyright is also blind to a field flipping from **nullable-without-default to non-nullable-with-schema-default** (`T | None = None` → `T = <default>`): every `x is not None` stays type-correct, but where that check meant "did the client send this field", it now always answers yes and silently forwards the schema default. Grep the regen diff's defaulted-field changes for presence checks on those fields and switch them to `"<field>" in request.model_fields_set` (the v3.2 regen's `size` on the search DTOs is the incident; only a test pinning the omission behavior caught it).
 
 ## API Compatibility Tool
 
