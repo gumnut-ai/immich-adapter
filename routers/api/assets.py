@@ -56,7 +56,7 @@ from services.asset_edit_renderer import (
 )
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.error_mapping import map_gumnut_error
+from routers.utils.error_mapping import invalid_chain_error, map_gumnut_error
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
 
@@ -276,7 +276,7 @@ async def _stream_exact_original(
     try:
         root = select_root(versions, asset_id=gumnut_asset_id)
     except InvalidVersionChainError:
-        raise _invalid_chain_error()
+        raise invalid_chain_error()
 
     original = (root.version_urls or {}).get("original")
     if original is None:
@@ -319,7 +319,7 @@ async def _stream_edit_base_variant(
     try:
         base = select_edit_base(versions, asset_id=gumnut_asset_id)
     except InvalidVersionChainError:
-        raise _invalid_chain_error()
+        raise invalid_chain_error()
 
     variant = _upgrade_variant_for_aspect(variant, base.width, base.height)
     variant_key = _resolve_variant_key(base.mime_type, variant)
@@ -1473,14 +1473,6 @@ async def download_asset(
 _EDIT_UPLOAD_FILENAMES = {"image/jpeg": "edit.jpg", "image/png": "edit.png"}
 
 
-def _invalid_chain_error() -> HTTPException:
-    """The shared 502 invalid-chain contract (exact-original download and edits routes)."""
-    return HTTPException(
-        status.HTTP_502_BAD_GATEWAY,
-        detail="Asset version chain is invalid",
-    )
-
-
 def _edits_chain_tip[V: VersionLike](
     versions: Sequence[V], *, gumnut_asset_id: str
 ) -> V:
@@ -1488,7 +1480,7 @@ def _edits_chain_tip[V: VersionLike](
     try:
         return select_current(versions, asset_id=gumnut_asset_id)
     except InvalidVersionChainError:
-        raise _invalid_chain_error()
+        raise invalid_chain_error()
 
 
 def _require_editable_tip(tip: VersionLike) -> None:
@@ -1707,7 +1699,7 @@ async def apply_asset_edits(
     try:
         base = select_edit_base(versions, asset_id=gumnut_asset_id)
     except InvalidVersionChainError:
-        raise _invalid_chain_error()
+        raise invalid_chain_error()
     if not base.width or not base.height:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,

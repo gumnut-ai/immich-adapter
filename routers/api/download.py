@@ -1,6 +1,7 @@
 """Immich-compatible batch download planning and streaming ZIP archives."""
 
 import asyncio
+import logging
 import posixpath
 import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterable
@@ -20,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from gumnut import AsyncGumnut
 from gumnut.types.asset_response import AssetResponse
+from gumnut.types.assets import AssetVersionResponse
 from pydantic.json_schema import SkipJsonSchema
 from stream_zip import ZIP_AUTO, AsyncMemberFile, stream_zip
 
@@ -34,8 +36,14 @@ from routers.immich_models import (
     DownloadInfoDto,
     DownloadResponseDto,
 )
-from routers.utils.asset_conversion import resolve_file_modified_at
+from routers.utils.asset_conversion import is_asset_edited, resolve_file_modified_at
+from routers.utils.asset_version_chain import InvalidVersionChainError, select_root
 from routers.utils.cdn_client import iter_cdn_response_bytes, open_cdn_response
+from routers.utils.concurrency import (
+    BULK_FANOUT_CONCURRENCY_LIMIT,
+    gather_with_concurrency,
+)
+from routers.utils.error_mapping import invalid_chain_error
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
@@ -43,6 +51,8 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/download",
@@ -128,6 +138,30 @@ async def _assets_by_ids(
                 yield asset
 
 
+async def _abatched(items: AsyncIterable[_T], size: int) -> AsyncIterator[list[_T]]:
+    """Yield fixed-size lists from an async iterable, the last possibly short.
+
+    Bounds how much of a streamed selector is staged at once so a fan-out over
+    the batch caps in-flight work without first materializing the whole stream.
+    """
+    batch: list[_T] = []
+    async for item in items:
+        batch.append(item)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+def _member_unavailable_error() -> HTTPException:
+    """The batch route's 400 for a member with no downloadable bytes."""
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Not found or no asset.download access",
+    )
+
+
 async def _validated_info_assets_by_ids(
     client: AsyncGumnut,
     asset_ids: list[UUID],
@@ -142,24 +176,53 @@ async def _validated_info_assets_by_ids(
         )
     ]
     if len(assets) != len(asset_ids):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Not found or no asset.download access",
-        )
+        raise _member_unavailable_error()
     return assets
 
 
-async def _validated_archive_assets(
+async def _select_asset_root(
     client: AsyncGumnut,
-    asset_ids: list[UUID],
-) -> list[_ArchiveAsset]:
-    """Preflight every archive member while retaining only streaming metadata."""
-    assets: list[_ArchiveAsset] = []
-    async for asset in _assets_by_ids(
-        client,
-        asset_ids,
-        include=_DOWNLOAD_ARCHIVE_INCLUDE,
-    ):
+    gumnut_asset_id: str,
+    *,
+    include_variants: bool,
+) -> AssetVersionResponse:
+    """Resolve an asset's position-0 upload version.
+
+    Mirrors the single-asset ``/original?edited=false`` route
+    (``_stream_exact_original``): an invalid chain fails closed with the shared
+    502 rather than substituting another rendering. ``include_variants`` signs
+    the version's ``version_urls`` — needed to stream the bytes for ``/archive``,
+    but not for ``/info``, which reads only ``file_size_bytes``.
+    """
+    versions = (
+        await client.assets.versions.list(gumnut_asset_id, include=["variants"])
+        if include_variants
+        else await client.assets.versions.list(gumnut_asset_id)
+    )
+    try:
+        return select_root(versions, asset_id=gumnut_asset_id)
+    except InvalidVersionChainError:
+        raise invalid_chain_error()
+
+
+async def _resolve_archive_member(
+    client: AsyncGumnut,
+    asset: AssetResponse,
+    *,
+    edited: bool,
+) -> _ArchiveAsset:
+    """Resolve one member's streaming source, honoring ``edited``.
+
+    ``edited=true`` — and any root-only asset, whose current rendering *is* the
+    upload — streams the current rendering straight from the ``assets.list``
+    payload with no extra round-trip. ``edited=false`` on an edited asset
+    resolves the position-0 upload through the version chain, so the member's
+    filename, size, and bytes all describe that same selected version.
+    """
+    filename = asset.original_file_name
+    modified_at = resolve_file_modified_at(asset)
+
+    if edited or not is_asset_edited(asset):
         file_data = asset.file_data
         asset_urls = asset.asset_urls
         if (
@@ -168,25 +231,63 @@ async def _validated_archive_assets(
             or not asset_urls
             or "original" not in asset_urls
         ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Not found or no asset.download access",
-            )
-        assets.append(
-            _ArchiveAsset(
-                filename=asset.original_file_name,
-                modified_at=resolve_file_modified_at(asset),
-                size=file_data.file_size_bytes,
-                url=asset_urls["original"].url,
-            )
+            raise _member_unavailable_error()
+        return _ArchiveAsset(
+            filename=filename,
+            modified_at=modified_at,
+            size=file_data.file_size_bytes,
+            url=asset_urls["original"].url,
         )
 
-    if len(assets) != len(asset_ids):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Not found or no asset.download access",
+    root = await _select_asset_root(client, asset.id, include_variants=True)
+    original = (root.version_urls or {}).get("original")
+    if original is None:
+        logger.warning(
+            "Archive member original version bytes not available",
+            extra={"asset_id": asset.id, "version_id": root.id},
         )
-    return assets
+        raise _member_unavailable_error()
+    return _ArchiveAsset(
+        filename=filename,
+        modified_at=modified_at,
+        size=root.file_size_bytes,
+        url=original.url,
+    )
+
+
+async def _validated_archive_assets(
+    client: AsyncGumnut,
+    asset_ids: list[UUID],
+    *,
+    edited: bool,
+) -> list[_ArchiveAsset]:
+    """Preflight every archive member while retaining only streaming metadata.
+
+    Every member is resolved before any bytes stream, so a missing member or an
+    invalid version chain fails the request up front. Members resolve in
+    ``_abatched`` waves that keep only the compact ``_ArchiveAsset`` rows, so the
+    full ``AssetResponse`` payloads (metadata + signed variants) never accumulate
+    across an uncapped ``assetIds`` list; ``cancel_on_error`` drops a doomed
+    request's queued siblings. The final count check keeps the fail-up-front
+    missing-ID contract before streaming begins.
+    """
+    resolved: list[_ArchiveAsset] = []
+    async for wave in _abatched(
+        _assets_by_ids(client, asset_ids, include=_DOWNLOAD_ARCHIVE_INCLUDE),
+        BULK_FANOUT_CONCURRENCY_LIMIT,
+    ):
+        resolved.extend(
+            await gather_with_concurrency(
+                [
+                    _resolve_archive_member(client, asset, edited=edited)
+                    for asset in wave
+                ],
+                cancel_on_error=True,
+            )
+        )
+    if len(resolved) != len(asset_ids):
+        raise _member_unavailable_error()
+    return resolved
 
 
 async def _assets_for_info(
@@ -231,34 +332,54 @@ async def _assets_for_info(
         yield asset
 
 
-def _asset_size(asset: AssetResponse) -> int:
-    file_data = asset.file_data
-    if file_data is None or file_data.file_size_bytes is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Not found or no asset.download access",
-        )
-    return file_data.file_size_bytes
+async def _download_original_size(client: AsyncGumnut, asset: AssetResponse) -> int:
+    """Return the position-0 upload's byte size.
+
+    ``/info`` has no ``edited`` field and upstream's size accounting is always
+    original-based, so this reports the same version ``/archive`` streams for
+    ``edited=false``: a root-only asset reads its size straight from the
+    ``assets.list`` payload, while an edited asset resolves the root through the
+    version chain (only ``file_size_bytes`` is needed, so URLs are not signed).
+    """
+    if not is_asset_edited(asset):
+        file_data = asset.file_data
+        if file_data is None or file_data.file_size_bytes is None:
+            raise _member_unavailable_error()
+        return file_data.file_size_bytes
+    root = await _select_asset_root(client, asset.id, include_variants=False)
+    return root.file_size_bytes
 
 
 async def _build_download_info(
-    assets: AsyncIterable[AssetResponse], target_size: int
+    assets: AsyncIterable[AssetResponse],
+    target_size: int,
+    client: AsyncGumnut,
 ) -> DownloadResponseDto:
     archives: list[DownloadArchiveInfo] = []
     archive_ids: list[UUID] = []
     archive_size = 0
 
-    async for asset in assets:
-        archive_ids.append(safe_uuid_from_asset_id(asset.id))
-        archive_size += _asset_size(asset)
-        # Match Immich: the asset that crosses the threshold remains in the
-        # current archive, so one oversized asset naturally forms one archive.
-        if archive_size > target_size:
-            archives.append(
-                DownloadArchiveInfo(assetIds=archive_ids, size=archive_size)
-            )
-            archive_ids = []
-            archive_size = 0
+    # Resolve sizes in ``_abatched`` waves: only an edited asset costs a
+    # version-chain round-trip (a root-only asset resolves inline), and fanning
+    # each wave out under ``gather_with_concurrency`` keeps a library of edited
+    # assets from serializing one upstream latency per asset. Consuming each
+    # wave's ordered sizes keeps threshold grouping request-exact.
+    async for wave in _abatched(assets, BULK_FANOUT_CONCURRENCY_LIMIT):
+        sizes = await gather_with_concurrency(
+            [_download_original_size(client, asset) for asset in wave],
+            cancel_on_error=True,
+        )
+        for asset, size in zip(wave, sizes):
+            archive_ids.append(safe_uuid_from_asset_id(asset.id))
+            archive_size += size
+            # Match Immich: the asset that crosses the threshold remains in the
+            # current archive, so one oversized asset naturally forms one archive.
+            if archive_size > target_size:
+                archives.append(
+                    DownloadArchiveInfo(assetIds=archive_ids, size=archive_size)
+                )
+                archive_ids = []
+                archive_size = 0
 
     if archive_ids:
         archives.append(DownloadArchiveInfo(assetIds=archive_ids, size=archive_size))
@@ -487,9 +608,13 @@ async def download_archive(
 ) -> StreamingResponse:
     """Stream requested assets as an on-the-fly ZIP archive.
 
-    Members currently use the current rendering regardless of ``edited``.
+    Honors ``edited`` like the single-asset ``/original`` route: ``edited``
+    false/omitted (the upstream default) streams each member's position-0
+    uploaded original, while ``edited=true`` streams the current rendering.
     """
-    assets = await _validated_archive_assets(client, request.assetIds)
+    assets = await _validated_archive_assets(
+        client, request.assetIds, edited=bool(request.edited)
+    )
     return StreamingResponse(
         _stream_archive(assets),
         media_type="application/zip",
@@ -504,8 +629,9 @@ async def get_download_info(
     slug: Annotated[str | SkipJsonSchema[None], Query()] = None,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> DownloadResponseDto:
-    """Return archive groups and original byte sizes for a batch download."""
+    """Return archive groups and position-0 original byte sizes for a batch download."""
     return await _build_download_info(
         _assets_for_info(request, client),
         request.archiveSize or DEFAULT_DOWNLOAD_ARCHIVE_SIZE,
+        client,
     )
