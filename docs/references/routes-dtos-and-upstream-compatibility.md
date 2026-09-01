@@ -1,6 +1,6 @@
 ---
 title: "Routes, DTOs, and Upstream Compatibility"
-last-updated: 2026-08-26
+last-updated: 2026-09-01
 ---
 
 # Routes, DTOs, and Upstream Compatibility
@@ -78,7 +78,7 @@ The two are not auto-synced, but CI enforces that they match (see the `check-imm
 
 Forgetting step 2 causes silent drift — the served web UI stays on the old Immich version while the API models advance.
 
-A regen can add newly-required fields to (or retype) the generated DTOs, breaking endpoint stubs that hand-construct them at **runtime** (pydantic `ValidationError` → 500); these stubs have no callers in most tests, so the break hides until a client hits the route. Keep a construction smoke test per hand-built-DTO stub — `assert isinstance(await <endpoint>(), <Dto>)`, see `tests/unit/api/test_{system_config,jobs,license}.py` — and, as with an SDK bump, run the **full** `uv run pytest` after regenerating.
+A regen can add newly-required fields to (or retype) the generated DTOs, breaking endpoint stubs that hand-construct them at **runtime** (pydantic `ValidationError` → 500); these stubs have no callers in most tests, so the break hides until a client hits the route. Keep a construction smoke test per hand-built-DTO stub — `assert isinstance(await <endpoint>(), <Dto>)`, see `tests/unit/api/test_system_config.py`, `tests/unit/api/test_jobs.py`, and `tests/unit/api/test_license.py` — and, as with an SDK bump, run the **full** `uv run pytest` after regenerating.
 
 ## Bumping the Gumnut SDK
 
