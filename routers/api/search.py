@@ -385,6 +385,17 @@ def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
     for field_name, value in request:
         if field_name in _ENUMERATION_HONORABLE_FIELDS:
             continue
+        # The structured `filter` disqualifies only when it actually restricts:
+        # an empty `{}` filter narrows nothing (see `_filter_restricts`), so a
+        # canonical `{"filter": {}}` request stays on the enumeration path
+        # instead of falling through to `search.search(query=None)`, which the
+        # Gumnut API 400s. A restricting filter is already short-circuited to an
+        # empty response in `search_assets`; rejecting it here keeps the
+        # classifier correct in isolation.
+        if field_name == "filter":
+            if _filter_restricts(value):
+                return False
+            continue
         # Unsupported boolean filters (isMotion/isEncoded/…) restrict only when
         # explicitly true; false narrows nothing, so it does not disqualify the
         # enumeration.
@@ -545,12 +556,13 @@ async def search_assets(
     )
     if extra_query is not None:
         search_kwargs["extra_query"] = extra_query
-    if "size" in request.model_fields_set:
-        # Clamp at the Gumnut API per-page ceiling. The Immich client default
-        # is 1000; without this, the Gumnut API 422s. v3.2 gives `size` a
-        # schema default (so it is never None); only an explicitly sent size
-        # is forwarded, letting the Gumnut API apply its own default otherwise.
-        search_kwargs["limit"] = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
+    # v3.2 materializes `size`'s default into the DTO (250 for metadata search),
+    # so `request.size` always carries Immich's effective default. Forward it
+    # (clamped to the Gumnut API per-page ceiling) so an omitted `size` returns
+    # Immich's default page size rather than the Gumnut API's own smaller
+    # default; the clamp also keeps the Immich client's size=1000 from 422ing.
+    # This matches the enumeration path, which forwards the same default.
+    search_kwargs["limit"] = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
     if request.page is not None:
         search_kwargs["page"] = int(request.page)
 
@@ -603,12 +615,12 @@ async def search_smart(
     )
     if extra_query is not None:
         search_kwargs["extra_query"] = extra_query
-    if "size" in request.model_fields_set:
-        # Clamp at the Gumnut API per-page ceiling. The Immich client default
-        # is 1000; without this, the Gumnut API 422s. v3.2 gives `size` a
-        # schema default (so it is never None); only an explicitly sent size
-        # is forwarded, letting the Gumnut API apply its own default otherwise.
-        search_kwargs["limit"] = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
+    # v3.2 materializes `size`'s default into the DTO (100 for smart search), so
+    # `request.size` always carries Immich's effective default. Forward it
+    # (clamped to the Gumnut API per-page ceiling) so an omitted `size` returns
+    # Immich's default page size rather than the Gumnut API's own smaller
+    # default; the clamp also keeps the Immich client's size=1000 from 422ing.
+    search_kwargs["limit"] = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
     if request.page is not None:
         search_kwargs["page"] = int(request.page)
 

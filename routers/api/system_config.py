@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from pydantic import AnyUrl
+from routers.api.constants import FIXED_LOGIN_CONFIG
 from routers.immich_models import (
     AdminConfigBackupsDto,
     AdminConfigClipDto,
@@ -309,17 +310,19 @@ async def get_config() -> AdminConfigDto:
     notifications_config = AdminConfigNotificationsDto(smtp=smtp_config)
 
     # OAuth is the default (and only) login method. autoLaunch causes the Immich
-    # web client to redirect to the OAuth provider automatically. enabled=True
-    # ensures the system config is consistent with the /server/features response.
+    # web client to redirect to the OAuth provider automatically. The
+    # login-controlling values come from the shared FIXED_LOGIN_CONFIG so this
+    # administrative projection stays consistent with /server/features and
+    # /public/config.
     oauth_config = AdminConfigOAuthDto(
         allowInsecureRequests=False,
-        autoLaunch=True,
+        autoLaunch=FIXED_LOGIN_CONFIG.oauth_auto_launch,
         autoRegister=True,
-        buttonText="Sign in with Gumnut",
+        buttonText=FIXED_LOGIN_CONFIG.oauth_button_text,
         clientId="",
         clientSecret="",
         defaultStorageQuota=0,
-        enabled=True,
+        enabled=FIXED_LOGIN_CONFIG.oauth_enabled,
         endSessionEndpoint="",
         issuerUrl="",
         mobileOverrideEnabled=False,
@@ -336,13 +339,15 @@ async def get_config() -> AdminConfigDto:
     )
 
     # Password login disabled — all authentication goes through OAuth
-    password_login = AdminConfigPasswordLoginDto(enabled=False)
+    password_login = AdminConfigPasswordLoginDto(
+        enabled=FIXED_LOGIN_CONFIG.password_login_enabled
+    )
 
     reverse_geocoding = AdminConfigReverseGeocodingDto(enabled=True)
 
     server_config = AdminConfigServerDto(
         externalDomain="https://example.com",
-        loginPageMessage="",
+        loginPageMessage=FIXED_LOGIN_CONFIG.login_page_message,
         publicUsers=False,
     )
 
@@ -354,7 +359,7 @@ async def get_config() -> AdminConfigDto:
 
     templates_config = AdminConfigTemplatesDto(email=email_templates)
 
-    theme_config = AdminConfigThemeDto(customCss="")
+    theme_config = AdminConfigThemeDto(customCss=FIXED_LOGIN_CONFIG.custom_css)
 
     trash_config = AdminConfigTrashDto(
         days=30,

@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from shortuuid import uuid
 
 from config.settings import get_settings
-from routers.api.constants import STUB_LICENSE_KEY
+from routers.api.constants import FIXED_LOGIN_CONFIG, STUB_LICENSE_KEY
 from routers.immich_models import (
     LicenseKeyDto,
     LicenseResponseDto,
@@ -48,11 +48,13 @@ server_features = {
     "sidecar": False,
     "search": True,
     "trash": True,
-    "oauth": True,
+    # The login-controlling flags come from the shared FIXED_LOGIN_CONFIG so the
+    # /server/features, /public/config, and /admin/config projections can't drift.
+    "oauth": FIXED_LOGIN_CONFIG.oauth_enabled,
     # Auto-redirect to OAuth provider on login page instead of showing login form
-    "oauthAutoLaunch": True,
+    "oauthAutoLaunch": FIXED_LOGIN_CONFIG.oauth_auto_launch,
     # Hide the password login form — OAuth is the only login method
-    "passwordLogin": False,
+    "passwordLogin": FIXED_LOGIN_CONFIG.password_login_enabled,
     "configFile": False,
     "email": False,
     "ocr": False,
@@ -70,11 +72,10 @@ def get_fake_config() -> dict:
     process restart — which is what deploys do.
     """
     return {
-        "loginPageMessage": "",
+        "loginPageMessage": FIXED_LOGIN_CONFIG.login_page_message,
         "trashDays": get_settings().trash_retention_days,
         "userDeleteDelay": 7,
-        # Shown as the OAuth button label if the login form is visible (e.g., ?autoLaunch=0)
-        "oauthButtonText": "Sign in with Gumnut",
+        "oauthButtonText": FIXED_LOGIN_CONFIG.oauth_button_text,
         "isInitialized": True,
         "isOnboarded": True,
         "externalDomain": "",

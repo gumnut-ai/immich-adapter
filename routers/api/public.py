@@ -13,6 +13,7 @@ page message or custom CSS.
 
 from fastapi import APIRouter
 
+from routers.api.constants import FIXED_LOGIN_CONFIG
 from routers.immich_models import (
     PublicConfigDto,
     PublicConfigOAuthDto,
@@ -29,17 +30,16 @@ router = APIRouter(
 
 
 def _public_config() -> PublicConfigDto:
+    cfg = FIXED_LOGIN_CONFIG
     return PublicConfigDto(
         oauth=PublicConfigOAuthDto(
-            enabled=True,
-            autoLaunch=True,
-            # Shown as the OAuth button label if the login form is visible
-            # (e.g., ?autoLaunch=0); mirrors /server/config's oauthButtonText.
-            buttonText="Sign in with Gumnut",
+            enabled=cfg.oauth_enabled,
+            autoLaunch=cfg.oauth_auto_launch,
+            buttonText=cfg.oauth_button_text,
         ),
-        passwordLogin=PublicConfigPasswordLoginDto(enabled=False),
-        server=PublicConfigServerDto(loginPageMessage=""),
-        theme=PublicConfigThemeDto(customCss=""),
+        passwordLogin=PublicConfigPasswordLoginDto(enabled=cfg.password_login_enabled),
+        server=PublicConfigServerDto(loginPageMessage=cfg.login_page_message),
+        theme=PublicConfigThemeDto(customCss=cfg.custom_css),
     )
 
 

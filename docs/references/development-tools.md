@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-08-31
+last-updated: 2026-09-01
 ---
 
 # Development Tools
@@ -45,7 +45,7 @@ Always run linting and formatting on the generated model file before committing;
 
 ### Tag Substitution
 
-When fetching the OpenAPI spec from a GitHub blob URL, the generator substitutes the Immich version tag from the `.immich-container-tag` file so the generated models match the specific Immich version you're targeting. If the file is missing or empty, it falls back to `main`. The generated file's comment header records which version was used.
+When fetching the OpenAPI spec from a GitHub blob URL, the generator substitutes the Immich version tag from the `.immich-container-tag` file so the generated models match the specific Immich version you're targeting. Blob-URL generation requires a non-empty tag file: a missing or empty `.immich-container-tag` makes the generator exit with an error rather than fall back to a branch. The generated file's comment header records which version was used.
 
 The models may deliberately *lead* the container tag: pre-GA prep for a version bump (e.g. implementing endpoints a release candidate's web build depends on) regenerates from the upcoming release's spec while `.immich-container-tag` stays on the shipped version. Blob-URL substitution can't express that — pass the explicit `raw.githubusercontent.com/immich-app/immich/<tag>/open-api/immich-openapi-specs.json` URL instead, which records that tag in the header.
 
@@ -61,7 +61,7 @@ A regeneration that **retypes** a field (e.g. `str` → `UUID` ids) silently tur
 
 A regen that makes a field **required** breaks the same stubs through a different error — `Argument missing for parameter "<name>"` at every hand-construction site. Sweep it the same way: for a stub with no smoke test yet, pyright is the only pre-runtime signal. Note the limits of that signal — it catches a missing required argument and an *incompatible* retype (`str` → `UUID`), but **not** a *widening* one (`int` → `float` still accepts an int literal) and **not** a tightened `Field(pattern=…/min_length=…/ge=…/le=…)` constraint. A widening retype is harmless by itself; the hazard is a constraint an existing literal now violates, which fails only at value validation — so the construction smoke test [routes and compatibility reference](./routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version) prescribes is the backstop. The v3.0.3 retarget's `percentageLimit` (`int` → `float`, `le=9007199254740991` → `le=1.0`) is the near-miss that shows why: pyright saw nothing, and the stub's `percentageLimit=1` stayed valid only because upstream's default sits exactly on the new bound.
 
-Pyright is also blind to a field flipping from **nullable-without-default to non-nullable-with-schema-default** (`T | None = None` → `T = <default>`): every `x is not None` stays type-correct, but where that check meant "did the client send this field", it now always answers yes and silently forwards the schema default. Grep the regen diff's defaulted-field changes for presence checks on those fields and switch them to `"<field>" in request.model_fields_set` (the v3.2 regen's `size` on the search DTOs is the incident; only a test pinning the omission behavior caught it).
+Pyright is also blind to a field flipping from **nullable-without-default to non-nullable-with-schema-default** (`T | None = None` → `T = <default>`): every `x is not None` stays type-correct, but where that check meant "did the client send this field", it now always answers yes and silently forwards the schema default. Grep the regen diff's defaulted-field changes for presence checks on those fields and decide per field whether forwarding that default is what you want — pyright can't tell, and only a test pinning the omission behavior catches the flip. The v3.2 regen's `size` on the search DTOs is the incident, and it cuts both ways: `size` materializes Immich's *own* effective default (250 metadata / 100 smart), so the adapter forwards it — clamped to the Gumnut API's 200-per-page ceiling — instead of gating on `model_fields_set` and under-returning to the Gumnut API's smaller default. The opposite case, where presence genuinely means "did the client send this", is the update-style DTOs in [routes and compatibility](./routes-dtos-and-upstream-compatibility.md#omit-vs-explicit-null-in-update-style-dtos--use-model_fields_set), which do need `model_fields_set`.
 
 ## API Compatibility Tool
 

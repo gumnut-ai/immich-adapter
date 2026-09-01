@@ -343,10 +343,14 @@ class TestSearchMetadata:
         assert result.assets.items == []
 
     @pytest.mark.anyio
-    async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
-        """When size/page are absent, the SDK is called without them so the Gumnut API
-        applies its own defaults. Substituting our own defaults would fragment the
-        single source of truth."""
+    async def test_forwards_materialized_size_default_when_omitted(
+        self, mock_current_user
+    ):
+        """v3.2 materializes `size`'s default into the DTO (250 for metadata
+        search), so an omitted size forwards that clamped default instead of
+        letting the Gumnut API apply its smaller one — matching the count
+        upstream Immich returns. `page` has no schema default, so it stays
+        absent."""
         search_response = Mock()
         search_response.data = []
 
@@ -360,7 +364,8 @@ class TestSearchMetadata:
         )
 
         call_kwargs = mock_client.search.search.call_args.kwargs
-        assert "limit" not in call_kwargs
+        # 250 clamped to the Gumnut API per-page ceiling.
+        assert call_kwargs["limit"] == 200
         assert "page" not in call_kwargs
 
     @pytest.mark.anyio
@@ -584,10 +589,13 @@ class TestSearchSmart:
         }
 
     @pytest.mark.anyio
-    async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
-        """When size/page are absent, the SDK is called without them so the Gumnut API
-        applies its own defaults. Substituting our own defaults would fragment the
-        single source of truth."""
+    async def test_forwards_materialized_size_default_when_omitted(
+        self, mock_current_user
+    ):
+        """v3.2 materializes `size`'s default into the DTO (100 for smart
+        search), so an omitted size forwards it instead of letting the Gumnut
+        API apply its smaller default — matching the count upstream Immich
+        returns. `page` has no schema default, so it stays absent."""
         search_response = Mock()
         search_response.data = []
 
@@ -601,7 +609,8 @@ class TestSearchSmart:
         )
 
         call_kwargs = mock_client.search.search.call_args.kwargs
-        assert "limit" not in call_kwargs
+        # 100 is below the Gumnut API per-page ceiling, so it forwards as-is.
+        assert call_kwargs["limit"] == 100
         assert "page" not in call_kwargs
 
     @pytest.mark.anyio
@@ -702,6 +711,15 @@ class TestCriterionLessEnumeration:
     def test_empty_request_is_enumeration(self):
         assert _is_criterion_less_enumeration(MetadataSearchDto()) is True
 
+    def test_empty_structured_filter_does_not_disqualify(self):
+        # `filter: {}` restricts nothing (empty `model_fields_set`), so a
+        # criterion-less request carrying only an empty filter still enumerates
+        # instead of falling through to `search.search(query=None)`.
+        assert (
+            _is_criterion_less_enumeration(MetadataSearchDto(filter=SearchFilter()))
+            is True
+        )
+
     def test_enumeration_honorable_fields_do_not_disqualify(self):
         # The fields immich-go's asset sweep sends, plus withDeleted.
         assert (
@@ -787,6 +805,30 @@ class TestSearchMetadataEnumeration:
         assert result.assets.total == 3
         assert result.assets.nextPage is None
         assert len(result.assets.items) == 3
+
+    @pytest.mark.anyio
+    async def test_empty_structured_filter_routes_to_listing(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """A criterion-less request whose only populated field is an empty
+        `filter: {}` enumerates via the listing rather than hitting
+        `search.search(query=None)`, which the Gumnut API rejects."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(2)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+        mock_client.search.search = AsyncMock()
+
+        result = await search_assets(
+            request=MetadataSearchDto(filter=SearchFilter()),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        mock_client.search.search.assert_not_called()
+        assert result.assets.count == 2
+        assert len(result.assets.items) == 2
 
     @pytest.mark.anyio
     async def test_favorite_and_rating_filters_route_to_listing(

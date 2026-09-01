@@ -175,7 +175,6 @@ async def get_user_admin(id: UUID) -> UserAdminResponseDto:
     """
     return UserAdminResponseDto(
         id=id,
-        # Synthetic per-user cluster group; see current_user.py.
         clusterGroupId=id,
         email="user@example.com",
         name="User Name",
@@ -210,7 +209,6 @@ async def update_user_admin(
     """
     return UserAdminResponseDto(
         id=id,
-        # Synthetic per-user cluster group; see current_user.py.
         clusterGroupId=id,
         email=request.email or "user@example.com",
         name=request.name or "Updated User",
@@ -245,7 +243,6 @@ async def delete_user_admin(
     """
     return UserAdminResponseDto(
         id=id,
-        # Synthetic per-user cluster group; see current_user.py.
         clusterGroupId=id,
         email="deleted@example.com",
         name="Deleted User",
@@ -298,7 +295,6 @@ async def restore_user_admin(id: UUID) -> UserAdminResponseDto:
     """
     return UserAdminResponseDto(
         id=id,
-        # Synthetic per-user cluster group; see current_user.py.
         clusterGroupId=id,
         email="restored@example.com",
         name="Restored User",
