@@ -25,7 +25,6 @@ from gumnut.types.assets import AssetVersionResponse
 from pydantic.json_schema import SkipJsonSchema
 from stream_zip import ZIP_AUTO, AsyncMemberFile, stream_zip
 
-from routers.api.assets import _invalid_chain_error
 from routers.api.constants import (
     DEFAULT_DOWNLOAD_ARCHIVE_SIZE,
     GUMNUT_API_MAX_BULK_IDS,
@@ -40,7 +39,11 @@ from routers.immich_models import (
 from routers.utils.asset_conversion import is_asset_edited, resolve_file_modified_at
 from routers.utils.asset_version_chain import InvalidVersionChainError, select_root
 from routers.utils.cdn_client import iter_cdn_response_bytes, open_cdn_response
-from routers.utils.concurrency import gather_with_concurrency
+from routers.utils.concurrency import (
+    BULK_FANOUT_CONCURRENCY_LIMIT,
+    gather_with_concurrency,
+)
+from routers.utils.error_mapping import invalid_chain_error
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
@@ -135,6 +138,22 @@ async def _assets_by_ids(
                 yield asset
 
 
+async def _abatched(items: AsyncIterable[_T], size: int) -> AsyncIterator[list[_T]]:
+    """Yield fixed-size lists from an async iterable, the last possibly short.
+
+    Bounds how much of a streamed selector is staged at once so a fan-out over
+    the batch caps in-flight work without first materializing the whole stream.
+    """
+    batch: list[_T] = []
+    async for item in items:
+        batch.append(item)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
 def _member_unavailable_error() -> HTTPException:
     """The batch route's 400 for a member with no downloadable bytes."""
     return HTTPException(
@@ -183,7 +202,7 @@ async def _select_asset_root(
     try:
         return select_root(versions, asset_id=gumnut_asset_id)
     except InvalidVersionChainError:
-        raise _invalid_chain_error()
+        raise invalid_chain_error()
 
 
 async def _resolve_archive_member(
@@ -245,23 +264,30 @@ async def _validated_archive_assets(
     """Preflight every archive member while retaining only streaming metadata.
 
     Every member is resolved before any bytes stream, so a missing member or an
-    invalid version chain fails the request up front. Root resolution for edited
-    members fans out under a bounded semaphore; ``gather_with_concurrency``
-    preserves request order for the ZIP.
+    invalid version chain fails the request up front. Members resolve in
+    ``_abatched`` waves that keep only the compact ``_ArchiveAsset`` rows, so the
+    full ``AssetResponse`` payloads (metadata + signed variants) never accumulate
+    across an uncapped ``assetIds`` list; ``cancel_on_error`` drops a doomed
+    request's queued siblings. The final count check keeps the fail-up-front
+    missing-ID contract before streaming begins.
     """
-    assets = [
-        asset
-        async for asset in _assets_by_ids(
-            client,
-            asset_ids,
-            include=_DOWNLOAD_ARCHIVE_INCLUDE,
+    resolved: list[_ArchiveAsset] = []
+    async for wave in _abatched(
+        _assets_by_ids(client, asset_ids, include=_DOWNLOAD_ARCHIVE_INCLUDE),
+        BULK_FANOUT_CONCURRENCY_LIMIT,
+    ):
+        resolved.extend(
+            await gather_with_concurrency(
+                [
+                    _resolve_archive_member(client, asset, edited=edited)
+                    for asset in wave
+                ],
+                cancel_on_error=True,
+            )
         )
-    ]
-    if len(assets) != len(asset_ids):
+    if len(resolved) != len(asset_ids):
         raise _member_unavailable_error()
-    return await gather_with_concurrency(
-        [_resolve_archive_member(client, asset, edited=edited) for asset in assets]
-    )
+    return resolved
 
 
 async def _assets_for_info(
@@ -333,21 +359,27 @@ async def _build_download_info(
     archive_ids: list[UUID] = []
     archive_size = 0
 
-    # Resolve sizes while streaming the selector: the album/user selectors can
-    # enumerate the whole library, so materializing every asset is avoided. Only
-    # an edited asset costs a version-chain round-trip; a root-only asset (the
-    # common case) resolves inline, so the walk stays as light as before.
-    async for asset in assets:
-        archive_ids.append(safe_uuid_from_asset_id(asset.id))
-        archive_size += await _download_original_size(client, asset)
-        # Match Immich: the asset that crosses the threshold remains in the
-        # current archive, so one oversized asset naturally forms one archive.
-        if archive_size > target_size:
-            archives.append(
-                DownloadArchiveInfo(assetIds=archive_ids, size=archive_size)
-            )
-            archive_ids = []
-            archive_size = 0
+    # Resolve sizes in ``_abatched`` waves: only an edited asset costs a
+    # version-chain round-trip (a root-only asset resolves inline), and fanning
+    # each wave out under ``gather_with_concurrency`` keeps a library of edited
+    # assets from serializing one upstream latency per asset. Consuming each
+    # wave's ordered sizes keeps threshold grouping request-exact.
+    async for wave in _abatched(assets, BULK_FANOUT_CONCURRENCY_LIMIT):
+        sizes = await gather_with_concurrency(
+            [_download_original_size(client, asset) for asset in wave],
+            cancel_on_error=True,
+        )
+        for asset, size in zip(wave, sizes):
+            archive_ids.append(safe_uuid_from_asset_id(asset.id))
+            archive_size += size
+            # Match Immich: the asset that crosses the threshold remains in the
+            # current archive, so one oversized asset naturally forms one archive.
+            if archive_size > target_size:
+                archives.append(
+                    DownloadArchiveInfo(assetIds=archive_ids, size=archive_size)
+                )
+                archive_ids = []
+                archive_size = 0
 
     if archive_ids:
         archives.append(DownloadArchiveInfo(assetIds=archive_ids, size=archive_size))

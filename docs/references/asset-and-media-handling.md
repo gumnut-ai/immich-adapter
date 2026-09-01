@@ -79,8 +79,8 @@ has no `edited` field, so its reported sizes are always position-0 original
 `kind` is lean-core, a version-chain fetch is only needed for edited members
 (`kind != "original"`); root-only members resolve straight from the
 `assets.list` payload. An invalid chain fails closed with the same 502 as the
-single-asset route (`_invalid_chain_error`); a member with no downloadable
-bytes keeps the batch route's existing 400.
+single-asset route; a member with no downloadable bytes keeps the batch route's
+existing 400.
 
 The **edit base** is a different selection: the highest-position version whose
 `kind` is not `edit` (or `edit:*`), from `select_edit_base` in the same module.

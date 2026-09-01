@@ -19,6 +19,7 @@ from gumnut.types.asset_response import AssetResponse
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.download import (
+    _abatched,
     _ArchiveAsset,
     _assets_by_ids,
     _assets_for_info,
@@ -31,6 +32,7 @@ from routers.api.download import (
     get_download_info,
 )
 from routers.immich_models import DownloadArchiveDto, DownloadInfoDto
+from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     uuid_to_gumnut_album_id,
@@ -230,6 +232,92 @@ async def test_download_info_matches_immich_threshold_grouping() -> None:
         safe_uuid_from_asset_id(assets[0].id),
         safe_uuid_from_asset_id(assets[1].id),
     ]
+
+
+@pytest.mark.anyio
+async def test_abatched_groups_stream_into_fixed_size_batches() -> None:
+    async def stream(items: list[int]) -> AsyncIterator[int]:
+        for item in items:
+            yield item
+
+    async def batches(items: list[int], size: int) -> list[list[int]]:
+        return [batch async for batch in _abatched(stream(items), size)]
+
+    # Empty stream yields nothing.
+    assert await batches([], 3) == []
+    # Exact multiple yields no trailing empty batch.
+    assert await batches([1, 2, 3, 4], 2) == [[1, 2], [3, 4]]
+    # A short final batch is flushed.
+    assert await batches([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]]
+
+
+@pytest.mark.anyio
+async def test_download_info_bounds_edited_size_fanout_and_groups_across_waves() -> (
+    None
+):
+    # More edited members than the fan-out limit, so /info resolves their
+    # original sizes in bounded waves. Peak concurrency must stay within the
+    # limit (an unbounded gather would exceed it), and threshold grouping must
+    # stay request-exact even when the crossing lands mid-second-wave and the
+    # version-chain fetches complete in reverse request order.
+    member_count = BULK_FANOUT_CONCURRENCY_LIMIT * 2
+    asset_ids = [uuid4() for _ in range(member_count)]
+    # Each member's current rendering is 999 bytes, but /info must report the
+    # position-0 upload. Uploads shrink with index (20, 19, ... 1) so the whole
+    # heavy head lands in one archive and the light tail in the next — and so a
+    # mis-ordered result would shift the crossing and be visible.
+    assets = [
+        _download_asset(asset_id, size=999, kind="edit") for asset_id in asset_ids
+    ]
+    upload_sizes = {
+        uuid_to_gumnut_asset_id(asset_id): member_count - index
+        for index, asset_id in enumerate(asset_ids)
+    }
+
+    active = 0
+    peak = 0
+    lock = asyncio.Lock()
+
+    async def versions_list(gumnut_asset_id: str, **kwargs: Any) -> list[Mock]:
+        nonlocal active, peak
+        async with lock:
+            active += 1
+            peak = max(peak, active)
+        # Larger (earlier) members sleep longest, so completion order reverses
+        # request order — ordered consumption must still place each size right.
+        size = upload_sizes[gumnut_asset_id]
+        await asyncio.sleep(size * 0.002)
+        async with lock:
+            active -= 1
+        return [_make_version(0, size=size), _make_version(1, size=999)]
+
+    client = Mock()
+    client.assets.versions.list = AsyncMock(side_effect=versions_list)
+
+    async def asset_stream() -> AsyncIterator[AssetResponse]:
+        for asset in assets:
+            yield asset
+
+    # Uploads 20..1 sum to 210. A 175-byte target crosses after 13 members
+    # (cumulative 182 for sizes 20..8), i.e. inside the second wave (members
+    # 10..19); the 28-byte tail (sizes 7..1) then never crosses again.
+    result = await _build_download_info(asset_stream(), 175, client)
+
+    assert peak > 1, "expected concurrent edited-size resolution"
+    assert peak <= BULK_FANOUT_CONCURRENCY_LIMIT
+    assert client.assets.versions.list.await_count == member_count
+    # /info reads only file_size_bytes, so it must not sign version URLs.
+    assert all(
+        "include" not in call.kwargs
+        for call in client.assets.versions.list.await_args_list
+    )
+    expected_ids = [safe_uuid_from_asset_id(asset.id) for asset in assets]
+    assert [archive.assetIds for archive in result.archives] == [
+        expected_ids[:13],
+        expected_ids[13:],
+    ]
+    assert [archive.size for archive in result.archives] == [182, 28]
+    assert result.totalSize == 210
 
 
 @pytest.mark.anyio
@@ -1094,3 +1182,110 @@ async def test_archive_preserves_request_order_across_mixed_edited_members() -> 
 
     # Root-only member takes no version-chain fetch.
     assert client.assets.versions.list.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_archive_bounds_edited_root_fanout_within_concurrency_limit() -> None:
+    # More edited members than the fan-out limit, so preflight must resolve their
+    # roots in bounded waves. Replacing the bounded helper with an unbounded
+    # `asyncio.gather` over every member would drive peak concurrency to the
+    # member count; the bound keeps it at or below BULK_FANOUT_CONCURRENCY_LIMIT
+    # while still resolving more than one root at a time.
+    member_count = BULK_FANOUT_CONCURRENCY_LIMIT * 2
+    asset_ids = [uuid4() for _ in range(member_count)]
+    assets = [
+        _download_asset(asset_id, filename=f"edited-{index}.jpg", kind="edit")
+        for index, asset_id in enumerate(asset_ids)
+    ]
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage(assets))
+
+    active = 0
+    peak = 0
+    lock = asyncio.Lock()
+
+    async def versions_list(gumnut_asset_id: str, **kwargs: Any) -> list[Mock]:
+        nonlocal active, peak
+        async with lock:
+            active += 1
+            peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        async with lock:
+            active -= 1
+        return [
+            _make_version(0, url=f"https://cdn.example.com/{gumnut_asset_id}", size=5),
+            _make_version(1, size=9),
+        ]
+
+    client.assets.versions.list = AsyncMock(side_effect=versions_list)
+
+    async def fake_cdn_chunks(url: str, state: object) -> AsyncIterator[bytes]:
+        yield b"x" * 5
+
+    with patch("routers.api.download._cdn_asset_chunks", side_effect=fake_cdn_chunks):
+        response = await download_archive(
+            DownloadArchiveDto(assetIds=asset_ids, edited=False), client=client
+        )
+        archive = await _collect_response_body(response)
+
+    assert peak > 1, "expected concurrent edited-root resolution"
+    assert peak <= BULK_FANOUT_CONCURRENCY_LIMIT
+    assert client.assets.versions.list.await_count == member_count
+    with ZipFile(BytesIO(archive)) as zip_file:
+        assert zip_file.namelist() == [
+            f"edited-{index}.jpg" for index in range(member_count)
+        ]
+
+
+@pytest.mark.anyio
+async def test_archive_cancels_pending_members_when_one_preflight_fails() -> None:
+    # One member's chain is invalid, so the response (a 502) is already
+    # determined. The remaining members' root lookups must be cancelled rather
+    # than left running to completion, so an aborted large archive stops issuing
+    # upstream requests whose results would be discarded.
+    failing_id = uuid4()
+    pending_ids = [uuid4() for _ in range(3)]
+    asset_ids = [failing_id, *pending_ids]
+    assets = [
+        _download_asset(asset_id, filename=f"m-{index}.jpg", kind="edit")
+        for index, asset_id in enumerate(asset_ids)
+    ]
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage(assets))
+
+    started: list[str] = []
+    cancelled: list[str] = []
+    completed: list[str] = []
+
+    async def versions_list(gumnut_asset_id: str, **kwargs: Any) -> list[Mock]:
+        if gumnut_asset_id == uuid_to_gumnut_asset_id(failing_id):
+            # Yield first so the sibling lookups are actually in flight when this
+            # one fails; cancel_on_error must then cancel those in-flight
+            # requests rather than await their now-useless results.
+            await asyncio.sleep(0.02)
+            return []  # no unique root -> invalid chain -> 502
+        started.append(gumnut_asset_id)
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            cancelled.append(gumnut_asset_id)
+            raise
+        completed.append(gumnut_asset_id)  # pragma: no cover - sibling is cancelled
+        return [
+            _make_version(0, url=f"https://cdn.example.com/{gumnut_asset_id}"),
+            _make_version(1),
+        ]
+
+    client.assets.versions.list = AsyncMock(side_effect=versions_list)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await download_archive(
+            DownloadArchiveDto(assetIds=asset_ids, edited=False), client=client
+        )
+
+    assert exc_info.value.status_code == 502
+    # Siblings began before the failure propagated, then were cancelled — none
+    # were allowed to finish their now-useless upstream round-trip.
+    assert started, "expected sibling lookups to begin before the failure"
+    assert set(cancelled) == set(started)
+    assert completed == []

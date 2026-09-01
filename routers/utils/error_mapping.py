@@ -55,6 +55,19 @@ QUOTA_EXCEEDED_DETAIL = "Quota has been exceeded!"
 E = TypeVar("E", bound=Enum)
 
 
+def invalid_chain_error() -> HTTPException:
+    """Return the shared 502 for a malformed asset version chain.
+
+    A chain with no unique position-0 root fails closed with this rather than
+    substituting another rendering; the routes that resolve the version chain
+    map their ``InvalidVersionChainError`` to it.
+    """
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="Asset version chain is invalid",
+    )
+
+
 def truncated_error_detail(exc: Exception) -> str:
     """Stringify and truncate an exception for the `error_detail` log field."""
     return str(exc)[:ERROR_DETAIL_MAX_CHARS]
