@@ -48,8 +48,6 @@ server_features = {
     "sidecar": False,
     "search": True,
     "trash": True,
-    # The login-controlling flags come from the shared FIXED_LOGIN_CONFIG so the
-    # /server/features, /public/config, and /admin/config projections can't drift.
     "oauth": FIXED_LOGIN_CONFIG.oauth_enabled,
     # Auto-redirect to OAuth provider on login page instead of showing login form
     "oauthAutoLaunch": FIXED_LOGIN_CONFIG.oauth_auto_launch,

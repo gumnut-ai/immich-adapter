@@ -263,7 +263,6 @@ async def link_oauth_account(
     now = datetime.now(timezone.utc)
     return UserAdminResponseDto(
         avatarColor=UserAvatarColor.primary,
-        # Synthetic per-user cluster group; see current_user.py.
         clusterGroupId=current_user.id,
         createdAt=now,
         deletedAt=now,

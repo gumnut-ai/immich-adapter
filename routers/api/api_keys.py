@@ -41,8 +41,7 @@ async def create_api_key(request: ApiKeyCreateDto) -> ApiKeyCreateResponseDto:
         createdAt=datetime.now(tz=timezone.utc),
         updatedAt=datetime.now(tz=timezone.utc),
     )
-    # v3.2 flattens the key fields to the top level; the nested `apiKey` is
-    # kept but deprecated. Serve both so old and new clients read the same key.
+    # Populate both response shapes for client compatibility.
     return ApiKeyCreateResponseDto(
         apiKey=api_key,
         id=api_key.id,

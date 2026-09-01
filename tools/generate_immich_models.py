@@ -91,8 +91,6 @@ def fetch_spec(spec_path: str) -> tuple[str, str | None, str]:
                 print(f"Could not read retrieve Immich tag from file: {e}")
                 sys.exit(1)
 
-            # normalize any `/blob/<ref>/` to the container tag (non-empty by
-            # get_container_tag's contract — it raises rather than falling back)
             ref = container_tag
             spec_path = re.sub(r"/blob/[^/]+/", f"/{ref}/", spec_path)
             tag_or_branch = ref

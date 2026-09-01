@@ -1,10 +1,4 @@
-"""Unit tests for the public config endpoints (Immich v3.2+).
-
-The v3.2 web login page calls ``getPublicConfig`` before any authentication,
-so these tests pin both the hand-built DTO construction (a model regen that
-adds required fields breaks it at runtime, not in pyright) and the
-load-bearing values the login flow reads.
-"""
+"""Unit tests for the public config endpoints."""
 
 import pytest
 
@@ -19,8 +13,7 @@ class TestGetPublicConfig:
         config = await get_public_config()
 
         assert isinstance(config, PublicConfigDto)
-        # OAuth is the only login method; these values drive the web login
-        # page (auto-launch into the OAuth flow, button label as fallback).
+        # These values control the login flow and its manual-launch fallback.
         assert config.oauth.enabled is True
         assert config.oauth.autoLaunch is True
         assert config.oauth.buttonText == "Sign in with Gumnut"
@@ -32,7 +25,6 @@ class TestGetPublicConfig:
         assert await get_public_config_defaults() == await get_public_config()
 
     def test_routes_are_unauthenticated(self):
-        """The login page fetches public config before any credential exists;
-        a missing UNAUTHENTICATED_PATHS entry turns login into a 401."""
+        """The login page fetches public config before credentials exist."""
         assert "/api/public/config" in AuthMiddleware.UNAUTHENTICATED_PATHS
         assert "/api/public/config/defaults" in AuthMiddleware.UNAUTHENTICATED_PATHS

@@ -349,11 +349,7 @@ class TestSearchMetadata:
     async def test_forwards_materialized_size_default_when_omitted(
         self, mock_current_user
     ):
-        """v3.2 materializes `size`'s default into the DTO (250 for metadata
-        search), so an omitted size forwards that clamped default instead of
-        letting the Gumnut API apply its smaller one — matching the count
-        upstream Immich returns. `page` has no schema default, so it stays
-        absent."""
+        """Forward the DTO's default size, but leave an omitted page absent."""
         search_response = Mock()
         search_response.data = []
 
@@ -367,14 +363,12 @@ class TestSearchMetadata:
         )
 
         call_kwargs = mock_client.search.search.call_args.kwargs
-        # 250 clamped to the Gumnut API per-page ceiling.
         assert call_kwargs["limit"] == 200
         assert "page" not in call_kwargs
 
     @pytest.mark.anyio
     async def test_structured_filter_returns_empty(self, mock_current_user):
-        """v3.2's structured `filter` (alpha) has no Gumnut translation; it only
-        restricts, so the route returns empty rather than over-matching."""
+        """An unsupported restricting filter returns empty, not extra matches."""
         mock_client = Mock()
         mock_client.search.search = AsyncMock()
 
@@ -410,9 +404,7 @@ class TestSearchMetadata:
     async def test_all_null_structured_filter_does_not_restrict(
         self, mock_current_user
     ):
-        """An all-null filter (`{"filter": {"city": null}}`) is no constraint —
-        a set-but-null property must not empty the route the way a populated one
-        does. The search proceeds normally, like the empty `{}` case."""
+        """An explicitly null filter property imposes no constraint."""
         search_response = Mock(data=[])
         mock_client = Mock()
         mock_client.search.search = AsyncMock(return_value=search_response)
@@ -616,10 +608,7 @@ class TestSearchSmart:
     async def test_forwards_materialized_size_default_when_omitted(
         self, mock_current_user
     ):
-        """v3.2 materializes `size`'s default into the DTO (100 for smart
-        search), so an omitted size forwards it instead of letting the Gumnut
-        API apply its smaller default — matching the count upstream Immich
-        returns. `page` has no schema default, so it stays absent."""
+        """Forward the DTO's default size, but leave an omitted page absent."""
         search_response = Mock()
         search_response.data = []
 
@@ -633,14 +622,12 @@ class TestSearchSmart:
         )
 
         call_kwargs = mock_client.search.search.call_args.kwargs
-        # 100 is below the Gumnut API per-page ceiling, so it forwards as-is.
         assert call_kwargs["limit"] == 100
         assert "page" not in call_kwargs
 
     @pytest.mark.anyio
     async def test_structured_filter_returns_empty(self, mock_current_user):
-        """v3.2's structured `filter` (alpha) has no Gumnut translation; it only
-        restricts, so the route returns empty rather than over-matching."""
+        """An unsupported restricting filter returns empty, not extra matches."""
         mock_client = Mock()
         mock_client.search.search = AsyncMock()
 
@@ -736,18 +723,14 @@ class TestCriterionLessEnumeration:
         assert _is_criterion_less_enumeration(MetadataSearchDto()) is True
 
     def test_empty_structured_filter_does_not_disqualify(self):
-        # `filter: {}` restricts nothing (no property carries a non-null value),
-        # so a criterion-less request carrying only an empty filter still
-        # enumerates instead of falling through to `search.search(query=None)`.
+        # `filter: {}` imposes no constraint.
         assert (
             _is_criterion_less_enumeration(MetadataSearchDto(filter=SearchFilter()))
             is True
         )
 
     def test_all_null_structured_filter_does_not_disqualify(self):
-        # `{"filter": {"city": null}}` sets `city` in `model_fields_set` but to
-        # None, which is no constraint — it must behave like an empty `{}` and
-        # stay on the enumeration path, not divert to `search.search(query=None)`.
+        # Explicit null behaves like an empty filter.
         assert (
             _is_criterion_less_enumeration(
                 MetadataSearchDto(filter=SearchFilter(city=None))
@@ -756,10 +739,7 @@ class TestCriterionLessEnumeration:
         )
 
     def test_empty_nested_filter_object_conservatively_restricts(self):
-        # A present-but-empty nested filter object (`{"filter": {"city": {}}}`)
-        # counts as a non-null value, so it is conservatively treated as
-        # restricting and disqualifies the enumeration path. No client emits this
-        # shape and returning empty fails closed; pins the deliberate boundary.
+        # A non-null nested object fails closed, even when it is empty.
         assert (
             _is_criterion_less_enumeration(
                 MetadataSearchDto(filter=SearchFilter(city=StringFilterNullable()))
@@ -789,10 +769,7 @@ class TestCriterionLessEnumeration:
         )
 
     def test_structured_order_by_does_not_disqualify(self):
-        # v3.2's `orderBy` selects ordering, not membership, so a criterion-less
-        # request carrying only it still enumerates instead of diverting to
-        # `search.search(query=None)`. A field the Gumnut listing can't sort by
-        # (fileSizeInBytes) still doesn't restrict the set, so it stays too.
+        # Sort fields do not restrict membership, even when unsupported.
         assert (
             _is_criterion_less_enumeration(MetadataSearchDto(orderBy=SearchOrder()))
             is True
@@ -869,7 +846,6 @@ class TestSearchMetadataEnumeration:
         assert list_kwargs["state"] == "live"
         assert list_kwargs["limit"] == 200
         assert list_kwargs["include"] == ASSET_INCLUDE
-        # Neither `order` nor `orderBy` set → newest-first, the old DTO default.
         assert list_kwargs["order"] == "desc"
         assert result.assets.count == 3
         assert result.assets.total == 3
@@ -880,9 +856,7 @@ class TestSearchMetadataEnumeration:
     async def test_empty_structured_filter_routes_to_listing(
         self, mock_sync_cursor_page, mock_current_user
     ):
-        """A criterion-less request whose only populated field is an empty
-        `filter: {}` enumerates via the listing rather than hitting
-        `search.search(query=None)`, which the Gumnut API rejects."""
+        """An empty filter stays on the criterion-less listing path."""
         now = datetime(2024, 6, 1, tzinfo=timezone.utc)
         assets = [_make_search_asset(now) for _ in range(2)]
 
@@ -1311,9 +1285,7 @@ class TestSearchMetadataEnumeration:
     async def test_structured_order_by_direction_is_forwarded(
         self, mock_sync_cursor_page, mock_current_user
     ):
-        """v3.2's `orderBy.direction` drives the listing order, and it wins over
-        the deprecated `order` when both are sent. `orderBy.field` has no Gumnut
-        listing equivalent and is simply ignored (capture-time order stands)."""
+        """Forward direction, ignore unsupported fields, and prefer `orderBy`."""
         now = datetime(2024, 6, 1, tzinfo=timezone.utc)
         assets = [_make_search_asset(now) for _ in range(3)]
 

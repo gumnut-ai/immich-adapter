@@ -309,11 +309,7 @@ async def get_config() -> AdminConfigDto:
 
     notifications_config = AdminConfigNotificationsDto(smtp=smtp_config)
 
-    # OAuth is the default (and only) login method. autoLaunch causes the Immich
-    # web client to redirect to the OAuth provider automatically. The
-    # login-controlling values come from the shared FIXED_LOGIN_CONFIG so this
-    # administrative projection stays consistent with /server/features and
-    # /public/config.
+    # OAuth is the only login method; autoLaunch skips the password form.
     oauth_config = AdminConfigOAuthDto(
         allowInsecureRequests=False,
         autoLaunch=FIXED_LOGIN_CONFIG.oauth_auto_launch,
@@ -368,7 +364,6 @@ async def get_config() -> AdminConfigDto:
 
     user_config = AdminConfigUserDto(deleteDelay=7)
 
-    # Root AdminConfigDto
     return AdminConfigDto(
         backup=backup_config,
         ffmpeg=ffmpeg_config,

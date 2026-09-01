@@ -96,10 +96,8 @@ async def get_current_user_admin(
 
     user_admin_dto = UserAdminResponseDto(
         id=user_uuid,
-        # v3.2 requires a per-user cluster-group UUID (upstream migrates one
-        # group per user). Gumnut has no cluster groups, so reuse the user's
-        # own UUID as a deterministic synthetic value; the cluster-group
-        # endpoints it would key into are not implemented here.
+        # Gumnut has no cluster groups; the user UUID supplies the required,
+        # stable per-user value.
         clusterGroupId=user_uuid,
         email=user.email or "",
         name=full_name,

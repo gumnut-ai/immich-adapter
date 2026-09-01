@@ -58,7 +58,6 @@ _USER_PREFERENCES_RESPONSE: UserPreferencesResponseDto = UserPreferencesResponse
         albumInvite=False, albumUpdate=False, enabled=False
     ),
     folders=FoldersResponse(enabled=False, sidebarWeb=False),
-    # sidebarWeb=False matches upstream's server-side preference default.
     memories=MemoriesResponse(duration=7, enabled=False, sidebarWeb=False),
     people=PeopleResponse(enabled=False, sidebarWeb=False),
     purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
@@ -138,11 +137,9 @@ async def create_user_admin(request: UserAdminCreateDto) -> UserAdminResponseDto
     Create a user.
     This is a stub implementation that returns a fake user response.
     """
-    # v3 types the id UUID; a non-UUID stub fails response validation.
     user_id = uuid4()
     return UserAdminResponseDto(
         id=user_id,
-        # Synthetic per-user cluster group; see current_user.py.
         clusterGroupId=user_id,
         email=request.email,
         name=request.name,

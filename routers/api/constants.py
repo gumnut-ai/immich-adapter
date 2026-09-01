@@ -3,15 +3,10 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class FixedLoginConfig:
-    """The adapter's fixed, load-bearing login configuration.
+    """Login values shared by the public, server, and admin config DTOs.
 
-    OAuth ("Sign in with Gumnut", auto-launched) is the adapter's only login
-    method; password login is disabled and there is no login-page message or
-    custom CSS. These values collectively control the login experience and are
-    re-projected into several Immich DTOs — the unauthenticated public config
-    (`/public/config`), the deprecated `/server/config` + `/server/features`,
-    and the administrative `/admin/config`. Defining them once here keeps those
-    parallel projections from drifting apart.
+    OAuth is the adapter's only login method. Keeping these load-bearing values
+    together prevents the parallel DTO projections from drifting.
     """
 
     oauth_enabled: bool = True

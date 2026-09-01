@@ -80,7 +80,7 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 
 A regen can add newly-required fields to (or retype) the generated DTOs, breaking endpoint stubs that hand-construct them at **runtime** (pydantic `ValidationError` → 500); these stubs have no callers in most tests, so the break hides until a client hits the route. Keep a construction smoke test per hand-built-DTO stub — `assert isinstance(await <endpoint>(), <Dto>)`, see `tests/unit/api/test_{system_config,jobs,license}.py` — and, as with an SDK bump, run the **full** `uv run pytest` after regenerating.
 
-A regen can likewise add a search-DTO field that only **orders, paginates, or shapes** results rather than restricting them (the empty `filter`, then `orderBy`). Audit new such fields against `_ENUMERATION_HONORABLE_FIELDS` in `routers/api/search.py` and add the non-restricting ones: its allow-list fails safe by treating every *unlisted* field as a restricting filter, so a non-restricting newcomer left off it diverts a criterion-less enumeration to `search.search(query=None)`, which the Gumnut API 400s — a failure with no test coverage until that request shape is exercised.
+Audit new search-DTO fields against `_ENUMERATION_HONORABLE_FIELDS` in `routers/api/search.py`. Add fields that only order, paginate, or shape results; unlisted fields are treated as restricting and route criterion-less requests to a search call the Gumnut API rejects.
 
 ## Bumping the Gumnut SDK
 

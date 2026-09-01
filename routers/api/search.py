@@ -277,11 +277,8 @@ _ENUMERATION_HONORABLE_FIELDS = frozenset(
         "page",
         "size",
         "order",
-        # v3.2's structured sort. Like the deprecated `order`, it selects
-        # ordering, not membership, so it never restricts the result set and
-        # must not divert an otherwise criterion-less request to the
-        # `search.search(query=None)` 400 path. `_list_asset_page` honors its
-        # direction (its `field` has no Gumnut listing equivalent — see there).
+        # Sorts without restricting membership; the listing path honors its
+        # direction but cannot honor every field.
         "orderBy",
         "visibility",
         "trashedAfter",
@@ -349,21 +346,10 @@ def _compose_free_text_query(
 
 
 def _filter_restricts(filter_: SearchFilter | None) -> bool:
-    """True when v3.2's structured `filter` (alpha) actually restricts results.
+    """Whether an unsupported structured filter must fail closed.
 
-    It has no Gumnut translation, so the search routes honor the convention
-    for unsupported restrictive filters and return empty rather than
-    over-matching. A filter restricts only when at least one property carries a
-    non-null value: every `SearchFilter` property is optional (`X | None`), so
-    both an empty `{}` and an all-null `{"city": null}` mean "no constraint" and
-    are ignored. Field presence alone (`model_fields_set`) can't tell the two
-    apart — Pydantic records an explicitly-null property as set — so inspect the
-    values.
-
-    The check is at the top-level property, so a present-but-empty *nested*
-    filter object (`{"city": {}}`) counts as a non-null value and is
-    conservatively treated as restricting. No client emits that shape, and
-    returning empty fails closed, so this isn't chased into per-leaf recursion.
+    Empty and all-null filters impose no constraint. Any non-null top-level
+    value, including an empty nested filter, is treated as restricting.
     """
     return filter_ is not None and any(value is not None for _, value in filter_)
 
@@ -401,14 +387,7 @@ def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
     for field_name, value in request:
         if field_name in _ENUMERATION_HONORABLE_FIELDS:
             continue
-        # The structured `filter` disqualifies only when it actually restricts:
-        # an empty `{}` or all-null filter narrows nothing (see
-        # `_filter_restricts`), so a canonical `{"filter": {}}` request stays on
-        # the enumeration path
-        # instead of falling through to `search.search(query=None)`, which the
-        # Gumnut API 400s. A restricting filter is already short-circuited to an
-        # empty response in `search_assets`; rejecting it here keeps the
-        # classifier correct in isolation.
+        # Empty or all-null structured filters do not restrict enumeration.
         if field_name == "filter":
             if _filter_restricts(value):
                 return False
@@ -456,23 +435,13 @@ async def _list_asset_page(
     else:
         state = "live"
 
-    # Clamp at the Gumnut API per-page ceiling. The Immich client default is
-    # 1000; the adapter pages the client through the library at 200 per page.
-    # v3.2 gives `size` a schema default (250), so it is never None; the
-    # default clamps to the same 200-per-page walk as the old None fallback.
+    # The DTO always supplies a size; clamp it to the Gumnut API ceiling.
     size = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
     page = int(request.page) if request.page is not None else 1
     start = (page - 1) * size
 
-    # v3.2 replaces the deprecated `order` (direction only) with structured
-    # `orderBy` (direction + field). The Gumnut listing sorts solely by capture
-    # time, so only the direction is expressible: `orderBy.field`
-    # (fileCreatedAt/localDateTime/fileSizeInBytes/rating) has no listing
-    # equivalent and is ignored, exactly as `order` only ever chose direction.
-    # Returning the correct asset set in capture-time order beats failing closed
-    # for a sort the backend can't express. `orderBy` wins over the deprecated
-    # `order` when both are sent; absent both, newest-first matches the old DTO
-    # default.
+    # The listing supports direction but not `orderBy.field`. Prefer `orderBy`
+    # over the deprecated `order`, and default to newest first.
     if request.orderBy is not None:
         direction = request.orderBy.direction
     else:
@@ -584,12 +553,7 @@ async def search_assets(
     )
     if extra_query is not None:
         search_kwargs["extra_query"] = extra_query
-    # v3.2 materializes `size`'s default into the DTO (250 for metadata search),
-    # so `request.size` always carries Immich's effective default. Forward it
-    # (clamped to the Gumnut API per-page ceiling) so an omitted `size` returns
-    # Immich's default page size rather than the Gumnut API's own smaller
-    # default; the clamp also keeps the Immich client's size=1000 from 422ing.
-    # This matches the enumeration path, which forwards the same default.
+    # Preserve the DTO's effective default while respecting the Gumnut API cap.
     search_kwargs["limit"] = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
     if request.page is not None:
         search_kwargs["page"] = int(request.page)
@@ -643,11 +607,7 @@ async def search_smart(
     )
     if extra_query is not None:
         search_kwargs["extra_query"] = extra_query
-    # v3.2 materializes `size`'s default into the DTO (100 for smart search), so
-    # `request.size` always carries Immich's effective default. Forward it
-    # (clamped to the Gumnut API per-page ceiling) so an omitted `size` returns
-    # Immich's default page size rather than the Gumnut API's own smaller
-    # default; the clamp also keeps the Immich client's size=1000 from 422ing.
+    # Preserve the DTO's effective default while respecting the Gumnut API cap.
     search_kwargs["limit"] = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
     if request.page is not None:
         search_kwargs["page"] = int(request.page)
