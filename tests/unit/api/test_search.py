@@ -387,7 +387,6 @@ class TestSearchMetadata:
 
     @pytest.mark.anyio
     async def test_empty_structured_filter_does_not_restrict(self, mock_current_user):
-        """`filter: {}` restricts nothing, so the search proceeds normally."""
         search_response = Mock(data=[])
         mock_client = Mock()
         mock_client.search.search = AsyncMock(return_value=search_response)
@@ -404,7 +403,6 @@ class TestSearchMetadata:
     async def test_all_null_structured_filter_does_not_restrict(
         self, mock_current_user
     ):
-        """An explicitly null filter property imposes no constraint."""
         search_response = Mock(data=[])
         mock_client = Mock()
         mock_client.search.search = AsyncMock(return_value=search_response)
@@ -723,14 +721,12 @@ class TestCriterionLessEnumeration:
         assert _is_criterion_less_enumeration(MetadataSearchDto()) is True
 
     def test_empty_structured_filter_does_not_disqualify(self):
-        # `filter: {}` imposes no constraint.
         assert (
             _is_criterion_less_enumeration(MetadataSearchDto(filter=SearchFilter()))
             is True
         )
 
     def test_all_null_structured_filter_does_not_disqualify(self):
-        # Explicit null behaves like an empty filter.
         assert (
             _is_criterion_less_enumeration(
                 MetadataSearchDto(filter=SearchFilter(city=None))
@@ -739,7 +735,6 @@ class TestCriterionLessEnumeration:
         )
 
     def test_empty_nested_filter_object_conservatively_restricts(self):
-        # A non-null nested object fails closed, even when it is empty.
         assert (
             _is_criterion_less_enumeration(
                 MetadataSearchDto(filter=SearchFilter(city=StringFilterNullable()))

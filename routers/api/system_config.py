@@ -309,7 +309,6 @@ async def get_config() -> AdminConfigDto:
 
     notifications_config = AdminConfigNotificationsDto(smtp=smtp_config)
 
-    # OAuth is the only login method; autoLaunch skips the password form.
     oauth_config = AdminConfigOAuthDto(
         allowInsecureRequests=False,
         autoLaunch=FIXED_LOGIN_CONFIG.oauth_auto_launch,
@@ -334,7 +333,6 @@ async def get_config() -> AdminConfigDto:
         tokenEndpointAuthMethod=OAuthTokenEndpointAuthMethod.client_secret_post,
     )
 
-    # Password login disabled — all authentication goes through OAuth
     password_login = AdminConfigPasswordLoginDto(
         enabled=FIXED_LOGIN_CONFIG.password_login_enabled
     )

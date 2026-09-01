@@ -28,8 +28,6 @@ class TestGetConfig:
         config = await get_config()
 
         assert isinstance(config, AdminConfigDto)
-        # OAuth is the only login method the adapter supports; these two
-        # values are load-bearing for the Immich clients' login flow.
         assert config.oauth.enabled is True
         assert config.passwordLogin.enabled is False
         # Real-time HLS is an intentional gap; disabling it keeps both clients

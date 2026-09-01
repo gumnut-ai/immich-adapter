@@ -49,9 +49,7 @@ server_features = {
     "search": True,
     "trash": True,
     "oauth": FIXED_LOGIN_CONFIG.oauth_enabled,
-    # Auto-redirect to OAuth provider on login page instead of showing login form
     "oauthAutoLaunch": FIXED_LOGIN_CONFIG.oauth_auto_launch,
-    # Hide the password login form — OAuth is the only login method
     "passwordLogin": FIXED_LOGIN_CONFIG.password_login_enabled,
     "configFile": False,
     "email": False,

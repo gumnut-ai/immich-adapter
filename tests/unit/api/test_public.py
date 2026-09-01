@@ -13,7 +13,6 @@ class TestGetPublicConfig:
         config = await get_public_config()
 
         assert isinstance(config, PublicConfigDto)
-        # These values control the login flow and its manual-launch fallback.
         assert config.oauth.enabled is True
         assert config.oauth.autoLaunch is True
         assert config.oauth.buttonText == "Sign in with Gumnut"

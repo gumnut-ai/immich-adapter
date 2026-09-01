@@ -387,7 +387,6 @@ def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
     for field_name, value in request:
         if field_name in _ENUMERATION_HONORABLE_FIELDS:
             continue
-        # Empty or all-null structured filters do not restrict enumeration.
         if field_name == "filter":
             if _filter_restricts(value):
                 return False

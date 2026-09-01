@@ -33,15 +33,7 @@ from spec_preprocess import strip_non_string_patterns
 
 
 def get_container_tag() -> str:
-    """
-    Read the Immich container tag from .immich-container-tag file.
-
-    Returns:
-        The container tag (e.g., "v2.2.2").
-
-    Raises:
-        Exception: if the file is missing or empty.
-    """
+    """Return the non-empty Immich tag from `.immich-container-tag`."""
     tag_file = Path(".immich-container-tag")
     if tag_file.exists():
         content = tag_file.read_text().strip()

@@ -18,7 +18,6 @@ class TestPublicConfigEndpoint:
         assert response.status_code == 200
 
         data = response.json()
-        # Load-bearing values for the login flow.
         assert data["oauth"]["enabled"] is True
         assert data["oauth"]["autoLaunch"] is True
         assert data["oauth"]["buttonText"] == "Sign in with Gumnut"
