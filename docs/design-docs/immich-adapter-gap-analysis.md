@@ -2,7 +2,7 @@
 title: "Immich Adapter Gap Analysis"
 status: active
 created: 2026-04-15
-last-updated: 2026-08-26
+last-updated: 2026-09-01
 ---
 
 # Immich Adapter Gap Analysis
@@ -94,7 +94,7 @@ Server feature flags are the first line of defense for hiding unsupported UI. A 
 
 ## Version upgrades
 
-Before changing the pinned Immich version:
+[Upgrading the Immich Target Version](../guides/upgrading-immich-version.md) is the step-by-step procedure, including how to diff two spec versions and classify the result. In summary, before changing the pinned Immich version:
 
 1. update the coordinated version owners described in [Routes, DTOs, and Upstream Compatibility](../references/routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version);
 2. regenerate models;

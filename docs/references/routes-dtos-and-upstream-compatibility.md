@@ -1,6 +1,6 @@
 ---
 title: "Routes, DTOs, and Upstream Compatibility"
-last-updated: 2026-08-26
+last-updated: 2026-09-01
 ---
 
 # Routes, DTOs, and Upstream Compatibility
@@ -64,6 +64,8 @@ Generated models can also omit upstream zod refinements. Before synthesizing val
 Treat any claim about upstream behavior in a task description as a hypothesis until it is read there, including one you wrote yourself. The timeline stack work was specified on the premise that the Immich *client* collapses a burst using the per-asset tuple; upstream collapses server-side and the client only draws a badge, so building to the spec as written would have shipped a badge on every frame of every burst.
 
 ## Bumping the Immich Version
+
+This section covers the mechanics of moving the pin. Evaluating a new release first (spec diff, endpoint classification, client and SDK checks) is the [Upgrading the Immich Target Version](../guides/upgrading-immich-version.md) guide.
 
 The Immich version the adapter targets is pinned in **two** files that must be kept in sync:
 

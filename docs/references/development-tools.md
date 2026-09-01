@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-08-21
+last-updated: 2026-09-01
 ---
 
 # Development Tools
@@ -128,4 +128,4 @@ Renovate is limited to the `github-actions` and `dockerfile` managers, and gates
 
 ### Not Managed by Renovate
 
-The `ghcr.io/immich-app/immich-server` image is intentionally excluded. The adapter treats the target Immich version as a coordinated compatibility decision, not a routine dependency bump, so update it manually via the workflow in [Routes, DTOs, and Upstream Compatibility](./routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version).
+The `ghcr.io/immich-app/immich-server` image is intentionally excluded. The adapter treats the target Immich version as a coordinated compatibility decision, not a routine dependency bump, so update it manually via the [Upgrading the Immich Target Version](../guides/upgrading-immich-version.md) guide, which ends with the pin-bump mechanics in [Routes, DTOs, and Upstream Compatibility](./routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version).
