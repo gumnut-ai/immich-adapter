@@ -27,6 +27,7 @@ from routers.immich_models import (
     SearchOrderField,
     SmartSearchDto,
     StatisticsSearchDto,
+    StringFilterNullable,
 )
 from routers.utils.asset_conversion import (
     ASSET_INCLUDE,
@@ -406,6 +407,27 @@ class TestSearchMetadata:
         mock_client.search.search.assert_called_once()
 
     @pytest.mark.anyio
+    async def test_all_null_structured_filter_does_not_restrict(
+        self, mock_current_user
+    ):
+        """An all-null filter (`{"filter": {"city": null}}`) is no constraint —
+        a set-but-null property must not empty the route the way a populated one
+        does. The search proceeds normally, like the empty `{}` case."""
+        search_response = Mock(data=[])
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        await search_assets(
+            request=MetadataSearchDto(
+                description="anything", filter=SearchFilter(city=None)
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        mock_client.search.search.assert_called_once()
+
+    @pytest.mark.anyio
     async def test_clamps_size_to_gumnut_api_ceiling(self, mock_current_user):
         """The Immich client sends size=1000 by default; the Gumnut API caps at 200.
         The adapter must clamp before forwarding, otherwise the Gumnut API 422s."""
@@ -714,12 +736,35 @@ class TestCriterionLessEnumeration:
         assert _is_criterion_less_enumeration(MetadataSearchDto()) is True
 
     def test_empty_structured_filter_does_not_disqualify(self):
-        # `filter: {}` restricts nothing (empty `model_fields_set`), so a
-        # criterion-less request carrying only an empty filter still enumerates
-        # instead of falling through to `search.search(query=None)`.
+        # `filter: {}` restricts nothing (no property carries a non-null value),
+        # so a criterion-less request carrying only an empty filter still
+        # enumerates instead of falling through to `search.search(query=None)`.
         assert (
             _is_criterion_less_enumeration(MetadataSearchDto(filter=SearchFilter()))
             is True
+        )
+
+    def test_all_null_structured_filter_does_not_disqualify(self):
+        # `{"filter": {"city": null}}` sets `city` in `model_fields_set` but to
+        # None, which is no constraint — it must behave like an empty `{}` and
+        # stay on the enumeration path, not divert to `search.search(query=None)`.
+        assert (
+            _is_criterion_less_enumeration(
+                MetadataSearchDto(filter=SearchFilter(city=None))
+            )
+            is True
+        )
+
+    def test_empty_nested_filter_object_conservatively_restricts(self):
+        # A present-but-empty nested filter object (`{"filter": {"city": {}}}`)
+        # counts as a non-null value, so it is conservatively treated as
+        # restricting and disqualifies the enumeration path. No client emits this
+        # shape and returning empty fails closed; pins the deliberate boundary.
+        assert (
+            _is_criterion_less_enumeration(
+                MetadataSearchDto(filter=SearchFilter(city=StringFilterNullable()))
+            )
+            is False
         )
 
     def test_enumeration_honorable_fields_do_not_disqualify(self):

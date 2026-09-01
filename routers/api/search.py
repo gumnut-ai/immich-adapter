@@ -353,9 +353,19 @@ def _filter_restricts(filter_: SearchFilter | None) -> bool:
 
     It has no Gumnut translation, so the search routes honor the convention
     for unsupported restrictive filters and return empty rather than
-    over-matching. An empty `{}` filter restricts nothing and is ignored.
+    over-matching. A filter restricts only when at least one property carries a
+    non-null value: every `SearchFilter` property is optional (`X | None`), so
+    both an empty `{}` and an all-null `{"city": null}` mean "no constraint" and
+    are ignored. Field presence alone (`model_fields_set`) can't tell the two
+    apart — Pydantic records an explicitly-null property as set — so inspect the
+    values.
+
+    The check is at the top-level property, so a present-but-empty *nested*
+    filter object (`{"city": {}}`) counts as a non-null value and is
+    conservatively treated as restricting. No client emits that shape, and
+    returning empty fails closed, so this isn't chased into per-leaf recursion.
     """
-    return filter_ is not None and bool(filter_.model_fields_set)
+    return filter_ is not None and any(value is not None for _, value in filter_)
 
 
 def _empty_search_response() -> SearchResponseDto:
@@ -392,8 +402,9 @@ def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
         if field_name in _ENUMERATION_HONORABLE_FIELDS:
             continue
         # The structured `filter` disqualifies only when it actually restricts:
-        # an empty `{}` filter narrows nothing (see `_filter_restricts`), so a
-        # canonical `{"filter": {}}` request stays on the enumeration path
+        # an empty `{}` or all-null filter narrows nothing (see
+        # `_filter_restricts`), so a canonical `{"filter": {}}` request stays on
+        # the enumeration path
         # instead of falling through to `search.search(query=None)`, which the
         # Gumnut API 400s. A restricting filter is already short-circuited to an
         # empty response in `search_assets`; rejecting it here keeps the
