@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-08-26
+last-updated: 2026-08-29
 ---
 
 # Immich Adapter Architecture
@@ -87,22 +87,23 @@ current group, so one large asset can form an archive larger than the target.
 
 `POST /api/download/archive` preflights every requested asset before returning a
 response. The preflight requests the file metadata, asset metadata, and variants
-needed to verify an accessible original URL, a non-null file size, and a usable
-modified-time fallback; one missing or inaccessible item rejects the whole
-archive. Successful requests stream the signed CDN originals into an on-the-fly
-ZIP in request order without taking custody of complete assets or archives. CDN
-bodies are consumed in bounded chunks, ZIP generation uses a dedicated bounded
-executor, and cancellation closes the active CDN response and pending archive
-work.
+needed to verify an accessible current-rendering URL, a non-null file size, and a
+usable modified-time fallback; one missing or inaccessible item rejects the
+whole archive. Successful requests stream the signed current-rendering URLs into
+an on-the-fly ZIP in request order without taking custody of complete assets or
+archives. CDN bodies are consumed in bounded chunks, ZIP generation uses a
+dedicated bounded executor, and cancellation closes the active CDN response and
+pending archive work.
 
 Archive member names are flattened, sanitized, kept unique under
 case-insensitive and Unicode-equivalent comparisons, and bounded to a filesystem
 component's UTF-8 size limit. ZIP timestamps are clamped to the DOS header range.
 Immich's `edited` flag selects a rung of the asset's version chain: `edited=true`
 serves the current rendering; `edited=false` serves the edit base for display
-variants and the exact uploaded bytes for `/original`. Selection rules and the
-`/edits` routes that append, replace, and remove `edit` versions are in
-[Asset and Media Handling](../references/asset-and-media-handling.md).
+variants and the exact uploaded bytes for `/original`. Archive members always
+use the current rendering, so the flag has no effect on that route. Selection
+rules and the `/edits` routes that append, replace, and remove `edit` versions
+are in [Asset and Media Handling](../references/asset-and-media-handling.md).
 
 ## Collection translation
 
