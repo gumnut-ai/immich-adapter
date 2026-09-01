@@ -277,6 +277,12 @@ _ENUMERATION_HONORABLE_FIELDS = frozenset(
         "page",
         "size",
         "order",
+        # v3.2's structured sort. Like the deprecated `order`, it selects
+        # ordering, not membership, so it never restricts the result set and
+        # must not divert an otherwise criterion-less request to the
+        # `search.search(query=None)` 400 path. `_list_asset_page` honors its
+        # direction (its `field` has no Gumnut listing equivalent — see there).
+        "orderBy",
         "visibility",
         "trashedAfter",
         "withDeleted",
@@ -447,13 +453,24 @@ async def _list_asset_page(
     page = int(request.page) if request.page is not None else 1
     start = (page - 1) * size
 
+    # v3.2 replaces the deprecated `order` (direction only) with structured
+    # `orderBy` (direction + field). The Gumnut listing sorts solely by capture
+    # time, so only the direction is expressible: `orderBy.field`
+    # (fileCreatedAt/localDateTime/fileSizeInBytes/rating) has no listing
+    # equivalent and is ignored, exactly as `order` only ever chose direction.
+    # Returning the correct asset set in capture-time order beats failing closed
+    # for a sort the backend can't express. `orderBy` wins over the deprecated
+    # `order` when both are sent; absent both, newest-first matches the old DTO
+    # default.
+    if request.orderBy is not None:
+        direction = request.orderBy.direction
+    else:
+        direction = request.order or AssetOrder.desc
     list_kwargs: dict[str, Any] = {
         "state": state,
         "limit": GUMNUT_API_MAX_PAGE_SIZE,
         "include": ASSET_INCLUDE,
-        # v3.2 deprecates `order` and drops its schema default; absent still
-        # means newest-first, matching the old DTO default.
-        "order": (request.order or AssetOrder.desc).value,
+        "order": direction.value,
     }
     extra_query = rating_extra_query(
         rating_filter_values(

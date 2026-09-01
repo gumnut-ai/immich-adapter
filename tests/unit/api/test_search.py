@@ -23,6 +23,8 @@ from routers.immich_models import (
     BoolFilter,
     RandomSearchDto,
     SearchFilter,
+    SearchOrder,
+    SearchOrderField,
     SmartSearchDto,
     StatisticsSearchDto,
 )
@@ -741,6 +743,27 @@ class TestCriterionLessEnumeration:
             _is_criterion_less_enumeration(MetadataSearchDto(withDeleted=True)) is True
         )
 
+    def test_structured_order_by_does_not_disqualify(self):
+        # v3.2's `orderBy` selects ordering, not membership, so a criterion-less
+        # request carrying only it still enumerates instead of diverting to
+        # `search.search(query=None)`. A field the Gumnut listing can't sort by
+        # (fileSizeInBytes) still doesn't restrict the set, so it stays too.
+        assert (
+            _is_criterion_less_enumeration(MetadataSearchDto(orderBy=SearchOrder()))
+            is True
+        )
+        assert (
+            _is_criterion_less_enumeration(
+                MetadataSearchDto(
+                    orderBy=SearchOrder(
+                        direction=AssetOrder.asc,
+                        field=SearchOrderField.fileSizeInBytes,
+                    )
+                )
+            )
+            is True
+        )
+
     def test_supported_or_non_restricting_false_flags_do_not_disqualify(self):
         # Favorite false is translated by the listing path; unsupported false
         # flags narrow nothing. Neither needs the search path.
@@ -801,6 +824,8 @@ class TestSearchMetadataEnumeration:
         assert list_kwargs["state"] == "live"
         assert list_kwargs["limit"] == 200
         assert list_kwargs["include"] == ASSET_INCLUDE
+        # Neither `order` nor `orderBy` set → newest-first, the old DTO default.
+        assert list_kwargs["order"] == "desc"
         assert result.assets.count == 3
         assert result.assets.total == 3
         assert result.assets.nextPage is None
@@ -1236,6 +1261,43 @@ class TestSearchMetadataEnumeration:
         )
         assert [item.id for item in asc.assets.items] == expected_desc
         assert mock_client.assets.list.call_args.kwargs["order"] == "asc"
+
+    @pytest.mark.anyio
+    async def test_structured_order_by_direction_is_forwarded(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """v3.2's `orderBy.direction` drives the listing order, and it wins over
+        the deprecated `order` when both are sent. `orderBy.field` has no Gumnut
+        listing equivalent and is simply ignored (capture-time order stands)."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(3)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+
+        # `orderBy` alone, unsupported field: direction honored, field ignored.
+        await search_assets(
+            request=MetadataSearchDto(
+                orderBy=SearchOrder(
+                    direction=AssetOrder.asc,
+                    field=SearchOrderField.fileSizeInBytes,
+                )
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+        assert mock_client.assets.list.call_args.kwargs["order"] == "asc"
+
+        # `orderBy` overrides the deprecated `order` when both are present.
+        await search_assets(
+            request=MetadataSearchDto(
+                order=AssetOrder.asc,
+                orderBy=SearchOrder(direction=AssetOrder.desc),
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+        assert mock_client.assets.list.call_args.kwargs["order"] == "desc"
 
     @pytest.mark.anyio
     async def test_real_criterion_still_uses_search(self, mock_current_user):
