@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-08-26
+last-updated: 2026-08-30
 ---
 
 # Immich WebSocket Events Reference
@@ -84,7 +84,7 @@ Client columns are read from the pinned upstream source for **both** clients (`w
 **Payload**: `{ asset: SyncAssetV2, edit: SyncAssetEditV1[] }` — the refreshed sync asset row plus the complete current edit-action list (empty after a delete). See `AssetEditReadyV2Payload` in `services/websockets.py`.
 
 **Client handling**:
-- **Web**: The editor's apply flow registers a one-shot 10-second wait for this event, filtered on `payload.asset.id`, *before* sending the PUT/DELETE, and treats a timeout as a failed apply — every successful edit write must emit exactly one.
+- **Web**: The editor's apply flow registers a one-shot 10-second wait for this event, filtered on `payload.asset.id`, *before* sending the PUT/DELETE, and treats a timeout as a failed apply. A normal committed edit write emits exactly one event; a durable write may still return success without an event if post-commit refresh or payload conversion fails (see **Failure semantics**).
 - **Mobile**: Its editor's `applyEdits` arms the same 10-second `asset.id`-filtered wait before the PUT/DELETE. On receipt the event is dispatched to `syncWebsocketEditV2`, which upserts `payload.asset` through the v2 asset-sync path and replaces the asset's local edit rows with `payload.edit` (an event arriving while one is still processing is dropped, not queued). A malformed payload (non-object, missing `asset`) is logged and dropped, so the adapter must always send both fields.
 
 **Companion event**: the same commit also emits `on_asset_update` with the full refreshed `AssetResponseDto`, which the editor panel and timeline use to refresh `isEdited`, dimensions, MIME type, and URLs without a reload.

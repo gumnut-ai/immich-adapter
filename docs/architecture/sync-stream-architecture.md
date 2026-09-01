@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-08-19
+last-updated: 2026-08-30
 ---
 
 # Sync Stream Architecture
@@ -148,7 +148,15 @@ The invariant tests in `test_sync_v2.py` assert that every V2 type in `_SYNC_TYP
 
 ## No-Op Request Types
 
-Immich sync types that are accepted but have no Gumnut equivalent (e.g., `AssetEditsV1` — we don't support editing) go in `_NOOP_REQUEST_TYPES` in `stream.py`. This prevents "unsupported type" warnings while making the no-op explicit. Do not just add them to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that silently drops them.
+Immich sync types that are accepted but have no Gumnut equivalent (e.g.,
+`AssetEditsV1`, which has no edit-history sync source) go in
+`_NOOP_REQUEST_TYPES` in `stream.py`. This sync no-op is separate from the
+implemented HTTP edit routes described in
+[`asset-and-media-handling.md`](../references/asset-and-media-handling.md):
+the routes support reading and writing the current Immich edit recipe, but
+edit-history events are not streamed through this endpoint. Do not just add
+such types to `_SUPPORTED_REQUEST_TYPES` without `_SYNC_TYPE_ORDER` — that
+silently drops them.
 
 The v3 mobile client requests these types on every sync, so keep unsupported
 ones in `_NOOP_REQUEST_TYPES` to avoid repeated warnings. `UserMetadataV1` is
