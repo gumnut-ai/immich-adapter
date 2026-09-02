@@ -65,6 +65,8 @@ Treat any claim about upstream behavior in a task description as a hypothesis un
 
 ## Bumping the Immich Version
 
+This section covers the mechanics of moving the pin. Evaluating a new release first (spec diff, endpoint classification, client and SDK checks) is the [Upgrading the Immich Target Version](../guides/upgrading-immich-version.md) guide.
+
 The Immich version the adapter targets is pinned in **two** files that must be kept in sync:
 
 1. `.immich-container-tag` — read at runtime by `config/immich_version.py`, by `tools/generate_immich_models.py` when regenerating models from the OpenAPI spec, and by `scripts/extract-immich-web.py` when extracting web assets locally.
