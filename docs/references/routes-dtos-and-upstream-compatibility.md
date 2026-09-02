@@ -1,6 +1,6 @@
 ---
 title: "Routes, DTOs, and Upstream Compatibility"
-last-updated: 2026-09-01
+last-updated: 2026-09-02
 ---
 
 # Routes, DTOs, and Upstream Compatibility
@@ -82,6 +82,8 @@ Forgetting step 2 causes silent drift — the served web UI stays on the old Imm
 
 A regen can add newly-required fields to (or retype) the generated DTOs, breaking endpoint stubs that hand-construct them at **runtime** (pydantic `ValidationError` → 500); these stubs have no callers in most tests, so the break hides until a client hits the route. Keep a construction smoke test per hand-built-DTO stub — `assert isinstance(await <endpoint>(), <Dto>)`, see `tests/unit/api/test_{system_config,jobs,license}.py` — and, as with an SDK bump, run the **full** `uv run pytest` after regenerating.
 
+Audit new search-DTO fields against `_ENUMERATION_HONORABLE_FIELDS` in `routers/api/search.py`. Add fields that only order, paginate, or shape results; unlisted fields are treated as restricting and route criterion-less requests to a search call the Gumnut API rejects.
+
 ## Bumping the Gumnut SDK
 
 The SDK is auto-generated (Stainless), so a version bump can add **newly-required** fields to response models (e.g. `FaceResponse.source` arrived in 0.116). Tests construct these models directly as fixtures, so a bump can break suites unrelated to the endpoint you're touching. Run the **full** `uv run pytest` after a bump (not just the changed endpoint's tests), and when a required field is added, `grep` the tests for `<Model>(` to fix every direct construction.
@@ -107,9 +109,9 @@ Some SDK contracts are already pinned by committed tests, so a bump that breaks 
 6. **Test endpoints**: Verify responses match Immich API expectations
 7. **Audit `/me/preferences` for a gating boolean**: Many client UI features (memories, tags, ratings, folders, people, shared links, email notifications, cast) are gated client-side on a flag in `UserPreferencesResponseDto`. The default in `routers/api/users.py::userPreferencesResponse` ships most of these as `enabled=False`, which silently hides the corresponding UI even after the backing endpoints are wired up. When implementing an endpoint that backs a client UI feature, grep `routers/api/users.py` for the matching preference field and flip its `enabled` to `True`. The Immich web client checks these via `$preferences?.<area>?.enabled`; missing the flip means the new endpoints become dead code on the client.
 8. **Audit `routers/api/server.py::server_features`**: Many client UI features are also gated by a server-feature flag advertised via `GET /server/features`. When promoting an area from stub to a real implementation, flip the matching key from `False` to `True` and update the explanatory comment so it scopes only to the remaining stubbed sub-features. Leaving the flag at `False` after implementing the endpoint silently hides the UI; flipping it to `True` while parts of the area are still stubbed surfaces non-functional UI.
-9. **Update the live-gap and architecture docs**: Promoting an endpoint from stub to real — **or dropping an endpoint removed upstream** — changes the active system record:
-   - `docs/design-docs/immich-adapter-gap-analysis.md` — update or remove the affected row in **Live gaps**, then update **Priorities** when the work changes what should close next, be revisited, or remain intentional. Bump `last-updated`.
-   - `docs/architecture/adapter-architecture.md` — update only when the endpoint changes a described system boundary, translation rule, collection shape, routing path, or failure behavior. This document is an architecture overview, not an endpoint catalog.
+9. **Update the feature-compatibility and architecture references**: Promoting an endpoint from stub to real — **or dropping an endpoint removed upstream** — changes the current compatibility record:
+   - `docs/references/feature-compatibility.md` owns feature-area classification and policy. Update it when an area moves between supported/current, product-dependent, deferred compatibility gap (a non-commitment), or intentional unsupported. Do not copy exact routes, schemas, model fields, or feature-flag values into it; those remain owned by code and generated models.
+   - `docs/architecture/adapter-architecture.md` owns current system boundaries, translation rules, collection shapes, routing paths, and failure behavior. Update it only when the endpoint changes one of those architectural contracts; it is not an endpoint catalog.
    - Search the feature name and removed path/handler across `docs/` and this reference for other summaries, rationale, feature-gate claims, or caller lists that the change makes false.
 
    If the endpoint emits a new WebSocket event or changes an existing event's timing, update the event's row in `docs/references/websocket-events-reference.md` **Summary Table** and its section under **Event Details**. Update `docs/architecture/websocket-implementation.md` only when room targeting, payload construction, delivery/failure semantics, or client convergence changes. Bump every edited document's `last-updated`.

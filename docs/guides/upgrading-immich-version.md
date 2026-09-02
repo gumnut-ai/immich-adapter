@@ -1,6 +1,6 @@
 ---
 title: "Upgrading the Immich Target Version"
-last-updated: 2026-09-01
+last-updated: 2026-09-02
 ---
 
 # Upgrading the Immich Target Version
@@ -117,13 +117,13 @@ grep -rn '"/<path>"' routers/api/           # find the handler; paths are declar
 grep -rln '<handler_name>' tests/
 ```
 
-Delete the handler, its tests, and any WebSocket emission or gap-analysis row that referenced it. Then follow the doc-update sweep in [Routes, DTOs, and Upstream Compatibility § Implementing New Endpoints](../references/routes-dtos-and-upstream-compatibility.md#implementing-new-endpoints), step 9, which also covers removals.
+Delete the handler, its tests, and any WebSocket emission that referenced it. If the removal changes a feature-area classification, update [Feature Compatibility](../references/feature-compatibility.md). Then follow the doc-update sweep in [Routes, DTOs, and Upstream Compatibility § Implementing New Endpoints](../references/routes-dtos-and-upstream-compatibility.md#implementing-new-endpoints), step 9, which also covers removals.
 
 ### Deprecated operations
 
 A `Deprecated` state means the route still exists at the target version, so the pinned clients may still call it. Keep serving it. Record two things:
 
-1. **The replacement.** The `replacementId` in the history names the operation that supersedes it. Check whether the adapter implements the replacement, and whether the pinned clients have already moved to it (see [Step 5](#step-5--read-the-clients-not-just-the-spec)). If the clients now call the replacement and the adapter only implements the old route, that is a live gap.
+1. **The replacement.** The `replacementId` in the history names the operation that supersedes it. Check whether the adapter implements the replacement, and whether the pinned clients have already moved to it (see [Step 5](#step-5--read-the-clients-not-just-the-spec)). If the clients now call the replacement and the adapter only implements the old route, that is a current compatibility difference.
 2. **The removal horizon.** Deprecations announce what the next major will delete. Note them in the PR so the next major-version upgrade starts with a list.
 
 ### Promoted operations (Alpha or Beta to Stable)
@@ -135,7 +135,7 @@ grep -rn '"/<path>"' routers/api/       # is it implemented at all?
 grep -n -i 'stub' routers/api/<router>.py
 ```
 
-Stubs identify themselves in their docstrings ("This is a stub implementation ...") or by returning `501`. If a promoted endpoint is currently a stub, decide whether to implement it properly using the evaluation rules in the [gap analysis](../design-docs/immich-adapter-gap-analysis.md#evaluation-rules): does a pinned client reach it, is a benign empty read honest, does the Gumnut API have the model. Record the outcome as a row change in **Live gaps** (see [Step 6](#step-6--check-what-the-gumnut-api-and-sdk-can-support) for the dependency column). Promotion alone does not force an implementation; an Intentional gap can stay intentional, but the reasoning has to be re-stated against the new state.
+Stubs identify themselves in their docstrings ("This is a stub implementation ...") or by returning `501`. If a promoted endpoint is currently a stub, decide whether to implement it properly: does a pinned client reach it, is a benign empty read honest, and does the Gumnut API have the model? Record any changed feature-area classification in [Feature Compatibility](../references/feature-compatibility.md) after completing the dependency check in [Step 6](#step-6--check-what-the-gumnut-api-and-sdk-can-support). Promotion alone does not force an implementation; an intentional unsupported area can stay intentional, but its classification must still fit the promoted contract.
 
 ### Added operations
 
@@ -143,7 +143,7 @@ New routes fall into three buckets, and the spec cannot tell you which:
 
 - **Client-reached.** A pinned web or mobile client calls it. It needs at least a compatibility response, and usually an implementation.
 - **Reachable but gated.** The client calls it only when a server feature flag or user preference enables the feature. The adapter can keep it unreachable by leaving the gate off (see the `/server/features` and `/me/preferences` audits in [Routes § Implementing New Endpoints](../references/routes-dtos-and-upstream-compatibility.md#implementing-new-endpoints)).
-- **Not a client route.** Admin, integrity, plugin, and other operator surfaces that normal clients never hit. These become an Intentional gap and a 404 from the adapter.
+- **Not a client route.** Admin, integrity, plugin, and other operator surfaces that normal clients never hit. These become intentionally unsupported areas and return a 404 from the adapter.
 
 Decide the bucket in [Step 5](#step-5--read-the-clients-not-just-the-spec), then the dependency in [Step 6](#step-6--check-what-the-gumnut-api-and-sdk-can-support). The unannotated routes (no `x-immich-state`) that appeared in v3 were plugins, workflows, backchannel logout, and album map markers; treat "no state" as Alpha until upstream says otherwise.
 
@@ -212,7 +212,7 @@ For each endpoint you are considering implementing, the question is whether the 
 
 2. **The latest SDK on PyPI.** The generated SDK trails the deployed API, so a missing method may already exist in a newer release. Bump the SDK before designing a raw-client workaround, following [Routes § Bumping the Gumnut SDK](../references/routes-dtos-and-upstream-compatibility.md#bumping-the-gumnut-sdk).
 3. **The live Gumnut API.** `https://api.gumnut.ai/openapi.json` is the contract the SDK is generated from. If the endpoint or field is there but not in any SDK release, a raw `client.get`/`client.post` call is the temporary bridge; note it so the next SDK bump can replace it.
-4. **Nothing.** The Gumnut API has no model for the feature. The adapter cannot fake durable state (see the gap analysis's **Stub behavior**: a benign empty read is fine, a mutation that claims success when nothing was stored is not). Write the row in **Live gaps** with the backend capability named in the **Dependency** column and a **Disposition** of Revisit or Intentional. That row is the hand-off to Gumnut API work; describe the capability the adapter needs, not a ticket.
+4. **Nothing.** The Gumnut API has no model for the feature. The adapter cannot fake durable state: a benign empty read can be compatible, but new or revised mutation behavior must not claim success when nothing was stored. Classify the feature as product-dependent, deferred, or intentionally unsupported in [Feature Compatibility](../references/feature-compatibility.md), describing the missing Gumnut API capability rather than citing a ticket.
 
 ## Step 7 — Run the compatibility validator against both specs
 
@@ -256,17 +256,17 @@ The pin lives in two files that CI checks against each other (the `check-immich-
 
    The script reads the tag from `.immich-container-tag`, pulls `ghcr.io/immich-app/immich-server:<tag>`, and writes `static/.extracted-tag`. The adapter logs a loud warning on startup when that marker no longer matches the pin, so a forgotten extraction announces itself. `static/` is gitignored; nothing to commit. Then run the stack per [Running with Immich Web](running-with-immich-web.md) and click through login, timeline, an album, a person, search, and an upload with the new client. This is the only step that exercises the real client against the adapter, and it is where behavior changes the spec could not show surface.
 
-4. **Update the gap analysis.** `docs/design-docs/immich-adapter-gap-analysis.md` is the active record of what is and is not implemented. Update the pinned version in **Context**, then add, change, or remove **Live gaps** rows for every decision from Step 3, add a dated bullet to the feature-area decisions section if the release introduced a new feature family, and re-check **Priorities**. Bump `last-updated`.
+4. **Update feature compatibility.** Reconcile every feature-area decision from Step 3 with `docs/references/feature-compatibility.md`. Change a classification only when the release or accompanying implementation changes the product boundary or current support; keep route, DTO, and version details in code and the PR body. Bump `last-updated` when the reference changes.
 5. **Sweep other version mentions.** Docs cite versions in two ways, and only one should change:
 
    ```bash
    grep -rn "$OLD" --include='*.md' --include='Dockerfile' --include='*.py' --include='*.yml' . | grep -v '^./.venv'
    ```
 
-   Update mentions that describe the **current** state (the README's build example, the gap analysis, any "as of vX.Y.Z the web client passes ..." claim, after re-verifying the claim against the new tag). Leave mentions that pin a **historical event** to the version where it happened (a past retype, a near-miss, an inventory baseline); those are correct as written.
+   Update mentions that describe the **current** state (the README's build example and any "as of vX.Y.Z the web client passes ..." claim, after re-verifying the claim against the new tag). Leave mentions that pin a **historical event** to the version where it happened (a past retype, a near-miss, an inventory baseline); those are correct as written.
 
 6. **Documentation lint and the map.** `uv run scripts/lint_docs.py --fix` bumps any `last-updated` you missed. If you added a guide or reference, add its row to the Documentation Map in `AGENTS.md`.
-7. **Write the PR body as the record.** Summarize the spec delta by bucket (removed, deprecated with replacement, promoted, added, schema changes), state the decision for each added or promoted endpoint, and list anything deferred to the gap analysis or to Gumnut API work. The repo is public, so describe backend dependencies in terms of the Gumnut API contract, not tickets or private paths. This body is what the next upgrade reads first.
+7. **Write the PR body as the record.** Summarize the spec delta by bucket (removed, deprecated with replacement, promoted, added, schema changes), state the decision for each added or promoted endpoint, and list anything deferred by the feature-compatibility classification or by a missing Gumnut API capability. The repo is public, so describe backend dependencies in terms of the Gumnut API contract, not tickets or private paths. This body is what the next upgrade reads first.
 
 ## Running this guide with an agent
 

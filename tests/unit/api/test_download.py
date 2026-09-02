@@ -21,6 +21,7 @@ from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.download import (
     _abatched,
     _ArchiveAsset,
+    _archive_content_disposition,
     _assets_by_ids,
     _assets_for_info,
     _build_download_info,
@@ -146,6 +147,48 @@ async def test_archive_streams_valid_zip_in_request_order_with_safe_unique_names
         assert zip_file.namelist() == ["..tripphoto.jpg", "..tripphoto+1.jpg"]
         assert zip_file.read("..tripphoto.jpg") == b"first"
         assert zip_file.read("..tripphoto+1.jpg") == b"second"
+
+
+@pytest.mark.parametrize(
+    ("archive_name", "expected"),
+    [
+        (None, 'attachment; filename="assets.zip"'),
+        ("", 'attachment; filename="assets.zip"'),
+        ("Trip 2024", "attachment; filename*=UTF-8''Trip%202024.zip"),
+        ("café+1", "attachment; filename*=UTF-8''caf%C3%A9%2B1.zip"),
+        # A CRLF injection attempt is percent-encoded, never a raw header break.
+        ("evil\r\nX-Bad: 1", "attachment; filename*=UTF-8''evil%0D%0AX-Bad%3A%201.zip"),
+    ],
+)
+def test_archive_content_disposition_honors_requested_name(
+    archive_name: str | None, expected: str
+) -> None:
+    assert _archive_content_disposition(archive_name) == expected
+
+
+@pytest.mark.anyio
+async def test_archive_uses_requested_archive_name_in_content_disposition() -> None:
+    asset_id = uuid4()
+    client = Mock()
+    client.assets.list = Mock(
+        return_value=MockSyncCursorPage(
+            [_download_asset(asset_id, url="https://cdn.example.com/only")]
+        )
+    )
+
+    async def fake_cdn_chunks(url: str, state: object) -> AsyncIterator[bytes]:
+        yield b"data"
+
+    with patch("routers.api.download._cdn_asset_chunks", side_effect=fake_cdn_chunks):
+        response = await download_archive(
+            DownloadArchiveDto(assetIds=[asset_id], archiveName="Family Trip"),
+            client=client,
+        )
+        await _collect_response_body(response)
+
+    assert response.headers["content-disposition"] == (
+        "attachment; filename*=UTF-8''Family%20Trip.zip"
+    )
 
 
 @pytest.mark.anyio

@@ -14,6 +14,7 @@ from stat import S_IFREG
 from threading import Event, Lock
 from typing import Annotated, Any, TypeVar, cast
 from unicodedata import normalize
+from urllib.parse import quote
 from uuid import UUID
 
 import httpx
@@ -390,6 +391,20 @@ async def _build_download_info(
     )
 
 
+def _archive_content_disposition(archive_name: str | None) -> str:
+    """Build the archive response's Content-Disposition header.
+
+    Immich derives the download filename from the client-supplied
+    ``archiveName``, emitting it as an RFC 5987 ``filename*`` value; the
+    percent-encoding also neutralizes header injection from an untrusted name.
+    An absent name keeps the adapter's ``assets.zip`` default.
+    """
+    if archive_name:
+        encoded = quote(archive_name, safe="")
+        return f"attachment; filename*=UTF-8''{encoded}.zip"
+    return 'attachment; filename="assets.zip"'
+
+
 def _sanitize_archive_filename(filename: str) -> str:
     """Return a safe, flat ZIP member filename with no traversal semantics."""
     sanitized = _UNSAFE_FILENAME_CHARACTERS.sub("", filename).strip().rstrip(" .")
@@ -618,7 +633,9 @@ async def download_archive(
     return StreamingResponse(
         _stream_archive(assets),
         media_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="assets.zip"'},
+        headers={
+            "Content-Disposition": _archive_content_disposition(request.archiveName)
+        },
     )
 
 

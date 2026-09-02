@@ -30,6 +30,7 @@ from routers.api import (
     notifications,
     partners,
     people,
+    public,
     search,
     server,
     sessions,
@@ -150,6 +151,7 @@ app.include_router(oauth.router)
 app.include_router(notifications.router)
 app.include_router(partners.router)
 app.include_router(people.router)
+app.include_router(public.router)
 app.include_router(search.router)
 app.include_router(server.router)
 app.include_router(sessions.router)

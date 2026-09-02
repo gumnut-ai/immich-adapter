@@ -45,6 +45,7 @@ The sections below follow that order, with design docs split by their `status:` 
 |-------|----------|-----------------|
 | Project conventions | `docs/references/project-conventions.md` | Python style, repository organization, public-repository wording, and pull requests |
 | Routes and compatibility | `docs/references/routes-dtos-and-upstream-compatibility.md` | Route parameters, DTOs, errors, generated models, upstream behavior, version bumps, and the checklist for promoting a stub to a real implementation |
+| Feature compatibility | `docs/references/feature-compatibility.md` | Supported workflows, product-dependent surfaces, deferred compatibility gaps, and intentional unsupported areas |
 | Asset and media handling | `docs/references/asset-and-media-handling.md` | Asset fields, media variants, checksums, face geometry, and asset-operation WebSocket emission |
 | Pagination, bulk, and concurrency | `docs/references/pagination-bulk-and-concurrency.md` | Cursor/offset translation, bounded enumeration, aggregates, fan-out, and bulk-ID operations |
 | Testing and logging | `docs/references/testing-and-logging.md` | Test fixtures, async test traps, structured logging, and upstream severity policy |
@@ -63,14 +64,7 @@ The sections below follow that order, with design docs split by their `status:` 
 | Running with Immich Web | `docs/guides/running-with-immich-web.md` | Setting up the full local stack (Immich web + adapter + the Gumnut API + Clerk OAuth) |
 | Running with Immich Mobile | `docs/guides/running-with-immich-mobile.md` | Self-signed certs, HTTPS setup, connecting the Immich mobile app |
 | Importing with immich-go | `docs/guides/importing-with-immich-go.md` | Bulk-importing a library with the immich-go CLI, `x-api-key` auth via a Gumnut API key |
-| Upgrading the Immich version | `docs/guides/upgrading-immich-version.md` | Evaluating a new Immich release or RC: spec diff, removed/deprecated/promoted/new endpoints, SDK support, the pin bump, web extraction, gap-analysis refresh |
-
-## Active Design Docs
-
-| Topic | Document | Consult when... |
-|-------|----------|-----------------|
-| Large upload timeout | `docs/design-docs/large-upload-timeout.md` | Streaming upload pipeline, large file upload failures, Immich client timeout limits |
-| Immich adapter gap analysis | `docs/design-docs/immich-adapter-gap-analysis.md` | Prioritizing adapter work, evaluating stub endpoints, assessing feature gaps |
+| Upgrading the Immich version | `docs/guides/upgrading-immich-version.md` | Evaluating a new Immich release or RC: spec diff, endpoint changes, SDK support, the pin bump, web extraction, and feature classification |
 
 ## Historical & Deprecated Design Docs
 
@@ -84,4 +78,6 @@ Decision records, not descriptions of the running system — consult them for *w
 | Trash soft-delete (adapter) | `docs/design-docs/trash-soft-delete-adapter.md` | The original adapter-side trash design record — current trash/restore semantics are in `docs/architecture/adapter-architecture.md` |
 | Static file sharing | `docs/design-docs/static-file-sharing.md` | Why the adapter serves Immich static files itself and chose Docker extraction — current operation is in the web guide |
 | Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Why event replay required parent-first upserts, child-first deletes, and current-state FK verification |
+| Large upload timeout | `docs/design-docs/large-upload-timeout.md` | Historical mobile-upload timeout analysis and forwarding alternatives — current upload behavior is in `docs/architecture/adapter-architecture.md` |
+| Immich adapter gap analysis | `docs/design-docs/immich-adapter-gap-analysis.md` | Historical compatibility evaluation and rationale — current feature classifications are in `docs/references/feature-compatibility.md` |
 | Immich v3 API change analysis | `docs/design-docs/immich-v3-api-changes.md` | Why the adapter made a clean Immich v3 retarget and how behavioral changes were separated from codegen noise |

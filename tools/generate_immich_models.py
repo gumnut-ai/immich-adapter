@@ -33,12 +33,7 @@ from spec_preprocess import strip_non_string_patterns
 
 
 def get_container_tag() -> str:
-    """
-    Read the Immich container tag from .immich-container-tag file.
-
-    Returns:
-        The container tag (e.g., "v2.2.2") or empty string if file is missing/empty.
-    """
+    """Return the non-empty Immich tag from `.immich-container-tag`."""
     tag_file = Path(".immich-container-tag")
     if tag_file.exists():
         content = tag_file.read_text().strip()
@@ -88,8 +83,7 @@ def fetch_spec(spec_path: str) -> tuple[str, str | None, str]:
                 print(f"Could not read retrieve Immich tag from file: {e}")
                 sys.exit(1)
 
-            # normalize any `/blob/<ref>/` to use the container tag (or main)
-            ref = container_tag or "main"
+            ref = container_tag
             spec_path = re.sub(r"/blob/[^/]+/", f"/{ref}/", spec_path)
             tag_or_branch = ref
         elif "raw.githubusercontent.com" in parsed.netloc:

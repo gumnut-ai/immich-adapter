@@ -14,7 +14,7 @@ from routers.api.system_config import (
     get_storage_template_options,
 )
 from routers.immich_models import (
-    SystemConfigDto,
+    AdminConfigDto,
     SystemConfigTemplateStorageOptionDto,
 )
 
@@ -27,9 +27,7 @@ class TestGetConfig:
         """The stub config must validate against the generated models."""
         config = await get_config()
 
-        assert isinstance(config, SystemConfigDto)
-        # OAuth is the only login method the adapter supports; these two
-        # values are load-bearing for the Immich clients' login flow.
+        assert isinstance(config, AdminConfigDto)
         assert config.oauth.enabled is True
         assert config.passwordLogin.enabled is False
         # Real-time HLS is an intentional gap; disabling it keeps both clients

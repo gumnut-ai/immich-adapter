@@ -41,7 +41,16 @@ async def create_api_key(request: ApiKeyCreateDto) -> ApiKeyCreateResponseDto:
         createdAt=datetime.now(tz=timezone.utc),
         updatedAt=datetime.now(tz=timezone.utc),
     )
-    return ApiKeyCreateResponseDto(apiKey=api_key, secret="fake-secret-key-12345")
+    # Populate both response shapes for client compatibility.
+    return ApiKeyCreateResponseDto(
+        apiKey=api_key,
+        id=api_key.id,
+        name=api_key.name,
+        permissions=api_key.permissions,
+        createdAt=api_key.createdAt,
+        updatedAt=api_key.updatedAt,
+        secret="fake-secret-key-12345",
+    )
 
 
 @router.get("/me")
