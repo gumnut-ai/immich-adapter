@@ -373,7 +373,24 @@ class SpecComparator:
             adapter_actual_path = adapter_paths_normalized[normalized_path]
             self._compare_path_normalized(immich_actual_path, adapter_actual_path)
 
-        return self.differences
+        # Several comparison stages build set differences and intersections. Sort
+        # the completed report so identical findings have stable ordering even
+        # when the compared specs have different path or parameter sets. This
+        # keeps saved reports meaningfully diffable across Immich versions.
+        return sorted(
+            self.differences,
+            key=lambda difference: (
+                difference["path"],
+                difference.get("method", ""),
+                difference["type"],
+                str(difference.get("parameter", "")),
+                str(difference.get("location", "")),
+                str(difference.get("status", "")),
+                str(difference.get("content_type", "")),
+                difference["message"],
+                str(difference.get("details", "")),
+            ),
+        )
 
     def _compare_path_normalized(self, immich_path_key: str, adapter_path_key: str):
         """Compare specific paths between the two specs, handling different path prefixes."""

@@ -20,6 +20,8 @@ export IMMICH=../immich
 export S="$(mktemp -d)"   # or any scratch directory
 ```
 
+Keep these variables in one persistent shell for the whole procedure. An agent whose command tool starts a fresh shell for each call must repeat this setup, along with the `OLD` and `NEW` declarations below, in every call that uses them; pausing between steps does not preserve shell state.
+
 ## Step 0 — Identify the current and target versions
 
 ```bash
@@ -49,7 +51,7 @@ Both files are large (about 600 KB) and a raw `diff` is unreadable: the schema s
 Immich annotates every operation with `x-immich-state` (`Alpha`, `Beta`, `Stable`, `Deprecated`, `Internal`, or absent for a few unannotated routes) and `x-immich-history` (a list of `{version, state}` entries, where a `Deprecated` entry carries a `replacementId` naming the operation that supersedes it). Deprecated operations also set the standard OpenAPI `deprecated: true`. The history is keyed by **major** version, so a promotion from Beta to Stable inside a major only shows up by comparing `x-immich-state` between the two specs, which is what this script does.
 
 ```bash
-python3 - "$S/old.json" "$S/new.json" <<'EOF'
+uv run python - "$S/old.json" "$S/new.json" <<'EOF'
 import json, sys
 old, new = [json.load(open(p)) for p in sys.argv[1:3]]
 METHODS = ("get", "post", "put", "patch", "delete")
@@ -81,7 +83,7 @@ print()
 
 print("== operations whose definition changed (params, body, responses, docs)")
 for k in sorted(set(o) & set(n)):
-    if o[k] != n[k] and o[k].get("x-immich-state") == n[k].get("x-immich-state"):
+    if o[k] != n[k]:
         print(f"  {k[0]:6} {k[1]}")
 print()
 
@@ -95,12 +97,12 @@ EOF
 For any operation or schema the script lists as changed, look at the actual delta before deciding it matters:
 
 ```bash
-python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["paths"][sys.argv[2]][sys.argv[3]], indent=1))' "$S/old.json" /albums/{id}/user/{userId} put > "$S/op-old.json"
-python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["paths"][sys.argv[2]][sys.argv[3]], indent=1))' "$S/new.json" /albums/{id}/user/{userId} put > "$S/op-new.json"
+uv run python -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["paths"][sys.argv[2]][sys.argv[3]], indent=1))' "$S/old.json" /albums/{id}/user/{userId} put > "$S/op-old.json"
+uv run python -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["paths"][sys.argv[2]][sys.argv[3]], indent=1))' "$S/new.json" /albums/{id}/user/{userId} put > "$S/op-new.json"
 diff "$S/op-old.json" "$S/op-new.json"
 ```
 
-Description-only deltas still deserve a read. `x-immich-history` entries can also sit on individual parameters, where the script above does not look. The v3.0.3 to v3.1.0 delta was entirely parameter descriptions, yet one of them carried a history entry deprecating the `"me"` value for `userId` on the album-user routes, slated for removal in Immich v4.
+An operation appears in both sections when its state and its definition changed. Keep that overlap: otherwise a promotion or deprecation could hide a simultaneous parameter, body, or response change. Description-only deltas still deserve a read. `x-immich-history` entries can also sit on individual parameters, where the script above does not look. The v3.0.3 to v3.1.0 delta was entirely parameter descriptions, yet one of them carried a history entry deprecating the `"me"` value for `userId` on the album-user routes, slated for removal in Immich v4.
 
 ## Step 3 — Classify every finding
 
@@ -225,7 +227,7 @@ uv run tools/validate_api_compatibility.py --immich-spec="$S/new.json" --adapter
 diff "$S/compat-old.txt" "$S/compat-new.txt"
 ```
 
-The exit code is the number of error-level incompatibilities, so both runs will exit non-zero: a `missing_endpoint` error is what an intentional 404 looks like to the validator, and the baseline already carries dozens. What matters is every *new* error, which should correspond one-to-one with the added operations from Step 2 that you decided to leave unimplemented. See [Development Tools § API Compatibility Tool](../references/development-tools.md#api-compatibility-tool) for flags.
+The exit code is the number of error-level incompatibilities, so both runs will exit non-zero: a `missing_endpoint` error is what an intentional 404 looks like to the validator, and the baseline already carries dozens. The validator sorts its findings so the report diff contains actual additions and removals rather than reordered baseline rows. Reconcile every changed entry with Step 2: new `missing_endpoint` errors normally correspond to added operations left unimplemented, while method, parameter, request-body, response, and schema findings can come from changed operations. See [Development Tools § API Compatibility Tool](../references/development-tools.md#api-compatibility-tool) for flags.
 
 ## Step 8 — Decide what to do with a release candidate
 
@@ -270,6 +272,6 @@ The pin lives in two files that CI checks against each other (the `check-immich-
 
 Paste this into an agent session from the repo root, filling in the tag:
 
-> Read `docs/guides/upgrading-immich-version.md` and walk me through upgrading the adapter from the version in `.immich-container-tag` to Immich `<tag>`. The upstream clone is at `../immich`. Go one step at a time: run the step's commands, show me the results and your classification, and wait for my go-ahead before moving on. In Step 3, present each removed, deprecated, promoted, and added operation with your recommended disposition and the evidence from the client source. In Step 6, tell me for each candidate endpoint whether the installed SDK, a newer SDK release, the live Gumnut API, or nothing supports it. Do not bump `.immich-container-tag` or the Dockerfile until I say the release is live.
+> Read `docs/guides/upgrading-immich-version.md` and walk me through upgrading the adapter from the version in `.immich-container-tag` to Immich `<tag>`. The upstream clone is at `../immich`. Go one step at a time: run the step's commands, show me the results and your classification, and wait for my go-ahead before moving on. Keep the guide's shell variables in a persistent session, or re-declare them in every command call that starts a fresh shell. In Step 3, present each removed, deprecated, promoted, and added operation with your recommended disposition and the evidence from the client source. In Step 6, tell me for each candidate endpoint whether the installed SDK, a newer SDK release, the live Gumnut API, or nothing supports it. Do not bump `.immich-container-tag` or the Dockerfile until I say the release is live.
 
 For a release that is already GA and where you want the whole thing done, replace the last two sentences with: "Complete every step including the Step 9 bump, and open a PR whose body follows Step 9 item 7."
