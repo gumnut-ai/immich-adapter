@@ -263,6 +263,7 @@ async def link_oauth_account(
     now = datetime.now(timezone.utc)
     return UserAdminResponseDto(
         avatarColor=UserAvatarColor.primary,
+        clusterGroupId=current_user.id,
         createdAt=now,
         deletedAt=now,
         email=current_user.email,
@@ -321,6 +322,7 @@ async def unlink_oauth_account(
     now = datetime.now(timezone.utc)
     return UserAdminResponseDto(
         avatarColor=UserAvatarColor.primary,
+        clusterGroupId=current_user.id,
         createdAt=now,
         deletedAt=now,
         email=current_user.email,

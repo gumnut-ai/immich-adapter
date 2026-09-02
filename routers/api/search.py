@@ -20,6 +20,8 @@ from routers.immich_models import (
     SearchAlbumResponseDto,
     SearchExploreItem,
     SearchExploreResponseDto,
+    SearchFilter,
+    AssetOrder,
     AssetResponseDto,
     AssetTypeEnum,
     AssetVisibility,
@@ -245,6 +247,9 @@ async def search_asset_statistics(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> SearchStatisticsResponseDto:
     """Get asset count statistics."""
+    if _filter_restricts(request.filter):
+        return SearchStatisticsResponseDto(total=0)
+
     buckets = await fetch_asset_counts(
         client,
         ratings=rating_filter_values(
@@ -272,6 +277,9 @@ _ENUMERATION_HONORABLE_FIELDS = frozenset(
         "page",
         "size",
         "order",
+        # Sorts without restricting membership; the listing path honors its
+        # direction but cannot honor every field.
+        "orderBy",
         "visibility",
         "trashedAfter",
         "withDeleted",
@@ -337,6 +345,25 @@ def _compose_free_text_query(
     return " ".join(terms) or None
 
 
+def _filter_restricts(filter_: SearchFilter | None) -> bool:
+    """Whether an unsupported structured filter must fail closed.
+
+    Empty and all-null filters impose no constraint. Any non-null top-level
+    value, including an empty nested filter, is treated as restricting.
+    """
+    return filter_ is not None and any(value is not None for _, value in filter_)
+
+
+def _empty_search_response() -> SearchResponseDto:
+    """An empty search result page."""
+    return SearchResponseDto(
+        albums=SearchAlbumResponseDto(count=0, facets=[], items=[], total=0),
+        assets=SearchAssetResponseDto(
+            count=0, facets=[], items=[], nextCursor=None, nextPage=None, total=0
+        ),
+    )
+
+
 def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
     """True when a metadata search is a filter-less asset-listing walk.
 
@@ -359,6 +386,10 @@ def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
     """
     for field_name, value in request:
         if field_name in _ENUMERATION_HONORABLE_FIELDS:
+            continue
+        if field_name == "filter":
+            if _filter_restricts(value):
+                return False
             continue
         # Unsupported boolean filters (isMotion/isEncoded/…) restrict only when
         # explicitly true; false narrows nothing, so it does not disqualify the
@@ -391,12 +422,7 @@ async def _list_asset_page(
         request.visibility is not None
         and request.visibility != AssetVisibility.timeline
     ):
-        return SearchResponseDto(
-            albums=SearchAlbumResponseDto(count=0, facets=[], items=[], total=0),
-            assets=SearchAssetResponseDto(
-                count=0, facets=[], items=[], nextPage=None, total=0
-            ),
-        )
+        return _empty_search_response()
 
     # `withDeleted` widens to live+trashed. A `trashedAfter` request selects the
     # trashed listing; because the Gumnut API has no trash-date filter, the loop
@@ -408,21 +434,22 @@ async def _list_asset_page(
     else:
         state = "live"
 
-    # Clamp at the Gumnut API per-page ceiling. The Immich client default is
-    # 1000; the adapter pages the client through the library at 200 per page.
-    size = (
-        min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
-        if request.size is not None
-        else GUMNUT_API_MAX_PAGE_SIZE
-    )
+    # The DTO always supplies a size; clamp it to the Gumnut API ceiling.
+    size = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
     page = int(request.page) if request.page is not None else 1
     start = (page - 1) * size
 
+    # The listing supports direction but not `orderBy.field`. Prefer `orderBy`
+    # over the deprecated `order`, and default to newest first.
+    if request.orderBy is not None:
+        direction = request.orderBy.direction
+    else:
+        direction = request.order or AssetOrder.desc
     list_kwargs: dict[str, Any] = {
         "state": state,
         "limit": GUMNUT_API_MAX_PAGE_SIZE,
         "include": ASSET_INCLUDE,
-        "order": request.order.value,
+        "order": direction.value,
     }
     extra_query = rating_extra_query(
         rating_filter_values(
@@ -470,6 +497,7 @@ async def _list_asset_page(
             count=len(page_items),
             facets=[],
             items=page_items,
+            nextCursor=None,
             nextPage=next_page,
             total=len(page_items),
         ),
@@ -488,6 +516,9 @@ async def search_assets(
     folded into the free-text query rather than applied as filters — see
     `_compose_free_text_query` for what that costs.
     """
+    if _filter_restricts(request.filter):
+        return _empty_search_response()
+
     if _is_criterion_less_enumeration(request):
         return await _list_asset_page(request, client, current_user)
 
@@ -521,10 +552,8 @@ async def search_assets(
     )
     if extra_query is not None:
         search_kwargs["extra_query"] = extra_query
-    if request.size is not None:
-        # Clamp at the Gumnut API per-page ceiling. The Immich client default
-        # is 1000; without this, the Gumnut API 422s.
-        search_kwargs["limit"] = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
+    # Preserve the DTO's effective default while respecting the Gumnut API cap.
+    search_kwargs["limit"] = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
     if request.page is not None:
         search_kwargs["page"] = int(request.page)
 
@@ -543,6 +572,7 @@ async def search_assets(
             count=len(immich_assets),
             facets=[],
             items=immich_assets,
+            nextCursor=None,
             nextPage=None,
             total=len(immich_assets),
         ),
@@ -560,6 +590,9 @@ async def search_smart(
     Camera and place filters are folded into the query alongside the caller's
     text — see `_compose_free_text_query` for what that costs.
     """
+    if _filter_restricts(request.filter):
+        return _empty_search_response()
+
     search_kwargs: dict[str, Any] = {
         "query": _compose_free_text_query(request.query, request),
         "include": ASSET_INCLUDE,
@@ -573,10 +606,8 @@ async def search_smart(
     )
     if extra_query is not None:
         search_kwargs["extra_query"] = extra_query
-    if request.size is not None:
-        # Clamp at the Gumnut API per-page ceiling. The Immich client default
-        # is 1000; without this, the Gumnut API 422s.
-        search_kwargs["limit"] = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
+    # Preserve the DTO's effective default while respecting the Gumnut API cap.
+    search_kwargs["limit"] = min(int(request.size), GUMNUT_API_MAX_PAGE_SIZE)
     if request.page is not None:
         search_kwargs["page"] = int(request.page)
 
@@ -595,6 +626,7 @@ async def search_smart(
             count=len(immich_assets),
             facets=[],
             items=immich_assets,
+            nextCursor=None,
             nextPage=None,
             total=len(immich_assets),
         ),
@@ -735,6 +767,7 @@ async def search_random(
         any(value is not None for value in unsupported_value_filters)
         or any(unsupported_flag_filters)
         or request.tagIds
+        or _filter_restricts(request.filter)
     ):
         return []
 

@@ -23,7 +23,7 @@ from routers.immich_models import (
     RatingsResponse,
     RecentlyAddedResponse,
     SharedLinksResponse,
-    SystemConfigSmtpDto,
+    AdminConfigSmtpDto,
     TagsResponse,
     TemplateDto,
     TemplateResponseDto,
@@ -58,7 +58,7 @@ _USER_PREFERENCES_RESPONSE: UserPreferencesResponseDto = UserPreferencesResponse
         albumInvite=False, albumUpdate=False, enabled=False
     ),
     folders=FoldersResponse(enabled=False, sidebarWeb=False),
-    memories=MemoriesResponse(duration=7, enabled=False),
+    memories=MemoriesResponse(duration=7, enabled=False, sidebarWeb=False),
     people=PeopleResponse(enabled=False, sidebarWeb=False),
     purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
     ratings=RatingsResponse(enabled=True),
@@ -109,7 +109,7 @@ async def get_notification_template_admin(
 
 
 @router.post("/notifications/test-email")
-async def send_test_email_admin(request: SystemConfigSmtpDto) -> TestEmailResponseDto:
+async def send_test_email_admin(request: AdminConfigSmtpDto) -> TestEmailResponseDto:
     """
     Send test email.
     This is a stub implementation that returns a fake test email response.
@@ -137,9 +137,10 @@ async def create_user_admin(request: UserAdminCreateDto) -> UserAdminResponseDto
     Create a user.
     This is a stub implementation that returns a fake user response.
     """
+    user_id = uuid4()
     return UserAdminResponseDto(
-        # v3 types the id UUID; a non-UUID stub fails response validation.
-        id=uuid4(),
+        id=user_id,
+        clusterGroupId=user_id,
         email=request.email,
         name=request.name,
         isAdmin=request.isAdmin or False,
@@ -171,6 +172,7 @@ async def get_user_admin(id: UUID) -> UserAdminResponseDto:
     """
     return UserAdminResponseDto(
         id=id,
+        clusterGroupId=id,
         email="user@example.com",
         name="User Name",
         isAdmin=False,
@@ -204,6 +206,7 @@ async def update_user_admin(
     """
     return UserAdminResponseDto(
         id=id,
+        clusterGroupId=id,
         email=request.email or "user@example.com",
         name=request.name or "Updated User",
         isAdmin=request.isAdmin or False,
@@ -237,6 +240,7 @@ async def delete_user_admin(
     """
     return UserAdminResponseDto(
         id=id,
+        clusterGroupId=id,
         email="deleted@example.com",
         name="Deleted User",
         isAdmin=False,
@@ -288,6 +292,7 @@ async def restore_user_admin(id: UUID) -> UserAdminResponseDto:
     """
     return UserAdminResponseDto(
         id=id,
+        clusterGroupId=id,
         email="restored@example.com",
         name="Restored User",
         isAdmin=False,

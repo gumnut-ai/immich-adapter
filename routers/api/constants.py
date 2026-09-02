@@ -1,3 +1,27 @@
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class FixedLoginConfig:
+    """Login values shared by the public, server, and admin config DTOs.
+
+    OAuth is the adapter's only login method. Keeping these load-bearing values
+    together prevents the parallel DTO projections from drifting.
+    """
+
+    oauth_enabled: bool = True
+    oauth_auto_launch: bool = True
+    # Shown as the OAuth button label when the login form is visible (e.g.,
+    # ?autoLaunch=0).
+    oauth_button_text: str = "Sign in with Gumnut"
+    password_login_enabled: bool = False
+    login_page_message: str = ""
+    custom_css: str = ""
+
+
+FIXED_LOGIN_CONFIG = FixedLoginConfig()
+
+
 # Maximum page size accepted by the Gumnut API. The backend rejects any
 # per-page `limit` above this with a 422, so the adapter clamps to it before
 # forwarding. Keep in sync with the backend's own per-page ceiling.

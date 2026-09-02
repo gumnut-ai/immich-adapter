@@ -96,6 +96,9 @@ async def get_current_user_admin(
 
     user_admin_dto = UserAdminResponseDto(
         id=user_uuid,
+        # Gumnut has no cluster groups; the user UUID supplies the required,
+        # stable per-user value.
+        clusterGroupId=user_uuid,
         email=user.email or "",
         name=full_name,
         isAdmin=False,  # Always False - no need to show Immich admin controls

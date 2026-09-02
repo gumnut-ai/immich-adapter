@@ -79,6 +79,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         "/api/oauth/authorize",
         "/api/oauth/callback",
         "/api/oauth/mobile-redirect",
+        # Public config is fetched by the web login page before any auth.
+        "/api/public/config",
+        "/api/public/config/defaults",
         "/api/server/config",
         "/api/server/features",
         "/api/server/media-types",

@@ -64,7 +64,7 @@ userPreferencesResponse: UserPreferencesResponseDto = UserPreferencesResponseDto
         albumInvite=False, albumUpdate=False, enabled=False
     ),
     folders=FoldersResponse(enabled=False, sidebarWeb=False),
-    memories=MemoriesResponse(duration=7, enabled=True),
+    memories=MemoriesResponse(duration=7, enabled=True, sidebarWeb=False),
     people=PeopleResponse(enabled=False, sidebarWeb=False),
     purchase=PurchaseResponse(hideBuyButtonUntil="", showSupportBadge=False),
     ratings=RatingsResponse(enabled=True),
@@ -101,6 +101,7 @@ async def update_my_user(
 
     return UserAdminResponseDto(
         id=user_uuid,
+        clusterGroupId=user_uuid,
         email=user.email or "",
         name=full_name,
         isAdmin=True,

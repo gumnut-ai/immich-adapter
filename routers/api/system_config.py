@@ -1,56 +1,57 @@
 from fastapi import APIRouter
 from pydantic import AnyUrl
+from routers.api.constants import FIXED_LOGIN_CONFIG
 from routers.immich_models import (
+    AdminConfigBackupsDto,
+    AdminConfigClipDto,
+    AdminConfigDatabaseBackupDto,
+    AdminConfigDto,
+    AdminConfigDuplicateDetectionDto,
+    AdminConfigFFmpegDto,
+    AdminConfigFFmpegRealtimeDto,
+    AdminConfigFacesDto,
+    AdminConfigFacialRecognitionDto,
+    AdminConfigGeneratedFullsizeImageDto,
+    AdminConfigGeneratedImageDto,
+    AdminConfigImageDto,
+    AdminConfigIntegrityChecksDto,
+    AdminConfigIntegrityChecksumJobDto,
+    AdminConfigIntegrityJobDto,
+    AdminConfigJobDto,
+    AdminConfigJobSettingsDto,
+    AdminConfigLibraryDto,
+    AdminConfigLibraryScanDto,
+    AdminConfigLibraryWatchDto,
+    AdminConfigLoggingDto,
+    AdminConfigMachineLearningAvailabilityChecksDto,
+    AdminConfigMachineLearningDto,
+    AdminConfigMapDto,
+    AdminConfigMetadataDto,
+    AdminConfigNewVersionCheckDto,
+    AdminConfigNightlyTasksDto,
+    AdminConfigNotificationsDto,
+    AdminConfigOAuthDto,
+    AdminConfigOcrDto,
+    AdminConfigPasswordLoginDto,
+    AdminConfigReverseGeocodingDto,
+    AdminConfigServerDto,
+    AdminConfigSmtpDto,
+    AdminConfigSmtpTransportDto,
+    AdminConfigStorageTemplateDto,
+    AdminConfigTemplateEmailsDto,
+    AdminConfigTemplatesDto,
+    AdminConfigThemeDto,
+    AdminConfigTrashDto,
+    AdminConfigUserDto,
     AudioCodec,
-    CLIPConfig,
     CQMode,
     Colorspace,
-    DatabaseBackupConfig,
-    DuplicateDetectionConfig,
-    FacialRecognitionConfig,
     HlsVideoResolution,
     ImageFormat,
-    JobSettingsDto,
     LogLevel,
-    MachineLearningAvailabilityChecksDto,
     OAuthTokenEndpointAuthMethod,
-    OcrConfig,
     ReleaseChannel,
-    SystemConfigBackupsDto,
-    SystemConfigDto,
-    SystemConfigFFmpegDto,
-    SystemConfigFFmpegRealtimeDto,
-    SystemConfigFacesDto,
-    SystemConfigGeneratedFullsizeImageDto,
-    SystemConfigGeneratedImageDto,
-    SystemConfigImageDto,
-    SystemConfigIntegrityChecks,
-    SystemConfigIntegrityChecksumJob,
-    SystemConfigIntegrityJob,
-    SystemConfigJobDto,
-    SystemConfigLibraryDto,
-    SystemConfigLibraryScanDto,
-    SystemConfigLibraryWatchDto,
-    SystemConfigLoggingDto,
-    SystemConfigMachineLearningDto,
-    SystemConfigMapDto,
-    SystemConfigMetadataDto,
-    SystemConfigNewVersionCheckDto,
-    SystemConfigNightlyTasksDto,
-    SystemConfigNotificationsDto,
-    SystemConfigOAuthDto,
-    SystemConfigPasswordLoginDto,
-    SystemConfigReverseGeocodingDto,
-    SystemConfigServerDto,
-    SystemConfigSmtpDto,
-    SystemConfigSmtpTransportDto,
-    SystemConfigStorageTemplateDto,
-    SystemConfigTemplateEmailsDto,
-    SystemConfigTemplatesDto,
     SystemConfigTemplateStorageOptionDto,
-    SystemConfigThemeDto,
-    SystemConfigTrashDto,
-    SystemConfigUserDto,
     ToneMapping,
     TranscodeHWAccel,
     TranscodePolicy,
@@ -67,7 +68,7 @@ router = APIRouter(
 
 
 @router.get("")
-async def get_config() -> SystemConfigDto:
+async def get_config() -> AdminConfigDto:
     """
     Get system configuration.
     This is a stub implementation that properly creates all nested DTOs.
@@ -76,7 +77,7 @@ async def get_config() -> SystemConfigDto:
     # Create all nested DTOs from deepest level up
 
     # Level 3 - Deepest nested DTOs
-    smtp_transport = SystemConfigSmtpTransportDto(
+    smtp_transport = AdminConfigSmtpTransportDto(
         host="localhost",
         ignoreCert=False,
         password="",
@@ -86,63 +87,63 @@ async def get_config() -> SystemConfigDto:
     )
 
     # Level 2 - Second level DTOs
-    database_backup = DatabaseBackupConfig(
+    database_backup = AdminConfigDatabaseBackupDto(
         cronExpression="0 2 * * *",
         enabled=False,
         keepLastAmount=7,
     )
 
-    job_settings_bg = JobSettingsDto(concurrency=5)
-    job_settings_face = JobSettingsDto(concurrency=2)
-    job_settings_lib = JobSettingsDto(concurrency=5)
-    job_settings_meta = JobSettingsDto(concurrency=5)
-    job_settings_mig = JobSettingsDto(concurrency=5)
-    job_settings_notif = JobSettingsDto(concurrency=5)
-    job_settings_search = JobSettingsDto(concurrency=5)
-    job_settings_sidecar = JobSettingsDto(concurrency=5)
-    job_settings_smart = JobSettingsDto(concurrency=2)
-    job_settings_thumb = JobSettingsDto(concurrency=5)
-    job_settings_video = JobSettingsDto(concurrency=1)
-    job_settings_ocr = JobSettingsDto(concurrency=1)
-    job_settings_workflow = JobSettingsDto(concurrency=5)
-    job_settings_integrity = JobSettingsDto(concurrency=1)
+    job_settings_bg = AdminConfigJobSettingsDto(concurrency=5)
+    job_settings_face = AdminConfigJobSettingsDto(concurrency=2)
+    job_settings_lib = AdminConfigJobSettingsDto(concurrency=5)
+    job_settings_meta = AdminConfigJobSettingsDto(concurrency=5)
+    job_settings_mig = AdminConfigJobSettingsDto(concurrency=5)
+    job_settings_notif = AdminConfigJobSettingsDto(concurrency=5)
+    job_settings_search = AdminConfigJobSettingsDto(concurrency=5)
+    job_settings_sidecar = AdminConfigJobSettingsDto(concurrency=5)
+    job_settings_smart = AdminConfigJobSettingsDto(concurrency=2)
+    job_settings_thumb = AdminConfigJobSettingsDto(concurrency=5)
+    job_settings_video = AdminConfigJobSettingsDto(concurrency=1)
+    job_settings_ocr = AdminConfigJobSettingsDto(concurrency=1)
+    job_settings_workflow = AdminConfigJobSettingsDto(concurrency=5)
+    job_settings_integrity = AdminConfigJobSettingsDto(concurrency=1)
 
-    fullsize_image = SystemConfigGeneratedFullsizeImageDto(
+    fullsize_image = AdminConfigGeneratedFullsizeImageDto(
         enabled=True,
         format=ImageFormat.jpeg,
         quality=80,
     )
 
-    preview_image = SystemConfigGeneratedImageDto(
+    preview_image = AdminConfigGeneratedImageDto(
         format=ImageFormat.jpeg,
         quality=80,
         size=1440,
     )
 
-    thumbnail_image = SystemConfigGeneratedImageDto(
+    thumbnail_image = AdminConfigGeneratedImageDto(
         format=ImageFormat.webp,
         quality=80,
         size=250,
     )
 
-    library_scan = SystemConfigLibraryScanDto(
+    library_scan = AdminConfigLibraryScanDto(
         cronExpression="0 0 * * *",
         enabled=True,
     )
 
-    library_watch = SystemConfigLibraryWatchDto(enabled=False)
+    library_watch = AdminConfigLibraryWatchDto(enabled=False)
 
-    clip_config = CLIPConfig(
+    clip_config = AdminConfigClipDto(
         enabled=True,
         modelName="ViT-B-32::openai",
     )
 
-    duplicate_detection = DuplicateDetectionConfig(
+    duplicate_detection = AdminConfigDuplicateDetectionDto(
         enabled=True,
         maxDistance=0.01,
     )
 
-    facial_recognition = FacialRecognitionConfig(
+    facial_recognition = AdminConfigFacialRecognitionDto(
         enabled=True,
         maxDistance=0.6,
         minFaces=3,
@@ -150,25 +151,25 @@ async def get_config() -> SystemConfigDto:
         modelName="buffalo_l",
     )
 
-    faces_config = SystemConfigFacesDto(**{"import": True})
+    faces_config = AdminConfigFacesDto(**{"import": True})
 
-    smtp_config = SystemConfigSmtpDto(
+    smtp_config = AdminConfigSmtpDto(
         enabled=False,
         replyTo="noreply@example.com",
         transport=smtp_transport,
         **{"from": "immich@example.com"},
     )
 
-    email_templates = SystemConfigTemplateEmailsDto(
+    email_templates = AdminConfigTemplateEmailsDto(
         albumInviteTemplate="",
         albumUpdateTemplate="",
         welcomeTemplate="",
     )
 
     # Level 1 - Primary nested DTOs
-    backup_config = SystemConfigBackupsDto(database=database_backup)
+    backup_config = AdminConfigBackupsDto(database=database_backup)
 
-    ffmpeg_config = SystemConfigFFmpegDto(
+    ffmpeg_config = AdminConfigFFmpegDto(
         accel=TranscodeHWAccel.disabled,
         accelDecode=False,
         acceptedAudioCodecs=[AudioCodec.aac],
@@ -185,7 +186,7 @@ async def get_config() -> SystemConfigDto:
         # both clients on direct playback. The resolution/codec lists are inert
         # while disabled but are required by the schema as of Immich v3.0.2, so
         # they mirror the upstream server defaults.
-        realtime=SystemConfigFFmpegRealtimeDto(
+        realtime=AdminConfigFFmpegRealtimeDto(
             enabled=False,
             resolutions=[
                 HlsVideoResolution.integer_480,
@@ -205,7 +206,7 @@ async def get_config() -> SystemConfigDto:
         twoPass=False,
     )
 
-    image_config = SystemConfigImageDto(
+    image_config = AdminConfigImageDto(
         colorspace=Colorspace.p3,
         extractEmbedded=False,
         fullsize=fullsize_image,
@@ -215,24 +216,24 @@ async def get_config() -> SystemConfigDto:
 
     # Integrity-check schedules mirror the Immich v3 server defaults, including
     # the zero-padded cron form of "every day at 3am".
-    integrity_checks = SystemConfigIntegrityChecks(
-        checksumFiles=SystemConfigIntegrityChecksumJob(
+    integrity_checks = AdminConfigIntegrityChecksDto(
+        checksumFiles=AdminConfigIntegrityChecksumJobDto(
             cronExpression="0 03 * * *",
             enabled=True,
             percentageLimit=1,
             timeLimit=3600000,
         ),
-        missingFiles=SystemConfigIntegrityJob(
+        missingFiles=AdminConfigIntegrityJobDto(
             cronExpression="0 03 * * *",
             enabled=True,
         ),
-        untrackedFiles=SystemConfigIntegrityJob(
+        untrackedFiles=AdminConfigIntegrityJobDto(
             cronExpression="0 03 * * *",
             enabled=True,
         ),
     )
 
-    job_config = SystemConfigJobDto(
+    job_config = AdminConfigJobDto(
         backgroundTask=job_settings_bg,
         editor=job_settings_bg,
         faceDetection=job_settings_face,
@@ -250,21 +251,21 @@ async def get_config() -> SystemConfigDto:
         workflow=job_settings_workflow,
     )
 
-    library_config = SystemConfigLibraryDto(
+    library_config = AdminConfigLibraryDto(
         scan=library_scan,
         watch=library_watch,
     )
 
-    logging_config = SystemConfigLoggingDto(
+    logging_config = AdminConfigLoggingDto(
         enabled=True,
         level=LogLevel.log,
     )
 
-    ml_availabilityChecks = MachineLearningAvailabilityChecksDto(
+    ml_availabilityChecks = AdminConfigMachineLearningAvailabilityChecksDto(
         enabled=False, interval=1, timeout=1
     )
 
-    ocr_config = OcrConfig(
+    ocr_config = AdminConfigOcrDto(
         enabled=False,
         maxResolution=1,
         minDetectionScore=0.5,
@@ -272,7 +273,7 @@ async def get_config() -> SystemConfigDto:
         modelName="",
     )
 
-    ml_config = SystemConfigMachineLearningDto(
+    ml_config = AdminConfigMachineLearningDto(
         availabilityChecks=ml_availabilityChecks,
         clip=clip_config,
         duplicateDetection=duplicate_detection,
@@ -284,20 +285,20 @@ async def get_config() -> SystemConfigDto:
         ocr=ocr_config,
     )
 
-    map_config = SystemConfigMapDto(
+    map_config = AdminConfigMapDto(
         darkStyle=AnyUrl("https://api.mapbox.com/styles/v1/mapbox/dark-v9"),
         enabled=True,
         lightStyle=AnyUrl("https://api.mapbox.com/styles/v1/mapbox/light-v9"),
     )
 
-    metadata_config = SystemConfigMetadataDto(faces=faces_config)
+    metadata_config = AdminConfigMetadataDto(faces=faces_config)
 
-    new_version_check = SystemConfigNewVersionCheckDto(
+    new_version_check = AdminConfigNewVersionCheckDto(
         channel=ReleaseChannel.stable,
         enabled=True,
     )
 
-    nightly_tasks = SystemConfigNightlyTasksDto(
+    nightly_tasks = AdminConfigNightlyTasksDto(
         clusterNewFaces=True,
         databaseCleanup=True,
         generateMemories=True,
@@ -306,20 +307,17 @@ async def get_config() -> SystemConfigDto:
         syncQuotaUsage=True,
     )
 
-    notifications_config = SystemConfigNotificationsDto(smtp=smtp_config)
+    notifications_config = AdminConfigNotificationsDto(smtp=smtp_config)
 
-    # OAuth is the default (and only) login method. autoLaunch causes the Immich
-    # web client to redirect to the OAuth provider automatically. enabled=True
-    # ensures the system config is consistent with the /server/features response.
-    oauth_config = SystemConfigOAuthDto(
+    oauth_config = AdminConfigOAuthDto(
         allowInsecureRequests=False,
-        autoLaunch=True,
+        autoLaunch=FIXED_LOGIN_CONFIG.oauth_auto_launch,
         autoRegister=True,
-        buttonText="Sign in with Gumnut",
+        buttonText=FIXED_LOGIN_CONFIG.oauth_button_text,
         clientId="",
         clientSecret="",
         defaultStorageQuota=0,
-        enabled=True,
+        enabled=FIXED_LOGIN_CONFIG.oauth_enabled,
         endSessionEndpoint="",
         issuerUrl="",
         mobileOverrideEnabled=False,
@@ -335,36 +333,36 @@ async def get_config() -> SystemConfigDto:
         tokenEndpointAuthMethod=OAuthTokenEndpointAuthMethod.client_secret_post,
     )
 
-    # Password login disabled — all authentication goes through OAuth
-    password_login = SystemConfigPasswordLoginDto(enabled=False)
+    password_login = AdminConfigPasswordLoginDto(
+        enabled=FIXED_LOGIN_CONFIG.password_login_enabled
+    )
 
-    reverse_geocoding = SystemConfigReverseGeocodingDto(enabled=True)
+    reverse_geocoding = AdminConfigReverseGeocodingDto(enabled=True)
 
-    server_config = SystemConfigServerDto(
+    server_config = AdminConfigServerDto(
         externalDomain="https://example.com",
-        loginPageMessage="",
+        loginPageMessage=FIXED_LOGIN_CONFIG.login_page_message,
         publicUsers=False,
     )
 
-    storage_template = SystemConfigStorageTemplateDto(
+    storage_template = AdminConfigStorageTemplateDto(
         enabled=False,
         hashVerificationEnabled=True,
         template="{{y}}/{{y}}-{{MM}}-{{dd}}/{{filename}}",
     )
 
-    templates_config = SystemConfigTemplatesDto(email=email_templates)
+    templates_config = AdminConfigTemplatesDto(email=email_templates)
 
-    theme_config = SystemConfigThemeDto(customCss="")
+    theme_config = AdminConfigThemeDto(customCss=FIXED_LOGIN_CONFIG.custom_css)
 
-    trash_config = SystemConfigTrashDto(
+    trash_config = AdminConfigTrashDto(
         days=30,
         enabled=True,
     )
 
-    user_config = SystemConfigUserDto(deleteDelay=7)
+    user_config = AdminConfigUserDto(deleteDelay=7)
 
-    # Root SystemConfigDto
-    return SystemConfigDto(
+    return AdminConfigDto(
         backup=backup_config,
         ffmpeg=ffmpeg_config,
         image=image_config,
@@ -390,8 +388,8 @@ async def get_config() -> SystemConfigDto:
     )
 
 
-@router.put("", response_model=SystemConfigDto)
-async def update_config(config: SystemConfigDto) -> SystemConfigDto:
+@router.put("", response_model=AdminConfigDto)
+async def update_config(config: AdminConfigDto) -> AdminConfigDto:
     """
     Update system configuration.
     This is a stub implementation that returns the same config.
@@ -399,8 +397,8 @@ async def update_config(config: SystemConfigDto) -> SystemConfigDto:
     return config
 
 
-@router.get("/defaults", response_model=SystemConfigDto)
-async def get_config_defaults() -> SystemConfigDto:
+@router.get("/defaults", response_model=AdminConfigDto)
+async def get_config_defaults() -> AdminConfigDto:
     """
     Get default system configuration.
     This is a stub implementation that returns the same as get_config.

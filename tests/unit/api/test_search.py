@@ -20,9 +20,14 @@ from routers.immich_models import (
     AssetTypeEnum,
     AssetVisibility,
     MetadataSearchDto,
+    BoolFilter,
     RandomSearchDto,
+    SearchFilter,
+    SearchOrder,
+    SearchOrderField,
     SmartSearchDto,
     StatisticsSearchDto,
+    StringFilterNullable,
 )
 from routers.utils.asset_conversion import (
     ASSET_INCLUDE,
@@ -155,6 +160,22 @@ class TestSearchPerson:
 
 class TestSearchStatistics:
     """Test the search_asset_statistics endpoint."""
+
+    @pytest.mark.anyio
+    async def test_structured_filter_returns_zero(self):
+        """A restricting structured `filter` has no translation; counting the
+        whole library would over-count, so the route reports zero."""
+        mock_client = Mock()
+
+        result = await search_asset_statistics(
+            request=StatisticsSearchDto(
+                filter=SearchFilter(isFavorite=BoolFilter(eq=True))
+            ),
+            client=mock_client,
+        )
+
+        assert result.total == 0
+        mock_client.assets.counts.assert_not_called()
 
     @pytest.mark.anyio
     async def test_returns_total_from_counts(self):
@@ -325,10 +346,10 @@ class TestSearchMetadata:
         assert result.assets.items == []
 
     @pytest.mark.anyio
-    async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
-        """When size/page are absent, the SDK is called without them so the Gumnut API
-        applies its own defaults. Substituting our own defaults would fragment the
-        single source of truth."""
+    async def test_forwards_materialized_size_default_when_omitted(
+        self, mock_current_user
+    ):
+        """Forward the DTO's default size, but leave an omitted page absent."""
         search_response = Mock()
         search_response.data = []
 
@@ -342,8 +363,59 @@ class TestSearchMetadata:
         )
 
         call_kwargs = mock_client.search.search.call_args.kwargs
-        assert "limit" not in call_kwargs
+        assert call_kwargs["limit"] == 200
         assert "page" not in call_kwargs
+
+    @pytest.mark.anyio
+    async def test_structured_filter_returns_empty(self, mock_current_user):
+        """An unsupported restricting filter returns empty, not extra matches."""
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock()
+
+        result = await search_assets(
+            request=MetadataSearchDto(
+                description="anything",
+                filter=SearchFilter(isFavorite=BoolFilter(eq=True)),
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.count == 0
+        assert result.assets.items == []
+        mock_client.search.search.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_empty_structured_filter_does_not_restrict(self, mock_current_user):
+        search_response = Mock(data=[])
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        await search_assets(
+            request=MetadataSearchDto(description="anything", filter=SearchFilter()),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        mock_client.search.search.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_all_null_structured_filter_does_not_restrict(
+        self, mock_current_user
+    ):
+        search_response = Mock(data=[])
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock(return_value=search_response)
+
+        await search_assets(
+            request=MetadataSearchDto(
+                description="anything", filter=SearchFilter(city=None)
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        mock_client.search.search.assert_called_once()
 
     @pytest.mark.anyio
     async def test_clamps_size_to_gumnut_api_ceiling(self, mock_current_user):
@@ -531,10 +603,10 @@ class TestSearchSmart:
         }
 
     @pytest.mark.anyio
-    async def test_omits_pagination_kwargs_when_unspecified(self, mock_current_user):
-        """When size/page are absent, the SDK is called without them so the Gumnut API
-        applies its own defaults. Substituting our own defaults would fragment the
-        single source of truth."""
+    async def test_forwards_materialized_size_default_when_omitted(
+        self, mock_current_user
+    ):
+        """Forward the DTO's default size, but leave an omitted page absent."""
         search_response = Mock()
         search_response.data = []
 
@@ -548,8 +620,26 @@ class TestSearchSmart:
         )
 
         call_kwargs = mock_client.search.search.call_args.kwargs
-        assert "limit" not in call_kwargs
+        assert call_kwargs["limit"] == 100
         assert "page" not in call_kwargs
+
+    @pytest.mark.anyio
+    async def test_structured_filter_returns_empty(self, mock_current_user):
+        """An unsupported restricting filter returns empty, not extra matches."""
+        mock_client = Mock()
+        mock_client.search.search = AsyncMock()
+
+        result = await search_smart(
+            request=SmartSearchDto(
+                query="anything", filter=SearchFilter(isFavorite=BoolFilter(eq=True))
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.count == 0
+        assert result.assets.items == []
+        mock_client.search.search.assert_not_called()
 
     @pytest.mark.anyio
     async def test_clamps_size_to_gumnut_api_ceiling(self, mock_current_user):
@@ -630,6 +720,28 @@ class TestCriterionLessEnumeration:
     def test_empty_request_is_enumeration(self):
         assert _is_criterion_less_enumeration(MetadataSearchDto()) is True
 
+    def test_empty_structured_filter_does_not_disqualify(self):
+        assert (
+            _is_criterion_less_enumeration(MetadataSearchDto(filter=SearchFilter()))
+            is True
+        )
+
+    def test_all_null_structured_filter_does_not_disqualify(self):
+        assert (
+            _is_criterion_less_enumeration(
+                MetadataSearchDto(filter=SearchFilter(city=None))
+            )
+            is True
+        )
+
+    def test_empty_nested_filter_object_conservatively_restricts(self):
+        assert (
+            _is_criterion_less_enumeration(
+                MetadataSearchDto(filter=SearchFilter(city=StringFilterNullable()))
+            )
+            is False
+        )
+
     def test_enumeration_honorable_fields_do_not_disqualify(self):
         # The fields immich-go's asset sweep sends, plus withDeleted.
         assert (
@@ -649,6 +761,24 @@ class TestCriterionLessEnumeration:
         )
         assert (
             _is_criterion_less_enumeration(MetadataSearchDto(withDeleted=True)) is True
+        )
+
+    def test_structured_order_by_does_not_disqualify(self):
+        # Sort fields do not restrict membership, even when unsupported.
+        assert (
+            _is_criterion_less_enumeration(MetadataSearchDto(orderBy=SearchOrder()))
+            is True
+        )
+        assert (
+            _is_criterion_less_enumeration(
+                MetadataSearchDto(
+                    orderBy=SearchOrder(
+                        direction=AssetOrder.asc,
+                        field=SearchOrderField.fileSizeInBytes,
+                    )
+                )
+            )
+            is True
         )
 
     def test_supported_or_non_restricting_false_flags_do_not_disqualify(self):
@@ -711,10 +841,33 @@ class TestSearchMetadataEnumeration:
         assert list_kwargs["state"] == "live"
         assert list_kwargs["limit"] == 200
         assert list_kwargs["include"] == ASSET_INCLUDE
+        assert list_kwargs["order"] == "desc"
         assert result.assets.count == 3
         assert result.assets.total == 3
         assert result.assets.nextPage is None
         assert len(result.assets.items) == 3
+
+    @pytest.mark.anyio
+    async def test_empty_structured_filter_routes_to_listing(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """An empty filter stays on the criterion-less listing path."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(2)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+        mock_client.search.search = AsyncMock()
+
+        result = await search_assets(
+            request=MetadataSearchDto(filter=SearchFilter()),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        mock_client.search.search.assert_not_called()
+        assert result.assets.count == 2
+        assert len(result.assets.items) == 2
 
     @pytest.mark.anyio
     async def test_favorite_and_rating_filters_route_to_listing(
@@ -1124,6 +1277,41 @@ class TestSearchMetadataEnumeration:
         assert mock_client.assets.list.call_args.kwargs["order"] == "asc"
 
     @pytest.mark.anyio
+    async def test_structured_order_by_direction_is_forwarded(
+        self, mock_sync_cursor_page, mock_current_user
+    ):
+        """Forward direction, ignore unsupported fields, and prefer `orderBy`."""
+        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assets = [_make_search_asset(now) for _ in range(3)]
+
+        mock_client = Mock()
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page(assets))
+
+        # `orderBy` alone, unsupported field: direction honored, field ignored.
+        await search_assets(
+            request=MetadataSearchDto(
+                orderBy=SearchOrder(
+                    direction=AssetOrder.asc,
+                    field=SearchOrderField.fileSizeInBytes,
+                )
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+        assert mock_client.assets.list.call_args.kwargs["order"] == "asc"
+
+        # `orderBy` overrides the deprecated `order` when both are present.
+        await search_assets(
+            request=MetadataSearchDto(
+                order=AssetOrder.asc,
+                orderBy=SearchOrder(direction=AssetOrder.desc),
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+        assert mock_client.assets.list.call_args.kwargs["order"] == "desc"
+
+    @pytest.mark.anyio
     async def test_real_criterion_still_uses_search(self, mock_current_user):
         """A description keeps the existing semantic-search path; no listing."""
         search_response = Mock()
@@ -1509,6 +1697,7 @@ class TestSearchRandom:
             RandomSearchDto(city="Sydney"),
             RandomSearchDto(isMotion=True),
             RandomSearchDto(tagIds=[uuid4()]),
+            RandomSearchDto(filter=SearchFilter(isFavorite=BoolFilter(eq=True))),
         ):
             result = await search_random(
                 request=request, client=mock_client, current_user=mock_current_user
@@ -1594,6 +1783,7 @@ class TestSearchRandom:
             "isMotion",
             "isNotInAlbum",
             "isOffline",
+            "filter",
         }
         non_restricting = {"withDeleted", "withExif", "withPeople", "withStacked"}
 
