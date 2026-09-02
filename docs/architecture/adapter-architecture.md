@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-01
+last-updated: 2026-09-02
 ---
 
 # Immich Adapter Architecture
@@ -75,6 +75,24 @@ Asset converters translate Gumnut metadata, timestamps, checksums, media variant
 - video upload events may wait for a renderable derived image.
 
 The canonical rules and source anchors are in [Asset and Media Handling](../references/asset-and-media-handling.md).
+
+### Upload forwarding and cancellation
+
+`routers/api/assets.py::upload_asset` selects between the buffered and streaming
+paths from `streaming_upload_threshold_bytes`. The streaming path is used when the
+threshold is zero or a valid `Content-Length` exceeds it. With a nonzero
+threshold, missing or invalid lengths, including incoming chunked transfers,
+use the buffered path; this preserves multipart handling that needs a seekable
+upload file.
+
+`services/streaming_upload.py::StreamingUploadPipeline` forwards the multipart
+body through a bounded `StreamingPipe`, so the parser and upstream request apply
+backpressure without buffering the complete asset. If the client disconnects
+during streaming, the pipeline propagates cancellation through the pipe and
+upstream request. The route handles disconnects from either path and represents
+the aborted request internally as HTTP 499 (`ClientDisconnect`). The adapter
+does not impose a fixed total upload deadline. Resumable uploads are
+unimplemented.
 
 ### Batch downloads
 
@@ -173,4 +191,4 @@ This keeps the client and generated API target aligned without adding a separate
 - Sync hydration failures that would advance past missing data terminate the stream without completion so the client cannot acknowledge a corrupt position.
 - Realtime emit failures are non-fatal after a successful mutation.
 
-The active list of unsupported or stubbed feature areas belongs in [Immich Adapter Gap Analysis](../design-docs/immich-adapter-gap-analysis.md), not in this architecture overview.
+Feature-area classifications belong in [Feature Compatibility](../references/feature-compatibility.md), not in this architecture overview. This document owns the current translation and failure behavior.

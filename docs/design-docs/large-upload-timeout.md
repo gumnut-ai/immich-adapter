@@ -1,19 +1,30 @@
 ---
 title: "Large Upload Timeout"
-status: active
+status: deprecated
+superseded-by: ../architecture/adapter-architecture.md
 created: 2026-04-13
-last-updated: 2026-05-27
+last-updated: 2026-09-02
 ---
 
 # Large Upload Timeout
 
+> **Deprecated (2026-09-02):** This design record evaluated mobile upload
+> failures and possible timeout remedies. It does not describe the current
+> upload pipeline. See [Immich Adapter Architecture](../architecture/adapter-architecture.md)
+> for the living forwarding and cancellation behavior; the content below is
+> retained for the historical context, alternatives, and rationale.
+
 ## Problem
 
-Uploads of large files (3+ GB videos) from Immich mobile clients fail consistently. The upload progresses to 75–89% completion and then the client disconnects, aborting the entire upload. Smaller files (under ~2.5 GB) succeed reliably.
+At the time of this investigation, uploads of large files from Immich mobile
+clients could disconnect late in transfer, aborting the entire upload.
 
-## Root Cause
+## Root-cause reassessment
 
-The Immich mobile client enforces a **60-second HTTP request timeout** for uploads. The adapter's streaming upload pipeline must relay the entire file to the upstream API within this window, or the client disconnects.
+The investigation correlated these failures with client-side timeout settings.
+Those settings describe connection, read, write, or request inactivity behavior;
+they do not establish a universal fixed total-upload deadline. The current
+architecture documents the adapter's forwarding and cancellation behavior.
 
 ### Immich Client Timeouts
 
@@ -31,105 +42,66 @@ OkHttpClientConfiguration(
 config.timeoutIntervalForRequest = 60
 ```
 
-The upload endpoint (`POST /api/assets`) does not override these defaults for large files.
-
-### Evidence
-
-Render request logs (ingress layer) confirm the 60-second cutoff. Sizes and durations are rounded from representative samples; no user-identifying data is included.
-
-| File | Size (approx.) | Time to completion or abort | Status | Result |
-|------|----------------|----------------------------|--------|--------|
-| Video | ~500 MB | ~13s | 201 | Success |
-| Video | ~1 GB | ~25s | 201 | Success |
-| Video | ~1.5 GB | ~33s | 201 | Success |
-| Video | ~3.5 GB | ~61s (aborted) | 499 | Client disconnected |
-| Video | ~3.7 GB | ~60s (aborted) | 499 | Client disconnected |
-
-For successful uploads, the duration is the full request round-trip. For failed uploads, it is the time until the client disconnected — **not** the time a complete upload would have taken. The failed uploads transferred only 75–89% of the file before the timeout fired.
-
-HTTP 499 is the adapter's current representation of these aborted uploads: `upload_asset` catches `ClientDisconnect` on both buffered and streaming paths and records the request as "client closed request" rather than surfacing a server-side 500/502. Earlier revisions could still map the streaming-path disconnect to 502 via `map_gumnut_error`; that is no longer the documented behavior.
-
-### Pipeline Throughput
-
-The streaming upload pipeline (client → adapter → upstream API) sustains approximately 50 MB/s (decimal megabytes). Actual throughput varies with network conditions and upstream processing overhead. Approximate transfer times at this rate:
-
-- ~2.5 GB completes in ~50s — typically within the 60s window
-- ~3 GB requires ~60s — borderline, may succeed or fail depending on conditions
-- ~3.5 GB requires ~70s — consistently exceeds the window
-
-Files in the 2.5–3 GB range are borderline; files above ~3 GB consistently fail. The pipeline cannot be made fast enough to handle arbitrarily large files within a fixed 60-second timeout.
-
-## How the Streaming Upload Pipeline Works
-
-The adapter streams uploads without buffering the entire file to disk. Three concurrent workers (one async task and two thread-pool workers) form a pipeline:
-
-```
-Immich client ──► _feed_chunks() ──► queue ──► _run_parser() ──► pipe ──► _sync_upload() ──► upstream API
-                  (asyncio task,        (thread-pool worker,       (thread-pool worker,
-                   reads request body)   multipart parser)          sync httpx POST)
-```
-
-1. **`_feed_chunks`** — Asyncio task that reads chunks from the Immich client's HTTP request body and enqueues them
-2. **`_run_parser`** — Thread-pool worker that dequeues chunks, runs the multipart parser, and writes file data into a `StreamingPipe`
-3. **`_sync_upload`** — Thread-pool worker that sends a sync httpx POST to the upstream API, with the pipe as the request body
-
-When the client disconnects at 60 seconds, `_feed_chunks` raises `ClientDisconnect`, which propagates through the pipeline. The httpx POST to the upstream API is interrupted, the upstream API sees its own `ClientDisconnect`, and any in-progress S3 multipart upload is aborted.
-
-### Current Timeout Configuration
-
-| Component | Setting | Value |
-|-----------|---------|-------|
-| httpx client (adapter → upstream) | `connect` | 30s |
-| httpx client (adapter → upstream) | `read` / `write` | 600s |
-| Chunk queue | `get` timeout | 300s |
-| Chunk queue | `put` stall timeout | 300s |
-| Headers ready | `wait` timeout | 30s |
-
-None of these are the bottleneck — the Immich client's 60-second timeout is the binding constraint.
-
-## Workaround
-
-Upload large files through the **Immich web app** instead of the mobile app. The web app uses `XMLHttpRequest` without setting an application-level timeout, so uploads are not subject to the mobile client's 60-second limit. A ~3.5 GB upload at ~50 MB/s takes ~70 seconds, which completes without issue in typical browser environments.
-
-Limitations:
-- The file must be accessible from the computer running the browser
-- The browser tab must stay open during the upload
-
-This only affects the mobile app's 60-second timeout. The upload pipeline through the adapter is the same for both clients.
-
 ## Options
 
 ### Option A: Chunked Upload Support
 
-Implement a chunked upload endpoint that accepts file data in smaller pieces, each completing well within 60 seconds. The upstream Immich project has an in-progress branch (`feat/server-chunked-uploads`) designing this protocol.
+Implement a chunked or resumable upload endpoint that accepts file data in
+smaller pieces. Upstream Immich had an in-progress branch
+(`feat/server-chunked-uploads`) exploring this protocol.
 
 **Pros:** Solves the problem for arbitrarily large files; resilient to network interruptions; aligns with upstream direction.
 **Cons:** Requires implementing a new endpoint, temporary storage for in-progress chunks, and chunk assembly logic. Must match whatever protocol the Immich client implements. No timeline for when upstream ships this — building ahead of the client risks protocol divergence.
 
-**Recommendation:** Monitor the `feat/server-chunked-uploads` branch. Implement adapter support when the Immich client ships chunked uploads.
+This option was not shipped. No resumable-upload protocol is implemented in
+the adapter.
 
 ### Option B: Accept-and-Forward
 
-Accept the upload from the client (streaming to a temporary file), respond 201 immediately, then forward to the upstream API in the background.
+Accept the upload from the client (streaming to a temporary file), respond 201 immediately, then forward to the Gumnut API in the background.
 
-**Pros:** Works with the current client — no client-side changes needed.
-**Cons:** Requires temporary disk storage for 3+ GB files. The client receives a success response before the upstream API has processed the file, creating a window where the asset appears uploaded but isn't available. Error handling becomes complex (what if the background forward fails?).
+**Pros:** Works with the then-current client — no client-side changes needed.
+**Cons:** Requires temporary disk storage for large files. The client receives a
+success response before the Gumnut API has processed the file, creating a window
+where the asset appears uploaded but is not available. Error handling becomes
+complex if the background forward fails.
+
+This option was not shipped.
 
 ### Option C: Pipeline Speed Optimization
 
-Reduce pipeline latency to complete 3+ GB uploads within 60 seconds.
+Reduce forwarding latency enough to avoid client-side disconnects.
 
 **Pros:** No API changes needed.
-**Cons:** Would need ~63 MB/s sustained throughput for 3.73 GB. Current throughput is ~50 MB/s. The ceiling is set by network bandwidth between services and upstream API processing time, neither of which the adapter controls. Also doesn't scale — a 5 GB file would need ~85 MB/s.
+**Cons:** The ceiling is set by network bandwidth between services and Gumnut API
+processing time, neither of which the adapter controls. Improving throughput
+alone would not provide a resumable failure boundary for arbitrarily large
+files.
 
-## Recommendation
+This option was not adopted as the upload design.
 
-**Option A (chunked uploads)** is the right long-term fix, but we should wait for the upstream Immich client to ship the protocol before implementing it in the adapter. Monitor the `feat/server-chunked-uploads` branch for progress.
+## Historical recommendation
 
-If large upload failures become a higher priority before upstream ships, Option B (accept-and-forward) is a viable interim fix, though it adds operational complexity.
+The evaluation favored a client-aligned chunked protocol, but no chunked or
+resumable implementation shipped. The adapter instead retained synchronous
+buffered and streaming forwarding; their current behavior is documented in
+[Immich Adapter Architecture](../architecture/adapter-architecture.md).
 
-## Related Issues
+Accept-and-forward was not selected because it would acknowledge success before
+the Gumnut API had accepted the asset and would require durable background error
+handling.
 
-- Immich upstream branch: [`feat/server-chunked-uploads`](https://github.com/immich-app/immich/tree/feat/server-chunked-uploads)
+## Upstream context
+
 - Immich PR [#27237](https://github.com/immich-app/immich/pull/27237): Removed `timeoutIntervalForResource = 300` on iOS but left the 60-second `timeoutIntervalForRequest`
 - Immich PR [#27399](https://github.com/immich-app/immich/pull/27399) (on chunked uploads branch): "fix(mobile): low upload timeout on android"
+- Immich PR [#22385](https://github.com/immich-app/immich/pull/22385): as of 2026-09-02, an open, server-only resumable-upload change; it did not represent a shipped client protocol or an adapter commitment
+
+## Outcome
+
+**2026-09-02:** The proposed fixed-timeout remedies were retired. No
+chunked/resumable or accept-and-forward proposal shipped. Separate streaming
+forwarding, bounded backpressure, client-disconnect cancellation, and internal
+HTTP 499 handling did ship; the living description is in [Immich Adapter
+Architecture](../architecture/adapter-architecture.md). This record remains
+for the original context, alternatives, and rationale.
