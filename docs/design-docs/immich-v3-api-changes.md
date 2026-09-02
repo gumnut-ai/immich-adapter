@@ -3,7 +3,7 @@ title: "Immich v2.7.5 to v3 API Change Analysis"
 status: deprecated
 superseded-by: ../architecture/adapter-architecture.md
 created: 2026-06-16
-last-updated: 2026-08-11
+last-updated: 2026-09-02
 ---
 
 # Immich v2.7.5 to v3 API Change Analysis
@@ -59,7 +59,7 @@ The v3 surface added adaptive streaming, integrity checks, calendar heatmap, alb
 - HLS was gated off by the advertised server feature and direct video playback remained the supported path;
 - admin integrity, backchannel logout, and optional plugin/workflow surfaces did not belong to the adapter's product boundary.
 
-The current open set is maintained in [Immich Adapter Gap Analysis](immich-adapter-gap-analysis.md).
+The current feature classifications are maintained in [Feature Compatibility](../references/feature-compatibility.md).
 
 ## Alternatives considered
 
