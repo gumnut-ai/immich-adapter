@@ -45,9 +45,14 @@ the single-user Gumnut library model. These include adaptive video streaming,
 integrity and database-maintenance workflows, OAuth backchannel logout, library
 management, session lock/PIN, administration and user management, unsupported
 notification and job/queue infrastructure, and plugins/workflows. Duplicate
-detection follows Gumnut's different product approach. Compatibility responses
-may be benign empty reads where a client needs the shape, but mutation stubs
-must not claim durable success.
+detection follows Gumnut's different product approach. The calendar heatmap is
+a benign empty compatibility read.
+
+Some legacy mutation stubs still return compatibility success without durable
+storage. That response keeps a client usable; it does not make the feature
+supported. New or revised compatibility behavior must not claim durable success
+without persistence. Changing an existing stub's client-visible response
+requires separate behavioral review.
 
 ## Keeping classifications current
 

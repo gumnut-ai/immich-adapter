@@ -58,9 +58,16 @@ These decisions are product/architecture choices, not promises that every unsupp
 
 ## Stub behavior
 
-Read-only compatibility routes may return an empty shape when that cleanly renders an unsupported feature. Mutation stubs must not claim durable success when nothing was stored. Prefer a clear unsupported response, but verify current web and mobile degradation before changing an existing response: customer-visible error behavior is a separate decision from documentation maintenance.
+The survey treated a benign empty read as honest when it cleanly rendered an
+unsupported feature, while recognizing that a successful mutation response
+could mislead when nothing was stored. It also treated client feature flags as
+the first defense against exposing unsupported UI. These criteria informed the
+classifications but did not establish that every legacy stub already followed
+them.
 
-Server feature flags are the first line of defense for hiding unsupported UI. A stub is a compatibility tool, not an implementation.
+Current policy, including how to handle legacy compatibility responses, lives
+in [Feature Compatibility](../references/feature-compatibility.md). Changing an
+existing client-visible response remains a separate behavioral decision.
 
 ## Outcome
 
