@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-02
+last-updated: 2026-09-03
 ---
 
 # Immich Adapter Architecture
@@ -36,6 +36,22 @@ The single-library assumption is more specific than a generic compatibility stub
 6. Asset/session mutations may emit Socket.IO events after the backend operation succeeds.
 
 For session creation, credential custody, JWT refresh, checkpoint flow, and logout, read [Session and Checkpoint Implementation](session-checkpoint-implementation.md). For room membership and realtime failure behavior, read [WebSocket Implementation](websocket-implementation.md).
+
+### Public login configuration
+
+The unauthenticated login page loads `GET /api/public/config` before it has a
+credential. `GET /api/public/config/defaults` exposes the same payload because
+the adapter's login configuration is fixed rather than admin-editable. Both
+routes are implemented in `routers/api/public.py` and return a `PublicConfigDto`
+projected from `FIXED_LOGIN_CONFIG` in `routers/api/constants.py`: OAuth is
+enabled and auto-launched with the button text `Sign in with Gumnut`, password
+login is disabled, and the login message and custom CSS are empty.
+
+The two exact paths are listed in `AuthMiddleware.UNAUTHENTICATED_PATHS`; the
+middleware does not automatically allow every route under `/api/public`.
+`/api/server/config`, `/api/server/features`, and the system-config response
+reuse the shared login values where their DTOs expose them, so changes to the
+login contract belong in `FIXED_LOGIN_CONFIG` and its projections together.
 
 ### Security decisions not visible in route behavior
 
