@@ -128,13 +128,11 @@ class DefaultSettings(Settings):
     )
 
 
-def _log_settings_overrides() -> dict:
+def _log_settings_overrides() -> None:
     """
     Get environment variables that override values from the config files
     and log them. Sensitive values like passwords, secrets, and keys are masked.
 
-    Returns:
-        Dictionary of field names and their overridden values
     """
     # Get all field names from the Settings class
     field_names = list(Settings.__annotations__.keys())
@@ -156,8 +154,6 @@ def _log_settings_overrides() -> dict:
                 logger.info(f"  {field}: {masked_value}")
             else:
                 logger.info(f"  {field}: {value}")
-
-    return overrides
 
 
 @lru_cache
