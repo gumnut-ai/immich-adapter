@@ -94,6 +94,7 @@ network and use the Redis container's network name in `REDIS_URL` instead.
 - `PORT`: Port to bind to (default: 8080)
 - `GUMNUT_API_BASE_URL`: URL of the Gumnut API backend
 - `REDIS_URL`: Redis connection URL (default: `redis://localhost:6379/1`)
+- `STREAMING_UPLOAD_THRESHOLD_BYTES`: Upload size in bytes above which requests with a valid `Content-Length` use the streaming path (default: `104857600`; `0` forces streaming)
 - `SESSION_ENCRYPTION_KEY`: Required Fernet key for encrypting stored sessions
 - `OAUTH_MOBILE_REDIRECT_URI`: Custom URL scheme for mobile app deep linking during OAuth flow (default: app.immich:///oauth-callback)
 - `TRASH_RETENTION_DAYS`: Trash retention window surfaced to Immich clients as `trashDays` (default: `90`)
