@@ -40,8 +40,10 @@ taken from the lane's filename.
   finding as **Report when** / **Evidence** / optional **Do not report**); further
   lane-specific sections are fine. Give every lane a skip condition — a lane that
   runs on every activation gates nothing. Keep lane-specific calibration in the
-  lane and shared review policy in `DAEMON.md`: a lane that restates daemon policy
-  is where the two drift out of agreement.
+  lane and shared review policy in `DAEMON.md`; where a repository convention
+  owns the policy, have the daemon cite this repo's copy of it and derive the
+  mechanics at run time instead of restating them — a daemon that restates policy
+  it does not own is where the two drift out of agreement.
 - Prefer the smallest safe change, and state explicit limits (open-PR caps,
   commits-per-activation, one concern per PR) so activations stay bounded.
 - A shell command in a `DAEMON.md` is the daemon's implementation, not an
