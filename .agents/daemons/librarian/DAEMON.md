@@ -34,7 +34,7 @@ schedule: "0 */6 * * *"
 `docs/references/documentation-conventions.md` § Design Doc Lifecycle owns what each transition requires — the closing record, evolution-note format, forward pointers, retirement triggers, and the reclassification steps. This section only says which transitions this daemon may make on its own and what evidence each needs.
 
 - **`active` → `completed`:** only when the implementation the doc specifies is present on `main`. Linked PRs and Linear references are pointers for humans, not evidence in themselves (a doc may record an abandoned attempt), and the doc's own future-tense plan, an open PR, or a green branch is not evidence either. When meaningful accepted work still remains, leave the status alone.
-- **`completed` → `deprecated`:** only when a retirement trigger named in the authority applies, with every extraction and reclassification step the authority requires done in the same PR; if nothing is worth extracting, deprecate without a destination.
+- **`completed` → `deprecated`:** only when a retirement trigger named in the authority applies, with every step the authority requires for that trigger done in the same PR.
 - **Evolution notes and forward pointers:** when a merged change contradicts a `completed` doc. Check the retirement triggers first.
 - When the evidence for a transition is missing or conflicts, make no status change and do not open a PR for it. Judgment calls this daemon is denied belong to a human-approved documentation audit.
 
