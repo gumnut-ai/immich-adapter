@@ -31,12 +31,12 @@ schedule: "0 */6 * * *"
 - When adding or renaming a doc, add or update its row in the Documentation Map in `AGENTS.md`, in the section matching the doc's type. Reclassifying a design doc's `status:` moves its row between the Active and Historical & Deprecated sections rather than removing it.
 
 ## Lifecycle Policy
-`docs/references/documentation-conventions.md` § Design Doc Lifecycle is the authority for what each transition requires; this section only says which transitions this daemon may make on its own and what evidence each needs. Status follows verified implementation state, never document age.
+`docs/references/documentation-conventions.md` § Design Doc Lifecycle owns what each transition requires — the closing record, evolution-note format, forward pointers, retirement triggers, and the reclassification steps. This section only says which transitions this daemon may make on its own and what evidence each needs.
 
-- **`active` → `completed`:** only when the doc's accepted scope has shipped, shown by durable records — the PRs the doc or its map row links merged to `main`, and the central implementation present on `main`. The doc's own future-tense plan, an open PR, or a green branch is not evidence. Add or finish the `## Outcome` section (what shipped, what diverged, what was deferred and where it is tracked), resolve stale open questions and TODOs into it, bump `last-updated`, and move the map row to Historical & Deprecated in the same PR. When meaningful accepted work still remains, leave the status alone.
-- **`completed` → `deprecated`:** only when a retirement trigger in the authority applies (an evergreen doc owns the live subject, a second evolution note is due, functionality it describes was removed, or the decision was reversed). Extract still-current material into `docs/architecture/` or `docs/references/` in the same PR, add the banner, set `superseded-by:` only to a doc that exists, and leave the map row under Historical & Deprecated with its Consult-when cell routed to the live source. If nothing is worth extracting, deprecate without a destination and omit `superseded-by`.
-- **Evolution notes and forward pointers:** when a merged change contradicts a `completed` doc, append the dated evolution note (using shipped names, not the body's planned names) and add an inline forward pointer at the top of each affected section for removals. Check the retirement triggers first — a second note is itself one.
-- When the evidence for a transition is missing or conflicts, make no status change and do not open a PR for it. Judgment calls this daemon is denied belong to a human-driven documentation audit.
+- **`active` → `completed`:** only when the implementation the doc specifies is present on `main`; where the doc or its map row links PRs, those must have merged. A Linear reference is a pointer for humans, not evidence this daemon can read, and the doc's own future-tense plan, an open PR, or a green branch is not evidence either. When meaningful accepted work still remains, leave the status alone.
+- **`completed` → `deprecated`:** only when a retirement trigger named in the authority applies, with the extraction it requires (into `docs/architecture/` or `docs/references/`) done in the same PR. Set `superseded-by:` only to a doc that exists; if nothing is worth extracting, deprecate without a destination.
+- **Evolution notes and forward pointers:** when a merged change contradicts a `completed` doc. Check the retirement triggers first.
+- When the evidence for a transition is missing or conflicts, make no status change and do not open a PR for it. Judgment calls this daemon is denied belong to a human-approved documentation audit.
 
 ## Scope
 This repo's docs live under (in scope):
@@ -60,13 +60,7 @@ Run the documentation linter before opening a PR; it is the only mechanical guar
 uv run scripts/lint_docs.py
 ```
 
-If that invocation fails before the checks run because the installed `uv` rejects the `exclude-newer` setting in the script's PEP 723 header, run the same script with its one dependency supplied directly instead of reporting the linter as blocked:
-
-```
-uv run --no-project --with 'markdown-it-py>=3,<5' python scripts/lint_docs.py
-```
-
-Also run `git diff --check`. If the linter reports a failure, fix it or do not open the PR.
+If that cannot start because the installed `uv` rejects the script's `exclude-newer` setting, run `uv run --no-project --with markdown-it-py python scripts/lint_docs.py` instead. If it cannot compute a merge-base (a shallow checkout), run every check `--list-checks` names except `freshness` via repeated `--check`; CI still enforces freshness on the PR. A run that exits before scanning for any other reason is a blocker to state in the PR body, not a doc violation; do not silently skip the activation over it. Also run `git diff --check`. If a check reports a failure, fix it or do not open the PR.
 
 ## Limits
 - Push at most 3 commits per activation.
