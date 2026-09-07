@@ -28,7 +28,7 @@ schedule: "0 */6 * * *"
 - Preserve author voice — match the tone and style of existing docs in the same directory.
 - When the right edit belongs elsewhere (see Scope), describe the topic in the PR description rather than attempting the change. Do not name sibling repositories — this repo is public (see `AGENTS.md`).
 - When a merged PR deletes or renames a referenced file, class, or function, update doc references to it in this repo in the librarian PR.
-- When adding or renaming a doc, add or update its row in the Documentation Map in `AGENTS.md`, in the section matching the doc's type. Reclassifying a design doc's `status:` moves its row between the Active and Historical & Deprecated sections rather than removing it.
+- Keep the Documentation Map in `AGENTS.md` in step with every doc added, renamed, or reclassified, per `docs/references/documentation-conventions.md`.
 
 ## Lifecycle Policy
 `docs/references/documentation-conventions.md` § Design Doc Lifecycle owns what each transition requires — the closing record, evolution-note format, forward pointers, retirement triggers, and the reclassification steps. This section only says which transitions this daemon may make on its own and what evidence each needs.
