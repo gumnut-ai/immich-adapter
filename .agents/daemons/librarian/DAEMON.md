@@ -60,11 +60,9 @@ Run the documentation linter before opening a PR; it is the only mechanical guar
 uv run scripts/lint_docs.py
 ```
 
-If that cannot start because the installed `uv` rejects the script's `exclude-newer` setting, run the script as a plain `python` argument with its dependencies pinned from the checked-in lock, so the fallback resolves nothing outside the supply-chain cooldown:
-
-```
-uv run --no-project $(awk -F'"' '/^\[\[package\]\]/{p=1} p&&/^name = /{n=$2} p&&/^version = /{printf "--with %s==%s ", n, $2}' scripts/lint_docs.py.lock) python scripts/lint_docs.py
-```
+Before running the linter, follow [uv setup for agents](../../../AGENTS.md#uv-setup-for-agents).
+If uv rejects the configuration, repair the environment as described there; do not
+substitute a direct Python or manually supplied dependency invocation.
 
 If it cannot compute a merge-base (a shallow checkout), run every check `--list-checks` names except `freshness` via repeated `--check`; CI still enforces freshness on the PR. A run that exits before scanning for any other reason is a blocker to state in the PR body, not a doc violation; do not silently skip the activation over it. Also run `git diff --check`. If a check reports a failure, fix it or do not open the PR.
 

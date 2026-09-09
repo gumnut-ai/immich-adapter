@@ -8,6 +8,31 @@ Concrete violations that have actually shipped: cross-link lines like `Cross-lin
 
 Separately — and this one *is* about confidentiality — captured example data in committed docs (sync payloads, request/response logs, packet traces) must use placeholder PII — replace real names, emails, and LAN IPs with `Example User` / `user@example.com` / `192.0.2.x`, keeping only the technical fields the example actually teaches (UUIDs, checksums, timestamps, wire shapes). Real personal data in a public repo is exposure regardless of how it got there; pruning/restoring such a doc is the moment to redact, not to faithfully preserve the capture.
 
+# uv setup for agents
+
+Before running Python commands, use the version in the repository-root `.uv-version`.
+Keep this pin coordinated with intentional uv updates in `Dockerfile`.
+This is a repository convention; uv does not read the file automatically. From the
+repository root, run this in Bash to install the pinned release when needed:
+
+```bash
+set -euo pipefail
+expected_uv=$(cat .uv-version)
+export PATH="$HOME/.local/bin:$PATH"
+if [ "$(uv --version 2>/dev/null | awk '{print $2}')" != "$expected_uv" ]; then
+  curl -LsSf "https://astral.sh/uv/$expected_uv/install.sh" | UV_UNMANAGED_INSTALL="$HOME/.local/bin" sh
+  hash -r
+fi
+test "$(uv --version | awk '{print $2}')" = "$expected_uv"
+command -v uv
+uv --version
+```
+
+Keep that PATH in subsequent command shells and recheck the version if the shell
+changes. If installation or verification fails, report the environment blocker.
+If uv rejects `exclude-newer`, repair the environment using this setup; do not
+remove configuration or bypass the normal runner with manually supplied dependencies.
+
 # Pre-Commit Commands
 
 Run from the `immich-adapter/` directory:
