@@ -98,7 +98,7 @@ network and use the Redis container's network name in `REDIS_URL` instead.
 - `SESSION_ENCRYPTION_KEY`: Required Fernet key for encrypting stored sessions
 - `OAUTH_MOBILE_REDIRECT_URI`: Custom URL scheme for mobile app deep linking during OAuth flow (default: app.immich:///oauth-callback)
 - `TRASH_RETENTION_DAYS`: Trash retention window surfaced to Immich clients as `trashDays` (default: `90`)
-- `ENVIRONMENT`: Set to `development` or `production`
+- `ENVIRONMENT`: Set to `development`, `test`, or `production`
 - `LOG_LEVEL`: Log level (default: `info`, options: `debug`, `info`, `warning`, `error`)
 
 Optional advanced settings are available for telemetry, Redis connection
