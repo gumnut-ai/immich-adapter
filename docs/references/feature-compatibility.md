@@ -1,6 +1,6 @@
 ---
 title: "Feature Compatibility"
-last-updated: 2026-09-02
+last-updated: 2026-09-10
 ---
 
 # Feature Compatibility
@@ -32,7 +32,9 @@ exists.
 
 Known compatibility differences without an active owner or approved scope are
 deferred compatibility gaps, not commitments or a priority order. This includes
-tags, reverse geocoding, persistent memories writes, specialized search and
+tags, reverse geocoding, persistent memories writes and the dedicated memories
+page (including ID lookup through search, pagination, upcoming filters, and
+statistics), specialized search and
 trash-aware search limitations, API-key management, custom metadata, remaining
 asset edits and OCR, folder view, large-scale pagination, and stack-aware month
 counts. A gap stays in this classification until its product and implementation

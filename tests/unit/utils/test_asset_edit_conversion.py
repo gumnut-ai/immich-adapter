@@ -43,7 +43,7 @@ def crop(x: int = 100, y: int = 200, width: int = 800, height: int = 600):
     )
 
 
-def rotate(angle: float):
+def rotate(angle: int):
     return AssetEditActionItemDto(
         action=AssetEditAction.rotate, parameters=RotateParameters(angle=angle)
     )
@@ -132,7 +132,7 @@ class TestOrientationNormalization:
         )
 
 
-class TestRotationNormalization:
+class TestRotationValidation:
     @pytest.mark.parametrize(
         "angle,expected",
         [
@@ -140,29 +140,24 @@ class TestRotationNormalization:
             (90, 90),
             (180, 180),
             (270, 270),
-            (90.0, 90),
-            (-90, 270),
-            (-180, 180),
-            (-270, 90),
-            (360, 0),
-            (450, 90),
-            (-450, 270),
-            (720, 0),
         ],
     )
-    def test_normalizes_modulo_360(self, angle, expected):
+    def test_accepts_quarter_turns(self, angle, expected):
         assert to_recipe([rotate(angle)]).angle == expected
 
     @pytest.mark.parametrize(
         "angle",
-        [45, 91, -1, 90.5, 89.999999, float("nan"), float("inf"), float("-inf")],
+        [45, 91, 269],
     )
     def test_rejects_invalid_angles(self, angle):
         with pytest.raises(AssetEditValidationError) as exc_info:
             to_recipe([rotate(angle)])
         assert exc_info.value.code == "invalid_angle"
 
-    @pytest.mark.parametrize("bad_angle", [True, "90", 10**400])
+    @pytest.mark.parametrize(
+        "bad_angle",
+        [True, "90", -90, 360, 450, 720, 90.5, float("nan"), float("inf"), 10**400],
+    )
     def test_rejects_smuggled_angle_values(self, bad_angle):
         # Bypass Pydantic to exercise the codec boundary.
         params = RotateParameters.model_construct(angle=bad_angle)
@@ -333,8 +328,8 @@ class TestRejections:
 
     def test_errors_do_not_echo_client_values(self):
         with pytest.raises(AssetEditValidationError) as exc_info:
-            to_recipe([rotate(123456789.5)])
-        assert "123456789" not in str(exc_info.value)
+            to_recipe([rotate(123)])
+        assert "123" not in str(exc_info.value)
         with pytest.raises(AssetEditValidationError) as exc_info:
             to_recipe([crop(x=987654, y=0, width=SOURCE_W, height=1)])
         assert "987654" not in str(exc_info.value)
@@ -502,7 +497,7 @@ class TestReverseTranslation:
         assert isinstance(rows[2].parameters, RotateParameters)
         # Stored angle 90 with mirror set emits wire rotate 270: the wire list
         # mirrors first, so the rotation's sign flips crossing the mirror.
-        assert rows[2].parameters.angle == 270.0
+        assert rows[2].parameters.angle == 270
         assert all(isinstance(row, AssetEditActionItemResponseDto) for row in rows)
 
     def test_identity_recipe_yields_no_rows(self):

@@ -119,7 +119,7 @@ pooling, and server-side edit rendering:
 
 **Build with a specific Immich version:**
 ```bash
-docker build --build-arg IMMICH_VERSION=v3.1.0 -t immich-adapter .
+docker build --build-arg IMMICH_VERSION=v3.2.0 -t immich-adapter .
 ```
 
 ### Production Mode
