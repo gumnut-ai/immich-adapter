@@ -101,6 +101,22 @@ network and use the Redis container's network name in `REDIS_URL` instead.
 - `ENVIRONMENT`: Set to `development` or `production`
 - `LOG_LEVEL`: Log level (default: `info`, options: `debug`, `info`, `warning`, `error`)
 
+Optional advanced settings are available for telemetry, Redis connection
+pooling, and server-side edit rendering:
+
+- `SENTRY_DSN`: Sentry project DSN; unset disables Sentry reporting
+- `REDIS_MAX_CONNECTIONS`: Maximum Redis pool connections (default: `50`)
+- `REDIS_SOCKET_CONNECT_TIMEOUT`: Redis connection timeout in seconds (default: `5.0`)
+- `REDIS_SOCKET_TIMEOUT`: Redis read/write timeout in seconds (default: `5.0`)
+- `REDIS_HEALTH_CHECK_INTERVAL`: Idle Redis connection health-check interval in seconds (default: `30`)
+- `EDIT_RENDER_MAX_INPUT_BYTES`: Maximum edit source size in bytes (default: `104857600`)
+- `EDIT_RENDER_MAX_PIXELS`: Maximum decoded pixel count (default: `80000000`)
+- `EDIT_RENDER_MAX_DIMENSION`: Maximum source width or height in pixels (default: `30000`)
+- `EDIT_RENDER_MAX_OUTPUT_BYTES`: Maximum rendered output size in bytes (default: `104857600`)
+- `EDIT_RENDER_TIMEOUT_SECONDS`: Maximum edit-render time, including queue wait, in seconds (default: `60.0`)
+- `EDIT_RENDER_MAX_CONCURRENCY`: Maximum concurrent edit renders (default: `4`)
+- `EDIT_RENDER_SPOOL_MAX_BYTES`: In-memory edit-render spool limit in bytes before disk use (default: `16777216`)
+
 **Build with a specific Immich version:**
 ```bash
 docker build --build-arg IMMICH_VERSION=v3.1.0 -t immich-adapter .
