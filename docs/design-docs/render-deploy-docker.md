@@ -3,7 +3,7 @@ title: "Render Deploy with Docker"
 status: deprecated
 superseded-by: ../references/uvicorn-settings.md
 created: 2025-10-23
-last-updated: 2026-08-11
+last-updated: 2026-09-10
 ---
 
 # Multi-Stage Docker Deployment Guide for Render
@@ -21,8 +21,6 @@ last-updated: 2026-08-11
 ## Overview
 
 This guide explains how to deploy immich-adapter to Render using a multi-stage Dockerfile that automatically extracts Immich web files during the Docker build process.
-
-**Current Static Files Size**: 29MB (from `static/` directory)
 
 ## Why Multi-Stage
 
