@@ -72,3 +72,7 @@ If any check fails, do not open the PR. Note the failure in an internal log entr
 - At most 3 open dependency PRs from this daemon at a time.
 - At most 1 open dead-code cleanup PR at a time.
 - One concern per PR — never bundle a dep bump with a cleanup.
+
+## Human review
+
+When creating a PR, follow [Human review for daemon-created PRs](../AGENTS.md#human-review-for-daemon-created-prs) to select and request a human reviewer.
