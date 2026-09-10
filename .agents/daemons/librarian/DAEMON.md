@@ -70,3 +70,7 @@ If it cannot compute a merge-base (a shallow checkout), run every check `--list-
 - Push at most 3 commits per activation.
 - Maintain at most 3 open librarian PRs at a time, and at most 1 of them a design-doc status transition.
 - One topical area per PR; one status transition per PR.
+
+## Human review
+
+When creating a PR, follow [Human review for daemon-created PRs](../AGENTS.md#human-review-for-daemon-created-prs) to select and request a human reviewer.

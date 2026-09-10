@@ -56,6 +56,27 @@ taken from the lane's filename.
   silently answer a different question (`git log -G'pydantic'` is an unanchored
   regex, so it reports the date `pydantic-settings` changed).
 
+## Human review for daemon-created PRs
+
+When a daemon creates a pull request, request review from one eligible human
+GitHub user. A PR assignee or a mention in its body is not a review request.
+Preserve existing review requests; an existing eligible human reviewer satisfies
+this requirement.
+
+Choose the reviewer using recent, substantive contributions to the changed
+files, weighing both frequency and recency. Use GitHub commit or merged-PR
+history so a shallow checkout does not distort the evidence. For new files or
+sparse history, widen to the owning directory or related area, then an active
+repository maintainer. Resolve the GitHub account from that evidence rather
+than guessing a login from a commit name or email. Exclude the PR author, bots,
+and known automation accounts; confirm the candidate can review this repository.
+
+Request review when opening the PR or immediately afterward, and verify that
+GitHub recorded the request. Briefly record the selection rationale in the
+activation result. If no eligible human can be identified or the request fails,
+keep the PR, report the unresolved reviewer assignment and reason in the
+activation result, and do not claim the human-review handoff succeeded.
+
 ## Current daemons
 
 - `codebase-maintainer/` — keeps dependencies current and the codebase clean.
