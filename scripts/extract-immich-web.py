@@ -47,14 +47,34 @@ def print_info(message: str) -> None:
 def run_command(
     cmd: list[str], check: bool = True, capture_output: bool = False
 ) -> subprocess.CompletedProcess:
-    """Run a shell command and return the result."""
+    """Run a shell command and return the result.
+
+    When ``capture_output`` is false, stdout still streams to the terminal so
+    docker's pull progress stays visible, but stderr is captured (rather than
+    discarded) so callers can surface the real error on failure via
+    ``print_command_error``. When ``capture_output`` is true, both streams are
+    captured as usual.
+    """
     return subprocess.run(
         cmd,
         check=check,
         capture_output=capture_output,
         text=True,
-        stderr=subprocess.DEVNULL if not capture_output else None,
+        stderr=None if capture_output else subprocess.PIPE,
     )
+
+
+def print_command_error(result: subprocess.CompletedProcess) -> None:
+    """Echo a failed command's captured stderr, when present, as an error line.
+
+    ``run_command`` captures stderr even when it lets stdout stream to the
+    terminal, so this turns docker's own diagnostic (e.g. "Cannot connect to
+    the Docker daemon") into visible output instead of leaving only a generic
+    caller-supplied message.
+    """
+    stderr = (result.stderr or "").strip()
+    if stderr:
+        print_error(stderr)
 
 
 def cleanup(container_id: str | None, temp_dir: Path | None) -> None:
@@ -218,6 +238,7 @@ Examples:
             result = run_command(["docker", "pull", image_name], check=False)
             if result.returncode != 0:
                 print_error(f"Failed to pull image: {image_name}")
+                print_command_error(result)
                 return 1
 
         # Create container
@@ -227,6 +248,7 @@ Examples:
         )
         if result.returncode != 0 or not result.stdout or not result.stdout.strip():
             print_error("Failed to create container")
+            print_command_error(result)
             return 1
 
         container_id = result.stdout.strip()
@@ -245,6 +267,7 @@ Examples:
         )
         if result.returncode != 0:
             print_error("Failed to extract web files from container")
+            print_command_error(result)
             return 1
 
         # Verify extraction
@@ -274,6 +297,7 @@ Examples:
         result = run_command(["docker", "rm", container_id], check=False)
         if result.returncode != 0:
             print_error(f"Warning: Failed to remove container {container_id}")
+            print_command_error(result)
             print_error(
                 f"You may need to remove it manually with: docker rm {container_id}"
             )
