@@ -117,6 +117,17 @@ pooling, and server-side edit rendering:
 - `EDIT_RENDER_MAX_CONCURRENCY`: Maximum concurrent edit renders (default: `4`)
 - `EDIT_RENDER_SPOOL_MAX_BYTES`: In-memory edit-render spool limit in bytes before disk use (default: `16777216`)
 
+The Docker image also lets deployments tune Uvicorn's HTTP connection handling
+without rebuilding the image:
+
+- `TIMEOUT_KEEP_ALIVE`: Keep-alive timeout in seconds (default: `75`)
+- `LIMIT_CONCURRENCY`: Maximum concurrent connections (default: `200`)
+- `BACKLOG`: Listen backlog for pending connections (default: `2048`)
+
+These overrides apply to the image's production command; see
+[Uvicorn Runtime Settings](docs/references/uvicorn-settings.md) for the tuning
+guidance and configuration owners.
+
 **Build with a specific Immich version:**
 ```bash
 docker build --build-arg IMMICH_VERSION=v3.1.0 -t immich-adapter .
