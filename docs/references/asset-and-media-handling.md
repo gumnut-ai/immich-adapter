@@ -118,8 +118,10 @@ the predecessor (root current is an idempotent success; an opaque tip is 409 —
 an edit-specific route must not expose a generic external-version delete).
 The generated `RotateParameters` model bounds `angle` to integer values from 0
 through 270, but the runtime contract is narrower: a rotate action must use
-exactly `0`, `90`, `180`, or `270` degrees. Any other value is rejected with
-HTTP 400 and the `invalid_angle` error code.
+exactly `0`, `90`, `180`, or `270` degrees. Other integers within the generated
+bounds are rejected with HTTP 400. Values that fail model validation return HTTP
+422. The internal validation code is `invalid_angle`; the HTTP response exposes
+only the explanatory message.
 The emission contract for committed writes is owned by
 `docs/references/websocket-events-reference.md` § `AssetEditReadyV2`.
 
