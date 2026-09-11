@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 
 # Build arguments for versioning and metadata
-# Override with: docker build --build-arg IMMICH_VERSION=v3.1.0 .
+# Override with: docker build --build-arg IMMICH_VERSION=v3.2.0 .
 # Pinned to specific version for reproducible builds.
 # IMPORTANT: keep in sync with .immich-container-tag. Render builds this
 # Dockerfile automatically without a way to inject build-args from a file,
 # so this default is what ships to production. See
 # docs/references/routes-dtos-and-upstream-compatibility.md § "Bumping the Immich Version".
-# Last updated: 2026-07-29 (Immich v3.1.0)
-ARG IMMICH_VERSION=v3.1.0
+# Last updated: 2026-09-10 (Immich v3.2.0)
+ARG IMMICH_VERSION=v3.2.0
 ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
 

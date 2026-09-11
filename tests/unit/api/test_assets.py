@@ -3,13 +3,14 @@
 import asyncio
 import json
 
+import httpx
 import pytest
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Any
 from unittest.mock import Mock, AsyncMock, patch
 from zoneinfo import ZoneInfo
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from uuid import UUID, uuid4
 import base64
@@ -40,7 +41,10 @@ from routers.api.assets import (
     delete_asset_metadata,
     get_asset_metadata_by_key,
     play_asset_video,
+    router as assets_router,
 )
+from routers.utils.current_user import get_current_user
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     safe_uuid_from_stack_id,
@@ -4170,6 +4174,66 @@ class TestAssetEdits:
 
     RECIPE_PARAMS = {"version": 1, "angle": 90, "mirror": False}
 
+    @pytest.fixture
+    def edit_http_app(self, mock_current_user):
+        app = FastAPI()
+        app.include_router(assets_router)
+        client = self._client([self._version(position=0)])
+        app.dependency_overrides[get_authenticated_gumnut_client] = lambda: client
+        app.dependency_overrides[get_current_user] = lambda: mock_current_user
+        return app, client
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("angle", [90, 180, 270])
+    async def test_http_rotation_response_is_integer(
+        self, edit_http_app, sample_uuid, angle
+    ):
+        app, client = edit_http_app
+        fake_render, _ = self._fake_render()
+        with (
+            patch("routers.api.assets.render_asset_edit", fake_render),
+            patch("routers.api.assets.emit_user_event", AsyncMock()),
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as http:
+                response = await http.put(
+                    f"/api/assets/{sample_uuid}/edits",
+                    json={
+                        "edits": [{"action": "rotate", "parameters": {"angle": angle}}]
+                    },
+                )
+        assert response.status_code == 200
+        wire_angle = response.json()["edits"][0]["parameters"]["angle"]
+        assert type(wire_angle) is int
+        assert wire_angle == angle
+        client.assets.versions.with_raw_response.append.assert_awaited_once()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "angle,status_code",
+        [(45, 400), (91, 400), (-90, 422), (360, 422), (450, 422), (90.5, 422)],
+    )
+    async def test_http_rejects_invalid_rotation_before_render_or_write(
+        self, edit_http_app, sample_uuid, angle, status_code
+    ):
+        app, client = edit_http_app
+        fake_render, render_calls = self._fake_render()
+        with patch("routers.api.assets.render_asset_edit", fake_render):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as http:
+                response = await http.put(
+                    f"/api/assets/{sample_uuid}/edits",
+                    json={
+                        "edits": [{"action": "rotate", "parameters": {"angle": angle}}]
+                    },
+                )
+        assert response.status_code == status_code
+        assert render_calls == []
+        client.assets.versions.with_raw_response.append.assert_not_awaited()
+        client.assets.versions.with_raw_response.replace.assert_not_awaited()
+
     # --- GET ---------------------------------------------------------------
 
     @pytest.mark.anyio
@@ -4196,7 +4260,11 @@ class TestAssetEdits:
         assert [row.action for row in first.edits] == [AssetEditAction.rotate]
         rotate_parameters = first.edits[0].parameters
         assert isinstance(rotate_parameters, RotateParameters)
-        assert rotate_parameters.angle == 90.0
+        assert rotate_parameters.angle == 90
+        wire_angle = json.loads(first.model_dump_json())["edits"][0]["parameters"][
+            "angle"
+        ]
+        assert type(wire_angle) is int
         # Synthesized row IDs are stable for the same asset/version/action.
         assert [row.id for row in first.edits] == [row.id for row in second.edits]
 
@@ -5136,7 +5204,7 @@ class TestAssetEdits:
                         edits=[
                             AssetEditActionItemDto(
                                 action=AssetEditAction.rotate,
-                                parameters=RotateParameters(angle=360.0),
+                                parameters=RotateParameters(angle=0),
                             )
                         ]
                     ),

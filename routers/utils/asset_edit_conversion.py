@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -154,21 +153,13 @@ def _validate_crop(
     return CropBox(x=x, y=y, width=width, height=height)
 
 
-def _normalize_angle(angle: float) -> int:
-    if isinstance(angle, bool) or not isinstance(angle, (int, float)):
+def _validate_angle(angle: int) -> int:
+    # OpenAPI expresses integer bounds, but upstream also requires quarter turns.
+    if type(angle) is not int or angle not in _VALID_ANGLES:
         raise AssetEditValidationError(
-            "invalid_angle", "Rotation angle must be a number"
+            "invalid_angle", "Rotation angle must be 0, 90, 180, or 270 degrees"
         )
-    # Avoid converting arbitrarily large ints inside isfinite().
-    if isinstance(angle, float) and not math.isfinite(angle):
-        raise AssetEditValidationError("invalid_angle", "Rotation angle must be finite")
-    # The recipe contract accepts any finite multiple of 90, deliberately wider
-    # than Immich's literal input validator, and normalizes it.
-    if angle % 90 != 0:
-        raise AssetEditValidationError(
-            "invalid_angle", "Rotation angle must be a multiple of 90 degrees"
-        )
-    return int(angle) % 360
+    return angle
 
 
 def immich_edits_to_recipe(
@@ -245,7 +236,7 @@ def immich_edits_to_recipe(
                     "duplicate_action", "Duplicate rotate action"
                 )
             seen.add("rotate")
-            rotation = _normalize_angle(parameters.angle)
+            rotation = _validate_angle(parameters.angle)
             angle = (angle - rotation if mirror else angle + rotation) % 360
         elif action is AssetEditAction.mirror:
             if not isinstance(parameters, MirrorParameters):
@@ -394,7 +385,7 @@ def recipe_to_immich_edits(
             AssetEditActionItemResponseDto(
                 action=AssetEditAction.rotate,
                 id=_synthesized_row_id(asset_id, version_id, AssetEditAction.rotate),
-                parameters=RotateParameters(angle=float(wire_angle)),
+                parameters=RotateParameters(angle=wire_angle),
             )
         )
     return rows
