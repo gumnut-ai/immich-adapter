@@ -1,6 +1,6 @@
 ---
 title: "Asset and Media Handling"
-last-updated: 2026-08-26
+last-updated: 2026-09-11
 ---
 
 # Asset and Media Handling
@@ -116,6 +116,10 @@ snapshotted tip, so a tip moved by a concurrent writer returns 409 and is never
 retried against a refetched chain. DELETE removes the current edit and restores
 the predecessor (root current is an idempotent success; an opaque tip is 409 —
 an edit-specific route must not expose a generic external-version delete).
+The generated `RotateParameters` model bounds `angle` to integer values from 0
+through 270, but the runtime contract is narrower: a rotate action must use
+exactly `0`, `90`, `180`, or `270` degrees. Any other value is rejected with
+HTTP 400 and the `invalid_angle` error code.
 The emission contract for committed writes is owned by
 `docs/references/websocket-events-reference.md` § `AssetEditReadyV2`.
 
