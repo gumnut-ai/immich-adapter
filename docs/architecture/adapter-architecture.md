@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-03
+last-updated: 2026-09-10
 ---
 
 # Immich Adapter Architecture
@@ -139,6 +139,9 @@ variants and the position-0 uploaded bytes for `/original` and batch archives.
 default `edited=false` archive request. Selection rules and the `/edits` routes
 that append, replace, and remove `edit` versions are in
 [Asset and Media Handling](../references/asset-and-media-handling.md).
+
+The optional `archiveName` request field controls the UTF-8-safe outer ZIP
+filename through `Content-Disposition`; absent or empty names use `assets.zip`.
 
 ## Collection translation
 
