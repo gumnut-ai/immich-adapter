@@ -1,11 +1,21 @@
 ---
 title: Documentation Conventions
-last-updated: 2026-08-11
+last-updated: 2026-09-14
 ---
 
 # Documentation Conventions
 
 How to write and maintain documentation in this repository.
+
+## Line Length
+
+Aim to wrap documentation prose at 80 characters in the Markdown source so
+small edits produce readable diffs. This is guidance, not a hard limit or a
+lint rule. Keep longer lines when wrapping would harm readability or Markdown
+structure, such as table rows, URLs, inline code, and code examples.
+
+Apply this incrementally to new or edited prose; do not reformat whole files
+or sweep existing documentation solely to adopt it.
 
 ## Doc Types
 
