@@ -9,10 +9,15 @@ How to write and maintain documentation in this repository.
 
 ## Line Length
 
-Aim to wrap documentation prose at 80 characters in the Markdown source so
-small edits produce readable diffs. This is guidance, not a hard limit or a
-lint rule. Keep longer lines when wrapping would harm readability or Markdown
-structure, such as table rows, URLs, inline code, and code examples.
+In repository files, aim to wrap documentation prose at 80 characters in the
+Markdown source so small edits produce readable diffs. This is guidance, not a
+hard limit or a lint rule. Keep longer lines when wrapping would harm
+readability or Markdown structure, such as table rows, URLs, inline code, and
+code examples.
+
+This guidance applies only to repository files. In PR descriptions, let the
+renderer wrap prose naturally; keep each paragraph or list item on one source
+line, except where Markdown structure requires a line break.
 
 Apply this incrementally to new or edited prose; do not reformat whole files
 or sweep existing documentation solely to adopt it.
