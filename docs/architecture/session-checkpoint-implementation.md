@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-09-13
+last-updated: 2026-09-14
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -170,6 +170,10 @@ The adapter parses each ack string as `SyncEntityType|cursor|`.
 
 - **JWTs are encrypted at rest** in `session:{uuid}.stored_jwt`; clients never receive the backend JWT after login.
 - **Session tokens are stable** across backend JWT refreshes, which keeps `/api/sessions` identities and sync checkpoints stable too.
+- **Session field updates are conditional and atomic**: `SessionStore` uses one
+  Redis script for updates such as JWT refresh, activity, library binding, and
+  sync-reset flags. If deletion wins the race, the update writes neither a
+  partial hash nor the activity index.
 - **Session deletion is authoritative**: deleting a session removes its checkpoint hash and index entries.
 - **TTL is optional**: when a session is created with an expiry, the same TTL is applied to both `session:{uuid}` and `session:{uuid}:checkpoints` so they expire together.
 - **Index cleanup is lazy**: if Redis TTL removes the main keys first, later reads clean up orphaned entries from `user:{user_id}:sessions` and `sessions:by_updated_at`.
