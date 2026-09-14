@@ -51,7 +51,7 @@ class Session:
 
     id: UUID  # The session token (what client sends as accessToken)
     user_id: str  # Gumnut user ID (UUID format)
-    library_id: str  # User's default library (or empty string)
+    library_id: str  # Resolved Gumnut library, or "" until the first scoped request
     stored_jwt: str  # Encrypted Gumnut JWT
     device_type: str  # "iOS", "Android", "Chrome", etc.
     device_os: str  # "iOS", "macOS", "Android", etc.
@@ -169,7 +169,7 @@ class SessionStore:
         Args:
             jwt_token: The Gumnut JWT (will be encrypted and stored)
             user_id: Gumnut user ID from JWT claims
-            library_id: User's default library ID
+            library_id: Resolved Gumnut library, or "" to resolve on first use
             device_type: "iOS", "Android", "Chrome", etc.
             device_os: "iOS 17.4", "Android 13", etc.
             app_version: "1.94.0" or empty string for web
@@ -381,6 +381,51 @@ class SessionStore:
         pipe.hset(f"session:{session_token}", "stored_jwt", encrypted_jwt)
         pipe.hset(f"session:{session_token}", "updated_at", now.isoformat())
         pipe.zadd("sessions:by_updated_at", {session_token: now.timestamp()})
+        await pipe.execute()
+        return True
+
+    async def update_library_id(self, session_token: str, library_id: str) -> bool:
+        """
+        Cache the library the session's Gumnut calls are scoped to.
+
+        Written once the adapter has resolved the user's first live library
+        (see ``services/library_resolver.py``); read back by the auth
+        middleware on every request.
+
+        Args:
+            session_token: The session token (UUID string)
+            library_id: The resolved Gumnut library ID
+
+        Returns:
+            True if session exists and was updated, False otherwise
+        """
+        if not await self._redis.exists(f"session:{session_token}"):
+            return False
+
+        await self._redis.hset(f"session:{session_token}", "library_id", library_id)
+        return True
+
+    async def forget_library(self, session_token: str) -> bool:
+        """
+        Drop the cached library and flag the session for a sync reset.
+
+        Called when the Gumnut API reports the cached library gone (trashed
+        elsewhere). The next request re-resolves; the reset makes the client
+        discard the vanished library's local copy and checkpoints before it
+        syncs the replacement.
+
+        Args:
+            session_token: The session token (UUID string)
+
+        Returns:
+            True if session exists and was updated, False otherwise
+        """
+        if not await self._redis.exists(f"session:{session_token}"):
+            return False
+
+        pipe = self._redis.pipeline()
+        pipe.hset(f"session:{session_token}", "library_id", "")
+        pipe.hset(f"session:{session_token}", "is_pending_sync_reset", "1")
         await pipe.execute()
         return True
 

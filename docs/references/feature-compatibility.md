@@ -43,10 +43,12 @@ context changes; its presence does not promise future delivery.
 ### Intentional unsupported areas
 
 Some Immich surfaces are outside the adapter's product boundary or conflict with
-the single-user Gumnut library model. These include adaptive video streaming,
-integrity and database-maintenance workflows, OAuth backchannel logout, library
-management, session lock/PIN, administration and user management, unsupported
-notification and job/queue infrastructure, and plugins/workflows. Duplicate
+the adapter's one-library-per-request rule (the adapter chooses the user's
+oldest live Gumnut library; Immich has no selector). These include adaptive
+video streaming, integrity and database-maintenance workflows, OAuth
+backchannel logout, library management, session lock/PIN, administration and
+user management, unsupported notification and job/queue infrastructure, and
+plugins/workflows. Duplicate
 detection follows Gumnut's different product approach. The calendar heatmap is
 a benign empty compatibility read.
 

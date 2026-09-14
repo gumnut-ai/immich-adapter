@@ -191,7 +191,7 @@ async def finish_oauth(
         session = await session_store.create(
             jwt_token=result.access_token,
             user_id=str(user_uuid),
-            library_id="",  # Not available from OAuth, use placeholder
+            library_id="",
             device_type=device_info.device_type,
             device_os=device_info.device_os,
             app_version=device_info.app_version,

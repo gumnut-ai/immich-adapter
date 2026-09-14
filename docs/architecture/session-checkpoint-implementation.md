@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-08-30
+last-updated: 2026-09-13
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -21,7 +21,7 @@ The important distinction is that the client-facing token is **not** the backend
 ```text
 session:{uuid}
   ├── user_id: "550e8400-e29b-41d4-a716-446655440000"
-  ├── library_id: ""
+  ├── library_id: "lib_..."
   ├── stored_jwt: "<encrypted backend JWT>"
   ├── device_type: "iOS"
   ├── device_os: "iOS 18.5"
@@ -98,7 +98,7 @@ Clients therefore keep using the same UUID session token across backend JWT refr
 - `DELETE /api/sessions/{id}` deletes a specific session.
 - `POST /api/sessions` and `POST /api/sessions/{id}/lock` are still 204 stubs.
 
-Session records still carry `library_id` for compatibility and metadata, but the current sync implementation resumes from owner-scoped events cursors rather than `library_id` timestamp filters.
+`library_id` is the Gumnut library the session's calls are scoped to (`""` until the first scoped request resolves it); see [Adapter Architecture](adapter-architecture.md#library-scope). Sync resumes from opaque events cursors within that library, not from `library_id` timestamp filters.
 
 ## Checkpoint model
 

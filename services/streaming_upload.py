@@ -73,7 +73,7 @@ class StreamingUploadPipeline:
     """Coordinates the three-thread streaming upload pipeline.
 
     Usage:
-        pipeline = StreamingUploadPipeline(request, api_base_url, jwt_token)
+        pipeline = StreamingUploadPipeline(request, api_base_url, jwt_token, library_id)
         result = await pipeline.execute(extract_fields_fn)
         # result is the JSON dict from the Gumnut API
         # pipeline.last_status_code has the HTTP status (200=duplicate, 201=created)
@@ -85,10 +85,14 @@ class StreamingUploadPipeline:
         request: Request,
         api_base_url: str,
         jwt_token: str,
+        library_id: str | None,
     ) -> None:
         self._request = request
         self._api_base_url = api_base_url
         self._jwt_token = jwt_token
+        # Bypassing the SDK also bypasses its default query parameter, so the
+        # bound library travels as the form field the upload endpoint reads.
+        self._library_id = library_id
 
         self._pipe = StreamingPipe(maxsize=64)
         self._form_parser = StreamingFormParser(self._pipe)
@@ -101,6 +105,9 @@ class StreamingUploadPipeline:
         # Populated after successful upload
         self.refreshed_token: str | None = None
         self.last_status_code: int | None = None
+        # The upstream error detail behind a raised HTTPException, so the
+        # caller can react to what the Gumnut API said (e.g. library gone).
+        self.last_error_detail: str | None = None
 
     @property
     def form_parser(self) -> StreamingFormParser:
@@ -222,6 +229,15 @@ class StreamingUploadPipeline:
             },
         )
 
+        form_fields = {
+            "device_asset_id": device_asset_id,
+            "device_id": device_id,
+            "file_created_at": file_created_at.isoformat(),
+            "file_modified_at": file_modified_at.isoformat(),
+        }
+        if self._library_id:
+            form_fields["library_id"] = self._library_id
+
         # Bypasses the Gumnut SDK because the pipe-backed body is non-replayable,
         # making SDK-level retry impossible. Token refresh is captured from the
         # response headers after the POST completes, but if the JWT expires during
@@ -237,12 +253,7 @@ class StreamingUploadPipeline:
                         content_type,
                     ),
                 },
-                data={
-                    "device_asset_id": device_asset_id,
-                    "device_id": device_id,
-                    "file_created_at": file_created_at.isoformat(),
-                    "file_modified_at": file_modified_at.isoformat(),
-                },
+                data=form_fields,
             )
         except httpx.TimeoutException as e:
             raise TimeoutError("Upstream upload timed out") from e
@@ -252,6 +263,7 @@ class StreamingUploadPipeline:
                 detail="Upload failed",
             ) from e
 
+        self.last_status_code = response.status_code
         detail: str | None = None
         if response.status_code in (200, 201):
             logger.info(
@@ -269,6 +281,7 @@ class StreamingUploadPipeline:
                 detail = str(body.get("detail", response.text))
             except Exception:
                 detail = response.text
+            self.last_error_detail = detail
             log_upstream_response(
                 logger,
                 context="streaming_upload",
@@ -314,7 +327,6 @@ class StreamingUploadPipeline:
         if new_token:
             self.refreshed_token = new_token
 
-        self.last_status_code = response.status_code
         return response.json()
 
     # --- Main orchestration ---

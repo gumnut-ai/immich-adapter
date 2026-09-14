@@ -62,6 +62,7 @@ def app_with_mocks(mock_session_store):
         return {
             "jwt_token": getattr(request.state, "jwt_token", None),
             "session_token": getattr(request.state, "session_token", None),
+            "session_library_id": getattr(request.state, "session_library_id", None),
             "is_web_client": getattr(request.state, "is_web_client", None),
         }
 
@@ -152,6 +153,21 @@ class TestAuthMiddleware:
         assert data["jwt_token"] == TEST_JWT
         assert data["session_token"] == session_token
         assert data["is_web_client"] is False
+        # The session's cached library rides along so the scoped Gumnut client
+        # needs no second Redis read.
+        assert data["session_library_id"] == "lib_456"
+
+    def test_unresolved_session_library_is_none(
+        self, client_with_mocks, mock_session_store
+    ):
+        """A session that has not resolved its library yet ("" in Redis)
+        exposes None, so the first scoped request knows to resolve it."""
+        mock_session_store.get_by_id.return_value.library_id = ""
+        headers = {"Authorization": f"Bearer {TEST_SESSION_ID}"}
+
+        response = client_with_mocks.get("/api/test/protected", headers=headers)
+
+        assert response.json()["session_library_id"] is None
 
     def test_web_client_with_cookie(self, client_with_mocks, mock_session_store):
         """Test that web client with cookie looks up session."""
@@ -259,6 +275,8 @@ class TestAuthMiddleware:
         data = response.json()
         assert data["jwt_token"] == api_key
         assert data["session_token"] is None
+        # API-key clients carry no session, so no cached library either.
+        assert data["session_library_id"] is None
         assert data["is_web_client"] is False
         # API keys are self-contained backend credentials — no session lookup.
         mock_session_store.get_by_id.assert_not_awaited()

@@ -1070,6 +1070,52 @@ class TestUploadAsset:
         assert exc_info.value.status_code == 502
 
     @pytest.mark.anyio
+    async def test_streaming_upload_forwards_library_gone(self, mock_current_user):
+        """The pipeline's own HTTP client bypasses the shared response hook, so
+        a 404 naming the bound library is forwarded from the upload path."""
+        request = Mock()
+        request.headers = {
+            "content-length": str(300 * 1024 * 1024),
+            "content-type": "multipart/form-data; boundary=---abc123",
+        }
+
+        class _State:
+            jwt_token = "test-jwt-token"
+
+        request.state = _State()
+
+        settings = _make_mock_settings(threshold=100 * 1024 * 1024)
+
+        mock_pipeline_instance = Mock()
+        mock_pipeline_instance.execute = AsyncMock(
+            side_effect=HTTPException(status_code=404, detail="Upload failed")
+        )
+        mock_pipeline_instance.last_status_code = 404
+        mock_pipeline_instance.last_error_detail = "Library lib_x not found"
+
+        with (
+            patch(
+                "routers.api.assets.StreamingUploadPipeline",
+                return_value=mock_pipeline_instance,
+            ),
+            patch(
+                "routers.api.assets.forget_bound_library_if_gone",
+                new_callable=AsyncMock,
+            ) as forget,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await upload_asset(
+                    request=request,
+                    client=Mock(),
+                    current_user=mock_current_user,
+                    settings=settings,
+                    library_id="lib_x",
+                )
+
+        assert exc_info.value.status_code == 404
+        forget.assert_awaited_once_with(404, "Library lib_x not found")
+
+    @pytest.mark.anyio
     async def test_streaming_upload_client_disconnect(self, mock_current_user):
         """A client disconnect on the streaming path returns 499 rather than being
         mapped to a 500/502 by the pipeline's broad error handler."""

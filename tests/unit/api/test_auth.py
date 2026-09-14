@@ -334,8 +334,9 @@ class TestValidateAccessTokenIntegration:
 
         assert response.status_code == 200
         assert response.json() == {"authStatus": True}
-        # The middleware-populated JWT was forwarded to the SDK client.
-        mock_get_client.assert_awaited_once_with(self.TEST_JWT)
+        # The middleware-populated JWT and the session's cached library were
+        # forwarded to the SDK client, with no library lookup in between.
+        mock_get_client.assert_awaited_once_with(self.TEST_JWT, "lib_456")
 
     def test_unauthenticated_request_returns_401(self, client):
         """No auth → 401 in Immich's error shape, raised by the dependency before

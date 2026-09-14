@@ -14,7 +14,10 @@ from routers.utils.bulk import classify_bulk_item_call
 from routers.utils.cdn_client import stream_from_cdn
 from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.error_mapping import log_upstream_response
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client,
+    get_current_library_id,
+)
 from routers.immich_models import (
     AssetFaceUpdateDto,
     AssetFaceUpdateItem,
@@ -98,6 +101,7 @@ def _immich_people_sort_key(person: PersonResponse) -> tuple:
 async def create_person(
     person_data: PersonCreateDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    library_id: str | None = Depends(get_current_library_id),
 ) -> PersonResponseDto:
     """
     Create a new person.
@@ -107,6 +111,7 @@ async def create_person(
         birth_date=person_data.birthDate,
         is_favorite=person_data.isFavorite,
         is_hidden=person_data.isHidden,
+        library_id=library_id,
     )
     return convert_gumnut_person_to_immich(gumnut_person)
 

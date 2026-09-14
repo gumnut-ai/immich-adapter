@@ -14,7 +14,10 @@ from routers.utils.concurrency import (
     BULK_FANOUT_CONCURRENCY_LIMIT,
     gather_with_concurrency,
 )
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client,
+    get_current_library_id,
+)
 from routers.utils.current_user import get_current_user
 from routers.immich_models import (
     AlbumResponseDto,
@@ -165,6 +168,7 @@ async def create_album(
     request: CreateAlbumDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
+    library_id: str | None = Depends(get_current_library_id),
 ) -> AlbumResponseDto:
     """
     Create a new album and associate any initial assets.
@@ -179,6 +183,7 @@ async def create_album(
     gumnut_album = await client.albums.create(
         name=request.albumName or "",
         description=request.description,
+        library_id=library_id,
     )
 
     asset_count = await _add_initial_assets_to_album(

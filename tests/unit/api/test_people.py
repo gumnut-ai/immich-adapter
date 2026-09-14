@@ -76,7 +76,7 @@ class TestCreatePerson:
         )
 
         # Execute
-        result = await create_person(request, client=mock_client)
+        result = await create_person(request, client=mock_client, library_id="lib_test")
 
         # Assert
         # Result should be a converted PersonResponseDto
@@ -88,6 +88,7 @@ class TestCreatePerson:
             birth_date=datetime(1990, 1, 1).date(),
             is_favorite=True,
             is_hidden=False,
+            library_id="lib_test",
         )
 
     @pytest.mark.anyio

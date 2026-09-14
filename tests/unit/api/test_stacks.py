@@ -120,6 +120,7 @@ async def _create(client, current_user, asset_uuids):
         request=StackCreateDto(assetIds=list(asset_uuids)),
         client=client,
         current_user=current_user,
+        library_id="lib_test",
     )
 
 
@@ -717,13 +718,15 @@ class TestCreateStack:
         assert kwargs["primary_asset_id"] == uuid_to_gumnut_asset_id(requested[0])
 
     @pytest.mark.anyio
-    async def test_omits_library_id(self, mock_current_user):
+    async def test_forwards_bound_library_id(self, mock_current_user):
+        """The bound library rides in the request body: the client's default
+        query parameter cannot reach a body field."""
         stack, members = make_gumnut_stack_with_members(count=2)
         client = _write_client(stack, members)
 
         await _create(client, mock_current_user, _member_uuids(members))
 
-        assert "library_id" not in client.stacks.create_stack.call_args.kwargs
+        assert client.stacks.create_stack.call_args.kwargs["library_id"] == "lib_test"
 
     @pytest.mark.anyio
     async def test_forwards_the_request_once_unmodified(self, mock_current_user):

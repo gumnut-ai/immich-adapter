@@ -55,7 +55,11 @@ from services.asset_edit_renderer import (
     render_asset_edit,
 )
 from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    forget_bound_library_if_gone,
+    get_authenticated_gumnut_client,
+    get_current_library_id,
+)
 from routers.utils.error_mapping import invalid_chain_error, map_gumnut_error
 from routers.utils.current_user import get_current_user, get_current_user_id
 from pydantic import ValidationError
@@ -552,6 +556,7 @@ async def upload_asset(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
+    library_id: str | None = Depends(get_current_library_id),
 ) -> AssetMediaResponseDto | JSONResponse:
     """
     Upload an asset using the Gumnut SDK.
@@ -592,10 +597,14 @@ async def upload_asset(
     try:
         if use_streaming:
             return await _upload_streaming(
-                request, client, current_user, settings.gumnut_api_base_url
+                request,
+                client,
+                current_user,
+                settings.gumnut_api_base_url,
+                library_id,
             )
         else:
-            return await _upload_buffered(request, client, current_user)
+            return await _upload_buffered(request, client, current_user, library_id)
     except ClientDisconnect:
         # The client hung up before finishing the upload (mobile backgrounding,
         # cancel, network blip). The connection is gone, so there's no one to
@@ -616,6 +625,7 @@ async def _upload_buffered(
     request: Request,
     client: AsyncGumnut,
     current_user: UserResponseDto,
+    library_id: str | None,
 ) -> AssetMediaResponseDto | JSONResponse:
     """Standard buffered upload path — Starlette spools file to /tmp."""
     async with request.form() as form:
@@ -686,6 +696,7 @@ async def _upload_buffered(
                     device_id=GUMNUT_UPLOAD_DEVICE_ID,
                     file_created_at=file_created_at,
                     file_modified_at=file_modified_at,
+                    library_id=library_id,
                 )
 
             gumnut_asset = await raw_response.parse()
@@ -723,6 +734,7 @@ async def _upload_streaming(
     client: AsyncGumnut,
     current_user: UserResponseDto,
     api_base_url: str,
+    library_id: str | None,
 ) -> AssetMediaResponseDto | JSONResponse:
     """Streaming upload path — pipes file data to the Gumnut API without buffering.
 
@@ -740,7 +752,7 @@ async def _upload_streaming(
 
     pipeline: StreamingUploadPipeline | None = None
     try:
-        pipeline = StreamingUploadPipeline(request, api_base_url, jwt_token)
+        pipeline = StreamingUploadPipeline(request, api_base_url, jwt_token, library_id)
         result = await pipeline.execute(_extract_upload_fields)
 
         asset_id = result.get("id", "")
@@ -782,6 +794,12 @@ async def _upload_streaming(
         return AssetMediaResponseDto(id=asset_uuid, status=AssetMediaStatus.created)
 
     except HTTPException:
+        # The pipeline posts through its own HTTP client, so the shared
+        # response hook never sees this upload's 404; forward it here.
+        if pipeline and pipeline.last_status_code and pipeline.last_error_detail:
+            await forget_bound_library_if_gone(
+                pipeline.last_status_code, pipeline.last_error_detail
+            )
         raise
     except ClientDisconnect:
         # Let the disconnect propagate to upload_asset's handler instead of
