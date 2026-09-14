@@ -18,22 +18,49 @@ Immich clients
 
 The adapter owns protocol compatibility and short-lived translation state. It does not own photo storage, search indexes, user identity, or background media processing. Redis stores adapter sessions and per-session sync checkpoints; durable photo data remains in the Gumnut API.
 
-Each request acts on exactly one Gumnut library, chosen by the adapter rather than the client (see [Library scope](#library-scope)). Immich library-management routes are compatibility stubs rather than a second library model.
+Each request acts on exactly one Gumnut library, chosen by the adapter rather
+than the client (see [Library scope](#library-scope)). Immich
+library-management routes are compatibility stubs rather than a second library
+model.
 
 ## Compatibility invariants
 
 The adapter cannot add Gumnut-specific endpoints or require client changes. A Gumnut capability with no Immich-shaped home therefore has to be represented by an existing Immich contract, an explicit compatibility stub, or a documented translation compromise.
 
-The one-library-per-request rule is more specific than a generic compatibility stub. Immich does not expose a library selector that the adapter can map to Gumnut, and `/api/libraries` is therefore an empty compatibility surface. The adapter makes one selection shared across every route instead of a per-route choice or fan-out, because fixing individual routes would create inconsistent authorization and data visibility.
+The one-library-per-request rule is more specific than a generic compatibility
+stub. Immich does not expose a library selector that the adapter can map to
+Gumnut, and `/api/libraries` is therefore an empty compatibility surface. The
+adapter makes one selection shared across every route, because fixing
+individual routes would create inconsistent authorization and data visibility.
 
 ### Library scope
 
-A Gumnut user can own several libraries, and the Gumnut API refuses a call that omits `library_id` when more than one is live. The adapter therefore resolves a library per request and scopes every Gumnut call to it:
+A Gumnut user can own several libraries, and the Gumnut API refuses a call that
+omits `library_id` when more than one is live. The adapter resolves a library
+per request and scopes every Gumnut call to it:
 
-- **Choice.** The user's oldest live library (first in creation order): deterministic and independent of any client state, so every new session or device starts on the same library. Nothing is stored as a preference; letting a user pick which library Immich sees is a possible follow-up.
-- **Binding.** `get_authenticated_gumnut_client` builds the SDK client with the resolved id as a default query parameter, so every query-scoped endpoint (lists, search, events, trash, counts) carries it without the call site knowing. The few endpoints that take `library_id` in a body or form — album, person, face, and stack creation, and both upload paths — receive it explicitly through `get_current_library_id`. By-id reads and writes need no library: a record id is unambiguous.
-- **Caching.** Session-token clients cache the id on the session record; API-key clients, which carry no session, under a hashed-key Redis entry with a one-hour TTL. A miss costs one `GET /api/libraries` on an unscoped client. Two cases stay unscoped and uncached: a user with no live library, whom the Gumnut API's zero-library fallback recreates one for; and an API key limited to selected libraries, which the API refuses the listing for. Such a key was never usable through the adapter beyond uploads on a single-library key, since the API requires it to name the library and Immich has no selector to supply one; that stays out of scope.
-- **Invalidation.** Another client can trash the chosen library mid-session. The Gumnut API answers a scoped call against a trashed or purged library with `404` and a detail naming that library; the shared HTTP client's response hook recognises it and drops the cached id, so the next request re-resolves onto the surviving library. The hook sees every SDK response, including those made inside a streaming sync body where the global exception handler cannot help; the streaming upload, which posts through its own HTTP client, forwards its upstream error explicitly. The request that discovers the trash still fails with the 404; recovery is on the next one. A session additionally gets a pending sync reset, since its checkpoints and the client's local copy belong to the vanished library. A session keeps the library it resolved until that library is gone: if the trashed one is later restored, sessions that already fell back stay on the survivor rather than resetting the device a second time, while new sessions (and a sign-out and sign-in) pick the restored one; an API-key entry expires with its TTL.
+- **Choice.** The user's oldest live library, so every session and device
+  starts on the same one regardless of client state.
+- **Binding.** `get_authenticated_gumnut_client` sets the resolved id as the
+  SDK client's default query parameter, so query-scoped endpoints carry it
+  without the call site knowing. The calls that take `library_id` in a body or
+  form get it from `get_current_library_id`. By-id reads and writes need no
+  library: a record id is unambiguous.
+- **Caching.** Session-token clients cache the id on the session record;
+  API-key clients, which have no session, under a hashed-key Redis entry with a
+  one-hour TTL. A miss costs one `GET /api/libraries` on an unscoped client.
+  Two cases stay unscoped and uncached: a user with no live library, and an API
+  key limited to selected libraries, which the API refuses the listing for.
+- **Invalidation.** Another client can trash the chosen library mid-session.
+  The Gumnut API answers a scoped call with a `404` naming that library; the
+  shared HTTP client's response hook drops the cached id, so the next request
+  re-resolves onto the survivor (the streaming upload, on its own HTTP client,
+  forwards the error explicitly). The request that discovers the trash still
+  fails, and a session also gets a pending sync reset, since its checkpoints
+  belong to the vanished library. A session keeps its resolved library until
+  that library is gone: restoring the trashed one does not move sessions that
+  already fell back; new sessions pick it up, and an API-key entry expires with
+  its TTL.
 
 ## Request path
 

@@ -1,8 +1,6 @@
 """Choose and cache the Gumnut library an Immich client acts on.
 
-The rule, the caching, and the invalidation are described in
-docs/architecture/adapter-architecture.md § Library scope; the request-side
-binding lives in ``routers/utils/gumnut_client.py``.
+See docs/architecture/adapter-architecture.md § Library scope.
 """
 
 import hashlib
@@ -19,18 +17,15 @@ from utils.redis_protocols import AsyncRedisClient
 
 logger = logging.getLogger(__name__)
 
-# API keys are long-lived and have no session to expire with, so their cached
-# library gets a bounded lifetime instead. Library-not-found drops the entry
-# earlier; the TTL only caps how long a stale entry can survive a path that
-# never reports the miss (e.g. a client that stops calling).
+# API keys have no session to expire with, so their cached library is bounded
+# by a TTL instead; library-not-found drops the entry earlier.
 API_KEY_LIBRARY_TTL_SECONDS = 60 * 60
 
 
 def first_live_library_id(libraries: Iterable[LibraryResponse]) -> str | None:
     """The oldest live library, or ``None`` when the user has none.
 
-    The Gumnut API lists live libraries newest first, so the order is fixed
-    here rather than trusting the response order.
+    The Gumnut API lists libraries newest first, so sort rather than trust it.
     """
     ordered = sorted(libraries, key=lambda library: (library.created_at, library.id))
     return ordered[0].id if ordered else None
@@ -39,12 +34,10 @@ def first_live_library_id(libraries: Iterable[LibraryResponse]) -> str | None:
 def is_library_not_found(detail: str, library_id: str) -> bool:
     """Whether a Gumnut 404 detail says the bound library is gone.
 
-    Contract: the Gumnut API rejects an explicit library that is trashed,
-    purged, or not owned with a detail of the form ``Library <id> not found
-    or not accessible by user <user>`` (the id is sometimes quoted and the
-    user suffix sometimes absent). Other 404s (asset, person, album) never
-    name a library, and matching the bound id keeps a stale asset id from
-    being mistaken for a vanished library.
+    The Gumnut API rejects a trashed, purged, or unowned library with
+    ``Library <id> not found or not accessible by user <user>`` (the id is
+    sometimes quoted, the user suffix sometimes absent). Requiring the bound
+    id keeps another entity's 404 from being read as a vanished library.
     """
     return detail.startswith("Library ") and library_id in detail
 
@@ -57,10 +50,8 @@ def _api_key_cache_key(api_key: str) -> str:
 class LibraryCache:
     """Per-credential cache of the resolved library id.
 
-    Session-token clients cache on their session record; API-key clients,
-    which carry no session, under a hashed-key entry with a TTL. Best-effort:
-    a Redis failure is logged and treated as a miss or a no-op write, so the
-    request still resolves the library from the Gumnut API rather than fail.
+    Best-effort: a Redis failure is logged and treated as a miss or a no-op
+    write, so the request resolves from the Gumnut API rather than fail.
     """
 
     def __init__(self, redis_client: Any, session_store: SessionStore):

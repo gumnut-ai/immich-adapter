@@ -22,30 +22,21 @@ logger = logging.getLogger(__name__)
 # Per-Request Scope
 # -----------------
 # The shared httpx response hook below sees every Gumnut SDK response but has
-# no request object, so per-request state reaches it through a *mutable scope*
-# installed on a ContextVar:
+# no request object, so per-request state reaches it through a *mutable* object
+# installed on a ContextVar by init_request_scope() before call_next. Code
+# downstream mutates that object in place, which the middleware can read back
+# afterwards — a ContextVar.set() inside the handler could not, because
+# Starlette's BaseHTTPMiddleware does not propagate those writes back out. Each
+# request installs its own scope, so concurrent requests on one event-loop
+# thread never observe each other's state; sharing would let one user's
+# refreshed JWT land in another user's session.
 #
-#   - The middleware calls init_request_scope() before invoking the downstream
-#     handler. ContextVar values set before the downstream call propagate
-#     *into* the handler/response-hook context.
-#   - Code running inside that context mutates the same scope object. The
-#     middleware reads it back after the handler returns: because the value
-#     read is a mutation of a shared object — not a ContextVar.set() inside
-#     the handler — it is visible even though Starlette's BaseHTTPMiddleware
-#     does not propagate ContextVar writes back out of the downstream call.
-#
-# Each request installs its own scope, so concurrent requests on the same event
-# loop thread can never observe each other's state. Two things live on it:
-#
-#   - The refreshed JWT. When the Gumnut API refreshes a token it returns the
-#     new one in the 'x-new-access-token' response header; the hook records it
-#     and the middleware persists it into the requesting user's session. Any
-#     sharing here would let one user's JWT land in another user's session.
-#   - The library scope: the library this request's Gumnut calls are bound to
-#     (see docs/architecture/adapter-architecture.md § Library scope) and how
-#     to forget it, so the hook can drop the cached library when the Gumnut
-#     API reports it gone — including from calls made inside a streaming body,
-#     which the global exception handler never sees.
+# The scope carries the refreshed JWT (returned in the 'x-new-access-token'
+# response header, persisted into the session by the middleware) and the
+# request's bound library plus how to forget it (see
+# docs/architecture/adapter-architecture.md § Library scope), so the hook can
+# drop a vanished library even from calls inside a streaming body, which the
+# global exception handler never sees.
 
 
 @dataclass
@@ -82,10 +73,9 @@ def init_request_scope() -> None:
 def _get_or_create_scope() -> _RequestScope:
     scope = _request_scope_var.get()
     if scope is None:
-        # No scope was installed for this context (e.g. a direct call outside
-        # the request lifecycle). Install one so state isn't silently lost
-        # within the current context. This still cannot leak across requests:
-        # the scope lives only in this context's ContextVar.
+        # No scope for this context (e.g. a direct call outside the request
+        # lifecycle). Install one; it lives only in this context's ContextVar,
+        # so it still cannot leak across requests.
         scope = _RequestScope()
         _request_scope_var.set(scope)
     return scope
@@ -151,15 +141,10 @@ async def forget_bound_library_if_gone(status_code: int, detail: str) -> None:
 
 
 async def _response_hook(response: httpx.Response) -> None:
-    """
-    HTTP response hook run on every Gumnut SDK response.
-
-    Records a refreshed token from the 'x-new-access-token' header on the
-    current request's scope, and drops the cached library when a 404 names the
-    request's bound library (see the Per-Request Scope comment above).
-
-    Args:
-        response: The httpx Response object from the Gumnut API
+    """Run on every Gumnut SDK response: record a refreshed token from the
+    'x-new-access-token' header on the current request's scope, and drop the
+    cached library when a 404 names the request's bound library (see the
+    Per-Request Scope comment above).
     """
     token = response.headers.get("x-new-access-token")
     if token:
@@ -228,8 +213,7 @@ async def get_gumnut_client(
     Args:
         jwt_token: JWT token for authenticated requests
         library_id: When set, sent as the ``library_id`` query parameter on
-            every call, so query-scoped endpoints act on that library without
-            each call site passing it. An explicit per-call value still wins.
+            every call. An explicit per-call value still wins.
 
     Returns:
         AsyncGumnut: Configured async Gumnut client instance with user's JWT
@@ -251,8 +235,7 @@ async def _resolve_library_id(
     """Resolve the library for this request's credential, caching the result.
 
     ``credential`` is the session's JWT or the raw API key. ``None`` leaves the
-    request unscoped and caches nothing (no live library, or a credential the
-    API refuses the listing for; see the architecture doc's Library scope).
+    request unscoped and caches nothing.
     """
     session_token = getattr(request.state, "session_token", None)
     if session_token:
@@ -319,10 +302,8 @@ async def get_authenticated_gumnut_client(
 async def get_current_library_id(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> str | None:
-    """
-    Dependency providing the library id bound for the current request, for the
-    Gumnut calls that take ``library_id`` in a body or form, which the client's
-    default query parameter cannot reach. Depending on the (per-request cached)
+    """The library bound for this request, for the Gumnut calls that take
+    ``library_id`` in a body or form. Depending on the (per-request cached)
     client guarantees the library is resolved first.
     """
     return get_bound_library_id()

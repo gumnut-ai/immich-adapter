@@ -404,9 +404,8 @@ class TestStreamingUploadPipeline:
 
     @pytest.mark.anyio
     async def test_upstream_error_detail_is_kept_for_the_caller(self):
-        """The pipeline's own HTTP client bypasses the shared response hook, so
-        the caller needs the upstream status and detail to react to a 404 that
-        names the bound library."""
+        """The pipeline's own HTTP client bypasses the shared response hook,
+        so the caller needs the upstream status and detail to react to it."""
         body, ct_header = _build_multipart_body()
         request = _make_mock_request(body, ct_header)
         response = _make_httpx_response(404, {"detail": "Library lib_x not found"})

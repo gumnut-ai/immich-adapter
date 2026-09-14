@@ -388,14 +388,6 @@ class SessionStore:
         """
         Cache the library the session's Gumnut calls are scoped to.
 
-        Written once the adapter has resolved the user's first live library
-        (see ``services/library_resolver.py``); read back by the auth
-        middleware on every request.
-
-        Args:
-            session_token: The session token (UUID string)
-            library_id: The resolved Gumnut library ID
-
         Returns:
             True if session exists and was updated, False otherwise
         """
@@ -409,13 +401,9 @@ class SessionStore:
         """
         Drop the cached library and flag the session for a sync reset.
 
-        Called when the Gumnut API reports the cached library gone (trashed
-        elsewhere). The next request re-resolves; the reset makes the client
-        discard the vanished library's local copy and checkpoints before it
-        syncs the replacement.
-
-        Args:
-            session_token: The session token (UUID string)
+        Called when the Gumnut API reports the cached library gone; the next
+        request re-resolves, and the reset makes the client discard the
+        vanished library's local copy and checkpoints.
 
         Returns:
             True if session exists and was updated, False otherwise

@@ -1,11 +1,4 @@
-"""Unit tests for binding the resolved library into the Gumnut client.
-
-Covers the mechanism the library fallback rests on: a library bound as the
-client's default query parameter reaches every query-scoped call, the
-per-request resolution and caching around it, the response hook that drops
-the cached library when the Gumnut API reports it gone, and the routes that
-must carry the library in a body instead.
-"""
+"""Unit tests for binding the resolved library into the Gumnut client."""
 
 import inspect
 from datetime import datetime, timezone
@@ -329,10 +322,8 @@ class TestAuthenticatedClientDependency:
 
 
 class TestBodyScopedRoutesDeclareTheDependency:
-    """The five routes whose Gumnut call takes `library_id` in a body or form
-    must receive it through `get_current_library_id`: the unit tests call the
-    handlers with an explicit value, so nothing else would notice the wiring
-    going missing while production silently sent no library."""
+    """The unit tests call these handlers with an explicit `library_id`, so
+    nothing else would notice the dependency wiring going missing."""
 
     @pytest.mark.parametrize(
         "handler",

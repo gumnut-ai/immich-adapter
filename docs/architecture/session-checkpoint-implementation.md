@@ -98,7 +98,10 @@ Clients therefore keep using the same UUID session token across backend JWT refr
 - `DELETE /api/sessions/{id}` deletes a specific session.
 - `POST /api/sessions` and `POST /api/sessions/{id}/lock` are still 204 stubs.
 
-`library_id` is the Gumnut library the session's calls are scoped to (`""` until the first scoped request resolves it); see [Adapter Architecture](adapter-architecture.md#library-scope). Sync resumes from opaque events cursors within that library, not from `library_id` timestamp filters.
+`library_id` is the Gumnut library the session's calls are scoped to (`""`
+until the first scoped request resolves it); see
+[Adapter Architecture](adapter-architecture.md#library-scope). Sync resumes
+from opaque events cursors within that library.
 
 ## Checkpoint model
 
