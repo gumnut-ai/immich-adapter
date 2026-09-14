@@ -1,6 +1,6 @@
 ---
 title: "Upgrading the Immich Target Version"
-last-updated: 2026-09-02
+last-updated: 2026-09-14
 ---
 
 # Upgrading the Immich Target Version
@@ -25,7 +25,7 @@ Keep these variables in one persistent shell for the whole procedure. An agent w
 ## Step 0 — Identify the current and target versions
 
 ```bash
-cat .immich-container-tag                          # current pin, e.g. v3.1.0
+cat .immich-container-tag                          # current pin, e.g. v3.2.0
 git -C "$IMMICH" fetch --tags origin
 git -C "$IMMICH" tag --sort=-creatordate | head    # candidates, e.g. v3.2.0, v3.2.0-rc.1
 ```
