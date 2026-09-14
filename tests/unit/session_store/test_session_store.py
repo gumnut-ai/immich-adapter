@@ -8,6 +8,8 @@ from uuid import UUID
 import redis.exceptions
 
 from services.session_store import (
+    _REQUIRED_SESSION_FIELDS,
+    _UPDATE_IF_EXISTS_LUA,
     Session,
     SessionDataError,
     SessionExpiredError,
@@ -19,6 +21,26 @@ from services.session_store import (
 TEST_SESSION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 TEST_SESSION_ID_2 = UUID("650e8400-e29b-41d4-a716-446655440001")
 TEST_ENCRYPTED_JWT = "gAAAAABh..."  # Mock encrypted JWT
+
+# Every writer that conditionally updates the session hash.
+WRITERS = [
+    pytest.param(
+        lambda store, token: store.update_activity(token), id="update_activity"
+    ),
+    pytest.param(
+        lambda store, token: store.update_stored_jwt(token, "new.jwt.token"),
+        id="update_stored_jwt",
+    ),
+    pytest.param(
+        lambda store, token: store.update_library_id(token, "lib_1"),
+        id="update_library_id",
+    ),
+    pytest.param(lambda store, token: store.forget_library(token), id="forget_library"),
+    pytest.param(
+        lambda store, token: store.set_pending_sync_reset(token, True),
+        id="set_pending_sync_reset",
+    ),
+]
 
 
 class TestSessionDataclass:
@@ -606,17 +628,23 @@ class TestSessionStoreDelete:
         mock_pipeline.zrem.assert_called_with("sessions:by_updated_at", session_token)
 
 
-class TestSessionStoreUpdateActivity:
-    """Tests for SessionStore.update_activity()."""
+def _decode_eval(mock_redis):
+    """Decode the recorded EVAL into (keys, token, score, fields)."""
+    script, numkeys, *rest = mock_redis.eval.call_args.args
+    assert script is _UPDATE_IF_EXISTS_LUA
+    keys = rest[:numkeys]
+    token, score, *pairs = rest[numkeys:]
+    return keys, token, score, dict(zip(pairs[::2], pairs[1::2]))
+
+
+class TestSessionStoreConditionalWrites:
+    """Every session hash writer goes through the atomic conditional update."""
 
     @pytest.fixture
     def mock_redis(self):
-        """Create a mock async Redis client."""
+        """Create a mock async Redis client whose EVAL reports a live session."""
         mock = AsyncMock()
-        # pipeline() is sync, but execute() is async
-        mock_pipeline = MagicMock()
-        mock_pipeline.execute = AsyncMock()
-        mock.pipeline = MagicMock(return_value=mock_pipeline)
+        mock.eval.return_value = 1
         return mock
 
     @pytest.fixture
@@ -625,107 +653,58 @@ class TestSessionStoreUpdateActivity:
         return SessionStore(mock_redis)
 
     @pytest.mark.anyio
-    async def test_update_activity_session_exists(self, session_store, mock_redis):
-        """Test updating activity for existing session."""
-        mock_redis.exists.return_value = True
+    async def test_update_activity_stamps_updated_at_and_index(
+        self, session_store, mock_redis
+    ):
+        """Test update_activity writes updated_at and the activity index score."""
+        session_token = str(TEST_SESSION_ID)
 
-        result = await session_store.update_activity(str(TEST_SESSION_ID))
+        result = await session_store.update_activity(session_token)
 
         assert result is True
-        mock_redis.pipeline.return_value.execute.assert_called_once()
+        keys, token, score, fields = _decode_eval(mock_redis)
+        assert keys == [f"session:{session_token}", "sessions:by_updated_at"]
+        assert token == session_token
+        assert set(fields) == {"updated_at"}
+        assert datetime.fromisoformat(
+            fields["updated_at"]
+        ).timestamp() == pytest.approx(float(score))
 
     @pytest.mark.anyio
-    async def test_update_activity_session_not_found(self, session_store, mock_redis):
-        """Test updating activity for non-existent session."""
-        mock_redis.exists.return_value = False
-
-        result = await session_store.update_activity(str(TEST_SESSION_ID))
-
-        assert result is False
-
-
-class TestSessionStoreUpdateStoredJwt:
-    """Tests for SessionStore.update_stored_jwt()."""
-
-    @pytest.fixture
-    def mock_redis(self):
-        """Create a mock async Redis client."""
-        mock = AsyncMock()
-        mock_pipeline = MagicMock()
-        mock_pipeline.execute = AsyncMock()
-        mock.pipeline = MagicMock(return_value=mock_pipeline)
-        return mock
-
-    @pytest.fixture
-    def session_store(self, mock_redis):
-        """Create SessionStore with mocked Redis."""
-        return SessionStore(mock_redis)
-
-    @pytest.mark.anyio
-    async def test_update_stored_jwt_success(self, session_store, mock_redis):
-        """Test updating stored JWT for existing session."""
-        mock_redis.exists.return_value = True
+    async def test_update_stored_jwt_writes_encrypted_jwt_and_activity(
+        self, session_store, mock_redis
+    ):
+        """Test update_stored_jwt stores the encrypted JWT and touches activity."""
+        session_token = str(TEST_SESSION_ID)
 
         with patch("services.session_store.encrypt_jwt") as mock_encrypt:
             mock_encrypt.return_value = "new_encrypted_jwt"
 
             result = await session_store.update_stored_jwt(
-                str(TEST_SESSION_ID), "new.jwt.token"
+                session_token, "new.jwt.token"
             )
 
-            assert result is True
-            mock_encrypt.assert_called_once_with("new.jwt.token")
-            mock_redis.pipeline.return_value.execute.assert_called_once()
+        assert result is True
+        mock_encrypt.assert_called_once_with("new.jwt.token")
+        _keys, _token, score, fields = _decode_eval(mock_redis)
+        assert fields["stored_jwt"] == "new_encrypted_jwt"
+        assert datetime.fromisoformat(
+            fields["updated_at"]
+        ).timestamp() == pytest.approx(float(score))
 
     @pytest.mark.anyio
-    async def test_update_stored_jwt_session_not_found(self, session_store, mock_redis):
-        """Test updating stored JWT for non-existent session."""
-        mock_redis.exists.return_value = False
-
-        result = await session_store.update_stored_jwt(
-            str(TEST_SESSION_ID), "new.jwt.token"
-        )
-
-        assert result is False
-
-
-class TestSessionStoreLibrary:
-    """Tests for SessionStore.update_library_id() and forget_library()."""
-
-    @pytest.fixture
-    def mock_redis(self):
-        """Create a mock async Redis client."""
-        mock = AsyncMock()
-        mock_pipeline = MagicMock()
-        mock_pipeline.execute = AsyncMock()
-        mock.pipeline = MagicMock(return_value=mock_pipeline)
-        return mock
-
-    @pytest.fixture
-    def session_store(self, mock_redis):
-        """Create SessionStore with mocked Redis."""
-        return SessionStore(mock_redis)
-
-    @pytest.mark.anyio
-    async def test_update_library_id_success(self, session_store, mock_redis):
-        mock_redis.exists.return_value = True
+    async def test_update_library_id_writes_library_only(
+        self, session_store, mock_redis
+    ):
+        """Test update_library_id writes library_id without touching activity."""
         session_token = str(TEST_SESSION_ID)
 
         result = await session_store.update_library_id(session_token, "lib_1")
 
         assert result is True
-        mock_redis.hset.assert_called_with(
-            f"session:{session_token}", "library_id", "lib_1"
-        )
-
-    @pytest.mark.anyio
-    async def test_update_library_id_session_not_found(self, session_store, mock_redis):
-        mock_redis.exists.return_value = False
-
-        result = await session_store.update_library_id(str(TEST_SESSION_ID), "lib_1")
-
-        assert result is False
-        mock_redis.hset.assert_not_called()
+        _keys, _token, score, fields = _decode_eval(mock_redis)
+        assert fields == {"library_id": "lib_1"}
+        assert score == ""
 
     @pytest.mark.anyio
     async def test_forget_library_clears_and_flags_sync_reset(
@@ -733,78 +712,141 @@ class TestSessionStoreLibrary:
     ):
         """The vanished library's local copy and checkpoints must not be
         resumed against its replacement, so forgetting also queues a reset."""
-        mock_redis.exists.return_value = True
-        session_token = str(TEST_SESSION_ID)
-
-        result = await session_store.forget_library(session_token)
-
-        assert result is True
-        pipe = mock_redis.pipeline.return_value
-        pipe.hset.assert_any_call(f"session:{session_token}", "library_id", "")
-        pipe.hset.assert_any_call(
-            f"session:{session_token}", "is_pending_sync_reset", "1"
-        )
-        pipe.execute.assert_awaited_once()
-
-    @pytest.mark.anyio
-    async def test_forget_library_session_not_found(self, session_store, mock_redis):
-        mock_redis.exists.return_value = False
-
         result = await session_store.forget_library(str(TEST_SESSION_ID))
 
-        assert result is False
-        mock_redis.pipeline.assert_not_called()
-
-
-class TestSessionStoreSyncReset:
-    """Tests for SessionStore.set_pending_sync_reset()."""
-
-    @pytest.fixture
-    def mock_redis(self):
-        """Create a mock async Redis client."""
-        return AsyncMock()
-
-    @pytest.fixture
-    def session_store(self, mock_redis):
-        """Create SessionStore with mocked Redis."""
-        return SessionStore(mock_redis)
-
-    @pytest.mark.anyio
-    async def test_set_pending_sync_reset_true(self, session_store, mock_redis):
-        """Test setting sync reset flag to true."""
-        mock_redis.exists.return_value = True
-        session_token = str(TEST_SESSION_ID)
-
-        result = await session_store.set_pending_sync_reset(session_token, True)
-
         assert result is True
-        mock_redis.hset.assert_called_with(
-            f"session:{session_token}", "is_pending_sync_reset", "1"
-        )
+        _keys, _token, _score, fields = _decode_eval(mock_redis)
+        assert fields == {"library_id": "", "is_pending_sync_reset": "1"}
 
     @pytest.mark.anyio
-    async def test_set_pending_sync_reset_false(self, session_store, mock_redis):
-        """Test setting sync reset flag to false."""
-        mock_redis.exists.return_value = True
-        session_token = str(TEST_SESSION_ID)
-
-        result = await session_store.set_pending_sync_reset(session_token, False)
-
-        assert result is True
-        mock_redis.hset.assert_called_with(
-            f"session:{session_token}", "is_pending_sync_reset", "0"
-        )
-
-    @pytest.mark.anyio
-    async def test_set_pending_sync_reset_session_not_found(
-        self, session_store, mock_redis
+    @pytest.mark.parametrize("pending,expected", [(True, "1"), (False, "0")])
+    async def test_set_pending_sync_reset(
+        self, session_store, mock_redis, pending, expected
     ):
-        """Test setting sync reset for non-existent session."""
-        mock_redis.exists.return_value = False
+        """Test set_pending_sync_reset writes the flag in both directions."""
+        result = await session_store.set_pending_sync_reset(
+            str(TEST_SESSION_ID), pending
+        )
 
-        result = await session_store.set_pending_sync_reset("nonexistent", True)
+        assert result is True
+        _keys, _token, _score, fields = _decode_eval(mock_redis)
+        assert fields == {"is_pending_sync_reset": expected}
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("writer", WRITERS)
+    async def test_writer_reports_missing_session(
+        self, session_store, mock_redis, writer
+    ):
+        """Test each writer returns False when the session no longer exists."""
+        mock_redis.eval.return_value = 0
+
+        with patch("services.session_store.encrypt_jwt", return_value="enc"):
+            result = await writer(session_store, str(TEST_SESSION_ID))
 
         assert result is False
+
+
+class _RacingRedis:
+    """In-memory Redis stand-in where a delete lands after the first round trip."""
+
+    def __init__(self, session_token: str, data: dict[str, str]):
+        self.key = f"session:{session_token}"
+        self.hashes: dict[str, dict[str, str]] = {self.key: dict(data)}
+        self.zsets: dict[str, dict[str, float]] = {}
+        self._delete_pending = True
+
+    def _after_round_trip(self) -> None:
+        """Deliver the concurrent delete once, after the first command is served."""
+        if self._delete_pending:
+            self._delete_pending = False
+            self.hashes.pop(self.key, None)
+
+    def _hset(self, name, key=None, value=None, mapping=None) -> None:
+        fields = dict(mapping or {})
+        if key is not None:
+            fields[key] = value
+        self.hashes.setdefault(name, {}).update(fields)
+
+    def _zadd(self, name, mapping) -> None:
+        self.zsets.setdefault(name, {}).update(mapping)
+
+    async def exists(self, name: str) -> int:
+        present = name in self.hashes
+        self._after_round_trip()
+        return 1 if present else 0
+
+    async def hset(self, name, key=None, value=None, mapping=None) -> int:
+        self._hset(name, key, value, mapping)
+        self._after_round_trip()
+        return 1
+
+    async def eval(self, script, numkeys, *keys_and_args) -> int:
+        assert script is _UPDATE_IF_EXISTS_LUA
+        keys = keys_and_args[:numkeys]
+        token, score, *pairs = keys_and_args[numkeys:]
+        result = 0
+        if keys[0] in self.hashes:
+            self._hset(keys[0], mapping=dict(zip(pairs[::2], pairs[1::2])))
+            if score:
+                self._zadd(keys[1], {token: float(score)})
+            result = 1
+        self._after_round_trip()
+        return result
+
+    def pipeline(self):
+        return _RacingPipeline(self)
+
+
+class _RacingPipeline:
+    """Queued commands applied as a single round trip, matching MULTI/EXEC."""
+
+    def __init__(self, redis: _RacingRedis):
+        self._redis = redis
+        self._queued = []
+
+    def hset(self, name, key=None, value=None, mapping=None) -> None:
+        self._queued.append(lambda: self._redis._hset(name, key, value, mapping))
+
+    def zadd(self, name, mapping) -> None:
+        self._queued.append(lambda: self._redis._zadd(name, mapping))
+
+    async def execute(self) -> list:
+        for command in self._queued:
+            command()
+        self._queued.clear()
+        self._redis._after_round_trip()
+        return []
+
+
+class TestSessionStoreConcurrentDelete:
+    """A delete racing a writer must never leave a partial session hash."""
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("writer", WRITERS)
+    async def test_concurrent_delete_cannot_leave_partial_hash(self, writer):
+        """Test a delete landing mid-write leaves no resurrected partial hash."""
+        session_token = str(TEST_SESSION_ID)
+        now = datetime.now(timezone.utc)
+        full_session = Session(
+            id=TEST_SESSION_ID,
+            user_id="user_123",
+            library_id="lib_456",
+            stored_jwt=TEST_ENCRYPTED_JWT,
+            device_type="iOS",
+            device_os="iOS 17.4",
+            app_version="1.94.0",
+            created_at=now,
+            updated_at=now,
+            is_pending_sync_reset=False,
+        ).to_dict()
+        racing_redis = _RacingRedis(session_token, full_session)
+        session_store = SessionStore(racing_redis)
+
+        with patch("services.session_store.encrypt_jwt", return_value="enc"):
+            await writer(session_store, session_token)
+
+        stored = racing_redis.hashes.get(f"session:{session_token}")
+        assert stored is None or _REQUIRED_SESSION_FIELDS <= set(stored)
 
 
 class TestSessionStoreDeleteAllForUser:

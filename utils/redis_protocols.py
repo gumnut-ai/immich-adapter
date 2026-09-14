@@ -56,3 +56,6 @@ class AsyncRedisClient(Protocol):
     def zrangebyscore(
         self, name: str, min: float, max: float
     ) -> Awaitable[list[Any]]: ...
+    def eval(
+        self, script: str, numkeys: int, *keys_and_args: str
+    ) -> Awaitable[Any]: ...
