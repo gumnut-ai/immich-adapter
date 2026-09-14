@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Storage Reference"
-last-updated: 2026-08-11
+last-updated: 2026-09-14
 ---
 
 # Session and Checkpoint Storage Reference
@@ -24,6 +24,10 @@ The stable session UUID is the client-facing Immich access token. It is independ
 Representative session fields are `user_id`, `library_id`, `stored_jwt`, `device_type`, `device_os`, `app_version`, `created_at`, `updated_at`, and `is_pending_sync_reset`. Treat `services/session_store.py::Session` as the field authority rather than copying defaults or client-version examples here.
 
 Session hashes may have a TTL. When a TTL is configured, the checkpoint hash receives the same TTL. Redis expiry does not remove set/sorted-set index entries; normal user-session reads lazily prune orphans, and `SessionStore.cleanup_stale_sessions` is an explicit maintenance operation rather than a background scheduler.
+
+Every session field update is conditional: `SessionStore` writes them only if
+the hash still exists, and does so atomically, so a concurrent delete can never
+resurrect a session as a partial hash.
 
 ## Checkpoint records
 

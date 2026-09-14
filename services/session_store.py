@@ -30,6 +30,21 @@ class SessionExpiredError(ValueError):
     pass
 
 
+# KEYS: session hash, activity index. ARGV: session token, activity score or
+# "" to skip the index write, then field/value pairs.
+_UPDATE_IF_EXISTS_LUA = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 0
+end
+if #ARGV > 2 then
+  redis.call('HSET', KEYS[1], unpack(ARGV, 3))
+end
+if ARGV[2] ~= '' then
+  redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
+end
+return 1
+"""
+
 _REQUIRED_SESSION_FIELDS = frozenset(
     [
         "user_id",
@@ -332,6 +347,35 @@ class SessionStore:
             pipe.zrem("sessions:by_updated_at", session_token)
         await pipe.execute()
 
+    async def _update_if_exists(
+        self,
+        session_token: str,
+        fields: dict[str, str] | None = None,
+        *,
+        touch_activity: bool = False,
+    ) -> bool:
+        """Write hash fields atomically, only if the session still exists."""
+        updates = dict(fields or {})
+        score = ""
+        if touch_activity:
+            now = datetime.now(timezone.utc)
+            updates["updated_at"] = now.isoformat()
+            score = str(now.timestamp())
+
+        args = [session_token, score]
+        for field, value in updates.items():
+            args.extend((field, value))
+
+        return bool(
+            await self._redis.eval(
+                _UPDATE_IF_EXISTS_LUA,
+                2,
+                f"session:{session_token}",
+                "sessions:by_updated_at",
+                *args,
+            )
+        )
+
     async def update_activity(self, session_token: str) -> bool:
         """
         Update session's updated_at timestamp.
@@ -344,15 +388,7 @@ class SessionStore:
         Returns:
             True if session exists and was updated, False otherwise
         """
-        if not await self._redis.exists(f"session:{session_token}"):
-            return False
-
-        now = datetime.now(timezone.utc)
-        pipe = self._redis.pipeline()
-        pipe.hset(f"session:{session_token}", "updated_at", now.isoformat())
-        pipe.zadd("sessions:by_updated_at", {session_token: now.timestamp()})
-        await pipe.execute()
-        return True
+        return await self._update_if_exists(session_token, touch_activity=True)
 
     async def update_stored_jwt(self, session_token: str, new_jwt: str) -> bool:
         """
@@ -371,18 +407,9 @@ class SessionStore:
         Raises:
             JWTEncryptionError: If JWT encryption fails
         """
-        if not await self._redis.exists(f"session:{session_token}"):
-            return False
-
-        encrypted_jwt = encrypt_jwt(new_jwt)
-        now = datetime.now(timezone.utc)
-
-        pipe = self._redis.pipeline()
-        pipe.hset(f"session:{session_token}", "stored_jwt", encrypted_jwt)
-        pipe.hset(f"session:{session_token}", "updated_at", now.isoformat())
-        pipe.zadd("sessions:by_updated_at", {session_token: now.timestamp()})
-        await pipe.execute()
-        return True
+        return await self._update_if_exists(
+            session_token, {"stored_jwt": encrypt_jwt(new_jwt)}, touch_activity=True
+        )
 
     async def update_library_id(self, session_token: str, library_id: str) -> bool:
         """
@@ -391,11 +418,7 @@ class SessionStore:
         Returns:
             True if session exists and was updated, False otherwise
         """
-        if not await self._redis.exists(f"session:{session_token}"):
-            return False
-
-        await self._redis.hset(f"session:{session_token}", "library_id", library_id)
-        return True
+        return await self._update_if_exists(session_token, {"library_id": library_id})
 
     async def forget_library(self, session_token: str) -> bool:
         """
@@ -408,14 +431,9 @@ class SessionStore:
         Returns:
             True if session exists and was updated, False otherwise
         """
-        if not await self._redis.exists(f"session:{session_token}"):
-            return False
-
-        pipe = self._redis.pipeline()
-        pipe.hset(f"session:{session_token}", "library_id", "")
-        pipe.hset(f"session:{session_token}", "is_pending_sync_reset", "1")
-        await pipe.execute()
-        return True
+        return await self._update_if_exists(
+            session_token, {"library_id": "", "is_pending_sync_reset": "1"}
+        )
 
     async def set_pending_sync_reset(self, session_token: str, pending: bool) -> bool:
         """
@@ -431,15 +449,9 @@ class SessionStore:
         Returns:
             True if session exists and was updated, False otherwise
         """
-        if not await self._redis.exists(f"session:{session_token}"):
-            return False
-
-        await self._redis.hset(
-            f"session:{session_token}",
-            "is_pending_sync_reset",
-            "1" if pending else "0",
+        return await self._update_if_exists(
+            session_token, {"is_pending_sync_reset": "1" if pending else "0"}
         )
-        return True
 
     async def delete(self, session_token: str) -> bool:
         """
