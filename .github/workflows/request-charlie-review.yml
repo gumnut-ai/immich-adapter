@@ -1,0 +1,44 @@
+name: Request Charlie review
+
+# Metadata only: never check out or execute PR code in this privileged workflow.
+# The daemon also watches PR opening; this makes the GitHub reviewer explicit.
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] -- Metadata only; no PR code, checkout, or caches.
+    types: [opened, ready_for_review]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: request-charlie-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  request-review:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Request Charlie unless already requested or reviewed
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const params = { ...context.repo, pull_number: context.issue.number };
+            const { data: pr } = await github.rest.pulls.get(params);
+            if (pr.state !== 'open' || pr.draft ||
+                pr.user.login.toLowerCase() === 'charliehelps') return;
+            if (pr.requested_reviewers.some(user =>
+                user.login.toLowerCase() === 'charliehelps')) return;
+
+            // Opening assignment must not turn a completed review into a rereview.
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              ...params, per_page: 100,
+            });
+            const identities = ['charliehelps', 'charliecreates', 'charliecreates[bot]'];
+            if (reviews.some(review =>
+                identities.includes(review.user?.login.toLowerCase()) &&
+                ['APPROVED', 'COMMENTED', 'CHANGES_REQUESTED'].includes(review.state))) return;
+
+            await github.rest.pulls.requestReviewers({
+              ...params, reviewers: ['CharlieHelps'],
+            });
