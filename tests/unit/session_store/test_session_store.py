@@ -628,13 +628,18 @@ class TestSessionStoreDelete:
         mock_pipeline.zrem.assert_called_with("sessions:by_updated_at", session_token)
 
 
+def _split_eval_args(numkeys, keys_and_args):
+    """Split an EVAL payload into (keys, token, score, fields)."""
+    keys = list(keys_and_args[:numkeys])
+    token, score, *pairs = keys_and_args[numkeys:]
+    return keys, token, score, dict(zip(pairs[::2], pairs[1::2]))
+
+
 def _decode_eval(mock_redis):
     """Decode the recorded EVAL into (keys, token, score, fields)."""
     script, numkeys, *rest = mock_redis.eval.call_args.args
     assert script is _UPDATE_IF_EXISTS_LUA
-    keys = rest[:numkeys]
-    token, score, *pairs = rest[numkeys:]
-    return keys, token, score, dict(zip(pairs[::2], pairs[1::2]))
+    return _split_eval_args(numkeys, rest)
 
 
 class TestSessionStoreConditionalWrites:
@@ -746,14 +751,35 @@ class TestSessionStoreConditionalWrites:
         assert result is False
 
 
-class _RacingRedis:
-    """In-memory Redis stand-in where a delete lands after the first round trip."""
+def _full_session_data() -> dict[str, str]:
+    """Build a complete session hash as SessionStore.create would write it."""
+    now = datetime.now(timezone.utc)
+    return Session(
+        id=TEST_SESSION_ID,
+        user_id="user_123",
+        library_id="lib_456",
+        stored_jwt=TEST_ENCRYPTED_JWT,
+        device_type="iOS",
+        device_os="iOS 17.4",
+        app_version="1.94.0",
+        created_at=now,
+        updated_at=now,
+        is_pending_sync_reset=False,
+    ).to_dict()
 
-    def __init__(self, session_token: str, data: dict[str, str]):
+
+class _RacingRedis:
+    """In-memory Redis stand-in that races a session delete against one writer."""
+
+    def __init__(
+        self, session_token: str, data: dict[str, str], *, deleted_first: bool = False
+    ):
         self.key = f"session:{session_token}"
-        self.hashes: dict[str, dict[str, str]] = {self.key: dict(data)}
+        self.hashes: dict[str, dict[str, str]] = (
+            {} if deleted_first else {self.key: dict(data)}
+        )
         self.zsets: dict[str, dict[str, float]] = {}
-        self._delete_pending = True
+        self._delete_pending = not deleted_first
 
     def _after_round_trip(self) -> None:
         """Deliver the concurrent delete once, after the first command is served."""
@@ -761,61 +787,24 @@ class _RacingRedis:
             self._delete_pending = False
             self.hashes.pop(self.key, None)
 
-    def _hset(self, name, key=None, value=None, mapping=None) -> None:
-        fields = dict(mapping or {})
-        if key is not None:
-            fields[key] = value
-        self.hashes.setdefault(name, {}).update(fields)
+    def _hset(self, name, mapping) -> None:
+        self.hashes.setdefault(name, {}).update(mapping)
 
     def _zadd(self, name, mapping) -> None:
         self.zsets.setdefault(name, {}).update(mapping)
 
-    async def exists(self, name: str) -> int:
-        present = name in self.hashes
-        self._after_round_trip()
-        return 1 if present else 0
-
-    async def hset(self, name, key=None, value=None, mapping=None) -> int:
-        self._hset(name, key, value, mapping)
-        self._after_round_trip()
-        return 1
-
     async def eval(self, script, numkeys, *keys_and_args) -> int:
+        # Transcribes _UPDATE_IF_EXISTS_LUA; the script itself is never run here.
         assert script is _UPDATE_IF_EXISTS_LUA
-        keys = keys_and_args[:numkeys]
-        token, score, *pairs = keys_and_args[numkeys:]
+        keys, token, score, fields = _split_eval_args(numkeys, keys_and_args)
         result = 0
         if keys[0] in self.hashes:
-            self._hset(keys[0], mapping=dict(zip(pairs[::2], pairs[1::2])))
+            self._hset(keys[0], fields)
             if score:
                 self._zadd(keys[1], {token: float(score)})
             result = 1
         self._after_round_trip()
         return result
-
-    def pipeline(self):
-        return _RacingPipeline(self)
-
-
-class _RacingPipeline:
-    """Queued commands applied as a single round trip, matching MULTI/EXEC."""
-
-    def __init__(self, redis: _RacingRedis):
-        self._redis = redis
-        self._queued = []
-
-    def hset(self, name, key=None, value=None, mapping=None) -> None:
-        self._queued.append(lambda: self._redis._hset(name, key, value, mapping))
-
-    def zadd(self, name, mapping) -> None:
-        self._queued.append(lambda: self._redis._zadd(name, mapping))
-
-    async def execute(self) -> list:
-        for command in self._queued:
-            command()
-        self._queued.clear()
-        self._redis._after_round_trip()
-        return []
 
 
 class TestSessionStoreConcurrentDelete:
@@ -823,23 +812,10 @@ class TestSessionStoreConcurrentDelete:
 
     @pytest.mark.anyio
     @pytest.mark.parametrize("writer", WRITERS)
-    async def test_concurrent_delete_cannot_leave_partial_hash(self, writer):
+    async def test_delete_after_first_round_trip_leaves_no_partial_hash(self, writer):
         """Test a delete landing mid-write leaves no resurrected partial hash."""
         session_token = str(TEST_SESSION_ID)
-        now = datetime.now(timezone.utc)
-        full_session = Session(
-            id=TEST_SESSION_ID,
-            user_id="user_123",
-            library_id="lib_456",
-            stored_jwt=TEST_ENCRYPTED_JWT,
-            device_type="iOS",
-            device_os="iOS 17.4",
-            app_version="1.94.0",
-            created_at=now,
-            updated_at=now,
-            is_pending_sync_reset=False,
-        ).to_dict()
-        racing_redis = _RacingRedis(session_token, full_session)
+        racing_redis = _RacingRedis(session_token, _full_session_data())
         session_store = SessionStore(racing_redis)
 
         with patch("services.session_store.encrypt_jwt", return_value="enc"):
@@ -847,6 +823,23 @@ class TestSessionStoreConcurrentDelete:
 
         stored = racing_redis.hashes.get(f"session:{session_token}")
         assert stored is None or _REQUIRED_SESSION_FIELDS <= set(stored)
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("writer", WRITERS)
+    async def test_delete_before_write_touches_neither_hash_nor_index(self, writer):
+        """Test a writer finding no session writes neither the hash nor the index."""
+        session_token = str(TEST_SESSION_ID)
+        racing_redis = _RacingRedis(
+            session_token, _full_session_data(), deleted_first=True
+        )
+        session_store = SessionStore(racing_redis)
+
+        with patch("services.session_store.encrypt_jwt", return_value="enc"):
+            result = await writer(session_store, session_token)
+
+        assert result is False
+        assert racing_redis.hashes == {}
+        assert racing_redis.zsets == {}
 
 
 class TestSessionStoreDeleteAllForUser:
