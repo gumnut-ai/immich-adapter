@@ -503,7 +503,10 @@ class TestCreateAlbum:
 
         # Execute
         result = await create_album(
-            request, client=mock_client, current_user=mock_current_user
+            request,
+            client=mock_client,
+            current_user=mock_current_user,
+            library_id="lib_test",
         )
 
         # Assert
@@ -512,7 +515,7 @@ class TestCreateAlbum:
         assert result.albumName == "New Album"
         assert result.assetCount == 0
         mock_client.albums.create.assert_called_once_with(
-            name="New Album", description="New Description"
+            name="New Album", description="New Description", library_id="lib_test"
         )
         mock_client.albums.assets_associations.add.assert_not_awaited()
 

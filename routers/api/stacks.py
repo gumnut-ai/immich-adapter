@@ -16,7 +16,10 @@ from routers.immich_models import (
 )
 from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.current_user import get_current_user, get_current_user_id
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client,
+    get_current_library_id,
+)
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
     uuid_to_gumnut_stack_id,
@@ -279,6 +282,7 @@ async def create_stack(
     request: StackCreateDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
+    library_id: str | None = Depends(get_current_library_id),
 ) -> StackResponseDto:
     """Group the requested assets into a new stack, covered by the first one.
 
@@ -295,6 +299,7 @@ async def create_stack(
     stack = await client.stacks.create_stack(
         asset_ids=gumnut_asset_ids,
         primary_asset_id=gumnut_asset_ids[0],
+        library_id=library_id,
     )
 
     # Best-effort realtime hint that the caller's stacks changed (upstream

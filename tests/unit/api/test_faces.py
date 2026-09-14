@@ -449,13 +449,16 @@ class TestCreateFace:
         mock_client.people.retrieve = AsyncMock(return_value=person)
 
         request = self._make_request(asset_uuid, person_uuid)
-        result = await create_face(request=request, client=mock_client)
+        result = await create_face(
+            request=request, client=mock_client, library_id="lib_test"
+        )
 
         # Box scaled 2x from the 1920x1080 preview to the 3840x2160 asset.
         mock_client.faces.create.assert_called_once_with(
             asset_id=gumnut_asset_id,
             bounding_box={"x": 200, "y": 400, "w": 600, "h": 800},
             person_id=gumnut_person_id,
+            library_id="lib_test",
         )
         assert result.id == safe_uuid_from_face_id(created.id)
         assert result.boundingBoxX1 == 200
@@ -534,12 +537,13 @@ class TestCreateFace:
         )
 
         request = self._make_request(asset_uuid, person_uuid)
-        await create_face(request=request, client=mock_client)
+        await create_face(request=request, client=mock_client, library_id="lib_test")
 
         mock_client.faces.create.assert_called_once_with(
             asset_id=gumnut_asset_id,
             bounding_box={"x": 100, "y": 200, "w": 300, "h": 400},
             person_id=gumnut_person_id,
+            library_id="lib_test",
         )
 
     @pytest.mark.anyio
@@ -622,13 +626,16 @@ class TestCreateFace:
         )
 
         request = self._make_request(asset_uuid, person_uuid)
-        result = await create_face(request=request, client=mock_client)
+        result = await create_face(
+            request=request, client=mock_client, library_id="lib_test"
+        )
 
         # No scaling and no clamp: the box is stored exactly as drawn.
         mock_client.faces.create.assert_called_once_with(
             asset_id=gumnut_asset_id,
             bounding_box={"x": 100, "y": 200, "w": 300, "h": 400},
             person_id=gumnut_person_id,
+            library_id="lib_test",
         )
         # Response falls back to the request's reported preview dimensions.
         assert result.imageWidth == 1920

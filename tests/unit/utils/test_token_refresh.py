@@ -13,7 +13,7 @@ from routers.utils.gumnut_client import (
     _response_hook,
     get_refreshed_token,
     clear_refreshed_token,
-    init_refresh_token_holder,
+    init_request_scope,
     set_refreshed_token,
     get_shared_http_client,
 )
@@ -234,7 +234,7 @@ class TestPerRequestIsolation:
 
     A shared store would let one user's refreshed JWT be persisted into another
     user's session under concurrent load. Each request installs its own holder
-    via init_refresh_token_holder(), so concurrent requests cannot observe each
+    via init_request_scope(), so concurrent requests cannot observe each
     other's tokens even when running on the same event-loop thread.
     """
 
@@ -250,12 +250,12 @@ class TestPerRequestIsolation:
         captured: dict[str, str | None] = {}
 
         def request_a():
-            init_refresh_token_holder()
+            init_request_scope()
             set_refreshed_token("jwt-for-A")
             captured["a"] = get_refreshed_token()
 
         def request_b():
-            init_refresh_token_holder()
+            init_request_scope()
             set_refreshed_token("jwt-for-B")
             captured["b"] = get_refreshed_token()
 
@@ -278,8 +278,8 @@ class TestPerRequestIsolation:
         ctx_b = copy_context()
 
         # Both requests start (install their own holders), interleaved.
-        ctx_a.run(init_refresh_token_holder)
-        ctx_b.run(init_refresh_token_holder)
+        ctx_a.run(init_request_scope)
+        ctx_b.run(init_request_scope)
 
         # Only request B's backend call refreshes a token.
         ctx_b.run(set_refreshed_token, "jwt-for-B")
@@ -291,7 +291,7 @@ class TestPerRequestIsolation:
     def test_set_without_init_lazily_installs_holder(self):
         """set_refreshed_token outside the request lifecycle still works.
 
-        A direct call with no init_refresh_token_holder() (e.g. a unit test that
+        A direct call with no init_request_scope() (e.g. a unit test that
         invokes the hook directly) lazily installs a holder in the current
         context. This stays isolated — the holder lives only in this context.
         """
@@ -316,7 +316,7 @@ class TestPerRequestIsolation:
         """Concurrent tasks running the real response hook don't leak tokens."""
 
         async def handle(token: str, started: asyncio.Event, release: asyncio.Event):
-            init_refresh_token_holder()
+            init_request_scope()
             response = httpx.Response(
                 status_code=200,
                 headers={"x-new-access-token": token},
@@ -461,7 +461,7 @@ class TestTokenRefreshWithMockedGumnut:
         """Sequential hook calls with explicit clears between them.
 
         Note: production does not rely on manual clearing for isolation — each
-        request installs its own holder via init_refresh_token_holder(). See
+        request installs its own holder via init_request_scope(). See
         TestPerRequestIsolation for the per-request isolation guarantee. This
         test exercises the lower-level set/clear/get sequence within one context.
         """

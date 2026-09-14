@@ -689,6 +689,73 @@ class TestSessionStoreUpdateStoredJwt:
         assert result is False
 
 
+class TestSessionStoreLibrary:
+    """Tests for SessionStore.update_library_id() and forget_library()."""
+
+    @pytest.fixture
+    def mock_redis(self):
+        """Create a mock async Redis client."""
+        mock = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock()
+        mock.pipeline = MagicMock(return_value=mock_pipeline)
+        return mock
+
+    @pytest.fixture
+    def session_store(self, mock_redis):
+        """Create SessionStore with mocked Redis."""
+        return SessionStore(mock_redis)
+
+    @pytest.mark.anyio
+    async def test_update_library_id_success(self, session_store, mock_redis):
+        mock_redis.exists.return_value = True
+        session_token = str(TEST_SESSION_ID)
+
+        result = await session_store.update_library_id(session_token, "lib_1")
+
+        assert result is True
+        mock_redis.hset.assert_called_with(
+            f"session:{session_token}", "library_id", "lib_1"
+        )
+
+    @pytest.mark.anyio
+    async def test_update_library_id_session_not_found(self, session_store, mock_redis):
+        mock_redis.exists.return_value = False
+
+        result = await session_store.update_library_id(str(TEST_SESSION_ID), "lib_1")
+
+        assert result is False
+        mock_redis.hset.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_forget_library_clears_and_flags_sync_reset(
+        self, session_store, mock_redis
+    ):
+        """The vanished library's local copy and checkpoints must not be
+        resumed against its replacement, so forgetting also queues a reset."""
+        mock_redis.exists.return_value = True
+        session_token = str(TEST_SESSION_ID)
+
+        result = await session_store.forget_library(session_token)
+
+        assert result is True
+        pipe = mock_redis.pipeline.return_value
+        pipe.hset.assert_any_call(f"session:{session_token}", "library_id", "")
+        pipe.hset.assert_any_call(
+            f"session:{session_token}", "is_pending_sync_reset", "1"
+        )
+        pipe.execute.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_forget_library_session_not_found(self, session_store, mock_redis):
+        mock_redis.exists.return_value = False
+
+        result = await session_store.forget_library(str(TEST_SESSION_ID))
+
+        assert result is False
+        mock_redis.pipeline.assert_not_called()
+
+
 class TestSessionStoreSyncReset:
     """Tests for SessionStore.set_pending_sync_reset()."""
 

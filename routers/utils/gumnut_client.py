@@ -1,112 +1,162 @@
 import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from functools import partial
 
 import httpx
 from contextvars import ContextVar
 from dataclasses import dataclass
-from fastapi import HTTPException, Request, status
-from gumnut import AsyncGumnut
+from fastapi import Depends, HTTPException, Request, status
+from gumnut import AsyncGumnut, PermissionDeniedError
 
 from config.settings import get_settings
+from services.library_resolver import (
+    LibraryCache,
+    first_live_library_id,
+    get_library_cache,
+    is_library_not_found,
+)
 
-# Token Refresh Handling
-# ----------------------
-# This module handles JWT token refreshing from the Gumnut API. When a token is
-# refreshed, the Gumnut API returns a new token in the 'x-new-access-token'
-# response header. The auth middleware persists that token into the requesting
-# user's session.
+logger = logging.getLogger(__name__)
+
+# Per-Request Scope
+# -----------------
+# The shared httpx response hook below sees every Gumnut SDK response but has
+# no request object, so per-request state reaches it through a *mutable* object
+# installed on a ContextVar by init_request_scope() before call_next. Code
+# downstream mutates that object in place, which the middleware can read back
+# afterwards — a ContextVar.set() inside the handler could not, because
+# Starlette's BaseHTTPMiddleware does not propagate those writes back out. Each
+# request installs its own scope, so concurrent requests on one event-loop
+# thread never observe each other's state; sharing would let one user's
+# refreshed JWT land in another user's session.
 #
-# The refreshed token must be isolated per request: a shared store would let one
-# user's refreshed JWT be persisted into another user's session under concurrent
-# load, granting cross-account access. We isolate it with a per-request *mutable
-# holder* installed on a ContextVar:
-#
-#   - The middleware calls init_refresh_token_holder() before invoking the
-#     downstream handler. ContextVar values set before the downstream call
-#     propagate *into* the handler/response-hook context.
-#   - The httpx response hook (running inside that context) mutates the same
-#     holder object via set_refreshed_token().
-#   - The middleware reads the token back via get_refreshed_token() after the
-#     handler returns. Because the value read is a mutation of a shared object —
-#     not a ContextVar.set() inside the handler — it is visible even though
-#     Starlette's BaseHTTPMiddleware does not propagate ContextVar writes back
-#     out of the downstream call.
-#
-# Each request installs its own holder, so concurrent requests on the same event
-# loop thread can never observe each other's refreshed tokens.
+# The scope carries the refreshed JWT (returned in the 'x-new-access-token'
+# response header, persisted into the session by the middleware) and the
+# request's bound library plus how to forget it (see
+# docs/architecture/adapter-architecture.md § Library scope), so the hook can
+# drop a vanished library even from calls inside a streaming body, which the
+# global exception handler never sees.
 
 
 @dataclass
-class _RefreshTokenHolder:
-    token: str | None = None
+class LibraryScope:
+    """The library a request's Gumnut calls are bound to and how to forget it."""
+
+    library_id: str
+    forget: Callable[[], Awaitable[None]]
+    forgotten: bool = False
 
 
-# Per-request token holder (see the Token Refresh Handling comment above).
-_refresh_holder_var: ContextVar[_RefreshTokenHolder | None] = ContextVar(
-    "refresh_token_holder", default=None
+@dataclass
+class _RequestScope:
+    refreshed_token: str | None = None
+    library: LibraryScope | None = None
+
+
+_request_scope_var: ContextVar[_RequestScope | None] = ContextVar(
+    "request_scope", default=None
 )
 
 _shared_http_client: httpx.AsyncClient | None = None
 
 
-def init_refresh_token_holder() -> None:
-    """Install a fresh per-request refreshed-token holder.
+def init_request_scope() -> None:
+    """Install a fresh per-request scope.
 
     Must be called by the auth middleware before invoking the downstream handler
-    so the response hook and the middleware share one per-request holder object.
+    so the handler, the response hook, and the middleware share one object.
     """
-    _refresh_holder_var.set(_RefreshTokenHolder())
+    _request_scope_var.set(_RequestScope())
 
 
-def _get_or_create_holder() -> _RefreshTokenHolder:
-    holder = _refresh_holder_var.get()
-    if holder is None:
-        # No holder was installed for this context (e.g. a direct call outside
-        # the request lifecycle). Install one so the token isn't silently lost
-        # within the current context. This still cannot leak across requests:
-        # the holder lives only in this context's ContextVar.
-        holder = _RefreshTokenHolder()
-        _refresh_holder_var.set(holder)
-    return holder
+def _get_or_create_scope() -> _RequestScope:
+    scope = _request_scope_var.get()
+    if scope is None:
+        # No scope for this context (e.g. a direct call outside the request
+        # lifecycle). Install one; it lives only in this context's ContextVar,
+        # so it still cannot leak across requests.
+        scope = _RequestScope()
+        _request_scope_var.set(scope)
+    return scope
 
 
 def get_refreshed_token() -> str | None:
     """Return the refreshed token captured for the current request, if any."""
-    holder = _refresh_holder_var.get()
-    return holder.token if holder is not None else None
+    scope = _request_scope_var.get()
+    return scope.refreshed_token if scope is not None else None
 
 
 def set_refreshed_token(token: str) -> None:
-    """Record a refreshed token on the current request's holder."""
-    _get_or_create_holder().token = token
+    """Record a refreshed token on the current request's scope."""
+    _get_or_create_scope().refreshed_token = token
 
 
 def clear_refreshed_token() -> None:
-    """Clear the refreshed token on the current request's holder, if present.
+    """Clear the refreshed token on the current request's scope, if present.
 
     No production code calls this — request isolation comes from each request
-    installing its own holder, not from clearing. Kept as a test reset helper.
+    installing its own scope, not from clearing. Kept as a test reset helper.
     """
-    holder = _refresh_holder_var.get()
-    if holder is not None:
-        holder.token = None
+    scope = _request_scope_var.get()
+    if scope is not None:
+        scope.refreshed_token = None
+
+
+def bind_library_scope(library: LibraryScope | None) -> None:
+    """Install (or clear, with ``None``) the current request's library scope."""
+    _get_or_create_scope().library = library
+
+
+def get_bound_library_id() -> str | None:
+    """The library id bound for the current request, if one was resolved."""
+    scope = _request_scope_var.get()
+    return scope.library.library_id if scope and scope.library else None
+
+
+async def forget_bound_library_if_gone(status_code: int, detail: str) -> None:
+    """Drop the cached library when a Gumnut error says the bound one vanished.
+
+    Non-throwing: callers sit inside SDK calls or upload error paths, and a
+    cache failure must not turn the upstream error into something else.
+    """
+    scope = _request_scope_var.get()
+    library = scope.library if scope is not None else None
+    if library is None or library.forgotten:
+        return
+    if status_code != status.HTTP_404_NOT_FOUND or not is_library_not_found(
+        detail, library.library_id
+    ):
+        return
+    # Later calls in this request still carry the stale id; one drop is enough.
+    library.forgotten = True
+    logger.warning(
+        "Bound library no longer available; dropping cached library",
+        extra={"library_id": library.library_id},
+    )
+    try:
+        await library.forget()
+    except Exception:
+        logger.error("Failed to drop cached library", exc_info=True)
 
 
 async def _response_hook(response: httpx.Response) -> None:
-    """
-    HTTP response hook that captures refreshed tokens from Gumnut API responses.
-
-    When the Gumnut API refreshes a token, it returns the new token in the
-    'x-new-access-token' header. This hook records that token on the current
-    request's refreshed-token holder (see the Token Refresh Handling comment at
-    the top of this module) for later retrieval
-    by the auth middleware.
-
-    Args:
-        response: The httpx Response object from the Gumnut API
+    """Run on every Gumnut SDK response: record a refreshed token from the
+    'x-new-access-token' header on the current request's scope, and drop the
+    cached library when a 404 names the request's bound library (see the
+    Per-Request Scope comment above).
     """
     token = response.headers.get("x-new-access-token")
     if token:
         set_refreshed_token(token)
+    if response.status_code == status.HTTP_404_NOT_FOUND and get_bound_library_id():
+        await response.aread()
+        try:
+            detail = response.json().get("detail")
+        except (ValueError, AttributeError):
+            return
+        if isinstance(detail, str):
+            await forget_bound_library_if_gone(response.status_code, detail)
 
 
 _client_lock = asyncio.Lock()
@@ -150,7 +200,9 @@ async def close_shared_http_client() -> None:
         _shared_http_client = None
 
 
-async def get_gumnut_client(jwt_token: str) -> AsyncGumnut:
+async def get_gumnut_client(
+    jwt_token: str, library_id: str | None = None
+) -> AsyncGumnut:
     """
     Create and return a configured AsyncGumnut client instance with the given JWT.
 
@@ -160,6 +212,8 @@ async def get_gumnut_client(jwt_token: str) -> AsyncGumnut:
 
     Args:
         jwt_token: JWT token for authenticated requests
+        library_id: When set, sent as the ``library_id`` query parameter on
+            every call. An explicit per-call value still wins.
 
     Returns:
         AsyncGumnut: Configured async Gumnut client instance with user's JWT
@@ -171,18 +225,61 @@ async def get_gumnut_client(jwt_token: str) -> AsyncGumnut:
         base_url=settings.gumnut_api_base_url,
         max_retries=3,
         http_client=await get_shared_http_client(),
+        default_query={"library_id": library_id} if library_id else None,
     )
 
 
-async def get_authenticated_gumnut_client(request: Request) -> AsyncGumnut:
+async def _resolve_library_id(
+    request: Request, credential: str, cache: LibraryCache
+) -> str | None:
+    """Resolve the library for this request's credential, caching the result.
+
+    ``credential`` is the session's JWT or the raw API key. ``None`` leaves the
+    request unscoped and caches nothing.
+    """
+    session_token = getattr(request.state, "session_token", None)
+    if session_token:
+        library_id = getattr(request.state, "session_library_id", None)
+        remember = partial(cache.remember_for_session, session_token)
+        forget = partial(cache.forget_session, session_token)
+    else:
+        library_id = await cache.get_for_api_key(credential)
+        remember = partial(cache.remember_for_api_key, credential)
+        forget = partial(cache.forget_api_key, credential)
+
+    if not library_id:
+        unscoped = await get_gumnut_client(credential)
+        try:
+            libraries = await unscoped.libraries.list()
+        except PermissionDeniedError:
+            logger.warning(
+                "Credential cannot list libraries; leaving calls unscoped",
+                extra={"path": request.url.path},
+            )
+            return None
+        library_id = first_live_library_id(libraries)
+        if library_id is None:
+            logger.info("User has no live library; leaving calls unscoped")
+            return None
+        await remember(library_id)
+
+    bind_library_scope(LibraryScope(library_id=library_id, forget=forget))
+    return library_id
+
+
+async def get_authenticated_gumnut_client(
+    request: Request, cache: LibraryCache = Depends(get_library_cache)
+) -> AsyncGumnut:
     """
     Dependency that provides an authenticated AsyncGumnut client for the current request.
 
-    Extracts the JWT from request.state (set by auth middleware) and creates
-    an AsyncGumnut client instance with that JWT.
+    Extracts the JWT from request.state (set by auth middleware), resolves the
+    library the request acts on, and creates an AsyncGumnut client bound to
+    both.
 
     Args:
         request: FastAPI request object containing state set by middleware
+        cache: Per-credential cache of the resolved library
 
     Returns:
         AsyncGumnut: Authenticated async Gumnut client instance for the current user
@@ -198,7 +295,18 @@ async def get_authenticated_gumnut_client(request: Request) -> AsyncGumnut:
             detail="Authentication required",
         )
 
-    return await get_gumnut_client(jwt_token)
+    library_id = await _resolve_library_id(request, jwt_token, cache)
+    return await get_gumnut_client(jwt_token, library_id)
+
+
+async def get_current_library_id(
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+) -> str | None:
+    """The library bound for this request, for the Gumnut calls that take
+    ``library_id`` in a body or form. Depending on the (per-request cached)
+    client guarantees the library is resolved first.
+    """
+    return get_bound_library_id()
 
 
 async def get_authenticated_gumnut_client_optional(
@@ -208,7 +316,8 @@ async def get_authenticated_gumnut_client_optional(
     Dependency that provides an authenticated AsyncGumnut client for the current request
     if a JWT is present. Otherwise, returns None without raising an exception.
 
-    Used during logout to prevent errors when no JWT is present.
+    Used during logout to prevent errors when no JWT is present. The client is
+    not library-scoped: logout has no library to act on.
 
     Args:
         request: FastAPI request object containing state set by middleware

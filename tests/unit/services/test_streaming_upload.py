@@ -115,13 +115,35 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt", None)
             result = await pipeline.execute(_extract_fields)
 
         assert result["id"] == "asset_abc123"
         assert result["status"] == "created"
         assert pipeline.last_status_code == 201
         mock_client.post.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_forwards_bound_library_as_form_field(self):
+        """The pipeline bypasses the SDK, so the bound library travels as the
+        form field the upload endpoint reads rather than a default query."""
+        body, ct_header = _build_multipart_body(filename="photo.jpg")
+        request = _make_mock_request(body, ct_header)
+        response = _make_httpx_response(201)
+
+        mock_client = MagicMock()
+        mock_client.post.return_value = response
+
+        with patch(
+            "services.streaming_upload._get_streaming_http_client",
+            return_value=mock_client,
+        ):
+            pipeline = StreamingUploadPipeline(
+                request, "http://localhost:8000", "jwt", library_id="lib_bound"
+            )
+            await pipeline.execute(_extract_fields)
+
+        assert mock_client.post.call_args.kwargs["data"]["library_id"] == "lib_bound"
 
     @pytest.mark.anyio
     async def test_synthesizes_device_fields_for_gumnut(self):
@@ -139,10 +161,13 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, "http://localhost:8000", "jwt")
+            pipeline = StreamingUploadPipeline(
+                request, "http://localhost:8000", "jwt", None
+            )
             await pipeline.execute(_extract_fields)
 
         sent_data = mock_client.post.call_args.kwargs["data"]
+        assert "library_id" not in sent_data
         # A unique UUID so distinct assets never collapse onto one device tuple.
         UUID(sent_data["device_asset_id"])  # raises if not a valid UUID
         assert sent_data["device_id"] == "gumnut-device"
@@ -165,7 +190,7 @@ class TestStreamingUploadPipeline:
                 body, ct_header = _build_multipart_body()
                 request = _make_mock_request(body, ct_header)
                 pipeline = StreamingUploadPipeline(
-                    request, "http://localhost:8000", "jwt"
+                    request, "http://localhost:8000", "jwt", None
                 )
                 await pipeline.execute(_extract_fields)
                 device_asset_ids.append(
@@ -189,7 +214,7 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt", None)
             with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
@@ -210,7 +235,7 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt", None)
             with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
@@ -231,7 +256,7 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt", None)
             with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
@@ -260,7 +285,7 @@ class TestStreamingUploadPipeline:
             ),
             patch("services.streaming_upload.set_refreshed_token") as mock_set,
         ):
-            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt", None)
             await pipeline.execute(_extract_fields)
 
         assert pipeline.refreshed_token == "new-jwt-token"
@@ -283,7 +308,7 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt", None)
             result = await pipeline.execute(_extract_fields)
 
         assert result["status"] == "duplicate"
@@ -304,7 +329,7 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt", None)
             with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 
@@ -347,7 +372,7 @@ class TestStreamingUploadPipeline:
                 return_value=mock_client,
             ):
                 pipeline = StreamingUploadPipeline(
-                    request, "http://localhost:8000", "jwt"
+                    request, "http://localhost:8000", "jwt", None
                 )
                 # Plain try/except instead of pytest.raises: the excinfo would
                 # keep the traceback (and through it the feeder task) alive,
@@ -378,6 +403,28 @@ class TestStreamingUploadPipeline:
         assert unretrieved == []
 
     @pytest.mark.anyio
+    async def test_upstream_error_detail_is_kept_for_the_caller(self):
+        """The pipeline's own HTTP client bypasses the shared response hook,
+        so the caller needs the upstream status and detail to react to it."""
+        body, ct_header = _build_multipart_body()
+        request = _make_mock_request(body, ct_header)
+        response = _make_httpx_response(404, {"detail": "Library lib_x not found"})
+
+        mock_client = MagicMock()
+        mock_client.post.return_value = response
+
+        with patch(
+            "services.streaming_upload._get_streaming_http_client",
+            return_value=mock_client,
+        ):
+            pipeline = StreamingUploadPipeline(request, "http://t", "jwt", "lib_x")
+            with pytest.raises(HTTPException):
+                await pipeline.execute(_extract_fields)
+
+        assert pipeline.last_status_code == 404
+        assert pipeline.last_error_detail == "Library lib_x not found"
+
+    @pytest.mark.anyio
     async def test_401_mapped_to_502(self):
         """Test that 401 from the Gumnut API maps to 502 (adapter's JWT expired, not client's session)."""
         body, ct_header = _build_multipart_body()
@@ -392,7 +439,7 @@ class TestStreamingUploadPipeline:
             "services.streaming_upload._get_streaming_http_client",
             return_value=mock_client,
         ):
-            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt")
+            pipeline = StreamingUploadPipeline(request, base_url, "test-jwt", None)
             with pytest.raises(HTTPException) as exc_info:
                 await pipeline.execute(_extract_fields)
 

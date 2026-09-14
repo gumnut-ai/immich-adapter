@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-03
+last-updated: 2026-09-13
 ---
 
 # Immich Adapter Architecture
@@ -18,13 +18,49 @@ Immich clients
 
 The adapter owns protocol compatibility and short-lived translation state. It does not own photo storage, search indexes, user identity, or background media processing. Redis stores adapter sessions and per-session sync checkpoints; durable photo data remains in the Gumnut API.
 
-The deployment assumes one Gumnut library per authenticated user. Immich library-management routes are compatibility stubs rather than a second library model.
+Each request acts on exactly one Gumnut library, chosen by the adapter rather
+than the client (see [Library scope](#library-scope)). Immich
+library-management routes are compatibility stubs rather than a second library
+model.
 
 ## Compatibility invariants
 
 The adapter cannot add Gumnut-specific endpoints or require client changes. A Gumnut capability with no Immich-shaped home therefore has to be represented by an existing Immich contract, an explicit compatibility stub, or a documented translation compromise.
 
-The single-library assumption is more specific than a generic compatibility stub. Immich does not expose a library selector that the adapter can map to Gumnut, and `/api/libraries` is therefore an empty compatibility surface. Adapter calls omit `library_id` and rely on the Gumnut API to resolve the authenticated user's only library. Supporting multiple libraries would require one selection or fan-out decision shared across every route; fixing individual routes would create inconsistent authorization and data visibility.
+The one-library-per-request rule is more specific than a generic compatibility
+stub. Immich does not expose a library selector that the adapter can map to
+Gumnut, and `/api/libraries` is therefore an empty compatibility surface. The
+adapter makes one selection shared across every route, because fixing
+individual routes would create inconsistent authorization and data visibility.
+
+### Library scope
+
+A Gumnut user can own several libraries, and the Gumnut API refuses a call that
+omits `library_id` when more than one is live. The adapter resolves a library
+per request and scopes every Gumnut call to it:
+
+- **Choice.** The user's oldest live library, so every session and device
+  starts on the same one regardless of client state.
+- **Binding.** `get_authenticated_gumnut_client` sets the resolved id as the
+  SDK client's default query parameter, so query-scoped endpoints carry it
+  without the call site knowing. The calls that take `library_id` in a body or
+  form get it from `get_current_library_id`. By-id reads and writes need no
+  library: a record id is unambiguous.
+- **Caching.** Session-token clients cache the id on the session record;
+  API-key clients, which have no session, under a hashed-key Redis entry with a
+  one-hour TTL. A miss costs one `GET /api/libraries` on an unscoped client.
+  Two cases stay unscoped and uncached: a user with no live library, and an API
+  key limited to selected libraries, which the API refuses the listing for.
+- **Invalidation.** Another client can trash the chosen library mid-session.
+  The Gumnut API answers a scoped call with a `404` naming that library; the
+  shared HTTP client's response hook drops the cached id, so the next request
+  re-resolves onto the survivor (the streaming upload, on its own HTTP client,
+  forwards the error explicitly). The request that discovers the trash still
+  fails, and a session also gets a pending sync reset, since its checkpoints
+  belong to the vanished library. A session keeps its resolved library until
+  that library is gone: restoring the trashed one does not move sessions that
+  already fell back; new sessions pick it up, and an API-key entry expires with
+  its TTL.
 
 ## Request path
 

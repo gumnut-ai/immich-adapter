@@ -9,7 +9,7 @@ from starlette.types import ASGIApp
 
 from routers.utils.gumnut_client import (
     get_refreshed_token,
-    init_refresh_token_holder,
+    init_request_scope,
 )
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_user_id
 from services.session_store import get_session_store
@@ -117,10 +117,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """
         path = request.url.path
 
-        # Install a fresh per-request holder for any refreshed token captured by
-        # the Gumnut response hook. Must happen before call_next so the holder is
-        # visible in the downstream handler's context (see gumnut_client.py).
-        init_refresh_token_holder()
+        # Install a fresh per-request scope (refreshed token, bound library).
+        # Must happen before call_next so the scope is visible in the
+        # downstream handler's context (see gumnut_client.py).
+        init_request_scope()
 
         # Skip auth for non-protected paths (static files, SPA routes)
         if not path.startswith(self.PROTECTED_PREFIXES):
@@ -134,6 +134,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         session_token = None
         is_web_client = False
         jwt_token = None
+        session_library_id = None
 
         # API-key auth (e.g. the immich-go CLI and other Immich API-key clients):
         # the `x-api-key` header carries a Gumnut API key (`apikey_...`), which is
@@ -180,6 +181,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     # attributable to the user it failed for.
                     _set_sentry_user(session.user_id)
                     jwt_token = session.get_jwt()
+                    # "" until the first scoped request resolves it.
+                    session_library_id = session.library_id or None
                 else:
                     logger.warning(
                         "Session not found for token",
@@ -207,6 +210,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Store in request state for dependency injection
         request.state.jwt_token = jwt_token
         request.state.session_token = session_token
+        request.state.session_library_id = session_library_id
         request.state.is_web_client = is_web_client
 
         # Call the endpoint handler

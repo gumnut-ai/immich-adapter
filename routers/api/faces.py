@@ -13,7 +13,10 @@ from routers.immich_models import (
     PersonResponseDto,
     SourceType,
 )
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client,
+    get_current_library_id,
+)
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_face_id,
     uuid_to_gumnut_asset_id,
@@ -134,6 +137,7 @@ async def get_faces(
 async def create_face(
     request: AssetFaceCreateDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    library_id: str | None = Depends(get_current_library_id),
 ) -> AssetFaceResponseDto:
     """Draw a user-specified face box on an asset and assign it to a person.
 
@@ -194,6 +198,7 @@ async def create_face(
         asset_id=gumnut_asset_id,
         bounding_box={"x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1},
         person_id=gumnut_person_id,
+        library_id=library_id,
     )
 
     # The create response carries only person_id, so fetch the full person to
