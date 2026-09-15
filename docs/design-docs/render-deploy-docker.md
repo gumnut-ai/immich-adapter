@@ -3,10 +3,10 @@ title: "Render Deploy with Docker"
 status: deprecated
 superseded-by: ../references/uvicorn-settings.md
 created: 2025-10-23
-last-updated: 2026-09-10
+last-updated: 2026-09-15
 ---
 
-# Multi-Stage Docker Deployment Guide for Render
+# Multi-Stage Docker Deployment Decision Record
 
 > **Deprecated (2026-07-27):** This doc argued for moving the adapter's Render deploy from a native Python runtime to a multi-stage Docker build, which shipped. It does not describe the current build. The repository's `Dockerfile` (and `.dockerignore`) is the source of truth for how the image is built and what it runs; [`docs/references/routes-dtos-and-upstream-compatibility.md`](../references/routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version) owns Immich version pinning and the CI sync check; and the Render `$PORT` / SSL-termination contract now lives in [`docs/references/uvicorn-settings.md`](../references/uvicorn-settings.md). This doc is retained for the decision rationale — the multi-stage-build reasoning, the native-vs-Docker comparison, and the migration/rollback strategy. It is no longer updated as the system changes.
 >
@@ -20,11 +20,16 @@ last-updated: 2026-09-10
 
 ## Overview
 
-This guide explains how to deploy immich-adapter to Render using a multi-stage Dockerfile that automatically extracts Immich web files during the Docker build process.
+The adapter needed Immich's prebuilt web files, which were published inside the
+Immich server image. The native Render runtime required a separate extraction
+step and committed static files, so the deployment decision was to use a
+multi-stage Docker image that extracted those files during the image build.
 
 ## Why Multi-Stage
 
-The adapter needs Immich's prebuilt web files, which are only published inside the Immich server image. A multi-stage build lets a throwaway first stage pull that image purely to harvest `/build/www`, and the Python stage copy just those files across — the ~800MB Immich image is left behind and never reaches the final layer:
+A multi-stage build let a throwaway first stage pull that image purely to
+harvest `/build/www`, and the Python stage copy just those files across. The
+large Immich image was left behind and did not reach the final layer:
 
 ```docker
 # Stage 1: This image contains the files we need
@@ -37,37 +42,37 @@ FROM python:3.14-slim
 COPY --from=immich /build/www ./static/
 ```
 
-(Illustrative — the shipped `Dockerfile` pins a version rather than tracking `release`; see "Immich Version Management" below.)
+(Illustrative decision record, not a current build recipe. The shipped
+`Dockerfile` pins a version rather than tracking `release`; the current
+version-pinning procedure is in
+[`routes-dtos-and-upstream-compatibility.md`](../references/routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version).)
 
-This replaced a manual extraction script plus committed static files. The payoff is that the Immich version becomes a declared, version-controlled build input instead of a step someone has to remember to run, and the resulting image is reproducible from the `Dockerfile` alone.
+This replaced the manual extraction script and committed static files. The
+payoff was that the Immich version became a declared, version-controlled build
+input instead of a step someone had to remember to run, and the resulting
+image was reproducible from the `Dockerfile` alone.
 
-## Complete Implementation
+## Migration outcome
 
-The multi-stage `Dockerfile` — three stages: extract Immich web files from `ghcr.io/immich-app/immich-server`, build the Python dependencies with `uv`, then assemble a slim non-root runtime that serves on `${PORT:-8080}` with a `/api/server/ping` health check — and its `.dockerignore` live at the repository root. See the repository's `Dockerfile` and `.dockerignore` for the current build.
-
-## Migration from Native Runtime
-
-### Migration Steps
-
-Migrated to Docker deploy: add the `Dockerfile` and `.dockerignore`, test the image locally, switch the Render service runtime from Python to Docker (via `render.yaml` or the dashboard), then push to trigger the build and verify the health check and static-file serving.
-
-### Zero-Downtime Migration Strategy
-
-Completed: prove the Docker image on a separate Render service first, then switch the production service's runtime and let Render's health check hold the old container up until the new one is healthy, with the previous deployment kept as a one-click rollback.
+The migration was completed by validating the Docker image on a separate
+Render service, then switching the production service's runtime. Render's
+health check kept the old container available until the new one was healthy,
+and the previous deployment remained available for rollback.
 
 ## Immich Version Management
 
-### Version Tags
+### Version-tag trade-offs
 
-Immich provides these Docker tags:
+The evaluated tag strategies were:
 
-- `release`: Latest stable release (recommended)
+- `release`: Latest stable release
 - `vX.Y.Z`: Specific version (e.g., `v1.95.1`)
-- `latest`: Bleeding edge (not recommended)
+- `latest`: Bleeding edge
 
-### Pinning to Specific Version
-
-The pinned-version option is the one that shipped: the `Dockerfile` declares `ARG IMMICH_VERSION`, kept in sync with `.immich-container-tag` and enforced by a CI job. See [`docs/references/routes-dtos-and-upstream-compatibility.md`](../references/routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version) for the current procedure. The trade-off analysis that led there:
+The pinned-version option was selected. The current procedure for changing the
+Immich version lives in
+[`routes-dtos-and-upstream-compatibility.md`](../references/routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version);
+the trade-off analysis that led to the decision follows.
 
 **Pros of `release` tag:**
 
@@ -93,19 +98,11 @@ The pinned-version option is the one that shipped: the `Dockerfile` declares `AR
 - Miss security fixes
 - More maintenance
 
-### Recommended Approach
-
-**Development/Staging:**
-
-```docker
-FROM ghcr.io/immich-app/immich-server:release AS immich-source
-```
-
-**Production:** pin to a specific `vX.Y.Z` tag so rebuilds are predictable, and bump it deliberately after testing each new Immich version.
-
 ## Performance
 
 ### Performance Characteristics
+
+The estimates recorded during the decision were:
 
 **Image Size:**
 
@@ -158,21 +155,10 @@ FROM ghcr.io/immich-app/immich-server:release AS immich-source
 - **Build Cost**: Uses more Render build minutes than the native runtime. May need a paid plan for longer builds.
 - **Cold Starts**: 10-18 seconds vs 5-8 seconds. Matters if you use Render free tier with spindown.
 
-## Conclusion
+## Decision outcome
 
-Multi-stage Docker deployment is the **best long-term solution** for automatically extracting Immich web files on Render:
-
-**Use this approach if:**
-
-- You want automated extraction
-- You're building for production
-- You value reproducibility
-- Build time isn't critical (1-6 minutes)
-- You're comfortable with Docker
-
-**Use committed files instead if:**
-
-- You need to deploy TODAY
-- Build time is critical (< 1 minute)
-- You're on Render free tier (build minute limits)
-- Docker complexity isn't worth it for your use case
+Multi-stage Docker deployment was selected because it automated static-file
+extraction, made builds reproducible, kept the Immich version in source
+control, and removed committed generated files. The rejected alternative was
+to keep committed static files: that would have reduced build time, but would
+have retained a manual extraction and synchronization burden.
