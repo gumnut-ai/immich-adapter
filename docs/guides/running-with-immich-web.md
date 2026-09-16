@@ -1,6 +1,6 @@
 ---
 title: "Running with Immich Web"
-last-updated: 2026-08-02
+last-updated: 2026-09-11
 ---
 
 # Running with Immich Web
@@ -63,7 +63,7 @@ Other useful options:
 
 ### Troubleshooting
 
-- **"Failed to pull image"**: Ensure Docker is running
+- **Docker extraction errors** (`Failed to pull image`, `Failed to create container`, or `Failed to extract web files from container`): The script prints Docker's own diagnostic after the generic error, which identifies whether the daemon, registry/image, or container operation needs attention. If `--skip-pull` reports that the image is not found locally, remove that flag to allow the script to pull it.
 - **OAuth `invalid_client` error**: Check that `CLERK_OAUTH_CLIENT_ID` in the Gumnut API backend's `.env` is set to a real value (not the placeholder)
 - **OAuth `redirect_uri` mismatch**: Add `http://localhost:3001/auth/login` as an allowed redirect URI in the Clerk OAuth application settings
 - **OAuth `invalid_scope` error**: Enable the `openid`, `email`, and `profile` scopes on the Clerk OAuth application
