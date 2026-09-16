@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-13
+last-updated: 2026-09-16
 ---
 
 # Immich Adapter Architecture
@@ -136,6 +136,11 @@ threshold is zero or a valid `Content-Length` exceeds it. With a nonzero
 threshold, missing or invalid lengths, including incoming chunked transfers,
 use the buffered path; this preserves multipart handling that needs a seekable
 upload file.
+
+The buffered path also inspects seekable video files and drops iOS Live Photo
+`.MOV` companions because the Gumnut API does not support live photos. The
+streaming path cannot perform that seek-based detection, so setting the
+threshold to `0` forwards every upload through a path that skips this check.
 
 `services/streaming_upload.py::StreamingUploadPipeline` forwards the multipart
 body through a bounded `StreamingPipe`, so the parser and upstream request apply
