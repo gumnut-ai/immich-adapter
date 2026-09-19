@@ -491,36 +491,6 @@ class SessionStore:
         await pipe.execute()
         return True
 
-    async def delete_all_for_user(self, user_id: str) -> int:
-        """
-        Delete all sessions for a user.
-
-        Uses pipelining to delete all sessions and their checkpoints efficiently.
-
-        Args:
-            user_id: Gumnut user ID
-
-        Returns:
-            Number of sessions deleted
-        """
-        session_tokens = await self._redis.smembers(f"user:{user_id}:sessions")
-        if not session_tokens:
-            return 0
-
-        session_token_list = list(session_tokens)
-
-        # Delete all session data, checkpoints, and indexes in one pipeline
-        pipe = self._redis.pipeline()
-        for session_token in session_token_list:
-            pipe.delete(f"session:{session_token}")
-            pipe.delete(f"session:{session_token}:checkpoints")
-            pipe.zrem("sessions:by_updated_at", session_token)
-        # Clear the entire user sessions set
-        pipe.delete(f"user:{user_id}:sessions")
-        await pipe.execute()
-
-        return len(session_token_list)
-
     async def get_stale_sessions(self, days: int = 90) -> list[str]:
         """
         Get session tokens that have been inactive for N days.

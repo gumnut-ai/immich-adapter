@@ -842,58 +842,6 @@ class TestSessionStoreConcurrentDelete:
         assert racing_redis.zsets == {}
 
 
-class TestSessionStoreDeleteAllForUser:
-    """Tests for SessionStore.delete_all_for_user()."""
-
-    @pytest.fixture
-    def mock_redis(self):
-        """Create a mock async Redis client."""
-        mock = AsyncMock()
-        # pipeline() is sync, but execute() is async
-        mock_pipeline = MagicMock()
-        mock_pipeline.execute = AsyncMock()
-        mock.pipeline = MagicMock(return_value=mock_pipeline)
-        return mock
-
-    @pytest.fixture
-    def session_store(self, mock_redis):
-        """Create SessionStore with mocked Redis."""
-        return SessionStore(mock_redis)
-
-    @pytest.mark.anyio
-    async def test_delete_all_for_user(self, session_store, mock_redis):
-        """Test deleting all sessions and checkpoints for a user using pipeline."""
-        mock_redis.smembers.return_value = {
-            str(TEST_SESSION_ID),
-            str(TEST_SESSION_ID_2),
-        }
-
-        count = await session_store.delete_all_for_user("user_123")
-
-        assert count == 2
-
-        # Verify pipeline commands
-        mock_pipeline = mock_redis.pipeline.return_value
-        # Should delete: 2 sessions + 2 checkpoints + 1 user set = 5 deletes
-        assert mock_pipeline.delete.call_count == 5
-        delete_calls = [call[0][0] for call in mock_pipeline.delete.call_args_list]
-        assert f"session:{TEST_SESSION_ID}" in delete_calls
-        assert f"session:{TEST_SESSION_ID}:checkpoints" in delete_calls
-        assert f"session:{TEST_SESSION_ID_2}" in delete_calls
-        assert f"session:{TEST_SESSION_ID_2}:checkpoints" in delete_calls
-        mock_pipeline.zrem.assert_called()
-        mock_pipeline.execute.assert_called_once()
-
-    @pytest.mark.anyio
-    async def test_delete_all_for_user_no_sessions(self, session_store, mock_redis):
-        """Test deleting sessions for user with no sessions."""
-        mock_redis.smembers.return_value = set()
-
-        count = await session_store.delete_all_for_user("user_123")
-
-        assert count == 0
-
-
 class TestSessionStoreStaleCleanup:
     """Tests for stale session cleanup methods."""
 
