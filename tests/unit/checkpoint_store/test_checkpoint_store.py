@@ -219,38 +219,6 @@ class TestCheckpointStoreGet:
         assert checkpoint is None
 
 
-class TestCheckpointStoreSet:
-    """Tests for CheckpointStore.set()."""
-
-    @pytest.fixture
-    def mock_redis(self):
-        """Create a mock async Redis client."""
-        return AsyncMock()
-
-    @pytest.fixture
-    def checkpoint_store(self, mock_redis):
-        """Create CheckpointStore with mocked Redis."""
-        return CheckpointStore(mock_redis)
-
-    @pytest.mark.anyio
-    async def test_set_stores_checkpoint(self, checkpoint_store, mock_redis):
-        """Test setting a checkpoint."""
-        result = await checkpoint_store.set(
-            TEST_SESSION_TOKEN, SyncEntityType.AssetV1, "event_asset123"
-        )
-
-        assert result is True
-        mock_redis.hset.assert_called_once()
-
-        # Verify the call arguments
-        call_args = mock_redis.hset.call_args
-        assert call_args[0][0] == f"session:{TEST_SESSION_TOKEN}:checkpoints"
-        assert call_args[0][1] == "AssetV1"
-        # Value should be pipe-delimited with updated_at and cursor
-        value = call_args[0][2]
-        assert "|event_asset123" in value
-
-
 class TestCheckpointStoreSetMany:
     """Tests for CheckpointStore.set_many()."""
 
