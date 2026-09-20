@@ -198,39 +198,6 @@ class CheckpointStore:
             )
             return None
 
-    async def set(
-        self,
-        session_token: UUID,
-        entity_type: SyncEntityType,
-        cursor: str,
-    ) -> bool:
-        """
-        Set a checkpoint for a session.
-
-        Args:
-            session_token: The session token (UUID)
-            entity_type: The entity type
-            cursor: The opaque v2 events cursor
-
-        Returns:
-            True if checkpoint was set successfully
-        """
-        now = datetime.now(timezone.utc)
-        checkpoint = Checkpoint(
-            entity_type=entity_type,
-            updated_at=now,
-            cursor=cursor,
-        )
-
-        key = _checkpoint_key(session_token)
-        value = checkpoint.to_redis_value()
-        with sentry_sdk.start_span(op="cache.put", name="checkpoint") as span:
-            await self._redis.hset(key, entity_type.value, value)
-            span.set_data("cache.key", [key])
-            span.set_data("cache.item_size", len(value))
-            self._set_network_data(span)
-        return True
-
     async def set_many(
         self,
         session_token: UUID,
