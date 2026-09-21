@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 API_KEY_LIBRARY_TTL_SECONDS = 60 * 60
 
 
-def first_live_library_id(libraries: Iterable[LibraryResponse]) -> str | None:
+def first_owned_library_id(libraries: Iterable[LibraryResponse]) -> str | None:
     """The oldest live library the user owns, or ``None`` when they own none.
 
     The listing also carries libraries shared with the user, each with the

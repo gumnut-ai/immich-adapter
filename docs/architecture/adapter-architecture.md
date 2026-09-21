@@ -52,8 +52,9 @@ per request and scopes every Gumnut call to it:
 - **Caching.** Session-token clients cache the id on the session record;
   API-key clients, which have no session, under a hashed-key Redis entry with a
   one-hour TTL. A miss costs one `GET /api/libraries` on an unscoped client.
-  Two cases stay unscoped and uncached: a user who owns no live library, and an API
-  key limited to selected libraries, which the API refuses the listing for.
+  Two cases stay unscoped and uncached: a user who owns no live library, and
+  an API key limited to selected libraries, which the API refuses the listing
+  for.
 - **Invalidation.** Another client can trash the chosen library mid-session.
   The Gumnut API answers a scoped call with a `404` naming that library; the
   shared HTTP client's response hook drops the cached id, so the next request

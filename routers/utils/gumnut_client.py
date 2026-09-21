@@ -12,7 +12,7 @@ from gumnut import AsyncGumnut, PermissionDeniedError
 from config.settings import get_settings
 from services.library_resolver import (
     LibraryCache,
-    first_live_library_id,
+    first_owned_library_id,
     get_library_cache,
     is_library_not_found,
 )
@@ -257,7 +257,7 @@ async def _resolve_library_id(
                 extra={"path": request.url.path},
             )
             return None
-        library_id = first_live_library_id(libraries)
+        library_id = first_owned_library_id(libraries)
         if library_id is None:
             logger.info("User owns no live library; leaving calls unscoped")
             return None
