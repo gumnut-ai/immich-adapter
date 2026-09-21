@@ -6,17 +6,18 @@ from unittest.mock import AsyncMock
 
 import pytest
 import redis.exceptions
+from gumnut.types.library_response import LibraryResponse
 
 from services.library_resolver import (
     API_KEY_LIBRARY_TTL_SECONDS,
     LibraryCache,
-    first_live_library_id,
+    first_owned_library_id,
     is_library_not_found,
 )
 from tests.conftest import make_gumnut_library
 
 
-class TestFirstLiveLibraryId:
+class TestFirstOwnedLibraryId:
     def test_picks_oldest_even_when_listed_newest_first(self):
         """The API lists live libraries newest first; the choice is the oldest."""
         base = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -26,7 +27,7 @@ class TestFirstLiveLibraryId:
             make_gumnut_library("lib_old", base),
         ]
 
-        assert first_live_library_id(libraries) == "lib_old"
+        assert first_owned_library_id(libraries) == "lib_old"
 
     def test_ties_break_on_id(self):
         base = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -35,10 +36,63 @@ class TestFirstLiveLibraryId:
             make_gumnut_library("lib_a", base),
         ]
 
-        assert first_live_library_id(libraries) == "lib_a"
+        assert first_owned_library_id(libraries) == "lib_a"
 
     def test_none_when_no_live_library(self):
-        assert first_live_library_id([]) is None
+        assert first_owned_library_id([]) is None
+
+    @pytest.mark.parametrize("role", ["viewer", "collaborator"])
+    def test_older_joined_library_does_not_win(self, role):
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        libraries = [
+            make_gumnut_library("lib_owned", base + timedelta(days=1)),
+            make_gumnut_library("lib_joined", base, role=role),
+        ]
+
+        assert first_owned_library_id(libraries) == "lib_owned"
+
+    def test_oldest_owned_wins_among_several(self):
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        libraries = [
+            make_gumnut_library("lib_owned_newer", base + timedelta(days=3)),
+            make_gumnut_library("lib_owned_older", base + timedelta(days=2)),
+            make_gumnut_library("lib_joined", base, role="viewer"),
+        ]
+
+        assert first_owned_library_id(libraries) == "lib_owned_older"
+
+    def test_none_when_only_joined_libraries(self):
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        libraries = [make_gumnut_library("lib_joined", base, role="collaborator")]
+
+        assert first_owned_library_id(libraries) is None
+
+    def test_reads_role_from_the_sdk_model(self):
+        """``role`` reaches the SDK model as an untyped extra field; a listing
+        without it predates sharing and holds owned libraries only."""
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        def library(library_id: str, created_at: datetime, **extra) -> LibraryResponse:
+            # `construct` is how the SDK builds rows from a response.
+            return LibraryResponse.construct(
+                id=library_id,
+                name=library_id,
+                user_id="intuser_1",
+                asset_count=0,
+                storage_used_bytes=0,
+                created_at=created_at,
+                updated_at=created_at,
+                **extra,
+            )
+
+        libraries = [
+            library("lib_joined", base, role="viewer"),
+            library("lib_owned", base + timedelta(days=1), role="owner"),
+            library("lib_no_role", base + timedelta(days=2)),
+        ]
+
+        assert first_owned_library_id(libraries) == "lib_owned"
+        assert first_owned_library_id([libraries[0], libraries[2]]) == "lib_no_role"
 
 
 class TestIsLibraryNotFound:

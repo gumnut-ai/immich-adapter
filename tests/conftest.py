@@ -169,11 +169,14 @@ def fake_sha1_checksum(seed: str) -> str:
     return base64.b64encode(hashlib.sha1(seed.encode()).digest()).decode()
 
 
-def make_gumnut_library(library_id: str, created_at: datetime) -> Mock:
+def make_gumnut_library(
+    library_id: str, created_at: datetime, role: str = "owner"
+) -> Mock:
     """Build a Mock Gumnut library row with the fields library resolution reads."""
     library = Mock()
     library.id = library_id
     library.created_at = created_at
+    library.role = role
     return library
 
 

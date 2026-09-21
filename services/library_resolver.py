@@ -22,12 +22,19 @@ logger = logging.getLogger(__name__)
 API_KEY_LIBRARY_TTL_SECONDS = 60 * 60
 
 
-def first_live_library_id(libraries: Iterable[LibraryResponse]) -> str | None:
-    """The oldest live library, or ``None`` when the user has none.
+def first_owned_library_id(libraries: Iterable[LibraryResponse]) -> str | None:
+    """The oldest live library the user owns, or ``None`` when they own none.
 
-    The Gumnut API lists libraries newest first, so sort rather than trust it.
+    The listing also carries libraries shared with the user, each with the
+    caller's ``role``; joining an older one must not redirect uploads. The SDK
+    does not type ``role`` yet, and a listing without it holds owned libraries
+    only. The Gumnut API lists libraries newest first, so sort rather than
+    trust it.
     """
-    ordered = sorted(libraries, key=lambda library: (library.created_at, library.id))
+    owned = [
+        library for library in libraries if getattr(library, "role", "owner") == "owner"
+    ]
+    ordered = sorted(owned, key=lambda library: (library.created_at, library.id))
     return ordered[0].id if ordered else None
 
 

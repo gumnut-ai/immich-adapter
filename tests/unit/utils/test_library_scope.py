@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from gumnut import AsyncGumnut, NotFoundError, PermissionDeniedError
 
@@ -172,6 +172,22 @@ class TestResolveLibraryId:
         cache.remember_for_session.assert_awaited_once_with(SESSION_TOKEN, "lib_old")
 
     @pytest.mark.anyio
+    async def test_session_miss_skips_an_older_joined_library(
+        self, cache, unscoped_client, get_client
+    ):
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        unscoped_client.libraries.list.return_value = [
+            make_gumnut_library("lib_owned", base.replace(day=2)),
+            make_gumnut_library("lib_joined", base, role="collaborator"),
+        ]
+        request = _request(session_library_id=None)
+
+        library_id = await _resolve_library_id(request, JWT, cache)
+
+        assert library_id == "lib_owned"
+        cache.remember_for_session.assert_awaited_once_with(SESSION_TOKEN, "lib_owned")
+
+    @pytest.mark.anyio
     async def test_api_key_reads_its_own_cache(
         self, cache, unscoped_client, get_client
     ):
@@ -207,6 +223,27 @@ class TestResolveLibraryId:
         library_id = await _resolve_library_id(request, JWT, cache)
 
         assert library_id is None
+        assert get_bound_library_id() is None
+        cache.remember_for_session.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_only_joined_libraries_is_refused_not_left_unscoped(
+        self, cache, unscoped_client, get_client
+    ):
+        """Unscoped, the API would default to the lone shared library."""
+        unscoped_client.libraries.list.return_value = [
+            make_gumnut_library(
+                "lib_joined",
+                datetime(2026, 1, 1, tzinfo=timezone.utc),
+                role="collaborator",
+            )
+        ]
+        request = _request(session_library_id=None)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _resolve_library_id(request, JWT, cache)
+
+        assert exc_info.value.status_code == 403
         assert get_bound_library_id() is None
         cache.remember_for_session.assert_not_awaited()
 

@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-16
+last-updated: 2026-09-21
 ---
 
 # Immich Adapter Architecture
@@ -39,8 +39,13 @@ A Gumnut user can own several libraries, and the Gumnut API refuses a call that
 omits `library_id` when more than one is live. The adapter resolves a library
 per request and scopes every Gumnut call to it:
 
-- **Choice.** The user's oldest live library, so every session and device
-  starts on the same one regardless of client state.
+- **Choice.** The oldest live library the user owns, so every session and
+  device starts on the same one regardless of client state. The listing also
+  returns libraries shared with the user, each carrying the caller's `role`;
+  only `owner` rows are candidates, so joining an older library never redirects
+  uploads. Choosing a shared library from Immich is not supported: a user with
+  shared libraries but none of their own gets a `403`, because an unscoped call
+  would let the Gumnut API default to a lone shared library.
 - **Binding.** `get_authenticated_gumnut_client` sets the resolved id as the
   SDK client's default query parameter, so query-scoped endpoints carry it
   without the call site knowing. The calls that take `library_id` in a body or
@@ -49,8 +54,9 @@ per request and scopes every Gumnut call to it:
 - **Caching.** Session-token clients cache the id on the session record;
   API-key clients, which have no session, under a hashed-key Redis entry with a
   one-hour TTL. A miss costs one `GET /api/libraries` on an unscoped client.
-  Two cases stay unscoped and uncached: a user with no live library, and an API
-  key limited to selected libraries, which the API refuses the listing for.
+  Two cases stay unscoped and uncached: a user with no live library at all
+  (the Gumnut API provisions one on first use), and an API key limited to
+  selected libraries, which the API refuses the listing for.
 - **Invalidation.** Another client can trash the chosen library mid-session.
   The Gumnut API answers a scoped call with a `404` naming that library; the
   shared HTTP client's response hook drops the cached id, so the next request
