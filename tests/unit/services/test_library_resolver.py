@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 import redis.exceptions
+from gumnut.types.library_response import LibraryResponse
 
 from services.library_resolver import (
     API_KEY_LIBRARY_TTL_SECONDS,
@@ -39,6 +40,60 @@ class TestFirstLiveLibraryId:
 
     def test_none_when_no_live_library(self):
         assert first_live_library_id([]) is None
+
+    @pytest.mark.parametrize("role", ["viewer", "collaborator"])
+    def test_older_joined_library_does_not_win(self, role):
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        libraries = [
+            make_gumnut_library("lib_owned", base + timedelta(days=1)),
+            make_gumnut_library("lib_joined", base, role=role),
+        ]
+
+        assert first_live_library_id(libraries) == "lib_owned"
+
+    def test_falls_back_to_next_owned_not_joined(self):
+        """The oldest owned library is trashed, so the listing omits it."""
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        libraries = [
+            make_gumnut_library("lib_owned_newer", base + timedelta(days=2)),
+            make_gumnut_library("lib_joined", base + timedelta(days=1), role="viewer"),
+        ]
+
+        assert first_live_library_id(libraries) == "lib_owned_newer"
+
+    def test_none_when_only_joined_libraries(self):
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        libraries = [make_gumnut_library("lib_joined", base, role="collaborator")]
+
+        assert first_live_library_id(libraries) is None
+
+    def test_reads_role_from_the_sdk_model(self):
+        """``role`` reaches the SDK model as an untyped extra field; a listing
+        without it predates sharing and holds owned libraries only."""
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        def library(library_id: str, created_at: datetime, **extra) -> LibraryResponse:
+            return LibraryResponse.model_validate(
+                {
+                    "id": library_id,
+                    "name": library_id,
+                    "user_id": "intuser_1",
+                    "asset_count": 0,
+                    "storage_used_bytes": 0,
+                    "created_at": created_at,
+                    "updated_at": created_at,
+                    **extra,
+                }
+            )
+
+        libraries = [
+            library("lib_joined", base, role="viewer"),
+            library("lib_owned", base + timedelta(days=1), role="owner"),
+            library("lib_no_role", base + timedelta(days=2)),
+        ]
+
+        assert first_live_library_id(libraries) == "lib_owned"
+        assert first_live_library_id([libraries[0], libraries[2]]) == "lib_no_role"
 
 
 class TestIsLibraryNotFound:

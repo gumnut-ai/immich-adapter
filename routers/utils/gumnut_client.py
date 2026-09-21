@@ -259,7 +259,7 @@ async def _resolve_library_id(
             return None
         library_id = first_live_library_id(libraries)
         if library_id is None:
-            logger.info("User has no live library; leaving calls unscoped")
+            logger.info("User owns no live library; leaving calls unscoped")
             return None
         await remember(library_id)
 

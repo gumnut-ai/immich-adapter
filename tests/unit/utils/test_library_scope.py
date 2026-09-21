@@ -172,6 +172,22 @@ class TestResolveLibraryId:
         cache.remember_for_session.assert_awaited_once_with(SESSION_TOKEN, "lib_old")
 
     @pytest.mark.anyio
+    async def test_session_miss_skips_an_older_joined_library(
+        self, cache, unscoped_client, get_client
+    ):
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        unscoped_client.libraries.list.return_value = [
+            make_gumnut_library("lib_owned", base.replace(day=2)),
+            make_gumnut_library("lib_joined", base, role="collaborator"),
+        ]
+        request = _request(session_library_id=None)
+
+        library_id = await _resolve_library_id(request, JWT, cache)
+
+        assert library_id == "lib_owned"
+        cache.remember_for_session.assert_awaited_once_with(SESSION_TOKEN, "lib_owned")
+
+    @pytest.mark.anyio
     async def test_api_key_reads_its_own_cache(
         self, cache, unscoped_client, get_client
     ):
