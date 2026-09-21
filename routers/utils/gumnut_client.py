@@ -235,7 +235,8 @@ async def _resolve_library_id(
     """Resolve the library for this request's credential, caching the result.
 
     ``credential`` is the session's JWT or the raw API key. ``None`` leaves the
-    request unscoped and caches nothing.
+    request unscoped and caches nothing. A user with shared libraries but none
+    of their own is refused with a 403 rather than left unscoped.
     """
     session_token = getattr(request.state, "session_token", None)
     if session_token:
@@ -259,7 +260,14 @@ async def _resolve_library_id(
             return None
         library_id = first_owned_library_id(libraries)
         if library_id is None:
-            logger.info("User owns no live library; leaving calls unscoped")
+            if libraries:
+                # Unscoped, the Gumnut API would default to a lone shared
+                # library and take this client's uploads into it.
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Immich needs a Gumnut library you own; create one first",
+                )
+            logger.info("User has no live library; leaving calls unscoped")
             return None
         await remember(library_id)
 
