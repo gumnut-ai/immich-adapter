@@ -32,7 +32,6 @@ WRITERS = [
         lambda store, token: store.update_stored_jwt(token, "new.jwt.token"),
         id="update_stored_jwt",
     ),
-    pytest.param(lambda store, token: store.forget_library(token), id="forget_library"),
     pytest.param(
         lambda store, token: store.set_pending_sync_reset(token, True),
         id="set_pending_sync_reset",
@@ -746,6 +745,11 @@ class TestSessionStoreConditionalWrites:
                 },
                 id="switch_library",
             ),
+            pytest.param(
+                lambda store, token: store.forget_library(token, "lib_old"),
+                {"library_id": "", "is_pending_sync_reset": "1"},
+                id="forget_library",
+            ),
         ],
     )
     async def test_library_writes_hold_only_while_the_previous_library_is_cached(
@@ -753,8 +757,9 @@ class TestSessionStoreConditionalWrites:
     ):
         """Library writes record when and how the library was resolved, and
         apply only while the session still holds the library they resolved
-        from, so a stale request cannot undo a concurrent switch. A switch also
-        flags a sync reset: checkpoints belong to the previous library."""
+        from, so a stale request cannot undo a concurrent switch. A switch or
+        drop also flags a sync reset: checkpoints belong to the previous
+        library."""
         session_token = str(TEST_SESSION_ID)
 
         with patch("services.session_store.time.time", return_value=1700000000.0):
@@ -777,18 +782,6 @@ class TestSessionStoreConditionalWrites:
         )
 
         assert result is False
-
-    @pytest.mark.anyio
-    async def test_forget_library_clears_and_flags_sync_reset(
-        self, session_store, mock_redis
-    ):
-        """The vanished library's local copy and checkpoints must not be
-        resumed against its replacement, so forgetting also queues a reset."""
-        result = await session_store.forget_library(str(TEST_SESSION_ID))
-
-        assert result is True
-        _keys, _token, _score, fields = _decode_eval(mock_redis)
-        assert fields == {"library_id": "", "is_pending_sync_reset": "1"}
 
     @pytest.mark.anyio
     @pytest.mark.parametrize("pending,expected", [(True, "1"), (False, "0")])

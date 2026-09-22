@@ -258,9 +258,11 @@ class TestLibraryCache:
     async def test_forget_session_drops_library_and_flags_reset(
         self, cache, mock_session_store
     ):
-        await cache.forget_session(SESSION_TOKEN)
+        await cache.forget_session(SESSION_TOKEN, "lib_1")
 
-        mock_session_store.forget_library.assert_awaited_once_with(SESSION_TOKEN)
+        mock_session_store.forget_library.assert_awaited_once_with(
+            SESSION_TOKEN, "lib_1"
+        )
 
     @pytest.mark.anyio
     async def test_forget_api_key_deletes_hashed_key(self, cache, mock_redis):

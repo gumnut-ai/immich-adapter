@@ -145,11 +145,13 @@ class LibraryCache:
         except redis.exceptions.RedisError:
             logger.error("Failed to cache resolved library", exc_info=True)
 
-    async def forget_session(self, session_token: str) -> None:
+    async def forget_session(
+        self, session_token: str, previous_library_id: str
+    ) -> None:
         """Drop the cached library and queue a sync reset: the client's local
         copy and checkpoints belong to a library it can no longer use."""
         try:
-            await self._session_store.forget_library(session_token)
+            await self._session_store.forget_library(session_token, previous_library_id)
         except redis.exceptions.RedisError:
             logger.error("Failed to drop cached library", exc_info=True)
 

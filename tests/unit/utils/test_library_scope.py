@@ -416,7 +416,7 @@ class TestResolveLibraryId:
             await _resolve_library_id(request, JWT, cache)
 
         assert exc_info.value.status_code == 403
-        cache.forget_session.assert_awaited_once_with(SESSION_TOKEN)
+        cache.forget_session.assert_awaited_once_with(SESSION_TOKEN, "lib_old")
 
     @pytest.mark.anyio
     async def test_stale_session_with_no_library_left_forgets_it(
@@ -428,7 +428,7 @@ class TestResolveLibraryId:
 
         assert library_id is None
         assert get_bound_library_id() is None
-        cache.forget_session.assert_awaited_once_with(SESSION_TOKEN)
+        cache.forget_session.assert_awaited_once_with(SESSION_TOKEN, "lib_old")
 
     @pytest.mark.anyio
     async def test_session_scope_forgets_through_the_cache(
@@ -439,7 +439,8 @@ class TestResolveLibraryId:
 
         await forget_bound_library_if_gone(404, "Library lib_cached not found")
 
-        cache.forget_session.assert_awaited_once_with(SESSION_TOKEN)
+        # Conditional on the bound library, so a concurrent switch survives.
+        cache.forget_session.assert_awaited_once_with(SESSION_TOKEN, "lib_cached")
 
     @pytest.mark.anyio
     async def test_api_key_scope_forgets_through_the_cache(

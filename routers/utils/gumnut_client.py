@@ -292,12 +292,10 @@ async def _resolve_library_id(
         is_fresh = time.time() - checked_at < LIBRARY_RECHECK_SECONDS
         # Staying put applies only to a library the session fell back to.
         stay_on = None if from_choice else cached
-        forget = partial(cache.forget_session, session_token)
     else:
         cached = await cache.get_for_api_key(credential)
         is_fresh = True  # the cache entry's TTL is the recheck bound
         stay_on = None
-        forget = partial(cache.forget_api_key, credential)
 
     if cached and is_fresh:
         library_id = cached
@@ -306,11 +304,11 @@ async def _resolve_library_id(
             choice = await _fetch_library_choice(request, credential, stay_on)
         except HTTPException:
             if cached and session_token:
-                await forget()
+                await cache.forget_session(session_token, cached)
             raise
         if choice is None:
             if cached and session_token:
-                await forget()
+                await cache.forget_session(session_token, cached)
             return None
         library_id = choice.library_id
         if not session_token:
@@ -324,6 +322,12 @@ async def _resolve_library_id(
         else:
             await cache.remember_for_session(session_token, cached or "", choice)
 
+    if session_token:
+        # Conditional on the bound library, so a request still bound to it
+        # cannot drop a library another request already switched to.
+        forget = partial(cache.forget_session, session_token, library_id)
+    else:
+        forget = partial(cache.forget_api_key, credential)
     bind_library_scope(LibraryScope(library_id=library_id, forget=forget))
     return library_id
 

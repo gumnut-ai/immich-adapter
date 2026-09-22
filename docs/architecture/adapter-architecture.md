@@ -68,11 +68,13 @@ per request and scopes every Gumnut call to it:
 - **Switching.** When a session's re-check resolves a different library — the
   choice changed, became unusable, or became usable again — the session moves
   to it and gets a pending sync reset in one conditional write, because its
-  checkpoints are cursors into the previous library's event stream. Library
-  writes hold only while the session still caches the library they resolved
-  from, so a request that read stale state cannot undo a concurrent switch. A request in flight finishes against the library it
-  resolved. A session whose library can no longer be resolved at all (the
-  `403` above, or no live library) drops it with a reset.
+  checkpoints are cursors into the previous library's event stream. A session
+  whose library can no longer be resolved at all (the `403` above, or no live
+  library) drops it with a reset. Every write of the session's library —
+  record, switch, or drop — holds only while the session still caches the
+  library the request observed, so a request that read stale state cannot
+  undo a concurrent switch. A request in flight finishes against the library
+  it resolved.
   Without a stored choice, a session that fell back stays on its library while
   the user still owns it, so restoring an older trashed library does not move
   it; new sessions pick the oldest.

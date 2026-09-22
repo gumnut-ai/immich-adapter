@@ -485,7 +485,9 @@ class SessionStore:
             )
         )
 
-    async def forget_library(self, session_token: str) -> bool:
+    async def forget_library(
+        self, session_token: str, previous_library_id: str
+    ) -> bool:
         """
         Drop the cached library and flag the session for a sync reset.
 
@@ -494,10 +496,13 @@ class SessionStore:
         library's local copy and checkpoints.
 
         Returns:
-            True if session exists and was updated, False otherwise
+            True if the session still held ``previous_library_id`` and was
+            updated, False otherwise
         """
-        return await self._update_if_exists(
-            session_token, {"library_id": "", "is_pending_sync_reset": "1"}
+        return await self._set_library_if(
+            session_token,
+            previous_library_id,
+            {"library_id": "", "is_pending_sync_reset": "1"},
         )
 
     async def set_pending_sync_reset(self, session_token: str, pending: bool) -> bool:
