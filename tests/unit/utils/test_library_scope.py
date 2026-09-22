@@ -141,6 +141,7 @@ class TestResolveLibraryId:
         cache = AsyncMock()
         cache.get_for_api_key.return_value = None
         cache.switch_session.return_value = True
+        cache.remember_for_session.return_value = True
         return cache
 
     @pytest.fixture
@@ -366,6 +367,32 @@ class TestResolveLibraryId:
             SESSION_TOKEN, "lib_old", LibraryChoice("lib_new", from_choice=True)
         )
         cache.remember_for_session.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_unrecorded_first_resolution_is_refused_for_retry(
+        self, cache, unscoped_client, get_client
+    ):
+        """A library the session does not record must not be served: a sync
+        stream would ack cursors the session cannot tie to a library."""
+        cache.remember_for_session.return_value = False
+        unscoped_client.libraries.list.return_value = [OWNED_OLD]
+        request = _request(session_library_id=None)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _resolve_library_id(request, JWT, cache)
+
+        assert exc_info.value.status_code == 503
+        assert get_bound_library_id() is None
+
+    @pytest.mark.anyio
+    async def test_unrecorded_revalidation_stays_on_the_observed_library(
+        self, cache, unscoped_client, get_client
+    ):
+        cache.remember_for_session.return_value = False
+        unscoped_client.libraries.list.return_value = [OWNED_OLD]
+        request = _request(session_library_id="lib_old", stale=True)
+
+        assert await _resolve_library_id(request, JWT, cache) == "lib_old"
 
     @pytest.mark.anyio
     async def test_uncommitted_switch_stays_on_the_observed_library(

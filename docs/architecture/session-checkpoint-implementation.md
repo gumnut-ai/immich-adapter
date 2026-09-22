@@ -132,7 +132,7 @@ Checkpoints without a cursor are skipped when reconstructing ack responses.
 The sync stream is driven by the backend events feed, with one checkpoint per entity type.
 
 1. If `request.reset=true`, the adapter deletes all checkpoints for the session before streaming.
-2. If the session has `is_pending_sync_reset=true`, the adapter returns a one-event stream containing `SyncResetV1|reset|` and stops.
+2. If the session has `is_pending_sync_reset=true`, or no longer holds the library this request bound, the adapter returns a one-event stream containing `SyncResetV1|reset|` and stops.
 3. Before the response starts, the route resolves `users.me()` so auth failures still surface as normal HTTP errors instead of being swallowed inside a streaming generator.
 4. `AuthUsersV1` and `UsersV1` are emitted directly from the current user record, using `current_user.updated_at` (or the user id as a fallback) as their cursor.
 5. Event-backed types resume from `checkpoint.cursor` using the backend events API with:

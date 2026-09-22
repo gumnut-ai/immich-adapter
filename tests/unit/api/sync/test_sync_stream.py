@@ -24,6 +24,11 @@ from routers.immich_models import (
     SyncRequestType,
     SyncStreamDto,
 )
+from routers.utils.gumnut_client import (
+    LibraryScope,
+    bind_library_scope,
+    init_request_scope,
+)
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     safe_uuid_from_face_id,
@@ -1488,6 +1493,33 @@ class TestGetSyncStreamEndpoint:
 
         mock_checkpoint_store.get_all.assert_not_called()
         mock_checkpoint_store.delete_all.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_session_moved_off_the_bound_library_sends_reset(self):
+        """A concurrent switch after this request bound its library would pair
+        this library's events with the other library's checkpoints."""
+        mock_request = Mock()
+        mock_request.state.session_token = str(TEST_SESSION_UUID)
+        mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
+        mock_session_store = AsyncMock(spec=SessionStore)
+        mock_session_store.get_by_id.return_value = create_mock_session()
+        init_request_scope()
+        bind_library_scope(LibraryScope(library_id="lib-old", forget=AsyncMock()))
+
+        result = await get_sync_stream(
+            request=SyncStreamDto(types=[SyncRequestType.AssetsV1]),
+            http_request=mock_request,
+            gumnut_client=Mock(),
+            checkpoint_store=mock_checkpoint_store,
+            session_store=mock_session_store,
+        )
+
+        events = [
+            json.loads(c if isinstance(c, str) else bytes(c).decode())
+            async for c in result.body_iterator
+        ]
+        assert [e["type"] for e in events] == ["SyncResetV1"]
+        mock_checkpoint_store.get_all.assert_not_called()
 
     @pytest.mark.anyio
     async def test_request_reset_clears_checkpoints(self):

@@ -32,7 +32,10 @@ from routers.immich_models import (
     SyncEntityType,
     SyncStreamDto,
 )
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client,
+    get_bound_library_id,
+)
 
 from routers.api.sync.events import to_ack_string
 from routers.api.sync.stream import generate_reset_stream, generate_sync_stream
@@ -331,10 +334,19 @@ async def get_sync_stream(
     # If so, send SyncResetV1 and end immediately (matches immich behavior)
     if session_uuid:
         session = await session_store.get_by_id(str(session_uuid))
-        if session and session.is_pending_sync_reset:
+        bound_library_id = get_bound_library_id()
+        # A concurrent request can move the session to another library after
+        # this one bound its library; the checkpoints loaded below would then
+        # belong to the other library, so reset instead of mixing them.
+        library_moved = (
+            session is not None
+            and bound_library_id is not None
+            and session.library_id != bound_library_id
+        )
+        if session and (session.is_pending_sync_reset or library_moved):
             logger.info(
-                "Session has isPendingSyncReset flag - sending SyncResetV1",
-                extra={"session_id": session_token},
+                "Session needs a sync reset - sending SyncResetV1",
+                extra={"session_id": session_token, "library_moved": library_moved},
             )
             return StreamingResponse(
                 generate_reset_stream(),

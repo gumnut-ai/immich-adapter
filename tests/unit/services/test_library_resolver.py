@@ -206,9 +206,13 @@ class TestLibraryCache:
     async def test_remember_for_session_writes_session_field(
         self, cache, mock_session_store
     ):
-        await cache.remember_for_session(
+        mock_session_store.update_library_id.return_value = True
+
+        held = await cache.remember_for_session(
             SESSION_TOKEN, "lib_1", LibraryChoice("lib_1", from_choice=True)
         )
+
+        assert held is True
 
         mock_session_store.update_library_id.assert_awaited_once_with(
             SESSION_TOKEN, "lib_1", "lib_1", from_choice=True
@@ -228,6 +232,20 @@ class TestLibraryCache:
         mock_session_store.switch_library.assert_awaited_once_with(
             SESSION_TOKEN, "lib_old", "lib_new", from_choice=False
         )
+
+    @pytest.mark.anyio
+    async def test_remember_for_session_redis_failure_is_not_held(
+        self, cache, mock_session_store
+    ):
+        mock_session_store.update_library_id.side_effect = (
+            redis.exceptions.ConnectionError("down")
+        )
+
+        held = await cache.remember_for_session(
+            SESSION_TOKEN, "", LibraryChoice("lib_1", from_choice=False)
+        )
+
+        assert held is False
 
     @pytest.mark.anyio
     async def test_switch_session_redis_failure_is_not_committed(

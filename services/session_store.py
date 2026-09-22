@@ -45,16 +45,21 @@ end
 return 1
 """
 
-# KEYS: session hash. ARGV: the library_id the caller resolved from, then
-# field/value pairs. Writes only while the session still holds that library
-# (every session hash has the field), so a request that resolved from a stale
-# read cannot overwrite a concurrent change.
+# KEYS: session hash. ARGV: the library_id the caller observed, the library_id
+# it wants, then field/value pairs. Writes only while the session still holds
+# the observed library (every session hash has the field), so a request that
+# read stale state cannot overwrite a concurrent change. Returns whether the
+# session now holds the wanted library: written here, or already there.
 _SET_LIBRARY_IF_LUA = """
-if redis.call('HGET', KEYS[1], 'library_id') ~= ARGV[1] then
-  return 0
+local current = redis.call('HGET', KEYS[1], 'library_id')
+if current == ARGV[1] then
+  redis.call('HSET', KEYS[1], unpack(ARGV, 3))
+  return 1
 end
-redis.call('HSET', KEYS[1], unpack(ARGV, 2))
-return 1
+if current == ARGV[2] then
+  return 1
+end
+return 0
 """
 
 _REQUIRED_SESSION_FIELDS = frozenset(
@@ -445,8 +450,8 @@ class SessionStore:
         with the time it was resolved.
 
         Returns:
-            True if the session still held ``previous_library_id`` and was
-            updated, False otherwise
+            Whether the session now holds ``library_id``: updated from
+            ``previous_library_id``, or already moved there by another request
         """
         return await self._set_library_if(
             session_token, previous_library_id, _library_fields(library_id, from_choice)
@@ -466,8 +471,8 @@ class SessionStore:
         Concurrent requests that resolved the same change reset the client once.
 
         Returns:
-            True if the session still held ``previous_library_id`` and was
-            switched, False otherwise
+            Whether the session now holds ``library_id``: switched from
+            ``previous_library_id``, or already moved there by another request
         """
         fields = _library_fields(library_id, from_choice)
         fields["is_pending_sync_reset"] = "1"
@@ -476,7 +481,7 @@ class SessionStore:
     async def _set_library_if(
         self, session_token: str, previous_library_id: str, fields: dict[str, str]
     ) -> bool:
-        args = [previous_library_id]
+        args = [previous_library_id, fields["library_id"]]
         for field, value in fields.items():
             args.extend((field, value))
         return bool(
@@ -496,8 +501,7 @@ class SessionStore:
         library's local copy and checkpoints.
 
         Returns:
-            True if the session still held ``previous_library_id`` and was
-            updated, False otherwise
+            Whether the session no longer holds a library
         """
         return await self._set_library_if(
             session_token,

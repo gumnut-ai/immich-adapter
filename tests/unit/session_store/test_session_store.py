@@ -766,9 +766,10 @@ class TestSessionStoreConditionalWrites:
             result = await write(session_store, session_token)
 
         assert result is True
-        script, numkeys, key, expected, *pairs = mock_redis.eval.call_args.args
+        script, numkeys, key, expected, target, *pairs = mock_redis.eval.call_args.args
         assert script is _SET_LIBRARY_IF_LUA
         assert (numkeys, key, expected) == (1, f"session:{session_token}", "lib_old")
+        assert target == expected_fields["library_id"]
         assert dict(zip(pairs[::2], pairs[1::2])) == expected_fields
 
     @pytest.mark.anyio

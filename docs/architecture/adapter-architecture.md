@@ -73,10 +73,13 @@ per request and scopes every Gumnut call to it:
   library) drops it with a reset. Every write of the session's library —
   record, switch, or drop — holds only while the session still caches the
   library the request observed, so a request that read stale state cannot
-  undo a concurrent switch. A request uses the new library only once its
-  switch commits; otherwise it stays on the library it observed, and a later
-  request retries. A request in flight finishes against the library it
-  resolved.
+  undo a concurrent switch. A request serves only a library its session
+  records, which is what ties checkpoints to one library: when its write does
+  not leave the session holding the resolved library, it stays on the library
+  it observed, and a first resolution that cannot be recorded gets a `503` to
+  retry. A sync stream whose session has moved off its bound library by the
+  time it reads checkpoints sends a reset instead. A request in flight
+  finishes against the library it resolved.
   Without a stored choice, a session that fell back stays on its library while
   the user still owns it, so restoring an older trashed library does not move
   it; new sessions pick the oldest.

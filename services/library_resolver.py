@@ -108,11 +108,13 @@ class LibraryCache:
 
     async def remember_for_session(
         self, session_token: str, previous_library_id: str, choice: LibraryChoice
-    ) -> None:
+    ) -> bool:
         """Record a resolution that did not change the session's library;
-        ``previous_library_id`` is ``""`` for a session's first resolution."""
+        ``previous_library_id`` is ``""`` for a session's first resolution.
+        Returns whether the session holds the chosen library; a Redis failure
+        counts as not."""
         try:
-            await self._session_store.update_library_id(
+            return await self._session_store.update_library_id(
                 session_token,
                 previous_library_id,
                 choice.library_id,
@@ -120,12 +122,14 @@ class LibraryCache:
             )
         except redis.exceptions.RedisError:
             logger.error("Failed to cache resolved library", exc_info=True)
+            return False
 
     async def switch_session(
         self, session_token: str, previous_library_id: str, choice: LibraryChoice
     ) -> bool:
         """Move the session to another library and queue a sync reset. Returns
-        whether the switch committed; a Redis failure counts as not."""
+        whether the session holds the chosen library; a Redis failure counts
+        as not."""
         try:
             return await self._session_store.switch_library(
                 session_token,

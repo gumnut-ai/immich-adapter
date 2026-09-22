@@ -313,18 +313,27 @@ async def _resolve_library_id(
         library_id = choice.library_id
         if not session_token:
             await cache.remember_for_api_key(credential, library_id)
-        elif cached and cached != library_id:
-            logger.info(
-                "Session library changed; switching and resetting sync",
-                extra={"previous_library_id": cached, "library_id": library_id},
-            )
-            if not await cache.switch_session(session_token, cached, choice):
-                # Without the committed switch there is no pending reset, so
-                # the new library must not meet the old library's checkpoints.
-                # Stay on the observed library; a later request retries.
-                library_id = cached
         else:
-            await cache.remember_for_session(session_token, cached or "", choice)
+            if cached and cached != library_id:
+                logger.info(
+                    "Session library changed; switching and resetting sync",
+                    extra={"previous_library_id": cached, "library_id": library_id},
+                )
+                held = await cache.switch_session(session_token, cached, choice)
+            else:
+                held = await cache.remember_for_session(
+                    session_token, cached or "", choice
+                )
+            if not held:
+                # A request serves only a library its session records: that is
+                # what ties sync checkpoints to one library. The session either
+                # still holds the observed library or left it with a reset.
+                if not cached:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Could not record the Gumnut library; try again",
+                    )
+                library_id = cached
 
     if session_token:
         # Conditional on the bound library, so a request still bound to it
