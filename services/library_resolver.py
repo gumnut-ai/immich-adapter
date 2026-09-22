@@ -123,10 +123,11 @@ class LibraryCache:
 
     async def switch_session(
         self, session_token: str, previous_library_id: str, choice: LibraryChoice
-    ) -> None:
-        """Move the session to another library and queue a sync reset."""
+    ) -> bool:
+        """Move the session to another library and queue a sync reset. Returns
+        whether the switch committed; a Redis failure counts as not."""
         try:
-            await self._session_store.switch_library(
+            return await self._session_store.switch_library(
                 session_token,
                 previous_library_id,
                 choice.library_id,
@@ -134,6 +135,7 @@ class LibraryCache:
             )
         except redis.exceptions.RedisError:
             logger.error("Failed to switch cached library", exc_info=True)
+            return False
 
     async def remember_for_api_key(self, api_key: str, library_id: str) -> None:
         try:

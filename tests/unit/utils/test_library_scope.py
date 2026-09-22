@@ -140,6 +140,7 @@ class TestResolveLibraryId:
     def cache(self):
         cache = AsyncMock()
         cache.get_for_api_key.return_value = None
+        cache.switch_session.return_value = True
         return cache
 
     @pytest.fixture
@@ -365,6 +366,22 @@ class TestResolveLibraryId:
             SESSION_TOKEN, "lib_old", LibraryChoice("lib_new", from_choice=True)
         )
         cache.remember_for_session.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_uncommitted_switch_stays_on_the_observed_library(
+        self, cache, unscoped_client, get_client
+    ):
+        """Without a committed switch there is no pending reset, so the new
+        library must not be served against the old library's checkpoints."""
+        cache.switch_session.return_value = False
+        unscoped_client.libraries.list.return_value = [OWNED_OLD, OWNED_NEW]
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_new")
+        request = _request(session_library_id="lib_old", stale=True)
+
+        library_id = await _resolve_library_id(request, JWT, cache)
+
+        assert library_id == "lib_old"
+        assert get_bound_library_id() == "lib_old"
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(

@@ -318,7 +318,11 @@ async def _resolve_library_id(
                 "Session library changed; switching and resetting sync",
                 extra={"previous_library_id": cached, "library_id": library_id},
             )
-            await cache.switch_session(session_token, cached, choice)
+            if not await cache.switch_session(session_token, cached, choice):
+                # Without the committed switch there is no pending reset, so
+                # the new library must not meet the old library's checkpoints.
+                # Stay on the observed library; a later request retries.
+                library_id = cached
         else:
             await cache.remember_for_session(session_token, cached or "", choice)
 
