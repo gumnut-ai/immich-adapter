@@ -226,10 +226,10 @@ async def send_sync_ack(
                 "SyncResetV1 acknowledged - resetting sync progress",
                 extra={"session_id": session_token},
             )
-            # Clear the pending sync reset flag
-            await session_store.set_pending_sync_reset(session_token, False)
-            # Delete all existing checkpoints
+            # Delete checkpoints before clearing the flag: a concurrent stream
+            # that sees the cleared flag must not load the old checkpoints.
             await checkpoint_store.delete_all(session_uuid)
+            await session_store.set_pending_sync_reset(session_token, False)
             # Update session activity
             await session_store.update_activity(session_token)
             return

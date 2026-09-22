@@ -140,12 +140,19 @@ class TestSendSyncAck:
 
     @pytest.mark.anyio
     async def test_handles_sync_reset_ack(self):
-        """SyncResetV1 ack clears pending reset flag and deletes all checkpoints."""
+        """SyncResetV1 ack deletes all checkpoints, then clears the pending reset flag."""
         mock_request = Mock()
         mock_request.state.session_token = str(TEST_SESSION_UUID)
 
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_session_store = AsyncMock(spec=SessionStore)
+        calls: list[str] = []
+        mock_checkpoint_store.delete_all.side_effect = lambda *_: calls.append(
+            "delete_all"
+        )
+        mock_session_store.set_pending_sync_reset.side_effect = lambda *_: calls.append(
+            "clear_flag"
+        )
 
         # SyncResetV1 ack with cursor
         request = SyncAckSetDto(acks=["SyncResetV1|reset|"])
@@ -162,6 +169,9 @@ class TestSendSyncAck:
             str(TEST_SESSION_UUID), False
         )
         mock_checkpoint_store.delete_all.assert_called_once_with(TEST_SESSION_UUID)
+        # Checkpoints go first, so a stream that sees the cleared flag
+        # cannot load checkpoints from before the reset.
+        assert calls == ["delete_all", "clear_flag"]
         mock_session_store.update_activity.assert_called_once_with(
             str(TEST_SESSION_UUID)
         )
