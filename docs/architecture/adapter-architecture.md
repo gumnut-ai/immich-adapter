@@ -70,8 +70,7 @@ per request and scopes every Gumnut call to it:
   to it and gets a pending sync reset in one conditional write, because its
   checkpoints are cursors into the previous library's event stream. Library
   writes hold only while the session still caches the library they resolved
-  from, so a request that read stale state cannot undo a concurrent switch or
-  reset the client twice. A request in flight finishes against the library it
+  from, so a request that read stale state cannot undo a concurrent switch. A request in flight finishes against the library it
   resolved. A session whose library can no longer be resolved at all (the
   `403` above, or no live library) drops it with a reset.
   Without a stored choice, a session that fell back stays on its library while
