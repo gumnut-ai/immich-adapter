@@ -22,7 +22,7 @@ import httpx
 from gumnut import AsyncGumnut
 from gumnut.types.assets import AssetVersionResponse
 from PIL import Image, ImageOps, UnidentifiedImageError
-from pillow_heif import register_heif_opener
+from pillow_heif.as_plugin import register_heif_opener
 
 from config.settings import Settings, get_settings
 from routers.utils.asset_edit_conversion import AssetEditError, EditRecipe
