@@ -45,8 +45,8 @@ per request and scopes every Gumnut call to it:
   `collaborator`. Otherwise the fallback: the oldest live library the user
   owns, so every session and device lands on the same one regardless of client
   state. Only `owner` rows are fallback candidates, so joining an older library
-  never redirects uploads; a Collaborator library is reached only by choosing
-  it. A user with no usable choice and shared libraries but none of their own
+  never redirects uploads; a `collaborator` library is reached only by
+  choosing it. A user with no usable choice and shared libraries but none of their own
   gets a `403` pointing at the web setting, because an unscoped call would let
   the Gumnut API default to a lone shared library.
 - **Binding.** `get_authenticated_gumnut_client` sets the resolved id as the
@@ -68,14 +68,15 @@ per request and scopes every Gumnut call to it:
 - **Switching.** When a session's re-check resolves a different library — the
   choice changed, became unusable, or became usable again — the session moves
   to it and gets a pending sync reset in one conditional write, because its
-  checkpoints are cursors into the previous library's event stream. The write
-  holds only while the session still caches the previous library, so
-  concurrent requests reset the client once. A request in flight finishes
-  against the library it resolved. A session whose library can no longer be
-  resolved at all (the `403` above, or no live library) drops it with a reset.
-  A user who never chooses sees no change: a session that fell back stays on
-  its library while the user still owns it, so restoring an older trashed
-  library does not move it; new sessions pick the oldest.
+  checkpoints are cursors into the previous library's event stream. Library
+  writes hold only while the session still caches the library they resolved
+  from, so a request that read stale state cannot undo a concurrent switch or
+  reset the client twice. A request in flight finishes against the library it
+  resolved. A session whose library can no longer be resolved at all (the
+  `403` above, or no live library) drops it with a reset.
+  Without a stored choice, a session that fell back stays on its library while
+  the user still owns it, so restoring an older trashed library does not move
+  it; new sessions pick the oldest.
 - **Invalidation.** Another client can trash the chosen library mid-session.
   The Gumnut API answers a scoped call with a `404` naming that library; the
   shared HTTP client's response hook drops the cached id, so the next request

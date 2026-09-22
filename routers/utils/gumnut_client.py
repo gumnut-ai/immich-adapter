@@ -232,7 +232,7 @@ async def get_gumnut_client(
     )
 
 
-async def _choose_library(
+async def _fetch_library_choice(
     request: Request, credential: str, stay_on: str | None
 ) -> LibraryChoice | None:
     """Resolve the library from the Gumnut API: the user's stored choice when
@@ -280,10 +280,9 @@ async def _resolve_library_id(
     """Resolve the library for this request's credential, caching the result.
 
     ``credential`` is the session's JWT or the raw API key. A cached library is
-    trusted for ``LIBRARY_RECHECK_SECONDS``, then resolved again so a changed
-    choice, or a library that became unusable or usable again, takes effect. A
-    session whose library changes is flagged for a sync reset. ``None`` leaves
-    the request unscoped and caches nothing.
+    trusted for ``LIBRARY_RECHECK_SECONDS``, then resolved again; a session
+    whose library changes is flagged for a sync reset. ``None`` leaves the
+    request unscoped and caches nothing.
     """
     session_token = getattr(request.state, "session_token", None)
     if session_token:
@@ -304,7 +303,7 @@ async def _resolve_library_id(
         library_id = cached
     else:
         try:
-            choice = await _choose_library(request, credential, stay_on)
+            choice = await _fetch_library_choice(request, credential, stay_on)
         except HTTPException:
             if cached and session_token:
                 await forget()
@@ -323,7 +322,7 @@ async def _resolve_library_id(
             )
             await cache.switch_session(session_token, cached, choice)
         else:
-            await cache.remember_for_session(session_token, choice)
+            await cache.remember_for_session(session_token, cached or "", choice)
 
     bind_library_scope(LibraryScope(library_id=library_id, forget=forget))
     return library_id

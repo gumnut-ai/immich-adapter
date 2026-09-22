@@ -18,13 +18,9 @@ from utils.redis_protocols import AsyncRedisClient
 
 logger = logging.getLogger(__name__)
 
-# How long a resolved library is trusted before the stored choice and the
-# library's usability are checked again. There is no push channel from the
-# Gumnut API, so this bounds how long a change of choice takes to reach
-# clients. Sessions revalidate against a timestamp; API keys, which have no
-# session, let their cache entry expire. Library-not-found drops either early.
+# How long a resolved library is trusted before it is resolved again: a
+# session's re-check interval and an API-key cache entry's TTL.
 LIBRARY_RECHECK_SECONDS = 5 * 60
-API_KEY_LIBRARY_TTL_SECONDS = LIBRARY_RECHECK_SECONDS
 
 # Roles an Immich client can act in: it assumes it can upload and edit.
 _CHOOSABLE_ROLES = frozenset({"owner", "collaborator"})
@@ -111,11 +107,16 @@ class LibraryCache:
         return value or None
 
     async def remember_for_session(
-        self, session_token: str, choice: LibraryChoice
+        self, session_token: str, previous_library_id: str, choice: LibraryChoice
     ) -> None:
+        """Record a resolution that did not change the session's library;
+        ``previous_library_id`` is ``""`` for a session's first resolution."""
         try:
             await self._session_store.update_library_id(
-                session_token, choice.library_id, from_choice=choice.from_choice
+                session_token,
+                previous_library_id,
+                choice.library_id,
+                from_choice=choice.from_choice,
             )
         except redis.exceptions.RedisError:
             logger.error("Failed to cache resolved library", exc_info=True)
@@ -123,8 +124,7 @@ class LibraryCache:
     async def switch_session(
         self, session_token: str, previous_library_id: str, choice: LibraryChoice
     ) -> None:
-        """Move the session to another library and queue a sync reset: the
-        client's local copy and checkpoints belong to the previous library."""
+        """Move the session to another library and queue a sync reset."""
         try:
             await self._session_store.switch_library(
                 session_token,
@@ -140,7 +140,7 @@ class LibraryCache:
             await self._redis.set(
                 _api_key_cache_key(api_key),
                 library_id,
-                ex=API_KEY_LIBRARY_TTL_SECONDS,
+                ex=LIBRARY_RECHECK_SECONDS,
             )
         except redis.exceptions.RedisError:
             logger.error("Failed to cache resolved library", exc_info=True)

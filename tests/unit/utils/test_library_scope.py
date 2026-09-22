@@ -188,7 +188,7 @@ class TestResolveLibraryId:
         # The lookup runs on an unscoped client, without a library bound.
         get_client.assert_awaited_once_with(JWT)
         cache.remember_for_session.assert_awaited_once_with(
-            SESSION_TOKEN, LibraryChoice("lib_old", from_choice=False)
+            SESSION_TOKEN, "", LibraryChoice("lib_old", from_choice=False)
         )
         # A session's first resolution is not a change of library.
         cache.switch_session.assert_not_awaited()
@@ -208,7 +208,7 @@ class TestResolveLibraryId:
 
         assert library_id == "lib_owned"
         cache.remember_for_session.assert_awaited_once_with(
-            SESSION_TOKEN, LibraryChoice("lib_owned", from_choice=False)
+            SESSION_TOKEN, "", LibraryChoice("lib_owned", from_choice=False)
         )
 
     @pytest.mark.anyio
@@ -316,8 +316,22 @@ class TestResolveLibraryId:
 
         assert library_id == "lib_shared"
         cache.remember_for_session.assert_awaited_once_with(
-            SESSION_TOKEN, LibraryChoice("lib_shared", from_choice=True)
+            SESSION_TOKEN, "", LibraryChoice("lib_shared", from_choice=True)
         )
+
+    @pytest.mark.anyio
+    async def test_choice_is_skipped_when_the_credential_may_not_read_it(
+        self, cache, unscoped_client, get_client
+    ):
+        unscoped_client.libraries.list.return_value = [OWNED_OLD, OWNED_NEW]
+        unscoped_client.users.me.side_effect = make_sdk_status_error(
+            403, "not permitted", cls=PermissionDeniedError
+        )
+        request = _request(jwt_token=API_KEY, session_token=None)
+
+        library_id = await _resolve_library_id(request, API_KEY, cache)
+
+        assert library_id == "lib_old"
 
     @pytest.mark.anyio
     async def test_stale_session_with_unchanged_library_restamps_without_reset(
@@ -330,7 +344,7 @@ class TestResolveLibraryId:
 
         assert library_id == "lib_old"
         cache.remember_for_session.assert_awaited_once_with(
-            SESSION_TOKEN, LibraryChoice("lib_old", from_choice=False)
+            SESSION_TOKEN, "lib_old", LibraryChoice("lib_old", from_choice=False)
         )
         cache.switch_session.assert_not_awaited()
         cache.forget_session.assert_not_awaited()
@@ -388,7 +402,7 @@ class TestResolveLibraryId:
         assert library_id == "lib_new"
         cache.switch_session.assert_not_awaited()
         cache.remember_for_session.assert_awaited_once_with(
-            SESSION_TOKEN, LibraryChoice("lib_new", from_choice=False)
+            SESSION_TOKEN, "lib_new", LibraryChoice("lib_new", from_choice=False)
         )
 
     @pytest.mark.anyio

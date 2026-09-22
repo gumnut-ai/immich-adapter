@@ -9,7 +9,7 @@ import redis.exceptions
 
 from services.session_store import (
     _REQUIRED_SESSION_FIELDS,
-    _SWITCH_LIBRARY_LUA,
+    _SET_LIBRARY_IF_LUA,
     _UPDATE_IF_EXISTS_LUA,
     Session,
     SessionDataError,
@@ -31,10 +31,6 @@ WRITERS = [
     pytest.param(
         lambda store, token: store.update_stored_jwt(token, "new.jwt.token"),
         id="update_stored_jwt",
-    ),
-    pytest.param(
-        lambda store, token: store.update_library_id(token, "lib_1"),
-        id="update_library_id",
     ),
     pytest.param(lambda store, token: store.forget_library(token), id="forget_library"),
     pytest.param(
@@ -724,51 +720,51 @@ class TestSessionStoreConditionalWrites:
         ).timestamp() == pytest.approx(float(score))
 
     @pytest.mark.anyio
-    async def test_update_library_id_stamps_the_check_without_activity(
-        self, session_store, mock_redis
+    @pytest.mark.parametrize(
+        "write,expected_fields",
+        [
+            pytest.param(
+                lambda store, token: store.update_library_id(
+                    token, "lib_old", "lib_new", from_choice=True
+                ),
+                {
+                    "library_id": "lib_new",
+                    "library_checked_at": "1700000000.0",
+                    "library_from_choice": "1",
+                },
+                id="update_library_id",
+            ),
+            pytest.param(
+                lambda store, token: store.switch_library(
+                    token, "lib_old", "lib_new", from_choice=False
+                ),
+                {
+                    "library_id": "lib_new",
+                    "library_checked_at": "1700000000.0",
+                    "library_from_choice": "0",
+                    "is_pending_sync_reset": "1",
+                },
+                id="switch_library",
+            ),
+        ],
+    )
+    async def test_library_writes_hold_only_while_the_previous_library_is_cached(
+        self, session_store, mock_redis, write, expected_fields
     ):
-        """update_library_id records the library, its basis, and when it was
-        resolved, without touching activity."""
+        """Library writes record when and how the library was resolved, and
+        apply only while the session still holds the library they resolved
+        from, so a stale request cannot undo a concurrent switch. A switch also
+        flags a sync reset: checkpoints belong to the previous library."""
         session_token = str(TEST_SESSION_ID)
 
         with patch("services.session_store.time.time", return_value=1700000000.0):
-            result = await session_store.update_library_id(
-                session_token, "lib_1", from_choice=True
-            )
-
-        assert result is True
-        _keys, _token, score, fields = _decode_eval(mock_redis)
-        assert fields == {
-            "library_id": "lib_1",
-            "library_checked_at": "1700000000.0",
-            "library_from_choice": "1",
-        }
-        assert score == ""
-
-    @pytest.mark.anyio
-    async def test_switch_library_is_conditional_and_flags_sync_reset(
-        self, session_store, mock_redis
-    ):
-        """The previous library's local copy and checkpoints must not be
-        resumed against the new one; the write holds only while the session
-        still caches the previous library."""
-        session_token = str(TEST_SESSION_ID)
-
-        with patch("services.session_store.time.time", return_value=1700000000.0):
-            result = await session_store.switch_library(
-                session_token, "lib_old", "lib_new", from_choice=False
-            )
+            result = await write(session_store, session_token)
 
         assert result is True
         script, numkeys, key, expected, *pairs = mock_redis.eval.call_args.args
-        assert script is _SWITCH_LIBRARY_LUA
+        assert script is _SET_LIBRARY_IF_LUA
         assert (numkeys, key, expected) == (1, f"session:{session_token}", "lib_old")
-        assert dict(zip(pairs[::2], pairs[1::2])) == {
-            "library_id": "lib_new",
-            "library_checked_at": "1700000000.0",
-            "library_from_choice": "0",
-            "is_pending_sync_reset": "1",
-        }
+        assert dict(zip(pairs[::2], pairs[1::2])) == expected_fields
 
     @pytest.mark.anyio
     async def test_switch_library_reports_a_session_that_already_moved(

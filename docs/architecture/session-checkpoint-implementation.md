@@ -103,8 +103,7 @@ Clients therefore keep using the same UUID session token across backend JWT refr
 `library_id` is the Gumnut library the session's calls are scoped to (`""`
 until the first scoped request resolves it). `library_checked_at` (epoch
 seconds) and `library_from_choice` record when it was last resolved and
-whether it was the user's stored choice; sessions written before those fields
-existed read them as `0` and re-resolve on their next request. See
+whether it was the user's stored choice. See
 [Adapter Architecture](adapter-architecture.md#library-scope). Sync resumes
 from opaque events cursors within that library, so a change of library also
 sets `is_pending_sync_reset`.

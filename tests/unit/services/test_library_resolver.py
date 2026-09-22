@@ -8,7 +8,7 @@ import pytest
 import redis.exceptions
 
 from services.library_resolver import (
-    API_KEY_LIBRARY_TTL_SECONDS,
+    LIBRARY_RECHECK_SECONDS,
     LibraryCache,
     LibraryChoice,
     choose_library,
@@ -207,11 +207,11 @@ class TestLibraryCache:
         self, cache, mock_session_store
     ):
         await cache.remember_for_session(
-            SESSION_TOKEN, LibraryChoice("lib_1", from_choice=True)
+            SESSION_TOKEN, "lib_1", LibraryChoice("lib_1", from_choice=True)
         )
 
         mock_session_store.update_library_id.assert_awaited_once_with(
-            SESSION_TOKEN, "lib_1", from_choice=True
+            SESSION_TOKEN, "lib_1", "lib_1", from_choice=True
         )
 
     @pytest.mark.anyio
@@ -245,7 +245,7 @@ class TestLibraryCache:
         await cache.remember_for_api_key(API_KEY, "lib_1")
 
         mock_redis.set.assert_awaited_once_with(
-            API_KEY_CACHE_KEY, "lib_1", ex=API_KEY_LIBRARY_TTL_SECONDS
+            API_KEY_CACHE_KEY, "lib_1", ex=LIBRARY_RECHECK_SECONDS
         )
 
     @pytest.mark.anyio

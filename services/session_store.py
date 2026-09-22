@@ -45,10 +45,11 @@ end
 return 1
 """
 
-# KEYS: session hash. ARGV: the library_id the caller expects the session to
-# hold, then field/value pairs. Writes only while that library is still cached,
-# so concurrent requests that see the same stale library switch it once.
-_SWITCH_LIBRARY_LUA = """
+# KEYS: session hash. ARGV: the library_id the caller resolved from, then
+# field/value pairs. Writes only while the session still holds that library
+# (every session hash has the field), so a request that resolved from a stale
+# read cannot overwrite a concurrent change.
+_SET_LIBRARY_IF_LUA = """
 if redis.call('HGET', KEYS[1], 'library_id') ~= ARGV[1] then
   return 0
 end
@@ -432,17 +433,23 @@ class SessionStore:
         )
 
     async def update_library_id(
-        self, session_token: str, library_id: str, *, from_choice: bool = False
+        self,
+        session_token: str,
+        previous_library_id: str,
+        library_id: str,
+        *,
+        from_choice: bool,
     ) -> bool:
         """
-        Cache the library the session's Gumnut calls are scoped to, stamped
+        Record the library the session's Gumnut calls are scoped to, stamped
         with the time it was resolved.
 
         Returns:
-            True if session exists and was updated, False otherwise
+            True if the session still held ``previous_library_id`` and was
+            updated, False otherwise
         """
-        return await self._update_if_exists(
-            session_token, _library_fields(library_id, from_choice)
+        return await self._set_library_if(
+            session_token, previous_library_id, _library_fields(library_id, from_choice)
         )
 
     async def switch_library(
@@ -454,24 +461,27 @@ class SessionStore:
         from_choice: bool,
     ) -> bool:
         """
-        Move the session to another library and flag it for a sync reset.
-
-        The client's local copy and checkpoints belong to the previous library.
-        Writes only while the session still caches ``previous_library_id``, so
-        concurrent requests that resolved the same change reset the client once.
+        Move the session to another library and flag it for a sync reset: the
+        client's local copy and checkpoints belong to the previous library.
+        Concurrent requests that resolved the same change reset the client once.
 
         Returns:
-            True if the session was switched, False if it no longer exists or
-            already moved off ``previous_library_id``
+            True if the session still held ``previous_library_id`` and was
+            switched, False otherwise
         """
         fields = _library_fields(library_id, from_choice)
         fields["is_pending_sync_reset"] = "1"
+        return await self._set_library_if(session_token, previous_library_id, fields)
+
+    async def _set_library_if(
+        self, session_token: str, previous_library_id: str, fields: dict[str, str]
+    ) -> bool:
         args = [previous_library_id]
         for field, value in fields.items():
             args.extend((field, value))
         return bool(
             await self._redis.eval(
-                _SWITCH_LIBRARY_LUA, 1, f"session:{session_token}", *args
+                _SET_LIBRARY_IF_LUA, 1, f"session:{session_token}", *args
             )
         )
 
@@ -479,9 +489,9 @@ class SessionStore:
         """
         Drop the cached library and flag the session for a sync reset.
 
-        Called when the Gumnut API reports the cached library gone; the next
-        request re-resolves, and the reset makes the client discard the
-        vanished library's local copy and checkpoints.
+        Called when the session's library is gone or no longer usable; the
+        next request re-resolves, and the reset makes the client discard that
+        library's local copy and checkpoints.
 
         Returns:
             True if session exists and was updated, False otherwise
