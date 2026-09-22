@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Storage Reference"
-last-updated: 2026-09-14
+last-updated: 2026-09-22
 ---
 
 # Session and Checkpoint Storage Reference
@@ -21,7 +21,7 @@ The adapter uses core Redis data structures only; it does not require RedisJSON 
 
 The stable session UUID is the client-facing Immich access token. It is independent of the backend JWT, so a JWT refresh can update encrypted server-side custody without changing the client token or checkpoint namespace.
 
-Representative session fields are `user_id`, `library_id`, `stored_jwt`, `device_type`, `device_os`, `app_version`, `created_at`, `updated_at`, and `is_pending_sync_reset`. Treat `services/session_store.py::Session` as the field authority rather than copying defaults or client-version examples here.
+Representative session fields are `user_id`, `library_id`, `stored_jwt`, `device_type`, `device_os`, `app_version`, `created_at`, `updated_at`, `is_pending_sync_reset`, `library_checked_at`, and `library_from_choice`. Treat `services/session_store.py::Session` as the field authority rather than copying defaults or client-version examples here.
 
 Session hashes may have a TTL. When a TTL is configured, the checkpoint hash receives the same TTL. Redis expiry does not remove set/sorted-set index entries; normal user-session reads lazily prune orphans, and `SessionStore.cleanup_stale_sessions` is an explicit maintenance operation rather than a background scheduler.
 

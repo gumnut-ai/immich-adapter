@@ -959,6 +959,7 @@ class TestFileDataSourcing:
         return AssetResponse(
             id="asset_test",
             current_version_id="asset_version_test",
+            file_size_bytes=0,
             kind="original",
             mime_type="image/jpeg",
             original_file_name="test.jpg",

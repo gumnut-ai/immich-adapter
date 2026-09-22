@@ -180,6 +180,7 @@ def create_asset_response(
     return AssetResponse(
         id=asset_data["id"],
         current_version_id="asset_version_test",
+        file_size_bytes=0,
         kind="original",
         mime_type=asset_data["mime_type"],
         original_file_name=asset_data["original_file_name"],
@@ -335,6 +336,7 @@ def mock_gumnut_user():
         first_name="Test",
         last_name="User",
         favorite_display_mode="rating",
+        demo_mode_enabled=False,
         is_superuser=False,
         is_active=True,
         is_verified=True,

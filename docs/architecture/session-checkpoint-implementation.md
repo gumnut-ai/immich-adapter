@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-09-14
+last-updated: 2026-09-22
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -28,7 +28,9 @@ session:{uuid}
   ├── app_version: "1.136.0"
   ├── created_at: "2026-06-11T08:59:12.123456+00:00"
   ├── updated_at: "2026-06-11T09:04:55.654321+00:00"
-  └── is_pending_sync_reset: "0"
+  ├── is_pending_sync_reset: "0"
+  ├── library_checked_at: "1781168695.65"
+  └── library_from_choice: "0"
 
 user:{user_id}:sessions
   └── {session_uuid_1, session_uuid_2, ...}
@@ -99,9 +101,13 @@ Clients therefore keep using the same UUID session token across backend JWT refr
 - `POST /api/sessions` and `POST /api/sessions/{id}/lock` are still 204 stubs.
 
 `library_id` is the Gumnut library the session's calls are scoped to (`""`
-until the first scoped request resolves it); see
+until the first scoped request resolves it). `library_checked_at` (epoch
+seconds) and `library_from_choice` record when it was last resolved and
+whether it was the user's stored choice; sessions written before those fields
+existed read them as `0` and re-resolve on their next request. See
 [Adapter Architecture](adapter-architecture.md#library-scope). Sync resumes
-from opaque events cursors within that library.
+from opaque events cursors within that library, so a change of library also
+sets `is_pending_sync_reset`.
 
 ## Checkpoint model
 

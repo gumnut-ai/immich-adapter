@@ -63,6 +63,12 @@ def app_with_mocks(mock_session_store):
             "jwt_token": getattr(request.state, "jwt_token", None),
             "session_token": getattr(request.state, "session_token", None),
             "session_library_id": getattr(request.state, "session_library_id", None),
+            "session_library_checked_at": getattr(
+                request.state, "session_library_checked_at", None
+            ),
+            "session_library_from_choice": getattr(
+                request.state, "session_library_from_choice", None
+            ),
             "is_web_client": getattr(request.state, "is_web_client", None),
         }
 
@@ -156,6 +162,21 @@ class TestAuthMiddleware:
         # The session's cached library rides along so the scoped Gumnut client
         # needs no second Redis read.
         assert data["session_library_id"] == "lib_456"
+
+    def test_session_library_revalidation_state_rides_along(
+        self, client_with_mocks, mock_session_store
+    ):
+        """When the library was last resolved, and whether it was the user's
+        choice, reach the resolver without a second Redis read."""
+        session = mock_session_store.get_by_id.return_value
+        session.library_checked_at = 1700000000.5
+        session.library_from_choice = True
+        headers = {"Authorization": f"Bearer {TEST_SESSION_ID}"}
+
+        data = client_with_mocks.get("/api/test/protected", headers=headers).json()
+
+        assert data["session_library_checked_at"] == 1700000000.5
+        assert data["session_library_from_choice"] is True
 
     def test_unresolved_session_library_is_none(
         self, client_with_mocks, mock_session_store

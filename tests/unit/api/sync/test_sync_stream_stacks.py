@@ -477,6 +477,7 @@ class TestEventDrivenStacks:
         asset = AssetResponse(
             id=asset_id,
             current_version_id="asset_version_test",
+            file_size_bytes=0,
             kind="original",
             created_at=UPDATED_AT,
             local_datetime=UPDATED_AT,
@@ -613,6 +614,7 @@ class TestEventDrivenStacks:
         freed = AssetResponse(
             id=make_gumnut_asset().id,
             current_version_id="asset_version_test",
+            file_size_bytes=0,
             kind="original",
             created_at=UPDATED_AT,
             local_datetime=UPDATED_AT,

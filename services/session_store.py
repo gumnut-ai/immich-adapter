@@ -45,6 +45,17 @@ end
 return 1
 """
 
+# KEYS: session hash. ARGV: the library_id the caller expects the session to
+# hold, then field/value pairs. Writes only while that library is still cached,
+# so concurrent requests that see the same stale library switch it once.
+_SWITCH_LIBRARY_LUA = """
+if redis.call('HGET', KEYS[1], 'library_id') ~= ARGV[1] then
+  return 0
+end
+redis.call('HSET', KEYS[1], unpack(ARGV, 2))
+return 1
+"""
+
 _REQUIRED_SESSION_FIELDS = frozenset(
     [
         "user_id",
@@ -74,6 +85,11 @@ class Session:
     created_at: datetime  # When session was created
     updated_at: datetime  # Last activity timestamp
     is_pending_sync_reset: bool  # True = client should full re-sync
+    # When library_id was last resolved (epoch seconds); 0 means never, so a
+    # session written before this field existed revalidates on its next request.
+    library_checked_at: float = 0.0
+    # Whether library_id is the user's stored choice rather than the fallback.
+    library_from_choice: bool = False
 
     def to_dict(self) -> dict[str, str]:
         """Convert to Redis hash format."""
@@ -87,6 +103,8 @@ class Session:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "is_pending_sync_reset": "1" if self.is_pending_sync_reset else "0",
+            "library_checked_at": str(self.library_checked_at),
+            "library_from_choice": "1" if self.library_from_choice else "0",
         }
 
     @classmethod
@@ -122,6 +140,8 @@ class Session:
                 created_at=datetime.fromisoformat(data["created_at"]),
                 updated_at=datetime.fromisoformat(data["updated_at"]),
                 is_pending_sync_reset=data["is_pending_sync_reset"] == "1",
+                library_checked_at=float(data.get("library_checked_at") or 0),
+                library_from_choice=data.get("library_from_choice") == "1",
             )
         except ValueError as e:
             raise SessionDataError(
@@ -411,14 +431,49 @@ class SessionStore:
             session_token, {"stored_jwt": encrypt_jwt(new_jwt)}, touch_activity=True
         )
 
-    async def update_library_id(self, session_token: str, library_id: str) -> bool:
+    async def update_library_id(
+        self, session_token: str, library_id: str, *, from_choice: bool = False
+    ) -> bool:
         """
-        Cache the library the session's Gumnut calls are scoped to.
+        Cache the library the session's Gumnut calls are scoped to, stamped
+        with the time it was resolved.
 
         Returns:
             True if session exists and was updated, False otherwise
         """
-        return await self._update_if_exists(session_token, {"library_id": library_id})
+        return await self._update_if_exists(
+            session_token, _library_fields(library_id, from_choice)
+        )
+
+    async def switch_library(
+        self,
+        session_token: str,
+        previous_library_id: str,
+        library_id: str,
+        *,
+        from_choice: bool,
+    ) -> bool:
+        """
+        Move the session to another library and flag it for a sync reset.
+
+        The client's local copy and checkpoints belong to the previous library.
+        Writes only while the session still caches ``previous_library_id``, so
+        concurrent requests that resolved the same change reset the client once.
+
+        Returns:
+            True if the session was switched, False if it no longer exists or
+            already moved off ``previous_library_id``
+        """
+        fields = _library_fields(library_id, from_choice)
+        fields["is_pending_sync_reset"] = "1"
+        args = [previous_library_id]
+        for field, value in fields.items():
+            args.extend((field, value))
+        return bool(
+            await self._redis.eval(
+                _SWITCH_LIBRARY_LUA, 1, f"session:{session_token}", *args
+            )
+        )
 
     async def forget_library(self, session_token: str) -> bool:
         """
@@ -558,6 +613,14 @@ class SessionStore:
             await delete_pipe.execute()
 
         return count
+
+
+def _library_fields(library_id: str, from_choice: bool) -> dict[str, str]:
+    return {
+        "library_id": library_id,
+        "library_checked_at": str(time.time()),
+        "library_from_choice": "1" if from_choice else "0",
+    }
 
 
 async def get_session_store() -> SessionStore:

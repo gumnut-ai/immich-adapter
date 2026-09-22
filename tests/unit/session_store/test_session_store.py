@@ -9,6 +9,7 @@ import redis.exceptions
 
 from services.session_store import (
     _REQUIRED_SESSION_FIELDS,
+    _SWITCH_LIBRARY_LUA,
     _UPDATE_IF_EXISTS_LUA,
     Session,
     SessionDataError,
@@ -124,6 +125,31 @@ class TestSessionDataclass:
             2025, 1, 20, 10, 30, 0, tzinfo=timezone.utc
         )
         assert session.is_pending_sync_reset is False
+        # A hash written before library revalidation existed is due for it.
+        assert session.library_checked_at == 0.0
+        assert session.library_from_choice is False
+
+    def test_library_revalidation_fields_round_trip(self):
+        now = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+        session = Session(
+            id=TEST_SESSION_ID,
+            user_id="user_123",
+            library_id="lib_456",
+            stored_jwt=TEST_ENCRYPTED_JWT,
+            device_type="iOS",
+            device_os="iOS 17.4",
+            app_version="1.94.0",
+            created_at=now,
+            updated_at=now,
+            is_pending_sync_reset=False,
+            library_checked_at=1700000000.5,
+            library_from_choice=True,
+        )
+
+        restored = Session.from_dict(TEST_SESSION_ID, session.to_dict())
+
+        assert restored.library_checked_at == 1700000000.5
+        assert restored.library_from_choice is True
 
     def test_from_dict_with_pending_sync_reset(self):
         """Test from_dict with is_pending_sync_reset='1'."""
@@ -698,18 +724,63 @@ class TestSessionStoreConditionalWrites:
         ).timestamp() == pytest.approx(float(score))
 
     @pytest.mark.anyio
-    async def test_update_library_id_writes_library_only(
+    async def test_update_library_id_stamps_the_check_without_activity(
         self, session_store, mock_redis
     ):
-        """Test update_library_id writes library_id without touching activity."""
+        """update_library_id records the library, its basis, and when it was
+        resolved, without touching activity."""
         session_token = str(TEST_SESSION_ID)
 
-        result = await session_store.update_library_id(session_token, "lib_1")
+        with patch("services.session_store.time.time", return_value=1700000000.0):
+            result = await session_store.update_library_id(
+                session_token, "lib_1", from_choice=True
+            )
 
         assert result is True
         _keys, _token, score, fields = _decode_eval(mock_redis)
-        assert fields == {"library_id": "lib_1"}
+        assert fields == {
+            "library_id": "lib_1",
+            "library_checked_at": "1700000000.0",
+            "library_from_choice": "1",
+        }
         assert score == ""
+
+    @pytest.mark.anyio
+    async def test_switch_library_is_conditional_and_flags_sync_reset(
+        self, session_store, mock_redis
+    ):
+        """The previous library's local copy and checkpoints must not be
+        resumed against the new one; the write holds only while the session
+        still caches the previous library."""
+        session_token = str(TEST_SESSION_ID)
+
+        with patch("services.session_store.time.time", return_value=1700000000.0):
+            result = await session_store.switch_library(
+                session_token, "lib_old", "lib_new", from_choice=False
+            )
+
+        assert result is True
+        script, numkeys, key, expected, *pairs = mock_redis.eval.call_args.args
+        assert script is _SWITCH_LIBRARY_LUA
+        assert (numkeys, key, expected) == (1, f"session:{session_token}", "lib_old")
+        assert dict(zip(pairs[::2], pairs[1::2])) == {
+            "library_id": "lib_new",
+            "library_checked_at": "1700000000.0",
+            "library_from_choice": "0",
+            "is_pending_sync_reset": "1",
+        }
+
+    @pytest.mark.anyio
+    async def test_switch_library_reports_a_session_that_already_moved(
+        self, session_store, mock_redis
+    ):
+        mock_redis.eval.return_value = 0
+
+        result = await session_store.switch_library(
+            str(TEST_SESSION_ID), "lib_old", "lib_new", from_choice=False
+        )
+
+        assert result is False
 
     @pytest.mark.anyio
     async def test_forget_library_clears_and_flags_sync_reset(

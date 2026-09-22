@@ -1,7 +1,8 @@
 """Unit tests for binding the resolved library into the Gumnut client."""
 
 import inspect
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
@@ -29,7 +30,11 @@ from routers.utils.gumnut_client import (
     get_refreshed_token,
     init_request_scope,
 )
-from services.library_resolver import get_library_cache
+from services.library_resolver import (
+    LIBRARY_RECHECK_SECONDS,
+    LibraryChoice,
+    get_library_cache,
+)
 from tests.conftest import make_gumnut_library, make_sdk_status_error
 
 JWT = "test.jwt.token"
@@ -43,12 +48,18 @@ def _request(
     jwt_token: str | None = JWT,
     session_token: str | None = SESSION_TOKEN,
     session_library_id: str | None = None,
+    stale: bool = False,
+    from_choice: bool = False,
 ) -> Mock:
     request = Mock()
     request.state = type("State", (), {})()
     request.state.jwt_token = jwt_token
     request.state.session_token = session_token
     request.state.session_library_id = session_library_id
+    request.state.session_library_checked_at = time.time() - (
+        LIBRARY_RECHECK_SECONDS + 1 if stale else 0
+    )
+    request.state.session_library_from_choice = from_choice
     return request
 
 
@@ -118,6 +129,12 @@ class TestDefaultQueryBinding:
         assert client.default_query == {"library_id": "lib_bound"}
 
 
+BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+OWNED_OLD = make_gumnut_library("lib_old", BASE)
+OWNED_NEW = make_gumnut_library("lib_new", BASE + timedelta(days=1))
+SHARED = make_gumnut_library("lib_shared", BASE, role="collaborator")
+
+
 class TestResolveLibraryId:
     @pytest.fixture
     def cache(self):
@@ -129,6 +146,7 @@ class TestResolveLibraryId:
     def unscoped_client(self):
         client = Mock()
         client.libraries.list = AsyncMock(return_value=[])
+        client.users.me = AsyncMock(return_value=Mock(immich_library_id=None))
         return client
 
     @pytest.fixture
@@ -169,7 +187,11 @@ class TestResolveLibraryId:
         assert get_bound_library_id() == "lib_old"
         # The lookup runs on an unscoped client, without a library bound.
         get_client.assert_awaited_once_with(JWT)
-        cache.remember_for_session.assert_awaited_once_with(SESSION_TOKEN, "lib_old")
+        cache.remember_for_session.assert_awaited_once_with(
+            SESSION_TOKEN, LibraryChoice("lib_old", from_choice=False)
+        )
+        # A session's first resolution is not a change of library.
+        cache.switch_session.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_session_miss_skips_an_older_joined_library(
@@ -185,7 +207,9 @@ class TestResolveLibraryId:
         library_id = await _resolve_library_id(request, JWT, cache)
 
         assert library_id == "lib_owned"
-        cache.remember_for_session.assert_awaited_once_with(SESSION_TOKEN, "lib_owned")
+        cache.remember_for_session.assert_awaited_once_with(
+            SESSION_TOKEN, LibraryChoice("lib_owned", from_choice=False)
+        )
 
     @pytest.mark.anyio
     async def test_api_key_reads_its_own_cache(
@@ -244,6 +268,7 @@ class TestResolveLibraryId:
             await _resolve_library_id(request, JWT, cache)
 
         assert exc_info.value.status_code == 403
+        assert "web settings" in exc_info.value.detail
         assert get_bound_library_id() is None
         cache.remember_for_session.assert_not_awaited()
 
@@ -263,6 +288,133 @@ class TestResolveLibraryId:
         assert library_id is None
         assert get_bound_library_id() is None
         cache.remember_for_api_key.assert_not_awaited()
+        # The stored choice is not consulted where the listing is refused.
+        unscoped_client.users.me.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_api_key_miss_follows_the_stored_choice(
+        self, cache, unscoped_client, get_client
+    ):
+        unscoped_client.libraries.list.return_value = [OWNED_OLD, OWNED_NEW]
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_new")
+        request = _request(jwt_token=API_KEY, session_token=None)
+
+        library_id = await _resolve_library_id(request, API_KEY, cache)
+
+        assert library_id == "lib_new"
+        cache.remember_for_api_key.assert_awaited_once_with(API_KEY, "lib_new")
+
+    @pytest.mark.anyio
+    async def test_shared_only_user_with_a_choice_is_scoped_to_it(
+        self, cache, unscoped_client, get_client
+    ):
+        unscoped_client.libraries.list.return_value = [SHARED]
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_shared")
+        request = _request(session_library_id=None)
+
+        library_id = await _resolve_library_id(request, JWT, cache)
+
+        assert library_id == "lib_shared"
+        cache.remember_for_session.assert_awaited_once_with(
+            SESSION_TOKEN, LibraryChoice("lib_shared", from_choice=True)
+        )
+
+    @pytest.mark.anyio
+    async def test_stale_session_with_unchanged_library_restamps_without_reset(
+        self, cache, unscoped_client, get_client
+    ):
+        unscoped_client.libraries.list.return_value = [OWNED_OLD, OWNED_NEW]
+        request = _request(session_library_id="lib_old", stale=True)
+
+        library_id = await _resolve_library_id(request, JWT, cache)
+
+        assert library_id == "lib_old"
+        cache.remember_for_session.assert_awaited_once_with(
+            SESSION_TOKEN, LibraryChoice("lib_old", from_choice=False)
+        )
+        cache.switch_session.assert_not_awaited()
+        cache.forget_session.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_stale_session_follows_a_new_choice_with_a_reset(
+        self, cache, unscoped_client, get_client
+    ):
+        unscoped_client.libraries.list.return_value = [OWNED_OLD, OWNED_NEW]
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_new")
+        request = _request(session_library_id="lib_old", stale=True)
+
+        library_id = await _resolve_library_id(request, JWT, cache)
+
+        assert library_id == "lib_new"
+        assert get_bound_library_id() == "lib_new"
+        cache.switch_session.assert_awaited_once_with(
+            SESSION_TOKEN, "lib_old", LibraryChoice("lib_new", from_choice=True)
+        )
+        cache.remember_for_session.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "listing,preferred_id",
+        [
+            pytest.param([OWNED_OLD, OWNED_NEW], None, id="choice-cleared"),
+            pytest.param([OWNED_OLD], "lib_new", id="choice-trashed"),
+        ],
+    )
+    async def test_stale_session_on_an_unusable_choice_falls_back_with_a_reset(
+        self, cache, unscoped_client, get_client, listing, preferred_id
+    ):
+        unscoped_client.libraries.list.return_value = listing
+        unscoped_client.users.me.return_value = Mock(immich_library_id=preferred_id)
+        request = _request(session_library_id="lib_new", stale=True, from_choice=True)
+
+        library_id = await _resolve_library_id(request, JWT, cache)
+
+        assert library_id == "lib_old"
+        cache.switch_session.assert_awaited_once_with(
+            SESSION_TOKEN, "lib_new", LibraryChoice("lib_old", from_choice=False)
+        )
+
+    @pytest.mark.anyio
+    async def test_stale_fallback_session_stays_put_when_an_older_library_returns(
+        self, cache, unscoped_client, get_client
+    ):
+        """Without a stored choice, restoring the oldest library does not move a
+        session that fell back to another one."""
+        unscoped_client.libraries.list.return_value = [OWNED_OLD, OWNED_NEW]
+        request = _request(session_library_id="lib_new", stale=True)
+
+        library_id = await _resolve_library_id(request, JWT, cache)
+
+        assert library_id == "lib_new"
+        cache.switch_session.assert_not_awaited()
+        cache.remember_for_session.assert_awaited_once_with(
+            SESSION_TOKEN, LibraryChoice("lib_new", from_choice=False)
+        )
+
+    @pytest.mark.anyio
+    async def test_stale_session_refused_forgets_its_library(
+        self, cache, unscoped_client, get_client
+    ):
+        unscoped_client.libraries.list.return_value = [SHARED]
+        request = _request(session_library_id="lib_old", stale=True)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _resolve_library_id(request, JWT, cache)
+
+        assert exc_info.value.status_code == 403
+        cache.forget_session.assert_awaited_once_with(SESSION_TOKEN)
+
+    @pytest.mark.anyio
+    async def test_stale_session_with_no_library_left_forgets_it(
+        self, cache, unscoped_client, get_client
+    ):
+        request = _request(session_library_id="lib_old", stale=True)
+
+        library_id = await _resolve_library_id(request, JWT, cache)
+
+        assert library_id is None
+        assert get_bound_library_id() is None
+        cache.forget_session.assert_awaited_once_with(SESSION_TOKEN)
 
     @pytest.mark.anyio
     async def test_session_scope_forgets_through_the_cache(

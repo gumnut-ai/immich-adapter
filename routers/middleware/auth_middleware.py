@@ -135,6 +135,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         is_web_client = False
         jwt_token = None
         session_library_id = None
+        session_library_checked_at = 0.0
+        session_library_from_choice = False
 
         # API-key auth (e.g. the immich-go CLI and other Immich API-key clients):
         # the `x-api-key` header carries a Gumnut API key (`apikey_...`), which is
@@ -183,6 +185,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     jwt_token = session.get_jwt()
                     # "" until the first scoped request resolves it.
                     session_library_id = session.library_id or None
+                    session_library_checked_at = session.library_checked_at
+                    session_library_from_choice = session.library_from_choice
                 else:
                     logger.warning(
                         "Session not found for token",
@@ -211,6 +215,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.jwt_token = jwt_token
         request.state.session_token = session_token
         request.state.session_library_id = session_library_id
+        request.state.session_library_checked_at = session_library_checked_at
+        request.state.session_library_from_choice = session_library_from_choice
         request.state.is_web_client = is_web_client
 
         # Call the endpoint handler
