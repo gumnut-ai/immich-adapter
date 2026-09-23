@@ -511,7 +511,7 @@ def test_distinct_truncated_names_share_suffix_progression() -> None:
 
 
 @pytest.mark.anyio
-async def test_info_requests_only_file_data_without_signing_original_urls() -> None:
+async def test_info_requests_lean_core_without_signing_original_urls() -> None:
     current_user_id = uuid4()
     assets = [_download_asset(uuid4()), _download_asset(uuid4())]
     client = Mock()
@@ -528,7 +528,7 @@ async def test_info_requests_only_file_data_without_signing_original_urls() -> N
     ]
 
     assert result == assets
-    assert client.assets.list.call_args.kwargs["include"] == ["file_data"]
+    assert client.assets.list.call_args.kwargs["include"] == []
 
 
 @pytest.mark.anyio
@@ -554,7 +554,7 @@ async def test_get_download_info_composes_default_and_explicit_thresholds(
 
     assert result.totalSize == 12
     assert [archive.size for archive in result.archives] == expected_sizes
-    assert client.assets.list.call_args.kwargs["include"] == ["file_data"]
+    assert client.assets.list.call_args.kwargs["include"] == []
 
 
 @pytest.mark.anyio

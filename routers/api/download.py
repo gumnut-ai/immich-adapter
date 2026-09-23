@@ -61,10 +61,8 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-# /info reads only lean-core fields (`kind`, `file_size_bytes`). The SDK drops an
-# empty include list, which would fetch the full default payload, so request the
-# cheap scalar group instead.
-_DOWNLOAD_INFO_INCLUDE = ["file_data"]
+# /info reads only lean-core fields (`kind`, `file_size_bytes`).
+_DOWNLOAD_INFO_INCLUDE: list[str] = []
 _DOWNLOAD_ARCHIVE_INCLUDE = ["file_data", "metadata", "variants"]
 _ZIP_MIN_TIMESTAMP = datetime(1980, 1, 1)
 _ZIP_MAX_TIMESTAMP = datetime(2107, 12, 31, 23, 59, 58)
