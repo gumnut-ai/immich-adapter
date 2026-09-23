@@ -61,7 +61,8 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-_DOWNLOAD_INFO_INCLUDE = ["file_data"]
+# /info reads only lean-core fields (`kind`, `file_size_bytes`).
+_DOWNLOAD_INFO_INCLUDE: list[str] = []
 _DOWNLOAD_ARCHIVE_INCLUDE = ["file_data", "metadata", "variants"]
 _ZIP_MIN_TIMESTAMP = datetime(1980, 1, 1)
 _ZIP_MAX_TIMESTAMP = datetime(2107, 12, 31, 23, 59, 58)
@@ -224,19 +225,14 @@ async def _resolve_archive_member(
     modified_at = resolve_file_modified_at(asset)
 
     if edited or not is_asset_edited(asset):
-        file_data = asset.file_data
         asset_urls = asset.asset_urls
-        if (
-            file_data is None
-            or file_data.file_size_bytes is None
-            or not asset_urls
-            or "original" not in asset_urls
-        ):
+        if not asset_urls or "original" not in asset_urls:
             raise _member_unavailable_error()
+        # Top-level size is the current rendering's, matching the streamed bytes.
         return _ArchiveAsset(
             filename=filename,
             modified_at=modified_at,
-            size=file_data.file_size_bytes,
+            size=asset.file_size_bytes,
             url=asset_urls["original"].url,
         )
 
@@ -343,10 +339,7 @@ async def _download_original_size(client: AsyncGumnut, asset: AssetResponse) -> 
     version chain (only ``file_size_bytes`` is needed, so URLs are not signed).
     """
     if not is_asset_edited(asset):
-        file_data = asset.file_data
-        if file_data is None or file_data.file_size_bytes is None:
-            raise _member_unavailable_error()
-        return file_data.file_size_bytes
+        return asset.file_size_bytes
     root = await _select_asset_root(client, asset.id, include_variants=False)
     return root.file_size_bytes
 

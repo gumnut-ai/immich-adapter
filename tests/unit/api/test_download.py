@@ -27,6 +27,7 @@ from routers.api.download import (
     _build_download_info,
     _deduplicated_archive_name,
     _get_archive_zip_executor,
+    _resolve_archive_member,
     _stream_archive,
     close_archive_zip_executor,
     download_archive,
@@ -48,15 +49,18 @@ def _download_asset(
     *,
     filename: str = "photo.jpg",
     size: int = 10,
+    upload_size: int | None = None,
     url: str | None = None,
     kind: str = "original",
 ) -> AssetResponse:
+    """``size`` is the current rendering's; ``upload_size`` defaults to it."""
     asset = make_gumnut_asset(
         asset_id=uuid_to_gumnut_asset_id(asset_id),
         original_file_name=filename,
         kind=kind,
     )
-    asset.file_data.file_size_bytes = size
+    asset.file_size_bytes = size
+    asset.file_data.file_size_bytes = size if upload_size is None else upload_size
     asset.asset_urls = {
         "original": Mock(url=url or f"https://cdn.example.com/{asset_id}")
     }
@@ -97,7 +101,7 @@ def _compact_archive_asset(asset: AssetResponse) -> _ArchiveAsset:
     return _ArchiveAsset(
         filename=asset.original_file_name,
         modified_at=asset.file_data.file_modified_at,
-        size=asset.file_data.file_size_bytes,
+        size=asset.file_size_bytes,
         url=asset.asset_urls["original"].url,
     )
 
@@ -507,7 +511,7 @@ def test_distinct_truncated_names_share_suffix_progression() -> None:
 
 
 @pytest.mark.anyio
-async def test_info_requests_only_file_data_without_signing_original_urls() -> None:
+async def test_info_requests_lean_core_without_signing_original_urls() -> None:
     current_user_id = uuid4()
     assets = [_download_asset(uuid4()), _download_asset(uuid4())]
     client = Mock()
@@ -524,7 +528,7 @@ async def test_info_requests_only_file_data_without_signing_original_urls() -> N
     ]
 
     assert result == assets
-    assert client.assets.list.call_args.kwargs["include"] == ["file_data"]
+    assert client.assets.list.call_args.kwargs["include"] == []
 
 
 @pytest.mark.anyio
@@ -550,7 +554,7 @@ async def test_get_download_info_composes_default_and_explicit_thresholds(
 
     assert result.totalSize == 12
     assert [archive.size for archive in result.archives] == expected_sizes
-    assert client.assets.list.call_args.kwargs["include"] == ["file_data"]
+    assert client.assets.list.call_args.kwargs["include"] == []
 
 
 @pytest.mark.anyio
@@ -569,25 +573,18 @@ async def test_info_rejects_missing_requested_asset() -> None:
 
 
 @pytest.mark.anyio
-async def test_info_rejects_unavailable_file_size() -> None:
-    missing_file_data = _download_asset(uuid4())
-    missing_file_data.file_data = None
-    missing_size = _download_asset(uuid4())
-    assert missing_size.file_data is not None
-    cast(Any, missing_size.file_data).file_size_bytes = None
+async def test_info_root_only_size_reads_top_level_field() -> None:
+    asset_id = uuid4()
+    asset = _download_asset(asset_id, size=7)
+    asset.file_data = None
+    client = Mock()
+    client.assets.list = Mock(return_value=MockSyncCursorPage([asset]))
 
-    for unavailable in (missing_file_data, missing_size):
-        client = Mock()
-        client.assets.list = Mock(return_value=MockSyncCursorPage([unavailable]))
+    result = await get_download_info(
+        DownloadInfoDto(assetIds=[asset_id]), client=client
+    )
 
-        with pytest.raises(HTTPException) as exc_info:
-            await get_download_info(
-                DownloadInfoDto(assetIds=[safe_uuid_from_asset_id(unavailable.id)]),
-                client=client,
-            )
-
-        assert exc_info.value.status_code == 400
-        assert exc_info.value.detail == "Not found or no asset.download access"
+    assert result.totalSize == 7
 
 
 @pytest.mark.anyio
@@ -863,18 +860,11 @@ async def test_archive_rejects_missing_asset_in_later_backend_chunk() -> None:
 
 @pytest.mark.anyio
 async def test_archive_rejects_unavailable_original_before_streaming() -> None:
-    missing_file_data = _download_asset(uuid4())
-    missing_file_data.file_data = None
-    missing_size = _download_asset(uuid4())
-    assert missing_size.file_data is not None
-    cast(Any, missing_size.file_data).file_size_bytes = None
     missing_urls = _download_asset(uuid4())
     missing_urls.asset_urls = None
     missing_original = _download_asset(uuid4())
     missing_original.asset_urls = {"thumbnail": Mock(url="https://cdn.example.com/x")}
     for unavailable in (
-        missing_file_data,
-        missing_size,
         missing_urls,
         missing_original,
     ):
@@ -968,9 +958,14 @@ async def test_archive_honors_edited_for_edited_asset(
     edited: bool, expected_url: str, expected_size: int, expected_bytes: bytes
 ) -> None:
     asset_id = uuid4()
-    # The current rendering (assets.list payload) is the edited file.
+    # The current rendering (assets.list payload) is the edited file; the
+    # upload's file_data size differs, so each branch must size its own bytes.
     asset = _download_asset(
-        asset_id, size=20, url="https://cdn.example.com/edited", kind="edit"
+        asset_id,
+        size=20,
+        upload_size=10,
+        url="https://cdn.example.com/edited",
+        kind="edit",
     )
     client = Mock()
     client.assets.list = Mock(return_value=MockSyncCursorPage([asset]))
@@ -1010,6 +1005,25 @@ async def test_archive_honors_edited_for_edited_asset(
         await_args = client.assets.versions.list.await_args
         assert await_args is not None
         assert await_args.kwargs["include"] == ["variants"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("edited", "expected_size"), [(False, 10), (True, 20)])
+async def test_archive_member_size_describes_the_streamed_version(
+    edited: bool, expected_size: int
+) -> None:
+    asset = _download_asset(uuid4(), size=20, upload_size=10, kind="edit")
+    client = Mock()
+    client.assets.versions.list = AsyncMock(
+        return_value=[
+            _make_version(0, url="https://cdn.example.com/upload", size=10),
+            _make_version(1, size=20),
+        ]
+    )
+
+    member = await _resolve_archive_member(client, asset, edited=edited)
+
+    assert member.size == expected_size
 
 
 @pytest.mark.anyio

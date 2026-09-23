@@ -237,7 +237,8 @@ def gumnut_metadata_to_sync_exif_v1(asset: AssetResponse) -> SyncAssetExifV1:
     Convert Gumnut AssetResponse (with metadata) to Immich SyncAssetExifV1 format.
 
     Accepts the full AssetResponse because image dimensions live on the asset and
-    file size lives on its nested ``file_data`` group — not on the Metadata object.
+    the upload's file size lives on its nested ``file_data`` group — not on the
+    Metadata object.
 
     Args:
         asset: Gumnut asset data (must have non-None metadata)

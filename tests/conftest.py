@@ -151,6 +151,8 @@ def make_gumnut_asset(
     asset.thumbhash = None
     asset.width = 1920
     asset.height = 1080
+    # Current rendering's size; equals ``file_data``'s upload size until edited.
+    asset.file_size_bytes = 1059218
     asset.people = []  # Empty list for people
     asset.metadata = None  # No metadata
     asset.trashed_at = trashed_at
