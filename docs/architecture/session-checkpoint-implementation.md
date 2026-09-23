@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-09-22
+last-updated: 2026-09-23
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -10,7 +10,7 @@ last-updated: 2026-09-22
 `immich-adapter` keeps two related pieces of Redis state:
 
 - **Sessions** keyed by a stable UUID session token that Immich clients send back on later requests
-- **Checkpoints** keyed by session and sync entity type so `/api/sync/stream` can resume from the last acknowledged cursor
+- **Checkpoints** keyed by session, sync epoch, and sync entity type so `/api/sync/stream` can resume from the last acknowledged cursor
 
 The important distinction is that the client-facing token is **not** the backend JWT. The adapter encrypts the backend JWT, keeps it server-side, and updates it in place when the backend refreshes it. Sync resume is likewise **cursor-based**, not timestamp-hash-based: each entity type stores the last opaque Gumnut API events cursor that the client acknowledged.
 
@@ -153,7 +153,7 @@ Checkpoints without a cursor are skipped when reconstructing ack responses.
 
 The sync stream is driven by the backend events feed, with one checkpoint per entity type.
 
-1. If `request.reset=true`, the adapter deletes all checkpoints for the session before streaming.
+1. If `request.reset=true`, the adapter deletes all checkpoints for the session's current sync epoch before streaming.
 2. The stream binds the session's current `sync_epoch`. If the client owes a reset, or the session no longer records the library this request bound, the adapter returns a one-event stream containing `SyncResetV1|reset|{epoch}` and stops.
 3. Before the response starts, the route resolves `users.me()` so auth failures still surface as normal HTTP errors instead of being swallowed inside a streaming generator.
 4. `AuthUsersV1` and `UsersV1` are emitted directly from the current user record, using `current_user.updated_at` (or the user id as a fallback) as their cursor.

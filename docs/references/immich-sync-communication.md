@@ -1,6 +1,6 @@
 ---
 title: "Immich Sync Wire Reference"
-last-updated: 2026-09-22
+last-updated: 2026-09-23
 ---
 
 # Immich Sync Wire Reference
@@ -19,7 +19,7 @@ This reference describes the Immich v3 sync shapes the adapter accepts and emits
 ```
 
 - `types` contains generated `SyncRequestType` values. Do not copy an enum count into documentation; regeneration can add values without changing the protocol.
-- `reset=true` clears the session's stored checkpoints before streaming.
+- `reset=true` clears the session's current sync epoch's stored checkpoints before streaming.
 - The adapter implements some request types, synthesizes user metadata, and explicitly accepts unsupported feature families as no-ops. `_SYNC_TYPE_ORDER`, `_NOOP_REQUEST_TYPES`, and `_SUPPORTED_REQUEST_TYPES` in `routers/api/sync/stream.py` own that classification.
 - When both V1 and its supported V2 successor are requested, `_V1_SUPERSEDED_BY_V2` suppresses the duplicate V1 pass.
 
@@ -28,7 +28,7 @@ This reference describes the Immich v3 sync shapes the adapter accepts and emits
 The response is newline-delimited JSON. Each line has the same envelope:
 
 ```json
-{"type":"AssetV2","data":{"id":"00000000-0000-4000-8000-000000000001","ownerId":"00000000-0000-4000-8000-000000000002","originalFileName":"example.jpg"},"ack":"AssetV2|cursor-example-001|"}
+{"type":"AssetV2","data":{"id":"00000000-0000-4000-8000-000000000001","ownerId":"00000000-0000-4000-8000-000000000002","originalFileName":"example.jpg"},"ack":"AssetV2|cursor-example-001|0"}
 ```
 
 The abbreviated `data` above is illustrative, not a complete payload. Use the generated model named by `type` for required fields and constraints. Synthetic UUIDs, filenames, and cursors are deliberate: captured production payloads do not belong in this public repository.
@@ -60,21 +60,33 @@ Unsupported v3 families such as partner sharing and OCR are explicit no-ops rath
 
 ## Acknowledgements
 
-Every emitted line includes:
+Every emitted line for a session-bound stream includes:
 
 ```text
-{SyncEntityType}|{cursor}|
+{SyncEntityType}|{cursor}|{epoch}
 ```
 
-The trailing pipe is reserved for compatibility with Immich's wire format. The cursor is opaque and must not contain `|`; `routers/api/sync/events.py::to_ack_string` logs that invalid condition. Most event-backed records carry the Gumnut API events cursor. User-derived rows use the user's `updated_at` value, and the completion record uses an adapter-owned completion cursor.
+The epoch is the session's bound sync epoch. An ack issued before epoch support
+or without a bound epoch has an empty final component for compatibility. The
+cursor is opaque and must not contain `|`; `routers/api/sync/events.py::to_ack_string`
+logs that invalid condition. Most event-backed records carry the Gumnut API
+events cursor. User-derived rows use the user's `updated_at` value, and the
+completion record uses an adapter-owned completion cursor.
 
 The client acknowledges processed positions with `POST /api/sync/ack`:
 
 ```json
-{"acks":["AssetV2|cursor-example-001|","AlbumV2|cursor-example-002|"]}
+{"acks":["AssetV2|cursor-example-001|0","AlbumV2|cursor-example-002|0"]}
 ```
 
-`routers/api/sync/routes.py::_parse_ack` validates the entity enum, skips malformed or empty-cursor values, and stores the last value for duplicate entity types in one request. `GET /api/sync/ack` reconstructs the same wire strings from stored checkpoints. A `SyncResetV1` acknowledgement clears every checkpoint and the pending-reset flag; other acknowledgements in that request are ignored.
+`routers/api/sync/routes.py::_parse_ack` validates the entity enum, parses the
+optional epoch, skips malformed or empty-cursor values, and stores the last
+value for duplicate entity types in one request. A missing or empty epoch is
+treated as the session's current epoch for compatibility. `GET /api/sync/ack`
+reconstructs the same wire strings from stored checkpoints. A `SyncResetV1`
+acknowledgement clears the checkpoints for its epoch and marks the client
+current only if the session is still at that epoch; other acknowledgements in
+that request are ignored.
 
 ## Completion and reset
 

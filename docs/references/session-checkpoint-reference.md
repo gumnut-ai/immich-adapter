@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Storage Reference"
-last-updated: 2026-09-22
+last-updated: 2026-09-23
 ---
 
 # Session and Checkpoint Storage Reference
@@ -62,7 +62,10 @@ The ack wire format is distinct from Redis storage:
 
 | Boundary | Format |
 |----------|--------|
-| Immich client ↔ adapter | `{SyncEntityType}|{cursor}|` |
+| Immich client ↔ adapter | `{SyncEntityType}|{cursor}|{epoch}` |
 | Adapter checkpoint hash | field = `SyncEntityType`; value = `{updated_at}|{cursor}` |
 
-See the [sync wire reference](immich-sync-communication.md#acknowledgements) for parsing and reset behavior.
+An ack issued before epoch support may omit the epoch or leave its final
+component empty; `POST /api/sync/ack` treats either form as the session's
+current epoch. See the [sync wire reference](immich-sync-communication.md#acknowledgements)
+for parsing and reset behavior.
