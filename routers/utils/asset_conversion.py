@@ -38,11 +38,11 @@ logger = logging.getLogger(__name__)
 
 # `include` sets the adapter must request explicitly on its Gumnut asset reads.
 #
-# The Gumnut API returns the full asset shape today, but is moving to a lean default
-# where an omitted `include` returns none of the heavy fields. The adapter reads
-# several of those off every asset, so it must opt back into exactly what its
-# conversions consume — otherwise, once the default flips, EXIF / checksum / size
-# / people silently become null and the Immich-facing asset is corrupted.
+# The Gumnut API's asset responses default to a lean core: an omitted `include`
+# returns none of the heavy fields. The adapter reads several of those off every
+# asset, so it must opt back into exactly what its conversions consume —
+# otherwise EXIF / checksum / size / people silently become null and the
+# Immich-facing asset is corrupted.
 #
 # `metadata` feeds the EXIF block (camera/GPS/timestamps); `file_data` feeds
 # `checksum_sha1` → Immich checksum, `file_size_bytes`, and the
