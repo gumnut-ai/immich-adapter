@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from functools import partial
 
@@ -11,8 +12,10 @@ from gumnut import AsyncGumnut, PermissionDeniedError
 
 from config.settings import get_settings
 from services.library_resolver import (
+    LIBRARY_RECHECK_SECONDS,
     LibraryCache,
-    first_owned_library_id,
+    LibraryChoice,
+    choose_library,
     get_library_cache,
     is_library_not_found,
 )
@@ -44,7 +47,7 @@ class LibraryScope:
     """The library a request's Gumnut calls are bound to and how to forget it."""
 
     library_id: str
-    forget: Callable[[], Awaitable[None]]
+    forget: Callable[[], Awaitable[object]]
     forgotten: bool = False
 
 
@@ -229,48 +232,126 @@ async def get_gumnut_client(
     )
 
 
+async def _fetch_library_choice(
+    request: Request, credential: str, stay_on: str | None
+) -> LibraryChoice | None:
+    """Resolve the library from the Gumnut API: the user's stored choice when
+    usable, else the fallback (see ``choose_library``).
+
+    ``None`` leaves the request unscoped: the credential cannot list libraries
+    (an API key limited to selected libraries, whose preference is therefore
+    not consulted), or the user has no live library. A user with only shared
+    libraries and no usable choice is refused with a 403.
+    """
+    unscoped = await get_gumnut_client(credential)
+    try:
+        libraries = await unscoped.libraries.list()
+    except PermissionDeniedError:
+        logger.warning(
+            "Credential cannot list libraries; leaving calls unscoped",
+            extra={"path": request.url.path},
+        )
+        return None
+    if not libraries:
+        logger.info("User has no live library; leaving calls unscoped")
+        return None
+
+    try:
+        preferred_id = (await unscoped.users.me()).immich_library_id
+    except PermissionDeniedError:
+        preferred_id = None
+    choice = choose_library(libraries, preferred_id, stay_on=stay_on)
+    if choice is None:
+        # Unscoped, the Gumnut API would default to a lone shared library and
+        # take this client's uploads into it.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Immich needs a Gumnut library: choose one in the Immich section "
+                "of your Gumnut web settings, or create one of your own"
+            ),
+        )
+    return choice
+
+
+def _unrecorded() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Could not record the Gumnut library; try again",
+    )
+
+
 async def _resolve_library_id(
     request: Request, credential: str, cache: LibraryCache
 ) -> str | None:
     """Resolve the library for this request's credential, caching the result.
 
-    ``credential`` is the session's JWT or the raw API key. ``None`` leaves the
-    request unscoped and caches nothing. A user with shared libraries but none
-    of their own is refused with a 403 rather than left unscoped.
+    ``credential`` is the session's JWT or the raw API key. A cached library is
+    trusted for ``LIBRARY_RECHECK_SECONDS``, then resolved again; a session
+    whose library changes resets its sync. ``None`` leaves the request
+    unscoped and caches nothing.
+
+    A session request serves only a library its session records: that is what
+    ties its sync state to one library. When the session write does not land,
+    the request stays on the library it observed (the session still holds it,
+    or has left it and reset its sync), or gets a retryable 503 when it has
+    none to stay on.
     """
     session_token = getattr(request.state, "session_token", None)
     if session_token:
-        library_id = getattr(request.state, "session_library_id", None)
-        remember = partial(cache.remember_for_session, session_token)
-        forget = partial(cache.forget_session, session_token)
+        cached = getattr(request.state, "session_library_id", None)
+        checked_at = getattr(request.state, "session_library_checked_at", 0.0)
+        from_choice = getattr(request.state, "session_library_from_choice", False)
+        is_fresh = time.time() - checked_at < LIBRARY_RECHECK_SECONDS
+        # Staying put applies only to a library the session fell back to.
+        stay_on = None if from_choice else cached
     else:
-        library_id = await cache.get_for_api_key(credential)
-        remember = partial(cache.remember_for_api_key, credential)
-        forget = partial(cache.forget_api_key, credential)
+        cached = await cache.get_for_api_key(credential)
+        is_fresh = True  # the cache entry's TTL is the recheck bound
+        stay_on = None
 
-    if not library_id:
-        unscoped = await get_gumnut_client(credential)
+    if cached and is_fresh:
+        library_id = cached
+    else:
         try:
-            libraries = await unscoped.libraries.list()
-        except PermissionDeniedError:
-            logger.warning(
-                "Credential cannot list libraries; leaving calls unscoped",
-                extra={"path": request.url.path},
-            )
+            choice = await _fetch_library_choice(request, credential, stay_on)
+        except HTTPException:
+            if cached and session_token:
+                await cache.set_session_library(session_token, cached, "")
+            raise
+        if choice is None:
+            if (
+                cached
+                and session_token
+                and not await cache.set_session_library(session_token, cached, "")
+            ):
+                raise _unrecorded()
             return None
-        library_id = first_owned_library_id(libraries)
-        if library_id is None:
-            if libraries:
-                # Unscoped, the Gumnut API would default to a lone shared
-                # library and take this client's uploads into it.
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Immich needs a Gumnut library you own; create one first",
+        library_id = choice.library_id
+        if not session_token:
+            await cache.remember_for_api_key(credential, library_id)
+        else:
+            if cached and cached != library_id:
+                logger.info(
+                    "Session library changed; switching and resetting sync",
+                    extra={"previous_library_id": cached, "library_id": library_id},
                 )
-            logger.info("User has no live library; leaving calls unscoped")
-            return None
-        await remember(library_id)
+            if not await cache.set_session_library(
+                session_token,
+                cached or "",
+                library_id,
+                from_choice=choice.from_choice,
+            ):
+                if not cached:
+                    raise _unrecorded()
+                library_id = cached
 
+    if session_token:
+        # Conditional on the bound library, so a request still bound to it
+        # cannot drop a library another request already switched to.
+        forget = partial(cache.set_session_library, session_token, library_id, "")
+    else:
+        forget = partial(cache.forget_api_key, credential)
     bind_library_scope(LibraryScope(library_id=library_id, forget=forget))
     return library_id
 

@@ -40,7 +40,6 @@ def mock_session_store():
         app_version="",
         created_at=now,
         updated_at=now,
-        is_pending_sync_reset=False,
     )
     store.create.return_value = mock_session
     return store

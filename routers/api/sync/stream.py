@@ -872,9 +872,10 @@ async def generate_sync_stream(
 
 async def generate_reset_stream() -> AsyncGenerator[str, None]:
     """
-    Generate a sync stream containing only SyncResetV1.
+    Generate a sync stream containing only SyncResetV1, acked with the bound
+    sync epoch the client resets to.
 
-    Used when the session has isPendingSyncReset flag set.
+    Used when the client's local copy belongs to an earlier sync epoch.
     Matches immich behavior: send SyncResetV1 and end immediately.
     """
     yield (

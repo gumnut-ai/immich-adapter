@@ -293,7 +293,7 @@ class TestValidateAccessTokenIntegration:
             app_version="1.94.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
+            library_checked_at=now.timestamp(),
         )
         session.get_jwt = MagicMock(return_value=self.TEST_JWT)
         store.get_by_id.return_value = session
@@ -334,8 +334,9 @@ class TestValidateAccessTokenIntegration:
 
         assert response.status_code == 200
         assert response.json() == {"authStatus": True}
-        # The middleware-populated JWT and the session's cached library were
-        # forwarded to the SDK client, with no library lookup in between.
+        # The middleware-populated JWT and the session's freshly checked
+        # library were forwarded to the SDK client, with no library lookup in
+        # between.
         mock_get_client.assert_awaited_once_with(self.TEST_JWT, "lib_456")
 
     def test_unauthenticated_request_returns_401(self, client):

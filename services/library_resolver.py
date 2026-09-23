@@ -6,6 +6,7 @@ See docs/architecture/adapter-architecture.md § Library scope.
 import hashlib
 import logging
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 import redis.exceptions
@@ -17,25 +18,55 @@ from utils.redis_protocols import AsyncRedisClient
 
 logger = logging.getLogger(__name__)
 
-# API keys have no session to expire with, so their cached library is bounded
-# by a TTL instead; library-not-found drops the entry earlier.
-API_KEY_LIBRARY_TTL_SECONDS = 60 * 60
+# How long a resolved library is trusted before it is resolved again: a
+# session's re-check interval and an API-key cache entry's TTL.
+LIBRARY_RECHECK_SECONDS = 5 * 60
+
+# Roles an Immich client can act in: it assumes it can upload and edit.
+_CHOOSABLE_ROLES = frozenset({"owner", "collaborator"})
+
+
+@dataclass(frozen=True)
+class LibraryChoice:
+    library_id: str
+    from_choice: bool  # the user's stored choice, rather than the fallback
 
 
 def first_owned_library_id(libraries: Iterable[LibraryResponse]) -> str | None:
     """The oldest live library the user owns, or ``None`` when they own none.
 
     The listing also carries libraries shared with the user, each with the
-    caller's ``role``; joining an older one must not redirect uploads. The SDK
-    does not type ``role`` yet, and a listing without it holds owned libraries
-    only. The Gumnut API lists libraries newest first, so sort rather than
-    trust it.
+    caller's ``role``; joining an older one must not redirect uploads. The
+    Gumnut API lists libraries newest first, so sort rather than trust it.
     """
-    owned = [
-        library for library in libraries if getattr(library, "role", "owner") == "owner"
-    ]
+    owned = [library for library in libraries if library.role == "owner"]
     ordered = sorted(owned, key=lambda library: (library.created_at, library.id))
     return ordered[0].id if ordered else None
+
+
+def choose_library(
+    libraries: Iterable[LibraryResponse],
+    preferred_id: str | None,
+    *,
+    stay_on: str | None = None,
+) -> LibraryChoice | None:
+    """The library an Immich client acts on, or ``None`` when the user owns none
+    and has no usable choice.
+
+    ``libraries`` is the caller's live listing. The stored choice wins while it
+    is listed with a role Immich can act in. Otherwise the fallback applies:
+    ``stay_on`` (a library the session fell back to earlier) while the user
+    still owns it, so restoring an older library does not move the session and
+    force a resync; else the oldest owned library.
+    """
+    libraries = list(libraries)
+    roles = {library.id: library.role for library in libraries}
+    if preferred_id and roles.get(preferred_id) in _CHOOSABLE_ROLES:
+        return LibraryChoice(preferred_id, from_choice=True)
+    if stay_on and roles.get(stay_on) == "owner":
+        return LibraryChoice(stay_on, from_choice=False)
+    fallback = first_owned_library_id(libraries)
+    return LibraryChoice(fallback, from_choice=False) if fallback else None
 
 
 def is_library_not_found(detail: str, library_id: str) -> bool:
@@ -75,29 +106,38 @@ class LibraryCache:
             return None
         return value or None
 
-    async def remember_for_session(self, session_token: str, library_id: str) -> None:
+    async def set_session_library(
+        self,
+        session_token: str,
+        previous_library_id: str,
+        library_id: str,
+        *,
+        from_choice: bool = False,
+    ) -> bool:
+        """Record the session's library (``""`` drops it) from the one the
+        request observed; leaving a library resets the client's sync. Returns
+        whether the session holds ``library_id``; a Redis failure counts as
+        not."""
         try:
-            await self._session_store.update_library_id(session_token, library_id)
+            return await self._session_store.set_library(
+                session_token,
+                previous_library_id,
+                library_id,
+                from_choice=from_choice,
+            )
         except redis.exceptions.RedisError:
-            logger.error("Failed to cache resolved library", exc_info=True)
+            logger.error("Failed to record session library", exc_info=True)
+            return False
 
     async def remember_for_api_key(self, api_key: str, library_id: str) -> None:
         try:
             await self._redis.set(
                 _api_key_cache_key(api_key),
                 library_id,
-                ex=API_KEY_LIBRARY_TTL_SECONDS,
+                ex=LIBRARY_RECHECK_SECONDS,
             )
         except redis.exceptions.RedisError:
             logger.error("Failed to cache resolved library", exc_info=True)
-
-    async def forget_session(self, session_token: str) -> None:
-        """Drop the cached library and queue a sync reset: the client's local
-        copy and checkpoints belong to the library that just vanished."""
-        try:
-            await self._session_store.forget_library(session_token)
-        except redis.exceptions.RedisError:
-            logger.error("Failed to drop cached library", exc_info=True)
 
     async def forget_api_key(self, api_key: str) -> None:
         try:

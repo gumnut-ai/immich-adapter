@@ -45,7 +45,6 @@ class TestHelperFunctions:
             app_version="1.94.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
         )
 
         # Current session token matches session.id
@@ -71,7 +70,7 @@ class TestHelperFunctions:
             app_version="1.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=True,
+            client_epoch=-1,
         )
 
         result = _session_to_response_dto(session, "different_session_token")
@@ -93,7 +92,6 @@ class TestHelperFunctions:
             app_version="",  # Empty string
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
         )
 
         result = _session_to_response_dto(session, "other")
@@ -153,7 +151,6 @@ class TestGetSessions:
                 app_version="1.94.0",
                 created_at=now,
                 updated_at=now,
-                is_pending_sync_reset=False,
             ),
             Session(
                 id=TEST_SESSION_ID_2,
@@ -165,7 +162,6 @@ class TestGetSessions:
                 app_version="1.94.0",
                 created_at=now,
                 updated_at=now,
-                is_pending_sync_reset=False,
             ),
         ]
 
@@ -255,7 +251,6 @@ class TestDeleteAllSessions:
                 app_version="1.0",
                 created_at=now,
                 updated_at=now,
-                is_pending_sync_reset=False,
             ),
             Session(
                 id=TEST_SESSION_ID_2,
@@ -267,7 +262,6 @@ class TestDeleteAllSessions:
                 app_version="1.0",
                 created_at=now,
                 updated_at=now,
-                is_pending_sync_reset=False,
             ),
         ]
 
@@ -303,7 +297,6 @@ class TestDeleteAllSessions:
                 app_version="1.0",
                 created_at=now,
                 updated_at=now,
-                is_pending_sync_reset=False,
             ),
         ]
 
@@ -338,7 +331,6 @@ class TestDeleteAllSessions:
                 app_version="1.0",
                 created_at=now,
                 updated_at=now,
-                is_pending_sync_reset=False,
             ),
             Session(
                 id=TEST_SESSION_ID_2,
@@ -350,7 +342,6 @@ class TestDeleteAllSessions:
                 app_version="1.0",
                 created_at=now,
                 updated_at=now,
-                is_pending_sync_reset=False,
             ),
         ]
 
@@ -404,7 +395,6 @@ class TestUpdateSession:
             app_version="1.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
         )
 
         updated_session = Session(
@@ -417,7 +407,7 @@ class TestUpdateSession:
             app_version="1.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=True,
+            client_epoch=-1,
         )
 
         mock_session_store.get_by_id.side_effect = [session, updated_session]
@@ -474,7 +464,6 @@ class TestUpdateSession:
             app_version="1.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
         )
 
         mock_session_store.get_by_id.return_value = session
@@ -507,7 +496,6 @@ class TestUpdateSession:
             app_version="1.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
         )
 
         mock_session_store.get_by_id.return_value = session
@@ -557,7 +545,6 @@ class TestDeleteSession:
             app_version="1.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
         )
 
         mock_session_store.get_by_id.return_value = session
@@ -607,7 +594,6 @@ class TestDeleteSession:
             app_version="1.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
         )
 
         mock_session_store.get_by_id.return_value = session
@@ -639,7 +625,6 @@ class TestDeleteSession:
             app_version="1.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
         )
 
         mock_session_store.get_by_id.return_value = session
@@ -677,7 +662,6 @@ class TestDeleteSession:
             app_version="1.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
         )
 
         mock_session_store.get_by_id.return_value = session

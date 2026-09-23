@@ -180,6 +180,7 @@ def create_asset_response(
     return AssetResponse(
         id=asset_data["id"],
         current_version_id="asset_version_test",
+        file_size_bytes=0,
         kind="original",
         mime_type=asset_data["mime_type"],
         original_file_name=asset_data["original_file_name"],
@@ -299,7 +300,6 @@ def mock_session():
         app_version="1.0.0",
         created_at=now,
         updated_at=now,
-        is_pending_sync_reset=False,
     )
     # Mock the get_jwt method to return a usable token
     session.get_jwt = Mock(return_value="real-jwt-token")
@@ -335,6 +335,7 @@ def mock_gumnut_user():
         first_name="Test",
         last_name="User",
         favorite_display_mode="rating",
+        demo_mode_enabled=False,
         is_superuser=False,
         is_active=True,
         is_verified=True,
@@ -832,7 +833,7 @@ class TestSyncStreamHTTPE2E:
             ack = event["ack"]
             ack_parts = ack.split("|")
 
-            # All acks should have exactly 3 parts: type|cursor|
+            # All acks should have exactly 3 parts: type|cursor|epoch
             assert len(ack_parts) == 3, f"Ack should have exactly 3 parts: {ack}"
 
             # First part should match event type
@@ -840,8 +841,8 @@ class TestSyncStreamHTTPE2E:
                 f"Ack type mismatch: expected {event_type}, got {ack_parts[0]}"
             )
 
-            # Trailing part should be empty (from trailing |)
-            assert ack_parts[2] == "", f"Ack should end with trailing |: {ack}"
+            # Last part is the session's sync epoch
+            assert ack_parts[2] == "0", f"Ack should carry sync epoch 0: {ack}"
 
             # Collect cursor
             cursor = ack_parts[1]

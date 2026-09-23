@@ -39,34 +39,57 @@ A Gumnut user can own several libraries, and the Gumnut API refuses a call that
 omits `library_id` when more than one is live. The adapter resolves a library
 per request and scopes every Gumnut call to it:
 
-- **Choice.** The oldest live library the user owns, so every session and
-  device starts on the same one regardless of client state. The listing also
-  returns libraries shared with the user, each carrying the caller's `role`;
-  only `owner` rows are candidates, so joining an older library never redirects
-  uploads. Choosing a shared library from Immich is not supported: a user with
-  shared libraries but none of their own gets a `403`, because an unscoped call
-  would let the Gumnut API default to a lone shared library.
+- **Choice.** The user's stored Immich library (`immich_library_id` on
+  `GET /api/users/me`, set from the Gumnut web settings) when it is usable:
+  listed by `GET /api/libraries` with the caller's `role` as `owner` or
+  `collaborator`. Otherwise the fallback: the oldest live library the user
+  owns, so every session and device lands on the same one regardless of client
+  state. Only `owner` rows are fallback candidates, so joining an older library
+  never redirects uploads; a `collaborator` library is reached only by
+  choosing it. A user with no usable choice and shared libraries but none of their own
+  gets a `403` pointing at the web setting, because an unscoped call would let
+  the Gumnut API default to a lone shared library.
 - **Binding.** `get_authenticated_gumnut_client` sets the resolved id as the
   SDK client's default query parameter, so query-scoped endpoints carry it
   without the call site knowing. The calls that take `library_id` in a body or
   form get it from `get_current_library_id`. By-id reads and writes need no
   library: a record id is unambiguous.
-- **Caching.** Session-token clients cache the id on the session record;
-  API-key clients, which have no session, under a hashed-key Redis entry with a
-  one-hour TTL. A miss costs one `GET /api/libraries` on an unscoped client.
-  Two cases stay unscoped and uncached: a user with no live library at all
-  (the Gumnut API provisions one on first use), and an API key limited to
-  selected libraries, which the API refuses the listing for.
+- **Caching and re-check.** Session-token clients cache the id on the session
+  record with when it was resolved and whether it was the stored choice;
+  API-key clients, which have no session, under a hashed-key Redis entry. Both
+  are trusted for `LIBRARY_RECHECK_SECONDS` (five minutes; the API-key entry's
+  TTL), then resolved again, so a changed choice reaches connected clients
+  within minutes without a per-request Gumnut call or a push channel. A
+  resolution costs `GET /api/libraries` then `GET /api/users/me` on an
+  unscoped client. Two cases stay unscoped and uncached: a user with no live
+  library at all (the Gumnut API provisions one on first use), and an API key
+  limited to selected libraries, which the API refuses the listing for; its
+  stored choice is not consulted.
+- **Switching.** When a session's re-check resolves a different library — the
+  choice changed, became unusable, or became usable again — the session moves
+  to it; one whose library can no longer be resolved at all (the `403` above,
+  or no live library) drops it. Either way its sync resets: the session's
+  sync epoch advances in the same conditional write, which holds only while
+  the session still records the library the request observed, so a request
+  that read stale state changes nothing. Checkpoints are stored per epoch and
+  acks carry the epoch they were issued for, so an ack from a stream of the
+  previous library is dropped rather than resuming the new one (see
+  [Session & checkpoint implementation](session-checkpoint-implementation.md)).
+  A request serves only a library its session records: when its write does not
+  leave the session holding the resolved library, it stays on the library it
+  observed, and with none to stay on — a first resolution, or a library it
+  could not drop — gets a `503` to retry. A sync stream whose session no
+  longer records the library it bound sends a reset instead of streaming.
+  Without a stored choice, a session that fell back stays on its library while
+  the user still owns it, so restoring an older trashed library does not move
+  it; new sessions pick the oldest.
 - **Invalidation.** Another client can trash the chosen library mid-session.
   The Gumnut API answers a scoped call with a `404` naming that library; the
   shared HTTP client's response hook drops the cached id, so the next request
-  re-resolves onto the survivor (the streaming upload, on its own HTTP client,
-  forwards the error explicitly). The request that discovers the trash still
-  fails, and a session also gets a pending sync reset, since its checkpoints
-  belong to the vanished library. A session keeps its resolved library until
-  that library is gone: restoring the trashed one does not move sessions that
-  already fell back; new sessions pick it up, and an API-key entry expires with
-  its TTL.
+  re-resolves without waiting for the re-check (the streaming upload, on its
+  own HTTP client, forwards the error explicitly). The request that discovers
+  the trash still fails, and a session's sync resets, since its checkpoints
+  belong to the vanished library.
 
 ## Request path
 

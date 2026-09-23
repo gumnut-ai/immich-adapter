@@ -2,6 +2,7 @@
 
 import json
 import logging
+from contextvars import ContextVar
 from typing import Any, cast
 from uuid import UUID
 
@@ -57,6 +58,17 @@ _DELETE_EVENT_ENTITY_TYPES: dict[str, str] = {
 }
 
 
+# The session sync epoch the current request streams for; see bind_sync_epoch.
+_sync_epoch: ContextVar[int | None] = ContextVar("sync_epoch", default=None)
+
+
+def bind_sync_epoch(epoch: int) -> None:
+    """Stamp the acks this request issues with the session's sync epoch, so an
+    ack that returns after the session changed library is recognised as stale.
+    """
+    _sync_epoch.set(epoch)
+
+
 def to_ack_string(
     entity_type: SyncEntityType,
     cursor: str,
@@ -64,7 +76,9 @@ def to_ack_string(
     """
     Convert entity type and cursor to ack string.
 
-    Ack format for immich-adapter: "SyncEntityType|cursor|"
+    Ack format for immich-adapter: "SyncEntityType|cursor|epoch", where epoch
+    is the bound sync epoch (empty when none is bound). Clients echo acks back
+    unchanged.
 
     The cursor MUST NOT contain pipe characters — ``_parse_ack()`` splits on
     ``|`` and would silently truncate the cursor, corrupting the checkpoint.
@@ -83,7 +97,8 @@ def to_ack_string(
             "Cursor contains pipe character, ack format will be corrupted",
             extra={"entity_type": entity_type.value, "cursor": cursor},
         )
-    return f"{entity_type.value}|{cursor}|"
+    epoch = _sync_epoch.get()
+    return f"{entity_type.value}|{cursor}|{'' if epoch is None else epoch}"
 
 
 def make_sync_event(

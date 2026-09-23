@@ -6,11 +6,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 import redis.exceptions
-from gumnut.types.library_response import LibraryResponse
 
 from services.library_resolver import (
-    API_KEY_LIBRARY_TTL_SECONDS,
+    LIBRARY_RECHECK_SECONDS,
     LibraryCache,
+    LibraryChoice,
+    choose_library,
     first_owned_library_id,
     is_library_not_found,
 )
@@ -67,32 +68,80 @@ class TestFirstOwnedLibraryId:
 
         assert first_owned_library_id(libraries) is None
 
-    def test_reads_role_from_the_sdk_model(self):
-        """``role`` reaches the SDK model as an untyped extra field; a listing
-        without it predates sharing and holds owned libraries only."""
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
-        def library(library_id: str, created_at: datetime, **extra) -> LibraryResponse:
-            # `construct` is how the SDK builds rows from a response.
-            return LibraryResponse.construct(
-                id=library_id,
-                name=library_id,
-                user_id="intuser_1",
-                asset_count=0,
-                storage_used_bytes=0,
-                created_at=created_at,
-                updated_at=created_at,
-                **extra,
-            )
+BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+OWNED_OLD = make_gumnut_library("lib_owned_old", BASE)
+OWNED_NEW = make_gumnut_library("lib_owned_new", BASE + timedelta(days=1))
+SHARED = make_gumnut_library(
+    "lib_shared", BASE - timedelta(days=1), role="collaborator"
+)
+VIEWED = make_gumnut_library("lib_viewed", BASE - timedelta(days=1), role="viewer")
 
-        libraries = [
-            library("lib_joined", base, role="viewer"),
-            library("lib_owned", base + timedelta(days=1), role="owner"),
-            library("lib_no_role", base + timedelta(days=2)),
-        ]
 
-        assert first_owned_library_id(libraries) == "lib_owned"
-        assert first_owned_library_id([libraries[0], libraries[2]]) == "lib_no_role"
+class TestChooseLibrary:
+    def test_no_choice_is_the_oldest_owned(self):
+        assert choose_library([OWNED_NEW, OWNED_OLD], None) == LibraryChoice(
+            "lib_owned_old", from_choice=False
+        )
+
+    @pytest.mark.parametrize("library", [OWNED_NEW, SHARED])
+    def test_usable_choice_wins(self, library):
+        libraries = [OWNED_OLD, OWNED_NEW, SHARED]
+
+        assert choose_library(libraries, library.id) == LibraryChoice(
+            library.id, from_choice=True
+        )
+
+    def test_choice_lifts_the_owner_filter_for_a_shared_only_user(self):
+        assert choose_library([SHARED], "lib_shared") == LibraryChoice(
+            "lib_shared", from_choice=True
+        )
+
+    @pytest.mark.parametrize(
+        "preferred_id",
+        [
+            pytest.param("lib_viewed", id="viewer-role"),
+            pytest.param("lib_trashed", id="not-listed"),
+        ],
+    )
+    def test_unusable_choice_falls_back(self, preferred_id):
+        libraries = [OWNED_OLD, OWNED_NEW, VIEWED]
+
+        assert choose_library(libraries, preferred_id) == LibraryChoice(
+            "lib_owned_old", from_choice=False
+        )
+
+    def test_unusable_choice_and_nothing_owned_is_none(self):
+        assert choose_library([VIEWED, SHARED], "lib_viewed") is None
+
+    def test_fallback_stays_on_a_still_owned_library(self):
+        """Restoring an older library does not move a session that fell back."""
+        libraries = [OWNED_OLD, OWNED_NEW]
+
+        assert choose_library(
+            libraries, None, stay_on="lib_owned_new"
+        ) == LibraryChoice("lib_owned_new", from_choice=False)
+
+    def test_usable_choice_overrides_staying_put(self):
+        libraries = [OWNED_OLD, OWNED_NEW]
+
+        assert choose_library(
+            libraries, "lib_owned_old", stay_on="lib_owned_new"
+        ) == LibraryChoice("lib_owned_old", from_choice=True)
+
+    @pytest.mark.parametrize(
+        "stay_on",
+        [
+            pytest.param("lib_shared", id="not-owned"),
+            pytest.param("lib_trashed", id="not-listed"),
+        ],
+    )
+    def test_stay_put_needs_an_owned_live_library(self, stay_on):
+        libraries = [OWNED_OLD, OWNED_NEW, SHARED]
+
+        assert choose_library(libraries, None, stay_on=stay_on) == LibraryChoice(
+            "lib_owned_old", from_choice=False
+        )
 
 
 class TestIsLibraryNotFound:
@@ -154,14 +203,29 @@ class TestLibraryCache:
         assert await cache.get_for_api_key(API_KEY) is None
 
     @pytest.mark.anyio
-    async def test_remember_for_session_writes_session_field(
+    async def test_set_session_library_writes_through_the_store(
         self, cache, mock_session_store
     ):
-        await cache.remember_for_session(SESSION_TOKEN, "lib_1")
+        mock_session_store.set_library.return_value = True
 
-        mock_session_store.update_library_id.assert_awaited_once_with(
-            SESSION_TOKEN, "lib_1"
+        held = await cache.set_session_library(
+            SESSION_TOKEN, "lib_old", "lib_new", from_choice=True
         )
+
+        assert held is True
+        mock_session_store.set_library.assert_awaited_once_with(
+            SESSION_TOKEN, "lib_old", "lib_new", from_choice=True
+        )
+
+    @pytest.mark.anyio
+    async def test_set_session_library_redis_failure_is_not_held(
+        self, cache, mock_session_store
+    ):
+        mock_session_store.set_library.side_effect = redis.exceptions.ConnectionError(
+            "down"
+        )
+
+        assert await cache.set_session_library(SESSION_TOKEN, "", "lib_1") is False
 
     @pytest.mark.anyio
     async def test_remember_for_api_key_writes_hashed_key_with_ttl(
@@ -170,7 +234,7 @@ class TestLibraryCache:
         await cache.remember_for_api_key(API_KEY, "lib_1")
 
         mock_redis.set.assert_awaited_once_with(
-            API_KEY_CACHE_KEY, "lib_1", ex=API_KEY_LIBRARY_TTL_SECONDS
+            API_KEY_CACHE_KEY, "lib_1", ex=LIBRARY_RECHECK_SECONDS
         )
 
     @pytest.mark.anyio
@@ -178,14 +242,6 @@ class TestLibraryCache:
         mock_redis.set.side_effect = redis.exceptions.ConnectionError("down")
 
         await cache.remember_for_api_key(API_KEY, "lib_1")
-
-    @pytest.mark.anyio
-    async def test_forget_session_drops_library_and_flags_reset(
-        self, cache, mock_session_store
-    ):
-        await cache.forget_session(SESSION_TOKEN)
-
-        mock_session_store.forget_library.assert_awaited_once_with(SESSION_TOKEN)
 
     @pytest.mark.anyio
     async def test_forget_api_key_deletes_hashed_key(self, cache, mock_redis):

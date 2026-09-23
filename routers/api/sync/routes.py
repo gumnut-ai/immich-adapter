@@ -32,9 +32,12 @@ from routers.immich_models import (
     SyncEntityType,
     SyncStreamDto,
 )
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client,
+    get_bound_library_id,
+)
 
-from routers.api.sync.events import to_ack_string
+from routers.api.sync.events import bind_sync_epoch, to_ack_string
 from routers.api.sync.stream import generate_reset_stream, generate_sync_stream
 
 logger = logging.getLogger(__name__)
@@ -78,14 +81,21 @@ def _get_session_token(request: Request) -> UUID:
         )
 
 
-def _parse_ack(ack: str) -> tuple[SyncEntityType, str] | None:
-    """
-    Parse an ack string into entity type and cursor.
+async def _current_epoch(session_store: SessionStore, session_token: str) -> int:
+    """The session's sync epoch; checkpoints are read and written under it."""
+    session = await session_store.get_by_id(session_token)
+    return session.sync_epoch if session else 0
 
-    Ack format for immich-adapter: "SyncEntityType|cursor|"
+
+def _parse_ack(ack: str) -> tuple[SyncEntityType, str, int | None] | None:
+    """
+    Parse an ack string into entity type, cursor, and sync epoch.
+
+    Ack format for immich-adapter: "SyncEntityType|cursor|epoch"
     - SyncEntityType: Entity type string (e.g., "AssetV1", "AlbumV1")
     - cursor: Opaque v2 events cursor
-    - Trailing pipe for future additions
+    - epoch: The session sync epoch the ack was issued for; empty in acks
+      issued before epochs
 
     Matches immich behavior: only throws for invalid entity types, skips
     malformed acks otherwise.
@@ -94,7 +104,7 @@ def _parse_ack(ack: str) -> tuple[SyncEntityType, str] | None:
         ack: The ack string to parse
 
     Returns:
-        Tuple of (entity_type, cursor), or None if ack is malformed.
+        Tuple of (entity_type, cursor, epoch), or None if ack is malformed.
 
     Raises:
         HTTPException: If entity type is invalid (matches immich behavior)
@@ -127,26 +137,34 @@ def _parse_ack(ack: str) -> tuple[SyncEntityType, str] | None:
         )
         return None
 
-    return entity_type, cursor
+    epoch = parts[2] if len(parts) > 2 else ""
+    return (
+        entity_type,
+        cursor,
+        int(epoch) if epoch.isascii() and epoch.isdigit() else None,
+    )
 
 
 @router.get("/ack")
 async def get_sync_ack(
     http_request: Request,
     checkpoint_store: CheckpointStore = Depends(get_checkpoint_store),
+    session_store: SessionStore = Depends(get_session_store),
 ) -> List[SyncAckDto]:
     """
     Get sync acknowledgements for the current session.
 
-    Returns all stored checkpoints for the session, each containing:
+    Returns the checkpoints of the session's sync epoch, each containing:
     - type: The sync entity type (e.g., "AssetV1", "AlbumV1")
-    - ack: The ack string in format "SyncEntityType|cursor|"
+    - ack: The ack string in format "SyncEntityType|cursor|epoch"
 
     Requires a session token - API keys are not allowed.
     """
     session_uuid = _get_session_token(http_request)
 
-    checkpoints = await checkpoint_store.get_all(session_uuid)
+    epoch = await _current_epoch(session_store, str(session_uuid))
+    bind_sync_epoch(epoch)
+    checkpoints = await checkpoint_store.get_all(session_uuid, epoch)
 
     ack_dtos = [
         SyncAckDto(
@@ -182,20 +200,24 @@ async def send_sync_ack(
     """
     Acknowledge sync checkpoints.
 
-    Parses each ack string and stores the checkpoint for the session.
-    If any ack is for SyncResetV1, resets the session's sync progress
-    (clears is_pending_sync_reset flag and deletes all checkpoints).
+    Parses each ack string and stores the checkpoint under the session's sync
+    epoch. Acks issued for an epoch the session has left are dropped: they
+    belong to a library the session no longer syncs. Acks without an epoch
+    (issued before epochs) count as the current one. A SyncResetV1 ack records
+    that the client reset to the epoch it was issued for.
 
-    Ack format for immich-adapter: "SyncEntityType|cursor|"
+    Ack format for immich-adapter: "SyncEntityType|cursor|epoch"
 
     Requires a session token - API keys are not allowed.
     """
     session_uuid = _get_session_token(http_request)
     session_token = str(session_uuid)
+    epoch = await _current_epoch(session_store, session_token)
 
     # Parse all acks and collect checkpoints to store
     # Value is cursor string
     checkpoints_to_store: dict[SyncEntityType, str] = {}
+    stale_count = 0
 
     for idx, ack in enumerate(request.acks):
         parsed = _parse_ack(ack)
@@ -203,9 +225,11 @@ async def send_sync_ack(
             # Malformed ack - skip it (already logged)
             continue
 
-        entity_type, cursor = parsed
+        entity_type, cursor, ack_epoch = parsed
+        if ack_epoch is None:
+            ack_epoch = epoch
 
-        # Handle SyncResetV1 specially - reset sync progress and return
+        # Handle SyncResetV1 specially - record the reset and return
         if entity_type == SyncEntityType.SyncResetV1:
             # Warn if there are other acks that will be ignored
             remaining_acks = len(request.acks) - idx - 1
@@ -221,27 +245,29 @@ async def send_sync_ack(
                 )
             logger.info(
                 "SyncResetV1 acknowledged - resetting sync progress",
-                extra={"session_id": session_token},
+                extra={"session_id": session_token, "epoch": ack_epoch},
             )
-            # Clear the pending sync reset flag
-            await session_store.set_pending_sync_reset(session_token, False)
-            # Delete all existing checkpoints
-            await checkpoint_store.delete_all(session_uuid)
-            # Update session activity
+            await session_store.acknowledge_sync_reset(session_token, ack_epoch)
             await session_store.update_activity(session_token)
             return
+
+        if ack_epoch != epoch:
+            stale_count += 1
+            continue
 
         # Store checkpoint (last one wins if duplicates)
         checkpoints_to_store[entity_type] = cursor
 
-    # Store all checkpoints atomically
-    if checkpoints_to_store:
-        await checkpoint_store.set_many(
-            session_uuid,
-            [
-                (entity_type, cursor)
-                for entity_type, cursor in checkpoints_to_store.items()
-            ],
+    # Store all checkpoints atomically, unless the epoch moved meanwhile
+    if checkpoints_to_store and not await checkpoint_store.set_many(
+        session_uuid, epoch, list(checkpoints_to_store.items())
+    ):
+        stale_count += len(checkpoints_to_store)
+        checkpoints_to_store = {}
+    if stale_count:
+        logger.info(
+            "Dropped acks for a sync epoch the session has left",
+            extra={"session_id": session_token, "stale_count": stale_count},
         )
 
     # Update session activity timestamp
@@ -263,6 +289,7 @@ async def delete_sync_ack(
     request: SyncAckDeleteDto,
     http_request: Request,
     checkpoint_store: CheckpointStore = Depends(get_checkpoint_store),
+    session_store: SessionStore = Depends(get_session_store),
 ):
     """
     Delete sync acknowledgements - reset sync state.
@@ -274,17 +301,18 @@ async def delete_sync_ack(
     Requires a session token - API keys are not allowed.
     """
     session_uuid = _get_session_token(http_request)
+    epoch = await _current_epoch(session_store, str(session_uuid))
 
     if request.types is None:
         # No types specified - delete all checkpoints
-        await checkpoint_store.delete_all(session_uuid)
+        await checkpoint_store.delete_all(session_uuid, epoch)
         logger.info(
             "Deleted all checkpoints",
             extra={"session_id": str(session_uuid)},
         )
     elif len(request.types) > 0:
         # Specific types requested - delete those
-        await checkpoint_store.delete(session_uuid, request.types)
+        await checkpoint_store.delete(session_uuid, epoch, request.types)
         logger.info(
             f"Deleted {len(request.types)} checkpoint types",
             extra={
@@ -315,7 +343,7 @@ async def get_sync_stream(
     only returning entities updated after the checkpoint timestamp.
 
     If request.reset is True, clears all checkpoints before streaming (full sync).
-    If session has isPendingSyncReset flag, sends SyncResetV1 and ends immediately.
+    If the client must reset (see above), sends SyncResetV1 and ends immediately.
     """
     session_token = getattr(http_request.state, "session_token", None)
     session_uuid: UUID | None = None
@@ -327,19 +355,29 @@ async def get_sync_stream(
             # Invalid session token - continue without session features
             pass
 
-    # Check if session has isPendingSyncReset flag set
-    # If so, send SyncResetV1 and end immediately (matches immich behavior)
+    # The stream reads and acks checkpoints of the session's sync epoch. If the
+    # client's local copy belongs to an earlier epoch, or the session has moved
+    # off the library this request bound, send SyncResetV1 and end immediately
+    # (matches immich behavior).
+    epoch = 0
     if session_uuid:
         session = await session_store.get_by_id(str(session_uuid))
-        if session and session.is_pending_sync_reset:
-            logger.info(
-                "Session has isPendingSyncReset flag - sending SyncResetV1",
-                extra={"session_id": session_token},
-            )
-            return StreamingResponse(
-                generate_reset_stream(),
-                media_type="application/jsonlines+json",
-            )
+        if session:
+            epoch = session.sync_epoch
+            bind_sync_epoch(epoch)
+            library_moved = session.library_id != (get_bound_library_id() or "")
+            if session.is_pending_sync_reset or library_moved:
+                logger.info(
+                    "Session needs a sync reset - sending SyncResetV1",
+                    extra={
+                        "session_id": session_token,
+                        "library_moved": library_moved,
+                    },
+                )
+                return StreamingResponse(
+                    generate_reset_stream(),
+                    media_type="application/jsonlines+json",
+                )
 
     # Handle request.reset flag - clear all checkpoints before streaming
     # This triggers a full sync from the beginning
@@ -348,12 +386,12 @@ async def get_sync_stream(
             "request.reset=True - clearing all checkpoints for full sync",
             extra={"session_id": session_token},
         )
-        await checkpoint_store.delete_all(session_uuid)
+        await checkpoint_store.delete_all(session_uuid, epoch)
 
     # Load checkpoints for delta sync (empty dict if no session or no checkpoints)
     checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
     if session_uuid and not request.reset:
-        checkpoints = await checkpoint_store.get_all(session_uuid)
+        checkpoints = await checkpoint_store.get_all(session_uuid, epoch)
         checkpoint_map = {cp.entity_type: cp for cp in checkpoints}
         logger.debug(
             f"Loaded {len(checkpoint_map)} checkpoints for sync stream",
