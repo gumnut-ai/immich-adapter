@@ -9,7 +9,6 @@ import redis.exceptions
 
 from services.session_store import (
     _REQUIRED_SESSION_FIELDS,
-    _SET_LIBRARY_IF_LUA,
     _UPDATE_IF_EXISTS_LUA,
     Session,
     SessionDataError,
@@ -32,10 +31,6 @@ WRITERS = [
         lambda store, token: store.update_stored_jwt(token, "new.jwt.token"),
         id="update_stored_jwt",
     ),
-    pytest.param(
-        lambda store, token: store.set_pending_sync_reset(token, True),
-        id="set_pending_sync_reset",
-    ),
 ]
 
 
@@ -55,7 +50,6 @@ class TestSessionDataclass:
             app_version="1.94.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
         )
 
         result = session.to_dict()
@@ -68,10 +62,13 @@ class TestSessionDataclass:
         assert result["app_version"] == "1.94.0"
         assert result["created_at"] == "2025-01-20T10:00:00+00:00"
         assert result["updated_at"] == "2025-01-20T10:00:00+00:00"
+        assert result["sync_epoch"] == "0"
+        assert result["client_epoch"] == "0"
+        # Kept for adapters still reading sessions without epochs.
         assert result["is_pending_sync_reset"] == "0"
 
-    def test_to_dict_with_pending_sync_reset(self):
-        """Test to_dict with is_pending_sync_reset=True."""
+    def test_sync_epochs_round_trip(self):
+        """A client behind the session's sync epoch owes a reset."""
         now = datetime.now(timezone.utc)
         session = Session(
             id=TEST_SESSION_ID,
@@ -83,15 +80,17 @@ class TestSessionDataclass:
             app_version="1.94.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=True,
+            sync_epoch=3,
+            client_epoch=2,
         )
 
-        result = session.to_dict()
+        restored = Session.from_dict(TEST_SESSION_ID, session.to_dict())
 
-        assert result["is_pending_sync_reset"] == "1"
+        assert (restored.sync_epoch, restored.client_epoch) == (3, 2)
+        assert restored.is_pending_sync_reset is True
 
     def test_from_dict(self):
-        """Test Session.from_dict() creates Session from Redis hash data."""
+        """from_dict reads a hash written before sync epochs as epoch 0."""
         data = {
             "user_id": "user_123",
             "library_id": "lib_456",
@@ -119,6 +118,7 @@ class TestSessionDataclass:
         assert session.updated_at == datetime(
             2025, 1, 20, 10, 30, 0, tzinfo=timezone.utc
         )
+        assert (session.sync_epoch, session.client_epoch) == (0, 0)
         assert session.is_pending_sync_reset is False
         # A hash written before library revalidation existed is due for it.
         assert session.library_checked_at == 0.0
@@ -136,7 +136,6 @@ class TestSessionDataclass:
             app_version="1.94.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
             library_checked_at=1700000000.5,
             library_from_choice=True,
         )
@@ -147,7 +146,7 @@ class TestSessionDataclass:
         assert restored.library_from_choice is True
 
     def test_from_dict_with_pending_sync_reset(self):
-        """Test from_dict with is_pending_sync_reset='1'."""
+        """A reset flagged before sync epochs is still owed."""
         data = {
             "user_id": "user_123",
             "library_id": "lib_456",
@@ -210,7 +209,6 @@ class TestSessionDataclass:
             app_version="1.94.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
         )
 
         with patch("services.session_store.decrypt_jwt") as mock_decrypt:
@@ -272,7 +270,8 @@ class TestSessionStoreCreate:
 
     @pytest.mark.anyio
     async def test_create_session_with_expiry(self, session_store, mock_redis):
-        """Test creating a session with TTL sets TTL on both session and checkpoint keys."""
+        """Test creating a session with TTL sets TTL on the session key (checkpoints
+        take the session's remaining TTL when written)."""
         with patch("services.session_store.encrypt_jwt") as mock_encrypt:
             mock_encrypt.return_value = TEST_ENCRYPTED_JWT
 
@@ -289,13 +288,9 @@ class TestSessionStoreCreate:
                 expires_at=expires_at,
             )
 
-            # Verify expire was called on pipeline for both session and checkpoint keys
             mock_pipeline = mock_redis.pipeline.return_value
-            assert mock_pipeline.expire.call_count == 2
             expire_calls = [call[0][0] for call in mock_pipeline.expire.call_args_list]
-            session_key = str(session.id)
-            assert f"session:{session_key}" in expire_calls
-            assert f"session:{session_key}:checkpoints" in expire_calls
+            assert expire_calls == [f"session:{session.id}"]
 
     @pytest.mark.anyio
     async def test_create_session_with_past_expiry_raises_error(
@@ -719,86 +714,6 @@ class TestSessionStoreConditionalWrites:
         ).timestamp() == pytest.approx(float(score))
 
     @pytest.mark.anyio
-    @pytest.mark.parametrize(
-        "write,expected_fields",
-        [
-            pytest.param(
-                lambda store, token: store.update_library_id(
-                    token, "lib_old", "lib_new", from_choice=True
-                ),
-                {
-                    "library_id": "lib_new",
-                    "library_checked_at": "1700000000.0",
-                    "library_from_choice": "1",
-                },
-                id="update_library_id",
-            ),
-            pytest.param(
-                lambda store, token: store.switch_library(
-                    token, "lib_old", "lib_new", from_choice=False
-                ),
-                {
-                    "library_id": "lib_new",
-                    "library_checked_at": "1700000000.0",
-                    "library_from_choice": "0",
-                    "is_pending_sync_reset": "1",
-                },
-                id="switch_library",
-            ),
-            pytest.param(
-                lambda store, token: store.forget_library(token, "lib_old"),
-                {"library_id": "", "is_pending_sync_reset": "1"},
-                id="forget_library",
-            ),
-        ],
-    )
-    async def test_library_writes_hold_only_while_the_previous_library_is_cached(
-        self, session_store, mock_redis, write, expected_fields
-    ):
-        """Library writes record when and how the library was resolved, and
-        apply only while the session still holds the library they resolved
-        from, so a stale request cannot undo a concurrent switch. A switch or
-        drop also flags a sync reset: checkpoints belong to the previous
-        library."""
-        session_token = str(TEST_SESSION_ID)
-
-        with patch("services.session_store.time.time", return_value=1700000000.0):
-            result = await write(session_store, session_token)
-
-        assert result is True
-        script, numkeys, key, expected, target, *pairs = mock_redis.eval.call_args.args
-        assert script is _SET_LIBRARY_IF_LUA
-        assert (numkeys, key, expected) == (1, f"session:{session_token}", "lib_old")
-        assert target == expected_fields["library_id"]
-        assert dict(zip(pairs[::2], pairs[1::2])) == expected_fields
-
-    @pytest.mark.anyio
-    async def test_switch_library_reports_a_session_that_already_moved(
-        self, session_store, mock_redis
-    ):
-        mock_redis.eval.return_value = 0
-
-        result = await session_store.switch_library(
-            str(TEST_SESSION_ID), "lib_old", "lib_new", from_choice=False
-        )
-
-        assert result is False
-
-    @pytest.mark.anyio
-    @pytest.mark.parametrize("pending,expected", [(True, "1"), (False, "0")])
-    async def test_set_pending_sync_reset(
-        self, session_store, mock_redis, pending, expected
-    ):
-        """Test set_pending_sync_reset writes the flag in both directions."""
-        result = await session_store.set_pending_sync_reset(
-            str(TEST_SESSION_ID), pending
-        )
-
-        assert result is True
-        _keys, _token, _score, fields = _decode_eval(mock_redis)
-        assert fields == {"is_pending_sync_reset": expected}
-
-    @pytest.mark.anyio
     @pytest.mark.parametrize("writer", WRITERS)
     async def test_writer_reports_missing_session(
         self, session_store, mock_redis, writer
@@ -825,7 +740,6 @@ def _full_session_data() -> dict[str, str]:
         app_version="1.94.0",
         created_at=now,
         updated_at=now,
-        is_pending_sync_reset=False,
     ).to_dict()
 
 

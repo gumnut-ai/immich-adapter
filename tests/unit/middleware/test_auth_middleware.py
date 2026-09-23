@@ -36,7 +36,6 @@ def create_test_session(session_id: UUID = TEST_SESSION_ID) -> Session:
         app_version="1.94.0",
         created_at=now,
         updated_at=now,
-        is_pending_sync_reset=False,
     )
 
 

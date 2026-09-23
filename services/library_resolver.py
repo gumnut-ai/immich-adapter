@@ -106,39 +106,27 @@ class LibraryCache:
             return None
         return value or None
 
-    async def remember_for_session(
-        self, session_token: str, previous_library_id: str, choice: LibraryChoice
+    async def set_session_library(
+        self,
+        session_token: str,
+        previous_library_id: str,
+        library_id: str,
+        *,
+        from_choice: bool = False,
     ) -> bool:
-        """Record a resolution that did not change the session's library;
-        ``previous_library_id`` is ``""`` for a session's first resolution.
-        Returns whether the session holds the chosen library; a Redis failure
-        counts as not."""
+        """Record the session's library (``""`` drops it) from the one the
+        request observed; leaving a library resets the client's sync. Returns
+        whether the session holds ``library_id``; a Redis failure counts as
+        not."""
         try:
-            return await self._session_store.update_library_id(
+            return await self._session_store.set_library(
                 session_token,
                 previous_library_id,
-                choice.library_id,
-                from_choice=choice.from_choice,
+                library_id,
+                from_choice=from_choice,
             )
         except redis.exceptions.RedisError:
-            logger.error("Failed to cache resolved library", exc_info=True)
-            return False
-
-    async def switch_session(
-        self, session_token: str, previous_library_id: str, choice: LibraryChoice
-    ) -> bool:
-        """Move the session to another library and queue a sync reset. Returns
-        whether the session holds the chosen library; a Redis failure counts
-        as not."""
-        try:
-            return await self._session_store.switch_library(
-                session_token,
-                previous_library_id,
-                choice.library_id,
-                from_choice=choice.from_choice,
-            )
-        except redis.exceptions.RedisError:
-            logger.error("Failed to switch cached library", exc_info=True)
+            logger.error("Failed to record session library", exc_info=True)
             return False
 
     async def remember_for_api_key(self, api_key: str, library_id: str) -> None:
@@ -150,16 +138,6 @@ class LibraryCache:
             )
         except redis.exceptions.RedisError:
             logger.error("Failed to cache resolved library", exc_info=True)
-
-    async def forget_session(
-        self, session_token: str, previous_library_id: str
-    ) -> None:
-        """Drop the cached library and queue a sync reset: the client's local
-        copy and checkpoints belong to a library it can no longer use."""
-        try:
-            await self._session_store.forget_library(session_token, previous_library_id)
-        except redis.exceptions.RedisError:
-            logger.error("Failed to drop cached library", exc_info=True)
 
     async def forget_api_key(self, api_key: str) -> None:
         try:

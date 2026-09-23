@@ -47,7 +47,7 @@ class LibraryScope:
     """The library a request's Gumnut calls are bound to and how to forget it."""
 
     library_id: str
-    forget: Callable[[], Awaitable[None]]
+    forget: Callable[[], Awaitable[object]]
     forgotten: bool = False
 
 
@@ -274,6 +274,13 @@ async def _fetch_library_choice(
     return choice
 
 
+def _unrecorded() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Could not record the Gumnut library; try again",
+    )
+
+
 async def _resolve_library_id(
     request: Request, credential: str, cache: LibraryCache
 ) -> str | None:
@@ -281,8 +288,14 @@ async def _resolve_library_id(
 
     ``credential`` is the session's JWT or the raw API key. A cached library is
     trusted for ``LIBRARY_RECHECK_SECONDS``, then resolved again; a session
-    whose library changes is flagged for a sync reset. ``None`` leaves the
-    request unscoped and caches nothing.
+    whose library changes resets its sync. ``None`` leaves the request
+    unscoped and caches nothing.
+
+    A session request serves only a library its session records: that is what
+    ties its sync state to one library. When the session write does not land,
+    the request stays on the library it observed (the session still holds it,
+    or has left it and reset its sync), or gets a retryable 503 when it has
+    none to stay on.
     """
     session_token = getattr(request.state, "session_token", None)
     if session_token:
@@ -304,11 +317,15 @@ async def _resolve_library_id(
             choice = await _fetch_library_choice(request, credential, stay_on)
         except HTTPException:
             if cached and session_token:
-                await cache.forget_session(session_token, cached)
+                await cache.set_session_library(session_token, cached, "")
             raise
         if choice is None:
-            if cached and session_token:
-                await cache.forget_session(session_token, cached)
+            if (
+                cached
+                and session_token
+                and not await cache.set_session_library(session_token, cached, "")
+            ):
+                raise _unrecorded()
             return None
         library_id = choice.library_id
         if not session_token:
@@ -319,26 +336,20 @@ async def _resolve_library_id(
                     "Session library changed; switching and resetting sync",
                     extra={"previous_library_id": cached, "library_id": library_id},
                 )
-                held = await cache.switch_session(session_token, cached, choice)
-            else:
-                held = await cache.remember_for_session(
-                    session_token, cached or "", choice
-                )
-            if not held:
-                # A request serves only a library its session records: that is
-                # what ties sync checkpoints to one library. The session either
-                # still holds the observed library or left it with a reset.
+            if not await cache.set_session_library(
+                session_token,
+                cached or "",
+                library_id,
+                from_choice=choice.from_choice,
+            ):
                 if not cached:
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail="Could not record the Gumnut library; try again",
-                    )
+                    raise _unrecorded()
                 library_id = cached
 
     if session_token:
         # Conditional on the bound library, so a request still bound to it
         # cannot drop a library another request already switched to.
-        forget = partial(cache.forget_session, session_token, library_id)
+        forget = partial(cache.set_session_library, session_token, library_id, "")
     else:
         forget = partial(cache.forget_api_key, credential)
     bind_library_scope(LibraryScope(library_id=library_id, forget=forget))

@@ -91,7 +91,7 @@ def create_mock_session(
         app_version="1.94.0",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
-        is_pending_sync_reset=is_pending_sync_reset,
+        client_epoch=-1 if is_pending_sync_reset else 0,
     )
 
 

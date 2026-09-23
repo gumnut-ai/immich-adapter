@@ -36,7 +36,6 @@ def make_session(session_id: UUID, jwt: str = "decrypted-jwt-token") -> Session:
         app_version="1.0",
         created_at=now,
         updated_at=now,
-        is_pending_sync_reset=False,
     )
     session.get_jwt = MagicMock(return_value=jwt)
     return session

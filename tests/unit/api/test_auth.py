@@ -293,7 +293,6 @@ class TestValidateAccessTokenIntegration:
             app_version="1.94.0",
             created_at=now,
             updated_at=now,
-            is_pending_sync_reset=False,
             library_checked_at=now.timestamp(),
         )
         session.get_jwt = MagicMock(return_value=self.TEST_JWT)

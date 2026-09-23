@@ -1,28 +1,41 @@
 """Tests for sync.py ack parsing and generation helpers."""
 
+from contextvars import copy_context
+
 import pytest
 from fastapi import HTTPException
 
 from routers.api.sync.routes import _parse_ack
-from routers.api.sync.events import to_ack_string
+from routers.api.sync.events import bind_sync_epoch, to_ack_string
 from routers.immich_models import SyncEntityType
 
 
 class TestParseAck:
     """Tests for _parse_ack helper function.
 
-    Ack format for immich-adapter: "SyncEntityType|cursor|"
+    Ack format for immich-adapter: "SyncEntityType|cursor|epoch"
     """
+
+    def test_parse_ack_with_epoch(self):
+        result = _parse_ack("AssetV1|event_cursor_abc|7")
+        assert result == (SyncEntityType.AssetV1, "event_cursor_abc", 7)
+
+    def test_parse_ack_with_non_ascii_digit_epoch(self):
+        """A crafted epoch is malformed, not a server error."""
+        result = _parse_ack("AssetV1|event_cursor_abc|\u00b2")
+        assert result == (SyncEntityType.AssetV1, "event_cursor_abc", None)
 
     def test_parse_valid_ack(self):
         """Parse a valid ack string with entity type and cursor."""
         ack = "AssetV1|event_cursor_abc123|"
         result = _parse_ack(ack)
         assert result is not None
-        entity_type, cursor = result
+        entity_type, cursor, epoch = result
 
         assert entity_type == SyncEntityType.AssetV1
         assert cursor == "event_cursor_abc123"
+        # Issued before sync epochs: the handler treats it as the current one.
+        assert epoch is None
 
     def test_parse_ack_with_empty_cursor(self):
         """Parse ack with empty cursor returns None (malformed)."""
@@ -35,7 +48,7 @@ class TestParseAck:
         ack = "AssetV1|event_cursor_abc"
         result = _parse_ack(ack)
         assert result is not None
-        entity_type, cursor = result
+        entity_type, cursor, epoch = result
 
         assert entity_type == SyncEntityType.AssetV1
         assert cursor == "event_cursor_abc"
@@ -60,7 +73,7 @@ class TestParseAck:
         ack = "AssetV1|event_cursor_abc|extra_field|"
         result = _parse_ack(ack)
         assert result is not None
-        entity_type, cursor = result
+        entity_type, cursor, epoch = result
 
         assert entity_type == SyncEntityType.AssetV1
         assert cursor == "event_cursor_abc"
@@ -98,10 +111,25 @@ class TestToAckString:
         ack_string = to_ack_string(original_type, original_cursor)
         result = _parse_ack(ack_string)
         assert result is not None
-        parsed_type, parsed_cursor = result
+        parsed_type, parsed_cursor, parsed_epoch = result
 
         assert parsed_type == original_type
         assert parsed_cursor == original_cursor
+        assert parsed_epoch is None
+
+    def test_ack_string_carries_bound_epoch(self):
+        def issue() -> str:
+            bind_sync_epoch(4)
+            return to_ack_string(SyncEntityType.AssetV1, "event_cursor_abc")
+
+        ack_string = copy_context().run(issue)
+
+        assert ack_string == "AssetV1|event_cursor_abc|4"
+        assert _parse_ack(ack_string) == (
+            SyncEntityType.AssetV1,
+            "event_cursor_abc",
+            4,
+        )
 
     def test_roundtrip_with_empty_cursor_rejected(self):
         """Verify roundtrip with empty cursor is rejected by parser."""

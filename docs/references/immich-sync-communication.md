@@ -1,6 +1,6 @@
 ---
 title: "Immich Sync Wire Reference"
-last-updated: 2026-08-11
+last-updated: 2026-09-22
 ---
 
 # Immich Sync Wire Reference
@@ -79,5 +79,5 @@ The client acknowledges processed positions with `POST /api/sync/ack`:
 ## Completion and reset
 
 - `SyncCompleteV1` terminates every successfully generated stream, including a stream with no entity changes.
-- A session with `is_pending_sync_reset` receives `SyncResetV1` and no normal entity stream.
+- A session whose client owes a reset (its `client_epoch` differs from the session's `sync_epoch`) receives `SyncResetV1` and no normal entity stream.
 - An unhandled hydration or transport failure ends the generator without `SyncCompleteV1`. This is intentional: the client must not acknowledge a position past data that failed to stream.

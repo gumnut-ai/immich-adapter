@@ -133,7 +133,7 @@ class TestCheckpointStoreGetAll:
             "AlbumV1": "2025-01-20T09:30:00+00:00|event_album456",
         }
 
-        checkpoints = await checkpoint_store.get_all(TEST_SESSION_TOKEN)
+        checkpoints = await checkpoint_store.get_all(TEST_SESSION_TOKEN, 0)
 
         assert len(checkpoints) == 2
         entity_types = {c.entity_type for c in checkpoints}
@@ -146,7 +146,7 @@ class TestCheckpointStoreGetAll:
         """Test getting checkpoints when none exist."""
         mock_redis.hgetall.return_value = {}
 
-        checkpoints = await checkpoint_store.get_all(TEST_SESSION_TOKEN)
+        checkpoints = await checkpoint_store.get_all(TEST_SESSION_TOKEN, 0)
 
         assert checkpoints == []
 
@@ -160,7 +160,7 @@ class TestCheckpointStoreGetAll:
             "AlbumV1": "malformed-data",  # Invalid format — skipped
         }
 
-        result = await checkpoint_store.get_all(TEST_SESSION_TOKEN)
+        result = await checkpoint_store.get_all(TEST_SESSION_TOKEN, 0)
         assert len(result) == 1
         assert result[0].entity_type == SyncEntityType.AssetV1
 
@@ -175,7 +175,7 @@ class TestCheckpointStoreGetAll:
         }
 
         with pytest.raises(ValueError, match="UnknownTypeV1"):
-            await checkpoint_store.get_all(TEST_SESSION_TOKEN)
+            await checkpoint_store.get_all(TEST_SESSION_TOKEN, 0)
 
 
 class TestCheckpointStoreGet:
@@ -197,7 +197,7 @@ class TestCheckpointStoreGet:
         mock_redis.hget.return_value = "2025-01-20T10:30:45+00:00|event_asset123"
 
         checkpoint = await checkpoint_store.get(
-            TEST_SESSION_TOKEN, SyncEntityType.AssetV1
+            TEST_SESSION_TOKEN, 0, SyncEntityType.AssetV1
         )
 
         assert checkpoint is not None
@@ -213,7 +213,7 @@ class TestCheckpointStoreGet:
         mock_redis.hget.return_value = None
 
         checkpoint = await checkpoint_store.get(
-            TEST_SESSION_TOKEN, SyncEntityType.AssetV1
+            TEST_SESSION_TOKEN, 0, SyncEntityType.AssetV1
         )
 
         assert checkpoint is None
@@ -242,28 +242,28 @@ class TestCheckpointStoreSetMany:
             (SyncEntityType.AlbumV1, "event_album456"),
         ]
 
-        result = await checkpoint_store.set_many(TEST_SESSION_TOKEN, checkpoints)
+        mock_redis.eval.return_value = 1
+
+        result = await checkpoint_store.set_many(TEST_SESSION_TOKEN, 2, checkpoints)
 
         assert result is True
-        mock_redis.hset.assert_called_once()
-
-        # Verify the mapping was passed
-        call_args = mock_redis.hset.call_args
-        assert call_args[0][0] == f"session:{TEST_SESSION_TOKEN}:checkpoints"
-        assert "mapping" in call_args[1]
-        mapping = call_args[1]["mapping"]
-        assert "AssetV1" in mapping
-        assert "AlbumV1" in mapping
+        _script, _numkeys, session_key, key, epoch, *pairs = (
+            mock_redis.eval.call_args.args
+        )
+        assert session_key == f"session:{TEST_SESSION_TOKEN}"
+        assert key == f"session:{TEST_SESSION_TOKEN}:checkpoints:2"
+        assert epoch == "2"
+        assert set(pairs[::2]) == {"AssetV1", "AlbumV1"}
 
     @pytest.mark.anyio
     async def test_set_many_returns_true_for_empty_list(
         self, checkpoint_store, mock_redis
     ):
         """Test set_many returns True for empty checkpoint list."""
-        result = await checkpoint_store.set_many(TEST_SESSION_TOKEN, [])
+        result = await checkpoint_store.set_many(TEST_SESSION_TOKEN, 0, [])
 
         assert result is True
-        mock_redis.hset.assert_not_called()
+        mock_redis.eval.assert_not_called()
 
 
 class TestCheckpointStoreDelete:
@@ -285,12 +285,12 @@ class TestCheckpointStoreDelete:
     ):
         """Test deleting specific checkpoints."""
         result = await checkpoint_store.delete(
-            TEST_SESSION_TOKEN, [SyncEntityType.AssetV1, SyncEntityType.AlbumV1]
+            TEST_SESSION_TOKEN, 3, [SyncEntityType.AssetV1, SyncEntityType.AlbumV1]
         )
 
         assert result is True
         mock_redis.hdel.assert_called_once_with(
-            f"session:{TEST_SESSION_TOKEN}:checkpoints", "AssetV1", "AlbumV1"
+            f"session:{TEST_SESSION_TOKEN}:checkpoints:3", "AssetV1", "AlbumV1"
         )
 
     @pytest.mark.anyio
@@ -298,7 +298,7 @@ class TestCheckpointStoreDelete:
         self, checkpoint_store, mock_redis
     ):
         """Test delete returns True for empty entity type list."""
-        result = await checkpoint_store.delete(TEST_SESSION_TOKEN, [])
+        result = await checkpoint_store.delete(TEST_SESSION_TOKEN, 0, [])
 
         assert result is True
         mock_redis.hdel.assert_not_called()
@@ -322,9 +322,9 @@ class TestCheckpointStoreDeleteAll:
         self, checkpoint_store, mock_redis
     ):
         """Test delete_all removes the entire checkpoint hash."""
-        result = await checkpoint_store.delete_all(TEST_SESSION_TOKEN)
+        result = await checkpoint_store.delete_all(TEST_SESSION_TOKEN, 3)
 
         assert result is True
         mock_redis.delete.assert_called_once_with(
-            f"session:{TEST_SESSION_TOKEN}:checkpoints"
+            f"session:{TEST_SESSION_TOKEN}:checkpoints:3"
         )

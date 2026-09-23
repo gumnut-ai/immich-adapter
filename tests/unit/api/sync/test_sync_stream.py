@@ -1431,7 +1431,11 @@ class TestGetSyncStreamEndpoint:
         mock_checkpoint_store.get_all.return_value = [checkpoint]
 
         mock_session_store = AsyncMock(spec=SessionStore)
-        mock_session_store.get_by_id.return_value = create_mock_session()
+        session = create_mock_session()
+        session.sync_epoch = session.client_epoch = 3
+        mock_session_store.get_by_id.return_value = session
+        init_request_scope()
+        bind_library_scope(LibraryScope(library_id="lib-123", forget=AsyncMock()))
 
         request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1])
 
@@ -1443,8 +1447,8 @@ class TestGetSyncStreamEndpoint:
             session_store=mock_session_store,
         )
 
-        # Verify checkpoint store was called with correct session UUID
-        mock_checkpoint_store.get_all.assert_called_once_with(TEST_SESSION_UUID)
+        # Checkpoints of the session's sync epoch
+        mock_checkpoint_store.get_all.assert_called_once_with(TEST_SESSION_UUID, 3)
 
         # Consume stream and verify auth user was skipped due to checkpoint
         events = []
@@ -1455,6 +1459,7 @@ class TestGetSyncStreamEndpoint:
         # Only SyncCompleteV1 (auth user skipped because checkpoint exists)
         assert len(events) == 1
         assert events[0]["type"] == "SyncCompleteV1"
+        assert events[0]["ack"].endswith("|3")
 
     @pytest.mark.anyio
     async def test_pending_sync_reset_sends_only_reset_event(self):
@@ -1489,22 +1494,25 @@ class TestGetSyncStreamEndpoint:
         assert len(events) == 1
         assert events[0]["type"] == "SyncResetV1"
         assert events[0]["data"] == {}
-        assert events[0]["ack"] == "SyncResetV1|reset|"
+        # Acking it records that the client reset to the session's epoch.
+        assert events[0]["ack"] == "SyncResetV1|reset|0"
 
         mock_checkpoint_store.get_all.assert_not_called()
         mock_checkpoint_store.delete_all.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_session_moved_off_the_bound_library_sends_reset(self):
-        """A concurrent switch after this request bound its library would pair
-        this library's events with the other library's checkpoints."""
+    @pytest.mark.parametrize("bound", ["lib-old", None])
+    async def test_session_moved_off_the_bound_library_sends_reset(self, bound):
+        """A concurrent change after this request bound its library (or none)
+        would pair its events with another library's sync state."""
         mock_request = Mock()
         mock_request.state.session_token = str(TEST_SESSION_UUID)
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_session_store = AsyncMock(spec=SessionStore)
         mock_session_store.get_by_id.return_value = create_mock_session()
         init_request_scope()
-        bind_library_scope(LibraryScope(library_id="lib-old", forget=AsyncMock()))
+        if bound:
+            bind_library_scope(LibraryScope(library_id=bound, forget=AsyncMock()))
 
         result = await get_sync_stream(
             request=SyncStreamDto(types=[SyncRequestType.AssetsV1]),
@@ -1535,6 +1543,8 @@ class TestGetSyncStreamEndpoint:
 
         mock_session_store = AsyncMock(spec=SessionStore)
         mock_session_store.get_by_id.return_value = create_mock_session()
+        init_request_scope()
+        bind_library_scope(LibraryScope(library_id="lib-123", forget=AsyncMock()))
 
         request = SyncStreamDto(types=[SyncRequestType.AuthUsersV1], reset=True)
 
@@ -1546,7 +1556,7 @@ class TestGetSyncStreamEndpoint:
             session_store=mock_session_store,
         )
 
-        mock_checkpoint_store.delete_all.assert_called_once_with(TEST_SESSION_UUID)
+        mock_checkpoint_store.delete_all.assert_called_once_with(TEST_SESSION_UUID, 0)
         mock_checkpoint_store.get_all.assert_not_called()
 
         events = []

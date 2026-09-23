@@ -67,19 +67,19 @@ per request and scopes every Gumnut call to it:
   stored choice is not consulted.
 - **Switching.** When a session's re-check resolves a different library — the
   choice changed, became unusable, or became usable again — the session moves
-  to it and gets a pending sync reset in one conditional write, because its
-  checkpoints are cursors into the previous library's event stream. A session
-  whose library can no longer be resolved at all (the `403` above, or no live
-  library) drops it with a reset. Every write of the session's library —
-  record, switch, or drop — holds only while the session still caches the
-  library the request observed, so a request that read stale state cannot
-  undo a concurrent switch. A request serves only a library its session
-  records, which is what ties checkpoints to one library: when its write does
-  not leave the session holding the resolved library, it stays on the library
-  it observed, and a first resolution that cannot be recorded gets a `503` to
-  retry. A sync stream whose session has moved off its bound library by the
-  time it reads checkpoints sends a reset instead. A request in flight
-  finishes against the library it resolved.
+  to it; one whose library can no longer be resolved at all (the `403` above,
+  or no live library) drops it. Either way its sync resets: the session's
+  sync epoch advances in the same conditional write, which holds only while
+  the session still records the library the request observed, so a request
+  that read stale state changes nothing. Checkpoints are stored per epoch and
+  acks carry the epoch they were issued for, so an ack from a stream of the
+  previous library is dropped rather than resuming the new one (see
+  [Session & checkpoint implementation](session-checkpoint-implementation.md)).
+  A request serves only a library its session records: when its write does not
+  leave the session holding the resolved library, it stays on the library it
+  observed, and with none to stay on — a first resolution, or a library it
+  could not drop — gets a `503` to retry. A sync stream whose session no
+  longer records the library it bound sends a reset instead of streaming.
   Without a stored choice, a session that fell back stays on its library while
   the user still owns it, so restoring an older trashed library does not move
   it; new sessions pick the oldest.
@@ -88,8 +88,8 @@ per request and scopes every Gumnut call to it:
   shared HTTP client's response hook drops the cached id, so the next request
   re-resolves without waiting for the re-check (the streaming upload, on its
   own HTTP client, forwards the error explicitly). The request that discovers
-  the trash still fails, and a session also gets a pending sync reset, since
-  its checkpoints belong to the vanished library.
+  the trash still fails, and a session's sync resets, since its checkpoints
+  belong to the vanished library.
 
 ## Request path
 

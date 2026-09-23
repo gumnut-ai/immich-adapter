@@ -203,63 +203,29 @@ class TestLibraryCache:
         assert await cache.get_for_api_key(API_KEY) is None
 
     @pytest.mark.anyio
-    async def test_remember_for_session_writes_session_field(
+    async def test_set_session_library_writes_through_the_store(
         self, cache, mock_session_store
     ):
-        mock_session_store.update_library_id.return_value = True
+        mock_session_store.set_library.return_value = True
 
-        held = await cache.remember_for_session(
-            SESSION_TOKEN, "lib_1", LibraryChoice("lib_1", from_choice=True)
+        held = await cache.set_session_library(
+            SESSION_TOKEN, "lib_old", "lib_new", from_choice=True
         )
 
         assert held is True
-
-        mock_session_store.update_library_id.assert_awaited_once_with(
-            SESSION_TOKEN, "lib_1", "lib_1", from_choice=True
+        mock_session_store.set_library.assert_awaited_once_with(
+            SESSION_TOKEN, "lib_old", "lib_new", from_choice=True
         )
 
     @pytest.mark.anyio
-    async def test_switch_session_moves_library_through_the_store(
+    async def test_set_session_library_redis_failure_is_not_held(
         self, cache, mock_session_store
     ):
-        mock_session_store.switch_library.return_value = True
-
-        committed = await cache.switch_session(
-            SESSION_TOKEN, "lib_old", LibraryChoice("lib_new", from_choice=False)
+        mock_session_store.set_library.side_effect = redis.exceptions.ConnectionError(
+            "down"
         )
 
-        assert committed is True
-        mock_session_store.switch_library.assert_awaited_once_with(
-            SESSION_TOKEN, "lib_old", "lib_new", from_choice=False
-        )
-
-    @pytest.mark.anyio
-    async def test_remember_for_session_redis_failure_is_not_held(
-        self, cache, mock_session_store
-    ):
-        mock_session_store.update_library_id.side_effect = (
-            redis.exceptions.ConnectionError("down")
-        )
-
-        held = await cache.remember_for_session(
-            SESSION_TOKEN, "", LibraryChoice("lib_1", from_choice=False)
-        )
-
-        assert held is False
-
-    @pytest.mark.anyio
-    async def test_switch_session_redis_failure_is_not_committed(
-        self, cache, mock_session_store
-    ):
-        mock_session_store.switch_library.side_effect = (
-            redis.exceptions.ConnectionError("down")
-        )
-
-        committed = await cache.switch_session(
-            SESSION_TOKEN, "lib_old", LibraryChoice("lib_new", from_choice=False)
-        )
-
-        assert committed is False
+        assert await cache.set_session_library(SESSION_TOKEN, "", "lib_1") is False
 
     @pytest.mark.anyio
     async def test_remember_for_api_key_writes_hashed_key_with_ttl(
@@ -276,16 +242,6 @@ class TestLibraryCache:
         mock_redis.set.side_effect = redis.exceptions.ConnectionError("down")
 
         await cache.remember_for_api_key(API_KEY, "lib_1")
-
-    @pytest.mark.anyio
-    async def test_forget_session_drops_library_and_flags_reset(
-        self, cache, mock_session_store
-    ):
-        await cache.forget_session(SESSION_TOKEN, "lib_1")
-
-        mock_session_store.forget_library.assert_awaited_once_with(
-            SESSION_TOKEN, "lib_1"
-        )
 
     @pytest.mark.anyio
     async def test_forget_api_key_deletes_hashed_key(self, cache, mock_redis):

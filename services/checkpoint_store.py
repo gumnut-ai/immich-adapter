@@ -9,6 +9,7 @@ from uuid import UUID
 import sentry_sdk
 
 from routers.immich_models import SyncEntityType
+from services.session_store import checkpoint_key
 from utils.redis_client import get_redis_client, parse_redis_peer
 from utils.redis_protocols import AsyncRedisClient
 
@@ -84,15 +85,24 @@ class Checkpoint:
         )
 
 
-def _checkpoint_key(session_token: UUID) -> str:
-    """
-    Generate Redis key for session checkpoints.
-
-    Schema: session:{uuid}:checkpoints (Hash)
-        Each field is an entity type (e.g., AssetV1, AlbumV1)
-        Each value is pipe-delimited: {updated_at}|{cursor}
-    """
-    return f"session:{session_token}:checkpoints"
+# KEYS: session hash, the epoch's checkpoint key. ARGV: the epoch, then
+# field/value pairs. Writes only while the session is still at that epoch, so
+# an ack from a stream of a library the session has left is dropped, and gives
+# the checkpoints the session's remaining TTL so they expire with it.
+_SET_IF_EPOCH_LUA = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 0
+end
+if (redis.call('HGET', KEYS[1], 'sync_epoch') or '0') ~= ARGV[1] then
+  return 0
+end
+redis.call('HSET', KEYS[2], unpack(ARGV, 2))
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl > 0 then
+  redis.call('PEXPIRE', KEYS[2], ttl)
+end
+return 1
+"""
 
 
 class CheckpointStore:
@@ -102,8 +112,9 @@ class CheckpointStore:
     Hides Redis implementation details from calling code.
     All checkpoint operations go through this class.
 
-    Checkpoints are tied to sessions - when a session is deleted,
-    its checkpoints should also be deleted (handled by SessionStore).
+    Checkpoints are tied to a session's sync epoch (see SessionStore): each
+    epoch's checkpoints are a hash of entity type to "{updated_at}|{cursor}".
+    SessionStore deletes them with the session or when the epoch advances.
     """
 
     def __init__(self, redis_client: Any):
@@ -121,17 +132,18 @@ class CheckpointStore:
         span.set_data("network.peer.address", self._redis_host)
         span.set_data("network.peer.port", self._redis_port)
 
-    async def get_all(self, session_token: UUID) -> list[Checkpoint]:
+    async def get_all(self, session_token: UUID, epoch: int) -> list[Checkpoint]:
         """
-        Get all checkpoints for a session.
+        Get all checkpoints for a session's sync epoch.
 
         Args:
             session_token: The session token (UUID)
+            epoch: The session's sync epoch
 
         Returns:
             List of Checkpoint objects, empty if none exist
         """
-        key = _checkpoint_key(session_token)
+        key = checkpoint_key(session_token, epoch)
         with sentry_sdk.start_span(op="cache.get", name="checkpoint") as span:
             data = await self._redis.hgetall(key)
             span.set_data("cache.key", [key])
@@ -162,19 +174,20 @@ class CheckpointStore:
         return checkpoints
 
     async def get(
-        self, session_token: UUID, entity_type: SyncEntityType
+        self, session_token: UUID, epoch: int, entity_type: SyncEntityType
     ) -> Checkpoint | None:
         """
-        Get a specific checkpoint for a session.
+        Get a specific checkpoint for a session's sync epoch.
 
         Args:
             session_token: The session token (UUID)
+            epoch: The session's sync epoch
             entity_type: The entity type
 
         Returns:
             Checkpoint if found, None otherwise
         """
-        key = _checkpoint_key(session_token)
+        key = checkpoint_key(session_token, epoch)
         with sentry_sdk.start_span(op="cache.get", name="checkpoint") as span:
             value = await self._redis.hget(key, entity_type.value)
             span.set_data("cache.key", [key])
@@ -201,17 +214,20 @@ class CheckpointStore:
     async def set_many(
         self,
         session_token: UUID,
+        epoch: int,
         checkpoints: list[tuple[SyncEntityType, str]],
     ) -> bool:
         """
-        Set multiple checkpoints for a session atomically.
+        Set multiple checkpoints for a sync epoch atomically, only while the
+        session is still at that epoch.
 
         Args:
             session_token: The session token (UUID)
+            epoch: The sync epoch the acked events were streamed for
             checkpoints: List of (entity_type, cursor) tuples.
 
         Returns:
-            True if checkpoints were set successfully
+            Whether the checkpoints were written
         """
         if not checkpoints:
             return True
@@ -227,22 +243,28 @@ class CheckpointStore:
             )
             mapping[entity_type.value] = checkpoint.to_redis_value()
 
-        key = _checkpoint_key(session_token)
+        key = checkpoint_key(session_token, epoch)
+        args = [str(epoch)]
+        for field, value in mapping.items():
+            args.extend((field, value))
         with sentry_sdk.start_span(op="cache.put", name="checkpoint") as span:
-            await self._redis.hset(key, mapping=mapping)
+            written = await self._redis.eval(
+                _SET_IF_EPOCH_LUA, 2, f"session:{session_token}", key, *args
+            )
             span.set_data("cache.key", [key])
             span.set_data("cache.item_size", sum(len(v) for v in mapping.values()))
             self._set_network_data(span)
-        return True
+        return bool(written)
 
     async def delete(
-        self, session_token: UUID, entity_types: list[SyncEntityType]
+        self, session_token: UUID, epoch: int, entity_types: list[SyncEntityType]
     ) -> bool:
         """
-        Delete specific checkpoints for a session.
+        Delete specific checkpoints for a session's sync epoch.
 
         Args:
             session_token: The session token (UUID)
+            epoch: The session's sync epoch
             entity_types: List of entity types to delete
 
         Returns:
@@ -252,20 +274,23 @@ class CheckpointStore:
             return True
 
         entity_type_values = [et.value for et in entity_types]
-        await self._redis.hdel(_checkpoint_key(session_token), *entity_type_values)
+        await self._redis.hdel(
+            checkpoint_key(session_token, epoch), *entity_type_values
+        )
         return True
 
-    async def delete_all(self, session_token: UUID) -> bool:
+    async def delete_all(self, session_token: UUID, epoch: int) -> bool:
         """
-        Delete all checkpoints for a session.
+        Delete all checkpoints for a session's sync epoch.
 
         Args:
             session_token: The session token (UUID)
+            epoch: The session's sync epoch
 
         Returns:
             True if operation completed (even if no checkpoints existed)
         """
-        await self._redis.delete(_checkpoint_key(session_token))
+        await self._redis.delete(checkpoint_key(session_token, epoch))
         return True
 
 
