@@ -41,7 +41,7 @@ schedule: "0 */6 * * *"
 ## Scope
 This repo's docs live under (in scope):
 - `/README.md`
-- All `AGENTS.md` and `CLAUDE.md` files in this repo
+- All `AGENTS.md` files in this repo
 - `/docs/architecture/` — adapter, sync stream, WebSocket, session/checkpoint
 - `/docs/design-docs/` — auth, trash, sync ordering, gap analysis, etc.
 - `/docs/guides/` — running with Immich web/mobile
