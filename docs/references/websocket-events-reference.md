@@ -5,6 +5,9 @@ last-updated: 2026-09-24
 
 # Immich WebSocket Events Reference
 
+This reference covers upstream Immich event contracts and adapter behavior;
+events the adapter does not emit are marked upstream-only.
+
 ## Summary Table
 
 Client columns are read from the pinned upstream source for **both** clients (`web/src/lib/` and `mobile/lib/` at the tag in `.immich-container-tag`); "Not used" means neither registers a handler, not that web alone doesn't.
@@ -19,26 +22,14 @@ Client columns are read from the pinned upstream source for **both** clients (`w
 | `on_asset_restore` | Asset restored from trash | `assetIds: string[]` | Global listener | Listener |
 | `on_asset_update` | Sidecar metadata extracted (upstream) / description, location, datetime, favorite, or rating edited, or edit-route write committed (adapter) | `AssetResponseDto` | Global listener | Listener |
 | `on_asset_stack_update` | Stack created/updated/deleted | None | Declared, not subscribed | Not referenced |
-| `on_asset_hidden` | Upstream only: asset visibility changed; not emitted by this adapter | `assetId: string` | Global listener | Listener |
-| `on_person_thumbnail` | Upstream only: person thumbnail generated; no current adapter emission | `personId: string` | Page-specific | Not used |
+| `on_asset_hidden` | Upstream only: asset visibility changed | `assetId: string` | Global listener | Listener |
+| `on_person_thumbnail` | Upstream only: person thumbnail generated | `personId: string` | Page-specific | Not used |
 | `on_session_delete` | Session invalidated (upstream) / session deleted (adapter) | `sessionId: string` | Global (triggers logout) | Not used |
-| `on_notification` | Upstream only: in-app notification created; not emitted by this adapter | `NotificationDto` | Global (refreshes panel) | Not used |
-| `on_config_update` | Upstream only: system config changed; not emitted by this adapter | None | Global listener | Listener |
-| `on_new_release` | Upstream only: new version available; not emitted by this adapter | `ReleaseNotification` | Global listener | Listener |
+| `on_notification` | Upstream only: in-app notification created | `NotificationDto` | Global (refreshes panel) | Not used |
+| `on_config_update` | Upstream only: system config changed | None | Global listener | Listener |
+| `on_new_release` | Upstream only: new version available | `ReleaseNotification` | Global listener | Listener |
 | `on_server_version` | Connection established | `ServerVersionResponseDto` | Global listener | Not documented |
-| `on_user_delete` | Upstream only: user account deleted; not emitted by this adapter | `userId: string` | Global listener | Not documented |
-
----
-
-## Adapter emission boundary
-
-This reference combines upstream Immich event contracts with the events the
-adapter currently emits. An upstream trigger is not evidence that the adapter
-emits the same event. For adapter behavior, use `WebSocketEvent` in
-`services/websockets.py` and its router call sites. `on_asset_hidden`,
-`on_notification`, `on_config_update`, `on_new_release`, and `on_user_delete`
-are upstream-only here. The adapter declares `on_person_thumbnail` for a
-future event channel, but it has no current emission call site.
+| `on_user_delete` | Upstream only: user account deleted | `userId: string` | Global listener | Not documented |
 
 ---
 
@@ -213,9 +204,8 @@ When received, the client updates `person.updatedAt` to force the browser to fet
 - **Web**: Global listener. Triggers `authManager.logout()`.
 - **Mobile**: Not used.
 
-**Adapter timing**: The adapter awaits `emit_session_event` during logout and
-session-deletion requests after deleting the session. It does not add a 500 ms
-post-response delay.
+**Adapter timing**: Logout and session-deletion requests await
+`emit_session_event` before returning the HTTP response.
 
 ---
 
