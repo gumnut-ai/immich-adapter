@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-09-23
+last-updated: 2026-09-24
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -153,8 +153,8 @@ Checkpoints without a cursor are skipped when reconstructing ack responses.
 
 The sync stream is driven by the backend events feed, with one checkpoint per entity type.
 
-1. If `request.reset=true`, the adapter deletes all checkpoints for the session's current sync epoch before streaming.
-2. The stream binds the session's current `sync_epoch`. If the client owes a reset, or the session no longer records the library this request bound, the adapter returns a one-event stream containing `SyncResetV1|reset|{epoch}` and stops.
+1. The stream binds the session's current `sync_epoch`. If the client owes a reset, or the session no longer records the library this request bound, the adapter returns a one-event stream containing `SyncResetV1|reset|{epoch}` and stops. This reset gate runs before `request.reset` is processed.
+2. If `request.reset=true`, the adapter deletes all checkpoints for the session's current sync epoch before streaming.
 3. Before the response starts, the route resolves `users.me()` so auth failures still surface as normal HTTP errors instead of being swallowed inside a streaming generator.
 4. `AuthUsersV1` and `UsersV1` are emitted directly from the current user record, using `current_user.updated_at` (or the user id as a fallback) as their cursor.
 5. Event-backed types resume from `checkpoint.cursor` using the backend events API with:
@@ -165,7 +165,11 @@ The sync stream is driven by the backend events feed, with one checkpoint per en
    has no edit-history source; this does not disable the implemented HTTP edit
    routes. `AssetFacesV1` is skipped when `AssetFacesV2` is also requested so
    the same face events are not streamed twice.
-8. On successful completion, the stream finishes with `SyncCompleteV1|complete|`. Failures during event fetch or entity hydration end the stream without a completion event, leaving the affected cursor unacknowledged for retry.
+8. On successful completion, a session-bound stream finishes with
+   `SyncCompleteV1|complete|{epoch}`. A stream without a bound session uses an
+   empty epoch field (`SyncCompleteV1|complete|`). Failures during event fetch or
+   entity hydration end the stream without a completion event, leaving the
+   affected cursor unacknowledged for retry.
 
 This two-phase ordering is the key behavior that keeps the mobile client's SQLite foreign keys consistent while still using a single events source.
 
