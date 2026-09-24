@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-08-30
+last-updated: 2026-09-24
 ---
 
 # Immich WebSocket Events Reference
@@ -19,14 +19,26 @@ Client columns are read from the pinned upstream source for **both** clients (`w
 | `on_asset_restore` | Asset restored from trash | `assetIds: string[]` | Global listener | Listener |
 | `on_asset_update` | Sidecar metadata extracted (upstream) / description, location, datetime, favorite, or rating edited, or edit-route write committed (adapter) | `AssetResponseDto` | Global listener | Listener |
 | `on_asset_stack_update` | Stack created/updated/deleted | None | Declared, not subscribed | Not referenced |
-| `on_asset_hidden` | Asset visibility changed | `assetId: string` | Global listener | Listener |
-| `on_person_thumbnail` | Person thumbnail generated | `personId: string` | Page-specific | Not used |
-| `on_session_delete` | Session invalidated | `sessionId: string` | Global (triggers logout) | Not used |
-| `on_notification` | In-app notification created | `NotificationDto` | Global (refreshes panel) | Not used |
-| `on_config_update` | System config changed | None | Global listener | Listener |
-| `on_new_release` | New version available | `ReleaseNotification` | Global listener | Listener |
+| `on_asset_hidden` | Upstream only: asset visibility changed; not emitted by this adapter | `assetId: string` | Global listener | Listener |
+| `on_person_thumbnail` | Upstream only: person thumbnail generated; no current adapter emission | `personId: string` | Page-specific | Not used |
+| `on_session_delete` | Session invalidated (upstream) / session deleted (adapter) | `sessionId: string` | Global (triggers logout) | Not used |
+| `on_notification` | Upstream only: in-app notification created; not emitted by this adapter | `NotificationDto` | Global (refreshes panel) | Not used |
+| `on_config_update` | Upstream only: system config changed; not emitted by this adapter | None | Global listener | Listener |
+| `on_new_release` | Upstream only: new version available; not emitted by this adapter | `ReleaseNotification` | Global listener | Listener |
 | `on_server_version` | Connection established | `ServerVersionResponseDto` | Global listener | Not documented |
-| `on_user_delete` | User account deleted | `userId: string` | Global listener | Not documented |
+| `on_user_delete` | Upstream only: user account deleted; not emitted by this adapter | `userId: string` | Global listener | Not documented |
+
+---
+
+## Adapter emission boundary
+
+This reference combines upstream Immich event contracts with the events the
+adapter currently emits. An upstream trigger is not evidence that the adapter
+emits the same event. For adapter behavior, use `WebSocketEvent` in
+`services/websockets.py` and its router call sites. `on_asset_hidden`,
+`on_notification`, `on_config_update`, `on_new_release`, and `on_user_delete`
+are upstream-only here. The adapter declares `on_person_thumbnail` for a
+future event channel, but it has no current emission call site.
 
 ---
 
@@ -154,6 +166,7 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`, and t
 ### `on_asset_hidden`
 
 **Trigger**: Emitted when asset visibility changes to hidden (`notification.service.ts`). Used for hiding live photo motion video components.
+**Adapter status**: Upstream-only; this adapter does not emit this event.
 **Sent to**: Asset owner (by userId)
 **Payload**: `assetId: string`
 
@@ -166,6 +179,8 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`, and t
 ### `on_person_thumbnail`
 
 **Trigger**: Emitted when the `PersonGenerateThumbnail` job completes (`job.service.ts`).
+**Adapter status**: The adapter declares this event as requiring the Gumnut API
+event channel, but has no current emission call site.
 **Sent to**: Person owner (by userId)
 **Payload**: `personId: string`
 
@@ -198,13 +213,16 @@ When received, the client updates `person.updatedAt` to force the browser to fet
 - **Web**: Global listener. Triggers `authManager.logout()`.
 - **Mobile**: Not used.
 
-**Note**: Event is sent with a 500ms delay after the response.
+**Adapter timing**: The adapter awaits `emit_session_event` during logout and
+session-deletion requests after deleting the session. It does not add a 500 ms
+post-response delay.
 
 ---
 
 ### `on_notification`
 
 **Trigger**: Emitted when in-app notification is created (`notification.service.ts`).
+**Adapter status**: Upstream-only; this adapter does not emit this event.
 **Sent to**: Notification recipient (by userId)
 **Payload**: `NotificationDto` (see `routers/immich_models.py`)
 
@@ -224,6 +242,7 @@ When received, the client updates `person.updatedAt` to force the browser to fet
 
 ### `on_config_update`
 
+**Adapter status**: Upstream-only; this adapter does not emit this event.
 **Sent to**: All connected clients (broadcast)
 
 Otherwise as in the Summary Table; emitted from `notification.service.ts`.
@@ -233,6 +252,7 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`.
 ### `on_new_release`
 
 **Trigger**: Emitted when background job detects new GitHub release (`version.service.ts`).
+**Adapter status**: Upstream-only; this adapter does not emit this event.
 **Sent to**: All connected clients (broadcast)
 **Payload**: `ReleaseNotification` (see `routers/immich_models.py`)
 
@@ -252,6 +272,7 @@ Otherwise as in the Summary Table; sent on WebSocket connection establishment, a
 
 ### `on_user_delete`
 
+**Adapter status**: Upstream-only; this adapter does not emit this event.
 **Sent to**: All connected clients (broadcast)
 
 Otherwise as in the Summary Table; emitted from `notification.service.ts`.
