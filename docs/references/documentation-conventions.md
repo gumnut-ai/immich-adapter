@@ -1,6 +1,6 @@
 ---
 title: Documentation Conventions
-last-updated: 2026-09-14
+last-updated: 2026-09-24
 ---
 
 # Documentation Conventions
@@ -111,7 +111,7 @@ Add `superseded-by:` when a deprecated doc has an evergreen or newer design-doc 
 
 ## Writing Prescriptive Conventions
 
-Keep codebase-specific facts and traps that a capable contributor could reasonably miss. Do not pad the doc with generic framework, language, HTTP, SQL, or testing tutorials.
+Keep codebase-specific facts and traps that a capable contributor could reasonably miss. Do not pad the doc with generic framework, language, HTTP, SQL, or testing tutorials. The same bar applies to every doc an agent follows — runbooks, guides, and `AGENTS.md`: state the goal and the constraints a capable agent could not work out from the repository, not command recipes or step checklists it can derive.
 
 - Explain a non-obvious rationale once and point to it elsewhere.
 - Scope absolute claims by checking the full repository for counterexamples.
