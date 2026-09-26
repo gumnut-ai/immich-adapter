@@ -930,18 +930,22 @@ class TestCreateAlbum:
                 current_user=mock_current_user,
             )
         )
-        await association_started.wait()
         try:
-            result = await create_album(
-                CreateAlbumDto(albumName="Test Album", assetIds=[reused_asset_uuid]),
-                client=reuse_client,
-                current_user=mock_current_user,
-            )
+            async with asyncio.timeout(5):
+                await association_started.wait()
+                result = await create_album(
+                    CreateAlbumDto(
+                        albumName="Test Album", assetIds=[reused_asset_uuid]
+                    ),
+                    client=reuse_client,
+                    current_user=mock_current_user,
+                )
+                reuse_finished.set()
+                with pytest.raises(APIStatusError) as exc_info:
+                    await creator_task
         finally:
-            reuse_finished.set()
-
-        with pytest.raises(APIStatusError) as exc_info:
-            await creator_task
+            creator_task.cancel()
+            await asyncio.gather(creator_task, return_exceptions=True)
 
         assert exc_info.value is original_error
         assert result.assetCount == current_album.asset_count
