@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-22
+last-updated: 2026-09-26
 ---
 
 # Immich Adapter Architecture
@@ -128,7 +128,22 @@ The Gumnut API owns the OAuth client credentials and performs authorization URL 
 
 ### Request observability
 
-Sentry request context attaches the adapter session, public user identifier, route, and upstream failure metadata where available. Never put JWTs, API keys, or captured customer payloads in structured fields. Upstream response severity and aggregate degradation logging live in [Testing and Logging](../references/testing-and-logging.md).
+Sentry request context attaches the adapter session, public user identifier,
+route, and upstream failure metadata where available. The outermost
+`ObservabilityTagsMiddleware` also classifies recognized Immich traffic as
+`immich-mobile-ios`, `immich-mobile-android`, or `immich-web`. Mobile
+classification prefers the `deviceType` header and falls back to the native
+Immich User-Agent for transfers that omit it; browser User-Agents identify web
+traffic. Uptime probes and other unknown callers remain untagged. The raw
+User-Agent is recorded as the high-cardinality `user_agent.original` span
+attribute, not as a Sentry tag.
+
+The Sentry event hooks redact signed CDN credentials and filenames from error
+event values. HTTP client transaction spans likewise redact CDN query strings,
+URLs, and descriptions, and add `server.address` (and a valid
+`server.port`) for upstream correlation. Never put JWTs, API keys, or captured
+customer payloads in structured fields. Upstream response severity and
+aggregate degradation logging live in [Testing and Logging](../references/testing-and-logging.md).
 
 ## Translation boundaries
 
