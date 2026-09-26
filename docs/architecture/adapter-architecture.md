@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-22
+last-updated: 2026-09-26
 ---
 
 # Immich Adapter Architecture
@@ -223,6 +223,27 @@ The Gumnut API is cursor-paginated while several Immich routes expose numeric pa
 - fetch one entity directly.
 
 The exact patterns, caps, failure propagation, fan-out bounds, and bulk-write semantics live in [Pagination, Bulk Operations, and Concurrency](../references/pagination-bulk-and-concurrency.md). `routers/api/constants.py` owns mutable request caps.
+
+### Album creation and retries
+
+`routers/api/albums.py::create_album` distinguishes the Gumnut API's creation
+statuses: `201` confirms a new album, while `200` returns an existing album
+whose name matches within the library after trimming and ignoring case, and
+whose other provided fields match. Conflicting provided fields return `409`.
+An omitted description stays omitted in the Gumnut request; explicit null is
+forwarded.
+
+Initial asset associations are separate, chunked writes. On association
+failure, the adapter attempts to delete only an album confirmed new by `201`.
+An existing album and successful earlier associations remain intact, so a retry
+cannot delete previously saved data. Every requested asset must be reported as
+added or already present before the adapter returns success. Reused albums
+are retrieved after association succeeds to return their current total member
+count, cover, and date range. The Immich create route retains its `201`
+response status for both outcomes.
+
+Deploy this handling before enabling album reuse in the Gumnut API. It also
+works with an API that always returns `201` for successful album creation.
 
 ### Offset translation limitation
 

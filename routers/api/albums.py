@@ -4,7 +4,7 @@ from typing import Annotated, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from gumnut import AsyncGumnut, GumnutError
+from gumnut import AsyncGumnut, GumnutError, omit
 
 from routers.utils.bulk import (
     BulkChunkError,
@@ -171,26 +171,35 @@ async def create_album(
     library_id: str | None = Depends(get_current_library_id),
 ) -> AlbumResponseDto:
     """
-    Create a new album and associate any initial assets.
+    Create or reuse an album and associate any initial assets.
 
     Album creation and asset association are separate Gumnut API operations.
-    If any association fails, attempt a best-effort delete of the just-created
-    album before surfacing the error so Immich clients never receive a
-    successful partial create.
+    If any association fails, attempt a best-effort delete only when the
+    creation response confirms a new album. A reused album and any successful
+    associations remain intact on failure.
     albumUsers remain unsupported.
     """
 
-    gumnut_album = await client.albums.create(
+    raw_response = await client.albums.with_raw_response.create(
         name=request.albumName or "",
-        description=request.description,
+        description=request.description
+        if "description" in request.model_fields_set
+        else omit,
         library_id=library_id,
     )
+    gumnut_album = await raw_response.parse()
+    created = raw_response.status_code == status.HTTP_201_CREATED
 
     asset_count = await _add_initial_assets_to_album(
         client,
         gumnut_album.id,
         request.assetIds or [],
+        created=created,
     )
+
+    if not created:
+        gumnut_album = await client.albums.retrieve(gumnut_album.id)
+        asset_count = gumnut_album.asset_count
 
     return convert_gumnut_album_to_immich(
         gumnut_album,
@@ -203,8 +212,10 @@ async def _add_initial_assets_to_album(
     client: AsyncGumnut,
     gumnut_album_id: str,
     asset_uuids: list[UUID],
+    *,
+    created: bool,
 ) -> int:
-    """Associate initial assets and return the resulting unique membership count."""
+    """Associate assets and count unique requested memberships confirmed upstream."""
     associated_asset_ids: set[str] = set()
 
     for asset_uuid_chunk in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
@@ -219,7 +230,8 @@ async def _add_initial_assets_to_album(
                 asset_ids=gumnut_asset_ids,
             )
         except GumnutError:
-            await _rollback_created_album(client, gumnut_album_id)
+            if created:
+                await _rollback_created_album(client, gumnut_album_id)
             raise
 
         added_asset_ids = set(response.added_assets)
@@ -227,7 +239,8 @@ async def _add_initial_assets_to_album(
         not_found_asset_ids = set(response.not_found_assets)
 
         if not_found_asset_ids:
-            await _rollback_created_album(client, gumnut_album_id)
+            if created:
+                await _rollback_created_album(client, gumnut_album_id)
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="One or more initial album assets were not found or are not accessible",
@@ -243,7 +256,8 @@ async def _add_initial_assets_to_album(
                     "reported_count": len(reported_asset_ids),
                 },
             )
-            await _rollback_created_album(client, gumnut_album_id)
+            if created:
+                await _rollback_created_album(client, gumnut_album_id)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Upstream did not report membership for every initial album asset",

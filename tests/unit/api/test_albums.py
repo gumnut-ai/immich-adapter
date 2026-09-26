@@ -2,12 +2,13 @@
 
 import asyncio
 import logging
+from copy import copy
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
 from unittest.mock import AsyncMock, Mock, call
-from gumnut import APIStatusError, NotFoundError
+from gumnut import APIStatusError, NotFoundError, omit
 from gumnut.types.albums import AssetsAssociationAddResponse
 from uuid import uuid4
 
@@ -53,6 +54,10 @@ def _add_response(
         duplicate_assets=duplicate or [],
         not_found_assets=not_found or [],
     )
+
+
+def _create_response(album: object, status_code: int = 201) -> Mock:
+    return Mock(status_code=status_code, parse=AsyncMock(return_value=album))
 
 
 class TestGetAllAlbums:
@@ -489,6 +494,141 @@ class TestCreateAlbum:
     """Test the create_album endpoint."""
 
     @pytest.mark.anyio
+    @pytest.mark.parametrize("description", [omit, None, "Description"])
+    async def test_create_album_preserves_provided_description(
+        self, description, sample_gumnut_album, mock_current_user
+    ):
+        mock_client = Mock()
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=_create_response(sample_gumnut_album)
+        )
+        kwargs = {} if description is omit else {"description": description}
+
+        await create_album(
+            CreateAlbumDto(albumName="Test Album", **kwargs),
+            client=mock_client,
+            current_user=mock_current_user,
+            library_id="lib_test",
+        )
+
+        mock_client.albums.with_raw_response.create.assert_awaited_once_with(
+            name="Test Album", description=description, library_id="lib_test"
+        )
+
+    @pytest.mark.anyio
+    async def test_create_album_reuses_current_album_without_initial_assets(
+        self, sample_gumnut_album, mock_current_user
+    ):
+        mock_client = Mock()
+        raw_response = _create_response(sample_gumnut_album, status_code=200)
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=raw_response
+        )
+        mock_client.albums.retrieve = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.assets_associations.add = AsyncMock()
+        mock_client.albums.delete = AsyncMock()
+
+        result = await create_album(
+            CreateAlbumDto(albumName="test album"),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assetCount == sample_gumnut_album.asset_count
+        assert result.albumName == sample_gumnut_album.name
+        assert result.description == sample_gumnut_album.description
+        raw_response.parse.assert_awaited_once()
+        mock_client.albums.retrieve.assert_awaited_once_with(sample_gumnut_album.id)
+        mock_client.albums.assets_associations.add.assert_not_awaited()
+        mock_client.albums.delete.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_create_album_reuses_current_count_and_metadata_after_associations(
+        self, sample_gumnut_album, mock_current_user
+    ):
+        asset_uuids = [uuid4(), uuid4()]
+        gumnut_asset_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
+        current_album = copy(sample_gumnut_album)
+        current_album.asset_count = sample_gumnut_album.asset_count + 1
+        current_album.album_cover_asset_id = gumnut_asset_ids[1]
+        current_album.start_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        current_album.end_date = datetime(2026, 2, 1, tzinfo=timezone.utc)
+        current_album.updated_at = sample_gumnut_album.updated_at + timedelta(seconds=1)
+        mock_client = Mock()
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=_create_response(sample_gumnut_album, status_code=200)
+        )
+        mock_client.albums.assets_associations.add = AsyncMock(
+            return_value=_add_response(
+                added=[gumnut_asset_ids[1]], duplicate=[gumnut_asset_ids[0]]
+            )
+        )
+        mock_client.albums.retrieve = AsyncMock(return_value=current_album)
+        mock_client.albums.delete = AsyncMock()
+
+        result = await create_album(
+            CreateAlbumDto(albumName="test album", assetIds=asset_uuids),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assetCount == current_album.asset_count
+        assert result.albumThumbnailAssetId == asset_uuids[1]
+        assert result.startDate == current_album.start_date
+        assert result.endDate == current_album.end_date
+        assert result.updatedAt == current_album.updated_at
+        mock_client.albums.retrieve.assert_awaited_once_with(sample_gumnut_album.id)
+        mock_client.albums.delete.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("failure", ["sdk", "not_found", "incomplete"])
+    async def test_create_album_preserves_reused_album_on_later_association_failure(
+        self, failure, sample_gumnut_album, mock_current_user
+    ):
+        asset_uuids = [uuid4() for _ in range(GUMNUT_API_MAX_BULK_IDS + 1)]
+        gumnut_asset_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
+        last_response = (
+            make_sdk_status_error(500, "association failed")
+            if failure == "sdk"
+            else _add_response(not_found=[gumnut_asset_ids[-1]])
+            if failure == "not_found"
+            else _add_response()
+        )
+        mock_client = Mock()
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=_create_response(sample_gumnut_album, status_code=200)
+        )
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                _add_response(added=gumnut_asset_ids[:GUMNUT_API_MAX_BULK_IDS]),
+                last_response,
+            ]
+        )
+        mock_client.albums.delete = AsyncMock()
+        mock_client.albums.retrieve = AsyncMock()
+
+        with pytest.raises(
+            APIStatusError if failure == "sdk" else HTTPException
+        ) as exc:
+            await create_album(
+                CreateAlbumDto(albumName="Test Album", assetIds=asset_uuids),
+                client=mock_client,
+                current_user=mock_current_user,
+            )
+
+        assert (
+            exc.value.status_code
+            == {
+                "sdk": 500,
+                "not_found": 404,
+                "incomplete": 502,
+            }[failure]
+        )
+        assert mock_client.albums.assets_associations.add.await_count == 2
+        mock_client.albums.delete.assert_not_awaited()
+        mock_client.albums.retrieve.assert_not_awaited()
+
+    @pytest.mark.anyio
     async def test_create_album_success(self, sample_gumnut_album, mock_current_user):
         """An empty initial asset list creates an empty album."""
         # Setup - create mock client
@@ -496,7 +636,9 @@ class TestCreateAlbum:
         # Update the sample to have the name we want to test
         sample_gumnut_album.name = "New Album"
         sample_gumnut_album.description = "New Description"
-        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=_create_response(sample_gumnut_album)
+        )
         mock_client.albums.assets_associations.add = AsyncMock()
 
         request = CreateAlbumDto(albumName="New Album", description="New Description")
@@ -514,7 +656,7 @@ class TestCreateAlbum:
         assert hasattr(result, "albumName")
         assert result.albumName == "New Album"
         assert result.assetCount == 0
-        mock_client.albums.create.assert_called_once_with(
+        mock_client.albums.with_raw_response.create.assert_called_once_with(
             name="New Album", description="New Description", library_id="lib_test"
         )
         mock_client.albums.assets_associations.add.assert_not_awaited()
@@ -527,7 +669,9 @@ class TestCreateAlbum:
         asset_uuid = uuid4()
         gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
         mock_client = Mock()
-        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=_create_response(sample_gumnut_album)
+        )
         mock_client.albums.assets_associations.add = AsyncMock(
             return_value=_add_response(added=[gumnut_asset_id])
         )
@@ -554,7 +698,9 @@ class TestCreateAlbum:
             uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in asset_uuids
         ]
         mock_client = Mock()
-        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=_create_response(sample_gumnut_album)
+        )
         mock_client.albums.assets_associations.add = AsyncMock(
             side_effect=[
                 _add_response(added=gumnut_asset_ids[:GUMNUT_API_MAX_BULK_IDS]),
@@ -581,6 +727,35 @@ class TestCreateAlbum:
         ]
 
     @pytest.mark.anyio
+    async def test_create_album_counts_repeated_initial_asset_once(
+        self, sample_gumnut_album, mock_current_user
+    ):
+        asset_uuid = uuid4()
+        asset_id = uuid_to_gumnut_asset_id(asset_uuid)
+        mock_client = Mock()
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=_create_response(sample_gumnut_album)
+        )
+        mock_client.albums.assets_associations.add = AsyncMock(
+            side_effect=[
+                _add_response(added=[asset_id]),
+                _add_response(duplicate=[asset_id]),
+            ]
+        )
+
+        result = await create_album(
+            CreateAlbumDto(
+                albumName="Test Album",
+                assetIds=[asset_uuid] * (GUMNUT_API_MAX_BULK_IDS + 1),
+            ),
+            client=mock_client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assetCount == 1
+        assert mock_client.albums.assets_associations.add.await_count == 2
+
+    @pytest.mark.anyio
     async def test_create_album_rolls_back_incomplete_asset_response(
         self, sample_gumnut_album, mock_current_user
     ):
@@ -588,7 +763,9 @@ class TestCreateAlbum:
         asset_uuids = [uuid4(), uuid4()]
         reported_id = uuid_to_gumnut_asset_id(asset_uuids[0])
         mock_client = Mock()
-        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=_create_response(sample_gumnut_album)
+        )
         mock_client.albums.assets_associations.add = AsyncMock(
             return_value=_add_response(added=[reported_id])
         )
@@ -614,7 +791,9 @@ class TestCreateAlbum:
             uuid_to_gumnut_asset_id(asset_uuid) for asset_uuid in asset_uuids
         ]
         mock_client = Mock()
-        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=_create_response(sample_gumnut_album)
+        )
         mock_client.albums.assets_associations.add = AsyncMock(
             side_effect=[
                 _add_response(added=gumnut_asset_ids[:GUMNUT_API_MAX_BULK_IDS]),
@@ -644,7 +823,9 @@ class TestCreateAlbum:
         missing_uuid = uuid4()
         missing_id = uuid_to_gumnut_asset_id(missing_uuid)
         mock_client = Mock()
-        mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=_create_response(sample_gumnut_album)
+        )
         mock_client.albums.assets_associations.add = AsyncMock(
             return_value=_add_response(not_found=[missing_id])
         )
@@ -663,12 +844,17 @@ class TestCreateAlbum:
         mock_client.albums.delete.assert_awaited_once_with(sample_gumnut_album.id)
 
     @pytest.mark.anyio
-    async def test_create_album_propagates_creation_sdk_error(self, mock_current_user):
+    @pytest.mark.parametrize("status_code", [409, 500])
+    async def test_create_album_propagates_creation_sdk_error(
+        self, status_code, mock_current_user
+    ):
         """Album creation SDK errors bubble to the global handler."""
         mock_client = Mock()
-        mock_client.albums.create = AsyncMock(
-            side_effect=make_sdk_status_error(500, "boom")
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            side_effect=make_sdk_status_error(status_code, "boom")
         )
+        mock_client.albums.assets_associations.add = AsyncMock()
+        mock_client.albums.delete = AsyncMock()
 
         with pytest.raises(APIStatusError):
             await create_album(
@@ -676,6 +862,8 @@ class TestCreateAlbum:
                 client=mock_client,
                 current_user=mock_current_user,
             )
+        mock_client.albums.assets_associations.add.assert_not_awaited()
+        mock_client.albums.delete.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_create_album_rolls_back_association_sdk_error(
@@ -688,7 +876,9 @@ class TestCreateAlbum:
             name="Test Album",
             description=None,
         )
-        mock_client.albums.create = AsyncMock(return_value=sample_album)
+        mock_client.albums.with_raw_response.create = AsyncMock(
+            return_value=_create_response(sample_album)
+        )
         mock_client.albums.assets_associations.add = AsyncMock(
             side_effect=make_sdk_status_error(500, "boom")
         )
