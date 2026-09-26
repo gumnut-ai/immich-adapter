@@ -226,18 +226,19 @@ The exact patterns, caps, failure propagation, fan-out bounds, and bulk-write se
 
 ### Album creation and retries
 
-`routers/api/albums.py::create_album` distinguishes the Gumnut API's creation
-statuses: `201` confirms a new album, while `200` returns an existing album
+The Gumnut API returns `201` for a new album or `200` for an existing album
 whose name matches within the library after trimming and ignoring case, and
 whose other provided fields match. Conflicting provided fields return `409`.
 An omitted description stays omitted in the Gumnut request; explicit null is
 forwarded.
 
 Initial asset associations are separate, chunked writes. On association
-failure, the adapter attempts to delete only an album confirmed new by `201`.
-An existing album and successful earlier associations remain intact, so a retry
-cannot delete previously saved data. Every requested asset must be reported as
-added or already present before the adapter returns success. Reused albums
+failure, the album and successful memberships remain intact for a retry,
+including an album just created by this request. A `201` response cannot prove
+exclusive ownership: another request may reuse the album and save memberships
+before the creator's associations fail. Deleting the album would erase that
+other request's saved data. Every requested asset must be reported as
+added or already present before the adapter returns success. Albums
 are retrieved after association succeeds to return their current total member
 count, cover, and date range. The Immich create route retains its `201`
 response status for both outcomes.
