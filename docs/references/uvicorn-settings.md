@@ -1,6 +1,6 @@
 ---
 title: "Uvicorn Runtime Settings"
-last-updated: 2026-08-11
+last-updated: 2026-09-26
 ---
 
 # Uvicorn Runtime Settings
@@ -19,6 +19,20 @@ Read those files for mutable values. Keeping a second settings table here would 
 ## Render bind contract
 
 Render supplies `PORT`; the image command expands it at runtime and binds on all container interfaces. A process that listens only on loopback or ignores `PORT` is unreachable even when it starts successfully. `Dockerfile` also owns the health-check port expression, so bind and health behavior remain aligned.
+
+## Container health check
+
+The image health check requests `GET /api/server/ping` on
+`http://localhost:${PORT:-8080}`. The endpoint is unauthenticated and returns
+`{"res": "pong"}` when the adapter process is serving requests. It is a
+liveness check only: the handler does not probe Redis or the Gumnut API.
+
+Startup still depends on Redis. The application lifespan checks the configured
+Redis connection before serving requests, so an unreachable Redis instance
+prevents the application from starting even though the ping handler itself is
+lightweight. Treat a passing ping as evidence that the process is alive, not as
+confirmation that every upstream dependency is ready. `Dockerfile` owns the
+health-check interval, timeout, start period, and retry count.
 
 ## WebSocket implementation
 
