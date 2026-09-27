@@ -59,7 +59,7 @@ The sections below follow that order, with design docs split by their `status:` 
 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
-| Adapter architecture | `docs/architecture/adapter-architecture.md` | Adapter boundary, request and data translation, persistence/custody routing, timeline stack collapse, trash, sync/realtime routing, and failure behavior |
+| Adapter architecture | `docs/architecture/adapter-architecture.md` | Adapter boundary, request and data translation, persistence/custody routing, timeline stack collapse, trash, sync/realtime routing, Sentry request observability, and failure behavior |
 | Sync stream architecture | `docs/architecture/sync-stream-architecture.md` | Sync stream event processing, FK ordering, event classification, face/album handling, adding new sync type versions |
 | WebSocket implementation | `docs/architecture/websocket-implementation.md` | WebSocket connections, real-time sync, event handling |
 | Session & checkpoint implementation | `docs/architecture/session-checkpoint-implementation.md` | Session management, checkpoint tracking, sync state |
