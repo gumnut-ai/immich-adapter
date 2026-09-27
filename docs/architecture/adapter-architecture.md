@@ -239,6 +239,28 @@ The Gumnut API is cursor-paginated while several Immich routes expose numeric pa
 
 The exact patterns, caps, failure propagation, fan-out bounds, and bulk-write semantics live in [Pagination, Bulk Operations, and Concurrency](../references/pagination-bulk-and-concurrency.md). `routers/api/constants.py` owns mutable request caps.
 
+### Album creation and retries
+
+The Gumnut API returns `201` for a new album or `200` for an existing album
+whose name matches within the library after trimming and ignoring case, and
+whose other provided fields match. Conflicting provided fields return `409`.
+An omitted description stays omitted in the Gumnut request; explicit null is
+forwarded.
+
+Initial asset associations are separate, chunked writes. On association
+failure, the album and successful memberships remain intact for a retry,
+including an album just created by this request. A `201` response cannot prove
+exclusive ownership: another request may reuse the album and save memberships
+before the creator's associations fail. Deleting the album would erase that
+other request's saved data. Every requested asset must be reported as
+added or already present before the adapter returns success. Albums
+are retrieved after association succeeds to return their current total member
+count, cover, and date range. The Immich create route retains its `201`
+response status for both outcomes.
+
+Deploy this handling before enabling album reuse in the Gumnut API. It also
+works with an API that always returns `201` for successful album creation.
+
 ### Offset translation limitation
 
 A numeric page cannot preserve the stability of an opaque cursor when entities change between requests. Duplicate or skipped rows across page boundaries are therefore possible on offset-shaped Immich routes. This is a protocol mismatch, not a condition the adapter can fully remove.

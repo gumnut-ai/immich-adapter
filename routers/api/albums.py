@@ -4,7 +4,7 @@ from typing import Annotated, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from gumnut import AsyncGumnut, GumnutError
+from gumnut import AsyncGumnut, omit
 
 from routers.utils.bulk import (
     BulkChunkError,
@@ -171,31 +171,34 @@ async def create_album(
     library_id: str | None = Depends(get_current_library_id),
 ) -> AlbumResponseDto:
     """
-    Create a new album and associate any initial assets.
+    Create or reuse an album and associate any initial assets.
 
     Album creation and asset association are separate Gumnut API operations.
-    If any association fails, attempt a best-effort delete of the just-created
-    album before surfacing the error so Immich clients never receive a
-    successful partial create.
+    Association failures preserve the album and successful memberships for a
+    retry. Even a newly created album may already be reused by another request,
+    so deleting it on failure could erase that request's saved data.
     albumUsers remain unsupported.
     """
 
     gumnut_album = await client.albums.create(
         name=request.albumName or "",
-        description=request.description,
+        description=request.description
+        if "description" in request.model_fields_set
+        else omit,
         library_id=library_id,
     )
-
-    asset_count = await _add_initial_assets_to_album(
+    await _add_initial_assets_to_album(
         client,
         gumnut_album.id,
         request.assetIds or [],
     )
 
+    gumnut_album = await client.albums.retrieve(gumnut_album.id)
+
     return convert_gumnut_album_to_immich(
         gumnut_album,
         current_user,
-        asset_count=asset_count,
+        asset_count=gumnut_album.asset_count,
     )
 
 
@@ -203,9 +206,8 @@ async def _add_initial_assets_to_album(
     client: AsyncGumnut,
     gumnut_album_id: str,
     asset_uuids: list[UUID],
-) -> int:
-    """Associate initial assets and return the resulting unique membership count."""
-    associated_asset_ids: set[str] = set()
+) -> None:
+    """Associate assets and verify every requested membership is confirmed upstream."""
 
     for asset_uuid_chunk in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
         gumnut_asset_ids = [
@@ -213,21 +215,16 @@ async def _add_initial_assets_to_album(
         ]
         requested_asset_ids = set(gumnut_asset_ids)
 
-        try:
-            response = await client.albums.assets_associations.add(
-                gumnut_album_id,
-                asset_ids=gumnut_asset_ids,
-            )
-        except GumnutError:
-            await _rollback_created_album(client, gumnut_album_id)
-            raise
+        response = await client.albums.assets_associations.add(
+            gumnut_album_id,
+            asset_ids=gumnut_asset_ids,
+        )
 
         added_asset_ids = set(response.added_assets)
         duplicate_asset_ids = set(response.duplicate_assets)
         not_found_asset_ids = set(response.not_found_assets)
 
         if not_found_asset_ids:
-            await _rollback_created_album(client, gumnut_album_id)
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="One or more initial album assets were not found or are not accessible",
@@ -243,29 +240,10 @@ async def _add_initial_assets_to_album(
                     "reported_count": len(reported_asset_ids),
                 },
             )
-            await _rollback_created_album(client, gumnut_album_id)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Upstream did not report membership for every initial album asset",
             )
-
-        associated_asset_ids.update(requested_asset_ids)
-
-    return len(associated_asset_ids)
-
-
-async def _rollback_created_album(
-    client: AsyncGumnut,
-    gumnut_album_id: str,
-) -> None:
-    """Best-effort cleanup for an album whose initial membership failed."""
-    try:
-        await client.albums.delete(gumnut_album_id)
-    except GumnutError:
-        logger.exception(
-            "Failed to roll back album after initial asset association failure",
-            extra={"album_id": gumnut_album_id},
-        )
 
 
 @router.put("/{id}/assets")
