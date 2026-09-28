@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation"
-last-updated: 2026-08-21
+last-updated: 2026-09-28
 ---
 
 # WebSocket Implementation
@@ -23,6 +23,14 @@ User-scoped events update every connected device owned by the user. Session-scop
 The service retains a socket-ID-to-room mapping for disconnect cleanup and observability. It runs in the application's asyncio event loop; room membership and emission are delegated to python-socketio.
 
 The WebSocket transport underneath Socket.IO is selected by Uvicorn. See [Uvicorn Runtime Settings](../references/uvicorn-settings.md) for the protocol choice and deployment owners.
+
+Socket.IO applies its own origin check independently of FastAPI HTTP CORS. The
+server is configured with `cors_allowed_origins="*"` in
+`services/websockets.py`, so the Socket.IO handshake's origin policy is not a
+statement about ordinary HTTP routes. The connect handler still requires a
+session token from one of the supported credential locations below. A
+deployment that needs credentialed cross-origin browser sockets should replace
+the wildcard with an explicit origin allowlist.
 
 ## Authentication
 
