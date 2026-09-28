@@ -1,6 +1,6 @@
 ---
 title: "Routes, DTOs, and Upstream Compatibility"
-last-updated: 2026-09-02
+last-updated: 2026-09-27
 ---
 
 # Routes, DTOs, and Upstream Compatibility
@@ -46,7 +46,7 @@ For the full error handling strategy including rate limit protection and per-ite
 
 ## Defining Endpoint Parameters
 
-- Use `Annotated` to specify attributes, such as `Query()`, `Path()`, `Body()` functions, or numeric or string validations, but do not use `Default` — the default value should be specified as part of the Python declaration. This is not just style: the `Query(default=X)` shape makes a param's default untestable — see [Testing](testing-and-logging.md#testing).
+- Use `Annotated` to specify attributes, such as `Query()`, `Path()`, `Body()` functions, or numeric or string validations, but do not use `Default` — the default value should be specified as part of the Python declaration. This is not just style: the `Query(default=X)` shape makes a param's default untestable — see [Testing](testing.md).
 - If a parameter is not required, use `| SkipJsonSchema[None]` after defining the type to allow Pydantic to accept the `None` type, but prevent `None` from being exposed in the OpenAPI schema.
 - If the exposed parameter name needs to be camelCase, use `alias="camelCase"` within the function and then use an appropriate snake_case name for the parameter in the function signature.
 
