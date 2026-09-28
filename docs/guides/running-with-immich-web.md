@@ -1,6 +1,6 @@
 ---
 title: "Running with Immich Web"
-last-updated: 2026-09-11
+last-updated: 2026-09-27
 ---
 
 # Running with Immich Web
@@ -86,29 +86,28 @@ Browser (localhost:3000)
 2. **Clerk OAuth configured** on the Gumnut API backend (the backend's `CLERK_OAUTH_CLIENT_ID` set to a real value, not the placeholder)
 3. **Redis** running at the `REDIS_URL` configured for the adapter
 4. **immich-adapter** running on `localhost:3001`
-5. The [Immich repository](https://github.com/immich-app/immich) cloned as a sibling directory (`../immich/`)
+5. The [Immich repository](https://github.com/immich-app/immich) checked out
+   at the version in `.immich-container-tag` and cloned as a sibling directory
+   (`../immich/`)
 
 ### Build and run Immich web
 
-1. **Build the Immich TypeScript SDK** (shared types used by the web app):
+Start in the `immich-adapter` repository root. Run these steps in the same
+shell so each command starts from the directory left by the previous step.
+
+1. **Install the Immich workspace and build its TypeScript SDK** (shared by
+   the web app):
 
 ```bash
-cd ../immich/open-api/typescript-sdk
+cd ../immich
 pnpm install
-pnpm run build
+pnpm --filter @immich/sdk build
 ```
 
-2. **Install web dependencies**:
+2. **Start the Immich web dev server**, pointing it at the adapter:
 
 ```bash
-cd ../immich/web
-pnpm install
-```
-
-3. **Start the Immich web dev server**, pointing it at the immich-adapter:
-
-```bash
-cd ../immich/web
+cd web
 IMMICH_SERVER_URL=http://localhost:3001/ pnpm run dev
 ```
 

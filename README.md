@@ -71,6 +71,7 @@ docker build -t immich-adapter .
 export SESSION_ENCRYPTION_KEY="$(uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
 
 docker run --rm -p 8080:8080 \
+  --add-host=host.docker.internal:host-gateway \
   -e PORT=8080 \
   -e GUMNUT_API_BASE_URL=http://host.docker.internal:8000 \
   -e REDIS_URL=redis://host.docker.internal:6379/1 \
@@ -88,7 +89,13 @@ network and use the Redis container's network name in `REDIS_URL` instead.
 
 **Important:** Use `host.docker.internal` instead of `localhost` to access services running on your host machine from within the container.
 
-**Note:** `host.docker.internal` does not work natively in Linux. Add `--add-host=host.docker.internal:<host-gateway>` where `<host-gateway>` is default gateway of the Docker bridge network, which is usually `172.17.0.1`.
+**Linux Docker Engine:** The `--add-host` option above maps
+`host.docker.internal` to Docker's special `host-gateway` address. Keep
+`host-gateway` literal; it is not an IP address to replace. Docker Desktop
+resolves `host.docker.internal` automatically, so the option is optional there.
+On Linux, the Gumnut API and Redis must accept connections from the Docker
+bridge; services listening only on `127.0.0.1` may be unreachable from the
+container.
 
 **Environment Variables:**
 - `PORT`: Port to bind to (default: 8080)
