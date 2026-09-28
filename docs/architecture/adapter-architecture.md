@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-27
+last-updated: 2026-09-28
 ---
 
 # Immich Adapter Architecture
@@ -120,7 +120,14 @@ login contract belong in `FIXED_LOGIN_CONFIG` and its projections together.
 
 ### Security decisions not visible in route behavior
 
-The adapter currently has no CORS middleware because it serves the web bundle from its own origin. If cross-origin access is introduced, credentialed requests must use an explicit origin allowlist; never combine credentials with a wildcard origin.
+The adapter has no FastAPI CORS middleware because it serves the web bundle
+from its own origin. Socket.IO has a separate origin policy: the server in
+`services/websockets.py` sets `cors_allowed_origins="*"` for its handshake.
+That wildcard does not bypass the connect handler's session-token check, which
+accepts a mobile header, a bearer token, or the `immich_access_token` cookie.
+Deployments that need credentialed cross-origin browser sockets should replace
+the wildcard with an explicit origin allowlist; do not rely on this setting as
+a general HTTP CORS policy.
 
 Mobile OAuth has a deliberate security gap: providers that cannot redirect to `app.immich:///oauth-callback` are sent to the adapter's HTTPS `/api/oauth/mobile-redirect`, which then redirects to the custom scheme. Custom schemes have no OS-enforced app ownership, so another installed app could register the scheme and receive the authorization code. PKCE reduces the usefulness of an intercepted code but does not prevent interception. Universal Links or Android App Links would require publishing the mobile app's signing identity, making the hardening a mobile distribution decision rather than an adapter-only change.
 
