@@ -1,6 +1,6 @@
 ---
 title: "Importing with immich-go"
-last-updated: 2026-07-29
+last-updated: 2026-09-27
 ---
 
 # Importing with immich-go
@@ -57,8 +57,11 @@ For a `upload from-folder` run, immich-go:
    `POST /api/search/metadata`, and skips assets whose checksum (base64 SHA-1) or
    filename+size already match. Modern immich-go does **not** call
    `/api/assets/bulk-upload-check`.
-3. Uploads each new asset with `POST /api/assets` (multipart `assetData`), sending
-   an `x-immich-checksum` header so the server can reject an already-stored file.
+3. Uploads each remaining asset with `POST /api/assets` (multipart `assetData`).
+   immich-go sends an `x-immich-checksum` header, but the adapter does not use
+   that header for upload-time duplicate detection. It forwards the file to the
+   Gumnut API, which may report a duplicate; the adapter then returns Immich's
+   duplicate status. This applies to both buffered and streaming uploads.
 4. Optionally creates albums with their initial asset membership
    (`POST /api/albums` with `assetIds`). Other album updates can add assets
    through `PUT /api/albums/{id}/assets`.
