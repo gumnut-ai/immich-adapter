@@ -23,7 +23,8 @@ For responses/errors from upstream Gumnut API calls, use status-based severity:
 
 - `404` → `INFO`
 - Other `4xx` (including `400`, `401`, `403`, `422`, `429`) → `WARNING`
-- `5xx` → `ERROR`
+- `507` (over-quota upload) → `WARNING`
+- Other `5xx` → `ERROR`
 
 When possible, use shared helpers in `routers/utils/error_mapping.py` (`upstream_status_log_level` / `log_upstream_response`) instead of ad-hoc `if/else` logging branches.
 
