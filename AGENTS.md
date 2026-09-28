@@ -73,7 +73,9 @@ The sections below follow that order, with design docs split by their `status:` 
 | Feature compatibility | `docs/references/feature-compatibility.md` | Supported workflows, product-dependent surfaces, deferred compatibility gaps, and intentional unsupported areas |
 | Asset and media handling | `docs/references/asset-and-media-handling.md` | Asset fields, media variants, checksums, face geometry, and asset-operation WebSocket emission |
 | Pagination, bulk, and concurrency | `docs/references/pagination-bulk-and-concurrency.md` | Cursor/offset translation, bounded enumeration, aggregates, fan-out, and bulk-ID operations |
-| Testing and logging | `docs/references/testing-and-logging.md` | Test fixtures, async test traps, structured logging, and upstream severity policy |
+| Testing | `docs/references/testing.md` | Test fixtures, async tests, direct endpoint calls, and pytest traps |
+| Logging | `docs/references/logging.md` | Structured logging, signed URL safety, upstream severity, and degradation records |
+| Prior testing and logging links | `docs/references/testing-and-logging.md` | Following an older link to the combined reference |
 | Documentation conventions | `docs/references/documentation-conventions.md` | Writing or maintaining docs — frontmatter, map rows, lifecycle, freshness, path citations |
 | GitHub Actions best practices | `docs/references/github-actions-best-practices.md` | Writing or reviewing workflows — action pins, permissions, untrusted triggers, shell interpolation, zizmor |
 | WebSocket events reference | `docs/references/websocket-events-reference.md` | WebSocket event types, payload formats |

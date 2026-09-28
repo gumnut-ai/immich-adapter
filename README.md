@@ -186,7 +186,8 @@ This invokes `uvicorn` directly because the `fastapi` CLI doesn't expose `--ws`,
 - [Routes and Upstream Compatibility](docs/references/routes-dtos-and-upstream-compatibility.md) — route parameters, DTOs, errors, generated models, upstream behavior, and version bumps
 - [Asset and Media Handling](docs/references/asset-and-media-handling.md) — asset fields, media variants, checksums, and asset-operation WebSocket emission
 - [Pagination, Bulk, and Concurrency](docs/references/pagination-bulk-and-concurrency.md) — cursor/offset translation, bounded enumeration, aggregates, fan-out, and bulk-ID operations
-- [Testing and Logging](docs/references/testing-and-logging.md) — test fixtures, async test traps, structured logging, and upstream severity policy
+- [Testing](docs/references/testing.md) — test fixtures, async test traps, and pytest conventions
+- [Logging](docs/references/logging.md) — structured logging, signed URL safety, and upstream severity policy
 - [Documentation Conventions](docs/references/documentation-conventions.md) — frontmatter, maps, lifecycle, paths, and freshness
 - [Development Tools](docs/references/development-tools.md) — model generator, API compatibility, OpenAPI spec, dependency automation
 - [GitHub Actions Best Practices](docs/references/github-actions-best-practices.md) — workflow security and review rules

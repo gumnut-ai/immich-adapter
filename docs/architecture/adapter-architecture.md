@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-26
+last-updated: 2026-09-27
 ---
 
 # Immich Adapter Architecture
@@ -143,7 +143,7 @@ event values. HTTP client transaction spans likewise redact CDN query strings,
 URLs, and descriptions, and add `server.address` (and a valid
 `server.port`) for upstream correlation. Never put JWTs, API keys, or captured
 customer payloads in structured fields. Upstream response severity and
-aggregate degradation logging live in [Testing and Logging](../references/testing-and-logging.md).
+aggregate degradation logging live in [Logging](../references/logging.md).
 
 ## Translation boundaries
 
