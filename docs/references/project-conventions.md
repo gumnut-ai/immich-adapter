@@ -1,6 +1,6 @@
 ---
 title: "Project Conventions"
-last-updated: 2026-09-10
+last-updated: 2026-10-01
 ---
 
 # Project Conventions
@@ -30,12 +30,8 @@ last-updated: 2026-09-10
 - **Branching**: Always create a new branch from `main` before making changes. Name it after the change (`fix-upload-timeout`), not after a ticket — a descriptive name is more useful in a branch list to everyone, inside the team and out. Don't modify files on an existing feature branch for unrelated work.
 - **File editing**: Always read a file before editing it. Never edit historical database migration files.
 - **Datetime handling**: When working with datetimes as strings, ensure the proper format is used, as Immich has different formats for different use cases. If you cannot determine the proper format to use, ask for clarification.
-- **Asset date fields**: Any endpoint or converter that emits Immich asset date fields must use the shared helpers in `routers/utils/asset_conversion.py`:
-  - `resolve_capture_datetime`, `resolve_file_created_at`, `resolve_local_date_time` — for capture-time fields. The Gumnut API resolves `asset.local_datetime` from `metadata.original_datetime → file_created_at → created_at` internally, so the helpers trust it as the single source of truth and the adapter must not re-add a fallback chain. The helpers then handle Immich's actual-UTC `fileCreatedAt` and keep-local-time `localDateTime` formats.
-  - `resolve_file_modified_at` — for the `fileModifiedAt` field. Unlike capture time, the Gumnut API does not resolve a single modify-time field — `asset.file_modified_at` is the raw file mtime — so the helper applies a `metadata.modified_datetime → asset.file_modified_at` cascade here. Do not "align" this with the capture-time helpers; the asymmetry is deliberate.
-- **Immich DTO datetime fields are `AwareDatetime`; Gumnut datetimes can be naive.** The Gumnut API serializes a local capture datetime timezone-naive when the capture timezone is unknown, and a non-null naive value fails an `AwareDatetime` field's validator (unhandled `ValidationError` → 500). Don't assume a Gumnut datetime is tz-aware: route local-capture-time fields through `to_immich_local_datetime` (labels naive values UTC keep-local-time, passes `None` through). Server row timestamps (`created_at`/`updated_at`) are tz-aware and pass through raw. This applies beyond asset fields: `AlbumResponseDto.startDate`/`endDate` are the min/max of assets' `local_datetime`, so they use the same helper as each asset's `localDateTime`.
-- **Immich DTO fields can constrain more tightly than the Gumnut value's own type** — the same unhandled-`ValidationError` → 500 trap as the naive-datetime bullet above, in another guise. Normalize before constructing the DTO. Example: `ExifResponseDto.rating` is `ge=1, le=5`, but cameras write 0 (XMP:Rating) or the deprecated -1 for "unrated"; `normalize_rating` bounds any value to 1-5 or None so an unrated/out-of-range rating never reaches the DTO.
-- **Immich web "today" wire format**: Some query params receive a string produced by the web client's `asLocalTimeISO`, which does `setZone('utc', { keepLocalTime: true })`. The wire value's date and time components are the user's **local wall-clock**, with `Z` appended so it transports as a string — the offset is fictitious. Pull `.year/.month/.day/.hour/.minute` off the parsed datetime as-is; do **not** apply timezone math, or you'll shift the user's local "today" by their UTC offset. As of Immich v3.2.0 the client still applies the hack to the search filter's `takenAfter`/`takenBefore`, which `POST /search/metadata` forwards to the Gumnut API as `local_datetime_after`/`local_datetime_before` (`routers/api/search.py`). Note that forwarding is a deliberate translation, not an identity: Immich resolves `takenAfter`/`takenBefore` against `fileCreatedAt`, a different field from the Gumnut API's `local_datetime`. `GET /memories?for=` was the canonical example until v3.0.3 retyped the param to a plain `date` — see `_local_today` in `routers/api/memories.py` for why that param stays typed `datetime`. The hack may reappear on any endpoint where the client wants the server to interpret a value in the user's local time without exposing the offset.
+- **Asset date and DTO normalization rules**: Follow [Asset Field Conversion](asset-field-conversion.md#asset-date-fields-and-dto-normalization).
+- **Immich local-wall-clock query values**: Follow [Route and DTO Contracts](route-and-dto-contracts.md#immich-web-today-wire-format).
 
 ## Pull Requests
 

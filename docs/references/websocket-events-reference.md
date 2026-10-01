@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-09-24
+last-updated: 2026-10-01
 ---
 
 # Immich WebSocket Events Reference
@@ -131,8 +131,6 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`, and t
 - **Web**: Global listener
 - **Mobile**: Listener, triggers sync
 
-**Note**: Sidecar files (XMP) store metadata alongside photos and sync bidirectionally with the database.
-
 ---
 
 ### `on_asset_stack_update`
@@ -225,7 +223,7 @@ When received, the client updates `person.updatedAt` to force the browser to fet
 | New media added to shared album | Album members | `AlbumUpdate` | Info | "New media has been added to the album ({name})" |
 
 **Client handling**:
-- **Web**: Global listener. Calls `notificationManager.refresh()` to fetch updated notifications. Displays in bell icon dropdown panel with colored icons, title, description, relative timestamp, and unread indicator. Album notifications navigate to `/albums/{albumId}` on click.
+- **Web**: Global listener. Calls `notificationManager.refresh()` to fetch updated notifications. Album notifications navigate to `/albums/{albumId}` on click.
 - **Mobile**: Does NOT listen to this event.
 
 ---

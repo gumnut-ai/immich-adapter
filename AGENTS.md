@@ -69,10 +69,20 @@ The sections below follow that order, with design docs split by their `status:` 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
 | Project conventions | `docs/references/project-conventions.md` | Python style, repository organization, public-repository wording, and pull requests |
-| Routes and compatibility | `docs/references/routes-dtos-and-upstream-compatibility.md` | Route parameters, DTOs, errors, generated models, upstream behavior, version bumps, and the checklist for promoting a stub to a real implementation |
+| Routes and compatibility index | `docs/references/routes-dtos-and-upstream-compatibility.md` | Following an older route, DTO, or compatibility section citation |
+| Route and DTO contracts | `docs/references/route-and-dto-contracts.md` | Error envelopes, middleware state transfer, parameter declarations, explicit nulls, mobile parsing, and web local-wall-clock query values |
+| Upstream compatibility | `docs/references/upstream-compatibility.md` | Pinned upstream verification, Immich/SDK version bumps, and promoting or removing endpoints |
+| Route errors and filters | `docs/references/route-errors-and-filters.md` | Auth-check stubs, restrictive filters, SDK exceptions, streaming failures, and client rate-limit handling |
 | Feature compatibility | `docs/references/feature-compatibility.md` | Supported workflows, product-dependent surfaces, deferred compatibility gaps, and intentional unsupported areas |
-| Asset and media handling | `docs/references/asset-and-media-handling.md` | Asset fields, media variants, checksums, face geometry, and asset-operation WebSocket emission |
-| Pagination, bulk, and concurrency | `docs/references/pagination-bulk-and-concurrency.md` | Cursor/offset translation, bounded enumeration, aggregates, fan-out, and bulk-ID operations |
+| Asset and media index | `docs/references/asset-and-media-handling.md` | Following an older asset/media section citation |
+| Asset field conversion | `docs/references/asset-field-conversion.md` | Include tokens, rating/favorite mapping, dimensions, date fields, DTO normalization, and outbound checksums |
+| Asset edits and downloads | `docs/references/asset-edits-and-downloads.md` | Version-chain roots, edit bases, edit-route concurrency, exact-original downloads, and edited face geometry |
+| Media variant selection | `docs/references/media-variant-selection.md` | Aspect-ratio thumbnail upgrades and video variant-key requirements |
+| Asset WebSocket emission | `docs/references/asset-websocket-emission.md` | Best-effort emission, per-ID helpers, bulk-write emission tradeoffs, and event-documentation updates |
+| Pagination and bulk index | `docs/references/pagination-bulk-and-concurrency.md` | Following an older pagination, bulk, or concurrency section citation |
+| Pagination and enumeration | `docs/references/pagination-and-enumeration.md` | Optional pagination forwarding, bounded collection walks, aggregates, per-page limits, and month bounds |
+| Bounded fan-out | `docs/references/bounded-fan-out.md` | Parallel SDK calls, per-item error handling, cancellation, and concurrency-test traps |
+| Bulk-ID operations | `docs/references/bulk-id-operations.md` | ID chunking, cross-chunk atomicity, trash-aware reads, typed item outcomes, and raw-SDK stopgaps |
 | Testing | `docs/references/testing.md` | Test fixtures, async tests, direct endpoint calls, and pytest traps |
 | Logging | `docs/references/logging.md` | Structured logging, signed URL safety, upstream severity, and degradation records |
 | Prior testing and logging links | `docs/references/testing-and-logging.md` | Following an older link to the combined reference |
