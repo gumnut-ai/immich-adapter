@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Storage Reference"
-last-updated: 2026-09-23
+last-updated: 2026-10-01
 ---
 
 # Session and Checkpoint Storage Reference
@@ -25,9 +25,8 @@ Representative session fields are `user_id`, `library_id`, `stored_jwt`, `device
 
 Session hashes may have a TTL. When a TTL is configured, checkpoint writes give the checkpoint hash the session's remaining TTL. Redis expiry does not remove set/sorted-set index entries; normal user-session reads lazily prune orphans, and `SessionStore.cleanup_stale_sessions` is an explicit maintenance operation rather than a background scheduler.
 
-Every session field update is conditional: `SessionStore` writes them only if
-the hash still exists, and does so atomically, so a concurrent delete can never
-resurrect a session as a partial hash.
+Session field updates are conditional and atomic. The lifecycle rationale
+is in [Session and checkpoint architecture](../architecture/session-checkpoint-implementation.md#security-and-lifecycle-notes).
 
 ## Checkpoint records
 

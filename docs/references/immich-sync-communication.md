@@ -1,6 +1,6 @@
 ---
 title: "Immich Sync Wire Reference"
-last-updated: 2026-09-23
+last-updated: 2026-10-01
 ---
 
 # Immich Sync Wire Reference
@@ -92,4 +92,4 @@ that request are ignored.
 
 - `SyncCompleteV1` terminates every successfully generated stream, including a stream with no entity changes.
 - A session whose client owes a reset (its `client_epoch` differs from the session's `sync_epoch`) receives `SyncResetV1` and no normal entity stream.
-- An unhandled hydration or transport failure ends the generator without `SyncCompleteV1`. This is intentional: the client must not acknowledge a position past data that failed to stream.
+- An unhandled hydration or transport failure ends the generator without `SyncCompleteV1`; see [sync stream architecture](../architecture/sync-stream-architecture.md) for retry and ordering rationale.
