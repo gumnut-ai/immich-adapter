@@ -169,12 +169,12 @@ The adapter depends on the events API response shape (`EventsResponse`). Fields 
 ### Current-state verification is not snapshot-aware
 
 Payload FK verification reads current Gumnut state while the events query is
-bounded at the sync start time. If a referenced person or asset is deleted
+bounded at the first read's `as_of`. If a referenced person or asset is deleted
 during the cycle, verification can null the reference one cycle before the
 bounded delete event arrives. The client converges on the same final state; the
 temporary early null is preferred to emitting an FK that can permanently wedge
-sync. Snapshot-aware verification would require an event-timeline lookup or an
-API-level `as_of` read contract.
+sync. Snapshot-aware verification would require an event-timeline lookup or
+entity reads bounded by `as_of`, which only bounds the events feed.
 
 ### Interrupted delete phase
 

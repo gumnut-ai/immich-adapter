@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
-from gumnut import AsyncGumnut
+from gumnut import AsyncGumnut, NotFoundError
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.events_response import Data as EventData
 from gumnut.types.asset_response import AssetResponse
@@ -26,6 +26,7 @@ from routers.immich_models import (
     SyncRequestType,
     SyncStreamDto,
 )
+from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_face_id,
     safe_uuid_from_user_id,
@@ -47,6 +48,7 @@ from routers.api.sync.events import (
     convert_entity_to_sync_event,
     make_delete_sync_event,
     make_sync_event,
+    removed_album_asset_pair,
     to_ack_string,
 )
 from routers.api.sync.fk_integrity import (
@@ -80,8 +82,9 @@ class SyncBound:
 
 
 class StackRowReadIncomplete(Exception):
-    """A stack upsert event names a row the bulk read did not return, and no
-    delete event in the sync window explains the absence.
+    """A stack upsert event names a row the bulk read did not return, no
+    delete event in the sync window explains the absence, and a direct read
+    still finds the stack.
 
     A transiently-invisible row (e.g. read lag between the events endpoint and
     ``list_stacks``), not a deleted stack — surfaced so the sync truncates and
@@ -91,12 +94,13 @@ class StackRowReadIncomplete(Exception):
     stack row — a hidden burst that would not self-heal until some later stack
     event re-emitted the row.
 
-    Both transient shapes resolve on the retry: a lagging row becomes visible,
-    and a stack deleted *after* the window bound gets its delete event inside
-    the next window. A stack that fails *persistently* wedges the pass until it
-    recovers — loud in the logs, and the same trade-off the member-read
-    failures in ``entity_fetch`` already make; never stranding a member is the
-    priority.
+    A lagging row resolves on the retry by becoming visible. A deleted stack
+    never reaches here: its delete is in this window, or the direct read
+    returns 404 (the feed is not in commit order, so the delete can land in an
+    earlier sync than an update to the same stack). A stack that fails
+    *persistently* wedges the pass until it recovers — loud in the logs, and
+    the same trade-off the member-read failures in ``entity_fetch`` already
+    make; never stranding a member is the priority.
     """
 
 
@@ -229,6 +233,26 @@ _SUPPORTED_REQUEST_TYPES: frozenset[SyncRequestType] = frozenset(
 )
 
 
+async def _stacks_not_found(
+    gumnut_client: AsyncGumnut, stack_ids: list[str]
+) -> list[str]:
+    """Return the stack ids a direct read reports as not found."""
+
+    async def _is_gone(stack_id: str) -> bool:
+        try:
+            await gumnut_client.stacks.retrieve_stack(stack_id)
+        except NotFoundError:
+            return True
+        return False
+
+    gone = await gather_with_concurrency(
+        [_is_gone(stack_id) for stack_id in stack_ids], cancel_on_error=True
+    )
+    return [
+        stack_id for stack_id, is_gone in zip(stack_ids, gone, strict=True) if is_gone
+    ]
+
+
 async def _require_missing_stacks_deleted(
     gumnut_client: AsyncGumnut,
     absent_ids: set[str],
@@ -254,9 +278,10 @@ async def _require_missing_stacks_deleted(
     the rare missing-row case and stack events are sparse.
     ``next_cursor`` is the current page's; the scan reads under ``bound``.
 
-    Any id left unexplained raises :class:`StackRowReadIncomplete` (see there
-    for why the transient shapes self-heal and a persistent failure wedges the
-    pass, deliberately).
+    An id still unexplained gets a direct read; a 404 means the stack is gone.
+    Any other id raises :class:`StackRowReadIncomplete` (see there for why a
+    lagging row self-heals and a persistent failure wedges the pass,
+    deliberately).
     """
     unexplained = absent_ids - {
         event.entity_id for event in page_events if event.event_type == "stack_deleted"
@@ -284,6 +309,12 @@ async def _require_missing_stacks_deleted(
         }
         last_cursor = events_response.next_cursor
         has_more = events_response.has_more
+
+    if unexplained:
+        # The feed is not in commit order, so a stack's delete can sort ahead of
+        # an earlier-starting update and land in a prior sync. A 404 on a direct
+        # read confirms the stack is gone.
+        unexplained -= set(await _stacks_not_found(gumnut_client, sorted(unexplained)))
 
     if unexplained:
         raise StackRowReadIncomplete(
@@ -439,7 +470,7 @@ async def _stream_entity_type(
                 {
                     pair
                     for event in events
-                    if (pair := _removed_membership(event)) is not None
+                    if (pair := removed_album_asset_pair(event)) is not None
                 },
             )
             if gumnut_entity_type == "album_asset"
@@ -468,7 +499,7 @@ async def _stream_entity_type(
                 # duplicate it. The cursor still advances past this event below.
                 if not emit_deletes:
                     continue
-                pair = _removed_membership(event)
+                pair = removed_album_asset_pair(event)
                 membership = current_memberships.get(pair) if pair is not None else None
                 if membership is not None:
                     # Re-added since: upsert the current row instead.
@@ -673,18 +704,6 @@ async def _stream_entity_type(
             f"Streamed {count} {sync_entity_type.value} events",
             extra={"entity_type": sync_entity_type.value, "count": count},
         )
-
-
-def _removed_membership(event: EventData) -> tuple[str, str] | None:
-    """The ``(album_id, asset_id)`` an ``album_asset_removed`` event names."""
-    if event.event_type != "album_asset_removed" or not isinstance(event.payload, dict):
-        return None
-    album_id = event.payload.get("album_id")
-    asset_id = event.payload.get("asset_id")
-    if not isinstance(album_id, str) or not isinstance(asset_id, str):
-        return None
-    album_id, asset_id = album_id.strip(), asset_id.strip()
-    return (album_id, asset_id) if album_id and asset_id else None
 
 
 def _yield_buffered_deletes(

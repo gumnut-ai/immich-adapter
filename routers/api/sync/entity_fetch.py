@@ -6,6 +6,7 @@ from uuid import UUID
 
 from gumnut import AsyncGumnut
 from gumnut.types.album_asset_response import AlbumAssetResponse
+from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.stack_list_stacks_response import StackListStacksResponse
@@ -249,19 +250,47 @@ async def fetch_current_album_memberships(
     A removal event names a pair, not a row, and a later transaction can re-add
     the pair yet sort ahead of the removal in the events feed. Pairs absent from
     the result are not members.
-    """
-    ordered = sorted(pairs)
 
-    async def _read(album_id: str, asset_id: str) -> AlbumAssetResponse | None:
+    Each read is a rate-limited list call. One removal request removes many
+    assets from one album, so an album with several pairs is read whole when
+    that takes fewer pages than one call per pair. A deleted album has no
+    members and costs nothing further.
+    """
+    by_album: dict[str, set[str]] = {}
+    for album_id, asset_id in pairs:
+        by_album.setdefault(album_id, set()).add(asset_id)
+    shared = [album_id for album_id, assets in by_album.items() if len(assets) > 1]
+    albums, _ = await fetch_entities_map(gumnut_client, "album", shared)
+
+    async def _read_pair(album_id: str, asset_id: str) -> list[AlbumAssetResponse]:
         page = await gumnut_client.album_assets.list(
             album_id=album_id, asset_id=asset_id, limit=1
         )
-        return page.data[0] if page.data else None
+        return list(page.data)
 
-    rows = await gather_with_concurrency(
-        [_read(album_id, asset_id) for album_id, asset_id in ordered],
-        cancel_on_error=True,
-    )
-    return {
-        pair: row for pair, row in zip(ordered, rows, strict=True) if row is not None
-    }
+    async def _read_album(album_id: str) -> list[AlbumAssetResponse]:
+        wanted = by_album[album_id]
+        return [
+            row
+            async for row in gumnut_client.album_assets.list(
+                album_id=album_id, limit=GUMNUT_API_MAX_BULK_IDS
+            )
+            if row.asset_id in wanted
+        ]
+
+    reads = []
+    for album_id, asset_ids in sorted(by_album.items()):
+        if len(asset_ids) == 1:
+            reads.append(_read_pair(album_id, next(iter(asset_ids))))
+            continue
+        album = albums.get(album_id)
+        if not isinstance(album, AlbumResponse):
+            continue
+        pages = -(-album.asset_count // GUMNUT_API_MAX_BULK_IDS)
+        if pages < len(asset_ids):
+            reads.append(_read_album(album_id))
+        else:
+            reads.extend(_read_pair(album_id, a) for a in sorted(asset_ids))
+
+    rows = await gather_with_concurrency(reads, cancel_on_error=True)
+    return {(row.album_id, row.asset_id): row for found in rows for row in found}

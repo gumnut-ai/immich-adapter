@@ -1158,6 +1158,105 @@ class TestGenerateSyncStream:
         assert ack_parts[0] == "AlbumToAssetDeleteV1"
         assert ack_parts[1] == "cursor_del_aa"
         assert events[1]["type"] == "SyncCompleteV1"
+        mock_client.album_assets.list.assert_called_once_with(
+            album_id=album_id, asset_id=asset_id, limit=1
+        )
+
+    @pytest.mark.anyio
+    async def test_bulk_removal_from_one_album_reads_the_album_once(self):
+        """Several removals from one small album read its members in one call
+        instead of one call per pair; a re-added pair still upserts."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        album_id = uuid_to_gumnut_album_id(TEST_UUID)
+        asset_ids = [
+            uuid_to_gumnut_asset_id(UUID(f"00000000-0000-0000-0000-0000000000{n}"))
+            for n in (91, 92, 93)
+        ]
+        mock_client.events.get.return_value = create_mock_events_response(
+            [
+                create_mock_event(
+                    entity_type="album_asset",
+                    entity_id=f"album_asset_{n}",
+                    event_type="album_asset_removed",
+                    created_at=updated_at,
+                    cursor=f"cursor_{n}",
+                    payload={"album_id": album_id, "asset_id": asset_id},
+                )
+                for n, asset_id in enumerate(asset_ids)
+            ]
+        )
+        mock_client.albums.list.return_value = create_mock_entity_page(
+            [create_mock_album_data(updated_at, asset_count=10)]
+        )
+        readded = create_mock_album_asset_data(updated_at)
+        readded.asset_id = asset_ids[1]
+        mock_client.album_assets.list.return_value = create_mock_entity_page([readded])
+
+        events = await collect_stream(
+            generate_sync_stream(
+                mock_client,
+                SyncStreamDto(types=[SyncRequestType.AlbumToAssetsV1]),
+                {},
+                mock_user,
+            )
+        )
+
+        assert sorted(e["type"] for e in events) == [
+            "AlbumToAssetDeleteV1",
+            "AlbumToAssetDeleteV1",
+            "AlbumToAssetV1",
+            "SyncCompleteV1",
+        ]
+        mock_client.album_assets.list.assert_called_once_with(
+            album_id=album_id, limit=200
+        )
+
+    @pytest.mark.anyio
+    async def test_removals_from_a_deleted_album_read_no_members(self):
+        """A deleted album has no members, so its removals delete without
+        reading pairs."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        album_id = uuid_to_gumnut_album_id(TEST_UUID)
+        mock_client.events.get.return_value = create_mock_events_response(
+            [
+                create_mock_event(
+                    entity_type="album_asset",
+                    entity_id=f"album_asset_{n}",
+                    event_type="album_asset_removed",
+                    created_at=updated_at,
+                    cursor=f"cursor_{n}",
+                    payload={
+                        "album_id": album_id,
+                        "asset_id": uuid_to_gumnut_asset_id(
+                            UUID(f"00000000-0000-0000-0000-0000000000{n}")
+                        ),
+                    },
+                )
+                for n in (91, 92)
+            ]
+        )
+
+        events = await collect_stream(
+            generate_sync_stream(
+                mock_client,
+                SyncStreamDto(types=[SyncRequestType.AlbumToAssetsV1]),
+                {},
+                mock_user,
+            )
+        )
+
+        assert [e["type"] for e in events] == [
+            "AlbumToAssetDeleteV1",
+            "AlbumToAssetDeleteV1",
+            "SyncCompleteV1",
+        ]
+        mock_client.album_assets.list.assert_not_called()
 
     @pytest.mark.anyio
     async def test_album_asset_removed_but_readded_streams_the_membership(self):
@@ -1687,7 +1786,6 @@ class TestStreamEntityTypePagination:
     async def test_first_call_uses_checkpoint_cursor(self):
         """First API call uses cursor from checkpoint as after_cursor."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -1847,7 +1945,6 @@ class TestStreamEntityTypePagination:
     async def test_stops_when_has_more_is_false(self):
         """Pagination stops when has_more is False, even with full page."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)

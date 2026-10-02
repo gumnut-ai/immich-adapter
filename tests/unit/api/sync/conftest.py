@@ -75,6 +75,8 @@ def create_mock_gumnut_client(user: Mock) -> Mock:
     client.people.list.return_value = empty_page
     client.faces.list.return_value = empty_page
     client.stacks.list_stacks.return_value = empty_page
+    # Default: a direct stack read finds the row (a missing row is transient).
+    client.stacks.retrieve_stack = AsyncMock(return_value=Mock())
     return client
 
 

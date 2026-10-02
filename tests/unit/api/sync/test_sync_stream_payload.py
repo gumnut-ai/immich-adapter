@@ -88,8 +88,6 @@ class TestFacePersonIdOverride:
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
         mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -302,8 +300,6 @@ class TestFacePersonIdOverride:
             [payload_person_data]
         )
 
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -362,8 +358,6 @@ class TestFacePersonIdOverride:
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
         mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -413,8 +407,6 @@ class TestFacePersonIdOverride:
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
         mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -462,8 +454,6 @@ class TestFacePersonIdOverride:
         mock_client.events.get.return_value = create_mock_events_response([face_event])
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
         mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
-
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
         results = []
         async for item in _stream_entity_type(
@@ -785,8 +775,6 @@ class TestFacePayloadOverrideDeletedPerson:
         mock_client.people.list.return_value = create_mock_entity_page(
             [payload_person_data]
         )
-
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
         # Incremental sync: person checkpoint exists (person type was synced before)
         checkpoint_map = {
@@ -1124,8 +1112,6 @@ class TestFacePayloadOverrideDeletedPerson:
         # Verification fetch returns empty — person is deleted in prod
         mock_client.people.list.return_value = create_mock_entity_page([])
 
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         # PersonV1 checkpoint exists: client synced persons in a prior cycle
         # (and processed the delete event for this person). This is the state
         # that made Fix 4 skip the null-out and leak the stale reference.
@@ -1285,8 +1271,6 @@ class TestAlbumPayloadOverrideDeletedAsset:
         # Verification fetch returns empty -- the asset was deleted in prod
         mock_client.assets.list.return_value = create_mock_entity_page([])
 
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         checkpoint_map = {
             SyncEntityType.AssetV1: Checkpoint(
                 entity_type=SyncEntityType.AssetV1,
@@ -1345,8 +1329,6 @@ class TestAssetFaceV2Converter:
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
         mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -1402,8 +1384,6 @@ class TestAssetFaceV2Converter:
         mock_client.people.list.return_value = create_mock_entity_page(
             [payload_person_data]
         )
-
-        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
         results = []
         async for item in _stream_entity_type(

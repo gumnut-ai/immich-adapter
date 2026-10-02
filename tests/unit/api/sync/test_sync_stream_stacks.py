@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
-from gumnut import GumnutError
+from gumnut import GumnutError, NotFoundError
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.file_data_response import FileDataResponse
 
@@ -33,6 +33,7 @@ from tests.conftest import (
     mock_list_stacks,
 )
 from tests.unit.api.sync.conftest import (
+    MOCK_AS_OF,
     TEST_UUID,
     collect_stream,
     create_mock_event,
@@ -760,6 +761,30 @@ class TestEventDrivenStacks:
         assert len(stack_event_reads) == 1
 
     @pytest.mark.anyio
+    async def test_missing_stack_row_that_reads_as_deleted_is_skipped(self):
+        # The feed is not in commit order, so the stack's delete can land in an
+        # earlier sync than an update to it. A 404 on a direct read shows the
+        # row is gone; skipping it keeps the sync from wedging on every retry.
+        user = create_mock_user(UPDATED_AT)
+        client = create_mock_gumnut_client(user)
+        stack = make_gumnut_stack()
+        client.events.get.return_value = create_mock_events_response(
+            [create_mock_event("stack", stack.id, "stack_updated", UPDATED_AT, "cur_v")]
+        )
+        client.stacks.list_stacks = mock_list_stacks([])
+        client.stacks.retrieve_stack = AsyncMock(
+            side_effect=NotFoundError(
+                "not found", response=Mock(status_code=404), body=None
+            )
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.StacksV1])
+        events = await collect_stream(generate_sync_stream(client, request, {}, user))
+
+        assert [e["type"] for e in events] == ["SyncCompleteV1"]
+        client.stacks.retrieve_stack.assert_awaited_once_with(stack.id)
+
+    @pytest.mark.anyio
     async def test_missing_stack_row_with_same_page_delete_is_skipped(self):
         # Created and deleted within one page: the row is legitimately gone,
         # so the absence is inert — the delete still reaches the client.
@@ -801,8 +826,9 @@ class TestEventDrivenStacks:
                     )
                 ],
                 has_more=True,
+                next_cursor="next_s1",
             ),
-            "cur_s1": create_mock_events_response(
+            "next_s1": create_mock_events_response(
                 [
                     create_mock_event(
                         "stack", stack.id, "stack_deleted", UPDATED_AT, "cur_s2"
@@ -822,6 +848,10 @@ class TestEventDrivenStacks:
         delete_events = [e for e in events if e["type"] == "StackDeleteV1"]
         assert len(delete_events) == 1
         assert events[-1]["type"] == "SyncCompleteV1"
+        # The scan continues from the page's next_cursor under the sync's bound.
+        scan = client.events.get.call_args_list[1]
+        assert scan.kwargs["after_cursor"] == "next_s1"
+        assert scan.kwargs["as_of"] == MOCK_AS_OF
 
     @pytest.mark.anyio
     async def test_scan_explaining_only_one_of_two_missing_stacks_truncates(self):
