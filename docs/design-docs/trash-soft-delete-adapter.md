@@ -3,7 +3,7 @@ title: "Trash: Soft-Delete with Retention (Adapter)"
 status: deprecated
 superseded-by: ../architecture/adapter-architecture.md
 created: 2026-04-20
-last-updated: 2026-08-05
+last-updated: 2026-10-02
 ---
 
 # Trash: Soft-Delete with Retention (Adapter)
@@ -12,8 +12,7 @@ last-updated: 2026-08-05
 > Immich-compatible trash and permanent deletion. It was pruned on 2026-08-05
 > to the context, cross-service contract, and evolution notes; endpoint,
 > filtering, event, and configuration inventories are owned by the code. For
-> current behavior, see [`adapter-architecture.md`](../architecture/adapter-architecture.md)
-> under “Trash and Deletion Semantics.”
+> current behavior, see [Trash and restore](../architecture/adapter-architecture.md#trash-and-restore).
 
 ## Context
 
