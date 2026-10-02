@@ -60,6 +60,8 @@ def create_mock_gumnut_client(user: Mock) -> Mock:
     events_response = Mock()
     events_response.data = []
     events_response.has_more = False
+    events_response.next_cursor = None
+    events_response.as_of = MOCK_AS_OF
     client.events.get = AsyncMock(return_value=events_response)
     # Default: empty entity list responses for batch fetching.
     # list() is NOT a coroutine — it returns an AsyncPaginator synchronously.
@@ -136,11 +138,22 @@ def create_mock_event(
     return event
 
 
-def create_mock_events_response(events: list, has_more: bool = False) -> Mock:
-    """Create a mock events response."""
+MOCK_AS_OF = "asof_test"
+
+
+def create_mock_events_response(
+    events: list, has_more: bool = False, next_cursor: str | None = None
+) -> Mock:
+    """Create a mock events response.
+
+    ``next_cursor`` defaults to the last event's cursor, as the real feed's
+    does apart from the bound it carries.
+    """
     resp = Mock()
     resp.data = events
     resp.has_more = has_more
+    resp.next_cursor = next_cursor or (events[-1].cursor if events else None)
+    resp.as_of = MOCK_AS_OF
     return resp
 
 

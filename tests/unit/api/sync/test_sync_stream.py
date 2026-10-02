@@ -14,6 +14,7 @@ from routers.api.sync.converters import gumnut_album_to_sync_album_user_v1
 from routers.api.sync.fk_integrity import SyncStreamStats
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
+    SyncBound,
     _stream_entity_type,
     generate_reset_stream,
     generate_sync_stream,
@@ -40,6 +41,7 @@ from routers.utils.gumnut_id_conversion import (
 from services.checkpoint_store import Checkpoint, CheckpointStore
 from services.session_store import SessionStore
 from tests.unit.api.sync.conftest import (
+    MOCK_AS_OF,
     TEST_SESSION_UUID,
     TEST_UUID,
     collect_stream,
@@ -1158,6 +1160,46 @@ class TestGenerateSyncStream:
         assert events[1]["type"] == "SyncCompleteV1"
 
     @pytest.mark.anyio
+    async def test_album_asset_removed_but_readded_streams_the_membership(self):
+        """A removal whose pair is a member again (re-added by a transaction
+        that sorts ahead of it) upserts the current row instead of deleting."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        membership = create_mock_album_asset_data(updated_at)
+        mock_event = create_mock_event(
+            entity_type="album_asset",
+            entity_id="album_asset_old_row",
+            event_type="album_asset_removed",
+            created_at=updated_at,
+            cursor="cursor_del_aa",
+            payload={
+                "album_id": membership.album_id,
+                "asset_id": membership.asset_id,
+            },
+        )
+        mock_client.events.get.return_value = create_mock_events_response([mock_event])
+        mock_client.album_assets.list.return_value = create_mock_entity_page(
+            [membership]
+        )
+
+        events = await collect_stream(
+            generate_sync_stream(
+                mock_client,
+                SyncStreamDto(types=[SyncRequestType.AlbumToAssetsV1]),
+                {},
+                mock_user,
+            )
+        )
+
+        assert [e["type"] for e in events] == ["AlbumToAssetV1", "SyncCompleteV1"]
+        assert events[0]["ack"].split("|")[1] == "cursor_del_aa"
+        mock_client.album_assets.list.assert_called_once_with(
+            album_id=membership.album_id, asset_id=membership.asset_id, limit=1
+        )
+
+    @pytest.mark.anyio
     async def test_skips_album_asset_removed_without_payload(self):
         """album_asset_removed events without payload are gracefully skipped."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
@@ -1611,6 +1653,33 @@ class TestGenerateResetStream:
         assert events[0]["ack"] == "SyncResetV1|reset|"
 
 
+class TestSyncBound:
+    """Every entity type in one sync reads under the first read's as_of."""
+
+    @pytest.mark.anyio
+    async def test_later_entity_types_pass_the_first_as_of(self):
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        await collect_stream(
+            generate_sync_stream(
+                mock_client,
+                SyncStreamDto(
+                    types=[SyncRequestType.AssetsV1, SyncRequestType.AlbumToAssetsV1]
+                ),
+                {},
+                mock_user,
+            )
+        )
+
+        first, second = mock_client.events.get.call_args_list
+        assert "as_of" not in first.kwargs
+        assert first.kwargs["entity_types"] == "asset"
+        assert second.kwargs["as_of"] == MOCK_AS_OF
+        assert second.kwargs["entity_types"] == "album_asset"
+
+
 class TestStreamEntityTypePagination:
     """Tests for cursor-based pagination in _stream_entity_type function."""
 
@@ -1618,7 +1687,7 @@ class TestStreamEntityTypePagination:
     async def test_first_call_uses_checkpoint_cursor(self):
         """First API call uses cursor from checkpoint as after_cursor."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -1639,14 +1708,13 @@ class TestStreamEntityTypePagination:
             sync_entity_type=SyncEntityType.AssetV1,
             owner_id=TEST_UUID,
             checkpoint=checkpoint,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):
             results.append(item)
 
         mock_client.events.get.assert_called_once_with(
-            created_at_lt=sync_started_at,
             entity_types="asset",
             limit=EVENTS_PAGE_SIZE,
             after_cursor="event_checkpoint_cursor",
@@ -1669,23 +1737,22 @@ class TestStreamEntityTypePagination:
             sync_entity_type=SyncEntityType.AssetV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):
             results.append(item)
 
         mock_client.events.get.assert_called_once_with(
-            created_at_lt=sync_started_at,
             entity_types="asset",
             limit=EVENTS_PAGE_SIZE,
         )
 
     @pytest.mark.anyio
-    async def test_pagination_uses_last_event_cursor_for_next_page(self):
-        """Subsequent calls use cursor from last event of previous page."""
+    async def test_pagination_continues_from_next_cursor_under_one_bound(self):
+        """Later pages pass the previous page's next_cursor, not its last
+        event's cursor, and the first read's as_of."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -1727,7 +1794,9 @@ class TestStreamEntityTypePagination:
         second_asset_data.id = second_asset_id
 
         # Set up mock responses
-        first_response = create_mock_events_response(first_page_events, has_more=True)
+        first_response = create_mock_events_response(
+            first_page_events, has_more=True, next_cursor="next_cursor_1"
+        )
         second_response = create_mock_events_response([second_page_event])
 
         mock_client.events.get.side_effect = [first_response, second_response]
@@ -1753,7 +1822,7 @@ class TestStreamEntityTypePagination:
             sync_entity_type=SyncEntityType.AssetV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):
@@ -1761,23 +1830,24 @@ class TestStreamEntityTypePagination:
 
         assert len(results) == EVENTS_PAGE_SIZE + 1
 
-        # Verify second call used cursor from last event of first page
         calls = mock_client.events.get.call_args_list
         assert len(calls) == 2
 
         second_call = calls[1]
         assert second_call == call(
-            created_at_lt=sync_started_at,
             entity_types="asset",
             limit=EVENTS_PAGE_SIZE,
-            after_cursor=f"cursor_{EVENTS_PAGE_SIZE - 1}",
+            after_cursor="next_cursor_1",
+            as_of=MOCK_AS_OF,
         )
+        # Acks stay on each event's own cursor.
+        assert json.loads(results[-1][0])["ack"] == "AssetV1|cursor_500|"
 
     @pytest.mark.anyio
     async def test_stops_when_has_more_is_false(self):
         """Pagination stops when has_more is False, even with full page."""
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+        datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
 
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -1821,7 +1891,7 @@ class TestStreamEntityTypePagination:
             sync_entity_type=SyncEntityType.AssetV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):

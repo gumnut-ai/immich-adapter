@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-08-30
+last-updated: 2026-10-02
 ---
 
 # Sync Stream Architecture
@@ -24,7 +24,7 @@ Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync eve
 
 ## Deletion Events
 
-`_make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted.
+`_make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted. The feed is not in commit order, so a later re-add can sort ahead of the removal; the adapter re-reads each removed pair and upserts the current membership instead when it exists.
 
 ## Gating Rows Is a State Transition, Never an Omission
 

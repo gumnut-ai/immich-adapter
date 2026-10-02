@@ -8,8 +8,8 @@ Delegates to submodules for event construction (events), entity fetching
 import json
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
@@ -39,6 +39,7 @@ from routers.api.sync.converters import (
     gumnut_user_to_sync_user_v1,
 )
 from routers.api.sync.entity_fetch import (
+    fetch_current_album_memberships,
     fetch_entities_map,
     fetch_suppressed_face_ids,
 )
@@ -60,6 +61,22 @@ logger = logging.getLogger(__name__)
 
 # Page size for events API pagination
 EVENTS_PAGE_SIZE = GUMNUT_API_MAX_PAGE_SIZE
+
+
+@dataclass
+class SyncBound:
+    """The events-feed ``as_of`` every entity type in one sync reads under.
+
+    Each events read stops at the point where every earlier write had finished,
+    and returns that point as ``as_of``. Entity types stream one after another,
+    parents first, so a later child read would stop at a later point and could
+    deliver a row whose parent the earlier read stopped short of; the phone
+    enforces those foreign keys. Passing the first read's ``as_of`` to every
+    later read gives the whole sync one bound. It also ends the sync: writes
+    that land mid-sync wait for the next one.
+    """
+
+    as_of: str | None = None
 
 
 class StackRowReadIncomplete(Exception):
@@ -217,7 +234,8 @@ async def _require_missing_stacks_deleted(
     absent_ids: set[str],
     page_events: Sequence[EventData],
     page_has_more: bool,
-    sync_started_at: datetime,
+    next_cursor: str | None,
+    bound: SyncBound,
 ) -> None:
     """Raise unless every absent stack row is explained by an in-window delete.
 
@@ -234,6 +252,7 @@ async def _require_missing_stacks_deleted(
     stack events forward to the window bound. The events API has no entity-id
     filter, so the look-ahead is a scan — acceptable because it runs only in
     the rare missing-row case and stack events are sparse.
+    ``next_cursor`` is the current page's; the scan reads under ``bound``.
 
     Any id left unexplained raises :class:`StackRowReadIncomplete` (see there
     for why the transient shapes self-heal and a persistent failure wedges the
@@ -242,19 +261,20 @@ async def _require_missing_stacks_deleted(
     unexplained = absent_ids - {
         event.entity_id for event in page_events if event.event_type == "stack_deleted"
     }
-    last_cursor = page_events[-1].cursor
+    last_cursor = next_cursor
     has_more = page_has_more
-    while unexplained and has_more:
+    while unexplained and has_more and last_cursor is not None:
         # The dict is deliberate: the SDK types entity_types as a string
         # sequence, but the API also accepts the plain string
         # _stream_entity_type sends — the untyped dict is what lets the same
         # wire shape pass the type checker.
         params: dict[str, Any] = {
-            "created_at_lt": sync_started_at,
             "entity_types": "stack",
             "limit": EVENTS_PAGE_SIZE,
             "after_cursor": last_cursor,
         }
+        if bound.as_of is not None:
+            params["as_of"] = bound.as_of
         events_response = await gumnut_client.events.get(**params)
         events = events_response.data
         if not events:
@@ -262,7 +282,7 @@ async def _require_missing_stacks_deleted(
         unexplained -= {
             event.entity_id for event in events if event.event_type == "stack_deleted"
         }
-        last_cursor = events[-1].cursor
+        last_cursor = events_response.next_cursor
         has_more = events_response.has_more
 
     if unexplained:
@@ -279,7 +299,7 @@ async def _stream_entity_type(
     sync_entity_type: SyncEntityType,
     owner_id: UUID,
     checkpoint: Checkpoint | None,
-    sync_started_at: datetime,
+    bound: SyncBound,
     stats: SyncStreamStats,
     checkpoint_map: dict[SyncEntityType, Checkpoint],
     delete_buffer: list[tuple[str, SyncEntityType]] | None = None,
@@ -303,7 +323,7 @@ async def _stream_entity_type(
         sync_entity_type: The Immich sync entity type (e.g., SyncEntityType.AssetV1)
         owner_id: The owner UUID
         checkpoint: The checkpoint with cursor (None for full sync)
-        sync_started_at: Upper bound for the query window
+        bound: The events-feed bound shared by every entity type in this sync
         stats: Mutable stats tracker for streamed IDs, skip counts, and FK warnings
         checkpoint_map: All checkpoints for this sync (used for FK reference checks)
         delete_buffer: If provided, delete events are appended here instead of yielded
@@ -318,20 +338,21 @@ async def _stream_entity_type(
     count = 0
 
     while True:
-        # Build params for events API.
-        # created_at_lt bounds the query to a point-in-time snapshot so events
-        # created during streaming are deferred to the next sync cycle.  This
-        # is required because cursor ordering alone doesn't prevent tailing new
-        # events indefinitely — the time bound guarantees the stream terminates.
+        # Read under the sync's shared bound (see SyncBound), and continue from
+        # next_cursor rather than the last event's cursor: next_cursor keeps
+        # this read's bound, while an event's cursor is a bare position.
         params: dict[str, Any] = {
-            "created_at_lt": sync_started_at,
             "entity_types": gumnut_entity_type,
             "limit": EVENTS_PAGE_SIZE,
         }
         if last_cursor is not None:
             params["after_cursor"] = last_cursor
+        if bound.as_of is not None:
+            params["as_of"] = bound.as_of
 
         events_response = await gumnut_client.events.get(**params)
+        if bound.as_of is None:
+            bound.as_of = events_response.as_of
 
         events = events_response.data
         if not events:
@@ -371,7 +392,8 @@ async def _stream_entity_type(
                     not_returned - missing_ids,
                     events,
                     events_response.has_more,
-                    sync_started_at,
+                    events_response.next_cursor,
+                    bound,
                 )
             stats.not_found_ids[gumnut_entity_type].update(not_returned)
 
@@ -409,6 +431,21 @@ async def _stream_entity_type(
                     },
                 )
 
+        # A removal names an (album, asset) pair that a later transaction may
+        # have re-added, so re-read whether each pair is a member now.
+        current_memberships = (
+            await fetch_current_album_memberships(
+                gumnut_client,
+                {
+                    pair
+                    for event in events
+                    if (pair := _removed_membership(event)) is not None
+                },
+            )
+            if gumnut_entity_type == "album_asset"
+            else {}
+        )
+
         # Process events in order
         for event in events:
             if event.event_type in _SKIPPED_EVENT_TYPES:
@@ -430,6 +467,30 @@ async def _stream_entity_type(
                 # album pass owns album_deleted), and re-emitting here would
                 # duplicate it. The cursor still advances past this event below.
                 if not emit_deletes:
+                    continue
+                pair = _removed_membership(event)
+                membership = current_memberships.get(pair) if pair is not None else None
+                if membership is not None:
+                    # Re-added since: upsert the current row instead.
+                    stats.streamed_ids[gumnut_entity_type].add(membership.id)
+                    check_fk_references(
+                        gumnut_entity_type,
+                        membership,
+                        stats,
+                        checkpoint_map,
+                        event.cursor,
+                    )
+                    yield (
+                        convert_entity_to_sync_event(
+                            gumnut_entity_type,
+                            membership,
+                            owner_id,
+                            event.cursor,
+                            sync_entity_type,
+                        ),
+                        1,
+                    )
+                    count += 1
                     continue
                 result = make_delete_sync_event(event)
                 if result:
@@ -602,8 +663,7 @@ async def _stream_entity_type(
                 yield json_line, 1
                 count += 1
 
-        # Update cursor from last event
-        last_cursor = events[-1].cursor
+        last_cursor = events_response.next_cursor
 
         if not events_response.has_more:
             break
@@ -613,6 +673,18 @@ async def _stream_entity_type(
             f"Streamed {count} {sync_entity_type.value} events",
             extra={"entity_type": sync_entity_type.value, "count": count},
         )
+
+
+def _removed_membership(event: EventData) -> tuple[str, str] | None:
+    """The ``(album_id, asset_id)`` an ``album_asset_removed`` event names."""
+    if event.event_type != "album_asset_removed" or not isinstance(event.payload, dict):
+        return None
+    album_id = event.payload.get("album_id")
+    asset_id = event.payload.get("asset_id")
+    if not isinstance(album_id, str) or not isinstance(asset_id, str):
+        return None
+    album_id, asset_id = album_id.strip(), asset_id.strip()
+    return (album_id, asset_id) if album_id and asset_id else None
 
 
 def _yield_buffered_deletes(
@@ -767,8 +839,7 @@ async def generate_sync_stream(
                 )
                 logger.debug("Streamed user metadata", extra={"user_id": owner_id})
 
-        # Capture sync start time to bound the query window
-        sync_started_at = datetime.now(timezone.utc)
+        bound = SyncBound()
 
         # Counters for logging
         event_counts: dict[str, int] = {}
@@ -800,7 +871,7 @@ async def generate_sync_stream(
                 sync_entity_type,
                 owner_uuid,
                 checkpoint,
-                sync_started_at,
+                bound,
                 stats,
                 checkpoint_map,
                 delete_buffer=delete_buffer,

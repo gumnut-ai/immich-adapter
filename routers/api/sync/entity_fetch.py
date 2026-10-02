@@ -5,6 +5,7 @@ from typing import Literal
 from uuid import UUID
 
 from gumnut import AsyncGumnut
+from gumnut.types.album_asset_response import AlbumAssetResponse
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.stack_list_stacks_response import StackListStacksResponse
@@ -238,3 +239,29 @@ async def fetch_suppressed_face_ids(
         if should_expose_face_geometry(asset)
     }
     return {face.id for face in faces if face.asset_id not in exposable_asset_ids}
+
+
+async def fetch_current_album_memberships(
+    gumnut_client: AsyncGumnut, pairs: set[tuple[str, str]]
+) -> dict[tuple[str, str], AlbumAssetResponse]:
+    """Read which ``(album_id, asset_id)`` pairs are album members now.
+
+    A removal event names a pair, not a row, and a later transaction can re-add
+    the pair yet sort ahead of the removal in the events feed. Pairs absent from
+    the result are not members.
+    """
+    ordered = sorted(pairs)
+
+    async def _read(album_id: str, asset_id: str) -> AlbumAssetResponse | None:
+        page = await gumnut_client.album_assets.list(
+            album_id=album_id, asset_id=asset_id, limit=1
+        )
+        return page.data[0] if page.data else None
+
+    rows = await gather_with_concurrency(
+        [_read(album_id, asset_id) for album_id, asset_id in ordered],
+        cancel_on_error=True,
+    )
+    return {
+        pair: row for pair, row in zip(ordered, rows, strict=True) if row is not None
+    }
