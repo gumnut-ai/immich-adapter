@@ -11,7 +11,7 @@ import pytest
 from gumnut.types.face_response import FaceResponse
 
 from routers.api.sync.fk_integrity import SyncStreamStats
-from routers.api.sync.stream import _stream_entity_type, generate_sync_stream
+from routers.api.sync.stream import SyncBound, _stream_entity_type, generate_sync_stream
 from routers.immich_models import SyncEntityType, SyncRequestType, SyncStreamDto
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
@@ -88,8 +88,6 @@ class TestFacePersonIdOverride:
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
         mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -97,7 +95,7 @@ class TestFacePersonIdOverride:
             sync_entity_type=SyncEntityType.AssetFaceV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):
@@ -302,8 +300,6 @@ class TestFacePersonIdOverride:
             [payload_person_data]
         )
 
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -311,7 +307,7 @@ class TestFacePersonIdOverride:
             sync_entity_type=SyncEntityType.AssetFaceV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):
@@ -362,8 +358,6 @@ class TestFacePersonIdOverride:
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
         mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -371,7 +365,7 @@ class TestFacePersonIdOverride:
             sync_entity_type=SyncEntityType.AssetFaceV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):
@@ -413,8 +407,6 @@ class TestFacePersonIdOverride:
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
         mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -422,7 +414,7 @@ class TestFacePersonIdOverride:
             sync_entity_type=SyncEntityType.AssetFaceV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):
@@ -463,8 +455,6 @@ class TestFacePersonIdOverride:
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
         mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -472,7 +462,7 @@ class TestFacePersonIdOverride:
             sync_entity_type=SyncEntityType.AssetFaceV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):
@@ -540,7 +530,7 @@ class TestAlbumCoverPayloadOverride:
             sync_entity_type=SyncEntityType.AlbumV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc),
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):
@@ -786,8 +776,6 @@ class TestFacePayloadOverrideDeletedPerson:
             [payload_person_data]
         )
 
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         # Incremental sync: person checkpoint exists (person type was synced before)
         checkpoint_map = {
             SyncEntityType.PersonV1: Checkpoint(
@@ -805,7 +793,7 @@ class TestFacePayloadOverrideDeletedPerson:
             sync_entity_type=SyncEntityType.AssetFaceV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=stats,
             checkpoint_map=checkpoint_map,
         ):
@@ -1124,8 +1112,6 @@ class TestFacePayloadOverrideDeletedPerson:
         # Verification fetch returns empty — person is deleted in prod
         mock_client.people.list.return_value = create_mock_entity_page([])
 
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         # PersonV1 checkpoint exists: client synced persons in a prior cycle
         # (and processed the delete event for this person). This is the state
         # that made Fix 4 skip the null-out and leak the stale reference.
@@ -1145,7 +1131,7 @@ class TestFacePayloadOverrideDeletedPerson:
             sync_entity_type=SyncEntityType.AssetFaceV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=stats,
             checkpoint_map=checkpoint_map,
         ):
@@ -1285,8 +1271,6 @@ class TestAlbumPayloadOverrideDeletedAsset:
         # Verification fetch returns empty -- the asset was deleted in prod
         mock_client.assets.list.return_value = create_mock_entity_page([])
 
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         checkpoint_map = {
             SyncEntityType.AssetV1: Checkpoint(
                 entity_type=SyncEntityType.AssetV1,
@@ -1303,7 +1287,7 @@ class TestAlbumPayloadOverrideDeletedAsset:
             sync_entity_type=SyncEntityType.AlbumV1,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=stats,
             checkpoint_map=checkpoint_map,
         ):
@@ -1345,8 +1329,6 @@ class TestAssetFaceV2Converter:
         mock_client.faces.list.return_value = create_mock_entity_page([face_data])
         mock_client.assets.list.return_value = create_mock_face_owning_asset_page()
 
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -1354,7 +1336,7 @@ class TestAssetFaceV2Converter:
             sync_entity_type=SyncEntityType.AssetFaceV2,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):
@@ -1403,8 +1385,6 @@ class TestAssetFaceV2Converter:
             [payload_person_data]
         )
 
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-
         results = []
         async for item in _stream_entity_type(
             gumnut_client=mock_client,
@@ -1412,7 +1392,7 @@ class TestAssetFaceV2Converter:
             sync_entity_type=SyncEntityType.AssetFaceV2,
             owner_id=TEST_UUID,
             checkpoint=None,
-            sync_started_at=sync_started_at,
+            bound=SyncBound(),
             stats=SyncStreamStats(),
             checkpoint_map={},
         ):
