@@ -1,0 +1,68 @@
+"""Normalize pinned compiler images, dependencies, and publisher sanitizer parity."""
+
+import json
+import re
+import shlex
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[2]
+path = root / ".github/workflows/pr-review.lock.yml"
+source = (root / ".github/workflows/pr-review.md").read_text()
+lock = path.read_text()
+pins = dict(re.findall(r"      (agent|apiProxy|squid): (ghcr.io/[^\n]+)", source))
+if len(pins) != 3:
+    raise SystemExit("Expected three source firewall image pins")
+start = lock.index("  detection:\n")
+prefix, detector = lock[:start], lock[start:]
+for image in pins.values():
+    detector = re.sub(re.escape(image.split("@")[0]) + r"(?!@)", image, detector)
+lines = detector.splitlines(keepends=True)
+for index, line in enumerate(lines):
+    if (
+        line.strip().startswith("printf")
+        and "awf-config.json" in line
+        and "network" in line
+    ):
+        config = json.loads(shlex.split(line)[2])
+        config["container"].pop("imageTag", None)
+        config["container"]["images"] = pins
+        encoded = json.dumps(config, separators=(",", ":"))
+        lines[index] = (
+            "          printf '%s\\n' '"
+            + encoded
+            + '\' > "${RUNNER_TEMP}/gh-aw/awf-config.json"\n'
+        )
+        break
+else:
+    raise SystemExit("Expected native detection configuration")
+lock = prefix + "".join(lines)
+lock = lock.replace(
+    "      - pre_activation\n      - pre_activation\n", "      - pre_activation\n"
+)
+lock = lock.replace(
+    "\non:\n",
+    "\n# Metadata only: trusted policy checkout, read-only inference, isolated publisher.\n"
+    "on: # zizmor: ignore[dangerous-triggers]\n",
+    1,
+)
+# The trusted guard hashes exactly the text produced by the pinned native publisher.
+# Copy its sanitizer environment instead of maintaining a second domain allowlist.
+publisher_start = lock.index(
+    "      - name: Process Safe Outputs\n", lock.index("  safe_outputs:\n")
+)
+publisher_env = lock[publisher_start : lock.index("        with:\n", publisher_start)]
+sanitizer_env = re.findall(
+    r"^          (GH_AW_ALLOWED_DOMAINS|GITHUB_SERVER_URL|GITHUB_API_URL): (.+)$",
+    publisher_env,
+    re.MULTILINE,
+)
+if len(sanitizer_env) != 3:
+    raise SystemExit("Expected native publisher sanitizer environment")
+guard_start = lock.index("      - name: Validate review before native publication\n")
+guard_end = lock.index("        with:\n", guard_start)
+lock = (
+    lock[:guard_end]
+    + "".join(f"          {key}: {value}\n" for key, value in sanitizer_env)
+    + lock[guard_end:]
+)
+path.write_text(lock)
