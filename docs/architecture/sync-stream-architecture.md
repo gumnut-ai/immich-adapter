@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-10-02
+last-updated: 2026-10-03
 ---
 
 # Sync Stream Architecture
@@ -106,15 +106,17 @@ members; propagating the error truncates the stream before its cursor is acked.
 A stack row **absent from the bulk `list_stacks` read** is likewise retriable —
 skipping it would advance the cursor past the stack while the asset pass still
 stamps `stackId` on its members, hiding the burst on the mobile timeline. The
-one legitimate absence is a stack created and deleted within the same sync
-window (the row is already gone), so the guard excuses exactly the ids with a
-`stack_deleted` event in the window: first the current events page, then a
-look-ahead scan of the remaining stack events up to the window bound (the
-events API has no entity-id filter). Anything left unexplained raises
-`StackRowReadIncomplete` and truncates the stream with the cursor preserved;
-read lag resolves on the next sync, and a delete that landed after the window
-bound is found inside the next window. Undecodable-id rows are excluded from
-the guard — the read returned them; they are degraded deliberately.
+guard first excuses exactly the ids with a `stack_deleted` event in the window:
+first the current events page, then a look-ahead scan of the remaining stack
+events up to the window bound (the events API has no entity-id filter). For any
+absence still unexplained, it performs a direct stack read; a `404` confirms
+that the stack was deleted, including when its delete landed in an earlier sync
+because the feed is not in commit order. A successful direct read leaves the
+absence unexplained, so it raises `StackRowReadIncomplete` and truncates the
+stream with the cursor preserved; another direct-read failure also truncates
+the stream rather than excusing the row. Read lag resolves on the next sync.
+Undecodable-id rows are excluded from the guard — the read returned them; they
+are degraded deliberately.
 
 The asset converter maps a member's `stack_id` to the Immich `stackId` through
 the shared `immich_stack_id` helper (`gumnut_id_conversion.py`); the upload-ready
