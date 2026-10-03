@@ -355,15 +355,18 @@ mismatches. Follow DAEMON.md for validation after edits. Choose the strongest
 actionable topic from recent-change inspection, the rotating sample or lint
 findings; report uninspected areas rather than expanding the sweep indefinitely.
 
-Before choosing a change, use targeted GitHub searches for this librarian's PRs
-(open and closed), verifying the actual head branch starts with
-`librarian/`. Search by that head prefix or the `librarian` label;
-include legacy unlabeled prefix matches. Paginate only matching results, stop
-when exhausted, and do not enumerate all repository PRs. If the tools cannot
-establish complete librarian history, report incomplete discovery rather than
-assume no prior proposal exists. Do not duplicate an
-open librarian PR's topic. Do not recreate a closed, unmerged librarian proposal unless
-you have materially new evidence; cite that evidence in the PR body. Legacy librarian proposals from other executors count against the caps.
+Before choosing a change, use targeted GitHub searches for librarian PRs
+(open and closed): the `librarian` label and actual head prefix `librarian/`,
+plus legacy documentation proposals by `app/charliecreates` (REST login
+`charliecreates[bot]`). Legacy branches include `charlie/librarian-*`,
+`docs/*` and `chore/*`; inspect their changed files and proposal rationale
+to identify librarian work rather than relying only on branch names. Paginate
+these targeted searches until exhausted; do not enumerate all repository PRs.
+If the tools cannot establish complete librarian history, report incomplete
+discovery rather than assume no prior proposal exists. Count open librarian
+proposals from every executor against the DAEMON.md caps. Do not duplicate an
+open proposal's topic or recreate a closed, unmerged proposal without materially
+new evidence; cite that evidence in the PR body.
 
 Make at most one topical documentation proposal within the librarian's scope.
 Use the configured gumnut-bot[bot] author and committer identity. Commit it
