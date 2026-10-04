@@ -16,4 +16,6 @@ if(!detector.includes(tag)) throw Error('expected detector imageTag correction p
 detector=detector.replace(tag,'"images":'+JSON.stringify(images));
 text=text.slice(0,start)+detector;
 if(text.split('\n').some(line=>line.includes('uses: github/gh-aw/actions/setup@') && !line.includes('c35393777e5604a63721d09512263b1383301d4f'))) throw Error('setup action SHA drift');
+// Match the pinned action's release label for online action-pin verification.
+text=text.replaceAll('github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f # c35393777e5604a63721d09512263b1383301d4f','github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f # v0.89.21');
 fs.writeFileSync('.github/workflows/maintainer.lock.yml',text);

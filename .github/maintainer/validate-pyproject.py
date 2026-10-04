@@ -1,4 +1,5 @@
 """Preserve every non-dependency field of a candidate Python manifest."""
+
 import copy
 import json
 import sys
