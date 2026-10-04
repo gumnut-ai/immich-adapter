@@ -45,6 +45,21 @@ lock = lock.replace(
     "on: # zizmor: ignore[dangerous-triggers]\n",
     1,
 )
+# Prompt generation must read the same admitted immutable policy as inference.
+activation_start = lock.index("  activation:\n")
+activation_end = lock.index("\n  agent:\n", activation_start)
+activation = lock[activation_start:activation_end]
+checkout = "      - name: Checkout .github and .agents folders\n"
+checkout_start = activation.index(checkout)
+checkout_with = activation.index("        with:\n", checkout_start) + len(
+    "        with:\n"
+)
+activation = (
+    activation[:checkout_with]
+    + "          ref: ${{ needs.pre_activation.outputs.policy }}\n"
+    + activation[checkout_with:]
+)
+lock = lock[:activation_start] + activation + lock[activation_end:]
 # The trusted guard hashes exactly the text produced by the pinned native publisher.
 # Copy its sanitizer environment instead of maintaining a second domain allowlist.
 publisher_start = lock.index(

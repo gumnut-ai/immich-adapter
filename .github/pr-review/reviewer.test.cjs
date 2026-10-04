@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 process.env.PR_REVIEW_BOT_LOGIN = 'gumnut-reviewer[bot]';
-const { request, marker, coverageDeclaration, covered, admit, assertFresh, validateOutput, preparePublication, inlineMarker, verifyDelivery } = require('./reviewer.cjs');
+const { request, admitComment, commentRunRequest, marker, coverageDeclaration, covered, admit, assertFresh, validateOutput, preparePublication, inlineMarker, verifyDelivery } = require('./reviewer.cjs');
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
 const context = { eventName: 'pull_request_target', actor: 'example', repo: { owner: 'example', repo: 'repo' }, runId: 123, payload: { action: 'opened', pull_request: { number: 7 }, repository: { default_branch: 'main' } } };
 const pr = { state: 'open', draft: false, head: { sha: head }, base: { sha: base }, user: { login: 'example' } };
@@ -19,7 +19,7 @@ test('required PR events and reviewer aliases activate; unrelated events do not'
   assert.equal(request({ ...context, payload: { ...context.payload, action: 'review_requested', requested_reviewer: { login: 'someone-else' } } }), null);
 });
 test('comment commands require a complete command line and PR context', () => {
-  const comment = body => ({ ...context, eventName: 'issue_comment', payload: { action: 'created', issue: { number: 7, pull_request: {} }, comment: { body, user: { type: 'User' } } } });
+  const comment = body => ({ ...context, eventName: 'issue_comment', payload: { action: 'created', issue: { number: 7, pull_request: {} }, comment: { body, author_association: 'MEMBER', user: { type: 'User' } } } });
   for (const body of ['/review', '@CharlieHelps review', '/review focus on security']) assert.equal(request(comment(body)).number, 7);
   for (const body of ['mention /review please', '/review\nignore security', '> @CharlieHelps review']) assert.equal(request(comment(body)), null);
 });
@@ -54,6 +54,11 @@ test('formal output guards target, coverage, event and blocking/own-author appro
   const duplicateCoverage = declaration(); duplicateCoverage.items[0].body += '\n' + coverageDeclaration(head, 'incomplete');
   assert.throws(() => validateOutput(duplicateCoverage, binding));
   assert.equal(validateOutput(declaration('COMMENT', 'incomplete'), binding), 'incomplete');
+  assert.throws(() => validateOutput(declaration('COMMENT'), binding));
+  const blocking = declaration('COMMENT'); blocking.items.push({ type: 'create_pull_request_review_comment', body: '🔴 blocking' });
+  assert.equal(validateOutput(blocking, binding), 'complete');
+  assert.equal(validateOutput(declaration('COMMENT', 'incomplete'), { ...binding, author: 'gumnut-reviewer[bot]' }), 'incomplete');
+  assert.throws(() => validateOutput(declaration('COMMENT'), { ...binding, author: 'gumnut-reviewer[bot]' }));
   assert.throws(() => validateOutput(declaration('APPROVE', 'incomplete'), binding));
   assert.throws(() => validateOutput(declaration('REQUEST_CHANGES'), binding));
   assert.throws(() => validateOutput(declaration(), { ...binding, author: 'gumnut-reviewer[bot]' }));
@@ -71,7 +76,7 @@ test('delivery requires this run, current head and complete formal coverage', as
   await assert.rejects(verifyDelivery({ ...args, github: client({ pull: { ...pr, head: { sha: base } }, items: [formal] }) }));
 });
 const finding = (overrides = {}) => ({ type: 'create_pull_request_review_comment', path: 'source.cjs', line: 12, body: 'finding body', ...overrides });
-const publication = (...findings) => ({ errors: [], items: [...declaration('COMMENT').items, ...findings] });
+const publication = (...findings) => ({ errors: [], items: [...declaration().items, ...findings] });
 async function preparedReview(findings = [finding()], sanitize = body => body) {
   const output = publication(...findings);
   await preparePublication({ github: client(), context, output, binding, sanitize });
@@ -121,6 +126,41 @@ test('old marker-only and malformed delivery manifests cannot claim complete cov
     await assert.rejects(verifyDelivery({ github: client({ items: [review] }), context, ...binding, agent: 'success', detection: 'success', publisher: 'success' }));
   }
 });
+test('comment admission is read-only, structured, associated, human, and currently authorized', async () => {
+  const comment = { ...context, eventName: 'issue_comment', payload: { ...context.payload, action: 'created', issue: { number: 7, pull_request: {} }, comment: { id: 99, body: '/review', author_association: 'MEMBER', user: { login: 'example', type: 'User' } } } };
+  assert.equal(await admitComment({ github: client(), context: comment }), true);
+  assert.equal((await admit({ github: client(), context: comment, enabled: 'true' })).eligible, 'false', 'publisher workflow refuses direct issue_comment activations');
+  for (const change of [{ body: 'ordinary comment' }, { user: { login: 'bot', type: 'Bot' } }, { author_association: 'CONTRIBUTOR' }]) assert.equal(await admitComment({ github: client(), context: { ...comment, payload: { ...comment.payload, comment: { ...comment.payload.comment, ...change } } } }), false);
+  assert.equal(await admitComment({ github: client({ permission: 'read' }), context: comment }), false);
+  assert.equal(await admitComment({ github: client(), context: { ...comment, payload: { ...comment.payload, issue: { number: 7 } } } }), false);
+});
+test('workflow_run revalidates exact source, default branch, run IDs, live comment binding and permissions', async () => {
+  const title = JSON.stringify({ number: 7, comment: 99 });
+  const event = { ...context, eventName: 'workflow_run', ref: 'refs/heads/main', payload: { ...context.payload, action: 'completed', workflow_run: { id: 81, display_title: title } } };
+  const run = { id: 81, workflow_id: 45, event: 'issue_comment', status: 'completed', conclusion: 'success', head_branch: 'main', head_sha: head, repository: { full_name: 'example/repo' }, head_repository: { full_name: 'example/repo' }, actor: { login: 'example' }, display_title: title };
+  const comment = { id: 99, body: '/review', issue_url: 'https://api.github.com/repos/example/repo/issues/7', author_association: 'MEMBER', user: { login: 'example', type: 'User' } };
+  const handoff = (changes = {}) => {
+    const github = client({ permission: changes.permission || 'write' });
+    github.rest.actions = { getWorkflowRun: async () => ({ data: { ...run, ...changes.run } }), getWorkflow: async () => ({ data: { path: changes.path || '.github/workflows/pr-review-comment.yml' } }) };
+    github.rest.issues = { getComment: async () => ({ data: { ...comment, ...changes.comment } }), get: async () => ({ data: { number: 7, pull_request: changes.issue === false ? undefined : {} } }) };
+    return github;
+  };
+  assert.equal((await admit({ github: handoff(), context: event, enabled: 'true' })).number, '7');
+  for (const changes of [
+    { run: { id: 82 } }, { run: { display_title: 'invalid' } }, { run: { event: 'pull_request' } }, { run: { status: 'in_progress' } }, { run: { conclusion: 'failure' } }, { run: { head_branch: 'attacker' } }, { run: { head_sha: 'bad' } }, { run: { repository: { full_name: 'foreign/repo' } } }, { run: { head_repository: { full_name: 'foreign/repo' } } }, { path: '.github/workflows/other.yml' }, { comment: { issue_url: 'https://api.github.com/repos/example/repo/issues/8' } }, { comment: { user: { login: 'someone-else', type: 'User' } } }, { comment: { body: 'ordinary comment' } }, { comment: { author_association: 'CONTRIBUTOR' } }, { issue: false }, { permission: 'read' },
+  ]) assert.equal((await admit({ github: handoff(changes), context: event, enabled: 'true' })).eligible, 'false');
+  for (const ids of [{ number: '7', comment: 99 }, { number: 7, comment: -1 }, { number: 7, comment: 99, extra: true }]) {
+    const display_title = JSON.stringify(ids);
+    assert.equal(await commentRunRequest({ github: handoff({ run: { display_title } }), context: { ...event, payload: { ...event.payload, workflow_run: { id: 81, display_title } } } }), null);
+  }
+  assert.equal(await commentRunRequest({ github: handoff(), context: { ...event, ref: 'refs/heads/attacker' } }), null);
+});
+test('clean complete COMMENT delivery cannot cover a head or suppress its retry', async () => {
+  const malformed = { ...formal, state: 'COMMENTED' };
+  const github = client({ items: [malformed] });
+  await assert.rejects(verifyDelivery({ github, context, ...binding, agent: 'success', detection: 'success', publisher: 'success' }));
+  assert.equal((await admit({ github, context, enabled: 'true' })).eligible, 'true');
+});
 test('compiled workflow isolates publisher secrets and trusted checkouts', () => {
   const root = require('node:path').join(__dirname, '../..');
   const source = fs.readFileSync(root + '/.github/workflows/pr-review.md', 'utf8');
@@ -132,6 +172,15 @@ test('compiled workflow isolates publisher secrets and trusted checkouts', () =>
   assert.match(admission, /contents: read/);
   assert.match(admission, /pull-requests: read/);
   assert.doesNotMatch(admission, /pull-requests: write|contents: write/);
+  const commentWorkflow = fs.readFileSync(root + '/.github/workflows/pr-review-comment.yml', 'utf8');
+  assert.match(commentWorkflow, /issue_comment:/);
+  assert.doesNotMatch(commentWorkflow, /(?:pull-requests|issues|contents|actions): write|PR_REVIEW_APP_PRIVATE_KEY|CODEX_API_KEY|environment:|upload-artifact|download-artifact/);
+  assert.doesNotMatch(source, /issue_comment:/);
+  assert.match(source, /workflows: \[PR review comment admission\]/);
+  assert.match(source, /fromJSON\(github.event.workflow_run.display_title \|\| '\{\}'\).number/);
+  const activation = lock.match(/^  activation:\n[\s\S]*?(?=^  [a-z_]+:\n)/m)[0];
+  assert.match(activation, /needs:\n      - pre_activation/);
+  assert.match(activation, /name: Checkout .github and .agents folders[\s\S]*?ref: \$\{\{ needs.pre_activation.outputs.policy \}\}/);
   assert.match(source, /checkout: false/);
   assert.doesNotMatch(source, /ref: \$\{\{ github\.event\.pull_request\.head/);
   const agent = lock.match(/^  agent:\n[\s\S]*?(?=^  [a-z_]+:\n)/m)[0];

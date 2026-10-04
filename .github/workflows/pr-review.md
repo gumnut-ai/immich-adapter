@@ -5,8 +5,10 @@ description: Review the current pull request under trusted repository policy.
 on:
   pull_request_target:
     types: [opened, reopened, ready_for_review, synchronize, review_requested]
-  issue_comment:
-    types: [created]
+  workflow_run:
+    workflows: [PR review comment admission]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       pull_request_number:
@@ -15,6 +17,7 @@ on:
         type: string
   roles: all
   permissions:
+    actions: read
     contents: read
     pull-requests: read
   steps:
@@ -42,7 +45,7 @@ on:
           await core.summary.write();
 if: vars.PR_REVIEW_ENABLED == 'true' && needs.pre_activation.outputs.eligible == 'true'
 concurrency:
-  group: pr-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pull_request_number }}
+  group: pr-review-${{ github.event.pull_request.number || inputs.pull_request_number || fromJSON(github.event.workflow_run.display_title || '{}').number }}
   cancel-in-progress: false
   queue: single
   job-discriminator: ${{ github.run_id }}
@@ -69,7 +72,7 @@ tools:
   github:
     github-token: ${{ secrets.GITHUB_TOKEN }}
 # Automatic checkout is disabled: the compiler only recognizes event base refs,
-# which cannot bind issue-comment/manual activations to immutable default policy.
+# which cannot bind comment-handoff/manual activations to immutable default policy.
 checkout: false
 steps:
   - name: Read immutable reviewed policy (never contributor head)
@@ -251,7 +254,7 @@ formal body: `PR review coverage: ${{ needs.pre_activation.outputs.head }} compl
 only when all applicable lanes finished, otherwise
 `PR review coverage: ${{ needs.pre_activation.outputs.head }} incomplete`.
 The trusted publisher adds durable coverage and delivery markers after native ingestion.
-An APPROVE requires complete coverage and no blocking finding. If the author is
-`${{ needs.pre_activation.outputs.bot }}`, publish a COMMENT limitation because the publisher cannot approve
+Complete clean coverage requires APPROVE; blocking or incomplete coverage requires COMMENT. If the author is
+`${{ needs.pre_activation.outputs.bot }}`, publish an incomplete COMMENT limitation because the publisher cannot approve
 its own PR. Never call noop for a review-required activation. Native publication
 and independent readback determine final completion.

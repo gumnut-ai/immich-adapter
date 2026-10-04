@@ -99,4 +99,33 @@ test('native body-only clean and limitation reviews preserve their distinct comp
     else await assert.rejects(verify(), /coverage remains incomplete/);
   }
 });
+test('native complete blocking COMMENT remains complete but own-author coverage fails closed', async () => {
+  const output = await collect([{ ...finding, body: '🔴 blocking: supported finding' }, { ...submit('complete'), event: 'COMMENT' }]);
+  await preparePublication({ github: global.github, context, output, binding, sanitize });
+  await publish(output);
+  assert.equal(published.state, 'COMMENTED');
+  assert.equal(await verify(), 'review-url');
+  assert.equal((await admit({ github: global.github, context, enabled: 'true' })).reason, 'already-reviewed-current-head');
+  const own = await collect([submit('complete')]);
+  await assert.rejects(preparePublication({ github: global.github, context, output: own, binding: { ...binding, author: bot.login }, sanitize }), /Own-author/);
+});
+test('default branch advance renders prompt from the admitted policy rather than event revision', async () => {
+  const checkout = fs.mkdtempSync(path.join(scratch, 'policy-'));
+  const git = (...args) => require('node:child_process').execFileSync('git', ['-C', checkout, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  git('init'); git('config', 'user.name', 'Example Reviewer'); git('config', 'user.email', 'reviewer@example.com');
+  const source = path.join(checkout, '.github/workflows/pr-review.md');
+  fs.mkdirSync(path.dirname(source), { recursive: true });
+  fs.writeFileSync(source, '---\ndescription: old\n---\nOld event policy instructions.');
+  git('add', '.github'); git('commit', '-m', 'Old policy');
+  const eventPolicy = git('rev-parse', 'HEAD');
+  fs.writeFileSync(source, '---\ndescription: new\n---\nNew admitted policy instructions.');
+  git('add', '.github'); git('commit', '-m', 'New policy');
+  const admittedPolicy = git('rev-parse', 'HEAD');
+  const activation = lock.match(/^  activation:\n[\s\S]*?(?=^  [a-z_]+:\n)/m)[0];
+  const usesAdmittedPolicy = /name: Checkout .github and .agents folders[\s\S]*?ref: \$\{\{ needs.pre_activation.outputs.policy \}\}/.test(activation);
+  git('checkout', '--detach', usesAdmittedPolicy ? admittedPolicy : eventPolicy);
+  const prompt = await native('runtime_import.cjs').processRuntimeImports('{{#runtime-import .github/workflows/pr-review.md}}', checkout);
+  assert.match(prompt, /New admitted policy instructions/);
+  assert.doesNotMatch(prompt, /Old event policy instructions/);
+});
 test.after(() => fs.rmSync(scratch, { recursive: true, force: true }));

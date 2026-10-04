@@ -17,7 +17,7 @@ function request(context) {
     return { number: p.pull_request.number, manual: p.action === 'review_requested' };
   }
   if (context.eventName === 'issue_comment') {
-    if (p.action !== 'created' || !p.issue?.pull_request || p.comment?.user?.type !== 'User') return null;
+    if (p.action !== 'created' || !p.issue?.pull_request || p.comment?.user?.type !== 'User' || !['OWNER', 'MEMBER', 'COLLABORATOR'].includes(p.comment.author_association)) return null;
     // Complete command lines only; quoted mentions or prose do not authorize work.
     if (!/^(?:\/review|@(?:CharlieHelps|gumnut-reviewer) review)(?:[ \t]+[^\r\n]*)?$/i.test(p.comment.body.trim())) return null;
     return { number: p.issue.number, manual: true };
@@ -28,6 +28,36 @@ function request(context) {
     return { number: Number(p.inputs.pull_request_number), manual: true };
   }
   return null;
+}
+
+async function admitComment({ github, context }) {
+  if (context.eventName !== 'issue_comment') return false;
+  const target = request(context);
+  if (!target || context.actor !== context.payload.comment.user.login) return false;
+  const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ ...context.repo, username: context.actor });
+  return ['admin', 'maintain', 'write'].includes(data.permission);
+}
+
+async function commentRunRequest({ github, context }) {
+  const event = context.payload.workflow_run;
+  if (context.payload.action !== 'completed' || !validNumber(event?.id)) return null;
+  const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: Number(event.id) });
+  const repo = `${context.repo.owner}/${context.repo.repo}`;
+  if (Number(run.id) !== Number(event.id) || event.display_title !== run.display_title || context.ref !== `refs/heads/${context.payload.repository.default_branch}` || run.event !== 'issue_comment' || run.status !== 'completed' || run.conclusion !== 'success' || run.head_branch !== context.payload.repository.default_branch || run.repository?.full_name !== repo || run.head_repository?.full_name !== repo || !validSHA(run.head_sha) || !validNumber(run.workflow_id)) return null;
+  const { data: workflow } = await github.rest.actions.getWorkflow({ ...context.repo, workflow_id: run.workflow_id });
+  if (workflow.path !== '.github/workflows/pr-review-comment.yml') return null;
+  // Numeric run metadata only: no artifact, code, prompt, or comment text crosses jobs.
+  let ids;
+  try { ids = JSON.parse(run.display_title); } catch { return null; }
+  if (!ids || Object.keys(ids).sort().join(',') !== 'comment,number' || typeof ids.number !== 'number' || typeof ids.comment !== 'number' || !validNumber(ids.number) || !validNumber(ids.comment)) return null;
+  const { data: comment } = await github.rest.issues.getComment({ ...context.repo, comment_id: Number(ids.comment) });
+  const api = context.apiUrl || process.env.GITHUB_API_URL || 'https://api.github.com';
+  if (comment.issue_url !== `${api}/repos/${repo}/issues/${ids.number}` || comment.user?.login !== run.actor?.login) return null;
+  const { data: issue } = await github.rest.issues.get({ ...context.repo, issue_number: Number(ids.number) });
+  if (!issue.pull_request) return null;
+  const original = { ...context, eventName: 'issue_comment', actor: comment.user.login, payload: { ...context.payload, action: 'created', issue, comment } };
+  const target = request(original);
+  return target ? { ...target, actor: comment.user.login } : null;
 }
 
 async function reviews(github, repo, number) {
@@ -54,6 +84,8 @@ async function findingsDelivered(github, repo, number, review) {
   if (expected === null) return false;
   const comments = await github.paginate(github.rest.pulls.listCommentsForReview, { ...repo, pull_number: Number(number), review_id: review.id, per_page: 100 });
   if (comments.length !== expected.length) return false;
+  const blocking = [review, ...comments].some(item => item.body?.includes('🔴 blocking'));
+  if (review.state !== (blocking ? 'COMMENTED' : 'APPROVED')) return false;
   const remaining = [...comments];
   return expected.every(entry => {
     const index = remaining.findIndex(c => c.user?.login === BOT && c.path === entry.path && (c.original_line ?? c.line) === Number(entry.line) && c.side === entry.side && (c.original_start_line ?? c.start_line ?? null) === (entry.start ?? null) && typeof c.body === 'string' && digest(c.body) === entry.digest);
@@ -90,17 +122,17 @@ async function preparePublication({ github, context, output, binding, sanitize }
 async function admit({ github, context, enabled }) {
   if (enabled !== 'true') return { eligible: 'false', reason: 'disabled' };
   if (!validBot(BOT)) throw new Error('Configure exact reviewer App bot login');
-  const target = request(context);
+  const target = context.eventName === 'workflow_run' ? await commentRunRequest({ github, context }) : context.eventName === 'issue_comment' ? null : request(context);
   if (!target) return { eligible: 'false', reason: 'unmatched-event' };
   if (!validNumber(target.number)) throw new Error('Invalid pull request number');
   if (target.manual) {
-    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ ...context.repo, username: context.actor });
+    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ ...context.repo, username: target.actor || context.actor });
     if (!['admin', 'maintain', 'write'].includes(data.permission)) return { eligible: 'false', reason: 'unauthorized-request' };
   }
   const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: target.number });
   if (pr.state !== 'open' || pr.draft) return { eligible: 'false', reason: 'closed-or-draft' };
   if (!validSHA(pr.head.sha) || !validSHA(pr.base.sha)) throw new Error('Invalid GitHub revision');
-  if (await deliveredCoverage(github, context.repo, target.number, await reviews(github, context.repo, target.number), pr.head.sha)) return { eligible: 'false', reason: 'already-reviewed-current-head' };
+  if (pr.user.login !== BOT && await deliveredCoverage(github, context.repo, target.number, await reviews(github, context.repo, target.number), pr.head.sha)) return { eligible: 'false', reason: 'already-reviewed-current-head' };
   return { eligible: 'true', reason: 'review-required', number: String(target.number), head: pr.head.sha, base: pr.base.sha, author: pr.user.login, bot: BOT };
 }
 
@@ -108,7 +140,7 @@ async function assertFresh({ github, context, number, head }) {
   if (!validNumber(number) || !validSHA(head)) throw new Error('Invalid review binding');
   const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) });
   if (pr.state !== 'open' || pr.draft || pr.head.sha !== head) throw new Error('Review incomplete: pull request closed, became draft, or head changed');
-  if (await deliveredCoverage(github, context.repo, number, await reviews(github, context.repo, Number(number)), head)) throw new Error('Review already published for this head');
+  if (pr.user.login !== BOT && await deliveredCoverage(github, context.repo, number, await reviews(github, context.repo, Number(number)), head)) throw new Error('Review already published for this head');
   return pr;
 }
 
@@ -127,7 +159,10 @@ function validateOutput(output, { number, head, author }) {
   const complete = declarations[0] === coverageDeclaration(head, 'complete');
   const incomplete = declarations[0] === coverageDeclaration(head, 'incomplete');
   if (declarations.length !== 1 || complete === incomplete) throw new Error('Exactly one current-head coverage declaration is required');
-  if (submit.event === 'APPROVE' && (!complete || author === BOT || output.items.some(item => item.body?.includes('🔴 blocking')))) throw new Error('Approval requires complete, clean coverage and a different author');
+  const blocking = output.items.some(item => item.body?.includes('🔴 blocking'));
+  if (author === BOT && complete) throw new Error('Own-author review requires incomplete COMMENT coverage');
+  const expected = complete && !blocking ? 'APPROVE' : 'COMMENT';
+  if (submit.event !== expected) throw new Error('Formal review event differs from complete/clean or blocking/incomplete policy');
   return complete ? 'complete' : 'incomplete';
 }
 
@@ -138,8 +173,9 @@ async function verifyDelivery({ github, context, number, head, agent, detection,
   const runURL = `${context.serverUrl || 'https://github.com'}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
   const delivered = (await reviews(github, context.repo, Number(number))).filter(r => r.user?.login === BOT && r.commit_id === head && r.body?.includes(runURL));
   if (delivered.length !== 1 || !['APPROVED', 'COMMENTED'].includes(delivered[0].state)) throw new Error('Current run formal review not confirmed');
+  if (pr.user.login === BOT) throw new Error('Own-author review cannot establish complete approval coverage');
   if (!delivered[0].body.includes(marker(head, 'complete'))) throw new Error('Formal limitation review delivered; coverage remains incomplete');
   if (!await findingsDelivered(github, context.repo, number, delivered[0])) throw new Error('Formal review delivered but declared inline findings are missing or altered');
   return delivered[0].html_url;
 }
-module.exports = { request, marker, coverageDeclaration, covered, admit, assertFresh, validateOutput, preparePublication, inlineMarker, verifyDelivery };
+module.exports = { request, admitComment, commentRunRequest, marker, coverageDeclaration, covered, admit, assertFresh, validateOutput, preparePublication, inlineMarker, verifyDelivery };

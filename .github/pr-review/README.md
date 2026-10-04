@@ -4,7 +4,7 @@
 `github/gh-aw` v0.89.21 at commit
 `c35393777e5604a63721d09512263b1383301d4f`. After compiling with
 `--action-tag c35393777e5604a63721d09512263b1383301d4f`, run
-`python3 .github/pr-review/reviewer-compile.py` to apply the pinned compiler's
+`uv run python .github/pr-review/reviewer-compile.py` to apply the pinned compiler's
 missing detection-image digests, duplicate activation dependency and native sanitizer environment parity, then
 `node --test .github/pr-review/reviewer.test.cjs` and `actionlint` on the two
 PR-review YAML files. The CI contract test also checks out that exact native commit and runs
@@ -27,7 +27,10 @@ uses the read-only workflow token explicitly.
 Automatic review covers open non-draft PRs, readiness, reopen and head updates.
 A reviewer request for `CharlieHelps` or `the configured reviewer App bot`, a complete `/review`
 or `@CharlieHelps review` command line, and default-branch manual dispatch are
-supported. Manual requests require the caller's current repository write,
+supported. A separate read-only comment-admission workflow hands off numeric
+PR/comment IDs through authenticated run metadata. The reviewer re-fetches the
+source run, exact workflow path, comment and author permissions before inference;
+comment jobs have no publisher credentials. Manual requests require the caller's current repository write,
 maintain or admin permission. Other free-form Charlie mentions do not trigger
 paid inference. Opening fork PRs can trigger inference once enabled; rate/cost
 exposure remains an operator decision. No contributor checkout, dependency

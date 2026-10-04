@@ -1,0 +1,30 @@
+name: PR review comment admission
+# Only GitHub-issued numeric IDs cross into workflow_run; no comment body or artifact.
+run-name: '{"number":${{ github.event.issue.number }},"comment":${{ github.event.comment.id }}}'
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+jobs:
+  admission:
+    if: vars.PR_REVIEW_ENABLED == 'true' && github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Read-only command and live permission check
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { admitComment } = require('./.github/pr-review/reviewer.cjs');
+            const eligible = await admitComment({ github, context });
+            core.summary.addRaw(`Read-only PR review request eligibility: ${eligible}\n`);
+            await core.summary.write();
