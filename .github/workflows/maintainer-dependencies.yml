@@ -1,0 +1,61 @@
+name: Locked dependency coverage
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "40 */6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: maintainer-dependency-index
+  cancel-in-progress: false
+jobs:
+  index:
+    # Separate activation consent; never run this publisher on a PR revision.
+    if: vars.MAINTAINER_DEPENDENCIES_ENABLED == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    environment: gumbot-publisher
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Build exact committed dependency inventory without installs
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p /tmp/maintainer-input
+          SCANNED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) python3 .github/maintainer/dependency-snapshot.py "$SOURCE_SHA" > /tmp/maintainer-input/dependency-snapshot.json
+      - name: Mint repository-only dependency submission token
+        id: publisher
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GUMBOT_CLIENT_ID }}
+          private-key: ${{ secrets.GUMBOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Submit to GitHub and require complete graph readback
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ steps.publisher.outputs.token }}
+          script: |
+            const fs=require('fs');
+            const bundle=JSON.parse(fs.readFileSync('/tmp/maintainer-input/dependency-snapshot.json','utf8'));
+            const {submit}=require('./.github/maintainer/dependency-coverage.cjs');
+            try { await submit({github,context,bundle,report:text=>core.summary.addRaw(text+'\n')}); }
+            finally { await core.summary.write(); }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: maintainer-dependency-coverage
+          path: /tmp/maintainer-input/dependency-*.json
+          if-no-files-found: warn
+          retention-days: 30
