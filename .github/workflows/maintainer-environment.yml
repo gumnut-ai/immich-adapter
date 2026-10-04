@@ -1,0 +1,60 @@
+name: Maintenance sandbox smoke
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 90
+    services:
+      redis:
+        image: redis:7@sha256:b2b95679e3b46fb51864949ed25ea976fc3a6bcc00a40a1bc00d568cb2822e50
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.21.0"
+          package-manager-cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - uses: github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f # v0.89.21
+        with:
+          destination: ${{ runner.temp }}/gh-aw/actions
+      - name: Read uv version
+        id: uv-version
+        shell: bash
+        run: |
+          version=$(cat .uv-version)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Expected an exact uv version (major.minor.patch)' >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ steps.uv-version.outputs.version }}
+          enable-cache: true
+          cache-suffix: maintainer-environment-smoke
+          cache-dependency-glob: "uv.lock"
+      - name: Install checksum-verified AWF and preserve verification inputs
+        run: |
+          bash "$RUNNER_TEMP/gh-aw/actions/install_awf_binary.sh" v0.28.25
+          mkdir -p "$RUNNER_TEMP/maintainer-trusted" /tmp/maintainer-input
+          cp scripts/check_maintainer_environment.sh scripts/run_maintainer_sandbox.sh "$RUNNER_TEMP/maintainer-trusted/"
+          cp .github/maintainer/sandbox.json "$RUNNER_TEMP/maintainer-trusted/"
+          echo '{"alerts":[],"routine":false}' > /tmp/maintainer-input/alerts.json
+      - name: Run full checks inside service-aware AWF sandbox without inference
+        env:
+          MAINTAINER_SERVICE_PORTS: ${{ job.services.redis.ports['6379'] }}
+        run: |
+          started=$(date +%s)
+          bash "$RUNNER_TEMP/maintainer-trusted/run_maintainer_sandbox.sh" smoke
+          echo "Actual AWF smoke passed in $(( $(date +%s) - started )) seconds" >> "$GITHUB_STEP_SUMMARY"
