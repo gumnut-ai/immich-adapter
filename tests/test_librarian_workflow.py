@@ -6,6 +6,7 @@ import shlex
 import subprocess
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -13,14 +14,14 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def librarian_jobs():
+def librarian_jobs() -> dict[str, Any]:
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/librarian.lock.yml").read_text()
     )
     return workflow["jobs"]
 
 
-def firewall_config(steps):
+def firewall_config(steps: list[dict[str, Any]]) -> dict[str, Any]:
     config_line = next(
         line.strip()
         for step in steps
@@ -31,7 +32,7 @@ def firewall_config(steps):
 
 
 @pytest.fixture
-def native_budget_parser(tmp_path, monkeypatch):
+def native_budget_parser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Stand in for the gh-aw helper installed by the runner's setup step."""
     helper = tmp_path / "gh-aw/actions/ai_credits_context.cjs"
     helper.parent.mkdir(parents=True)
@@ -43,7 +44,7 @@ def native_budget_parser(tmp_path, monkeypatch):
     monkeypatch.setenv("TEST_BUDGET_EXCEEDED", "false")
 
 
-def test_librarian_delivery_readback():
+def test_librarian_delivery_readback() -> None:
     subprocess.run(
         ["node", "--test", ".github/librarian/verify-delivery.test.cjs"],
         cwd=ROOT,
@@ -51,7 +52,7 @@ def test_librarian_delivery_readback():
     )
 
 
-def test_librarian_job_allows_inference_timeout_finalization():
+def test_librarian_job_allows_inference_timeout_finalization() -> None:
     job = librarian_jobs()["agent"]
     inference = next(
         step for step in job["steps"] if step.get("id") == "agentic_execution"
@@ -60,7 +61,7 @@ def test_librarian_job_allows_inference_timeout_finalization():
     assert job["timeout-minutes"] >= inference["timeout-minutes"] + 10
 
 
-def test_librarian_disables_whole_agent_harness_retries():
+def test_librarian_disables_whole_agent_harness_retries() -> None:
     frontmatter = (ROOT / ".github/workflows/librarian.md").read_text().split("---")[1]
     source = yaml.safe_load(frontmatter)
     assert source["engine"]["harness"]["max-retries"] == 0
@@ -73,7 +74,7 @@ def test_librarian_disables_whole_agent_harness_retries():
         assert str(execution["env"]["GH_AW_HARNESS_MAX_RETRIES"]) == "0"
 
 
-def test_librarian_firewall_downloads_match_source_pins():
+def test_librarian_firewall_downloads_match_source_pins() -> None:
     frontmatter = (ROOT / ".github/workflows/librarian.md").read_text().split("---")[1]
     pins = yaml.safe_load(frontmatter)["sandbox"]["agent"]["images"]
     for job_name in ("agent", "detection"):
@@ -87,7 +88,7 @@ def test_librarian_firewall_downloads_match_source_pins():
         assert "imageTag" not in config["container"]
 
 
-def test_librarian_budgets_reach_native_admission_and_both_proxies():
+def test_librarian_budgets_reach_native_admission_and_both_proxies() -> None:
     frontmatter = (ROOT / ".github/workflows/librarian.md").read_text().split("---")[1]
     source = yaml.safe_load(frontmatter)
     jobs = librarian_jobs()
@@ -110,7 +111,7 @@ def test_librarian_budgets_reach_native_admission_and_both_proxies():
         assert config["apiProxy"]["maxAiCredits"] == limit
 
 
-def test_librarian_luna_pricing_reaches_both_proxies_and_run_metadata():
+def test_librarian_luna_pricing_reaches_both_proxies_and_run_metadata() -> None:
     frontmatter = (ROOT / ".github/workflows/librarian.md").read_text().split("---")[1]
     providers = yaml.safe_load(frontmatter)["models"]["providers"]
     cost = providers["openai"]["models"]["gpt-6-luna"]["cost"]
@@ -137,7 +138,9 @@ def test_librarian_luna_pricing_reaches_both_proxies_and_run_metadata():
     assert json.loads(info["env"]["GH_AW_INFO_MODEL_COSTS"])["providers"] == providers
 
 
-def test_librarian_report_rejects_failed_postprocessing(tmp_path, native_budget_parser):
+def test_librarian_report_rejects_failed_postprocessing(
+    tmp_path: Path, native_budget_parser: None
+) -> None:
     report = next(
         step
         for step in librarian_jobs()["agent"]["steps"]
@@ -167,8 +170,8 @@ def test_librarian_report_rejects_failed_postprocessing(tmp_path, native_budget_
 
 
 def test_librarian_report_does_not_call_failed_status_probe_clean(
-    tmp_path, native_budget_parser
-):
+    tmp_path: Path, native_budget_parser: None
+) -> None:
     report = next(
         step
         for step in librarian_jobs()["agent"]["steps"]
@@ -216,8 +219,8 @@ def test_librarian_report_does_not_call_failed_status_probe_clean(
 
 
 def test_librarian_report_rejects_successful_budget_abort(
-    tmp_path, native_budget_parser
-):
+    tmp_path: Path, native_budget_parser: None
+) -> None:
     report = next(
         step
         for step in librarian_jobs()["agent"]["steps"]
@@ -246,7 +249,7 @@ def test_librarian_report_rejects_successful_budget_abort(
     assert "Librarian result: budget-interrupted" in summary.read_text()
 
 
-def test_librarian_python_matches_repository_pin():
+def test_librarian_python_matches_repository_pin() -> None:
     steps = librarian_jobs()["agent"]["steps"]
     python = [
         step
@@ -260,7 +263,7 @@ def test_librarian_python_matches_repository_pin():
     )
 
 
-def test_librarian_publisher_uses_only_app_credentials_and_no_issues():
+def test_librarian_publisher_uses_only_app_credentials_and_no_issues() -> None:
     jobs = librarian_jobs()
     assert "detection" in jobs
     assert "GH_AW_SAFE_OUTPUTS_STAGED" not in jobs["safe_outputs"]["env"]
@@ -280,7 +283,7 @@ def test_librarian_publisher_uses_only_app_credentials_and_no_issues():
                     assert value == "false"
 
 
-def test_librarian_no_work_is_owned_by_native_processing():
+def test_librarian_no_work_is_owned_by_native_processing() -> None:
     jobs = librarian_jobs()
     report = next(
         step
@@ -301,7 +304,7 @@ def test_librarian_no_work_is_owned_by_native_processing():
     )
 
 
-def handler_config():
+def handler_config() -> dict[str, Any]:
     handler = next(
         step
         for step in librarian_jobs()["safe_outputs"]["steps"]
@@ -310,7 +313,7 @@ def handler_config():
     return json.loads(handler["env"]["GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG"])
 
 
-def test_librarian_pull_request_policy():
+def test_librarian_pull_request_policy() -> None:
     handlers = handler_config()
     assert "push_to_pull_request_branch" not in handlers
     config = handlers["create_pull_request"]
