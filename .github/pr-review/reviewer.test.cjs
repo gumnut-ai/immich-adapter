@@ -75,7 +75,7 @@ test('formal output guards target, coverage, event and blocking/own-author appro
   assert.throws(() => validateOutput(duplicateCoverage, binding));
   assert.equal(validateOutput(declaration('COMMENT', 'incomplete'), binding), 'incomplete');
   assert.throws(() => validateOutput(declaration('COMMENT'), binding));
-  const blocking = declaration('COMMENT'); blocking.items.push({ type: 'create_pull_request_review_comment', body: '🔴 blocking' });
+  const blocking = declaration('COMMENT'); blocking.items.push({ type: 'create_pull_request_review_comment', body: '**Actual defect** | `🔴 blocking` | `§ Correctness`' });
   assert.equal(validateOutput(blocking, binding), 'complete');
   assert.equal(validateOutput(declaration('COMMENT', 'incomplete'), { ...binding, author: 'gumnut-reviewer[bot]' }), 'incomplete');
   assert.throws(() => validateOutput(declaration('COMMENT'), { ...binding, author: 'gumnut-reviewer[bot]' }));
@@ -84,7 +84,7 @@ test('formal output guards target, coverage, event and blocking/own-author appro
   assert.throws(() => validateOutput(declaration(), { ...binding, author: 'gumnut-reviewer[bot]' }));
   const mismatch = declaration(); mismatch.items[0].pull_request_number = 8;
   assert.throws(() => validateOutput(mismatch, binding));
-  const blocked = declaration(); blocked.items.push({ type: 'create_pull_request_review_comment', body: '🔴 blocking' });
+  const blocked = declaration(); blocked.items.push({ type: 'create_pull_request_review_comment', body: '**Actual defect** | `🔴 blocking` | `§ Correctness`' });
   assert.throws(() => validateOutput(blocked, binding));
   assert.throws(() => validateOutput({ items: [] }, binding));
 });
@@ -155,7 +155,7 @@ test('comment admission is read-only, structured, associated, human, and current
   assert.equal(await admitComment({ github: client(), context: { ...comment, payload: { ...comment.payload, issue: { number: 7 } } } }), false);
 });
 test('workflow_run revalidates exact source, default branch, run IDs, live comment binding and permissions', async () => {
-  const title = JSON.stringify({ number: 7, comment: 99 });
+  const title = JSON.stringify({ candidate: true, number: 7, comment: 99 });
   const event = { ...context, eventName: 'workflow_run', ref: 'refs/heads/main', payload: { ...context.payload, action: 'completed', workflow_run: { id: 81, display_title: title } } };
   const run = { id: 81, workflow_id: 45, event: 'issue_comment', status: 'completed', conclusion: 'success', head_branch: 'main', head_sha: head, repository: { full_name: 'example/repo' }, head_repository: { full_name: 'example/repo' }, actor: { login: 'example' }, display_title: title };
   const comment = { id: 99, body: '/review', issue_url: 'https://api.github.com/repos/example/repo/issues/7', author_association: 'MEMBER', user: { login: 'example', type: 'User' } };
@@ -169,7 +169,7 @@ test('workflow_run revalidates exact source, default branch, run IDs, live comme
   for (const changes of [
     { run: { id: 82 } }, { run: { display_title: 'invalid' } }, { run: { event: 'pull_request' } }, { run: { status: 'in_progress' } }, { run: { conclusion: 'failure' } }, { run: { head_branch: 'attacker' } }, { run: { head_sha: 'bad' } }, { run: { repository: { full_name: 'foreign/repo' } } }, { run: { head_repository: { full_name: 'foreign/repo' } } }, { path: '.github/workflows/other.yml' }, { comment: { issue_url: 'https://api.github.com/repos/example/repo/issues/8' } }, { comment: { user: { login: 'someone-else', type: 'User' } } }, { comment: { body: 'ordinary comment' } }, { comment: { author_association: 'CONTRIBUTOR' } }, { issue: false }, { permission: 'read' },
   ]) assert.equal((await admit({ github: handoff(changes), context: event, enabled: 'true' })).eligible, 'false');
-  for (const ids of [{ number: '7', comment: 99 }, { number: 7, comment: -1 }, { number: 7, comment: 99, extra: true }]) {
+  for (const ids of [{ candidate: true, number: '7', comment: 99 }, { candidate: true, number: 7, comment: -1 }, { candidate: true, number: 7, comment: 99, extra: true }, { number: 7, comment: 99 }, { candidate: 'true', number: 7, comment: 99 }, { candidate: false, number: 7, comment: 99 }]) {
     const display_title = JSON.stringify(ids);
     assert.equal(await commentRunRequest({ github: handoff({ run: { display_title } }), context: { ...event, payload: { ...event.payload, workflow_run: { id: 81, display_title } } } }), null);
   }
@@ -183,7 +183,7 @@ test('workflow_run revalidates exact source, default branch, run IDs, live comme
   const gate = routing.match(/^    if: (needs\.admission[^\n]+)/m)[1];
   const lock = fs.readFileSync(root + '/.github/workflows/pr-review.lock.yml', 'utf8');
   const group = lock.match(/^  group: pr-review-\$\{\{ (.+) \}\}$/m)[1];
-  const queueKey = (payload, inputs = {}) => 'pr-review-' + new Function('github', 'inputs', 'fromJSON', 'return ' + group)({ event: { pull_request: {}, workflow_run: { display_title: '' }, ...payload } }, inputs, JSON.parse);
+  const queueKey = (payload, inputs = {}) => 'pr-review-' + new Function('github', 'inputs', 'fromJSON', 'format', 'return ' + group)({ event_name: 'pull_request_target', run_id: 999, event: { pull_request: {}, workflow_run: { display_title: '' }, changes: {}, ...payload } }, inputs, JSON.parse, (pattern, id) => pattern.replace('{0}', id));
   const admitted = async changes => {
     const outputs = {};
     const core = { setOutput(key, value) { outputs[key] = value; }, summary: { addRaw() {}, async write() {} } };
@@ -249,4 +249,53 @@ test('compiled workflow isolates publisher secrets and trusted checkouts', () =>
   const refs = [...lock.matchAll(/ghcr.io\/github\/gh-aw-firewall\/(?:agent|api-proxy|squid):0\.28\.25[^\s"\\]*/g)].map(m => m[0]);
   assert.ok(refs.length > 6); assert.ok(refs.every(ref => /@sha256:[0-9a-f]{64}/.test(ref)), 'every firewall download must be digest-qualified');
   assert.doesNotMatch(lock, /uses: github\/gh-aw\/actions\/setup@v/);
+});
+
+test('base edits replace the diff; unrelated PR edits stay outside its queue and admission', async () => {
+  const root = require('node:path').join(__dirname, '../..');
+  const lock = fs.readFileSync(root + '/.github/workflows/pr-review.lock.yml', 'utf8');
+  assert.match(lock, /- edited/);
+  const admissionIf = lock.match(/^  pre_activation:\n    if: (.+)$/m)[1];
+  const gate = event => new Function('github', 'vars', 'return ' + admissionIf)({ event_name: 'pull_request_target', event: { ...event, changes: event.changes || {} } }, { PR_REVIEW_ENABLED: 'true' });
+  const group = lock.match(/^  group: pr-review-\$\{\{ (.+) \}\}$/m)[1];
+  const key = event => 'pr-review-' + new Function('github', 'inputs', 'fromJSON', 'format', 'return ' + group)({ event_name: 'pull_request_target', run_id: 999, event: { ...event, changes: event.changes || {} } }, {}, JSON.parse, (s, id) => s.replace('{0}', id));
+  const retarget = { ...context.payload, action: 'edited', changes: { base: { ref: { from: 'old-base' } } } };
+  assert.equal(request({ ...context, payload: retarget }).number, 7);
+  assert.equal((await admit({ github: client(), context: { ...context, payload: retarget }, enabled: 'true' })).eligible, 'true');
+  assert.equal(key(retarget), key(context.payload));
+  assert.ok(gate(retarget));
+  for (const changes of [{}, { title: { from: 'old' } }, { body: { from: 'old' } }]) {
+    const event = { ...retarget, changes };
+    assert.equal(request({ ...context, payload: event }), null);
+    assert.equal(gate(event), undefined, 'nonbase edits skip admission runner');
+    assert.equal((await admit({ github: client(), context: { ...context, payload: event }, enabled: 'true' })).eligible, 'false');
+    assert.equal(key(event), 'pr-review-ignored-edit-999');
+    assert.notEqual(key(event), key(retarget));
+  }
+});
+test('coarse comment candidates skip both jobs without trusting the flag as authorization', () => {
+  const root = require('node:path').join(__dirname, '../..');
+  const source = fs.readFileSync(root + '/.github/workflows/pr-review-comment.yml', 'utf8');
+  const router = fs.readFileSync(root + '/.github/workflows/pr-review-request.yml', 'utf8');
+  const runName = source.match(/^run-name: >-\n  (.*)$/m)[1];
+  const sourceIf = source.match(/^    if: (.*)$/m)[1];
+  const routerIf = router.match(/^    if: (.*)$/m)[1];
+  const contains = (a, b) => Array.isArray(a) ? a.some(x => x.toLowerCase() === b.toLowerCase()) : String(a).toLowerCase().includes(String(b).toLowerCase());
+  const evaluate = (expression, event) => new Function('github', 'vars', 'contains', 'fromJSON', 'startsWith', 'return ' + expression)({ event }, { PR_REVIEW_ENABLED: 'true' }, contains, JSON.parse, (a, b) => a.toLowerCase().startsWith(b.toLowerCase()));
+  const emit = event => runName.replace(/\$\{\{ (.*?) \}\}/g, (_, expression) => String(evaluate(expression, event)));
+  const payload = body => ({ issue: { number: 7, pull_request: {} }, comment: { id: 99, body, author_association: 'MEMBER', user: { type: 'User' } } });
+  for (const body of ['/review', '  /REVIEW security  ', '@CharlieHelps review', '@gumnut-reviewer REVIEW', '\n@CHARLIEHELPS review\n']) {
+    const event = payload(body), title = emit(event);
+    assert.equal(evaluate(sourceIf, event), true);
+    assert.deepEqual(JSON.parse(title), { candidate: true, number: 7, comment: 99 });
+    assert.equal(evaluate(routerIf, { workflow_run: { conclusion: 'success', display_title: title } }), true);
+  }
+  for (const event of [payload('Looks good'), { ...payload('/review'), issue: { number: 7 } }, { ...payload('/review'), comment: { ...payload('/review').comment, user: { type: 'Bot' } } }, { ...payload('/review'), comment: { ...payload('/review').comment, author_association: 'CONTRIBUTOR' } }]) {
+    const title = emit(event);
+    assert.equal(evaluate(sourceIf, event), false);
+    assert.equal(JSON.parse(title).candidate, false);
+    assert.equal(evaluate(routerIf, { workflow_run: { conclusion: 'success', display_title: title } }), false);
+  }
+  for (const title of ['bad metadata', '{"candidate":false,"number":7,"comment":99}', '{"candidate":"true","number":7,"comment":99}']) assert.equal(evaluate(routerIf, { workflow_run: { conclusion: 'success', display_title: title } }), false);
+  assert.equal(evaluate(routerIf, { workflow_run: { conclusion: 'failure', display_title: '{"candidate":true,"number":7,"comment":99}' } }), false);
 });

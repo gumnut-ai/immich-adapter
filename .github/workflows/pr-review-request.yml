@@ -14,7 +14,7 @@ permissions:
   pull-requests: read
 jobs:
   admission:
-    if: vars.PR_REVIEW_ENABLED == 'true'
+    if: vars.PR_REVIEW_ENABLED == 'true' && github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.display_title, '{"candidate":true,')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

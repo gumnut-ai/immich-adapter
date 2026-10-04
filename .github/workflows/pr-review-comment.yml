@@ -1,6 +1,8 @@
 name: PR review comment admission
-# Only GitHub-issued numeric IDs cross into workflow_run; no comment body or artifact.
-run-name: '{"number":${{ github.event.issue.number }},"comment":${{ github.event.comment.id }}}'
+# Only numeric IDs and a coarse command-candidate Boolean cross into workflow_run.
+# Candidate filtering saves runners; the live helper still owns authorization.
+run-name: >-
+  {"candidate":${{ github.event.issue.pull_request != null && github.event.comment.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && (contains(github.event.comment.body, '/review') || contains(github.event.comment.body, '@CharlieHelps review') || contains(github.event.comment.body, '@gumnut-reviewer review')) }},"number":${{ github.event.issue.number }},"comment":${{ github.event.comment.id }}}
 on:
   issue_comment:
     types: [created]
@@ -10,7 +12,7 @@ permissions:
   pull-requests: read
 jobs:
   admission:
-    if: vars.PR_REVIEW_ENABLED == 'true' && github.event.issue.pull_request
+    if: vars.PR_REVIEW_ENABLED == 'true' && (github.event.issue.pull_request != null && github.event.comment.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && (contains(github.event.comment.body, '/review') || contains(github.event.comment.body, '@CharlieHelps review') || contains(github.event.comment.body, '@gumnut-reviewer review')))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

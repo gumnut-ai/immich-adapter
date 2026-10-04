@@ -4,7 +4,7 @@ description: Review the current pull request under trusted repository policy.
 # Apply the documented detection-image correction after compilation.
 on:
   pull_request_target:
-    types: [opened, reopened, ready_for_review, synchronize, review_requested]
+    types: [opened, reopened, ready_for_review, synchronize, review_requested, edited]
   workflow_call:
     secrets:
       CODEX_API_KEY:
@@ -45,7 +45,8 @@ on:
           await core.summary.write();
 if: vars.PR_REVIEW_ENABLED == 'true' && needs.pre_activation.outputs.eligible == 'true'
 concurrency:
-  group: pr-review-${{ github.event.pull_request.number || inputs.pull_request_number || fromJSON(github.event.workflow_run.display_title || '{}').number }}
+  # Unrelated PR edits use a private run group; they cannot displace PR reviews.
+  group: pr-review-${{ (github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base) && (github.event.pull_request.number || inputs.pull_request_number || fromJSON(github.event.workflow_run.display_title || '{}').number) || format('ignored-edit-{0}', github.run_id) }}
   cancel-in-progress: false
   queue: single
   job-discriminator: ${{ github.run_id }}
@@ -256,6 +257,10 @@ formal body: `PR review coverage: head=${{ needs.pre_activation.outputs.head }} 
 only when all applicable lanes finished, otherwise
 `PR review coverage: head=${{ needs.pre_activation.outputs.head }} base=${{ needs.pre_activation.outputs.base }} incomplete`.
 The trusted publisher adds durable coverage and delivery markers after native ingestion.
+Use the daemon's exact first-line header for inline findings. For a blocking
+cross-file or holistic body finding, begin its own line with `🔴 blocking: <finding>`
+(optionally bold the `🔴 blocking:` label); ordinary prose or quoted mentions do
+not declare findings. Keep these declarations consistent with the formal event.
 Complete clean coverage requires APPROVE; blocking or incomplete coverage requires COMMENT. If the author is
 `${{ needs.pre_activation.outputs.bot }}`, publish an incomplete COMMENT limitation because the publisher cannot approve
 its own PR. Never call noop for a review-required activation. Native publication

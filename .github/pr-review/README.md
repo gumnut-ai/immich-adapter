@@ -24,11 +24,14 @@ No publisher credential enters the inference sandbox; the native firewall
 holds provider credentials outside that sandbox. The GitHub inference tool
 uses the read-only workflow token explicitly.
 
-Automatic review covers open non-draft PRs, readiness, reopen and head updates.
+Automatic review covers open non-draft PRs, readiness, reopen, head updates and base retargets. Unrelated title/body edits
+use an isolated run group and cannot displace a pending PR review.
 A reviewer request for `CharlieHelps` or `the configured reviewer App bot`, a complete `/review`
 or `@CharlieHelps review` command line, and default-branch manual dispatch are
 supported. A separate read-only comment-admission workflow hands off numeric
-PR/comment IDs through authenticated run metadata. A read-only routing workflow
+PR/comment IDs and a coarse command-candidate Boolean through authenticated
+run metadata. Ordinary comments skip both source and routing jobs before runner
+allocation; the Boolean never grants authorization. A read-only routing workflow
 re-fetches the source run, exact workflow path, comment and author permissions.
 Only eligible requests call the same-commit native reusable workflow and enter its
 whole-pipeline PR queue; ordinary comments cannot replace pending review work.
@@ -40,7 +43,10 @@ exposure remains an operator decision. No contributor checkout, dependency
 installation or contributor script execution is permitted in these jobs.
 
 Admission resolves the live head/base pair and skips completed same-pair
-reviews by the publisher. Serialized runs converge from that live state rather
+reviews by the publisher. Advancing a base branch alone does not fan out new
+reviews to every open PR; a later supported event or authorized manual request
+re-evaluates the current pair. This is review-at-admission coverage, not continuous
+revalidation after every unrelated base push. Serialized runs converge from that live state rather
 than queued event snapshots. The native publisher pins the formal review and
 inline comments to the admitted head, with the base in the coverage declaration
 and trusted marker. A head or base change before publication fails

@@ -101,7 +101,7 @@ test('native body-only clean and limitation reviews preserve their distinct comp
   }
 });
 test('native complete blocking COMMENT remains complete but own-author coverage fails closed', async () => {
-  const output = await collect([{ ...finding, body: '🔴 blocking: supported finding' }, { ...submit('complete'), event: 'COMMENT' }]);
+  const output = await collect([{ ...finding, body: '**Supported finding** | `🔴 blocking` | `§ Security`\n\nSupported evidence.' }, { ...submit('complete'), event: 'COMMENT' }]);
   await preparePublication({ github: global.github, context, output, binding, sanitize });
   await publish(output);
   assert.equal(published.state, 'COMMENTED');
@@ -155,3 +155,52 @@ test('default branch advance renders prompt from the admitted policy rather than
   assert.doesNotMatch(prompt, /Old event policy instructions/);
 });
 test.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+
+test('native outcome classification distinguishes prose from body and inline finding declarations', async () => {
+  for (const body of ['No 🔴 blocking findings.', '> 🔴 blocking: quoted example', 'The label `🔴 blocking` signals a finding.']) {
+    const output = await collect([{ ...submit('complete'), body: body + '\n' + coverageDeclaration(head, base, 'complete') }]);
+    await preparePublication({ github: global.github, context, output, binding, sanitize }); await publish(output);
+    assert.equal(published.state, 'APPROVED'); assert.equal(await verify(), 'review-url');
+  }
+  for (const label of ['🔴 blocking: Holistic defect with concrete alternative.', '**🔴 blocking:** Holistic defect with concrete alternative.']) {
+    const output = await collect([{ ...submit('complete'), event: 'COMMENT', body: label + '\n' + coverageDeclaration(head, base, 'complete') }]);
+    await preparePublication({ github: global.github, context, output, binding, sanitize }); await publish(output);
+    assert.equal(published.state, 'COMMENTED'); assert.equal(await verify(), 'review-url');
+    const contradiction = await collect([{ ...submit('complete'), body: label + '\n' + coverageDeclaration(head, base, 'complete') }]);
+    await assert.rejects(preparePublication({ github: global.github, context, output: contradiction, binding, sanitize }), /Formal review event/);
+  }
+  for (const body of ['🔴 blocking', '🔴 blocking:', '**🔴 blocking:**']) {
+    const malformed = await collect([{ ...submit('complete'), body: body + '\n' + coverageDeclaration(head, base, 'complete') }]);
+    await assert.rejects(preparePublication({ github: global.github, context, output: malformed, binding, sanitize }), /Ambiguous blocking/);
+  }
+  const contradictory = await collect([{ ...finding, body: '**Actual bug** | `🔴 blocking` | `§ Correctness`\n\nEvidence.' }, submit('complete')]);
+  await assert.rejects(preparePublication({ github: global.github, context, output: contradictory, binding, sanitize }), /Formal review event/);
+});
+
+test('native validation and delivery ignore fenced examples but retain real body blockers', async () => {
+  const examples = [
+    '```text\n🔴 blocking: example only\n```',
+    '~~~text\n**🔴 blocking:** example only\n~~~',
+    '   ````text\n```\n🔴 blocking: shorter inner fence is still an example\n````',
+    '~~~~text\n```\n🔴 blocking: another delimiter cannot close this example\n~~~~~',
+    '```text\n🔴 blocking: unclosed example',
+    '~~~text\n🔴 blocking\n~~~',
+  ];
+  for (const example of examples) {
+    const body = coverageDeclaration(head, base, 'complete') + '\n' + example;
+    const output = await collect([{ ...submit('complete'), body }]);
+    await preparePublication({ github: global.github, context, output, binding, sanitize }); await publish(output);
+    assert.equal(published.state, 'APPROVED'); assert.equal(await verify(), 'review-url');
+    published.state = 'COMMENTED';
+    await assert.rejects(verify(), /inline findings/);
+    assert.equal((await admit({ github: global.github, context, enabled: 'true' })).eligible, 'true', 'fake fenced blocker COMMENT cannot suppress retry');
+  }
+  for (const example of [examples[0], examples[1], examples[2], examples[3]]) {
+    const body = example + '\n🔴 blocking: Real holistic defect outside the example.\n' + coverageDeclaration(head, base, 'complete');
+    const output = await collect([{ ...submit('complete'), event: 'COMMENT', body }]);
+    await preparePublication({ github: global.github, context, output, binding, sanitize }); await publish(output);
+    assert.equal(published.state, 'COMMENTED'); assert.equal(await verify(), 'review-url');
+    const contradiction = await collect([{ ...submit('complete'), body }]);
+    await assert.rejects(preparePublication({ github: global.github, context, output: contradiction, binding, sanitize }), /Formal review event/);
+  }
+});

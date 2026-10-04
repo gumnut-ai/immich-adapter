@@ -8,11 +8,34 @@ const coverageDeclaration = (head, base, coverage) => `PR review coverage: head=
 const marker = (head, base, coverage) => `<!-- ${protocol} head=${head} base=${base} coverage=${coverage} -->`;
 const validNumber = value => /^[1-9][0-9]*$/.test(String(value)) && Number.isSafeInteger(Number(value));
 const validSHA = value => /^[0-9a-f]{40}$/.test(value || '');
+const inlineBlocking = body => /^\*\*[^*\r\n]+\*\* \| `🔴 blocking` \| `§ [^`\r\n]+`(?:\r?\n|$)/.test(body || '');
+// Fenced examples are evidence text, not standalone finding declarations.
+// CommonMark fences allow up to three spaces, matching delimiters, and a
+// closing run at least as long as the opener. An unclosed fence ends at EOF.
+function outsideFences(body) {
+  const prose = [];
+  let fence;
+  for (const line of (body || '').split(/\r?\n/)) {
+    const delimiter = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      if (delimiter && delimiter[1][0] === fence[0] && delimiter[1].length >= fence.length && /^[ \t]*$/.test(delimiter[2])) fence = undefined;
+    } else if (delimiter && (delimiter[1][0] === '~' || !delimiter[2].includes('`'))) {
+      fence = delimiter[1];
+    } else {
+      prose.push(line);
+    }
+  }
+  return prose.join('\n');
+}
+const bodyBlocking = body => /^(?:\*\*)?🔴 blocking:(?:\*\*)?[ \t]+\S.*$/m.test(outsideFences(body));
+const ambiguousInline = body => (body || '').split(/\r?\n/)[0].includes('🔴 blocking') && !inlineBlocking(body);
+const ambiguousBody = body => /^(?:\*\*)?🔴 blocking\b/m.test(outsideFences(body)) && !bodyBlocking(body);
 
 function request(context) {
   const p = context.payload;
   if (context.eventName === 'pull_request_target') {
-    if (!['opened', 'reopened', 'ready_for_review', 'synchronize', 'review_requested'].includes(p.action)) return null;
+    if (!['opened', 'reopened', 'ready_for_review', 'synchronize', 'review_requested', 'edited'].includes(p.action)) return null;
+    if (p.action === 'edited' && !p.changes?.base) return null;
     if (p.action === 'review_requested' && !['CharlieHelps', BOT].includes(p.requested_reviewer?.login)) return null;
     return { number: p.pull_request.number, manual: p.action === 'review_requested' };
   }
@@ -46,10 +69,10 @@ async function commentRunRequest({ github, context }) {
   if (Number(run.id) !== Number(event.id) || event.display_title !== run.display_title || context.ref !== `refs/heads/${context.payload.repository.default_branch}` || run.event !== 'issue_comment' || run.status !== 'completed' || run.conclusion !== 'success' || run.head_branch !== context.payload.repository.default_branch || run.repository?.full_name !== repo || run.head_repository?.full_name !== repo || !validSHA(run.head_sha) || !validNumber(run.workflow_id)) return null;
   const { data: workflow } = await github.rest.actions.getWorkflow({ ...context.repo, workflow_id: run.workflow_id });
   if (workflow.path !== '.github/workflows/pr-review-comment.yml') return null;
-  // Numeric run metadata only: no artifact, code, prompt, or comment text crosses jobs.
+  // Numeric IDs and a coarse candidate Boolean only: no artifact, code, prompt, or comment text crosses jobs.
   let ids;
   try { ids = JSON.parse(run.display_title); } catch { return null; }
-  if (!ids || Object.keys(ids).sort().join(',') !== 'comment,number' || typeof ids.number !== 'number' || typeof ids.comment !== 'number' || !validNumber(ids.number) || !validNumber(ids.comment)) return null;
+  if (!ids || Object.keys(ids).sort().join(',') !== 'candidate,comment,number' || ids.candidate !== true || typeof ids.number !== 'number' || typeof ids.comment !== 'number' || !validNumber(ids.number) || !validNumber(ids.comment)) return null;
   const { data: comment } = await github.rest.issues.getComment({ ...context.repo, comment_id: Number(ids.comment) });
   const api = context.apiUrl || process.env.GITHUB_API_URL || 'https://api.github.com';
   if (comment.issue_url !== `${api}/repos/${repo}/issues/${ids.number}` || comment.user?.login !== run.actor?.login) return null;
@@ -84,7 +107,8 @@ async function findingsDelivered(github, repo, number, review) {
   if (expected === null) return false;
   const comments = await github.paginate(github.rest.pulls.listCommentsForReview, { ...repo, pull_number: Number(number), review_id: review.id, per_page: 100 });
   if (comments.length !== expected.length) return false;
-  const blocking = [review, ...comments].some(item => item.body?.includes('🔴 blocking'));
+  if (ambiguousBody(review.body) || comments.some(item => ambiguousInline(item.body))) return false;
+  const blocking = bodyBlocking(review.body) || comments.some(item => inlineBlocking(item.body));
   if (review.state !== (blocking ? 'COMMENTED' : 'APPROVED')) return false;
   const remaining = [...comments];
   return expected.every(entry => {
@@ -160,7 +184,8 @@ function validateOutput(output, { number, head, base, author }) {
   const complete = declarations[0] === coverageDeclaration(head, base, 'complete');
   const incomplete = declarations[0] === coverageDeclaration(head, base, 'incomplete');
   if (declarations.length !== 1 || complete === incomplete) throw new Error('Exactly one current head/base coverage declaration is required');
-  const blocking = output.items.some(item => item.body?.includes('🔴 blocking'));
+  if (ambiguousBody(submit.body) || output.items.filter(item => item.type === 'create_pull_request_review_comment').some(item => ambiguousInline(item.body))) throw new Error('Ambiguous blocking finding declaration');
+  const blocking = bodyBlocking(submit.body) || output.items.filter(item => item.type === 'create_pull_request_review_comment').some(item => inlineBlocking(item.body));
   if (author === BOT && complete) throw new Error('Own-author review requires incomplete COMMENT coverage');
   const expected = complete && !blocking ? 'APPROVE' : 'COMMENT';
   if (submit.event !== expected) throw new Error('Formal review event differs from complete/clean or blocking/incomplete policy');

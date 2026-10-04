@@ -45,6 +45,18 @@ lock = lock.replace(
     "on: # zizmor: ignore[dangerous-triggers]\n",
     1,
 )
+# Skip irrelevant edited events before allocating the admission runner. Their
+# workflow concurrency key is already isolated from the real PR queue.
+pre_activation = "  pre_activation:\n"
+if lock.count(pre_activation) != 1:
+    raise SystemExit("Expected one native admission job")
+lock = lock.replace(
+    pre_activation,
+    pre_activation
+    + "    if: vars.PR_REVIEW_ENABLED == 'true' && (github.event_name != "
+    + "'pull_request_target' || github.event.action != 'edited' || github.event.changes.base)\n",
+    1,
+)
 # Prompt generation must read the same admitted immutable policy as inference.
 activation_start = lock.index("  activation:\n")
 activation_end = lock.index("\n  agent:\n", activation_start)
