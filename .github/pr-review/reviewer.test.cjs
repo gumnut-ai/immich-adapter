@@ -226,7 +226,7 @@ test('compiled workflow isolates publisher secrets and trusted checkouts', () =>
   assert.match(routing, /workflows: \[PR review comment admission\]/);
   assert.doesNotMatch(routing, /^concurrency:/m);
   assert.match(routing, /needs: admission\n    if: needs.admission.outputs.eligible == 'true'/);
-  assert.match(routing, /uses: \.\/.github\/workflows\/pr-review.lock.yml/);
+  assert.match(routing, /uses: \$\/.github\/workflows\/pr-review.lock.yml/);
   assert.doesNotMatch(routing, /(?:pull-requests|issues|contents|actions): write|PR_REVIEW_APP_PRIVATE_KEY|secrets: inherit|environment:/);
   assert.doesNotMatch(lock, /^      (?:pull-requests|issues|contents|actions): write$/m);
   assert.match(source, /fromJSON\(github.event.workflow_run.display_title \|\| '\{\}'\).number/);

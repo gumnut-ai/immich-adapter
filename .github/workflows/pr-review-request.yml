@@ -42,6 +42,6 @@ jobs:
     needs: admission
     if: needs.admission.outputs.eligible == 'true'
     # Same-commit reusable workflow retains the native whole-pipeline PR queue.
-    uses: ./.github/workflows/pr-review.lock.yml
+    uses: $/.github/workflows/pr-review.lock.yml
     secrets:
       CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
