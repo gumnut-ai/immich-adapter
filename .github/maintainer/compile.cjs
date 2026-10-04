@@ -7,6 +7,14 @@ const source=fs.readFileSync('.github/workflows/maintainer.md','utf8');
 const images=Object.fromEntries([...source.matchAll(/^      (agent|apiProxy|squid): (ghcr[^\n]+)$/gm)].map(m=>[m[1],m[2]]));
 if(Object.keys(images).length!==3) throw Error('expected three digest-qualified AWF images');
 let text=fs.readFileSync('.github/workflows/maintainer.lock.yml','utf8');
+// v0.89.21 omits pre-activation permissions and rejects them in frontmatter.
+// Scope read access to the trusted checkout/coverage admission job only.
+const admissionStart=text.indexOf('  pre_activation:\n');
+const admissionEnd=text.indexOf('\n  safe_outputs:\n',admissionStart);
+if(admissionStart<0 || admissionEnd<0) throw Error('expected admission job boundaries');
+const admission=text.slice(admissionStart,admissionEnd);
+if((admission.match(/^  [a-z_]+:$/gm)||[]).length!==1 || /\n    permissions:/.test(admission) || !admission.includes('\n    steps:')) throw Error('admission permission correction point drift');
+text=text.slice(0,admissionStart)+admission.replace('\n    steps:', '\n    permissions:\n      contents: read\n      actions: read\n    steps:')+text.slice(admissionEnd);
 const start=text.indexOf('  detection:\n');
 if(start<0) throw Error('detector missing');
 let detector=text.slice(start);

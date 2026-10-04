@@ -172,7 +172,7 @@ safe-outputs:
     # Dependency manifests/locks are allowed and checked by trusted validation.
     protected-files:
       policy: blocked
-      exclude: [AGENTS.md, README.md, "**/package.json", "**/bun.lock", "**/uv.lock", "**/pyproject.toml", "**/biome.json", "**/biome.jsonc"]
+      exclude: [AGENTS.md, README.md, package.json, bun.lock, uv.lock, pyproject.toml, biome.json, biome.jsonc]
   add-reviewer:
     max: 1
     target: "*"
@@ -193,6 +193,8 @@ safe-outputs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
 jobs:
   pre-activation:
+    # The pinned compiler cannot express job permissions here; compile.cjs
+    # grants only Contents/Actions read to the generated admission job.
     outputs:
       admit: ${{ steps.alerts.outputs.admit }}
   agent:

@@ -30,6 +30,7 @@ PY_SERVICE
     uv run ruff format --check
     uv run ruff check
     uv run pyright
+    uv run --no-config --locked --script scripts/lint_docs.py --base "$GITHUB_SHA"
     REDIS_URL=redis://host.docker.internal:6379/1 uv run pytest
   )
 }
