@@ -54,12 +54,44 @@ checkout_start = activation.index(checkout)
 checkout_with = activation.index("        with:\n", checkout_start) + len(
     "        with:\n"
 )
-activation = (
-    activation[:checkout_with]
-    + "          ref: ${{ needs.pre_activation.outputs.policy }}\n"
-    + activation[checkout_with:]
-)
+checkout_end = activation.find("      - ", checkout_with)
+if checkout_end < 0:
+    checkout_end = len(activation)
+checkout_options = activation[checkout_with:checkout_end]
+policy_ref = "          ref: ${{ needs.pre_activation.outputs.policy }}\n"
+if re.search(r"^          ref: .+\n", checkout_options, re.MULTILINE):
+    checkout_options = re.sub(
+        r"^          ref: .+\n",
+        lambda _: policy_ref,
+        checkout_options,
+        count=1,
+        flags=re.MULTILINE,
+    )
+else:
+    checkout_options = policy_ref + checkout_options
+activation = activation[:checkout_with] + checkout_options + activation[checkout_end:]
 lock = lock[:activation_start] + activation + lock[activation_end:]
+# The pinned compiler redundantly grants GITHUB_TOKEN PR write even when every
+# write handler uses the separate App token. Reusable callers stay read-only.
+for job_name in ("safe_outputs", "conclusion"):
+    match = re.search(
+        rf"^  {job_name}:\n[\s\S]*?(?=^  [a-z_]+:\n|\Z)", lock, re.MULTILINE
+    )
+    if not match:
+        raise SystemExit(f"Expected native {job_name} job")
+    job = match[0]
+    if "github-token: ${{ steps.safe-outputs-app-token.outputs.token }}" not in job:
+        raise SystemExit(f"Expected isolated App publication in {job_name}")
+    readonly, count = re.subn(
+        r"^      pull-requests: write$",
+        "      pull-requests: read",
+        job,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if count != 1:
+        raise SystemExit(f"Expected native redundant token permission in {job_name}")
+    lock = lock[: match.start()] + readonly + lock[match.end() :]
 # The trusted guard hashes exactly the text produced by the pinned native publisher.
 # Copy its sanitizer environment instead of maintaining a second domain allowlist.
 publisher_start = lock.index(

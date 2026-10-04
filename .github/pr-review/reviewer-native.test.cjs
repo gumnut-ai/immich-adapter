@@ -12,10 +12,10 @@ if (!runtime) throw new Error('GH_AW_ACTIONS_DIR must identify the pinned native
 const lock = fs.readFileSync(path.join(__dirname, '../workflows/pr-review.lock.yml'), 'utf8');
 const pin = lock.match(/uses: github\/gh-aw\/actions\/setup@([0-9a-f]{40})/)[1];
 assert.equal(require('node:child_process').execFileSync('git', ['-C', runtime, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), pin);
-const head = 'a'.repeat(40), bot = { login: process.env.PR_REVIEW_BOT_LOGIN, type: 'Bot' };
+const head = 'a'.repeat(40), base = 'b'.repeat(40), bot = { login: process.env.PR_REVIEW_BOT_LOGIN, type: 'Bot' };
 const context = { eventName: 'pull_request_target', actor: 'example', repo: { owner: 'example', repo: 'repo' }, runId: 123, serverUrl: 'https://github.com', payload: { action: 'opened', pull_request: { number: 7 }, repository: { default_branch: 'main' } } };
-const pr = { number: 7, state: 'open', draft: false, head: { sha: head }, base: { sha: 'b'.repeat(40) }, user: { login: 'example' } };
-const binding = { number: 7, head, author: 'example' };
+const pr = { number: 7, state: 'open', draft: false, head: { sha: head }, base: { sha: base }, user: { login: 'example' } };
+const binding = { number: 7, head, base, author: 'example' };
 const validation = JSON.parse(lock.match(/GH_AW_VALIDATION_JSON: \|\n((?: {12}.*\n)+)/)[1].split('\n').map(line => line.slice(12)).join('\n'));
 const config = JSON.parse(JSON.parse(lock.match(/GH_AW_SAFE_OUTPUTS_CONFIG: (.+)/)[1]));
 for (const value of Object.values(config)) {
@@ -37,6 +37,7 @@ global.core = { info() {}, debug() {}, warning() {}, error() {}, exportVariable(
 global.context = context;
 global.github = {
   rest: {
+    repos: { getCollaboratorPermissionLevel: async () => ({ data: { permission: 'write' } }) },
     pulls: {
       get: async () => ({ data: pr }),
       listFiles: async () => ({ data: [{ filename: 'source.cjs' }] }),
@@ -60,7 +61,7 @@ async function collect(items) {
   assert.ok(collected, 'native collector must return validated output');
   return collected;
 }
-const submit = coverage => ({ type: 'submit_pull_request_review', event: coverage === 'complete' ? 'APPROVE' : 'COMMENT', body: 'All applicable review lanes assessed.\n' + coverageDeclaration(head, coverage) });
+const submit = coverage => ({ type: 'submit_pull_request_review', event: coverage === 'complete' ? 'APPROVE' : 'COMMENT', body: 'All applicable review lanes assessed.\n' + coverageDeclaration(head, base, coverage) });
 const finding = { type: 'create_pull_request_review_comment', path: 'source.cjs', line: 12, body: 'Finding with @someone https://example.net/path <!-- untrusted -->' };
 async function publish(output) {
   const buffer = native('pr_review_buffer.cjs').createReviewBuffer();
@@ -71,14 +72,14 @@ async function publish(output) {
 }
 const verify = () => verifyDelivery({ github: global.github, context, ...binding, agent: 'success', detection: 'success', publisher: 'success' });
 test('native ingestion, guard, publisher and readback retain trusted coverage and exact finding delivery', async () => {
-  const output = await collect([finding, { ...submit('complete'), body: submit('complete').body + '\n' + marker(head, 'complete') }]);
+  const output = await collect([finding, { ...submit('complete'), body: submit('complete').body + '\n' + marker(head, base, 'complete') }]);
   assert.deepEqual(output.errors, []);
-  assert.equal(output.items[1].body.includes(marker(head, 'complete')), false, 'collector strips raw HTML markers');
+  assert.equal(output.items[1].body.includes(marker(head, base, 'complete')), false, 'collector strips raw HTML markers');
   await preparePublication({ github: global.github, context, output, binding, sanitize });
   await publish(output);
-  assert.ok(published.body.includes(marker(head, 'complete')), 'native publisher preserves trusted marker');
+  assert.ok(published.body.includes(marker(head, base, 'complete')), 'native publisher preserves trusted marker');
   assert.equal(await verify(), 'review-url');
-  assert.equal((await admit({ github: global.github, context, enabled: 'true' })).reason, 'already-reviewed-current-head');
+  assert.equal((await admit({ github: global.github, context, enabled: 'true' })).reason, 'already-reviewed-current-diff');
   comments = [];
   await assert.rejects(verify());
   assert.equal((await admit({ github: global.github, context, enabled: 'true' })).eligible, 'true');
@@ -105,9 +106,34 @@ test('native complete blocking COMMENT remains complete but own-author coverage 
   await publish(output);
   assert.equal(published.state, 'COMMENTED');
   assert.equal(await verify(), 'review-url');
-  assert.equal((await admit({ github: global.github, context, enabled: 'true' })).reason, 'already-reviewed-current-head');
+  assert.equal((await admit({ github: global.github, context, enabled: 'true' })).reason, 'already-reviewed-current-diff');
   const own = await collect([submit('complete')]);
   await assert.rejects(preparePublication({ github: global.github, context, output: own, binding: { ...binding, author: bot.login }, sanitize }), /Own-author/);
+});
+test('native collector to publisher preserves base identity and base advance stays uncovered until reviewed', async () => {
+  const output = await collect([finding, submit('complete')]);
+  await preparePublication({ github: global.github, context, output, binding, sanitize });
+  await publish(output);
+  assert.equal(await verify(), 'review-url');
+  const oldReview = published;
+  const newBase = 'c'.repeat(40);
+  pr.base.sha = newBase;
+  try {
+    await assert.rejects(verify(), /head\/base/);
+    const manual = { ...context, eventName: 'workflow_dispatch', ref: 'refs/heads/main', payload: { ...context.payload, inputs: { pull_request_number: '7' } } };
+    const next = await admit({ github: global.github, context: manual, enabled: 'true' });
+    assert.equal(next.eligible, 'true'); assert.equal(next.base, newBase);
+    const stale = await collect([submit('complete')]);
+    await assert.rejects(preparePublication({ github: global.github, context, output: stale, binding, sanitize }), /head\/base changed/);
+    const refreshed = await collect([{ ...submit('complete'), body: coverageDeclaration(head, newBase, 'complete') }]);
+    await preparePublication({ github: global.github, context, output: refreshed, binding: { ...binding, base: newBase }, sanitize });
+    assert.ok(refreshed.items[0].body.includes(marker(head, newBase, 'complete')));
+    await publish(refreshed);
+    assert.equal(await verifyDelivery({ github: global.github, context, ...binding, base: newBase, agent: 'success', detection: 'success', publisher: 'success' }), 'review-url');
+    assert.equal((await admit({ github: global.github, context: manual, enabled: 'true' })).reason, 'already-reviewed-current-diff');
+    published = oldReview;
+    await assert.rejects(verifyDelivery({ github: global.github, context, ...binding, base: newBase, agent: 'success', detection: 'success', publisher: 'success' }), /different-base/);
+  } finally { pr.base.sha = base; }
 });
 test('default branch advance renders prompt from the admitted policy rather than event revision', async () => {
   const checkout = fs.mkdtempSync(path.join(scratch, 'policy-'));

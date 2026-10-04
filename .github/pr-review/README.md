@@ -5,9 +5,9 @@
 `c35393777e5604a63721d09512263b1383301d4f`. After compiling with
 `--action-tag c35393777e5604a63721d09512263b1383301d4f`, run
 `uv run python .github/pr-review/reviewer-compile.py` to apply the pinned compiler's
-missing detection-image digests, duplicate activation dependency and native sanitizer environment parity, then
-`node --test .github/pr-review/reviewer.test.cjs` and `actionlint` on the two
-PR-review YAML files. The CI contract test also checks out that exact native commit and runs
+missing detection-image digests, activation policy binding, native sanitizer parity and redundant workflow-token write permissions, then
+`node --test .github/pr-review/reviewer.test.cjs` and `actionlint` on the
+review YAML files. The CI contract test also checks out that exact native commit and runs
 `GH_AW_ACTIONS_DIR=<native-checkout>/actions/setup/js node --test .github/pr-review/reviewer*.test.cjs`,
 exercising native collection, the trusted guard, native publication and readback. Commit the source and lock together. The reviewed daemon
 and its lanes remain the review-policy authority.
@@ -28,20 +28,24 @@ Automatic review covers open non-draft PRs, readiness, reopen and head updates.
 A reviewer request for `CharlieHelps` or `the configured reviewer App bot`, a complete `/review`
 or `@CharlieHelps review` command line, and default-branch manual dispatch are
 supported. A separate read-only comment-admission workflow hands off numeric
-PR/comment IDs through authenticated run metadata. The reviewer re-fetches the
-source run, exact workflow path, comment and author permissions before inference;
+PR/comment IDs through authenticated run metadata. A read-only routing workflow
+re-fetches the source run, exact workflow path, comment and author permissions.
+Only eligible requests call the same-commit native reusable workflow and enter its
+whole-pipeline PR queue; ordinary comments cannot replace pending review work.
+The native workflow repeats admission before inference;
 comment jobs have no publisher credentials. Manual requests require the caller's current repository write,
 maintain or admin permission. Other free-form Charlie mentions do not trigger
 paid inference. Opening fork PRs can trigger inference once enabled; rate/cost
 exposure remains an operator decision. No contributor checkout, dependency
 installation or contributor script execution is permitted in these jobs.
 
-Admission resolves live current-head metadata and skips completed same-head
+Admission resolves the live head/base pair and skips completed same-pair
 reviews by the publisher. Serialized runs converge from that live state rather
 than queued event snapshots. The native publisher pins the formal review and
-inline comments to the admitted commit. A head change before publication fails
+inline comments to the admitted head, with the base in the coverage declaration
+and trusted marker. A head or base change before publication fails
 closed; a race after that check can only attribute the review to the old head,
-and delivery readback fails the run until the new head is reviewed. An explicit
+and delivery readback fails the run until the current head/base pair is reviewed. An explicit
 plain coverage declaration survives native collection. Collector validation errors
 fail closed before publication; trusted code then adds durable coverage and delivery
 markers. The publisher
@@ -52,7 +56,8 @@ incomplete and do not suppress a retry. Blocking
 findings produce COMMENT, clean completed reads APPROVE, and incomplete reads
 COMMENT with a limitation. The publisher cannot approve its own authored PR;
 those require a different reviewer. A run is successful only after a complete
-formal review from that run is independently read back at the current head.
+formal review from that run is independently read back at the current head/base.
+Older head-only markers cannot establish complete coverage.
 
 Before cutover, validate on merged default-branch policy with separately
 admitted paid tests: complete clean approval, blocking COMMENT with inline

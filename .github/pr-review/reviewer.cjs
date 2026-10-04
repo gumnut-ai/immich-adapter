@@ -1,11 +1,11 @@
 // Trusted metadata checks only. Never load code from a contributor revision.
 const BOT = process.env.PR_REVIEW_BOT_LOGIN;
 const validBot = value => /^[a-zA-Z0-9-]+\[bot\]$/.test(value || '');
-const protocol = 'pr-review-native/v1';
+const protocol = 'pr-review-native/v2';
 const digest = body => require('node:crypto').createHash('sha256').update(body.trim()).digest('hex');
 const inlineMarker = entries => `<!-- pr-review-inline/v1 ${Buffer.from(JSON.stringify(entries)).toString('base64')} -->`;
-const coverageDeclaration = (head, coverage) => `PR review coverage: ${head} ${coverage}`;
-const marker = (head, coverage) => `<!-- ${protocol} head=${head} coverage=${coverage} -->`;
+const coverageDeclaration = (head, base, coverage) => `PR review coverage: head=${head} base=${base} ${coverage}`;
+const marker = (head, base, coverage) => `<!-- ${protocol} head=${head} base=${base} coverage=${coverage} -->`;
 const validNumber = value => /^[1-9][0-9]*$/.test(String(value)) && Number.isSafeInteger(Number(value));
 const validSHA = value => /^[0-9a-f]{40}$/.test(value || '');
 
@@ -63,8 +63,8 @@ async function commentRunRequest({ github, context }) {
 async function reviews(github, repo, number) {
   return github.paginate(github.rest.pulls.listReviews, { ...repo, pull_number: number, per_page: 100 });
 }
-function covered(items, head) {
-  return items.some(r => r.user?.login === BOT && r.commit_id === head && ['APPROVED', 'COMMENTED'].includes(r.state) && r.body?.includes(marker(head, 'complete')) && inlineManifest(r.body) !== null);
+function covered(items, head, base) {
+  return validSHA(head) && validSHA(base) && items.some(r => r.user?.login === BOT && r.commit_id === head && ['APPROVED', 'COMMENTED'].includes(r.state) && r.body?.includes(marker(head, base, 'complete')) && inlineManifest(r.body) !== null);
 }
 
 function inlineManifest(body) {
@@ -94,9 +94,9 @@ async function findingsDelivered(github, repo, number, review) {
     return true;
   });
 }
-async function deliveredCoverage(github, repo, number, items, head) {
+async function deliveredCoverage(github, repo, number, items, head, base) {
   for (const review of items) {
-    if (covered([review], head) && await findingsDelivered(github, repo, number, review)) return true;
+    if (covered([review], head, base) && await findingsDelivered(github, repo, number, review)) return true;
   }
   return false;
 }
@@ -114,7 +114,7 @@ async function preparePublication({ github, context, output, binding, sanitize }
   });
   const submit = output.items.find(item => item.type === 'submit_pull_request_review');
   // Only trusted code creates this delivery manifest; replace any agent-supplied copy.
-  submit.body = submit.body.replace(/<!-- pr-review-(?:inline|native)\/v1[\s\S]*?-->/g, '').trimEnd() + '\n\n' + marker(binding.head, coverage) + '\n' + inlineMarker(entries);
+  submit.body = submit.body.replace(/<!-- pr-review-(?:inline|native)\/v[12][\s\S]*?-->/g, '').trimEnd() + '\n\n' + marker(binding.head, binding.base, coverage) + '\n' + inlineMarker(entries);
   await assertFresh({ github, context, ...binding });
   return output;
 }
@@ -132,19 +132,20 @@ async function admit({ github, context, enabled }) {
   const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: target.number });
   if (pr.state !== 'open' || pr.draft) return { eligible: 'false', reason: 'closed-or-draft' };
   if (!validSHA(pr.head.sha) || !validSHA(pr.base.sha)) throw new Error('Invalid GitHub revision');
-  if (pr.user.login !== BOT && await deliveredCoverage(github, context.repo, target.number, await reviews(github, context.repo, target.number), pr.head.sha)) return { eligible: 'false', reason: 'already-reviewed-current-head' };
+  if (pr.user.login !== BOT && await deliveredCoverage(github, context.repo, target.number, await reviews(github, context.repo, target.number), pr.head.sha, pr.base.sha)) return { eligible: 'false', reason: 'already-reviewed-current-diff' };
   return { eligible: 'true', reason: 'review-required', number: String(target.number), head: pr.head.sha, base: pr.base.sha, author: pr.user.login, bot: BOT };
 }
 
-async function assertFresh({ github, context, number, head }) {
-  if (!validNumber(number) || !validSHA(head)) throw new Error('Invalid review binding');
+async function assertFresh({ github, context, number, head, base }) {
+  if (!validNumber(number) || !validSHA(head) || !validSHA(base)) throw new Error('Invalid review binding');
   const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) });
-  if (pr.state !== 'open' || pr.draft || pr.head.sha !== head) throw new Error('Review incomplete: pull request closed, became draft, or head changed');
-  if (pr.user.login !== BOT && await deliveredCoverage(github, context.repo, number, await reviews(github, context.repo, Number(number)), head)) throw new Error('Review already published for this head');
+  if (pr.state !== 'open' || pr.draft || pr.head.sha !== head || pr.base.sha !== base) throw new Error('Review incomplete: pull request closed, became draft, or head/base changed');
+  if (pr.user.login !== BOT && await deliveredCoverage(github, context.repo, number, await reviews(github, context.repo, Number(number)), head, base)) throw new Error('Review already published for this head/base');
   return pr;
 }
 
-function validateOutput(output, { number, head, author }) {
+function validateOutput(output, { number, head, base, author }) {
+  if (!validNumber(number) || !validSHA(head) || !validSHA(base)) throw new Error('Invalid review binding');
   if (!Array.isArray(output.errors) || output.errors.length) throw new Error('Review incomplete: native collector rejected output declarations');
   if (!Array.isArray(output.items)) throw new Error('Missing native safe-output declarations');
   const submits = output.items.filter(item => item.type === 'submit_pull_request_review');
@@ -156,9 +157,9 @@ function validateOutput(output, { number, head, author }) {
   }
   if (!['APPROVE', 'COMMENT'].includes(submit.event)) throw new Error('Unsupported formal review event');
   const declarations = typeof submit.body === 'string' ? submit.body.split(/\r?\n/).filter(line => line.startsWith('PR review coverage:')) : [];
-  const complete = declarations[0] === coverageDeclaration(head, 'complete');
-  const incomplete = declarations[0] === coverageDeclaration(head, 'incomplete');
-  if (declarations.length !== 1 || complete === incomplete) throw new Error('Exactly one current-head coverage declaration is required');
+  const complete = declarations[0] === coverageDeclaration(head, base, 'complete');
+  const incomplete = declarations[0] === coverageDeclaration(head, base, 'incomplete');
+  if (declarations.length !== 1 || complete === incomplete) throw new Error('Exactly one current head/base coverage declaration is required');
   const blocking = output.items.some(item => item.body?.includes('🔴 blocking'));
   if (author === BOT && complete) throw new Error('Own-author review requires incomplete COMMENT coverage');
   const expected = complete && !blocking ? 'APPROVE' : 'COMMENT';
@@ -166,15 +167,15 @@ function validateOutput(output, { number, head, author }) {
   return complete ? 'complete' : 'incomplete';
 }
 
-async function verifyDelivery({ github, context, number, head, agent, detection, publisher }) {
+async function verifyDelivery({ github, context, number, head, base, agent, detection, publisher }) {
   if ([agent, detection, publisher].some(result => result !== 'success')) throw new Error('Review incomplete: inference, detection or publication did not succeed');
   const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) });
-  if (pr.head.sha !== head) throw new Error('Review incomplete: newer head requires a new review');
+  if (!validNumber(number) || !validSHA(head) || !validSHA(base) || pr.state !== 'open' || pr.draft || pr.head.sha !== head || pr.base.sha !== base) throw new Error('Review incomplete: current open head/base requires a new review');
   const runURL = `${context.serverUrl || 'https://github.com'}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
   const delivered = (await reviews(github, context.repo, Number(number))).filter(r => r.user?.login === BOT && r.commit_id === head && r.body?.includes(runURL));
   if (delivered.length !== 1 || !['APPROVED', 'COMMENTED'].includes(delivered[0].state)) throw new Error('Current run formal review not confirmed');
   if (pr.user.login === BOT) throw new Error('Own-author review cannot establish complete approval coverage');
-  if (!delivered[0].body.includes(marker(head, 'complete'))) throw new Error('Formal limitation review delivered; coverage remains incomplete');
+  if (!delivered[0].body.includes(marker(head, base, 'complete'))) throw new Error('Formal limitation or different-base review delivered; coverage remains incomplete');
   if (!await findingsDelivered(github, context.repo, number, delivered[0])) throw new Error('Formal review delivered but declared inline findings are missing or altered');
   return delivered[0].html_url;
 }

@@ -1,0 +1,47 @@
+name: PR review request routing
+# No concurrency here: rejected requests must never enter the native PR queue.
+# Re-fetch authenticated run/comment metadata under read-only permissions;
+# only live authorized requests may call the protected native workflow.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: [PR review comment admission]
+    types: [completed]
+    branches: [main]
+permissions:
+  actions: read
+  contents: read
+  issues: read
+  pull-requests: read
+jobs:
+  admission:
+    if: vars.PR_REVIEW_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      eligible: ${{ steps.admission.outputs.eligible }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Revalidate source run and live authorization
+        id: admission
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_REVIEW_BOT_LOGIN: ${{ vars.PR_REVIEW_BOT_LOGIN }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { admit } = require('./.github/pr-review/reviewer.cjs');
+            const result = await admit({ github, context, enabled: 'true' });
+            core.setOutput('eligible', result.eligible);
+            core.summary.addRaw(`PR review request eligibility: ${result.eligible} (${result.reason})\n`);
+            await core.summary.write();
+  review:
+    needs: admission
+    if: needs.admission.outputs.eligible == 'true'
+    # Same-commit reusable workflow retains the native whole-pipeline PR queue.
+    uses: ./.github/workflows/pr-review.lock.yml
+    secrets:
+      CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}

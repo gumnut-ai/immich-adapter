@@ -6,12 +6,12 @@ const { request, admitComment, commentRunRequest, marker, coverageDeclaration, c
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
 const context = { eventName: 'pull_request_target', actor: 'example', repo: { owner: 'example', repo: 'repo' }, runId: 123, payload: { action: 'opened', pull_request: { number: 7 }, repository: { default_branch: 'main' } } };
 const pr = { state: 'open', draft: false, head: { sha: head }, base: { sha: base }, user: { login: 'example' } };
-const formal = { id: 19, user: { login: 'gumnut-reviewer[bot]' }, commit_id: head, state: 'APPROVED', body: marker(head, 'complete') + '\n' + inlineMarker([]) + '\nhttps://github.com/example/repo/actions/runs/123', html_url: 'review-url' };
+const formal = { id: 19, user: { login: 'gumnut-reviewer[bot]' }, commit_id: head, state: 'APPROVED', body: marker(head, base, 'complete') + '\n' + inlineMarker([]) + '\nhttps://github.com/example/repo/actions/runs/123', html_url: 'review-url' };
 function client({ pull = pr, items = [], comments = [], files = [{ filename: 'source.cjs' }], permission = 'write' } = {}) {
   return { rest: { pulls: { get: async () => ({ data: pull }), listReviews: 'reviews', listCommentsForReview: 'comments', listFiles: 'files' }, repos: { getCollaboratorPermissionLevel: async () => ({ data: { permission } }) } }, paginate: async (route, args) => { assert.equal(args.per_page, 100); return route === 'reviews' ? items : route === 'comments' ? comments : files; } };
 }
-const binding = { number: '7', head, author: 'example' };
-const declaration = (event = 'APPROVE', coverage = 'complete') => ({ errors: [], items: [{ type: 'submit_pull_request_review', event, body: coverageDeclaration(head, coverage) }] });
+const binding = { number: '7', head, base, author: 'example' };
+const declaration = (event = 'APPROVE', coverage = 'complete') => ({ errors: [], items: [{ type: 'submit_pull_request_review', event, body: coverageDeclaration(head, base, coverage) }] });
 test('required PR events and reviewer aliases activate; unrelated events do not', () => {
   for (const action of ['opened', 'reopened', 'ready_for_review', 'synchronize']) assert.equal(request({ ...context, payload: { ...context.payload, action } }).number, 7);
   assert.equal(request({ ...context, payload: { ...context.payload, action: 'review_requested', requested_reviewer: { login: 'CharlieHelps' } } }).manual, true);
@@ -38,20 +38,40 @@ test('manual requests use live permissions; drafts, closed and complete same-hea
   const manual = { ...context, payload: { ...context.payload, action: 'review_requested', requested_reviewer: { login: 'CharlieHelps' } } };
   assert.equal((await admit({ context: manual, enabled: 'true', github: client({ permission: 'read' }) })).reason, 'unauthorized-request');
   for (const pull of [{ ...pr, draft: true }, { ...pr, state: 'closed' }]) assert.equal((await admit({ context, enabled: 'true', github: client({ pull }) })).reason, 'closed-or-draft');
-  assert.equal((await admit({ context, enabled: 'true', github: client({ items: [formal] }) })).reason, 'already-reviewed-current-head');
-  assert.equal(covered([{ ...formal, commit_id: base }], head), false);
-  assert.equal(covered([{ ...formal, user: { login: 'attacker' } }], head), false);
-  assert.equal(covered([{ ...formal, body: marker(head, 'incomplete') }], head), false);
+  assert.equal((await admit({ context, enabled: 'true', github: client({ items: [formal] }) })).reason, 'already-reviewed-current-diff');
+  assert.equal(covered([{ ...formal, commit_id: base }], head, base), false);
+  assert.equal(covered([{ ...formal, user: { login: 'attacker' } }], head, base), false);
+  assert.equal(covered([{ ...formal, body: marker(head, base, 'incomplete') }], head, base), false);
 });
 test('publication rechecks head, state and duplicate history', async () => {
   await assertFresh({ github: client(), context, ...binding });
   for (const pull of [{ ...pr, head: { sha: base } }, { ...pr, draft: true }, { ...pr, state: 'closed' }]) await assert.rejects(assertFresh({ github: client({ pull }), context, ...binding }));
   await assert.rejects(assertFresh({ github: client({ items: [formal] }), context, ...binding }));
 });
+test('base advance invalidates old coverage and admits a fresh manual head/base review', async () => {
+  const newBase = 'c'.repeat(40);
+  const pull = { ...pr, base: { sha: newBase } };
+  const github = client({ pull, items: [formal] });
+  const manual = { ...context, eventName: 'workflow_dispatch', ref: 'refs/heads/main', payload: { ...context.payload, inputs: { pull_request_number: '7' } } };
+  const next = await admit({ github, context: manual, enabled: 'true' });
+  assert.equal(next.eligible, 'true'); assert.equal(next.head, head); assert.equal(next.base, newBase);
+  assert.equal(covered([formal], head, newBase), false);
+  assert.equal(covered([{ ...formal, body: `<!-- pr-review-native/v1 head=${head} coverage=complete -->\n` + inlineMarker([]) }], head, base), false, 'old head-only protocol cannot establish pair coverage');
+  await assert.rejects(assertFresh({ github, context, ...binding }), /head\/base changed/);
+  await assertFresh({ github, context, ...binding, base: newBase });
+  await assert.rejects(verifyDelivery({ github, context, ...binding, agent: 'success', detection: 'success', publisher: 'success' }), /head\/base/);
+  await assert.rejects(verifyDelivery({ github, context, ...binding, base: newBase, agent: 'success', detection: 'success', publisher: 'success' }), /different-base/);
+  const output = declaration();
+  await assert.rejects(preparePublication({ github, context, output, binding: { ...binding, base: newBase }, sanitize: body => body }), /head\/base coverage/);
+  output.items[0].body = coverageDeclaration(head, newBase, 'complete');
+  await preparePublication({ github, context, output, binding: { ...binding, base: newBase }, sanitize: body => body });
+  assert.ok(output.items[0].body.includes(marker(head, newBase, 'complete')));
+  for (const stale of [{ ...pr, draft: true }, { ...pr, state: 'closed' }, { ...pr, user: { login: formal.user.login } }]) await assert.rejects(verifyDelivery({ github: client({ pull: stale, items: [formal] }), context, ...binding, agent: 'success', detection: 'success', publisher: 'success' }));
+});
 test('formal output guards target, coverage, event and blocking/own-author approval', () => {
   assert.equal(validateOutput(declaration(), binding), 'complete');
   for (const errors of [undefined, null, 'bad', ['invalid inline finding']]) assert.throws(() => validateOutput({ ...declaration(), errors }, binding));
-  const duplicateCoverage = declaration(); duplicateCoverage.items[0].body += '\n' + coverageDeclaration(head, 'incomplete');
+  const duplicateCoverage = declaration(); duplicateCoverage.items[0].body += '\n' + coverageDeclaration(head, base, 'incomplete');
   assert.throws(() => validateOutput(duplicateCoverage, binding));
   assert.equal(validateOutput(declaration('COMMENT', 'incomplete'), binding), 'incomplete');
   assert.throws(() => validateOutput(declaration('COMMENT'), binding));
@@ -72,7 +92,7 @@ test('delivery requires this run, current head and complete formal coverage', as
   const args = { github: client({ items: [formal] }), context, ...binding, agent: 'success', detection: 'success', publisher: 'success' };
   assert.equal(await verifyDelivery(args), 'review-url');
   for (const result of ['failure', 'skipped', 'cancelled']) await assert.rejects(verifyDelivery({ ...args, agent: result }));
-  for (const items of [[], [{ ...formal, body: marker(head, 'incomplete') }], [{ ...formal, body: marker(head, 'complete') }], [formal, formal]]) await assert.rejects(verifyDelivery({ ...args, github: client({ items }) }));
+  for (const items of [[], [{ ...formal, body: marker(head, base, 'incomplete') }], [{ ...formal, body: marker(head, base, 'complete') }], [formal, formal]]) await assert.rejects(verifyDelivery({ ...args, github: client({ items }) }));
   await assert.rejects(verifyDelivery({ ...args, github: client({ pull: { ...pr, head: { sha: base } }, items: [formal] }) }));
 });
 const finding = (overrides = {}) => ({ type: 'create_pull_request_review_comment', path: 'source.cjs', line: 12, body: 'finding body', ...overrides });
@@ -107,7 +127,7 @@ test('missing, altered, extra or reused inline comments fail delivery and allow 
   const args = { context, ...binding, agent: 'success', detection: 'success', publisher: 'success' };
   const good = client({ items: [review], comments: [deliveredComment()] });
   assert.equal(await verifyDelivery({ ...args, github: good }), 'review-url');
-  assert.equal((await admit({ github: good, context, enabled: 'true' })).reason, 'already-reviewed-current-head');
+  assert.equal((await admit({ github: good, context, enabled: 'true' })).reason, 'already-reviewed-current-diff');
   for (const comments of [[], [deliveredComment({ body: 'altered' })], [deliveredComment({ path: 'other.cjs' })], [deliveredComment({ original_line: 13 })], [deliveredComment({ side: 'LEFT' })], [deliveredComment(), deliveredComment()]]) {
     const github = client({ items: [review], comments });
     await assert.rejects(verifyDelivery({ ...args, github }));
@@ -118,10 +138,10 @@ test('missing, altered, extra or reused inline comments fail delivery and allow 
   await assert.rejects(verifyDelivery({ ...args, github: client({ items: [duplicate], comments: [deliveredComment()] }) }));
 });
 test('old marker-only and malformed delivery manifests cannot claim complete coverage', async () => {
-  const bodies = [marker(head, 'complete'), marker(head, 'complete') + '\n' + inlineMarker([]) + inlineMarker([]), marker(head, 'complete') + '\n<!-- pr-review-inline/v1 malformed -->', marker(head, 'complete') + '\n' + inlineMarker([null]), marker(head, 'complete') + '\n' + inlineMarker([{ path: 'source.cjs', line: 12, side: 'RIGHT', digest: 'x', start: null }])];
+  const bodies = [marker(head, base, 'complete'), marker(head, base, 'complete') + '\n' + inlineMarker([]) + inlineMarker([]), marker(head, base, 'complete') + '\n<!-- pr-review-inline/v1 malformed -->', marker(head, base, 'complete') + '\n' + inlineMarker([null]), marker(head, base, 'complete') + '\n' + inlineMarker([{ path: 'source.cjs', line: 12, side: 'RIGHT', digest: 'x', start: null }])];
   for (const body of bodies) {
     const review = { ...formal, body: body + '\nhttps://github.com/example/repo/actions/runs/123' };
-    assert.equal(covered([review], head), false);
+    assert.equal(covered([review], head, base), false);
     assert.equal((await admit({ github: client({ items: [review] }), context, enabled: 'true' })).eligible, 'true');
     await assert.rejects(verifyDelivery({ github: client({ items: [review] }), context, ...binding, agent: 'success', detection: 'success', publisher: 'success' }));
   }
@@ -154,6 +174,30 @@ test('workflow_run revalidates exact source, default branch, run IDs, live comme
     assert.equal(await commentRunRequest({ github: handoff({ run: { display_title } }), context: { ...event, payload: { ...event.payload, workflow_run: { id: 81, display_title } } } }), null);
   }
   assert.equal(await commentRunRequest({ github: handoff(), context: { ...event, ref: 'refs/heads/attacker' } }), null);
+  // Execute the real wrapper admission script and its job gate before applying
+  // the real native concurrency expression. Ordinary successful source runs
+  // cannot replace an already pending authorized run for this PR.
+  const root = require('node:path').join(__dirname, '../..');
+  const routing = fs.readFileSync(root + '/.github/workflows/pr-review-request.yml', 'utf8');
+  const script = routing.match(/script: \|\n([\s\S]*?)(?=^  review:)/m)[1].split('\n').map(line => line.slice(12)).join('\n');
+  const gate = routing.match(/^    if: (needs\.admission[^\n]+)/m)[1];
+  const lock = fs.readFileSync(root + '/.github/workflows/pr-review.lock.yml', 'utf8');
+  const group = lock.match(/^  group: pr-review-\$\{\{ (.+) \}\}$/m)[1];
+  const queueKey = (payload, inputs = {}) => 'pr-review-' + new Function('github', 'inputs', 'fromJSON', 'return ' + group)({ event: { pull_request: {}, workflow_run: { display_title: '' }, ...payload } }, inputs, JSON.parse);
+  const admitted = async changes => {
+    const outputs = {};
+    const core = { setOutput(key, value) { outputs[key] = value; }, summary: { addRaw() {}, async write() {} } };
+    await new (async () => {}).constructor('github', 'context', 'core', 'require', script)(handoff(changes), event, core, name => { assert.equal(name, './.github/pr-review/reviewer.cjs'); return require('./reviewer.cjs'); });
+    return new Function('needs', 'return ' + gate)({ admission: { outputs } });
+  };
+  const pending = { group: queueKey(event.payload), run: 'authorized-request' };
+  assert.equal(await admitted({}), true);
+  assert.equal(pending.group, queueKey(context.payload));
+  assert.equal(pending.group, queueKey({ repository: context.payload.repository }, { pull_request_number: '7' }));
+  for (const changes of [{ comment: { body: 'ordinary comment' } }, { issue: false }, { permission: 'read' }, { run: { actor: { login: 'bot' } }, comment: { user: { login: 'bot', type: 'Bot' } } }, { run: { head_repository: { full_name: 'foreign/repo' } } }]) {
+    if (await admitted(changes)) pending.run = 'unqualified-request';
+    assert.equal(pending.run, 'authorized-request');
+  }
 });
 test('clean complete COMMENT delivery cannot cover a head or suppress its retry', async () => {
   const malformed = { ...formal, state: 'COMMENTED' };
@@ -176,11 +220,21 @@ test('compiled workflow isolates publisher secrets and trusted checkouts', () =>
   assert.match(commentWorkflow, /issue_comment:/);
   assert.doesNotMatch(commentWorkflow, /(?:pull-requests|issues|contents|actions): write|PR_REVIEW_APP_PRIVATE_KEY|CODEX_API_KEY|environment:|upload-artifact|download-artifact/);
   assert.doesNotMatch(source, /issue_comment:/);
-  assert.match(source, /workflows: \[PR review comment admission\]/);
+  assert.match(source, /workflow_call:/);
+  assert.doesNotMatch(source, /workflow_run:/);
+  const routing = fs.readFileSync(root + '/.github/workflows/pr-review-request.yml', 'utf8');
+  assert.match(routing, /workflows: \[PR review comment admission\]/);
+  assert.doesNotMatch(routing, /^concurrency:/m);
+  assert.match(routing, /needs: admission\n    if: needs.admission.outputs.eligible == 'true'/);
+  assert.match(routing, /uses: \.\/.github\/workflows\/pr-review.lock.yml/);
+  assert.doesNotMatch(routing, /(?:pull-requests|issues|contents|actions): write|PR_REVIEW_APP_PRIVATE_KEY|secrets: inherit|environment:/);
+  assert.doesNotMatch(lock, /^      (?:pull-requests|issues|contents|actions): write$/m);
   assert.match(source, /fromJSON\(github.event.workflow_run.display_title \|\| '\{\}'\).number/);
   const activation = lock.match(/^  activation:\n[\s\S]*?(?=^  [a-z_]+:\n)/m)[0];
   assert.match(activation, /needs:\n      - pre_activation/);
   assert.match(activation, /name: Checkout .github and .agents folders[\s\S]*?ref: \$\{\{ needs.pre_activation.outputs.policy \}\}/);
+  const checkoutOptions = activation.match(/name: Checkout .github and .agents folders\n[\s\S]*?with:\n([\s\S]*?)(?=      - |$)/)[1];
+  assert.equal((checkoutOptions.match(/^          ref:/gm) || []).length, 1);
   assert.match(source, /checkout: false/);
   assert.doesNotMatch(source, /ref: \$\{\{ github\.event\.pull_request\.head/);
   const agent = lock.match(/^  agent:\n[\s\S]*?(?=^  [a-z_]+:\n)/m)[0];

@@ -5,10 +5,10 @@ description: Review the current pull request under trusted repository policy.
 on:
   pull_request_target:
     types: [opened, reopened, ready_for_review, synchronize, review_requested]
-  workflow_run:
-    workflows: [PR review comment admission]
-    types: [completed]
-    branches: [main]
+  workflow_call:
+    secrets:
+      CODEX_API_KEY:
+        required: false
   workflow_dispatch:
     inputs:
       pull_request_number:
@@ -142,6 +142,7 @@ safe-outputs:
       env:
         PR_NUMBER: ${{ needs.pre_activation.outputs.number }}
         REVIEW_HEAD: ${{ needs.pre_activation.outputs.head }}
+        REVIEW_BASE: ${{ needs.pre_activation.outputs.base }}
         PR_AUTHOR: ${{ needs.pre_activation.outputs.author }}
         PR_REVIEW_BOT_LOGIN: ${{ vars.PR_REVIEW_BOT_LOGIN }}
         # reviewer-compile.py copies the native publisher sanitizer environment here.
@@ -150,7 +151,7 @@ safe-outputs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           const { preparePublication } = require('./.github/pr-review/reviewer.cjs');
-          const binding = { number: process.env.PR_NUMBER, head: process.env.REVIEW_HEAD, author: process.env.PR_AUTHOR };
+          const binding = { number: process.env.PR_NUMBER, head: process.env.REVIEW_HEAD, base: process.env.REVIEW_BASE, author: process.env.PR_AUTHOR };
           const fs = require('node:fs');
           const actionsDir = require('node:path').join(process.env.RUNNER_TEMP, 'gh-aw/actions');
           require(require('node:path').join(actionsDir, 'setup_globals.cjs')).setupGlobals(core, github, context, exec, io, getOctokit);
@@ -194,6 +195,7 @@ jobs:
           PR_NUMBER: ${{ needs.pre_activation.outputs.number }}
           PR_REVIEW_BOT_LOGIN: ${{ vars.PR_REVIEW_BOT_LOGIN }}
           REVIEW_HEAD: ${{ needs.pre_activation.outputs.head }}
+          REVIEW_BASE: ${{ needs.pre_activation.outputs.base }}
           AGENT_RESULT: ${{ needs.agent.result }}
           DETECTION_RESULT: ${{ needs.detection.result }}
           PUBLISHER_RESULT: ${{ needs.safe_outputs.result }}
@@ -202,7 +204,7 @@ jobs:
           script: |
             const { verifyDelivery } = require('./.github/pr-review/reviewer.cjs');
             try {
-              const url = await verifyDelivery({ github, context, number: process.env.PR_NUMBER, head: process.env.REVIEW_HEAD,
+              const url = await verifyDelivery({ github, context, number: process.env.PR_NUMBER, head: process.env.REVIEW_HEAD, base: process.env.REVIEW_BASE,
                 agent: process.env.AGENT_RESULT, detection: process.env.DETECTION_RESULT, publisher: process.env.PUBLISHER_RESULT });
               core.summary.addRaw(`Completed current-head formal review: ${url}\n`);
             } catch (error) {
@@ -250,9 +252,9 @@ Declare every eligible inline finding using create_pull_request_review_comment
 and exactly one submit_pull_request_review. Both are native deferred outputs,
 not confirmation that a review exists. Follow the repository APPROVE/COMMENT
 rules and never REQUEST_CHANGES. Include exactly one plain coverage declaration on its own line in the
-formal body: `PR review coverage: ${{ needs.pre_activation.outputs.head }} complete`
+formal body: `PR review coverage: head=${{ needs.pre_activation.outputs.head }} base=${{ needs.pre_activation.outputs.base }} complete`
 only when all applicable lanes finished, otherwise
-`PR review coverage: ${{ needs.pre_activation.outputs.head }} incomplete`.
+`PR review coverage: head=${{ needs.pre_activation.outputs.head }} base=${{ needs.pre_activation.outputs.base }} incomplete`.
 The trusted publisher adds durable coverage and delivery markers after native ingestion.
 Complete clean coverage requires APPROVE; blocking or incomplete coverage requires COMMENT. If the author is
 `${{ needs.pre_activation.outputs.bot }}`, publish an incomplete COMMENT limitation because the publisher cannot approve
