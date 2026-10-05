@@ -1,6 +1,8 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { verifyDelivery } = require("./verify-delivery.cjs");
+// Exercise both implementations with the same evidence and failure cases.
+const daemon = process.env.TEST_DELIVERY_DAEMON || "librarian";
+const { verifyDelivery } = require(`../${daemon}/verify-delivery.cjs`);
 
 function fixture() {
   const identity = {
@@ -12,7 +14,7 @@ function fixture() {
     html_url: "https://github.com/owner/repo/pull/7",
     head: {
       sha: "final-head",
-      ref: "librarian/docs",
+      ref: `${daemon}/docs`,
       repo: { full_name: "owner/repo" },
     },
     base: { ref: "main" },
@@ -142,4 +144,23 @@ test("noop stays pending native conclusion and missing outputs fail", async () =
   assert.equal(await verifyDelivery(f.args), "noop-awaiting-native-conclusion");
   f.args.env.OUTPUT_TYPES = "";
   await assert.rejects(verifyDelivery(f.args), /exactly one/);
+});
+
+
+test("automation logins cannot satisfy human handoff even when typed User", async () => {
+  for (const login of ["CharlieHelps", "CHARLIECREATES", "GitHub-Actions", "GUMNUT-BOT",
+    "ChatGPT-Codex-Connector", "COPILOT", "automation[BoT]"]) {
+    const f = fixture();
+    f.users[0].login = login;
+    await assert.rejects(verifyDelivery(f.args), /no eligible human review request/);
+    assert.match(f.reports.join("\n"), /Requested human reviewers: missing/);
+  }
+});
+
+
+test("each daemon rejects a PR from the other daemon's branch", async () => {
+  const f = fixture();
+  f.pr.head.ref = `${daemon === "librarian" ? "maintainer" : "librarian"}/proposal`;
+  await assert.rejects(verifyDelivery(f.args), /unexpected PR identity or branch/);
+  assert.match(f.reports.join("\n"), /pull\/7/);
 });

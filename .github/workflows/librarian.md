@@ -133,6 +133,10 @@ safe-outputs:
     max: 1
     target: "*"
     required-labels: [librarian]
+  steps:
+    - name: Resolve reviewer target using the native published PR map
+      if: contains(needs.agent.outputs.output_types, 'create_pull_request')
+      run: node .github/agent-delivery/prepare-reviewer-handler.cjs
   noop:
     report-as-issue: false
   missing-tool:
@@ -151,7 +155,7 @@ jobs:
   agent:
     timeout-minutes: 45
   safe_outputs:
-    if: needs.agent.result == 'success' && needs.detection.outputs.detection_success == 'true'
+    if: needs.agent.result == 'success' && needs.detection.outputs.detection_success == 'true' && (!contains(needs.agent.outputs.output_types, 'add_reviewer') || contains(needs.agent.outputs.output_types, 'create_pull_request'))
   verify_delivery:
     needs: [agent, detection, safe_outputs]
     if: always() && needs.agent.result != 'skipped'
@@ -379,7 +383,9 @@ in `.agents/daemons/AGENTS.md`; record the account, history evidence and
 selection rationale in the PR body. Call `add_reviewer` once, with that account
 and `pull_request_number: "aw_proposal"`, using the PR's actual temporary ID.
 The tools declare outputs that will be published later; do not claim that the
-PR or review request exists yet. Do not request a bot or automation account. Count all open librarian PRs from any executor against the DAEMON.md caps,
+PR or review request exists yet. Exclude logins ending in `[bot]` and known automation accounts, case-insensitively:
+`CharlieHelps`, `CharlieCreates`, `github-actions`, `gumnut-bot`,
+`chatgpt-codex-connector`, and `Copilot`. Do not request teams. Count all open librarian PRs from any executor against the DAEMON.md caps,
 including any legacy documentation proposals. The DAEMON.md limits on open
 librarian PRs and status transitions apply; when they leave no
 room for your proposal, report no work. Use the prepared locked linter and
