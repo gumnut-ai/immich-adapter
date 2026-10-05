@@ -1,10 +1,10 @@
 name: PR review workflow checks
 on:
   pull_request:
-    paths: ['.github/pr-review/**', '.github/workflows/pr-review*']
+    paths: ['.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
   push:
     branches: [main]
-    paths: ['.github/pr-review/**', '.github/workflows/pr-review*']
+    paths: ['.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
 permissions:
   contents: read
 jobs:
@@ -26,3 +26,7 @@ jobs:
       - run: node --test .github/pr-review/reviewer*.test.cjs
         env:
           GH_AW_ACTIONS_DIR: ${{ github.workspace }}/.native-gh-aw/actions/setup/js
+      - name: Check daemon human-review handoff and workflow wiring
+        run: node --test .github/agent-delivery/*.test.cjs .github/librarian/verify-delivery.test.cjs .github/maintainer/verify-delivery.test.cjs
+        env:
+          GH_AW_SETUP_DIR: ${{ github.workspace }}/.native-gh-aw/actions/setup/js

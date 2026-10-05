@@ -177,6 +177,10 @@ safe-outputs:
     max: 1
     target: "*"
     required-labels: [maintainer]
+  steps:
+    - name: Resolve reviewer target using the native published PR map
+      if: contains(needs.agent.outputs.output_types, 'create_pull_request')
+      run: node .github/agent-delivery/prepare-reviewer-handler.cjs
   noop:
     report-as-issue: false
   missing-tool:
@@ -200,7 +204,7 @@ jobs:
   agent:
     timeout-minutes: 90
   safe_outputs:
-    if: needs.agent.result == 'success' && needs.detection.outputs.detection_success == 'true'
+    if: needs.agent.result == 'success' && needs.detection.outputs.detection_success == 'true' && (!contains(needs.agent.outputs.output_types, 'add_reviewer') || contains(needs.agent.outputs.output_types, 'create_pull_request'))
   verify_delivery:
     needs: [agent, detection, safe_outputs]
     if: always() && needs.agent.result != 'skipped'
@@ -344,5 +348,9 @@ must be `maintainer/<unused-short-topic>`; include changelog links, affected
 apps and full-check evidence, advisory identifiers/age, immutable source SHA,
 coverage limits and reviewer-selection rationale. Select an eligible human
 through contribution history and call add_reviewer once using the PR temporary
-ID. A proposal is complete only after detection, publisher and delivery checks.
+ID (for example `pull_request_number: "aw_proposal"` for `temporary_id: "aw_proposal"`).
+Exclude logins ending in `[bot]` and known automation accounts, case-insensitively:
+`CharlieHelps`, `CharlieCreates`, `github-actions`, `gumnut-bot`,
+`chatgpt-codex-connector`, and `Copilot`. Do not request teams.
+A proposal is complete only after detection, publisher and delivery checks.
 Never approve, merge, push default branch, or run production operations.

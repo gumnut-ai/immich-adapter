@@ -51,7 +51,8 @@ pin corrections documented at the top of the source, then run:
 
 ```bash
 uv run pytest tests/test_librarian_workflow.py
-node --test .github/librarian/verify-delivery.test.cjs
+node --test .github/librarian/verify-delivery.test.cjs .github/maintainer/verify-delivery.test.cjs .github/agent-delivery/workflow-wiring.test.cjs
+GH_AW_SETUP_DIR=/path/to/pinned-gh-aw/actions/setup/js node --test .github/agent-delivery/reviewer-handler.test.cjs
 actionlint .github/workflows/librarian.lock.yml
 uv run --no-config --locked --script scripts/lint_docs.py --base origin/main
 git diff --check
@@ -61,3 +62,17 @@ Use the repository's pinned uv version from `AGENTS.md`. Tests check native
 budget wiring and abort handling, immutable firewall pins, isolated publisher
 credentials, docs-only publication scope, and incomplete delivery behavior.
 They do not prove live App access or sandbox setup.
+
+Both daemons install the shared reviewer repair in `.github/agent-delivery`
+before native safe-output processing, only for an activation proposing a PR.
+It checks complete SHA-256 hashes of the v0.89.21 native helpers before patching,
+orders `add_reviewer` after its temporary PR dependency, and resolves only a PR
+published by the same activation in this repository. The native handler still
+owns label checks and the review-request API. Exactly one human login is
+accepted; bot suffixes and known automation logins are excluded case-insensitively
+by the shared predicate used in both delivery verifiers. API or patch failures
+leave delivery incomplete. No-op outputs do not invoke the repair.
+
+The native integration test requires the setup helpers from commit
+`c35393777e5604a63721d09512263b1383301d4f` (v0.89.21); it runs those handlers
+with fixture GitHub responses and makes no review request or inference call.
