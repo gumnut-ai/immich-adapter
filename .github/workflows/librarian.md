@@ -36,6 +36,8 @@ concurrency:
   cancel-in-progress: false
   queue: single
 runs-on: blacksmith-2vcpu-ubuntu-2404
+# Keep generated admission and publisher jobs on the available runner pool.
+runs-on-slim: blacksmith-2vcpu-ubuntu-2404
 timeout-minutes: 30
 # 1 AIC = $0.01 at the runtime's pricing; not a provider invoice guarantee.
 # Initial manual-validation limits within the shared $50/month replacement goal.
