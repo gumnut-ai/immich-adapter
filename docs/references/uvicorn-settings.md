@@ -1,6 +1,6 @@
 ---
 title: "Uvicorn Runtime Settings"
-last-updated: 2026-10-01
+last-updated: 2026-10-05
 ---
 
 # Uvicorn Runtime Settings
@@ -9,7 +9,11 @@ This reference records why the adapter does not run Uvicorn with all defaults an
 
 ## Configuration owners
 
-- `Dockerfile` owns the production command, bind address, `PORT` fallback, WebSocket implementation, keep-alive, concurrency, and backlog defaults.
+- `Dockerfile` owns the production command, bind address, `PORT` fallback,
+  `LOG_LEVEL` forwarding to Uvicorn, WebSocket implementation, keep-alive,
+  concurrency, and backlog defaults.
+- `config/logging.py` owns the adapter's application logger levels and
+  formatting; `LOG_LEVEL` does not override that configuration.
 - `.vscode/launch.json` owns the local debugger's WebSocket implementation.
 - `pyproject.toml` owns the minimum Uvicorn version and its rationale.
 - `README.md` shows a human-run production-style command.

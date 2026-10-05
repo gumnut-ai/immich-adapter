@@ -110,7 +110,9 @@ container.
 - `OAUTH_MOBILE_REDIRECT_URI`: Custom URL scheme for mobile app deep linking during OAuth flow (default: app.immich:///oauth-callback)
 - `TRASH_RETENTION_DAYS`: Trash retention window surfaced to Immich clients as `trashDays` (default: `90`)
 - `ENVIRONMENT`: Set to `development`, `test`, or `production`
-- `LOG_LEVEL`: Log level (default: `info`, options: `debug`, `info`, `warning`, `error`)
+- `LOG_LEVEL`: Uvicorn/container process log level (default: `info`, options:
+  `debug`, `info`, `warning`, `error`). Application logger levels are configured
+  separately in `config/logging.py`.
 
 Optional advanced settings are available for telemetry, Redis connection
 pooling, and server-side edit rendering:
