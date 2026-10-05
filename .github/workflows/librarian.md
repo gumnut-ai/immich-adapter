@@ -207,17 +207,15 @@ steps:
         exit 1
       fi
       echo "version=$version" >> "$GITHUB_OUTPUT"
-  - name: Install pinned uv and restore librarian cache
+  - name: Install pinned uv and configure local cache
     id: uv_setup
     uses: astral-sh/setup-uv@v10.2.0
     with:
       version: ${{ steps.uv-version.outputs.version }}
-      enable-cache: true
-      cache-suffix: librarian-agent
-      cache-dependency-glob: |
-        scripts/lint_docs.py.lock
-        .uv-version
-        .python-version
+      # Agent-writable dependencies must not be persisted into future jobs.
+      enable-cache: false
+      # AWF hides runner HOME; /tmp is shared with offline validation.
+      cache-local-path: /tmp/scheduled-care-uv-cache
   - name: Prepare locked documentation linter
     id: linter_setup
     run: |
@@ -236,6 +234,8 @@ pre-agent-steps:
       set -euo pipefail
       trusted_dir="$RUNNER_TEMP/librarian-trusted-lint"
       mkdir -m 700 "$trusted_dir"
+      # Keep validation dependencies outside the agent-writable /tmp cache.
+      cp -a "${UV_CACHE_DIR:?prepared cache required}" "$trusted_dir/uv-cache"
       for file in lint_docs.py lint_docs.py.lock lint_docs.toml; do
         git show "$GITHUB_SHA:scripts/$file" > "$trusted_dir/$file"
       done
@@ -305,7 +305,8 @@ post-steps:
         outcome=validation-failed
         if awf --container-workdir "$GITHUB_WORKSPACE" \
           --mount "$RUNNER_TEMP/librarian-trusted-lint:/trusted-lint:ro" \
-          --env "GITHUB_SHA=$GITHUB_SHA" --env "UV_CACHE_DIR=$UV_CACHE_DIR" -- \
+          --mount "$RUNNER_TEMP/librarian-trusted-lint/uv-cache:/trusted-uv-cache:rw" \
+          --env "GITHUB_SHA=$GITHUB_SHA" --env "UV_CACHE_DIR=/trusted-uv-cache" -- \
           /bin/bash -c '
             set -euo pipefail
             # A staged patch may not match the file on disk. Reject mixed
