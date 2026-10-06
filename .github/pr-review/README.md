@@ -1,5 +1,10 @@
 # Native PR review
 
+This is a gated, unactivated native-review proposal, not a replacement reviewer
+available today. Humans review and merge PRs. The existing Codex review integration
+continues to review when requested with `@codex review`. The sections below describe
+the proposed workflow and its requirements before any future activation.
+
 `../workflows/pr-review.md` owns the executable workflow, compiled with
 `github/gh-aw` v0.89.21 at commit
 `c35393777e5604a63721d09512263b1383301d4f`. After compiling with
@@ -24,11 +29,12 @@ No publisher credential enters the inference sandbox; the native firewall
 holds provider credentials outside that sandbox. The GitHub inference tool
 uses the read-only workflow token explicitly.
 
-Automatic review covers open non-draft PRs, readiness, reopen, head updates and base retargets. Unrelated title/body edits
+If separately enabled, this workflow would cover open non-draft PRs, readiness,
+reopen, head updates and base retargets. Unrelated title/body edits
 use an isolated run group and cannot displace a pending PR review.
-A reviewer request for the configured reviewer App bot, a complete `/review`
-or `@gumnut-reviewer review` command line, and default-branch manual dispatch are
-supported. A separate read-only comment-admission workflow hands off numeric
+The proposed admission helper defines reviewer-request and comment-command
+matching; default-branch manual dispatch is also implemented. These interfaces
+do not identify an installed replacement reviewer or authorize activation. A separate read-only comment-admission workflow hands off numeric
 PR/comment IDs and a coarse command-candidate Boolean through authenticated
 run metadata. Ordinary comments skip both source and routing jobs before runner
 allocation; the Boolean never grants authorization. A read-only routing workflow

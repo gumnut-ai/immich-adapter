@@ -4,13 +4,16 @@ purpose: Give pull request authors concise, evidence-backed review feedback unde
 watch:
   - A non-draft pull request is opened.
   - A draft pull request is marked ready for review.
-  - The configured native reviewer App is requested as a reviewer.
-  - An authorized comment requests review through the native workflow.
+  - An authorized native workflow activation after separate operator enablement.
 routines:
   - Review the activated pull request according to this daemon's policy and applicable review lanes.
 ---
 
 # PR Review
+
+This policy is retained for a proposed, gated native workflow. Humans review
+and merge PRs today; existing Codex review remains available on request.
+This file does not provide an active replacement reviewer.
 
 PR review protocol: pr-review/v1
 

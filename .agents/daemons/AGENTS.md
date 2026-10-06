@@ -11,10 +11,14 @@ Each daemon is one subdirectory with a `DAEMON.md`, plus any reference files it 
 .agents/daemons/<daemon-id>/references/...
 ```
 
-These files are repository-owned role policies consumed by native Codex
-workflows. Their frontmatter records the role's purpose and limits; the owning
+These files are retained repository-owned role policies for proposed or
+individually gated native workflows. They do not establish active coverage. Their frontmatter records the role's purpose and limits; the owning
 workflow defines executable activation and scheduling. A policy file alone does
 not enable a role. Verify activation through the workflow's documented gates.
+
+Humans review and merge PRs. The existing Codex integration provides automated
+review when requested with `@codex review`; no native replacement reviewer is
+active.
 
 Review lanes live under `pr-review/references/lanes/`. Each inline finding carries
 a `` `§ <lane-name>` `` badge taken from the lane's filename.
