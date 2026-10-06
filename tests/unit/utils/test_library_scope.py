@@ -1,8 +1,9 @@
 """Unit tests for binding the resolved library into the Gumnut client."""
 
+import asyncio
 import inspect
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
@@ -507,6 +508,108 @@ class TestResolveLibraryId:
         await forget_bound_library_if_gone(404, "Library lib_cached not found")
 
         cache.forget_api_key.assert_awaited_once_with(API_KEY)
+
+
+class TestConcurrentResolution:
+    """Requests that need a resolution at once share one."""
+
+    @pytest.fixture
+    def cache(self):
+        cache = AsyncMock()
+        cache.get_for_api_key.return_value = None
+        cache.set_session_library.return_value = True
+        return cache
+
+    @pytest.fixture
+    def release(self):
+        return asyncio.Event()
+
+    @pytest.fixture
+    def unscoped_client(self, release):
+        async def list_libraries():
+            await release.wait()
+            return [make_gumnut_library("lib_a", datetime(2026, 1, 1, tzinfo=UTC))]
+
+        client = Mock()
+        client.libraries.list = AsyncMock(side_effect=list_libraries)
+        client.users.me = AsyncMock(return_value=Mock(immich_library_id=None))
+        with patch(
+            "routers.utils.gumnut_client.get_gumnut_client",
+            AsyncMock(return_value=client),
+        ):
+            yield client
+
+    @staticmethod
+    async def _start(count: int, cache) -> list[asyncio.Task]:
+        tasks = [
+            asyncio.create_task(
+                _resolve_library_id(
+                    _request(session_library_id="lib_a", stale=True), JWT, cache
+                )
+            )
+            for _ in range(count)
+        ]
+        await asyncio.sleep(0)  # let every request reach the shared resolution
+        await asyncio.sleep(0)
+        return tasks
+
+    @pytest.mark.anyio
+    async def test_stale_session_burst_resolves_once(
+        self, cache, unscoped_client, release
+    ):
+        tasks = await self._start(5, cache)
+        release.set()
+
+        assert await asyncio.gather(*tasks) == ["lib_a"] * 5
+        unscoped_client.libraries.list.assert_awaited_once()
+        unscoped_client.users.me.assert_awaited_once()
+        # Each request still records the library on its own session read.
+        assert cache.set_session_library.await_count == 5
+
+    @pytest.mark.anyio
+    async def test_failure_reaches_every_waiter_and_is_not_kept(
+        self, cache, unscoped_client, release
+    ):
+        unscoped_client.libraries.list.side_effect = [
+            make_sdk_status_error(500, "boom"),
+            [make_gumnut_library("lib_a", datetime(2026, 1, 1, tzinfo=UTC))],
+        ]
+
+        tasks = await self._start(3, cache)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        assert all(isinstance(result, Exception) for result in results)
+        assert unscoped_client.libraries.list.await_count == 1
+        request = _request(session_library_id="lib_a", stale=True)
+        assert await _resolve_library_id(request, JWT, cache) == "lib_a"
+
+    @pytest.mark.anyio
+    async def test_cancelled_request_leaves_the_others_their_result(
+        self, cache, unscoped_client, release
+    ):
+        first, second = await self._start(2, cache)
+        first.cancel()
+        await asyncio.sleep(0)
+        release.set()
+
+        assert await second == "lib_a"
+        assert first.cancelled()
+        unscoped_client.libraries.list.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_different_credentials_resolve_separately(
+        self, cache, unscoped_client, release
+    ):
+        release.set()
+        tasks = [
+            asyncio.create_task(
+                _resolve_library_id(_request(session_library_id=None), jwt, cache)
+            )
+            for jwt in ("jwt-one", "jwt-two")
+        ]
+
+        await asyncio.gather(*tasks)
+        assert unscoped_client.libraries.list.await_count == 2
 
 
 class TestAuthenticatedClientDependency:
