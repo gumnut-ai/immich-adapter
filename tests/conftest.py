@@ -288,8 +288,7 @@ def mock_list_stacks(rows):
     The matched rows come back **reversed**, deliberately not in the order the
     caller requested: the Gumnut API promises no row order and callers index by
     `row.id`, so replaying the request order would let a consumer that walked
-    the response instead of its own ID list pass. See the comment above
-    `complete_ids` in `resolve_timeline_stacks` for why that matters there.
+    the response instead of its own ID list pass.
     """
     rows_by_id = {row.id: row for row in rows}
     return Mock(
