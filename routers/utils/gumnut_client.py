@@ -295,13 +295,16 @@ async def _fetch_library_choice_once(
         def _done(finished: asyncio.Task[LibraryChoice | None]) -> None:
             if _library_choices_in_flight.get(key) is finished:
                 del _library_choices_in_flight[key]
-            # Mark a failure retrieved in case every waiter was cancelled.
+            # Retrieve a failure: with every waiter cancelled nothing else
+            # would, and asyncio reports it as never retrieved.
             if not finished.cancelled():
                 finished.exception()
 
         task.add_done_callback(_done)
-    # Shielded so one client disconnecting does not cancel the others' result.
-    return await asyncio.shield(task)
+    # wait() leaves the task running when this request is cancelled, so one
+    # client disconnecting does not cancel the others' result.
+    await asyncio.wait([task])
+    return task.result()
 
 
 def _unrecorded() -> HTTPException:
