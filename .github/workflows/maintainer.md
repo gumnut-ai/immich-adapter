@@ -326,7 +326,7 @@ blocked 24-hour SLA and phase; never weaken checks or claim successful noop.
 When routine is true, consider all repository targets under DAEMON.md, with
 bounded discovery and at most one topical PR per activation. Do not omit a target
 because its environment is unverified: report that target's preparation blocker.
-For legacy Charlie open-PR/cadence checks, also paginate `maintainer/` branch
+For legacy maintenance open-PR/cadence checks, also paginate `maintainer/` branch
 history (including closed proposals). Count prior maintenance PRs from either
 executor against the existing caps. Do not duplicate an open topic or recreate
 a closed unmerged proposal without material new evidence.

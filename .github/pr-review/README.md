@@ -26,8 +26,8 @@ uses the read-only workflow token explicitly.
 
 Automatic review covers open non-draft PRs, readiness, reopen, head updates and base retargets. Unrelated title/body edits
 use an isolated run group and cannot displace a pending PR review.
-A reviewer request for `CharlieHelps` or `the configured reviewer App bot`, a complete `/review`
-or `@CharlieHelps review` command line, and default-branch manual dispatch are
+A reviewer request for the configured reviewer App bot, a complete `/review`
+or `@gumnut-reviewer review` command line, and default-branch manual dispatch are
 supported. A separate read-only comment-admission workflow hands off numeric
 PR/comment IDs and a coarse command-candidate Boolean through authenticated
 run metadata. Ordinary comments skip both source and routing jobs before runner
@@ -37,7 +37,7 @@ Only eligible requests call the same-commit native reusable workflow and enter i
 whole-pipeline PR queue; ordinary comments cannot replace pending review work.
 The native workflow repeats admission before inference;
 comment jobs have no publisher credentials. Manual requests require the caller's current repository write,
-maintain or admin permission. Other free-form Charlie mentions do not trigger
+maintain or admin permission. Other free-form mentions do not trigger
 paid inference. Opening fork PRs can trigger inference once enabled; rate/cost
 exposure remains an operator decision. No contributor checkout, dependency
 installation or contributor script execution is permitted in these jobs.
@@ -65,12 +65,11 @@ those require a different reviewer. A run is successful only after a complete
 formal review from that run is independently read back at the current head/base.
 Older head-only markers cannot establish complete coverage.
 
-Before cutover, validate on merged default-branch policy with separately
+Before enabling native review, validate on merged default-branch policy with separately
 admitted paid tests: complete clean approval, blocking COMMENT with inline
 finding, limitation COMMENT, exact-head changes, duplicate events, authorized
 and unauthorized requests, a fork with adversarial text, and failed inference /
-publication. Check the actual hosted Charlie installation before withdrawing
-its coverage. These files do not disable Charlie. Without successful runtime
+publication. Without successful runtime
 verification, the replacement remains unverified even if CI is green.
 
 Native AIC is an inference estimate, not a provider invoice or portfolio cap.

@@ -36,13 +36,13 @@ function request(context) {
   if (context.eventName === 'pull_request_target') {
     if (!['opened', 'reopened', 'ready_for_review', 'synchronize', 'review_requested', 'edited'].includes(p.action)) return null;
     if (p.action === 'edited' && !p.changes?.base) return null;
-    if (p.action === 'review_requested' && !['CharlieHelps', BOT].includes(p.requested_reviewer?.login)) return null;
+    if (p.action === 'review_requested' && (!validBot(BOT) || p.requested_reviewer?.login !== BOT)) return null;
     return { number: p.pull_request.number, manual: p.action === 'review_requested' };
   }
   if (context.eventName === 'issue_comment') {
     if (p.action !== 'created' || !p.issue?.pull_request || p.comment?.user?.type !== 'User' || !['OWNER', 'MEMBER', 'COLLABORATOR'].includes(p.comment.author_association)) return null;
     // Complete command lines only; quoted mentions or prose do not authorize work.
-    if (!/^(?:\/review|@(?:CharlieHelps|gumnut-reviewer) review)(?:[ \t]+[^\r\n]*)?$/i.test(p.comment.body.trim())) return null;
+    if (!/^(?:\/review|@gumnut-reviewer review)(?:[ \t]+[^\r\n]*)?$/i.test(p.comment.body.trim())) return null;
     return { number: p.issue.number, manual: true };
   }
   if (context.eventName === 'workflow_dispatch') {
