@@ -25,13 +25,14 @@ function nativeFiles(dir) {
     fs.readFileSync(path.join(dir, name), "utf8"));
 }
 function invalidOutputs() {
-  const result = [{}, { items: [] }, { items: [null] }, { items: [output().items[0]] }];
+  const result = [{}, { errors: [], items: [] }, { errors: [], items: [null] }];
   for (const type of ["noop", "report_incomplete", "missing_tool", "missing_data"])
-    result.push({ items: [...output().items, { type }] });
+    result.push({ errors: [], items: [...output().items, { type }] });
   for (const mutate of [
     x => x.errors = ["Line 3: Unexpected output type 'report_incomplete'"],
     x => x.errors = ["Line 3: Too many items of type 'create_pull_request'"],
     x => x.errors = "invalid error envelope",
+    x => delete x.errors,
     x => x.items.push(x.items[0]),
     x => x.items.push(x.items[1]),
     x => delete x.items[0].temporary_id,
@@ -92,7 +93,7 @@ test("completed proposal uses native ordering, temporary map and exactly one wri
 test("CLI requires readable valid native output and fails before native helper preparation", t => {
   const dir = helpers(t), before = nativeFiles(dir);
   const file = path.join(dir, "output.json");
-  for (const content of [undefined, "invalid JSON", JSON.stringify({ items: [output().items[0]] }), JSON.stringify({ ...output(), errors: ["Invalid extra declaration"] })]) {
+  for (const content of [undefined, "invalid JSON", JSON.stringify({ items: output().items }), JSON.stringify({ ...output(), errors: ["Invalid extra declaration"] })]) {
     if (content !== undefined) fs.writeFileSync(file, content);
     const env = { PATH: process.env.PATH, RUNNER_TEMP: dir, GITHUB_REPOSITORY: "owner/repo" };
     if (content !== undefined) env.GH_AW_AGENT_OUTPUT = file;
@@ -123,4 +124,20 @@ test("preflight accepts either declaration order and an explicit same-repository
   validateProposal(declaration, "owner/repo");
   declaration.items.reverse();
   validateProposal(declaration, "owner/repo");
+});
+
+
+test("reviewer-selection failure preserves the useful native proposal", async t => {
+  global.core = { info() {}, warning() {}, error() {}, debug() {} };
+  const dir = helpers(t), declaration = output();
+  declaration.items.pop();
+  prepare(dir, declaration, "owner/repo");
+  const { processMessages } = require(path.join(dir, "safe_output_handler_manager.cjs"));
+  let writes = 0;
+  const result = await processMessages(new Map([["create_pull_request", async () => {
+    writes++;
+    return { success: true, number: 7, repo: "owner/repo", temporaryId: "aw_proposal" };
+  }]]), declaration.items);
+  assert.equal(writes, 1);
+  assert(result.results.every(item => item.success));
 });

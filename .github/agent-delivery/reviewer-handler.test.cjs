@@ -11,7 +11,7 @@ const { main } = require(path.join(setup, "add_reviewer.cjs"));
 
 
 function proposalOutput() {
-  return { items: [
+  return { errors: [], items: [
     { type: "create_pull_request", temporary_id: "aw_proposal" },
     { type: "add_reviewer", pull_request_number: "aw_proposal", reviewers: ["ternarybits"] },
   ] };

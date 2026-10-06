@@ -7,23 +7,28 @@ const { isHumanReviewer } = require("./human-reviewer.cjs");
 // Native handlers apply items independently. Validate the complete proposal
 // before any handler can publish; delivery readback cannot undo a write.
 function validateProposal(output, repository) {
-  if (output?.errors !== undefined &&
-      (!Array.isArray(output.errors) || output.errors.length !== 0))
+  if (!Array.isArray(output?.errors) || output.errors.length !== 0)
     throw Error("Native output collection must have no validation errors");
   const items = output?.items;
-  if (!Array.isArray(items) || items.length !== 2 ||
+  if (!Array.isArray(items) || (items.length !== 1 && items.length !== 2) ||
       items.some(item => !item || typeof item !== "object"))
-    throw Error("Expected one PR proposal and one human reviewer");
+    throw Error("Expected one PR proposal with at most one human reviewer");
   const proposals = items.filter(item => item.type === "create_pull_request");
   const reviews = items.filter(item => item.type === "add_reviewer");
-  if (proposals.length !== 1 || reviews.length !== 1)
-    throw Error("Expected one PR proposal and one human reviewer");
+  if (proposals.length !== 1 || reviews.length > 1 ||
+      items.length !== proposals.length + reviews.length)
+    throw Error("Expected one PR proposal with at most one human reviewer");
   if (items.some(item => item.repo && item.repo !== repository))
     throw Error("Proposal and reviewer must target this repository");
   const proposal = proposals[0], review = reviews[0];
   const normalize = id => typeof id === "string" ? id.replace(/^#/, "").toLowerCase() : "";
   const id = normalize(proposal.temporary_id);
-  if (!/^aw_[a-z0-9_]{3,12}$/.test(id) || normalize(review.pull_request_number) !== id)
+  if (!/^aw_[a-z0-9_]{3,12}$/.test(id))
+    throw Error("Invalid proposal temporary ID");
+  // Preserve a useful PR when policy cannot identify a human; delivery still
+  // reports the unresolved handoff rather than claiming success.
+  if (!review) return;
+  if (normalize(review.pull_request_number) !== id)
     throw Error("Reviewer target must be this proposal's temporary ID");
   if (!Array.isArray(review.reviewers) || review.reviewers.length !== 1 ||
       !/^[a-zA-Z0-9-]+$/.test(review.reviewers[0]) ||
