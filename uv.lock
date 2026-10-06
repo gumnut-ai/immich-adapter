@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "2026-09-20T09:01:33.574009808Z"
+exclude-newer = "2026-09-22T20:35:06.256308Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
@@ -337,7 +337,7 @@ wheels = [
 
 [[package]]
 name = "gumnut-sdk"
-version = "0.168.0"
+version = "0.169.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -347,9 +347,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e2/c5/a6a2a70446ec565fc2613647fb43ffdfd477fd8400dd95e614f2743d48c2/gumnut_sdk-0.168.0.tar.gz", hash = "sha256:b8e4a25ef8b40d7a6176e70138e02d8824d8ac44cb9c42dc1a2e1f4fffa44603", size = 352564, upload-time = "2026-10-02T19:50:41.323Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/66/1c/39541c76b01f220e2efac6ea8654d81fc9e4b9be22f6b057029cee0d3606/gumnut_sdk-0.169.0.tar.gz", hash = "sha256:ac571dee4fbba884a943f544ae093d8f9aa72b332c63f0139214272572cb0f75", size = 353514, upload-time = "2026-10-06T20:32:49.702Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4f/1c/3b65ea69ebad4644fe11ab10059cbe95f3a17b9013a05e9971c7506d1af7/gumnut_sdk-0.168.0-py3-none-any.whl", hash = "sha256:f3b1aa3c9f583ff561c9a41c5cc44f4fc12a89842dafa00272e46f3480e1a89a", size = 251058, upload-time = "2026-10-02T19:50:42.612Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/89/c4bbde6ba10c2b51b1ec86c6cd25606d027c5f4570fde72c4c00b8775477/gumnut_sdk-0.169.0-py3-none-any.whl", hash = "sha256:03862143245144fe198313b3cc199e990efb8f6a89a538971997329b3ae6acf7", size = 252228, upload-time = "2026-10-06T20:32:47.572Z" },
 ]
 
 [[package]]
@@ -454,7 +454,7 @@ dev = [
 requires-dist = [
     { name = "cryptography", specifier = ">=50.0.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.140.0" },
-    { name = "gumnut-sdk", specifier = ">=0.168.0" },
+    { name = "gumnut-sdk", specifier = ">=0.169.0" },
     { name = "pillow", specifier = ">=11" },
     { name = "pillow-heif", specifier = ">=1.7.0" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
