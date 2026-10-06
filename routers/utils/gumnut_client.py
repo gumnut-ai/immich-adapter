@@ -274,6 +274,39 @@ async def _fetch_library_choice(
     return choice
 
 
+# In-flight library resolutions, keyed by what the outcome depends on. A client
+# opening a timeline sends dozens of requests at once; when its library is due
+# a re-check they share one resolution rather than each listing libraries.
+_library_choices_in_flight: dict[
+    tuple[str, str | None], asyncio.Task[LibraryChoice | None]
+] = {}
+
+
+async def _fetch_library_choice_once(
+    request: Request, credential: str, stay_on: str | None
+) -> LibraryChoice | None:
+    """``_fetch_library_choice``, shared by the requests that need it at once."""
+    key = (credential, stay_on)
+    task = _library_choices_in_flight.get(key)
+    if task is None:
+        task = asyncio.create_task(_fetch_library_choice(request, credential, stay_on))
+        _library_choices_in_flight[key] = task
+
+        def _done(finished: asyncio.Task[LibraryChoice | None]) -> None:
+            if _library_choices_in_flight.get(key) is finished:
+                del _library_choices_in_flight[key]
+            # Retrieve a failure: with every waiter cancelled nothing else
+            # would, and asyncio reports it as never retrieved.
+            if not finished.cancelled():
+                finished.exception()
+
+        task.add_done_callback(_done)
+    # wait() leaves the task running when this request is cancelled, so one
+    # client disconnecting does not cancel the others' result.
+    await asyncio.wait([task])
+    return task.result()
+
+
 def _unrecorded() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -314,7 +347,7 @@ async def _resolve_library_id(
         library_id = cached
     else:
         try:
-            choice = await _fetch_library_choice(request, credential, stay_on)
+            choice = await _fetch_library_choice_once(request, credential, stay_on)
         except HTTPException:
             if cached and session_token:
                 await cache.set_session_library(session_token, cached, "")

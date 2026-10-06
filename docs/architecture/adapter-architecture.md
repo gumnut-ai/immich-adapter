@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-28
+last-updated: 2026-10-06
 ---
 
 # Immich Adapter Architecture
@@ -61,10 +61,12 @@ per request and scopes every Gumnut call to it:
   TTL), then resolved again, so a changed choice reaches connected clients
   within minutes without a per-request Gumnut call or a push channel. A
   resolution costs `GET /api/libraries` then `GET /api/users/me` on an
-  unscoped client. Two cases stay unscoped and uncached: a user with no live
-  library at all (the Gumnut API provisions one on first use), and an API key
-  limited to selected libraries, which the API refuses the listing for; its
-  stored choice is not consulted.
+  unscoped client, and requests on one credential that need it at the same
+  time share a single resolution per adapter process, so a client's burst of
+  parallel requests does not multiply those calls. Two cases stay unscoped
+  and uncached: a user with no live library at all (the Gumnut API provisions
+  one on first use), and an API key limited to selected libraries, which the
+  API refuses the listing for; its stored choice is not consulted.
 - **Switching.** When a session's re-check resolves a different library — the
   choice changed, became unusable, or became usable again — the session moves
   to it; one whose library can no longer be resolved at all (the `403` above,
