@@ -9,6 +9,14 @@ const setup = process.env.GH_AW_SETUP_DIR;
 if (!setup) throw Error("GH_AW_SETUP_DIR must identify pinned v0.89.21 setup/js");
 const { main } = require(path.join(setup, "add_reviewer.cjs"));
 
+
+function proposalOutput() {
+  return { items: [
+    { type: "create_pull_request", temporary_id: "aw_proposal" },
+    { type: "add_reviewer", pull_request_number: "aw_proposal", reviewers: ["ternarybits"] },
+  ] };
+}
+
 function fixture() {
   const calls = [];
   global.context = { eventName: "schedule", repo: { owner: "gumnut-ai", repo: "immich-adapter" }, payload: {} };
@@ -40,7 +48,7 @@ test("installed adapter uses native dependency ordering before resolving reviewe
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "librarian-handler-"));
   try {
     fs.cpSync(setup, dir, { recursive: true });
-    require("./prepare-reviewer-handler.cjs").prepare(dir);
+    require("./prepare-reviewer-handler.cjs").prepare(dir, proposalOutput());
     const { sortMessageIndicesByTemporaryIdDependencies: sort } = require(path.join(dir, "safe_output_handler_manager.cjs"));
     const f = fixture();
     const messages = [{ type: "add_reviewer", ...f.message, pull_request_number: "#AW_Proposal" },
@@ -95,7 +103,7 @@ test("complete helper drift fails before modifying either native helper", () => 
       fs.appendFileSync(path.join(dir, file), "\n// fixture drift\n");
       const names = ["add_reviewer.cjs", "safe_output_handler_manager.cjs"];
       const before = names.map(name => fs.readFileSync(path.join(dir, name), "utf8"));
-      assert.throws(() => require("./prepare-reviewer-handler.cjs").prepare(dir), /helpers changed/);
+      assert.throws(() => require("./prepare-reviewer-handler.cjs").prepare(dir, proposalOutput()), /helpers changed/);
       assert.deepEqual(names.map(name => fs.readFileSync(path.join(dir, name), "utf8")), before);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -116,5 +124,25 @@ test("both daemon configurations preserve native labels and reviewer API failure
       assert.equal((await handler(f.message, f.map)).success, labels[0] === daemon);
       assert.equal(f.calls.length, labels[0] === daemon ? 1 : 0);
     }
+  }
+});
+
+
+test("both PR publishers validate the exact native output before processing", () => {
+  for (const name of ["librarian", "maintainer"]) {
+    const root = path.resolve(__dirname, "../..");
+    const source = fs.readFileSync(path.join(root, `.github/workflows/${name}.md`), "utf8");
+    const lock = fs.readFileSync(path.join(root, `.github/workflows/${name}.lock.yml`), "utf8");
+    const job = lock.split("  safe_outputs:\n")[1].split(/^  [a-z_]+:$/m)[0];
+    const script = "node .github/agent-delivery/prepare-reviewer-handler.cjs";
+    const step = "name: Resolve reviewer target using the native published PR map";
+    const nativeOutput = "GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}";
+    assert.equal(source.split(script).length, 2, name);
+    assert.equal(job.split(script).length, 2, name);
+    assert(job.indexOf("name: Checkout repository") < job.indexOf(step), name);
+    assert(job.indexOf(step) < job.indexOf("name: Process Safe Outputs"), name);
+    assert(source.includes(nativeOutput), name);
+    assert(job.slice(job.indexOf(step), job.indexOf("name: Process Safe Outputs")).includes(nativeOutput), name);
+    assert.match(job.slice(job.indexOf(step), job.indexOf(script)), /contains\(needs.agent.outputs.output_types, 'create_pull_request'\)/);
   }
 });
