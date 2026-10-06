@@ -4,13 +4,16 @@ purpose: Give pull request authors concise, evidence-backed review feedback unde
 watch:
   - A non-draft pull request is opened.
   - A draft pull request is marked ready for review.
-  - The user CharlieHelps is requested as a reviewer.
-  - A comment on a pull request requests a review from CharlieHelps.
+  - An authorized native workflow activation after separate operator enablement.
 routines:
   - Review the activated pull request according to this daemon's policy and applicable review lanes.
 ---
 
 # PR Review
+
+This policy is retained for a proposed, gated native workflow. Humans review
+and merge PRs today; existing Codex review remains available on request.
+This file does not provide an active replacement reviewer.
 
 PR review protocol: pr-review/v1
 
@@ -19,7 +22,7 @@ PR review protocol: pr-review/v1
 - Personal preferences about style, naming, formatting, comments, or documentation that neither violate an applicable repository instruction nor create a concrete behavior risk.
 - Existing problems that the pull request neither introduces nor makes newly reachable or materially riskier.
 - Expected changes to generated, vendored, snapshot, lock, or build artifacts that do not themselves create a concrete correctness, safety, data, or compatibility risk.
-- Problems already clearly reported by current checks, the compiler, a formatter, a linter, or another review unless Charlie adds materially useful diagnosis or identifies a distinct consequence.
+- Problems already clearly reported by current checks, the compiler, a formatter, a linter, or another review unless the review adds materially useful diagnosis or identifies a distinct consequence.
 
 ## Review outcomes
 
@@ -78,4 +81,4 @@ PR review protocol: pr-review/v1
 ## Rereviews
 
 - On a follow-up review, consider the full current pull request while focusing primarily on changes since the previous review and any behavior they affect.
-- Do not repeat findings that are resolved, dismissed with supporting evidence, or explicitly accepted by a repository-authorized maintainer unless new evidence materially changes the risk. Correct or retract Charlie's prior mistakes.
+- Do not repeat findings that are resolved, dismissed with supporting evidence, or explicitly accepted by a repository-authorized maintainer unless new evidence materially changes the risk. Correct or retract prior review mistakes.

@@ -1,167 +1,20 @@
 ---
 title: "Asset and Media Handling"
-last-updated: 2026-09-25
+last-updated: 2026-10-01
 ---
 
 # Asset and Media Handling
 
-## Favorite and rating are one dial
+Use the focused reference for the task. This index preserves section-name
+citations to the former combined reference.
 
-The adapter exposes the Gumnut API's resolved metadata rating through Immich's two fields: `isFavorite` is true exactly when `metadata.rating == 5`, while EXIF/sync `rating` emits 1–5 and normalizes 0, null, or an out-of-range legacy value to null. Every asset read feeding `AssetResponseDto`, `SyncAssetV1`/`V2`, or the upload-ready WebSocket payload must request `include=metadata` and derive the heart through `is_asset_favorite`; hardcoded false values recreate the silent-revert bug after the next sync.
-
-Writes land on the same USER-layer dial. `isFavorite: true/false` writes 5/0. An explicitly-present `rating` writes 0–5 and wins when both fields are present. Immich uses explicit `rating: null` for unrated, so the adapter maps it to USER 0; forwarding backend null would instead clear the USER override and reveal an embedded FILE-layer rating. Values outside 0–5 return 422.
-
-When replaying rating changes to already-checkpointed clients, emit both `ASSET_UPDATED` and `METADATA_UPDATED` events without rewriting current ratings. Rewriting would turn a FILE-derived value into a persistent USER override.
-
-## Derive multi-path fields through one helper
-
-A field the adapter surfaces from more than one path must be derived identically in each: the write handler, the paired read handler, **and** the sync-stream converter (`routers/api/sync/converters.py`). Route any value mapped from a Gumnut field through a shared helper instead of hardcoding it per site, or the same entity reads back differently by path — use `resolve_asset_location` for asset city/country/coordinates, for example. When you touch one emit site for such a field, grep for every constructor of the Immich response type (`AssetFaceResponseDto`, `SyncAssetFaceV1` / `SyncAssetFaceV2`, …) before assuming it has one home.
-
-## Reading Gumnut asset fields — request them via `include`
-
-The Gumnut API returns a **lean default** asset response behind a JSON:API-style `?include=` parameter: an omitted `include` returns only the lean core and none of the heavy fields, which is why `faces`, `people`, and the `file_data` scalars (`device_asset_id` / `device_id` / `file_created_at` / `file_modified_at` / `checksum` / `file_size_bytes`) are nullable. So **any** `client.assets.list` / `client.search.search` / `client.assets.retrieve` whose result feeds a conversion that reads `metadata`, `people`, or a `file_data` scalar must pass the matching `include` — otherwise those fields arrive `null` and the Immich asset is silently corrupted (empty checksum, null size/EXIF, missing people). Mock-based unit tests don't catch a missing token.
-
-Use the constants in `routers/utils/asset_conversion.py`, chosen by what the conversion **downstream of the call** actually reads:
-
-| Constant | Tokens | Use for |
-|----------|--------|---------|
-| `ASSET_INCLUDE` | `metadata, people, file_data` | Reads feeding `convert_gumnut_asset_to_immich` (it emits `people`): `get_asset_info`, search, memories, the upload-success retrieve. |
-| `ASSET_INCLUDE_NO_PEOPLE` | `metadata, file_data` | The sync-stream `entity_fetch` reads, whose converters read the `file_data` scalars but never `people`. |
-| `ASSET_INCLUDE_METADATA_ONLY` | `metadata` | Reads that touch only `metadata`: timeline buckets (place names and GPS), map markers (GPS), the bulk per-asset datetime rewrite (`original_datetime`). |
-
-Reads that consume only **lean-core** fields (`id`, `mime_type`, `width`/`height`, `duration`, `trashed_at`, `local_datetime`, `stack_id`, `kind`, `file_size_bytes`) request **no** `include` — those stay populated regardless (today: trash-id collection, asset-count stats, the `/faces` width/height read, and `/download/info` sizes). `stack_id` earns its place on that list: the timeline's burst collapse still depends on it arriving as a lean-core field alongside an `include=metadata` request, and if it ever moved behind a token the feature would degrade to no collapse and no badges with no error and no failing test. `asset_urls` is the exception when a call may stream non-thumbnail bytes: `_retrieve_and_stream_variant` now passes `include=variants`, because it serves the `small`/`preview`/`fullsize`/`original` rungs (and the video `_image` equivalents) and even a `thumbnail` request can aspect-upgrade to `small`. `faces` is never requested off the asset — the adapter reads faces from the dedicated `/faces` endpoint. The `create()` (buffered upload) and `update_asset()` (PATCH) responses keep the full shape and expose no `include` param, so they need no change.
-
-Bumping `gumnut-sdk` can itself relax a previously-non-null asset field to `| None` as part of this migration (e.g. `file_modified_at` went `datetime` → `datetime | None`), which then needs a null-guard at every read site (`resolve_file_modified_at` falls back through `metadata.modified_datetime → file_data.file_modified_at → capture time` so the required Immich `fileModifiedAt` is never null). Run `uv run pyright` after any `gumnut-sdk` bump to surface newly-required guards.
-
-**But pyright does not cover a bump that renames or removes a parameter.** Several call sites build a `dict[str, Any]` and splat it (`client.search.search(**search_kwargs)`, the `assets.list` / `assets.counts` / `events.get` sites); `dict[str, Any]` erases the keys, so a dropped parameter type-checks clean and raises `TypeError: … got an unexpected keyword argument …` only when the endpoint is actually called. The 0.131→0.137 bump hit exactly this — `captured_after`/`captured_before` became `local_datetime_after`/`local_datetime_before` and pyright reported 0 errors on the stale call. So after a bump, also introspect the new signatures against every splatted call site rather than trusting a green type check:
-
-```
-uv run python -c "import inspect; from gumnut.resources.search import AsyncSearchResource; print(list(inspect.signature(AsyncSearchResource.search).parameters))"
-```
-
-**Read the file/provenance scalars from the nested `file_data` object, not the deprecated flat top-level fields.** The Gumnut API exposes the group in two shapes under the same `include=file_data` gate: the preferred nested `gumnut_asset.file_data` object (`checksum_sha1`, `file_modified_at`, `file_size_bytes`, `device_asset_id`, `device_id`, `file_created_at`, `checksum`) and the equivalent flat top-level scalars (`gumnut_asset.checksum_sha1`, …). Top-level `file_size_bytes` is not one of them: see [Edited state](#edited-state-and-exact-original-downloads). The flat scalars are deprecated and being removed, so read `gumnut_asset.file_data.<field>` guarding `file_data is None` — `file_data` is `None` when `include=file_data` isn't requested, and that guard preserves the legacy fallbacks (empty Immich checksum on a null `checksum_sha1`, null size, the modify-time cascade above). The whole group is gated by the `file_data` include token either way.
-
-At **runtime**, a field the server omits — an older Gumnut API during a rollout, or a field gated behind an `include` the call didn't request — does **not** raise `AttributeError` on access. The SDK builds responses with non-validating construction (`construct_type`, since `_strict_response_validation` is off), which materializes every field the model declares and defaults an omitted one to `None`. So read such a field with plain attribute access and treat `None` as "absent"; a `getattr(obj, "field", default)` guard written to catch an `AttributeError` fallback is dead code (the attribute is always present), and a docstring claiming the access can raise misleads the next reader. `AttributeError` is reachable only when the *pinned* SDK model doesn't declare the field at all — which the version pin precludes — so verify the installed model actually exposes a field (e.g. `grep` the installed `gumnut/types/*.py`) rather than trusting a version number, since a Stainless commit's internal `version` string can differ from the published release that first ships the field. The exception is a field the Gumnut API serves before any published SDK types it: it arrives as an untyped extra, so `getattr(obj, "field", default)` is the correct read until the SDK declares it. The pinned SDK now declares `LibraryResponse.role`, so `services/library_resolver.py::first_owned_library_id` reads it directly; tests still build rows with `Model.construct(...)`, the path responses take.
-
-## Asset dimensions and orientation
-
-The Gumnut API owns display-space dims at ingest — `asset.width` / `asset.height` already reflect post-rotation dimensions and must be emitted **verbatim** on the wire (immich web reads them via `getAssetRatio`). Pre-rotation raw dims live on `metadata.raw_width` / `metadata.raw_height`; surface them on `exifInfo.exifImageWidth` / `exifImageHeight` so Immich mobile can re-derive display dims locally. When raw dims are present, the EXIF `orientation` tag is emitted unchanged — mobile pairs it with the raw dims to compute display dims; immich web ignores it (it reads `asset.width/height` directly).
-
-Use `exif_dims_and_orientation(gumnut_asset)` from `routers/utils/asset_conversion.py` at every emit site that populates `exifInfo.exifImageWidth/Height` and the EXIF `orientation` field. The helper returns `(exifImageWidth, exifImageHeight, wire_orientation)` and bakes the orientation-nulling rule in:
-- **Raw dims present**: returns `metadata.raw_width/raw_height` and `wire_orientation` is `metadata.orientation` as a string. Mobile re-derives display dims locally from the pair.
-- **Drift-cohort fallback** (`raw_width/raw_height` are NULL): returns `asset.width/asset.height` (already display-space for that cohort) and `wire_orientation = None`. Feeding mobile display-space dims plus a non-null portrait orientation would make it re-apply the 5–8 swap and derive landscape dims for a portrait shot — the same double-rotation hazard the deleted `wire_orientation` helper was guarding. The fallback intentionally degrades to the old wire contract (display dims + nulled orientation) for drift rows.
-
-Emit all three tuple elements verbatim on the response. Do **not** re-derive orientation at the call site or skip the helper — bypassing it reintroduces the double-rotation bug. Do **not** swap dims yourself in the adapter — that was a workaround for the old contract where the Gumnut API stored raw dims on `asset.width/height`, removed when the Gumnut API switched to storing display-space dims at ingest. Reintroducing it would double-correct against the new ingest semantics and stretch every portrait shot.
-
-**Zero means unknown — coerce at every top-level `width/height` emit site.** the Gumnut API stores `0` (not `NULL`) for unknown dims on assets it couldn't probe, notably videos without EXIF width/height tags. The Immich mobile asset viewer (`asset_page.widget.dart::_getImageHeight`) divides `RemoteAssetEntity.width / height` to size its viewport and only guards against `null`; `0 / 0` yields `NaN` BoxConstraints and crashes the viewer on tap. `RemoteAssetEntity.width/height` is sourced from the **top-level** `SyncAssetV1.width/height` row (and `AssetResponseDto.width/height` on REST) — *not* the EXIF subobject. Every converter that emits a top-level `width`/`height` must coerce `0` to `None`: `asset.width if asset.width else None` (matching `build_asset_upload_ready_payload`, `convert_gumnut_asset_to_immich`, `gumnut_asset_to_sync_asset_v1`). The `exif_dims_and_orientation` helper bakes this rule in for the EXIF wire fields, but does **not** protect top-level row dims — those must apply the truthy guard explicitly at every emit site.
-
-## Edited state and exact-original downloads
-
-The top-level `kind` identifies the current rendering. Map `kind != "original"`
-to Immich `isEdited` through `is_asset_edited`; the namespace is open, so every
-non-original kind is edited. Because `kind` is a lean-core field, this requires
-no additional query.
-
-`asset_urls["original"]` points to the current rendering. For
-`GET /api/assets/{id}/original`, `edited=true` streams that rendering, while the
-default `edited=false` streams the version-chain root (`position == 0`) via
-`select_root` in `routers/utils/asset_version_chain.py`. Keep it on the root:
-Immich shows *Download original* for every asset it reports as edited, and
-backup tools expect the upload, so this path must never substitute a derived
-rendering.
-
-Size follows the same split. Lean-core top-level `file_size_bytes` is the
-current rendering's size, so size a stream of `asset_urls["original"]` from it.
-`file_data.file_size_bytes` is the upload's size; the two differ once an asset
-is edited. EXIF `fileSizeInByte` describes the upload, so it reads `file_data`.
-
-The batch routes in `routers/api/download.py` honor `edited` the same way.
-`POST /api/download/archive` defaults `edited` to `False` (matching upstream's
-`dto.edited ?? false`): false/omitted streams each member's `select_root`
-upload, `edited=true` streams the current rendering. `POST /api/download/info`
-has no `edited` field, so its reported sizes are always position-0 original
-(so `/info` and `/archive` agree for `edited=false`). Because the top-level
-`kind` is lean-core, a version-chain fetch is only needed for edited members
-(`kind != "original"`); root-only members resolve straight from the
-`assets.list` payload. An invalid chain fails closed with the same 502 as the
-single-asset route; a member with no downloadable bytes keeps the batch route's
-existing 400.
-
-The **edit base** is a different selection: the highest-position version whose
-`kind` is not `edit` (or `edit:*`), from `select_edit_base` in the same module.
-`services/asset_edit_renderer.py` renders every recipe from it. Skipping `edit`
-versions keeps repeated adjustments non-cumulative; preferring the latest
-non-edit version keeps an `external:*` rendering layered on the upload. External
-renderings are produced from the full chain below them, so an edit below an
-`external:*` version is already baked in and the latest non-edit is always the
-correct base. Until an external rendering exists, the base is the root. The
-edit base also serves `GET /api/assets/{id}/thumbnail` when `edited=false`
-(the default): the Immich web editor loads that preview as its canvas base and
-re-applies the saved recipe client-side, so serving the current rendering there
-would double-apply the recipe on screen. Immich web sends `edited=true` on
-every other media request, which keeps the fast `asset_urls` path; the
-`edited=false` path streams the base version's `version_urls` display rung.
-
-Mock assets must set `kind` explicitly; `make_gumnut_asset` defaults it to
-`"original"`.
-
-**Immich edit routes.** `GET`/`PUT`/`DELETE /api/assets/{id}/edits` (in
-`routers/api/assets.py`) adapt the unmodified Immich web editor to the version
-chain. The chain stores one consolidated recipe on the current `edit` version,
-not an action history. GET decodes the tip's recipe through
-`recipe_to_immich_edits` — root current, an opaque (`external:*`) tip, or an
-undecodable recipe all read as an empty edit list; opaque output is never
-presented as adjustable. PUT normalizes the complete Immich action list against
-the edit base's display dimensions (a crop must be the first action, as
-upstream requires), renders via `render_asset_edit`, and
-commits with `versions.append` (original current) or `versions.replace` (edit
-current). Concurrency is compare-and-swap by construction: append is accepted
-upstream only while the original is current, and replace/delete name the
-snapshotted tip, so a tip moved by a concurrent writer returns 409 and is never
-retried against a refetched chain. DELETE removes the current edit and restores
-the predecessor (root current is an idempotent success; an opaque tip is 409 —
-an edit-specific route must not expose a generic external-version delete).
-The generated `RotateParameters` model bounds `angle` to integer values from 0
-through 270, but the runtime contract is narrower: a rotate action must use
-exactly `0`, `90`, `180`, or `270` degrees. Other integers within the generated
-bounds are rejected with HTTP 400. Values that fail model validation return HTTP
-422. The internal validation code is `invalid_angle`; the HTTP response exposes
-only the explanatory message.
-The emission contract for committed writes is owned by
-`docs/references/websocket-events-reference.md` § `AssetEditReadyV2`.
-
-**Suppress face geometry while an edited rendering is current.** Gumnut stores
-face boxes in the original upload's pixel space, so they are invalid over
-derived pixels. Gate every REST and sync emit or write site through
-`should_expose_face_geometry`: REST reads return no geometry and writes return
-409. Sync must transition existing rows rather than omit them — `AssetFaceV2`
-emits `isVisible=false`, while `AssetFaceV1` emits `AssetFaceDeleteV1`; a later
-face event after restoration re-emits the visible row. Edits and restores do
-not themselves emit face events, so checkpointed clients converge only after
-the next face event or full resync. Suppression does not mutate faces, people
-associations, person thumbnails, or `AssetResponseDto.people`.
-
-Register `pillow-heif` before server-side Pillow decodes; otherwise HEIC/HEIF
-originals are unidentified. `services/asset_edit_renderer.py` is the pattern.
-
-## Thumbnail variant selection by aspect ratio
-
-`GET /api/assets/{id}/thumbnail?size=thumbnail` normally streams the 360px `thumbnail` variant, but `_retrieve_and_stream_variant` (`routers/api/assets.py`) upgrades it to the 720px `small` variant for **wide-landscape** assets — `width > height` AND aspect ratio above `_LANDSCAPE_SMALL_ASPECT_THRESHOLD` (see the constant for the value). The Immich web timeline is a justified-rows grid that renders every row at a fixed height; a 360px-longest-edge thumbnail of a landscape asset has a height of only `360/aspect`, so the wider the asset the shorter the tile and the more visibly it softens when upscaled to fill the row. Only assets past the threshold — where the upscale is visible — get bumped. The 720px `small` keeps those panorama/ultrawide cells crisp at roughly a quarter of the pixels of the 1440px `preview`, which is far more resolution than a timeline tile needs. Portrait assets are deliberately excluded — 360px lands on their height, which already meets the row height, so they stay crisp without the extra bandwidth. `small`/`preview`/`fullsize`/`original` requests and missing/zero dims pass through unchanged (the `width`/`height` `0`-means-unknown guard from *Asset dimensions and orientation* applies here too). Video upgrades resolve to `small_image` via the existing `_image`-suffix logic — so any variant the bump can target must be a member of both the `AssetVariant` type and `_VIDEO_IMAGE_VARIANTS`, or a video upgrade resolves to a bare (non-`_image`) key that isn't in `asset_urls` and 404s. The threshold is tunable.
-
-The upgrade rewrites the variant **before** the `asset_urls` existence check, so it assumes the backend generates `small`/`small_image` whenever `thumbnail`/`thumbnail_image` exists — true today (image variants are CDN-resized URLs of the same uploaded file; a video's still-image variants materialize together). If that ever stops holding, a wide-landscape thumbnail request would 404 instead of degrading to the thumbnail. Gate the upgrade on the upgraded key's presence if that assumption breaks.
-
-## Outbound asset checksums — emit base64 SHA-1, never the SHA-256
-
-Immich's `checksum` field is a base64-encoded **SHA-1** (28 chars): clients compute the SHA-1 of a local file and compare it to this value for pre-upload dedup and for local↔remote asset linking ("merged" state) in the mobile client. Gumnut's `AssetResponse` carries two checksums — `checksum` (base64 **SHA-256**, 44 chars, always present) and `checksum_sha1` (base64 SHA-1, the Immich-facing value; nullable on older rows). Emitting the SHA-256 on the wire is a format mismatch that can never equal the client-computed SHA-1, so it silently breaks dedup and makes a backed-up photo show up as two timeline entries.
-
-Use `resolve_immich_checksum(gumnut_asset)` from `routers/utils/asset_conversion.py` at **every** site that populates an outbound `checksum` field (`AssetResponseDto`, `SyncAssetV1`, the WebSocket `AssetUploadReadyV1Payload`). It returns `checksum_sha1`, or — when that is NULL — logs a WARNING with the `asset_id` and returns `""`. Never substitute `gumnut_asset.checksum` (SHA-256) or a literal like `"placeholder-checksum"`: a wrong-format value looks valid but never matches, whereas `""` produces a clean dedup no-match (the documented Immich behavior). The inbound dedup path is symmetric — `routers/api/assets.py::bulk_upload_check` keys on `checksum_sha1` and excludes rows without it.
-
-## WebSocket Emission
-
-`emit_user_event` and `emit_session_event` (in `services/websockets.py`) are **awaited but best-effort**: callers await them — in-request at nearly all call sites, so emission normally precedes the HTTP response, though the video-upload path defers it to a background task (see the [event reference](websocket-events-reference.md)) — and they catch `SocketIOError` from the underlying transport, log at WARN with `exc_info=True`, and return normally. **Do not wrap call sites in `try/except SocketIOError`** — the central swallow is the contract, and per-site catches are duplication. If the surrounding block needs to handle other exception types (e.g., DTO conversion before the emit, like `_emit_upload_events` in `routers/api/assets.py`), the broader try/except can stay; just don't add a separate `except SocketIOError` branch. That broader wrap is the rule for everything that runs after a durable write — a post-commit re-read, DTO conversion, the emit itself: it degrades to a WARN, never a 5xx, because the client would otherwise retry a mutation that already committed (`_emit_edit_committed_events` and `_retrieve_asset_for_edit_event` are the edit-route shape).
-
-For chunks that fire one event per id (e.g. `ASSET_DELETE`'s single-id wire shape), use `emit_user_event_per_id(event, user_id, payload_ids)` instead of rolling an inline `asyncio.gather(*(emit_user_event(...) for ... in chunk))` — the helper centralizes the per-id gather wave so callers don't duplicate it. Pass a generator or list of pre-stringified ids; the helper consumes the iterable once.
-
-**Bulk write endpoints whose SDK call returns no per-asset payload.** Some bulk writes (e.g., `bulk_update_assets`) return an empty body, so the adapter doesn't have the updated asset DTO needed to mirror the single-asset path's `on_asset_update` payload. The default is to **skip WebSocket emission** from the bulk path rather than re-fetch via `list_assets(ids=[...])` — the extra round-trip per chunk isn't justified when mobile triggers a generic sync refresh on its own and web has optimistic UI for these flows. Document the trade-off explicitly in the handler docstring so future readers don't reintroduce the round-trip on a hunch. Re-fetching is the right call only when a concrete client surface stays visibly stale until next sync; gate that decision on observed behavior, not theory.
-
-When a change modifies **when** an existing WebSocket event fires (deferral, debounce, batching, conditional skip) — not just when adding a brand-new event — update its row in `docs/references/websocket-events-reference.md` **Summary Table** and its section under **Event Details**, then bump `last-updated`. Update `docs/architecture/websocket-implementation.md` only when the change also affects room targeting, payload construction, delivery/failure semantics, or client convergence. The "Implementing New Endpoints" checklist step 9 covers new emit sites; this rule covers timing changes to existing ones. The image-vs-video `on_upload_success` deferral is the canonical example — the event reference must not keep claiming synchronous thumbnails after videos start waiting.
+| Former section (§) | Current reference |
+|---|---|
+| Favorite and rating are one dial | [Asset Field Conversion](asset-field-conversion.md#favorite-and-rating-are-one-dial) |
+| Derive multi-path fields through one helper | [Asset Field Conversion](asset-field-conversion.md#derive-multi-path-fields-through-one-helper) |
+| Reading Gumnut asset fields — request them via `include` | [Asset Field Conversion](asset-field-conversion.md#reading-gumnut-asset-fields--request-them-via-include) |
+| Asset dimensions and orientation | [Asset Field Conversion](asset-field-conversion.md#asset-dimensions-and-orientation) |
+| Outbound asset checksums — emit base64 SHA-1, never the SHA-256 | [Asset Field Conversion](asset-field-conversion.md#outbound-asset-checksums--emit-base64-sha-1-never-the-sha-256) |
+| Edited state and exact-original downloads | [Asset Edits and Downloads](asset-edits-and-downloads.md#edited-state-and-exact-original-downloads) |
+| Thumbnail variant selection by aspect ratio | [Media Variant Selection](media-variant-selection.md#thumbnail-variant-selection-by-aspect-ratio) |
+| WebSocket Emission | [Asset WebSocket Emission](asset-websocket-emission.md#websocket-emission) |

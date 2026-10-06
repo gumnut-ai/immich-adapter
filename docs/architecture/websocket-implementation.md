@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation"
-last-updated: 2026-09-28
+last-updated: 2026-10-01
 ---
 
 # WebSocket Implementation
@@ -77,7 +77,7 @@ A user with no connected sockets is a successful no-op. Payload construction err
 
 Web clients use realtime events for immediate UI refresh. Mobile clients also consume supported realtime sync payloads, but the normal sync stream and checkpoints remain the durable convergence path. A missed Socket.IO event therefore delays visibility; it does not change the source of truth.
 
-Bulk writes that return no updated asset payload normally skip an extra read solely to manufacture a realtime DTO. Mobile sync and web optimistic updates cover those flows unless observed client behavior proves otherwise. The rationale and caller rules live in [Asset and Media Handling](../references/asset-and-media-handling.md#websocket-emission).
+Bulk writes that return no updated asset payload normally skip an extra read solely to manufacture a realtime DTO. Mobile sync and web optimistic updates cover those flows unless observed client behavior proves otherwise. The rationale and caller rules live in [Asset and Media Handling](../references/asset-websocket-emission.md#websocket-emission).
 
 ## Verification
 

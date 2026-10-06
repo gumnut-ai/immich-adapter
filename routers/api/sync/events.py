@@ -131,6 +131,19 @@ def make_sync_event(
     )
 
 
+def removed_album_asset_pair(event: EventData) -> tuple[str, str] | None:
+    """The ``(album_id, asset_id)`` an ``album_asset_removed`` payload names,
+    or ``None`` when the payload lacks either."""
+    if event.event_type != "album_asset_removed" or not isinstance(event.payload, dict):
+        return None
+    album_id = event.payload.get("album_id")
+    asset_id = event.payload.get("asset_id")
+    if not isinstance(album_id, (str, int)) or not isinstance(asset_id, (str, int)):
+        return None
+    album_id_str, asset_id_str = str(album_id).strip(), str(asset_id).strip()
+    return (album_id_str, asset_id_str) if album_id_str and asset_id_str else None
+
+
 def make_delete_sync_event(
     event: EventData,
 ) -> tuple[str, SyncEntityType] | None:
@@ -230,9 +243,10 @@ def make_delete_sync_event(
         )
 
     elif event.event_type == "album_asset_removed":
-        if not isinstance(event.payload, dict):
+        pair = removed_album_asset_pair(event)
+        if pair is None:
             logger.warning(
-                "album_asset_removed event payload missing or invalid, skipping",
+                "album_asset_removed event payload lacks album_id/asset_id, skipping",
                 extra={
                     "event_type": event.event_type,
                     "cursor": event.cursor,
@@ -243,36 +257,7 @@ def make_delete_sync_event(
             )
             return None
 
-        album_id = event.payload.get("album_id")
-        asset_id = event.payload.get("asset_id")
-        if not isinstance(album_id, (str, int)) or not isinstance(asset_id, (str, int)):
-            logger.warning(
-                "album_asset_removed event album_id/asset_id missing or invalid type, skipping",
-                extra={
-                    "event_type": event.event_type,
-                    "cursor": event.cursor,
-                    "created_at": event.created_at,
-                    "entity_id": event.entity_id,
-                    "payload": event.payload,
-                },
-            )
-            return None
-
-        album_id_str = str(album_id).strip()
-        asset_id_str = str(asset_id).strip()
-        if not album_id_str or not asset_id_str:
-            logger.warning(
-                "album_asset_removed event album_id/asset_id empty after conversion, skipping",
-                extra={
-                    "event_type": event.event_type,
-                    "cursor": event.cursor,
-                    "created_at": event.created_at,
-                    "entity_id": event.entity_id,
-                    "payload": event.payload,
-                },
-            )
-            return None
-
+        album_id_str, asset_id_str = pair
         data = SyncAlbumToAssetDeleteV1(
             albumId=safe_uuid_from_album_id(album_id_str),
             assetId=safe_uuid_from_asset_id(asset_id_str),

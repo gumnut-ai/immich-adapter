@@ -1,6 +1,6 @@
 ---
 title: "Upgrading the Immich Target Version"
-last-updated: 2026-09-14
+last-updated: 2026-10-01
 ---
 
 # Upgrading the Immich Target Version
@@ -117,7 +117,7 @@ grep -rn '"/<path>"' routers/api/           # find the handler; paths are declar
 grep -rln '<handler_name>' tests/
 ```
 
-Delete the handler, its tests, and any WebSocket emission that referenced it. If the removal changes a feature-area classification, update [Feature Compatibility](../references/feature-compatibility.md). Then follow the doc-update sweep in [Routes, DTOs, and Upstream Compatibility § Implementing New Endpoints](../references/routes-dtos-and-upstream-compatibility.md#implementing-new-endpoints), step 9, which also covers removals.
+Delete the handler, its tests, and any WebSocket emission that referenced it. If the removal changes a feature-area classification, update [Feature Compatibility](../references/feature-compatibility.md). Then follow the doc-update sweep in [Routes, DTOs, and Upstream Compatibility § Implementing New Endpoints](../references/upstream-compatibility.md#implementing-new-endpoints), step 9, which also covers removals.
 
 ### Deprecated operations
 
@@ -142,7 +142,7 @@ Stubs identify themselves in their docstrings ("This is a stub implementation ..
 New routes fall into three buckets, and the spec cannot tell you which:
 
 - **Client-reached.** A pinned web or mobile client calls it. It needs at least a compatibility response, and usually an implementation.
-- **Reachable but gated.** The client calls it only when a server feature flag or user preference enables the feature. The adapter can keep it unreachable by leaving the gate off (see the `/server/features` and `/me/preferences` audits in [Routes § Implementing New Endpoints](../references/routes-dtos-and-upstream-compatibility.md#implementing-new-endpoints)).
+- **Reachable but gated.** The client calls it only when a server feature flag or user preference enables the feature. The adapter can keep it unreachable by leaving the gate off (see the `/server/features` and `/me/preferences` audits in [Routes § Implementing New Endpoints](../references/upstream-compatibility.md#implementing-new-endpoints)).
 - **Not a client route.** Admin, integrity, plugin, and other operator surfaces that normal clients never hit. These become intentionally unsupported areas and return a 404 from the adapter.
 
 Decide the bucket in [Step 5](#step-5--read-the-clients-not-just-the-spec), then the dependency in [Step 6](#step-6--check-what-the-gumnut-api-and-sdk-can-support). The unannotated routes (no `x-immich-state`) that appeared in v3 were plugins, workflows, backchannel logout, and album map markers; treat "no state" as Alpha until upstream says otherwise.
@@ -195,7 +195,7 @@ git -C "$IMMICH" diff "$OLD" "$NEW" -- server/src/controllers server/src/dtos se
 Use `git show <tag>:<path>` and `git grep <pattern> <tag> -- <path>` rather than checking out the tag, so the working tree cannot answer for the wrong version. Two things the spec never shows:
 
 - **Routes excluded from OpenAPI.** Controllers marked `@ApiExcludeEndpoint` are absent from the spec and from this diff. `git -C "$IMMICH" grep -n ApiExcludeEndpoint "$NEW" -- server/src/controllers` lists them.
-- **Response guarantees.** Array ordering, which rows a collection includes, and free-form string values that clients hard-match live in the server's mappers and repositories. [Routes § Verifying upstream behavior](../references/routes-dtos-and-upstream-compatibility.md#verifying-upstream-behavior--read-the-immich-source-not-just-the-spec) has the specifics.
+- **Response guarantees.** Array ordering, which rows a collection includes, and free-form string values that clients hard-match live in the server's mappers and repositories. [Routes § Verifying upstream behavior](../references/upstream-compatibility.md#verifying-upstream-behavior--read-the-immich-source-not-just-the-spec) has the specifics.
 
 Treat any claim about client behavior, including one in this guide or in a task description, as a hypothesis until it is read in the tagged source.
 
@@ -210,7 +210,7 @@ For each endpoint you are considering implementing, the question is whether the 
    uv run python -c "import gumnut; print([m for m in dir(gumnut.AsyncGumnut(api_key='x').assets) if not m.startswith('_')])"
    ```
 
-2. **The latest SDK on PyPI.** The generated SDK trails the deployed API, so a missing method may already exist in a newer release. Bump the SDK before designing a raw-client workaround, following [Routes § Bumping the Gumnut SDK](../references/routes-dtos-and-upstream-compatibility.md#bumping-the-gumnut-sdk).
+2. **The latest SDK on PyPI.** The generated SDK trails the deployed API, so a missing method may already exist in a newer release. Bump the SDK before designing a raw-client workaround, following [Routes § Bumping the Gumnut SDK](../references/upstream-compatibility.md#bumping-the-gumnut-sdk).
 3. **The live Gumnut API.** `https://api.gumnut.ai/openapi.json` is the contract the SDK is generated from. If the endpoint or field is there but not in any SDK release, a raw `client.get`/`client.post` call is the temporary bridge; note it so the next SDK bump can replace it.
 4. **Nothing.** The Gumnut API has no model for the feature. The adapter cannot fake durable state: a benign empty read can be compatible, but new or revised mutation behavior must not claim success when nothing was stored. Classify the feature as product-dependent, deferred, or intentionally unsupported in [Feature Compatibility](../references/feature-compatibility.md), describing the missing Gumnut API capability rather than citing a ticket.
 
@@ -235,7 +235,7 @@ Do all of the above against an RC. Do **not** pin production to one: the pin is 
 
 ## Step 9 — Bump the pin when the release is live
 
-The pin lives in two files that CI checks against each other (the `check-immich-version-sync` job in `.github/workflows/ci.yml`). Render builds the image straight from the repo, so the Dockerfile default is what ships. The full rationale is in [Routes § Bumping the Immich Version](../references/routes-dtos-and-upstream-compatibility.md#bumping-the-immich-version).
+The pin lives in two files that CI checks against each other (the `check-immich-version-sync` job in `.github/workflows/ci.yml`). Render builds the image straight from the repo, so the Dockerfile default is what ships. The full rationale is in [Routes § Bumping the Immich Version](../references/upstream-compatibility.md#bumping-the-immich-version).
 
 1. **Update the pin.** Write the tag to `.immich-container-tag`, and in `Dockerfile` update `ARG IMMICH_VERSION` and the `Last updated` comment beside it.
 2. **Regenerate the models from the tagged spec** so the header records the tag, and run the checks:

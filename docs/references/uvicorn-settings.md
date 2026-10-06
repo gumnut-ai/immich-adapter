@@ -1,6 +1,6 @@
 ---
 title: "Uvicorn Runtime Settings"
-last-updated: 2026-09-26
+last-updated: 2026-10-05
 ---
 
 # Uvicorn Runtime Settings
@@ -9,7 +9,11 @@ This reference records why the adapter does not run Uvicorn with all defaults an
 
 ## Configuration owners
 
-- `Dockerfile` owns the production command, bind address, `PORT` fallback, WebSocket implementation, keep-alive, concurrency, and backlog defaults.
+- `Dockerfile` owns the production command, bind address, `PORT` fallback,
+  `LOG_LEVEL` forwarding to Uvicorn, WebSocket implementation, keep-alive,
+  concurrency, and backlog defaults.
+- `config/logging.py` owns the adapter's application logger levels and
+  formatting; `LOG_LEVEL` does not override that configuration.
 - `.vscode/launch.json` owns the local debugger's WebSocket implementation.
 - `pyproject.toml` owns the minimum Uvicorn version and its rationale.
 - `README.md` shows a human-run production-style command.
@@ -52,12 +56,10 @@ Mobile and web clients make bursts of related requests and reuse connections. Th
 
 ## Verification
 
-After changing runtime settings:
-
-1. Run `uv run pytest tests/unit/config/test_uvicorn_ws_config.py`.
-2. Run a production-style local server using the current command shape from `README.md`.
-3. Connect and disconnect an Immich web or mobile client and check that Socket.IO traffic completes without shielded-future errors.
-4. Verify the server listens on the supplied `PORT`, not only the documented fallback.
+After changing runtime settings, run
+`tests/unit/config/test_uvicorn_ws_config.py`, then exercise real Socket.IO
+connect/disconnect using the production command shape in `README.md`. Check
+for shielded-future errors and verify binding to the supplied `PORT`.
 
 ## macOS backlog diagnostic
 

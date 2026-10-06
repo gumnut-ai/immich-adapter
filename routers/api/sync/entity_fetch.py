@@ -1,10 +1,11 @@
 """Batch entity fetching from the Gumnut API."""
 
 import logging
-from typing import Literal
 from uuid import UUID
 
 from gumnut import AsyncGumnut
+from gumnut.types.album_asset_response import AlbumAssetResponse
+from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.stack_list_stacks_response import StackListStacksResponse
@@ -30,24 +31,20 @@ def _batched(items: list[str], size: int) -> list[list[str]]:
 
 
 class StackMemberReadInconsistent(Exception):
-    """A stack row was returned but its all-state member read was empty."""
+    """A stack row was returned but no member could be read for it."""
 
 
 async def _first_stack_member(
-    client: AsyncGumnut,
-    stack_id: str,
-    *,
-    state: Literal["live", "all"],
-    asset_id: str | None = None,
+    client: AsyncGumnut, stack_id: str, *, asset_id: str | None = None
 ) -> AssetResponse | None:
-    """Return the first matching member without walking later cursor pages."""
+    """Return the first member in any state without walking later pages."""
     if asset_id is None:
-        page = client.assets.list(stack_id=stack_id, state=state, order="asc", limit=1)
+        page = client.assets.list(stack_id=stack_id, state="all", order="asc", limit=1)
     else:
         page = client.assets.list(
             stack_id=stack_id,
             ids=[asset_id],
-            state=state,
+            state="all",
             order="asc",
             limit=1,
         )
@@ -57,7 +54,11 @@ async def _first_stack_member(
 async def _resolve_stack_primary_for_sync(
     client: AsyncGumnut, stack_row: StackListStacksResponse
 ) -> UUID | None:
-    """Resolve a stack primary, skipping only an undecodable stack ID."""
+    """Resolve a stack primary, skipping only an undecodable stack ID.
+
+    The row's live member IDs settle every stack with a live member and no
+    trashed pin. Only the rest cost a member read.
+    """
     try:
         safe_uuid_from_stack_id(stack_row.id)
     except ValueError:
@@ -68,26 +69,30 @@ async def _resolve_stack_primary_for_sync(
         )
         return None
 
-    primary = None
-    if stack_row.primary_asset_id is not None:
-        primary = await _first_stack_member(
-            client,
-            stack_row.id,
-            state="all",
-            asset_id=stack_row.primary_asset_id,
-        )
-    if primary is None:
-        primary = await _first_stack_member(client, stack_row.id, state="live")
-    if primary is None:
-        primary = await _first_stack_member(client, stack_row.id, state="all")
-    if primary is None:
-        # asset_count excludes trashed members, so even zero cannot prove that
-        # an empty all-state read is permanent. Propagate to preserve the cursor.
+    live_ids = stack_row.asset_ids
+    if live_ids is None:
         raise StackMemberReadInconsistent(
-            f"stack {stack_row.id} member read returned none "
-            f"(row reports {stack_row.asset_count} live member(s))"
+            f"stack {stack_row.id} was listed without its member ids"
         )
-    return safe_uuid_from_asset_id(primary.id)
+
+    pin = stack_row.primary_asset_id
+    primary_id = pin if pin in live_ids else None
+    if primary_id is None and pin is not None:
+        # A trashed pin is still the cover, and only a member read can see it.
+        pinned = await _first_stack_member(client, stack_row.id, asset_id=pin)
+        primary_id = pinned.id if pinned is not None else None
+    if primary_id is None and live_ids:
+        primary_id = live_ids[0]
+    if primary_id is None:
+        trashed = await _first_stack_member(client, stack_row.id)
+        primary_id = trashed.id if trashed is not None else None
+    if primary_id is None:
+        # Propagate so the cursor is preserved: the row exists, so an empty
+        # all-state read is not known to be permanent.
+        raise StackMemberReadInconsistent(
+            f"stack {stack_row.id} member read returned none"
+        )
+    return safe_uuid_from_asset_id(primary_id)
 
 
 async def fetch_entities_map(
@@ -184,10 +189,10 @@ async def fetch_entities_map(
                     missing_ids.add(asset.id)
 
         elif gumnut_entity_type == "stack":
-            # Primary resolution costs one lean member read per stack, bounded
-            # here so a first sync does not fan out without limit.
+            # asset_ids keeps primary resolution off the per-stack read path,
+            # which exhausts the upstream rate limit on a first sync.
             stack_page = await gumnut_client.stacks.list_stacks(
-                ids=chunk, limit=len(chunk)
+                ids=chunk, limit=len(chunk), include=["asset_ids"]
             )
             rows = stack_page.data
             primary_ids = await gather_with_concurrency(
@@ -238,3 +243,57 @@ async def fetch_suppressed_face_ids(
         if should_expose_face_geometry(asset)
     }
     return {face.id for face in faces if face.asset_id not in exposable_asset_ids}
+
+
+async def fetch_current_album_memberships(
+    gumnut_client: AsyncGumnut, pairs: set[tuple[str, str]]
+) -> dict[tuple[str, str], AlbumAssetResponse]:
+    """Read which ``(album_id, asset_id)`` pairs are album members now.
+
+    A removal event names a pair, not a row, and a later transaction can re-add
+    the pair yet sort ahead of the removal in the events feed. Pairs absent from
+    the result are not members.
+
+    Each read is a rate-limited list call. One removal request removes many
+    assets from one album, so an album with several pairs is read whole when
+    that takes fewer pages than one call per pair. A deleted album has no
+    members and costs nothing further.
+    """
+    by_album: dict[str, set[str]] = {}
+    for album_id, asset_id in pairs:
+        by_album.setdefault(album_id, set()).add(asset_id)
+    shared = [album_id for album_id, assets in by_album.items() if len(assets) > 1]
+    albums, _ = await fetch_entities_map(gumnut_client, "album", shared)
+
+    async def _read_pair(album_id: str, asset_id: str) -> list[AlbumAssetResponse]:
+        page = await gumnut_client.album_assets.list(
+            album_id=album_id, asset_id=asset_id, limit=1
+        )
+        return list(page.data)
+
+    async def _read_album(album_id: str) -> list[AlbumAssetResponse]:
+        wanted = by_album[album_id]
+        return [
+            row
+            async for row in gumnut_client.album_assets.list(
+                album_id=album_id, limit=GUMNUT_API_MAX_BULK_IDS
+            )
+            if row.asset_id in wanted
+        ]
+
+    reads = []
+    for album_id, asset_ids in sorted(by_album.items()):
+        if len(asset_ids) == 1:
+            reads.append(_read_pair(album_id, next(iter(asset_ids))))
+            continue
+        album = albums.get(album_id)
+        if not isinstance(album, AlbumResponse):
+            continue
+        pages = -(-album.asset_count // GUMNUT_API_MAX_BULK_IDS)
+        if pages < len(asset_ids):
+            reads.append(_read_album(album_id))
+        else:
+            reads.extend(_read_pair(album_id, a) for a in sorted(asset_ids))
+
+    rows = await gather_with_concurrency(reads, cancel_on_error=True)
+    return {(row.album_id, row.asset_id): row for found in rows for row in found}

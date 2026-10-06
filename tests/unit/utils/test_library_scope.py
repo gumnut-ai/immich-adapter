@@ -1,5 +1,6 @@
 """Unit tests for binding the resolved library into the Gumnut client."""
 
+import asyncio
 import inspect
 import time
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,7 @@ from routers.api.people import create_person
 from routers.api.stacks import create_stack
 from routers.utils.gumnut_client import (
     LibraryScope,
+    _library_choices_in_flight,
     _resolve_library_id,
     _response_hook,
     bind_library_scope,
@@ -65,6 +67,7 @@ def _request(
 @pytest.fixture(autouse=True)
 def fresh_scope():
     init_request_scope()
+    _library_choices_in_flight.clear()
 
 
 def _mock_transport_client(
@@ -507,6 +510,162 @@ class TestResolveLibraryId:
         await forget_bound_library_if_gone(404, "Library lib_cached not found")
 
         cache.forget_api_key.assert_awaited_once_with(API_KEY)
+
+
+class TestConcurrentResolution:
+    """Requests that need a resolution at once share one."""
+
+    @pytest.fixture
+    def cache(self):
+        cache = AsyncMock()
+        cache.get_for_api_key.return_value = None
+        cache.set_session_library.return_value = True
+        return cache
+
+    @pytest.fixture
+    def release(self):
+        return asyncio.Event()
+
+    @pytest.fixture
+    def unscoped_client(self, release):
+        async def list_libraries():
+            await release.wait()
+            return [make_gumnut_library("lib_a", BASE)]
+
+        client = Mock()
+        client.libraries.list = AsyncMock(side_effect=list_libraries)
+        client.users.me = AsyncMock(return_value=Mock(immich_library_id=None))
+        with patch(
+            "routers.utils.gumnut_client.get_gumnut_client",
+            AsyncMock(return_value=client),
+        ):
+            yield client
+
+    @staticmethod
+    async def _start(cache, *requests: Mock, credential: str = JWT):
+        tasks = [
+            asyncio.create_task(_resolve_library_id(request, credential, cache))
+            for request in requests
+        ]
+        await asyncio.sleep(0)  # let every request reach the shared resolution
+        await asyncio.sleep(0)
+        return tasks
+
+    @staticmethod
+    def _stale(**overrides) -> Mock:
+        return _request(session_library_id="lib_a", stale=True, **overrides)
+
+    @pytest.mark.anyio
+    async def test_stale_session_burst_resolves_once(
+        self, cache, unscoped_client, release
+    ):
+        async with asyncio.timeout(5):
+            tasks = await self._start(cache, *(self._stale() for _ in range(5)))
+            release.set()
+            assert await asyncio.gather(*tasks) == ["lib_a"] * 5
+
+        unscoped_client.libraries.list.assert_awaited_once()
+        unscoped_client.users.me.assert_awaited_once()
+        # Each request still records the library on its own session read.
+        assert cache.set_session_library.await_count == 5
+
+    @pytest.mark.anyio
+    async def test_api_key_burst_resolves_once(self, cache, unscoped_client, release):
+        requests = [_request(session_token=None) for _ in range(5)]
+
+        async with asyncio.timeout(5):
+            tasks = await self._start(cache, *requests, credential=API_KEY)
+            release.set()
+            assert await asyncio.gather(*tasks) == ["lib_a"] * 5
+
+        unscoped_client.libraries.list.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_failure_reaches_every_waiter_and_is_not_kept(
+        self, cache, unscoped_client
+    ):
+        unscoped_client.libraries.list.side_effect = [
+            make_sdk_status_error(500, "boom"),
+            [make_gumnut_library("lib_a", BASE)],
+        ]
+
+        async with asyncio.timeout(5):
+            tasks = await self._start(cache, *(self._stale() for _ in range(3)))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            retried = await _resolve_library_id(self._stale(), JWT, cache)
+
+        assert all(isinstance(result, Exception) for result in results)
+        assert retried == "lib_a"
+        assert unscoped_client.libraries.list.await_count == 2
+
+    @pytest.mark.anyio
+    async def test_cancelled_request_leaves_the_others_their_result(
+        self, cache, unscoped_client, release
+    ):
+        async with asyncio.timeout(5):
+            first, second = await self._start(cache, self._stale(), self._stale())
+            first.cancel()
+            await asyncio.sleep(0)
+            release.set()
+            assert await second == "lib_a"
+
+        assert first.cancelled()
+        unscoped_client.libraries.list.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_failure_after_a_cancelled_request_is_not_reported_as_unhandled(
+        self, cache, unscoped_client, release
+    ):
+        async def fail():
+            await release.wait()
+            raise make_sdk_status_error(500, "boom")
+
+        unscoped_client.libraries.list.side_effect = fail
+        unhandled = []
+        asyncio.get_running_loop().set_exception_handler(
+            lambda _loop, context: unhandled.append(context)
+        )
+
+        async with asyncio.timeout(5):
+            first, second = await self._start(cache, self._stale(), self._stale())
+            first.cancel()
+            await asyncio.sleep(0)
+            release.set()
+            with pytest.raises(Exception, match="boom"):
+                await second
+            await asyncio.sleep(0)
+
+        assert unhandled == []
+
+    @pytest.mark.anyio
+    async def test_different_credentials_resolve_separately(
+        self, cache, unscoped_client, release
+    ):
+        release.set()
+
+        async with asyncio.timeout(5):
+            await asyncio.gather(
+                _resolve_library_id(_request(session_library_id=None), "jwt-1", cache),
+                _resolve_library_id(_request(session_library_id=None), "jwt-2", cache),
+            )
+
+        assert unscoped_client.libraries.list.await_count == 2
+
+    @pytest.mark.anyio
+    async def test_fallback_and_chosen_sessions_resolve_separately(
+        self, cache, unscoped_client, release
+    ):
+        """A fallback session may stay on its library; a chosen one may not,
+        so the two cannot share an outcome."""
+        release.set()
+
+        async with asyncio.timeout(5):
+            await asyncio.gather(
+                _resolve_library_id(self._stale(from_choice=False), JWT, cache),
+                _resolve_library_id(self._stale(from_choice=True), JWT, cache),
+            )
+
+        assert unscoped_client.libraries.list.await_count == 2
 
 
 class TestAuthenticatedClientDependency:

@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-08-30
+last-updated: 2026-10-03
 ---
 
 # Sync Stream Architecture
@@ -24,7 +24,7 @@ Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync eve
 
 ## Deletion Events
 
-`_make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted.
+`_make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted. The feed is not in commit order, so a later re-add can sort ahead of the removal; the adapter re-reads each removed pair and upserts the current membership instead when it exists.
 
 ## Gating Rows Is a State Transition, Never an Omission
 
@@ -97,24 +97,29 @@ is a visibility constraint. Deletes use the inverse order, with `StackDeleteV1`
 after asset deletes.
 
 `StackV1.primaryAssetId` is required but an unpinned Gumnut stack has no primary
-on its row. Sync therefore reads members without heavy asset includes, applies
-the shared effective-primary rule, and carries only the resulting UUID into the
-converter. Reads are concurrency-bounded. An empty all-state member read is
-retryable even when `asset_count` is zero, because that count excludes trashed
-members; propagating the error truncates the stream before its cursor is acked.
+on its row. Sync therefore asks `list_stacks` for each stack's live member IDs
+(`include=asset_ids`), applies the shared effective-primary rule, and carries
+only the resulting UUID into the converter. A stack with a live member and no
+trashed pin costs no further request, which keeps a first sync inside the
+upstream rate limit. Only a pin outside the live members or a stack with no
+live member needs a concurrency-bounded member read. A row without member IDs
+or an empty all-state member read is retryable, because the row still exists;
+propagating the error truncates the stream before its cursor is acked.
 
 A stack row **absent from the bulk `list_stacks` read** is likewise retriable —
 skipping it would advance the cursor past the stack while the asset pass still
 stamps `stackId` on its members, hiding the burst on the mobile timeline. The
-one legitimate absence is a stack created and deleted within the same sync
-window (the row is already gone), so the guard excuses exactly the ids with a
-`stack_deleted` event in the window: first the current events page, then a
-look-ahead scan of the remaining stack events up to the window bound (the
-events API has no entity-id filter). Anything left unexplained raises
-`StackRowReadIncomplete` and truncates the stream with the cursor preserved;
-read lag resolves on the next sync, and a delete that landed after the window
-bound is found inside the next window. Undecodable-id rows are excluded from
-the guard — the read returned them; they are degraded deliberately.
+guard first excuses exactly the ids with a `stack_deleted` event in the window:
+first the current events page, then a look-ahead scan of the remaining stack
+events up to the window bound (the events API has no entity-id filter). For any
+absence still unexplained, it performs a direct stack read; a `404` confirms
+that the stack was deleted, including when its delete landed in an earlier sync
+because the feed is not in commit order. A successful direct read leaves the
+absence unexplained, so it raises `StackRowReadIncomplete` and truncates the
+stream with the cursor preserved; another direct-read failure also truncates
+the stream rather than excusing the row. Read lag resolves on the next sync.
+Undecodable-id rows are excluded from the guard — the read returned them; they
+are degraded deliberately.
 
 The asset converter maps a member's `stack_id` to the Immich `stackId` through
 the shared `immich_stack_id` helper (`gumnut_id_conversion.py`); the upload-ready
@@ -169,12 +174,12 @@ The adapter depends on the events API response shape (`EventsResponse`). Fields 
 ### Current-state verification is not snapshot-aware
 
 Payload FK verification reads current Gumnut state while the events query is
-bounded at the sync start time. If a referenced person or asset is deleted
+bounded at the first read's `as_of`. If a referenced person or asset is deleted
 during the cycle, verification can null the reference one cycle before the
 bounded delete event arrives. The client converges on the same final state; the
 temporary early null is preferred to emitting an FK that can permanently wedge
-sync. Snapshot-aware verification would require an event-timeline lookup or an
-API-level `as_of` read contract.
+sync. Snapshot-aware verification would require an event-timeline lookup or
+entity reads bounded by `as_of`, which only bounds the events feed.
 
 ### Interrupted delete phase
 

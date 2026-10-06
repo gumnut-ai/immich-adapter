@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-09-28
+last-updated: 2026-10-06
 ---
 
 # Immich Adapter Architecture
@@ -61,10 +61,12 @@ per request and scopes every Gumnut call to it:
   TTL), then resolved again, so a changed choice reaches connected clients
   within minutes without a per-request Gumnut call or a push channel. A
   resolution costs `GET /api/libraries` then `GET /api/users/me` on an
-  unscoped client. Two cases stay unscoped and uncached: a user with no live
-  library at all (the Gumnut API provisions one on first use), and an API key
-  limited to selected libraries, which the API refuses the listing for; its
-  stored choice is not consulted.
+  unscoped client, and requests on one credential that need it at the same
+  time share a single resolution per adapter process, so a client's burst of
+  parallel requests does not multiply those calls. Two cases stay unscoped
+  and uncached: a user with no live library at all (the Gumnut API provisions
+  one on first use), and an API key limited to selected libraries, which the
+  API refuses the listing for; its stored choice is not consulted.
 - **Switching.** When a session's re-check resolves a different library — the
   choice changed, became unusable, or became usable again — the session moves
   to it; one whose library can no longer be resolved at all (the `403` above,
@@ -276,14 +278,14 @@ A numeric page cannot preserve the stability of an opaque cursor when entities c
 
 Immich expects the server to collapse a stack to one tile and attach the stack summary to that survivor. The adapter implements both halves for `GET /api/timeline/bucket` when `withStacked` is enabled:
 
-1. read stack rows in bounded chunks;
+1. read stack rows, with each stack's live member IDs, in bounded chunks;
 2. resolve a live timeline cover;
 3. retain that cover and remove other members;
 4. emit the stack UUID and live-member count on the surviving row.
 
 ### Timeline cover vs. effective primary
 
-`routers/utils/stack_conversion.py::resolve_effective_primary` owns the common selection policy. Stack listings run it across all members; timeline collapse runs it across live members through `select_timeline_cover`.
+`routers/utils/stack_conversion.py::resolve_effective_primary` owns the selection policy for stack listings, which run it across all members. Timeline collapse applies the same order to live members only, through `select_timeline_cover`: the pinned primary when it is live, otherwise the earliest live member. It reads the live member IDs that `list_stacks` returns on each row, so collapse costs no per-stack member read however many of a stack's frames the bucket holds.
 
 The divergence is deliberate. A trashed pinned primary can remain on a stack during the retention window. A stack listing can still show that user choice alongside live members, but using the trashed asset as the destructive timeline cover would remove every live member from the grid. The timeline therefore chooses a visible frame.
 

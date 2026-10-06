@@ -11,25 +11,23 @@ Each daemon is one subdirectory with a `DAEMON.md`, plus any reference files it 
 .agents/daemons/<daemon-id>/references/...
 ```
 
-The format of `DAEMON.md` — frontmatter fields, activation, and body conventions — is
-defined by the spec. Follow it as the source of truth rather than relying on the
-fields used by daemons already in this directory, since the spec may change over time:
+These files are retained repository-owned role policies for proposed or
+individually gated native workflows. They do not establish active coverage. Their frontmatter records the role's purpose and limits; the owning
+workflow defines executable activation and scheduling. A policy file alone does
+not enable a role. Verify activation through the workflow's documented gates.
 
-**https://docs.charlielabs.ai/daemons**
+Humans review and merge PRs. The existing Codex integration provides automated
+review when requested with `@codex review`; no native replacement reviewer is
+active.
 
-The spec covers `DAEMON.md` itself. It documents `references/` only as material a daemon
-may read, so the `references/lanes/` layout below is this repo's convention and this file
-is its only source of truth. To confirm lanes still load the way it assumes, read a recent
-`pr-review` review on GitHub: each inline finding carries a `` `§ <lane-name>` `` badge
-taken from the lane's filename.
+Review lanes live under `pr-review/references/lanes/`. Each inline finding carries
+a `` `§ <lane-name>` `` badge taken from the lane's filename.
 
 ## Repo conventions
 
 - Keep `<daemon-id>` and the frontmatter `id` in sync with each other.
-- No CI validates these files — a malformed daemon, or a lane at the wrong path, fails
-  silently by producing no findings rather than an error. Verify changes by hand, and
-  maintain the daemon list below yourself: a bot PR that installs a daemon adds its
-  directory without touching this file.
+- Verify policy and lane changes through the owning workflow's contract checks
+  and review the resulting guidance. Maintain the role list below in the same change.
 - Keep each daemon to a single, well-bounded role. Split unrelated concerns into
   separate daemons rather than overloading one. Several review dimensions of one
   role are not separate concerns — express them as lanes of that daemon (below)
@@ -77,7 +75,7 @@ activation result. If no eligible human can be identified or the request fails,
 keep the PR, report the unresolved reviewer assignment and reason in the
 activation result, and do not claim the human-review handoff succeeded.
 
-## Current daemons
+## Role policies
 
 - `codebase-maintainer/` — keeps dependencies current and the codebase clean.
 - `librarian/` — keeps this repo's documentation current and complete.

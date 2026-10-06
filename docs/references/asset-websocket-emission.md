@@ -1,0 +1,16 @@
+---
+title: "Asset WebSocket Emission"
+last-updated: 2026-10-01
+---
+
+# Asset WebSocket Emission
+
+## WebSocket Emission
+
+`emit_user_event` and `emit_session_event` (in `services/websockets.py`) are **awaited but best-effort**: callers await them — in-request at nearly all call sites, so emission normally precedes the HTTP response, though the video-upload path defers it to a background task (see the [event reference](websocket-events-reference.md)) — and they catch `SocketIOError` from the underlying transport, log at WARN with `exc_info=True`, and return normally. **Do not wrap call sites in `try/except SocketIOError`** — the central swallow is the contract, and per-site catches are duplication. If the surrounding block needs to handle other exception types (e.g., DTO conversion before the emit, like `_emit_upload_events` in `routers/api/assets.py`), the broader try/except can stay; just don't add a separate `except SocketIOError` branch. That broader wrap is the rule for everything that runs after a durable write — a post-commit re-read, DTO conversion, the emit itself: it degrades to a WARN, never a 5xx, because the client would otherwise retry a mutation that already committed (`_emit_edit_committed_events` and `_retrieve_asset_for_edit_event` are the edit-route shape).
+
+For chunks that fire one event per id (e.g. `ASSET_DELETE`'s single-id wire shape), use `emit_user_event_per_id(event, user_id, payload_ids)` instead of rolling an inline `asyncio.gather(*(emit_user_event(...) for ... in chunk))` — the helper centralizes the per-id gather wave so callers don't duplicate it. Pass a generator or list of pre-stringified ids; the helper consumes the iterable once.
+
+**Bulk write endpoints whose SDK call returns no per-asset payload.** Some bulk writes (e.g., `bulk_update_assets`) return an empty body, so the adapter doesn't have the updated asset DTO needed to mirror the single-asset path's `on_asset_update` payload. The default is to **skip WebSocket emission** from the bulk path rather than re-fetch via `list_assets(ids=[...])` — the extra round-trip per chunk isn't justified when mobile triggers a generic sync refresh on its own and web has optimistic UI for these flows. Document the trade-off explicitly in the handler docstring so future readers don't reintroduce the round-trip on a hunch. Re-fetching is the right call only when a concrete client surface stays visibly stale until next sync; gate that decision on observed behavior, not theory.
+
+When a change modifies **when** an existing WebSocket event fires (deferral, debounce, batching, conditional skip) — not just when adding a brand-new event — update its row in `docs/references/websocket-events-reference.md` **Summary Table** and its section under **Event Details**, then bump `last-updated`. Update `docs/architecture/websocket-implementation.md` only when the change also affects room targeting, payload construction, delivery/failure semantics, or client convergence. The "Implementing New Endpoints" checklist step 9 covers new emit sites; this rule covers timing changes to existing ones. The image-vs-video `on_upload_success` deferral is the canonical example — the event reference must not keep claiming synchronous thumbnails after videos start waiting.

@@ -1,0 +1,32 @@
+name: PR review workflow checks
+on:
+  pull_request:
+    paths: ['.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
+  push:
+    branches: [main]
+    paths: ['.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
+permissions:
+  contents: read
+jobs:
+  review-boundaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Load pinned native review runtime for contract tests
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: github/gh-aw
+          ref: c35393777e5604a63721d09512263b1383301d4f
+          path: .native-gh-aw
+          persist-credentials: false
+          sparse-checkout: actions/setup/js
+      - run: node --test .github/pr-review/reviewer*.test.cjs
+        env:
+          GH_AW_ACTIONS_DIR: ${{ github.workspace }}/.native-gh-aw/actions/setup/js
+      - name: Check daemon human-review handoff and workflow wiring
+        run: node --test .github/agent-delivery/*.test.cjs .github/librarian/verify-delivery.test.cjs .github/maintainer/verify-delivery.test.cjs
+        env:
+          GH_AW_SETUP_DIR: ${{ github.workspace }}/.native-gh-aw/actions/setup/js

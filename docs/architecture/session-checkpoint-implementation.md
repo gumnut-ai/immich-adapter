@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-09-24
+last-updated: 2026-10-06
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -158,8 +158,10 @@ The sync stream is driven by the backend events feed, with one checkpoint per en
 3. Before the response starts, the route resolves `users.me()` so auth failures still surface as normal HTTP errors instead of being swallowed inside a streaming generator.
 4. `AuthUsersV1` and `UsersV1` are emitted directly from the current user record, using `current_user.updated_at` (or the user id as a fallback) as their cursor.
 5. Event-backed types resume from `checkpoint.cursor` using the backend events API with:
-   - `after_cursor` for per-type resume
-   - `created_at_lt=sync_started_at` for a bounded point-in-time window
+   - `after_cursor` for per-type resume, then each page's `next_cursor`
+   - `as_of` from the sync's first events response, so every type stops at
+     the same point. Events beyond that bound wait for a later sync. Entity
+     hydration and FK checks read current state and can reflect later writes.
 6. Upserts stream first in foreign-key dependency order. Delete events are buffered and emitted afterward in reverse dependency order.
 7. `AssetEditsV1` is accepted as a no-op request type because the sync stream
    has no edit-history source; this does not disable the implemented HTTP edit

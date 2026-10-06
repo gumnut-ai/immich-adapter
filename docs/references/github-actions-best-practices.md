@@ -1,6 +1,6 @@
 ---
 title: GitHub Actions Best Practices
-last-updated: 2026-07-30
+last-updated: 2026-10-01
 ---
 
 # GitHub Actions Best Practices
@@ -40,7 +40,7 @@ Avoid `pull_request_target`. If a workflow genuinely needs to label or comment o
 - never runs PR-controlled code or installs PR-controlled dependencies;
 - never restores caches populated by fork PRs.
 
-Treat adding checkout or dependency execution to such a workflow as a security regression.
+Treat adding checkout or dependency execution to such a workflow as a security regression. Cache use must not cross from untrusted to privileged execution.
 
 ## Gate Comment and Issue Triggers
 
@@ -87,17 +87,6 @@ If a job must push, grant the narrow permission explicitly and document why cred
 Those checked-in files are the source of truth for the current action version, triggers, severity threshold, and SARIF/annotation mode. Do not copy those tunable values into prose. The workflow must run when either `.github/workflows/**` or `.github/zizmor.yml` changes.
 
 Prefer fixing a finding. Suppress one only with a narrow `# zizmor: ignore[rule]` annotation and an adjacent justification.
-
-## Review Checklist
-
-- [ ] Workflow-level `permissions:` is explicit and minimal.
-- [ ] Third-party actions use a full SHA plus version comment.
-- [ ] `actions/checkout` disables persisted credentials unless the job pushes.
-- [ ] CI uses `pull_request`, not a privileged trigger that executes PR code.
-- [ ] Comment/issue triggers strongly authorize the caller.
-- [ ] Event data reaches shell through `env:`, not direct interpolation.
-- [ ] Cache use does not cross from untrusted to privileged execution.
-- [ ] The local zizmor workflow and configuration cover this change.
 
 ## References
 
