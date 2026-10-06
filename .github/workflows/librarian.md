@@ -376,10 +376,12 @@ Only after finding a supported candidate, clear it before publishing:
   proposals on `charlie/librarian-*`, `docs/*` or `chore/*` branches. Branches
   and authors are clues, not proof of role. Inspect changed files and rationale
   only for ambiguous open roles, lifecycle transitions or candidate overlap.
-- Search closed, unmerged proposals by this candidate's topic and affected paths,
-  including those legacy authors and branches. Inspect files, rationale and
-  reviews only for relevant matches. Do not enumerate or classify all closed
-  documentation or chore PRs, or require a complete historical librarian archive.
+- Search closed, unmerged PR titles/bodies for this candidate's topic, document
+  names and area terms, including those legacy authors and branches. GitHub PR
+  search does not index changed-file paths: inspect changed files, rationale
+  and reviews for the relevant metadata matches. Disclose search terms and
+  coverage limits; do not claim exhaustive historical path clearance, enumerate
+  all closed documentation/chore PRs, or require a complete librarian archive.
 - Do not duplicate an open topic or recreate a closed, unmerged proposal without
   materially new evidence; cite that evidence in the PR body. If candidate
   clearance is unavailable, withhold that proposal and report the specific gap.
@@ -394,10 +396,12 @@ Make at most one topical documentation proposal within the librarian's scope.
 Use the configured gumnut-bot[bot] author and committer identity. Commit it
 in at most three commits and leave no uncommitted edits, then call
 the `create_pull_request` safe-output tool once with branch
-`librarian/<short-topic>-${{ github.run_id }}-<nonce>`. Generate a fresh lowercase
-hexadecimal nonce for each proposal, including reruns, to avoid branch reuse
-without searching historical branch names. The short topic uses lowercase
-letters, digits, `.`, `_`, `-`. Use a `temporary_id` such as
+`librarian/<short-topic>-${{ github.run_id }}`. Derive the short topic
+deterministically from the candidate's documentation area using lowercase
+letters, digits, `.`, `_`, `-`; preserve that candidate identity on reruns.
+Before retrying uncertain publication, reconcile the existing branch and PR.
+If the prior outcome cannot be established, stop as incomplete work rather
+than create another identity. Use a `temporary_id` such as
 `aw_proposal`. Select one eligible human using the contribution-history policy
 in `.agents/daemons/AGENTS.md`; record the account, history evidence and
 selection rationale in the PR body. Call `add_reviewer` once, with that account
