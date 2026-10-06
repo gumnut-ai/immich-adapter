@@ -27,3 +27,4 @@ if(text.split('\n').some(line=>line.includes('uses: github/gh-aw/actions/setup@'
 // Match the pinned action's release label for online action-pin verification.
 text=text.replaceAll('github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f # c35393777e5604a63721d09512263b1383301d4f','github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f # v0.89.21');
 fs.writeFileSync('.github/workflows/maintainer.lock.yml',text);
+execFileSync('python3',['.github/agent-delivery/correct-publisher-permissions.py'],{stdio:'inherit'});
