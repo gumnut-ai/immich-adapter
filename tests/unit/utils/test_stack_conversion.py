@@ -28,6 +28,7 @@ from routers.utils.gumnut_id_conversion import (
 )
 from routers.utils.stack_conversion import (
     GumnutStackRow,
+    TimelineStacks,
     build_asset_stack_summary,
     build_stack_response,
     fetch_stack_members,
@@ -922,3 +923,22 @@ class TestResolveTimelineStacks:
         assert all(not resolved.is_collapsed_away(member) for member in members)
         (record,) = [r for r in caplog.records if hasattr(r, "undecodable_stack_count")]
         assert getattr(record, "undecodable_stack_count") == 1
+
+
+class TestTimelineStacks:
+    def test_only_non_cover_members_are_collapsed_away(self):
+        stack, members = make_gumnut_stack_with_members(count=3)
+        resolved = TimelineStacks(
+            covers={stack.id: members[1].id}, tuples={stack.id: ["uuid", "3"]}
+        )
+
+        assert not resolved.is_collapsed_away(members[1])
+        assert resolved.is_collapsed_away(members[0])
+        assert resolved.is_collapsed_away(members[2])
+
+    def test_loose_asset_is_never_collapsed_and_has_no_tuple(self):
+        resolved = TimelineStacks(covers={"asset_stack_x": "asset_y"}, tuples={})
+        loose = make_gumnut_asset()
+
+        assert not resolved.is_collapsed_away(loose)
+        assert resolved.tuple_for(loose) is None

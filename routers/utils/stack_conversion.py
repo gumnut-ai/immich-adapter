@@ -2,11 +2,12 @@
 
 A Gumnut stack row carries identity and counts, plus its live member IDs when
 `list_stacks` is asked for them — the member assets themselves are reachable
-through the `stack_id` filter on `assets.list`. Every Immich stack surface (the `/stacks` reads and writes, the timeline's per-asset stack
-tuples, an asset's own `stack` block) therefore needs the same two steps before
-it can answer: fetch the members, and decide which one Immich should show as
-the cover. Both live here so the surfaces can't drift into disagreeing about
-which frame represents a burst.
+through the `stack_id` filter on `assets.list`. Every Immich stack surface (the
+`/stacks` reads and writes, the timeline's per-asset stack tuples, an asset's
+own `stack` block) has to decide which member Immich should show as the cover,
+and the surfaces that return members have to fetch them first. Both live here
+so the surfaces can't drift into disagreeing about which frame represents a
+burst.
 
 Member fetching is async and stack conversion is synchronous, deliberately: the
 upstream reads are confined to `hydrate_stack` / `hydrate_stacks` so that
@@ -426,10 +427,9 @@ async def resolve_timeline_stacks(
     - **A burst straddling a month boundary.** The cover surfaces in the
       adjacent bucket of the same view, so the burst still renders exactly one
       tile overall.
-    - **An album/person-filtered bucket that also asked for `withStacked`.** The
-      cover may fall outside the filter, in which case the burst is absent from
-      that view entirely. Upstream behaves the same way, and no Immich client
-      sends `withStacked` with `albumId` or `personId`.
+    - **A filtered bucket that also asked for `withStacked`** — favorites, an
+      album, a person. The cover may fall outside the filter, in which case the
+      burst is absent from that view entirely. Upstream behaves the same way.
 
     A stack the adapter cannot resolve is left out of the result rather than
     guessed at, so its frames stay in the bucket uncollapsed. The `continue`
