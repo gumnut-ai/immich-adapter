@@ -180,6 +180,8 @@ safe-outputs:
   steps:
     - name: Resolve reviewer target using the native published PR map
       if: contains(needs.agent.outputs.output_types, 'create_pull_request')
+      env:
+        GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
       run: node .github/agent-delivery/prepare-reviewer-handler.cjs
   noop:
     report-as-issue: false
