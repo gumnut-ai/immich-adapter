@@ -243,11 +243,10 @@ async def get_time_bucket(
         except Exception:
             # Same degradation, because the promise above is about the endpoint,
             # not about which exception family broke it: `resolve_timeline_stacks`
-            # does non-SDK work in this scope too (the `zip(..., strict=True)`
-            # that names its ordering invariant, the capture-time sort key), and
-            # a raise from any of it would turn a feature designed to degrade
-            # into a 500 on the app's primary view. ERROR because reaching here
-            # means an adapter bug rather than an upstream one.
+            # does non-SDK work in this scope too, and a raise from any of it
+            # would turn a feature designed to degrade into a 500 on the app's
+            # primary view. ERROR because reaching here means an adapter bug
+            # rather than an upstream one.
             logger.error(
                 "Unexpected error resolving timeline stacks; returning the "
                 "bucket uncollapsed",

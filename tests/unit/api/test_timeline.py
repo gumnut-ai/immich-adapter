@@ -1399,25 +1399,18 @@ def _stacked_bucket(*, count: int, first_day: int = 5):
     members = make_gumnut_stack_members(
         count, stack_id=stack.id, first_captured_at=_january(first_day)
     )
+    stack.asset_ids = [member.id for member in members]
     return stack, members
 
 
-def _stack_client(bucket_assets, stack_rows=(), *, live_members=None):
+def _stack_client(bucket_assets, stack_rows=()):
     """Mock client serving both reads `get_time_bucket` makes under `withStacked`.
 
-    `assets.list` answers the bucket read, or — when called with `stack_id` — the
-    fallback live-member read, so a test can assert which one happened. Omitting
-    a stack from `stack_rows` models a row that vanished between the two reads.
+    Omitting a stack from `stack_rows` models a row that vanished between the
+    two reads.
     """
-    live_members = live_members or {}
-
-    def _list_assets(**kwargs):
-        if "stack_id" in kwargs:
-            return MockSyncCursorPage(live_members.get(kwargs["stack_id"], []))
-        return MockSyncCursorPage(bucket_assets)
-
     client = Mock()
-    client.assets.list = Mock(side_effect=_list_assets)
+    client.assets.list = Mock(return_value=MockSyncCursorPage(bucket_assets))
     client.stacks.list_stacks = mock_list_stacks(stack_rows)
     return client
 
@@ -1517,9 +1510,8 @@ class TestTimeBucketStacks:
         or one that left the stack — must promote a frame that exists, or
         collapsing against it would erase the whole burst from the month.
 
-        The trashed-pin *divergence* from `resolve_effective_primary` is not
-        observable here: the route only ever hands live members to the selector.
-        `TestSelectTimelineCover` pins that one directly.
+        `TestSelectTimelineCover` pins the trashed-pin divergence from
+        `resolve_effective_primary` directly.
         """
         stack, members = _stacked_bucket(count=3)
         stack.primary_asset_id = make_gumnut_asset().id
@@ -1565,7 +1557,7 @@ class TestTimeBucketStacks:
         month, where the badge must report the stack's live size rather than how
         many of its frames this bucket happens to hold."""
         stack, members = _stacked_bucket(count=3)
-        client = _stack_client(members[:2], [stack], live_members={stack.id: members})
+        client = _stack_client(members[:2], [stack])
 
         with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
             mock_user_id.return_value = uuid4()
@@ -1616,9 +1608,8 @@ class TestTimeBucketStacks:
         """The promise is about the endpoint, not about which exception family
         broke it.
 
-        Resolution does non-SDK work too — the `zip(..., strict=True)` that
-        names its ordering invariant, the capture-time sort key — so catching
-        only `GumnutError` would let a future line 500 the app's primary view.
+        Resolution does non-SDK work too, so catching only `GumnutError` would
+        let a future line 500 the app's primary view.
         The ERROR half of the severity split the sibling above pins.
         """
         stack, members = _stacked_bucket(count=3)
@@ -1639,11 +1630,11 @@ class TestTimeBucketStacks:
         assert getattr(record, "time_bucket") == "2024-01-01T00:00:00"
 
     @pytest.mark.anyio
-    async def test_partially_contained_stack_reads_its_members(self):
-        """A burst straddling a month boundary leaves the bucket short of the
-        row's live count, and the true cover may sit in the other month."""
+    async def test_partially_contained_stack_defers_to_the_cover_month(self):
+        """A burst straddling a month boundary whose cover sits in the other
+        month contributes nothing here, and costs no member read."""
         stack, members = _stacked_bucket(count=3)
-        client = _stack_client(members[1:], [stack], live_members={stack.id: members})
+        client = _stack_client(members[1:], [stack])
 
         with patch("routers.api.timeline.get_current_user_id") as mock_user_id:
             mock_user_id.return_value = uuid4()
@@ -1654,12 +1645,7 @@ class TestTimeBucketStacks:
         # The cover is in the previous month, so this month contributes nothing
         # from the burst — the same single tile Immich shows, counted once.
         assert result["id"] == []
-        member_reads = [
-            call
-            for call in client.assets.list.call_args_list
-            if "stack_id" in call.kwargs
-        ]
-        assert len(member_reads) == 1
+        client.assets.list.assert_called_once()
 
     @pytest.mark.anyio
     async def test_dangling_stack_row_keeps_every_frame(self):
@@ -1702,8 +1688,7 @@ class TestTimeBucketStacks:
 
     @pytest.mark.anyio
     async def test_album_filter_still_reaches_the_bucket_read(self):
-        """The stack path adds its own `assets.list` calls, so the bucket read's
-        own filters have to survive being one call among several."""
+        """`withStacked` must not disturb the bucket read's own filters."""
         stack, members = _stacked_bucket(count=2)
         client = _stack_client(members, [stack])
         album_id = uuid4()
