@@ -100,11 +100,11 @@ after asset deletes.
 on its row. Sync therefore asks `list_stacks` for each stack's live member IDs
 (`include=asset_ids`), applies the shared effective-primary rule, and carries
 only the resulting UUID into the converter. A stack with a live member and no
-trashed pin costs no further request; one member read per stack exhausts the
-upstream rate limit on a first sync. Only a pin outside the live members or a
-stack with no live member needs a concurrency-bounded member read. An empty
-all-state member read is retryable, because the row still exists; propagating
-the error truncates the stream before its cursor is acked.
+trashed pin costs no further request, which keeps a first sync inside the
+upstream rate limit. Only a pin outside the live members or a stack with no
+live member needs a concurrency-bounded member read. A row without member IDs
+or an empty all-state member read is retryable, because the row still exists;
+propagating the error truncates the stream before its cursor is acked.
 
 A stack row **absent from the bulk `list_stacks` read** is likewise retriable —
 skipping it would advance the cursor past the stack while the asset pass still

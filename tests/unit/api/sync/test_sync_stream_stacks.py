@@ -219,6 +219,7 @@ class TestStackEntityFetch:
             for stack, members in pairs
         }
         client.stacks.list_stacks.assert_called_once()
+        assert client.stacks.list_stacks.call_args.kwargs["include"] == ["asset_ids"]
         client.assets.list.assert_not_called()
 
     @pytest.mark.anyio
