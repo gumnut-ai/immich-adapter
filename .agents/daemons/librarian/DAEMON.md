@@ -71,6 +71,23 @@ If it cannot compute a merge-base (a shallow checkout), run every check `--list-
 - Maintain at most 3 open librarian PRs at a time, and at most 1 of them a design-doc status transition.
 - One topical area per PR; one status transition per PR.
 
+## Discovery boundary
+
+Keep source review bounded to recent changes and a small related documentation
+area. Before publishing a supported candidate, establish the complete current
+open librarian inventory from every executor, including unlabeled legacy
+proposals, for the caps above; inspect ambiguous roles, lifecycle transitions
+and topic overlap selectively. Search closed, unmerged proposals only by the
+candidate's topic and affected paths, including legacy authors and branches.
+Read changed files, rationale and reviews only for relevant matches; do not
+require a complete closed documentation or chore archive. Do not duplicate an
+open topic or recreate a closed, unmerged proposal without materially new
+evidence. Missing clearance evidence withholds that candidate, not unrelated
+source review. Adequate source and lint inspection finding no supported edit
+permits scoped no work without archive clearance or open-inventory proof;
+claims of cap or overlap deferral require verified evidence. Keep metadata and
+excerpts compact and deduplicated.
+
 ## Human review
 
 When creating a PR, follow [Human review for daemon-created PRs](../AGENTS.md#human-review-for-daemon-created-prs) to select and request a human reviewer.

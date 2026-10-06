@@ -362,25 +362,46 @@ mismatches. Follow DAEMON.md for validation after edits. Choose the strongest
 actionable topic from recent-change inspection, the rotating sample or lint
 findings; report uninspected areas rather than expanding the sweep indefinitely.
 
-Before choosing a change, use targeted GitHub searches for librarian PRs
-(open and closed): the `librarian` label and actual head prefix `librarian/`,
-plus legacy documentation proposals by `app/charliecreates` (REST login
-`charliecreates[bot]`). Legacy branches include `charlie/librarian-*`,
-`docs/*` and `chore/*`; inspect their changed files and proposal rationale
-to identify librarian work rather than relying only on branch names. Paginate
-these targeted searches until exhausted; do not enumerate all repository PRs.
-If the tools cannot establish complete librarian history, report incomplete
-discovery rather than assume no prior proposal exists. Count open librarian
-proposals from every executor against the DAEMON.md caps. Do not duplicate an
-open proposal's topic or recreate a closed, unmerged proposal without materially
-new evidence; cite that evidence in the PR body.
+Keep discovery evidence compact: request only needed PR fields (number, state,
+author, head branch, title and labels), deduplicate results across searches, and
+retain targeted source, diff or review excerpts. Do not reread unchanged pages
+or full tool outputs, or search generated lockfiles for documentation evidence.
+
+Only after finding a supported candidate, clear it before publishing:
+
+- Establish the complete current open librarian inventory from every executor
+  for the DAEMON.md open-PR and lifecycle caps. Paginate the open inventory to
+  exhaustion, including unlabeled legacy work: `librarian` labels, `librarian/`
+  heads and legacy `app/charliecreates` (REST login `charliecreates[bot]`)
+  proposals on `charlie/librarian-*`, `docs/*` or `chore/*` branches. Branches
+  and authors are clues, not proof of role. Inspect changed files and rationale
+  only for ambiguous open roles, lifecycle transitions or candidate overlap.
+- Search closed, unmerged PR titles/bodies for this candidate's topic, document
+  names and area terms, including those legacy authors and branches. GitHub PR
+  search does not index changed-file paths: inspect changed files, rationale
+  and reviews for the relevant metadata matches. Disclose search terms and
+  coverage limits; do not claim exhaustive historical path clearance, enumerate
+  all closed documentation/chore PRs, or require a complete librarian archive.
+- Do not duplicate an open topic or recreate a closed, unmerged proposal without
+  materially new evidence; cite that evidence in the PR body. If candidate
+  clearance is unavailable, withhold that proposal and report the specific gap.
+  This does not block source review or clearance of unrelated candidates.
+
+Adequate source and lint inspection with no supported edit permits a scoped noop
+without archive clearance or open-inventory proof. A claimed cap or overlap
+deferral must have verified evidence; unavailable candidate clearance is
+incomplete work for that candidate, not proof that there is no work.
 
 Make at most one topical documentation proposal within the librarian's scope.
 Use the configured gumnut-bot[bot] author and committer identity. Commit it
 in at most three commits and leave no uncommitted edits, then call
 the `create_pull_request` safe-output tool once with branch
-`librarian/<short-topic>` (lowercase letters, digits, `.`, `_`, `-`),
-choosing a branch name no earlier librarian PR used and a `temporary_id` such as
+`librarian/<short-topic>-${{ github.run_id }}`. Derive the short topic
+deterministically from the candidate's documentation area using lowercase
+letters, digits, `.`, `_`, `-`; preserve that candidate identity on reruns.
+Before retrying uncertain publication, reconcile the existing branch and PR.
+If the prior outcome cannot be established, stop as incomplete work rather
+than create another identity. Use a `temporary_id` such as
 `aw_proposal`. Select one eligible human using the contribution-history policy
 in `.agents/daemons/AGENTS.md`; record the account, history evidence and
 selection rationale in the PR body. Call `add_reviewer` once, with that account
@@ -388,20 +409,20 @@ and `pull_request_number: "aw_proposal"`, using the PR's actual temporary ID.
 The tools declare outputs that will be published later; do not claim that the
 PR or review request exists yet. Exclude logins ending in `[bot]` and known automation accounts, case-insensitively:
 `CharlieHelps`, `CharlieCreates`, `github-actions`, `gumnut-bot`,
-`chatgpt-codex-connector`, and `Copilot`. Do not request teams. Count all open librarian PRs from any executor against the DAEMON.md caps,
-including any legacy documentation proposals. The DAEMON.md limits on open
-librarian PRs and status transitions apply; when they leave no
-room for your proposal, report no work. Use the prepared locked linter and
+`chatgpt-codex-connector`, and `Copilot`. Do not request teams. Apply the verified
+DAEMON.md caps and status-transition limits before publishing; when they leave no
+room, report the verified deferral. Use the prepared locked linter and
 relevant repository guidance to validate any edit. Check whitespace in the
 entire candidate change, including new files. If there is no justified edit,
 call the `noop` safe-output tool with the dispatch revision, recent commits and
 topics inspected, rotating area and document paths, implementation evidence,
-linter results, duplicate-PR findings and coverage limits. Distinguish checked
-and consistent from already proposed, cap-limited, or insufficient evidence.
+linter results, any candidate-clearance findings and coverage limits. Distinguish
+checked and consistent from already proposed, cap-limited, or insufficient evidence.
 Do not claim repository-wide documentation health from this bounded sample.
-A failed required check or unavailable evidence is incomplete work, not a
-successful no-work result. Choose exactly one terminal
-outcome: PR proposal or noop. Never emit noop alongside a PR proposal. A text-only answer does not
+A failed required source or validation check is incomplete work. Unavailable
+evidence needed to clear a supported candidate prevents its proposal and must
+be reported as incomplete candidate clearance, not a successful no-work result.
+Choose exactly one terminal outcome: PR proposal or noop. Never emit noop alongside a PR proposal. A text-only answer does not
 establish a completed no-work run.
 If preparation, inference, or validation fails, report that specific phase and
 the source revision. A timeout or interruption leaves the proposal incomplete.
