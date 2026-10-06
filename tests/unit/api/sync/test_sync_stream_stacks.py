@@ -8,6 +8,7 @@ from gumnut import GumnutError, NotFoundError
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.file_data_response import FileDataResponse
 
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.sync.converters import (
     gumnut_asset_to_sync_asset_v1,
     gumnut_asset_to_sync_asset_v2,
@@ -169,8 +170,7 @@ class TestStackEntityFetch:
                 state="all",
                 order="asc",
                 limit=1,
-            ),
-            call(stack_id=stack.id, state="live", order="asc", limit=1),
+            )
         ]
 
     @pytest.mark.anyio
@@ -186,6 +186,40 @@ class TestStackEntityFetch:
         fetched = result[stack.id]
         assert isinstance(fetched, FetchedStack)
         assert fetched.primary_asset_id == safe_uuid_from_asset_id(members[0].id)
+        client.stacks.list_stacks.assert_called_once_with(
+            ids=[stack.id], limit=1, include=["asset_ids"]
+        )
+        client.assets.list.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_full_chunk_of_live_stacks_reads_no_members(self):
+        # One member read per stack exhausts the upstream rate limit on a
+        # first sync of a library with a few hundred stacks.
+        pairs = [
+            make_gumnut_stack_with_members(count=2)
+            for _ in range(GUMNUT_API_MAX_BULK_IDS)
+        ]
+        pinned, pinned_members = pairs[0]
+        pinned.primary_asset_id = pinned_members[1].id
+        client = Mock()
+        client.stacks.list_stacks = mock_list_stacks([stack for stack, _ in pairs])
+        client.assets.list = Mock()
+
+        result, missing = await fetch_entities_map(
+            client, "stack", [stack.id for stack, _ in pairs]
+        )
+
+        assert missing == set()
+        assert {
+            stack_id: fetched.primary_asset_id
+            for stack_id, fetched in result.items()
+            if isinstance(fetched, FetchedStack)
+        } == {
+            stack.id: safe_uuid_from_asset_id(members[1 if stack is pinned else 0].id)
+            for stack, members in pairs
+        }
+        client.stacks.list_stacks.assert_called_once()
+        client.assets.list.assert_not_called()
 
     @pytest.mark.anyio
     async def test_all_trashed_stack_still_resolves_primary(self):
@@ -201,16 +235,13 @@ class TestStackEntityFetch:
         assert isinstance(fetched, FetchedStack)
         assert fetched.primary_asset_id == safe_uuid_from_asset_id(members[0].id)
         assert missing == set()
-        assert client.assets.list.call_args.kwargs["state"] == "all"
-        assert "include" not in client.assets.list.call_args.kwargs
         assert client.assets.list.call_args_list == [
-            call(stack_id=stack.id, state="live", order="asc", limit=1),
-            call(stack_id=stack.id, state="all", order="asc", limit=1),
+            call(stack_id=stack.id, state="all", order="asc", limit=1)
         ]
 
     @pytest.mark.anyio
     async def test_primary_resolution_stops_after_first_sufficient_member(self):
-        stack, members = make_gumnut_stack_with_members(count=2)
+        stack, members = make_gumnut_stack_with_members(count=2, trashed={0, 1})
         consumed = []
 
         async def member_page():
@@ -229,7 +260,7 @@ class TestStackEntityFetch:
         assert fetched.primary_asset_id == safe_uuid_from_asset_id(members[0].id)
         assert consumed == [members[0].id]
         assert client.assets.list.call_args_list == [
-            call(stack_id=stack.id, state="live", order="asc", limit=1)
+            call(stack_id=stack.id, state="all", order="asc", limit=1)
         ]
 
     @pytest.mark.anyio
@@ -259,12 +290,13 @@ class TestStackEntityFetch:
         assert isinstance(fetched_b, FetchedStack)
         assert fetched_a.primary_asset_id == safe_uuid_from_asset_id(members_a[0].id)
         assert fetched_b.primary_asset_id == safe_uuid_from_asset_id(members_b[2].id)
+        client.assets.list.assert_not_called()
 
     @pytest.mark.anyio
     async def test_transient_member_read_failure_propagates_not_skipped(self):
         good, good_members = make_gumnut_stack_with_members(count=2)
         good.primary_asset_id = good_members[0].id
-        bad, _bad_members = make_gumnut_stack_with_members(count=2)
+        bad, _bad_members = make_gumnut_stack_with_members(count=2, trashed={0, 1})
         client = Mock()
         client.stacks.list_stacks = mock_list_stacks([good, bad])
 
@@ -283,7 +315,7 @@ class TestStackEntityFetch:
     @pytest.mark.anyio
     async def test_member_failure_cancels_queued_stack_reads(self):
         stacks_and_members = [
-            make_gumnut_stack_with_members(count=1)
+            make_gumnut_stack_with_members(count=1, trashed={0})
             for _ in range(BULK_FANOUT_CONCURRENCY_LIMIT + 2)
         ]
         stacks = [stack for stack, _ in stacks_and_members]
@@ -312,13 +344,24 @@ class TestStackEntityFetch:
     @pytest.mark.anyio
     @pytest.mark.parametrize("asset_count", [0, 2])
     async def test_empty_member_read_propagates(self, asset_count):
-        stack = make_gumnut_stack(asset_count=asset_count)
+        stack = make_gumnut_stack(asset_count=asset_count, asset_ids=[])
         client = Mock()
         client.stacks.list_stacks = mock_list_stacks([stack])
         client.assets.list = _assets_list(members_by_stack={stack.id: []})
 
         with pytest.raises(StackMemberReadInconsistent):
             await fetch_entities_map(client, "stack", [stack.id])
+
+    @pytest.mark.anyio
+    async def test_row_without_member_ids_propagates(self):
+        stack = make_gumnut_stack(asset_ids=None)
+        client = Mock()
+        client.stacks.list_stacks = mock_list_stacks([stack])
+        client.assets.list = Mock()
+
+        with pytest.raises(StackMemberReadInconsistent):
+            await fetch_entities_map(client, "stack", [stack.id])
+        client.assets.list.assert_not_called()
 
     @pytest.mark.anyio
     async def test_undecodable_stack_id_skips_only_that_stack(self, caplog):
@@ -679,7 +722,7 @@ class TestEventDrivenStacks:
     async def test_stack_hydration_failure_truncates_before_asset_pass(self, caplog):
         user = create_mock_user(UPDATED_AT)
         client = create_mock_gumnut_client(user)
-        stack = make_gumnut_stack(asset_count=0)
+        stack = make_gumnut_stack(asset_count=0, asset_ids=[])
         asset = make_gumnut_asset(stack_id=stack.id)
         client.events.get = _events_by_type(
             {
