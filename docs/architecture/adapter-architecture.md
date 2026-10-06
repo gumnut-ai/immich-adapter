@@ -61,9 +61,10 @@ per request and scopes every Gumnut call to it:
   TTL), then resolved again, so a changed choice reaches connected clients
   within minutes without a per-request Gumnut call or a push channel. A
   resolution costs `GET /api/libraries` then `GET /api/users/me` on an
-  unscoped client, and requests on one credential that need it at the same
-  time share a single resolution per adapter process, so a client's burst of
-  parallel requests does not multiply those calls. Two cases stay unscoped
+  unscoped client. Parallel requests share one in-flight lookup per credential
+  and prior fallback library, if any. This keeps one client's burst from
+  multiplying upstream calls while letting sessions with different fallback
+  libraries resolve independently. Two cases stay unscoped
   and uncached: a user with no live library at all (the Gumnut API provisions
   one on first use), and an API key limited to selected libraries, which the
   API refuses the listing for; its stored choice is not consulted.
