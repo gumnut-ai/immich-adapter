@@ -16,8 +16,10 @@ is exactly `true`. Provision before enabling it:
   inference and threat detection. The agent receives read-only GitHub access.
 - Environment `gumbot-publisher`: variable `GUMBOT_CLIENT_ID` and secret
   `GUMBOT_PRIVATE_KEY` for the installed gumnut-bot GitHub App. Install the App
-  on this repository with contents and pull-request write permissions; it
-  must be able to push proposal branches, open PRs, and request human reviews.
+  on this repository with Contents and Pull requests write plus Issues read.
+  Issues read supports native PR label checks. Approve the added permission
+  on existing installations before enabling the updated workflow; token
+  creation fails if the installation has not granted a requested scope.
   The App private key is available only to native publication/conclusion jobs.
 - Blacksmith access for the configured inference and detection runner.
 

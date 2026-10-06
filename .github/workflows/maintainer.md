@@ -145,6 +145,8 @@ safe-outputs:
   staged: false
   timeout-minutes: 10
   environment: gumbot-publisher
+  # Native reviewer label checks need Issues read; after compilation run
+  # python3 .github/agent-delivery/correct-publisher-permissions.py
   github-app:
     client-id: ${{ vars.GUMBOT_CLIENT_ID }}
     private-key: ${{ secrets.GUMBOT_PRIVATE_KEY }}
