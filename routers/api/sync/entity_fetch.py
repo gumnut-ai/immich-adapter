@@ -1,7 +1,6 @@
 """Batch entity fetching from the Gumnut API."""
 
 import logging
-from typing import Literal
 from uuid import UUID
 
 from gumnut import AsyncGumnut
@@ -32,24 +31,20 @@ def _batched(items: list[str], size: int) -> list[list[str]]:
 
 
 class StackMemberReadInconsistent(Exception):
-    """A stack row was returned but its all-state member read was empty."""
+    """A stack row was returned but no member could be read for it."""
 
 
 async def _first_stack_member(
-    client: AsyncGumnut,
-    stack_id: str,
-    *,
-    state: Literal["live", "all"],
-    asset_id: str | None = None,
+    client: AsyncGumnut, stack_id: str, *, asset_id: str | None = None
 ) -> AssetResponse | None:
-    """Return the first matching member without walking later cursor pages."""
+    """Return the first member in any state without walking later pages."""
     if asset_id is None:
-        page = client.assets.list(stack_id=stack_id, state=state, order="asc", limit=1)
+        page = client.assets.list(stack_id=stack_id, state="all", order="asc", limit=1)
     else:
         page = client.assets.list(
             stack_id=stack_id,
             ids=[asset_id],
-            state=state,
+            state="all",
             order="asc",
             limit=1,
         )
@@ -59,7 +54,11 @@ async def _first_stack_member(
 async def _resolve_stack_primary_for_sync(
     client: AsyncGumnut, stack_row: StackListStacksResponse
 ) -> UUID | None:
-    """Resolve a stack primary, skipping only an undecodable stack ID."""
+    """Resolve a stack primary, skipping only an undecodable stack ID.
+
+    The row's live member IDs settle every stack with a live member and no
+    trashed pin. Only the rest cost a member read.
+    """
     try:
         safe_uuid_from_stack_id(stack_row.id)
     except ValueError:
@@ -70,26 +69,30 @@ async def _resolve_stack_primary_for_sync(
         )
         return None
 
-    primary = None
-    if stack_row.primary_asset_id is not None:
-        primary = await _first_stack_member(
-            client,
-            stack_row.id,
-            state="all",
-            asset_id=stack_row.primary_asset_id,
-        )
-    if primary is None:
-        primary = await _first_stack_member(client, stack_row.id, state="live")
-    if primary is None:
-        primary = await _first_stack_member(client, stack_row.id, state="all")
-    if primary is None:
-        # asset_count excludes trashed members, so even zero cannot prove that
-        # an empty all-state read is permanent. Propagate to preserve the cursor.
+    live_ids = stack_row.asset_ids
+    if live_ids is None:
         raise StackMemberReadInconsistent(
-            f"stack {stack_row.id} member read returned none "
-            f"(row reports {stack_row.asset_count} live member(s))"
+            f"stack {stack_row.id} was listed without its member ids"
         )
-    return safe_uuid_from_asset_id(primary.id)
+
+    pin = stack_row.primary_asset_id
+    primary_id = pin if pin in live_ids else None
+    if primary_id is None and pin is not None:
+        # A trashed pin is still the cover, and only a member read can see it.
+        pinned = await _first_stack_member(client, stack_row.id, asset_id=pin)
+        primary_id = pinned.id if pinned is not None else None
+    if primary_id is None and live_ids:
+        primary_id = live_ids[0]
+    if primary_id is None:
+        trashed = await _first_stack_member(client, stack_row.id)
+        primary_id = trashed.id if trashed is not None else None
+    if primary_id is None:
+        # Propagate so the cursor is preserved: the row exists, so an empty
+        # all-state read is not known to be permanent.
+        raise StackMemberReadInconsistent(
+            f"stack {stack_row.id} member read returned none"
+        )
+    return safe_uuid_from_asset_id(primary_id)
 
 
 async def fetch_entities_map(
@@ -186,10 +189,10 @@ async def fetch_entities_map(
                     missing_ids.add(asset.id)
 
         elif gumnut_entity_type == "stack":
-            # Primary resolution costs one lean member read per stack, bounded
-            # here so a first sync does not fan out without limit.
+            # asset_ids keeps primary resolution off the per-stack read path,
+            # which exhausts the upstream rate limit on a first sync.
             stack_page = await gumnut_client.stacks.list_stacks(
-                ids=chunk, limit=len(chunk)
+                ids=chunk, limit=len(chunk), include=["asset_ids"]
             )
             rows = stack_page.data
             primary_ids = await gather_with_concurrency(

@@ -188,6 +188,7 @@ def make_gumnut_stack(
     primary_asset_id: str | None = None,
     asset_count: int = 2,
     origin: str = "auto_burst",
+    asset_ids: list[str] | None = None,
 ) -> Mock:
     """Build a Mock Gumnut stack row (the shape every stacks endpoint returns).
 
@@ -201,6 +202,7 @@ def make_gumnut_stack(
     stack.id = stack_id or uuid_to_gumnut_stack_id(uuid4())
     stack.primary_asset_id = primary_asset_id
     stack.asset_count = asset_count
+    stack.asset_ids = asset_ids
     stack.origin = origin
     now = datetime.now(timezone.utc)
     stack.created_at = now
@@ -263,10 +265,15 @@ def make_gumnut_stack_with_members(
     row that claims two members while carrying eight would budget a number the
     response contradicts, and the test would pass for the wrong reason. Pass it
     explicitly to model the row and the member read disagreeing on purpose.
+
+    `asset_ids` defaults to the live members in order, as `list_stacks` returns
+    it with `include=asset_ids`.
     """
     stack_kwargs.setdefault("asset_count", count - len(trashed or ()))
     stack = make_gumnut_stack(**stack_kwargs)
     members = make_gumnut_stack_members(count, stack_id=stack.id, trashed=trashed)
+    if stack.asset_ids is None:
+        stack.asset_ids = [m.id for m in members if m.trashed_at is None]
     return stack, members
 
 
