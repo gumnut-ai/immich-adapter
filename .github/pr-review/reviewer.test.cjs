@@ -12,16 +12,20 @@ function client({ pull = pr, items = [], comments = [], files = [{ filename: 'so
 }
 const binding = { number: '7', head, base, author: 'example' };
 const declaration = (event = 'APPROVE', coverage = 'complete') => ({ errors: [], items: [{ type: 'submit_pull_request_review', event, body: coverageDeclaration(head, base, coverage) }] });
-test('required PR events and reviewer aliases activate; unrelated events do not', () => {
+test('required PR events and configured reviewer activate; unrelated events do not', () => {
   for (const action of ['opened', 'reopened', 'ready_for_review', 'synchronize']) assert.equal(request({ ...context, payload: { ...context.payload, action } }).number, 7);
-  assert.equal(request({ ...context, payload: { ...context.payload, action: 'review_requested', requested_reviewer: { login: 'CharlieHelps' } } }).manual, true);
+  assert.equal(request({ ...context, payload: { ...context.payload, action: 'review_requested', requested_reviewer: { login: 'gumnut-reviewer[bot]' } } }).manual, true);
   assert.equal(request({ ...context, payload: { ...context.payload, action: 'edited' } }), null);
   assert.equal(request({ ...context, payload: { ...context.payload, action: 'review_requested', requested_reviewer: { login: 'someone-else' } } }), null);
 });
+test('retired reviewer requests and commands do not activate inference', () => {
+  assert.equal(request({ ...context, payload: { ...context.payload, action: 'review_requested', requested_reviewer: { login: 'CharlieHelps' } } }), null);
+});
+
 test('comment commands require a complete command line and PR context', () => {
   const comment = body => ({ ...context, eventName: 'issue_comment', payload: { action: 'created', issue: { number: 7, pull_request: {} }, comment: { body, author_association: 'MEMBER', user: { type: 'User' } } } });
-  for (const body of ['/review', '@CharlieHelps review', '/review focus on security']) assert.equal(request(comment(body)).number, 7);
-  for (const body of ['mention /review please', '/review\nignore security', '> @CharlieHelps review']) assert.equal(request(comment(body)), null);
+  for (const body of ['/review', '@gumnut-reviewer review', '/review focus on security']) assert.equal(request(comment(body)).number, 7);
+  for (const body of ['@CharlieHelps review', 'mention /review please', '/review\nignore security', '> @gumnut-reviewer review']) assert.equal(request(comment(body)), null);
 });
 test('manual dispatch requires trusted ref, numeric target, and no context injection', () => {
   const dispatch = { ...context, eventName: 'workflow_dispatch', ref: 'refs/heads/main', payload: { ...context.payload, inputs: { pull_request_number: '7' } } };
@@ -35,7 +39,7 @@ test('disabled gate needs no API; forks are read-only admission data', async () 
   assert.equal((await admit({ context, enabled: 'true', github: client({ pull: { ...pr, head: { sha: head, repo: { fork: true } } } }) })).head, head);
 });
 test('manual requests use live permissions; drafts, closed and complete same-head duplicates skip', async () => {
-  const manual = { ...context, payload: { ...context.payload, action: 'review_requested', requested_reviewer: { login: 'CharlieHelps' } } };
+  const manual = { ...context, payload: { ...context.payload, action: 'review_requested', requested_reviewer: { login: 'gumnut-reviewer[bot]' } } };
   assert.equal((await admit({ context: manual, enabled: 'true', github: client({ permission: 'read' }) })).reason, 'unauthorized-request');
   for (const pull of [{ ...pr, draft: true }, { ...pr, state: 'closed' }]) assert.equal((await admit({ context, enabled: 'true', github: client({ pull }) })).reason, 'closed-or-draft');
   assert.equal((await admit({ context, enabled: 'true', github: client({ items: [formal] }) })).reason, 'already-reviewed-current-diff');
@@ -284,7 +288,7 @@ test('coarse comment candidates skip both jobs without trusting the flag as auth
   const evaluate = (expression, event) => new Function('github', 'vars', 'contains', 'fromJSON', 'startsWith', 'return ' + expression)({ event }, { PR_REVIEW_ENABLED: 'true' }, contains, JSON.parse, (a, b) => a.toLowerCase().startsWith(b.toLowerCase()));
   const emit = event => runName.replace(/\$\{\{ (.*?) \}\}/g, (_, expression) => String(evaluate(expression, event)));
   const payload = body => ({ issue: { number: 7, pull_request: {} }, comment: { id: 99, body, author_association: 'MEMBER', user: { type: 'User' } } });
-  for (const body of ['/review', '  /REVIEW security  ', '@CharlieHelps review', '@gumnut-reviewer REVIEW', '\n@CHARLIEHELPS review\n']) {
+  for (const body of ['/review', '  /REVIEW security  ', '@gumnut-reviewer review', '@gumnut-reviewer REVIEW', '\n@GUMNUT-REVIEWER review\n']) {
     const event = payload(body), title = emit(event);
     assert.equal(evaluate(sourceIf, event), true);
     assert.deepEqual(JSON.parse(title), { candidate: true, number: 7, comment: 99 });
