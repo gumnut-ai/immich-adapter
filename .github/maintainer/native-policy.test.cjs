@@ -25,3 +25,11 @@ test('compiled trusted admission alone has explicit read scopes',()=>{
  assert.match(admission,/\n    permissions:\n      contents: read\n      actions: read\n/);
  assert.match(lock,/\npermissions: \{\}\n/);
 });
+
+test('cleanup admission has no advisory trigger or secret dependency',()=>{
+ const source=fs.readFileSync(path.join(__dirname,'../workflows/maintainer.md'),'utf8');
+ assert.doesNotMatch(source,/maintainer-advisory|MAINTAINER_ALERTS_TOKEN|alerts\.json|steps\.alerts/);
+ assert.match(lock,/cron: "0 9 \* \* \*"/);
+ assert.doesNotMatch(lock,/MAINTAINER_ALERTS_TOKEN|maintainer-advisory|alerts\.json/);
+ assert.match(source,/needs\.pre_activation\.outputs\.default_branch_result == 'success'/);
+});

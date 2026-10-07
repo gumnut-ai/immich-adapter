@@ -1,4 +1,17 @@
-# Locked dependency advisory coverage
+# Codebase cleanup and dependency coverage
+
+`maintainer.md` runs daily codebase maintenance when `MAINTAINER_ENABLED=true`.
+Routine dependency scans and security-alert polling are no longer agent goals.
+Agents can still make justified dependency changes as part of useful maintenance,
+following repository dependency policy and full affected-app checks. Existing
+configuration protection, isolated publishing and human handoff remain intact.
+Cleanup needs neither an alert-reader credential nor an indexing receipt.
+
+The dependency submission workflow below is separately gated and is not needed
+for cleanup activation. Enabling Dependabot settings does not establish complete
+locked-dependency coverage or activate this submission workflow.
+
+## Optional locked dependency indexing
 
 `maintainer-dependencies.yml` is an inference-free, default-branch-only GitHub
 Dependency Submission API publisher. It remains disabled unless
@@ -28,8 +41,7 @@ security ownership. A public-registry lock entry cannot establish whether a pack
 GitHub's API requires Contents write. Only the indexing job uses the existing
 `gumbot-publisher` environment and a repository-only, Contents-write App token.
 The agent receives neither that token nor the App private key. Dependency graph
-readback uses a separate native read token; `MAINTAINER_ALERTS_TOKEN` requires
-only Dependabot alerts read and implicit metadata access.
+readback uses a separate native read token. Cleanup receives no alert-reader token.
 
 Before activation, the rollout owner must obtain authorization for dependency
 submission and any required repository security setting, provision these gates
@@ -39,21 +51,10 @@ main and retain its exact SHA, snapshot acceptance ID, per-manifest lock hashes,
 counts, exclusions/limitations, and complete paginated graph readback artifact.
 A POST acceptance is insufficient: a missing manifest, missing exact package
 URL/version, graph truncation, mismatched inventory, or advanced branch fails.
-Native preactivation also requires the indexing job and its submission/readback
-step to have succeeded on the latest run attempt for its own exact source SHA and rechecks every graph dependency before polling alerts. A zero
-alert set is accepted only after that coverage check.
-
-Indexing runs on main pushes, every six hours, and manual dispatch. Advisory
-polling runs every six hours; routine maintenance runs daily. An initial main
-push/index race fails closed until the next admission attempt. The 24-hour goal
-requires observed indexing, GitHub advisory/alert processing, alert admission,
-usable fixed versions/cooldown policy, adequate native budgets, and successful
-sandbox validation/publication. GitHub scheduling and upstream processing have
-no hard timing guarantee here. Measure a real indexing/readback run, advisory
-admission, and inference-free AWF smoke before declaring replacement coverage.
-Keep failures visible in Actions; failed indexing is a security coverage outage,
-not a no-alert result. No actual submission or runtime proof has been performed
-by preparing these disabled workflows.
+Indexing runs on main pushes, every six hours, and manual dispatch when its gate
+is enabled. Keep failed coverage visible rather than treating it as a no-alert
+result. Dependabot settings/configuration determine its alert and update coverage.
+This maintenance workflow does not provide an advisory-response SLA.
 
 Primary contracts:
 - https://docs.github.com/en/rest/dependency-graph/dependency-submission

@@ -1,5 +1,5 @@
-# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"8afcf1853141507ca3eeddda50911672b1e7de718158da4995d47544e1121743","body_hash":"c875562b429a9de83f59703c52323f0d59094675b73186c450d1b5006bfb7f92","compiler_version":"v0.89.21","strict":true,"agent_id":"codex","agent_model":"gpt-6-luna","engine_versions":{"codex":"0.156.1"},"agent_image_runner":"blacksmith-2vcpu-ubuntu-2404"}
-# gh-aw-manifest: {"version":1,"secrets":["CODEX_API_KEY","COPILOT_GITHUB_TOKEN","GH_AW_DEFAULT_OTLP_ENDPOINT","GH_AW_DEFAULT_OTLP_HEADERS","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","GUMBOT_PRIVATE_KEY","MAINTAINER_ALERTS_TOKEN","OPENAI_API_KEY"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"v7.0.1"},{"repo":"actions/create-github-app-token","sha":"bcd2ba49218906704ab6c1aa796996da409d3eb1","version":"v3.2.0"},{"repo":"actions/download-artifact","sha":"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c","version":"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"v9.0.0"},{"repo":"actions/setup-node","sha":"820762786026740c76f36085b0efc47a31fe5020","version":"v7.0.0"},{"repo":"actions/setup-python","sha":"5fda3b95a4ea91299a34e894583c3862153e4b97","version":"v7.0.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"astral-sh/setup-uv","sha":"c18668ad3cf93ea998bef934396af7bb5c839dc7","version":"v10.2.0"},{"repo":"github/gh-aw/actions/setup","sha":"c35393777e5604a63721d09512263b1383301d4f","version":"c35393777e5604a63721d09512263b1383301d4f"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.28.25@sha256:25fbbefb92b690d4e6ef34de8df057c0349e6adf2b7486c0cc56954a8e9a3cd4"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.28.25@sha256:c3c7082e73ba83052c580097e5a9c9c40a11e6f6b6fa0a4710e6859f83a62854"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.28.25@sha256:94cac14372280dbf4a08d021d7b5810a9fd7d73c88802e04a9e05551b1cbcd09"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.4.25","digest":"sha256:9be0a86220e807a0ecc89e53d7453468f7a53fbc6b3d1efd2299025ffe01d086","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.4.25@sha256:9be0a86220e807a0ecc89e53d7453468f7a53fbc6b3d1efd2299025ffe01d086"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f","pinned_image":"ghcr.io/github/gh-aw-node@sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f"},{"image":"ghcr.io/github/github-mcp-server:v1.12.2","digest":"sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6","pinned_image":"ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6"}],"mcp_servers":[{"name":"github","tools":["get_commit","get_file_contents","get_latest_release","get_me","get_pull_request","get_pull_request_comments","get_pull_request_diff","get_pull_request_files","get_pull_request_review_comments","get_pull_request_reviews","get_pull_request_status","get_release_by_tag","get_tag","issue_read","list_branches","list_commits","list_issue_types","list_issues","list_pull_requests","list_releases","list_starred_repositories","list_tags","pull_request_read","search_code","search_issues","search_pull_requests","search_repositories"]},{"name":"safeoutputs","tools":["add_reviewer","create_pull_request","missing_data","missing_tool","noop"]}]}
+# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"649afd15eb8c722fd926e3b4d1e66849e5cc48c3703e4e3855e76143d5f9f392","body_hash":"5ef202471b47c1a78faef7baf51f9f73e292f23952d649deccc92c99b2b985a4","compiler_version":"v0.89.21","strict":true,"agent_id":"codex","agent_model":"gpt-6-luna","engine_versions":{"codex":"0.156.1"},"agent_image_runner":"blacksmith-2vcpu-ubuntu-2404"}
+# gh-aw-manifest: {"version":1,"secrets":["CODEX_API_KEY","COPILOT_GITHUB_TOKEN","GH_AW_DEFAULT_OTLP_ENDPOINT","GH_AW_DEFAULT_OTLP_HEADERS","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","GUMBOT_PRIVATE_KEY","OPENAI_API_KEY"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"v7.0.1"},{"repo":"actions/create-github-app-token","sha":"bcd2ba49218906704ab6c1aa796996da409d3eb1","version":"v3.2.0"},{"repo":"actions/download-artifact","sha":"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c","version":"v8.0.1"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"v9.0.0"},{"repo":"actions/setup-node","sha":"820762786026740c76f36085b0efc47a31fe5020","version":"v7.0.0"},{"repo":"actions/setup-python","sha":"5fda3b95a4ea91299a34e894583c3862153e4b97","version":"v7.0.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"astral-sh/setup-uv","sha":"c18668ad3cf93ea998bef934396af7bb5c839dc7","version":"v10.2.0"},{"repo":"github/gh-aw/actions/setup","sha":"c35393777e5604a63721d09512263b1383301d4f","version":"c35393777e5604a63721d09512263b1383301d4f"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.28.25@sha256:25fbbefb92b690d4e6ef34de8df057c0349e6adf2b7486c0cc56954a8e9a3cd4"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.28.25@sha256:c3c7082e73ba83052c580097e5a9c9c40a11e6f6b6fa0a4710e6859f83a62854"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.28.25@sha256:94cac14372280dbf4a08d021d7b5810a9fd7d73c88802e04a9e05551b1cbcd09"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.4.25","digest":"sha256:9be0a86220e807a0ecc89e53d7453468f7a53fbc6b3d1efd2299025ffe01d086","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.4.25@sha256:9be0a86220e807a0ecc89e53d7453468f7a53fbc6b3d1efd2299025ffe01d086"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f","pinned_image":"ghcr.io/github/gh-aw-node@sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f"},{"image":"ghcr.io/github/github-mcp-server:v1.12.2","digest":"sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6","pinned_image":"ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6"}],"mcp_servers":[{"name":"github","tools":["get_commit","get_file_contents","get_latest_release","get_me","get_pull_request","get_pull_request_comments","get_pull_request_diff","get_pull_request_files","get_pull_request_review_comments","get_pull_request_reviews","get_pull_request_status","get_release_by_tag","get_tag","issue_read","list_branches","list_commits","list_issue_types","list_issues","list_pull_requests","list_releases","list_starred_repositories","list_tags","pull_request_read","search_code","search_issues","search_pull_requests","search_repositories"]},{"name":"safeoutputs","tools":["add_reviewer","create_pull_request","missing_data","missing_tool","noop"]}]}
 # This file was automatically generated by gh-aw (v0.89.21). DO NOT EDIT. To debug this workflow, load the skill at https://github.com/github/gh-aw/blob/main/debug.md
 #
 #    ___                   _   _
@@ -23,7 +23,7 @@
 #
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
-# Run daily maintenance and urgent dependency advisory work from reviewed policy.
+# Propose useful codebase maintenance without routine dependency-update scans.
 #
 # Secrets used:
 #   - CODEX_API_KEY
@@ -34,13 +34,11 @@
 #   - GH_AW_GITHUB_TOKEN
 #   - GITHUB_TOKEN
 #   - GUMBOT_PRIVATE_KEY
-#   - MAINTAINER_ALERTS_TOKEN
 #   - OPENAI_API_KEY
 #
 # Custom actions used:
 #   - actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 #   - actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-#   - actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
 #   - actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
 #   - actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
 #   - actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 (source v9)
@@ -60,16 +58,12 @@
 
 name: "Maintainer"
 on:
-  repository_dispatch:
-    types:
-      - maintainer-advisory
   # roles: # Roles processed as role check in pre-activation job
   # - admin # Roles processed as role check in pre-activation job
   # - maintainer # Roles processed as role check in pre-activation job
   # - write # Roles processed as role check in pre-activation job
   schedule:
     - cron: "0 9 * * *"
-    - cron: "0 3,15,21 * * *"
   # steps: # Steps injected into pre-activation job
   # - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
   # with:
@@ -84,49 +78,6 @@ on:
   # run: |
   # test "$RUN_REF" = "refs/heads/$DEFAULT_BRANCH"
   # test -z "$CALLER_CONTEXT"
-  # - if: vars.MAINTAINER_ENABLED == 'true'
-  # uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-  # with:
-  # python-version: "3.14"
-  # - env:
-  # SOURCE_SHA: ${{ github.sha }}
-  # if: vars.MAINTAINER_ENABLED == 'true'
-  # name: Build exact inventory for advisory coverage admission
-  # run: |
-  # mkdir -p /tmp/maintainer-input
-  # SCANNED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) python3 .github/maintainer/dependency-snapshot.py "$SOURCE_SHA" > /tmp/maintainer-input/dependency-snapshot.json
-  # - if: vars.MAINTAINER_ENABLED == 'true'
-  # name: Require exact-source native dependency coverage
-  # uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
-  # with:
-  # github-token: ${{ secrets.GITHUB_TOKEN }} # GitHub token used for reactions and status comments in activation
-  # script: |
-  # const fs=require('fs');
-  # const {assertCoverage}=require('./.github/maintainer/dependency-coverage.cjs');
-  # const bundle=JSON.parse(fs.readFileSync('/tmp/maintainer-input/dependency-snapshot.json','utf8'));
-  # const coverage=await assertCoverage({github,context,bundle});
-  # fs.writeFileSync('/tmp/maintainer-input/dependency-coverage.json',JSON.stringify(coverage));
-  # - env:
-  # ALERT_TOKEN: ${{ secrets.MAINTAINER_ALERTS_TOKEN }}
-  # id: alerts
-  # if: vars.MAINTAINER_ENABLED == 'true'
-  # name: Poll repository dependency alerts without inference
-  # uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
-  # with:
-  # github-token: ${{ secrets.MAINTAINER_ALERTS_TOKEN }} # GitHub token used for reactions and status comments in activation
-  # script: |
-  # if (!process.env.ALERT_TOKEN) throw new Error('Provision MAINTAINER_ALERTS_TOKEN with Dependabot alerts read');
-  # const {poll} = require('./.github/maintainer/poll-alerts.cjs');
-  # await poll({github, context, core, fs: require('fs'),
-  # eventName: context.eventName, schedule: context.payload.schedule,
-  # coverage: JSON.parse(require('fs').readFileSync('/tmp/maintainer-input/dependency-coverage.json','utf8'))});
-  # - if: vars.MAINTAINER_ENABLED == 'true'
-  # uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-  # with:
-  # if-no-files-found: error
-  # name: maintainer-input
-  # path: /tmp/maintainer-input/alerts.json
-  # retention-days: 7
   workflow_dispatch:
     inputs:
       aw_context:
@@ -156,8 +107,7 @@ jobs:
   activation:
     needs: pre_activation
     if: >
-      needs.pre_activation.outputs.activated == 'true' && (vars.MAINTAINER_ENABLED == 'true' && needs.pre_activation.outputs.default_branch_result == 'success' &&
-      needs.pre_activation.outputs.admit == 'true')
+      needs.pre_activation.outputs.activated == 'true' && (vars.MAINTAINER_ENABLED == 'true' && needs.pre_activation.outputs.default_branch_result == 'success')
     runs-on: ubuntu-slim
     permissions:
       actions: read
@@ -582,10 +532,6 @@ jobs:
         with:
           name: activation
           path: /tmp/gh-aw
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: maintainer-input
-          path: /tmp/maintainer-input
       - id: uv-version
         name: Read uv version
         run: "version=$(cat .uv-version)\nif [[ ! \"$version\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then\n  echo 'Expected an exact uv version (major.minor.patch)' >&2\n  exit 1\nfi\necho \"version=$version\" >> \"$GITHUB_OUTPUT\"\n"
@@ -1737,7 +1683,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           WORKFLOW_NAME: "Maintainer"
-          WORKFLOW_DESCRIPTION: "Run daily maintenance and urgent dependency advisory work from reviewed policy."
+          WORKFLOW_DESCRIPTION: "Propose useful codebase maintenance without routine dependency-update scans."
           HAS_PATCH: ${{ needs.agent.outputs.has_patch }}
           GH_AW_DETECTION_CONTINUE_ON_ERROR: "true"
           GH_AW_DETECTION_SKIP_PROMPT_SUMMARY: "true"
@@ -1821,7 +1767,7 @@ jobs:
           RUST_LOG: ${{ runner.debug == 1 && 'trace,hyper_util=info,mio=info,reqwest=info,os_info=info,codex_otel=warn,codex_core=debug,codex_exec=debug' || 'warn' }}
           TRACEPARENT: ${{ env.GITHUB_AW_OTEL_TRACE_ID != '' && env.GITHUB_AW_OTEL_PARENT_SPAN_ID != '' && format('00-{0}-{1}-01', env.GITHUB_AW_OTEL_TRACE_ID, env.GITHUB_AW_OTEL_PARENT_SPAN_ID) || '' }}
           WORKFLOW_NAME: "Maintainer"
-          WORKFLOW_DESCRIPTION: "Run daily maintenance and urgent dependency advisory work from reviewed policy."
+          WORKFLOW_DESCRIPTION: "Propose useful codebase maintenance without routine dependency-update scans."
           HAS_PATCH: ${{ needs.agent.outputs.has_patch }}
           GH_AW_DETECTION_CONTINUE_ON_ERROR: "true"
         run: |
@@ -1925,8 +1871,6 @@ jobs:
       GH_AW_RUNTIME_FEATURES: ${{ vars.GH_AW_RUNTIME_FEATURES }}
     outputs:
       activated: ${{ steps.check_membership.outputs.is_team_member == 'true' }}
-      admit: ${{ steps.alerts.outputs.admit }}
-      alerts_result: ${{ steps.alerts.outcome }}
       default_branch_result: ${{ steps.default_branch.outcome }}
       matched_command: ''
       setup-parent-span-id: ${{ steps.setup.outputs.parent-span-id || steps.setup.outputs.span-id }}
@@ -1975,49 +1919,6 @@ jobs:
           CALLER_CONTEXT: ${{ github.event.inputs.aw_context }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           RUN_REF: ${{ github.ref }}
-      - if: vars.MAINTAINER_ENABLED == 'true'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.14"
-      - name: Build exact inventory for advisory coverage admission
-        if: vars.MAINTAINER_ENABLED == 'true'
-        run: |
-          mkdir -p /tmp/maintainer-input
-          SCANNED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) python3 .github/maintainer/dependency-snapshot.py "$SOURCE_SHA" > /tmp/maintainer-input/dependency-snapshot.json
-        env:
-          SOURCE_SHA: ${{ github.sha }}
-      - name: Require exact-source native dependency coverage
-        if: vars.MAINTAINER_ENABLED == 'true'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs=require('fs');
-            const {assertCoverage}=require('./.github/maintainer/dependency-coverage.cjs');
-            const bundle=JSON.parse(fs.readFileSync('/tmp/maintainer-input/dependency-snapshot.json','utf8'));
-            const coverage=await assertCoverage({github,context,bundle});
-            fs.writeFileSync('/tmp/maintainer-input/dependency-coverage.json',JSON.stringify(coverage));
-      - name: Poll repository dependency alerts without inference
-        id: alerts
-        if: vars.MAINTAINER_ENABLED == 'true'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          ALERT_TOKEN: ${{ secrets.MAINTAINER_ALERTS_TOKEN }}
-        with:
-          github-token: ${{ secrets.MAINTAINER_ALERTS_TOKEN }}
-          script: |
-            if (!process.env.ALERT_TOKEN) throw new Error('Provision MAINTAINER_ALERTS_TOKEN with Dependabot alerts read');
-            const {poll} = require('./.github/maintainer/poll-alerts.cjs');
-            await poll({github, context, core, fs: require('fs'),
-              eventName: context.eventName, schedule: context.payload.schedule,
-              coverage: JSON.parse(require('fs').readFileSync('/tmp/maintainer-input/dependency-coverage.json','utf8'))});
-      - if: vars.MAINTAINER_ENABLED == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          if-no-files-found: error
-          name: maintainer-input
-          path: /tmp/maintainer-input/alerts.json
-          retention-days: 7
 
   safe_outputs:
     needs:

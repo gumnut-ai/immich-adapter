@@ -8,7 +8,7 @@ const images=Object.fromEntries([...source.matchAll(/^      (agent|apiProxy|squi
 if(Object.keys(images).length!==3) throw Error('expected three digest-qualified AWF images');
 let text=fs.readFileSync('.github/workflows/maintainer.lock.yml','utf8');
 // v0.89.21 omits pre-activation permissions and rejects them in frontmatter.
-// Scope read access to the trusted checkout/coverage admission job only.
+// Scope read access to the trusted default-branch admission job only.
 const admissionStart=text.indexOf('  pre_activation:\n');
 const admissionEnd=text.indexOf('\n  safe_outputs:\n',admissionStart);
 if(admissionStart<0 || admissionEnd<0) throw Error('expected admission job boundaries');
@@ -24,7 +24,10 @@ if(!detector.includes(tag)) throw Error('expected detector imageTag correction p
 detector=detector.replace(tag,'"images":'+JSON.stringify(images));
 text=text.slice(0,start)+detector;
 if(text.split('\n').some(line=>line.includes('uses: github/gh-aw/actions/setup@') && !line.includes('c35393777e5604a63721d09512263b1383301d4f'))) throw Error('setup action SHA drift');
-// Match the pinned action's release label for online action-pin verification.
-text=text.replaceAll('github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f # c35393777e5604a63721d09512263b1383301d4f','github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f # v0.89.21');
+// Preserve release labels on SHA-pinned action references after compilation.
+for(const [action,sha,version] of [
+  ['github/gh-aw/actions/setup','c35393777e5604a63721d09512263b1383301d4f','v0.89.21'],
+  ['oven-sh/setup-bun','0c5077e51419868618aeaa5fe8019c62421857d6','v2.2.0'],
+]) text=text.replace(new RegExp(`(${action}@${sha})(?: # [^\n]*)?$`,'gm'),`$1 # ${version}`);
 fs.writeFileSync('.github/workflows/maintainer.lock.yml',text);
 execFileSync('python3',['.github/agent-delivery/correct-publisher-permissions.py'],{stdio:'inherit'});
