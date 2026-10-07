@@ -35,6 +35,8 @@ A skipped event carries no ack. So the client's checkpoint still moves past a ru
 
 Face, asset and album upserts are excluded because they take event-time values from the event payload (see the handling sections below), so two events for one entity can produce different rows. The album-user row derived from album events is current-state too, but its pass is left as it is: albums have few events.
 
+Deduplication stays page-at-a-time. A client syncs incrementally and is eventually consistent: it reads a few pages, reconciles those entities, acks, and resumes later. So a pass emits and checkpoints each events page on its own, and must not read or hold a type's whole event history before emitting — for example, to find each entity's last event. Emitting the payload-dependent types once per sync would therefore need the Gumnut API to identify an entity's last event; the adapter cannot know it from one page.
+
 ## Deletion Events
 
 `make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted. The feed is not in commit order, so a later re-add can sort ahead of the removal; the adapter re-reads each removed pair and upserts the current membership instead when it exists.
