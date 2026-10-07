@@ -27,9 +27,17 @@ are buffered during iteration and yielded in phase 2. An unrecognized event
 type is therefore a re-read, which is how `asset_moved_out` and
 `asset_moved_in` are handled.
 
+## Repeated Events for One Entity
+
+A first sync has no checkpoint, so it replays the library's whole event history, and one entity can appear in it once per change ever made to it. For the entity types in `_CURRENT_STATE_ENTITY_TYPES` the upsert is built from current state alone, so every one of those events would produce the same row. Their passes emit an entity at its first event and skip the rest, without reading the entity again; a person, album membership or stack a read did not return is likewise not read or reported again, because the feed holds only committed changes and the row is therefore deleted. Metadata is re-read: its read also misses an asset that is trashed or outside the session library, which can change mid-pass. The stream summary logs the skipped count as `repeat_event_skips`.
+
+A skipped event carries no ack. So the client's checkpoint still moves past a run of repeats, the pass emits a `SyncAckV1` line — a no-op the client echoes back — acked under the pass's own sync type at the last skipped cursor: once at the end of the pass, and at a page boundary whenever `_SKIPPED_REPEATS_PER_ACK` repeats have gone unacked. The client sends one ack request per run of same-type lines, so these lines are deliberately sparse. Only repeats of an emitted entity move the checkpoint this way; events for an absent entity never emitted a row and still do not.
+
+Face, asset and album upserts are excluded because they take event-time values from the event payload (see the handling sections below), so two events for one entity can produce different rows. The album-user row derived from album events is current-state too, but its pass is left as it is: albums have few events.
+
 ## Deletion Events
 
-`_make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted. The feed is not in commit order, so a later re-add can sort ahead of the removal; the adapter re-reads each removed pair and upserts the current membership instead when it exists.
+`make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted. The feed is not in commit order, so a later re-add can sort ahead of the removal; the adapter re-reads each removed pair and upserts the current membership instead when it exists.
 
 ## Asset Membership Is Read From the Session's Library
 

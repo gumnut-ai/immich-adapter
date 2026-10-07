@@ -120,6 +120,7 @@ class SyncStreamStats:
         default_factory=lambda: defaultdict(int)
     )
     delete_event_skips: int = 0
+    repeat_event_skips: int = 0
     buffered_deletes: int = 0
     fk_warnings: int = 0
     suppressed_face_geometry: int = 0

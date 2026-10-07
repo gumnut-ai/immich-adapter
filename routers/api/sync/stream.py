@@ -172,6 +172,19 @@ _DERIVED_UPSERT_ONLY_TYPES: frozenset[SyncEntityType] = frozenset(
     {SyncEntityType.AlbumUserV1}
 )
 
+# Entity types whose upsert is built from current state alone, so every event
+# for one entity in a sync yields the same row; a pass emits each entity once.
+# A type whose upsert takes a value from the event payload must stay out. See
+# "Repeated Events for One Entity" in the sync stream architecture doc.
+_CURRENT_STATE_ENTITY_TYPES: frozenset[str] = frozenset(
+    {"person", "metadata", "album_asset", "stack"}
+)
+
+# Skipped repeats that may go unacked before a page ends with a SyncAckV1
+# line. A larger value re-reads more after an interrupted sync; a smaller one
+# costs the client more ack requests. The value is a judgment, not a measurement.
+_SKIPPED_REPEATS_PER_ACK = 5000
+
 # Order for streaming delete events — reverse of FK dependency order.
 # Children are deleted before parents so the client can clean up FK references
 # before the referenced entity is removed. This is the inverse of
@@ -326,6 +339,13 @@ async def _require_missing_stacks_deleted(
         )
 
 
+def _ack_only_line(sync_entity_type: SyncEntityType, cursor: str) -> str:
+    """A SyncAckV1 line: it delivers no row and moves the pass's checkpoint."""
+    return make_sync_event(
+        SyncEntityType.SyncAckV1, {}, cursor, ack_type=sync_entity_type
+    )
+
+
 async def _stream_entity_type(
     gumnut_client: AsyncGumnut,
     gumnut_entity_type: str,
@@ -370,6 +390,20 @@ async def _stream_entity_type(
     last_cursor = checkpoint.cursor if checkpoint else None
     count = 0
 
+    # See _CURRENT_STATE_ENTITY_TYPES. absent_ids are entities a read in this
+    # pass did not return. The feed holds only committed changes, so such a
+    # row is deleted and is not read or reported again. Metadata is the
+    # exception: its read also misses an asset that is trashed or outside the
+    # session library, either of which can change mid-pass.
+    skip_repeats = gumnut_entity_type in _CURRENT_STATE_ENTITY_TYPES
+    absence_is_final = skip_repeats and gumnut_entity_type != "metadata"
+    emitted_ids: set[str] = set()
+    absent_ids: set[str] = set()
+    reported_absent_ids: set[str] = set()
+    # Cursor of the latest skipped repeat since the last emitted row.
+    unacked_cursor: str | None = None
+    skipped_repeats = 0
+
     while True:
         # Read under the sync's shared bound (see SyncBound), and continue from
         # next_cursor rather than the last event's cursor: next_cursor keeps
@@ -397,6 +431,8 @@ async def _stream_entity_type(
             for event in events
             if event.event_type not in _DELETE_EVENT_TYPES
             and event.event_type not in _SKIPPED_EVENT_TYPES
+            and event.entity_id not in emitted_ids
+            and event.entity_id not in absent_ids
         ]
 
         # Batch-fetch entities for upserts
@@ -429,6 +465,8 @@ async def _stream_entity_type(
                     bound,
                 )
             stats.not_found_ids[gumnut_entity_type].update(not_returned)
+            if absence_is_final:
+                absent_ids.update(not_returned)
         # An asset absent on an earlier page can be back in the library now.
         stats.not_found_ids[gumnut_entity_type].difference_update(entities_map)
 
@@ -507,6 +545,10 @@ async def _stream_entity_type(
                 membership = current_memberships.get(pair) if pair is not None else None
                 if membership is not None:
                     # Re-added since: upsert the current row instead.
+                    if skip_repeats:
+                        emitted_ids.add(membership.id)
+                        unacked_cursor = None
+                        skipped_repeats = 0
                     stats.streamed_ids[gumnut_entity_type].add(membership.id)
                     check_fk_references(
                         gumnut_entity_type,
@@ -539,6 +581,15 @@ async def _stream_entity_type(
                 else:
                     stats.delete_event_skips += 1
             else:
+                if event.entity_id in emitted_ids:
+                    unacked_cursor = event.cursor
+                    skipped_repeats += 1
+                    stats.repeat_event_skips += 1
+                    continue
+                if event.entity_id in reported_absent_ids:
+                    stats.entity_not_found_skips[gumnut_entity_type] += 1
+                    continue
+
                 # Do not omit gated rows: existing clients need V2 hidden
                 # upserts or V1 retractions.
                 suppress_geometry = event.entity_id in suppressed_face_ids
@@ -591,6 +642,8 @@ async def _stream_entity_type(
                     count += 1
                     continue
                 if entity is None:
+                    if absence_is_final:
+                        reported_absent_ids.add(event.entity_id)
                     # Entity was deleted between event and fetch, or
                     # explicitly missing (e.g., asset fetched but no metadata).
                     # For metadata events, event.entity_id == asset_id, which
@@ -724,11 +777,23 @@ async def _stream_entity_type(
                 )
                 yield json_line, 1
                 count += 1
+                if skip_repeats:
+                    emitted_ids.add(event.entity_id)
+                    unacked_cursor = None
+                    skipped_repeats = 0
+
+        if unacked_cursor is not None and skipped_repeats >= _SKIPPED_REPEATS_PER_ACK:
+            yield _ack_only_line(sync_entity_type, unacked_cursor), 0
+            unacked_cursor = None
+            skipped_repeats = 0
 
         last_cursor = events_response.next_cursor
 
         if not events_response.has_more:
             break
+
+    if unacked_cursor is not None:
+        yield _ack_only_line(sync_entity_type, unacked_cursor), 0
 
     if count > 0:
         logger.debug(
@@ -978,6 +1043,8 @@ async def generate_sync_stream(
             summary_extra["buffered_deletes"] = stats.buffered_deletes
         if stats.fk_warnings > 0:
             summary_extra["fk_reference_warnings"] = stats.fk_warnings
+        if stats.repeat_event_skips > 0:
+            summary_extra["repeat_event_skips"] = stats.repeat_event_skips
         if stats.suppressed_face_geometry > 0:
             summary_extra["suppressed_face_geometry"] = stats.suppressed_face_geometry
         if stats.absent_asset_deletes > 0:
