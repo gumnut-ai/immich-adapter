@@ -105,6 +105,8 @@ def make_sync_event(
     entity_type: SyncEntityType,
     data: dict[str, Any],
     cursor: str,
+    *,
+    ack_type: SyncEntityType | None = None,
 ) -> str:
     """
     Create a sync event JSON line.
@@ -113,11 +115,12 @@ def make_sync_event(
         entity_type: The Immich sync entity type
         data: The entity data dict
         cursor: The opaque events cursor for checkpointing
+        ack_type: The checkpoint the ack advances, when not ``entity_type``'s
 
     Returns:
         JSON line string with newline
     """
-    ack = to_ack_string(entity_type, cursor)
+    ack = to_ack_string(ack_type or entity_type, cursor)
 
     return (
         json.dumps(
@@ -125,23 +128,6 @@ def make_sync_event(
                 "type": entity_type.value,
                 "data": data,
                 "ack": ack,
-            }
-        )
-        + "\n"
-    )
-
-
-def make_ack_only_event(entity_type: SyncEntityType, cursor: str) -> str:
-    """Create a ``SyncAckV1`` line that checkpoints ``entity_type`` at ``cursor``.
-
-    The line delivers no row; the client only echoes its ack back.
-    """
-    return (
-        json.dumps(
-            {
-                "type": SyncEntityType.SyncAckV1.value,
-                "data": {},
-                "ack": to_ack_string(entity_type, cursor),
             }
         )
         + "\n"

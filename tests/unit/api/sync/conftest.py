@@ -281,11 +281,11 @@ def create_mock_album_asset_data(updated_at: datetime) -> Mock:
     return album_asset
 
 
-def create_mock_entity_page(entities: list):
+def create_mock_entity_page(entities: list, next_page: Any = None):
     """Create a mock paginated entity response that supports await."""
     from tests.conftest import MockSyncCursorPage
 
-    return MockSyncCursorPage(entities)
+    return MockSyncCursorPage(entities, next_page)
 
 
 __all__ = [

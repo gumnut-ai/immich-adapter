@@ -21,6 +21,7 @@ from gumnut.types.face_response import FaceResponse
 from gumnut.types.user_response import UserResponse
 
 from routers.immich_models import (
+    SyncAssetDeleteV1,
     SyncAssetFaceDeleteV1,
     SyncEntityType,
     SyncRequestType,
@@ -28,6 +29,7 @@ from routers.immich_models import (
 )
 from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
     safe_uuid_from_face_id,
     safe_uuid_from_user_id,
 )
@@ -46,7 +48,6 @@ from routers.api.sync.entity_fetch import (
 )
 from routers.api.sync.events import (
     convert_entity_to_sync_event,
-    make_ack_only_event,
     make_delete_sync_event,
     make_sync_event,
     removed_album_asset_pair,
@@ -338,6 +339,13 @@ async def _require_missing_stacks_deleted(
         )
 
 
+def _ack_only_line(sync_entity_type: SyncEntityType, cursor: str) -> str:
+    """A SyncAckV1 line: it delivers no row and moves the pass's checkpoint."""
+    return make_sync_event(
+        SyncEntityType.SyncAckV1, {}, cursor, ack_type=sync_entity_type
+    )
+
+
 async def _stream_entity_type(
     gumnut_client: AsyncGumnut,
     gumnut_entity_type: str,
@@ -383,11 +391,15 @@ async def _stream_entity_type(
     count = 0
 
     # See _CURRENT_STATE_ENTITY_TYPES. absent_ids are entities a read in this
-    # pass did not return. The feed holds only committed changes, so such an
-    # entity is gone and is not read again.
+    # pass did not return. The feed holds only committed changes, so such a
+    # row is deleted and is not read or reported again. Metadata is the
+    # exception: its read also misses an asset that is trashed or outside the
+    # session library, either of which can change mid-pass.
     skip_repeats = gumnut_entity_type in _CURRENT_STATE_ENTITY_TYPES
+    absence_is_final = skip_repeats and gumnut_entity_type != "metadata"
     emitted_ids: set[str] = set()
     absent_ids: set[str] = set()
+    reported_absent_ids: set[str] = set()
     # Cursor of the latest skipped repeat since the last emitted row.
     unacked_cursor: str | None = None
     skipped_repeats = 0
@@ -422,7 +434,6 @@ async def _stream_entity_type(
             and event.entity_id not in emitted_ids
             and event.entity_id not in absent_ids
         ]
-        known_absent_ids = frozenset(absent_ids)
 
         # Batch-fetch entities for upserts
         entities_map, missing_ids = await fetch_entities_map(
@@ -454,8 +465,10 @@ async def _stream_entity_type(
                     bound,
                 )
             stats.not_found_ids[gumnut_entity_type].update(not_returned)
-            if skip_repeats:
+            if absence_is_final:
                 absent_ids.update(not_returned)
+        # An asset absent on an earlier page can be back in the library now.
+        stats.not_found_ids[gumnut_entity_type].difference_update(entities_map)
 
         # Verify that IDs referenced in event payloads (e.g. face_updated's
         # person_id, album_updated's album_cover_asset_id) still exist in
@@ -573,8 +586,7 @@ async def _stream_entity_type(
                     skipped_repeats += 1
                     stats.repeat_event_skips += 1
                     continue
-                if event.entity_id in known_absent_ids:
-                    # Reported when the read first missed it.
+                if event.entity_id in reported_absent_ids:
                     stats.entity_not_found_skips[gumnut_entity_type] += 1
                     continue
 
@@ -602,7 +614,36 @@ async def _stream_entity_type(
 
                 # Upsert event — look up fetched entity
                 entity = entities_map.get(event.entity_id)
+                if entity is None and gumnut_entity_type == "asset":
+                    # The library read omitted the asset (moved out or
+                    # deleted): remove it inline, acked on this pass's own
+                    # checkpoint. See sync-stream-architecture.md.
+                    logger.info(
+                        "Asset absent from the session library; removing it",
+                        extra={
+                            "entity_id": event.entity_id,
+                            "event_type": event.event_type,
+                            "cursor": event.cursor,
+                        },
+                    )
+                    stats.absent_asset_deletes += 1
+                    delete_data = SyncAssetDeleteV1(
+                        assetId=safe_uuid_from_asset_id(event.entity_id)
+                    )
+                    yield (
+                        make_sync_event(
+                            SyncEntityType.AssetDeleteV1,
+                            delete_data.model_dump(mode="json"),
+                            event.cursor,
+                            ack_type=sync_entity_type,
+                        ),
+                        1,
+                    )
+                    count += 1
+                    continue
                 if entity is None:
+                    if absence_is_final:
+                        reported_absent_ids.add(event.entity_id)
                     # Entity was deleted between event and fetch, or
                     # explicitly missing (e.g., asset fetched but no metadata).
                     # For metadata events, event.entity_id == asset_id, which
@@ -742,7 +783,7 @@ async def _stream_entity_type(
                     skipped_repeats = 0
 
         if unacked_cursor is not None and skipped_repeats >= _SKIPPED_REPEATS_PER_ACK:
-            yield make_ack_only_event(sync_entity_type, unacked_cursor), 0
+            yield _ack_only_line(sync_entity_type, unacked_cursor), 0
             unacked_cursor = None
             skipped_repeats = 0
 
@@ -752,7 +793,7 @@ async def _stream_entity_type(
             break
 
     if unacked_cursor is not None:
-        yield make_ack_only_event(sync_entity_type, unacked_cursor), 0
+        yield _ack_only_line(sync_entity_type, unacked_cursor), 0
 
     if count > 0:
         logger.debug(
@@ -1006,6 +1047,8 @@ async def generate_sync_stream(
             summary_extra["repeat_event_skips"] = stats.repeat_event_skips
         if stats.suppressed_face_geometry > 0:
             summary_extra["suppressed_face_geometry"] = stats.suppressed_face_geometry
+        if stats.absent_asset_deletes > 0:
+            summary_extra["absent_asset_deletes"] = stats.absent_asset_deletes
 
         logger.info("Sync stream summary", extra=summary_extra)
 

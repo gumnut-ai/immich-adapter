@@ -1453,17 +1453,17 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         mock_event = create_mock_event(
-            entity_type="asset",
-            entity_id="nonexistent-asset-id",
-            event_type="asset_created",
+            entity_type="album",
+            entity_id="nonexistent-album-id",
+            event_type="album_created",
             created_at=updated_at,
             cursor="cursor_missing_1",
         )
         mock_client.events.get.return_value = create_mock_events_response([mock_event])
         # Entity not in fetch results — empty page
-        mock_client.assets.list.return_value = create_mock_entity_page([])
+        mock_client.albums.list.return_value = create_mock_entity_page([])
 
-        request = SyncStreamDto(types=[SyncRequestType.AssetsV1])
+        request = SyncStreamDto(types=[SyncRequestType.AlbumsV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
@@ -2154,8 +2154,9 @@ class TestRepeatedEntityEvents:
                 [
                     self._event(a.id, "c1", "person_created"),
                     self._event(gone.id, "c2", "person_created"),
+                    self._event(gone.id, "c3", "person_updated"),
                 ],
-                [self._event(gone.id, "c3", "person_updated")],
+                [self._event(gone.id, "c4", "person_updated")],
             ],
             [a],
         )
@@ -2166,8 +2167,31 @@ class TestRepeatedEntityEvents:
 
         assert lines == [("PersonV1", "PersonV1|c1|")]
         assert client.people.list.call_count == 1
-        assert stats.entity_not_found_skips["person"] == 2
+        assert stats.entity_not_found_skips["person"] == 3
         assert len(caplog.records) == 1
+
+    @pytest.mark.anyio
+    async def test_absent_metadata_is_read_again(self):
+        """A metadata read also misses a trashed or moved-out asset, which can
+        come back mid-pass, so a miss is not final."""
+        metadata = create_mock_metadata_data(self.UPDATED_AT)
+        asset = create_mock_asset_data(self.UPDATED_AT)
+        asset.id = metadata.asset_id
+        asset.metadata = metadata
+        client = self._client(
+            [
+                [self._event(asset.id, "c1", "metadata_updated")],
+                [self._event(asset.id, "c2", "metadata_updated")],
+            ]
+        )
+        client.assets.list.side_effect = [
+            create_mock_entity_page([]),
+            create_mock_entity_page([asset]),
+        ]
+
+        assert await self._stream(client, "metadata", SyncEntityType.AssetExifV1) == [
+            ("AssetExifV1", "AssetExifV1|c2|"),
+        ]
 
     @pytest.mark.anyio
     async def test_delete_after_a_skipped_repeat_is_still_buffered(self):

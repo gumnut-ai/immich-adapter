@@ -20,11 +20,16 @@ the event cursor remains unacknowledged.
 
 ## Event Classification
 
-Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync event from event data), `_SKIPPED_EVENT_TYPES` (ignored), and everything else is treated as an upsert (fetch full entity from the Gumnut API). Delete events are buffered during iteration and yielded in phase 2.
+Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync
+event from event data), `_SKIPPED_EVENT_TYPES` (ignored), and everything else
+is treated as an upsert (fetch full entity from the Gumnut API). Delete events
+are buffered during iteration and yielded in phase 2. An unrecognized event
+type is therefore a re-read, which is how `asset_moved_out` and
+`asset_moved_in` are handled.
 
 ## Repeated Events for One Entity
 
-A first sync has no checkpoint, so it replays the library's whole event history, and one entity can appear in it once per change ever made to it. For the entity types in `_CURRENT_STATE_ENTITY_TYPES` the upsert is built from current state alone, so every one of those events would produce the same row. Their passes emit an entity at its first event and skip the rest, without reading the entity again; an entity a read did not return is likewise not read again, because the feed holds only committed changes and the entity is therefore gone. The stream summary logs the skipped count as `repeat_event_skips`.
+A first sync has no checkpoint, so it replays the library's whole event history, and one entity can appear in it once per change ever made to it. For the entity types in `_CURRENT_STATE_ENTITY_TYPES` the upsert is built from current state alone, so every one of those events would produce the same row. Their passes emit an entity at its first event and skip the rest, without reading the entity again; a person, album membership or stack a read did not return is likewise not read or reported again, because the feed holds only committed changes and the row is therefore deleted. Metadata is re-read: its read also misses an asset that is trashed or outside the session library, which can change mid-pass. The stream summary logs the skipped count as `repeat_event_skips`.
 
 A skipped event carries no ack. So the client's checkpoint still moves past a run of repeats, the pass emits a `SyncAckV1` line — a no-op the client echoes back — acked under the pass's own sync type at the last skipped cursor: once at the end of the pass, and at a page boundary whenever `_SKIPPED_REPEATS_PER_ACK` repeats have gone unacked. The client sends one ack request per run of same-type lines, so these lines are deliberately sparse. Only repeats of an emitted entity move the checkpoint this way; events for an absent entity never emitted a row and still do not.
 
@@ -33,6 +38,56 @@ Face, asset and album upserts are excluded because they take event-time values f
 ## Deletion Events
 
 `make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted. The feed is not in commit order, so a later re-add can sort ahead of the removal; the adapter re-reads each removed pair and upserts the current membership instead when it exists.
+
+## Asset Membership Is Read From the Session's Library
+
+An asset can move to another Gumnut library and keep its ID. The Gumnut API
+then records `asset_moved_out` in the library the asset left and
+`asset_moved_in` in the one it joined. Neither carries a payload or names the
+other library, and a move out is not a deletion: the asset may be back before
+the event is read.
+
+So for every asset event that is not `asset_deleted` (the two move types and
+older `asset_created`, `asset_updated`, and trash events alike) the asset pass
+asks the session's library whether it holds the asset now. Every Gumnut call
+in a sync is bound to that library (see
+[Library scope](adapter-architecture.md#library-scope)), and the pass lists
+the event IDs there in every state:
+
+- **Present:** the asset is upserted with its current state.
+- **Absent:** the pass emits `AssetDeleteV1`. The mobile client removes the
+  asset's faces, EXIF row, and album links with it. Only this session's
+  library is affected; a session on the destination library reads the asset
+  as present.
+- **Read failed or incomplete:** nothing is emitted. The read follows every
+  page before an ID counts as absent, and an error ends the stream before the
+  cursor is acknowledged.
+
+A by-ID asset read must not decide membership: it is not scoped to a library,
+so a user who can read both libraries would still get the moved asset back.
+
+The removal is emitted in feed order during phase 1 rather than buffered for
+phase 2, and its ack advances the asset pass's own checkpoint. A later event
+that finds the asset back therefore wins, an interrupted stream cannot
+acknowledge past an undelivered removal, and a library emptied by moves does
+not replay them on every sync. An asset created and permanently deleted
+within one window gets a second, harmless `AssetDeleteV1` from its
+`asset_deleted` event.
+
+An adapter without this behavior skips the absent asset and leaves it on the
+client, so it must not run against a Gumnut API that moves assets.
+
+Two things this pass does not do, which a move depends on the Gumnut API for:
+
+- **Hydrating an arriving asset.** EXIF and face rows are emitted only from
+  `metadata` and `face` events in the session library's feed. An asset that
+  arrives with only `asset_moved_in` syncs without them, so the API must
+  record those events in the destination feed with the move.
+- **Stacks.** An absent stack row is still confirmed with a by-ID read (see
+  [Stacks](#stacks-stacksv1)), which is not scoped to a library. That is
+  correct only while a stack never changes library, so when every asset of a
+  stack moves, the API must delete the stack and create a new one in the
+  destination rather than move it under its ID.
 
 ## Gating Rows Is a State Transition, Never an Omission
 

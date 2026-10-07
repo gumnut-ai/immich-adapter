@@ -95,6 +95,31 @@ async def _resolve_stack_primary_for_sync(
     return safe_uuid_from_asset_id(primary_id)
 
 
+async def _read_library_assets(
+    client: AsyncGumnut, asset_ids: list[str]
+) -> dict[str, AssetResponse]:
+    """Read which of ``asset_ids`` the client's library holds, in any state.
+
+    An omitted ID is absent from the library, so every page is read before an
+    ID counts as omitted and a failed read propagates.
+
+    ``state="all"`` keeps trashed assets, so a trash event hydrates and an
+    album cover pointing at a trashed asset survives until restore.
+    """
+    page = await client.assets.list(
+        state="all",
+        ids=asset_ids,
+        limit=len(asset_ids),
+        include=ASSET_INCLUDE_NO_PEOPLE,
+    )
+    found = {asset.id: asset for asset in page.data}
+    # A full page reports more to come; stop once every ID is accounted for.
+    while len(found) < len(asset_ids) and page.has_next_page():
+        page = await page.get_next_page()
+        found.update({asset.id: asset for asset in page.data})
+    return found
+
+
 async def fetch_entities_map(
     gumnut_client: AsyncGumnut,
     gumnut_entity_type: str,
@@ -139,19 +164,7 @@ async def fetch_entities_map(
 
     for chunk in _batched(unique_ids, GUMNUT_API_MAX_BULK_IDS):
         if gumnut_entity_type == "asset":
-            # state="all" includes trashed assets so ASSET_TRASHED events hydrate
-            # successfully — the default live-only filter would silently drop
-            # them from page.data, dropping the event before it reaches the
-            # client. Also covers payload-ref FK verification: album_cover_asset_id
-            # pointing at a trashed asset must not be nulled out, since restore
-            # should keep the cover intact.
-            page = await gumnut_client.assets.list(
-                state="all",
-                ids=chunk,
-                limit=len(chunk),
-                include=ASSET_INCLUDE_NO_PEOPLE,
-            )
-            result.update({entity.id: entity for entity in page.data})
+            result.update(await _read_library_assets(gumnut_client, chunk))
 
         elif gumnut_entity_type == "album":
             page = await gumnut_client.albums.list(ids=chunk, limit=len(chunk))
