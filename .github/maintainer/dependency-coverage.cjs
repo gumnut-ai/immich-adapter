@@ -64,32 +64,6 @@ async function assertCurrentHead({github, context, bundle}) {
   if (current.data.commit.sha !== context.sha) throw Error('Default branch advanced; retry on its current SHA');
 }
 
-async function assertCoverage({github, context, bundle}) {
-  await assertCurrentHead({github, context, bundle});
-  const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
-    ...context.repo, workflow_id:'maintainer-dependencies.yml', head_sha:context.sha,
-    branch:context.payload.repository.default_branch, status:'success', per_page:100,
-  });
-  let verifiedRun;
-  for (const run of runs.filter(run => run.head_sha === context.sha && run.conclusion === 'success' &&
-    ['push','schedule','workflow_dispatch'].includes(run.event))) {
-    // A workflow whose gated index job was skipped can conclude success. Require
-    // the latest attempt's actual job and submission/readback step to succeed.
-    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-      ...context.repo, run_id:run.id, filter:'latest', per_page:100,
-    });
-    if (jobs.some(job => job.name === 'index' && job.head_sha === context.sha &&
-      job.conclusion === 'success' && job.steps?.some(step =>
-        step.name === 'Submit to GitHub and require complete graph readback' && step.conclusion === 'success'))) {
-      verifiedRun=run;
-      break;
-    }
-  }
-  if (!verifiedRun)
-    throw Error('No successful locked-dependency submission/readback on this exact source SHA');
-  return {status:'verified', submission_run:verifiedRun.html_url, sha:context.sha, readback:await verifyGraph({github, repo:context.repo, bundle}), inventory:bundle.inventory};
-}
-
 async function submit({github, context, bundle, report, sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)), attempts=12}) {
   await assertCurrentHead({github, context, bundle});
   const receipt = {sha:context.sha, inventory:bundle.inventory, status:'incomplete'};
@@ -116,4 +90,4 @@ async function submit({github, context, bundle, report, sleep=ms=>new Promise(re
   throw failure;
 }
 
-module.exports={verifyGraph, assertCoverage, submit};
+module.exports={verifyGraph, submit};

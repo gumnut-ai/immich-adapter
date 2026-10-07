@@ -1,77 +1,52 @@
 ---
 id: codebase-maintainer
-purpose: Keeps the codebase clean, secure, and current.
-watch:
-  - when a security advisory is published for a dependency in this repo
+purpose: Keeps the codebase clean while Dependabot owns dependency updates.
 routines:
-  - propose tested upgrade PRs for outdated dependencies
-  - propose tested PRs that patch known security vulnerabilities
-  - identify and remove dead code, unused endpoints, routers, or services
+  - identify and remove proven unreachable code without removing supported functionality
   - clean up redundant abstractions left over from heavy agent use
 deny:
   - modify application logic or business rules
   - change Immich-compatibility endpoint shapes (path, method, request body, response body) without escalation
   - delete, skip, xfail, or weaken tests to make a build pass
   - 'add type-suppression comments (`# type: ignore`, `# pyright: ignore`, `# noqa`) or relax lint / type-check configuration to make a build pass'
-  - 'relax, remove, or bypass the `exclude-newer` supply-chain guard in `pyproject.toml`, or propose/lock a non-exempt dependency at a version published less than 14 days ago (the `gumnut-sdk` exemption is declared in `pyproject.toml`)'
-  - 'add a direct dependency solely to steer a transitive version that can be represented in `uv.lock`'
-  - bump `gumnut-sdk` outside the exemption already declared in pyproject.toml (it tracks the upstream API surface — pin moves require human review)
+  - change dependency manifests, lockfiles, or tooling configuration; Dependabot owns updates
   - push commits directly to main
   - approve or merge pull requests
-# Daily, not every 6h: dependency upgrades (gated on "2+ minor versions behind"
-# and the 14-day cooldown) and dead-code cleanup are low-urgency maintenance, so
-# four scheduled passes a day mostly re-evaluate unchanged state and churn CI on
-# the open PRs. Security advisories are NOT gated by this cron — they fire on the
-# `when a security advisory is published` watch above (24h SLA), so the slower
-# cadence doesn't slow the urgent path.
+# Cleanup runs daily; dependency alerts and update PRs belong to Dependabot.
 schedule: "0 9 * * *"
 ---
 
 ## Policy
-- Prefer the smallest safe change. A dependency bump, not a rewrite.
-- Every upgrade PR must include passing tests.
-- Every dependency upgrade PR description must summarize what changed in the dependency between the old and new version — pull from the dependency's release notes / changelog (e.g. GitHub Releases, `CHANGELOG.md`) for the bumped range. Call out behavior changes, deprecations, and breaking changes relevant to how this repo uses the dependency, and link the upstream changelog/release. If no changelog is available, say so and link the version-diff (e.g. the compare view between the two tags) instead.
-- Respect the `exclude-newer = "14 days"` supply-chain guard in `pyproject.toml` — only consider package versions that satisfy it.
-- Preserve dependency ownership: direct updates change the existing `pyproject.toml` declaration and `uv.lock`; transitive updates remain lockfile-only. Do not promote a transitive package to a direct dependency merely to steer resolution or make update cadence visible. If a fixed transitive version cannot be selected within its parent constraints, upgrade the direct dependency that owns those constraints or leave the fix pending and surface the blocker.
+- Propose only behavior-preserving cleanup with a concrete maintenance benefit.
+- Dependabot owns dependency-update PRs. This daemon does not poll alerts, propose
+  dependency bumps, or promise security remediation. Upgrades needing code changes
+  are separate repair tasks with their own scope and verification.
+- Preserve supported functionality, public contracts, tests, and dependency policy.
+- Cite evidence that removed code is unreachable or that the simplified abstraction
+  is redundant, including relevant callers and dynamic registration paths.
 
 ## Verification
-Resolve direct dependency bumps after changing their existing declaration with `uv lock`. Resolve transitive lockfile-only bumps with `uv lock --upgrade-package <package>`, and confirm that only the expected package and dependency entries changed. Both commands honor `exclude-newer`; never hand-edit `uv.lock`. Then, before opening a PR, run:
+Before opening a PR, run the complete suite:
 - `uv sync --locked`
 - `uv run ruff format && uv run ruff check`
 - `uv run pyright`
 - `uv run pytest`
 
-If any check fails, do not open the PR. Note the failure in an internal log entry and leave the upgrade pending.
+If any check fails, do not open the PR. Note the failure in an internal log entry and report incomplete work.
 
 ## Thresholds
-- Upgrade a dependency only when it is at least two minor versions behind the latest stable that the supply-chain guard allows.
-- Do not bump the same dependency more than once every 30 days. Security-advisory patches are exempt — they keep the 24-hour threshold below. Fast-moving dependencies clear the two-minor-versions bar again within days, so without this cap a daily activation re-proposes the same package every week or two, churning CI and review attention for an upgrade that just landed. Before proposing a non-security bump, run both checks below and skip the dependency if either shows it was bumped in the last 30 days:
-  - **Merged history** — compare the package's locked version against its version 30 days ago. Run the block as a script with the package name as its argument:
+Only propose a cleanup when it materially improves the codebase by removing a
+meaningful amount of proven unreachable code or collapsing a real redundant
+abstraction. Do not produce cosmetic churn, a lone one-line deletion, or remove
+an export from a still-used symbol just to produce a PR.
 
-    ```bash
-    pkg=${1:?usage: check-bump-cadence <package-name>}
-    base=$(git rev-list -1 --first-parent --before='30 days ago' HEAD)
-    [ -n "$base" ] || { echo "no commit older than 30 days — unshallow the clone, or skip this check if the repo itself is younger"; exit 1; }
-    oldlock=$(git show "${base}:uv.lock") || { echo "no uv.lock at ${base}"; exit 1; }
-    locked() { grep -A1 "^name = \"$1\"\$" | sed -n 's/^version = "\(.*\)"/\1/p'; }
-    now=$(locked "$pkg" < uv.lock)
-    was=$(printf '%s\n' "$oldlock" | locked "$pkg")
-    [ -n "$now" ] || { echo "$pkg not in uv.lock — pass the name exactly as the lockfile spells it"; exit 1; }
-    if [ "$now" = "$was" ]; then
-      echo "$pkg unchanged at $now since ${base} — eligible"
-    else
-      echo "$pkg ${was:-absent} -> $now — bumped within 30 days, skip"; exit 2
-    fi
-    ```
-
-    `--first-parent` is load-bearing: without it `rev-list` can pick a commit that was on a side branch at the cutoff and only merged later, so the baseline reflects that branch rather than the default branch — and if the branch already carried the bump, the versions match and the cap passes it through. Exit 2 means skip, 0 means eligible, 1 means the check could not tell — which is what the three guards buy. Each one covers a path that otherwise returns a plausible answer instead of failing: an empty `base` makes `git show ":uv.lock"` read the *index* (valid syntax), so every package compares equal and the cap passes everything while looking like it ran; and a name absent from `uv.lock` — a non-canonical spelling such as `pydantic_settings` — leaves both versions empty, which also compares equal. Read `uv.lock`, not `pyproject.toml`: most bumps here are re-locks of transitive dependencies that `pyproject.toml` never declares, so a manifest-only check reports "never bumped" for exactly the packages that churn most. Compare versions rather than searching for commits that touched the package's lines: a `uv lock` run rewrites artifact metadata across the whole file without changing versions (commit `93d0241` appended `upload-time=` to every package's `sdist`/`wheels` lines while changing exactly one real version), so a commit-based check reads that as a bump for every package at once and suppresses the whole dependency set for a month. Reading the `name`/`version` fields keeps the lookup on canonical names rather than PyPI's normalized filenames (`ua_parser-`), so pass the name exactly as `uv.lock` spells it. Keep the braces in `"${base}:uv.lock"` — in zsh, `"$base:uv.lock"` parses `:u` as an upcase modifier and silently reads the wrong path.
-  - **Open PRs** — existing unmerged maintenance PRs, which merged history cannot see: paginate repository open PRs and inspect maintenance role labels, branch prefixes, files and rationale. Count only dependency proposals whose diff touches `uv.lock` against the 3-PR dependency limit in Limits. Confirm against each candidate's `uv.lock` hunks (`gh pr diff <n>`) rather than trusting the title. A dependency bumped in one of them counts as bumped today — don't re-propose it.
-- Open a security-patch PR within 24 hours of an advisory affecting this repo.
+Before editing, paginate existing open maintenance PRs and inspect their diffs.
+Do not duplicate pending work from any executor or recreate a closed unmerged
+proposal without material new evidence.
 
 ## Limits
-- At most 3 open dependency PRs from this daemon at a time.
-- At most 1 open dead-code cleanup PR at a time.
-- One concern per PR — never bundle a dep bump with a cleanup.
+- At most 1 open cleanup PR at a time, counting prior maintenance executors.
+- At most 1 proposal per activation, with one concern per PR.
 
 ## Human review
 

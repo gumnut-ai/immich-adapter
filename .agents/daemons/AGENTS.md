@@ -77,7 +77,7 @@ activation result, and do not claim the human-review handoff succeeded.
 
 ## Role policies
 
-- `codebase-maintainer/` — keeps dependencies current and the codebase clean.
+- `codebase-maintainer/` — proposes tested codebase cleanup; Dependabot owns dependency updates.
 - `librarian/` — keeps this repo's documentation current and complete.
 - `pr-review/` — reviews pull requests under repo-authored policy, across the lanes
   in `pr-review/references/lanes/`.

@@ -16,7 +16,6 @@ sudo /usr/bin/env -i PATH="$PATH" HOME="$HOME" USER="${USER:-runner}" \
   --allow-host-service-ports "$MAINTAINER_SERVICE_PORTS" \
   --legacy-security --enable-host-access --allow-host-ports 80,443,8080 \
   --mount "$trusted:/trusted-maintainer:ro" \
-  --mount /tmp/maintainer-input:/tmp/maintainer-input:ro \
   --env "PATH=$PATH" --env "UV_CACHE_DIR=${UV_CACHE_DIR:-}" \
   --env "RUNNER_TOOL_CACHE=${RUNNER_TOOL_CACHE:-}" \
   --env "RUNNER_TEMP=$RUNNER_TEMP" --env "GITHUB_SHA=$GITHUB_SHA" \

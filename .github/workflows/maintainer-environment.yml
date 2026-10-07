@@ -47,10 +47,9 @@ jobs:
       - name: Install checksum-verified AWF and preserve verification inputs
         run: |
           bash "$RUNNER_TEMP/gh-aw/actions/install_awf_binary.sh" v0.28.25
-          mkdir -p "$RUNNER_TEMP/maintainer-trusted" /tmp/maintainer-input
+          mkdir -p "$RUNNER_TEMP/maintainer-trusted"
           cp scripts/check_maintainer_environment.sh scripts/run_maintainer_sandbox.sh "$RUNNER_TEMP/maintainer-trusted/"
           cp .github/maintainer/sandbox.json "$RUNNER_TEMP/maintainer-trusted/"
-          echo '{"alerts":[],"routine":false}' > /tmp/maintainer-input/alerts.json
       - name: Run full checks inside service-aware AWF sandbox without inference
         env:
           MAINTAINER_SERVICE_PORTS: ${{ job.services.redis.ports['6379'] }}

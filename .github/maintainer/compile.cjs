@@ -8,7 +8,7 @@ const images=Object.fromEntries([...source.matchAll(/^      (agent|apiProxy|squi
 if(Object.keys(images).length!==3) throw Error('expected three digest-qualified AWF images');
 let text=fs.readFileSync('.github/workflows/maintainer.lock.yml','utf8');
 // v0.89.21 omits pre-activation permissions and rejects them in frontmatter.
-// Scope read access to the trusted checkout/coverage admission job only.
+// Scope read access to the trusted default-branch admission job only.
 const admissionStart=text.indexOf('  pre_activation:\n');
 const admissionEnd=text.indexOf('\n  safe_outputs:\n',admissionStart);
 if(admissionStart<0 || admissionEnd<0) throw Error('expected admission job boundaries');
