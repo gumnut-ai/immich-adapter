@@ -284,8 +284,7 @@ other targets must prepare and verify successfully before publication. No paid
 provider/service credentials may be used for tests. Runtime preparation failure
 is incomplete work. Preserve supply-chain config and existing tests unchanged;
 if a valid upgrade requires changing either, surface for human escalation.
-For public-web CSP hash changes, follow DAEMON's exact mechanical exception;
-other render.yaml edits are prohibited. The publisher may further block a
+The publisher may further block a
 DAEMON-allowed sensitive file; report that delivery blocker, never evade it.
 
 Use gumnut-bot[bot] author and committer. Commit at most three commits, keep a

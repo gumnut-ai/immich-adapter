@@ -2,10 +2,10 @@
 id: codebase-maintainer
 purpose: Keeps the codebase clean and maintainable.
 routines:
-  - identify and remove proven unreachable code without removing supported functionality
-  - clean up redundant abstractions left over from heavy agent use
+  - find and implement useful behavior-preserving improvements to simplicity, clarity, reuse, and responsibility boundaries
+  - remove proven dead code and redundant state, abstractions, and ceremony when the result is easier to maintain
 deny:
-  - modify application logic or business rules
+  - change observable application behavior or business rules
   - change Immich-compatibility endpoint shapes (path, method, request body, response body) without escalation
   - delete, skip, xfail, or weaken tests to make a build pass
   - 'add type-suppression comments (`# type: ignore`, `# pyright: ignore`, `# noqa`) or relax lint / type-check configuration to make a build pass'
@@ -30,6 +30,33 @@ schedule: "0 9 * * *"
 - Cite evidence that removed code is unreachable or that the simplified abstraction
   is redundant, including relevant callers and dynamic registration paths.
 
+## Improving the codebase
+Understand the relevant code, callers, tests, and repository conventions before
+choosing a change. Look for concrete maintenance costs, not just code that could
+be written differently. Use these perspectives with judgment:
+
+- **Reuse:** search for an existing helper, constant, type, or component before
+  creating another. Consolidate copies that encode the same rule and could
+  drift; preserve separate implementations with genuinely different contracts.
+- **Simplification:** remove derivable state, repeated normalization, wrappers
+  with no useful contract, identical branches, and unnecessary abstractions.
+  Keep validation at real trust boundaries and guards needed by other callers.
+- **Responsibility:** put a rule in the layer that owns it. Prefer a bounded fix
+  to the shared mechanism over another caller-specific flag or compensating
+  lifecycle protocol. Do not turn a local cleanup into a speculative redesign.
+- **Minimalism:** remove redundant locals, unnecessary defensive copies, and
+  comments that merely restate code. Preserve rationale and hidden constraints;
+  shorter code is not necessarily clearer.
+
+Compare the candidate with doing nothing and with the smallest useful change.
+Callers and future maintenance should become meaningfully simpler; introducing
+new indirection or options merely to hide duplication is not an improvement.
+Verify behavioral equivalence, including supported cases the current tests may
+not cover. In the PR, explain the concrete cost removed and why the new shape is
+better; passing tests alone is not evidence of maintenance value. If the simpler
+solution would change supported behavior or a public contract, report the
+tradeoff for human judgment rather than implementing it.
+
 ## Verification
 Before opening a PR, run the complete suite:
 - `uv sync --locked`
@@ -40,10 +67,11 @@ Before opening a PR, run the complete suite:
 If any check fails, do not open the PR. Note the failure in an internal log entry and report incomplete work.
 
 ## Thresholds
-Only propose a cleanup when it materially improves the codebase by removing a
-meaningful amount of proven unreachable code or collapsing a real redundant
-abstraction. Do not produce cosmetic churn, a lone one-line deletion, or remove
-an export from a still-used symbol just to produce a PR.
+Propose a change when its concrete maintenance benefit outweighs its complexity
+and review cost. Size is not a quota: a small change can remove a real drift risk
+or clarify ownership. Avoid cosmetic churn, equally complex rewrites, and edits
+made merely to produce a PR. Report a no-op when no worthwhile improvement is
+found.
 
 Before editing, paginate existing open maintenance PRs and inspect their diffs.
 Do not duplicate pending work from any executor or recreate a closed unmerged
