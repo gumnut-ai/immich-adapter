@@ -76,10 +76,10 @@ Two things this pass does not do, which a move depends on the Gumnut API for:
   arrives with only `asset_moved_in` syncs without them, so the API must
   record those events in the destination feed with the move.
 - **Stacks.** An absent stack row is still confirmed with a by-ID read (see
-  [Stacks](#stacks-stacksv1)), which finds a stack that moved to another
-  library the user can read and stops the sync. A stack that moves must
-  record `stack_deleted` in the source feed, which excuses the absence when
-  it falls in the same sync window.
+  [Stacks](#stacks-stacksv1)), which is not scoped to a library. That is
+  correct only while a stack never changes library, so when every asset of a
+  stack moves, the API must delete the stack and create a new one in the
+  destination rather than move it under its ID.
 
 ## Gating Rows Is a State Transition, Never an Omission
 
