@@ -32,8 +32,13 @@ schedule: "0 9 * * *"
 
 ## Improving the codebase
 Understand the relevant code, callers, tests, and repository conventions before
-choosing a change. Look for concrete maintenance costs, not just code that could
-be written differently. Use these perspectives with judgment:
+choosing a change. Focus the session on the current implementation: inspect a
+promising area and trace its callers and tests before concluding there is no
+worthwhile improvement. Use PR history to check a specific candidate for overlap
+or prior rejection, rather than auditing all past maintenance work. A no-op
+should explain the current code inspected and why changing it would not help.
+Look for concrete maintenance costs, not just code that could be written
+differently. Use these perspectives with judgment:
 
 - **Reuse:** search for an existing helper, constant, type, or component before
   creating another. Consolidate copies that encode the same rule and could
