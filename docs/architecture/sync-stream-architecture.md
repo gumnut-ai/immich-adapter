@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-10-03
+last-updated: 2026-10-07
 ---
 
 # Sync Stream Architecture
@@ -21,6 +21,14 @@ the event cursor remains unacknowledged.
 ## Event Classification
 
 Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync event from event data), `_SKIPPED_EVENT_TYPES` (ignored), and everything else is treated as an upsert (fetch full entity from the Gumnut API). Delete events are buffered during iteration and yielded in phase 2.
+
+## Repeated Events for One Entity
+
+A first sync has no checkpoint, so it replays the library's whole event history, and one entity can appear in it hundreds of times (a person touched by every clustering run, for instance). For the entity types in `_CURRENT_STATE_ENTITY_TYPES` the upsert is built from current state alone, so every one of those events would produce the same row. Their passes emit an entity at its first event and skip the rest, without reading the entity again; an entity a read did not return is likewise not read again.
+
+A skipped event carries no ack. So the client's checkpoint still moves past a run of repeats, the pass emits a `SyncAckV1` line — a no-op the client echoes back — acked under the pass's own sync type at the last skipped cursor: once at the end of the pass, and at a page boundary whenever `_SKIPPED_REPEATS_PER_ACK` repeats have gone unacked. The client sends one ack request per run of same-type lines, so these lines are deliberately sparse. Only repeats of an emitted entity move the checkpoint this way; events for an absent entity never emitted a row and still do not.
+
+Faces, assets and albums are excluded because their upserts take event-time values from the event payload (see the handling sections below), so two events for one entity can produce different rows.
 
 ## Deletion Events
 

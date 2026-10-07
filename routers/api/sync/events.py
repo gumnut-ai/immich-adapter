@@ -131,6 +131,24 @@ def make_sync_event(
     )
 
 
+def make_ack_only_event(entity_type: SyncEntityType, cursor: str) -> str:
+    """Create a ``SyncAckV1`` line that checkpoints ``entity_type`` at ``cursor``.
+
+    The client treats ``SyncAckV1`` as a no-op and echoes its ack back, so the
+    line moves a checkpoint without delivering a row.
+    """
+    return (
+        json.dumps(
+            {
+                "type": SyncEntityType.SyncAckV1.value,
+                "data": {},
+                "ack": to_ack_string(entity_type, cursor),
+            }
+        )
+        + "\n"
+    )
+
+
 def removed_album_asset_pair(event: EventData) -> tuple[str, str] | None:
     """The ``(album_id, asset_id)`` an ``album_asset_removed`` payload names,
     or ``None`` when the payload lacks either."""

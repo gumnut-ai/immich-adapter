@@ -12,6 +12,7 @@ import pytest
 from routers.api.sync.routes import get_sync_stream
 from routers.api.sync.converters import gumnut_album_to_sync_album_user_v1
 from routers.api.sync.fk_integrity import SyncStreamStats
+from routers.api.sync import stream as stream_module
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
     SyncBound,
@@ -1997,3 +1998,230 @@ class TestStreamEntityTypePagination:
         assert len(results) == EVENTS_PAGE_SIZE
         # Only one API call — no second page fetch
         mock_client.events.get.assert_called_once()
+
+
+class TestRepeatedEntityEvents:
+    """A pass over a current-state entity type emits each entity once."""
+
+    UPDATED_AT = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+
+    def _person(self, n: int) -> Mock:
+        person = create_mock_person_data(self.UPDATED_AT)
+        person.id = uuid_to_gumnut_person_id(UUID(int=n))
+        return person
+
+    def _person_event(self, person_id: str, cursor: str, event_type: str) -> Mock:
+        return create_mock_event(
+            entity_type="person",
+            entity_id=person_id,
+            event_type=event_type,
+            created_at=self.UPDATED_AT,
+            cursor=cursor,
+        )
+
+    def _client(self, pages: list[list[Mock]], people: list[Mock]) -> Mock:
+        client = create_mock_gumnut_client(create_mock_user(self.UPDATED_AT))
+        client.events.get.side_effect = [
+            create_mock_events_response(
+                page, has_more=i < len(pages) - 1, next_cursor=f"next_{i}"
+            )
+            for i, page in enumerate(pages)
+        ]
+        by_id = {person.id: person for person in people}
+        client.people.list.side_effect = lambda **kwargs: create_mock_entity_page(
+            [by_id[id_] for id_ in kwargs["ids"] if id_ in by_id]
+        )
+        return client
+
+    async def _stream_people(self, client: Mock) -> list[dict]:
+        return [
+            json.loads(line)
+            async for line, _ in _stream_entity_type(
+                gumnut_client=client,
+                gumnut_entity_type="person",
+                sync_entity_type=SyncEntityType.PersonV1,
+                owner_id=TEST_UUID,
+                checkpoint=None,
+                bound=SyncBound(),
+                stats=SyncStreamStats(),
+                checkpoint_map={},
+                delete_buffer=[],
+            )
+        ]
+
+    @pytest.mark.anyio
+    async def test_repeats_are_skipped_and_acked_at_the_end(self):
+        """Later events for an emitted person emit nothing, are not read
+        again, and the pass ends by checkpointing past them."""
+        a, b = self._person(1), self._person(2)
+        client = self._client(
+            [
+                [
+                    self._person_event(a.id, "c1", "person_created"),
+                    self._person_event(a.id, "c2", "person_updated"),
+                    self._person_event(b.id, "c3", "person_created"),
+                ],
+                [
+                    self._person_event(a.id, "c4", "person_updated"),
+                    self._person_event(b.id, "c5", "person_updated"),
+                ],
+            ],
+            [a, b],
+        )
+
+        lines = await self._stream_people(client)
+
+        assert [(line["type"], line["ack"]) for line in lines] == [
+            ("PersonV1", "PersonV1|c1|"),
+            ("PersonV1", "PersonV1|c3|"),
+            ("SyncAckV1", "PersonV1|c5|"),
+        ]
+        assert lines[-1]["data"] == {}
+        # The second page holds only repeats, so it reads no people.
+        assert [c.kwargs["ids"] for c in client.people.list.call_args_list] == [
+            [a.id, b.id]
+        ]
+
+    @pytest.mark.anyio
+    async def test_no_ack_line_when_the_last_event_is_emitted(self):
+        """An emitted row already carries the latest cursor."""
+        a, b = self._person(1), self._person(2)
+        client = self._client(
+            [
+                [
+                    self._person_event(a.id, "c1", "person_created"),
+                    self._person_event(a.id, "c2", "person_updated"),
+                    self._person_event(b.id, "c3", "person_created"),
+                ]
+            ],
+            [a, b],
+        )
+
+        lines = await self._stream_people(client)
+
+        assert [line["ack"] for line in lines] == ["PersonV1|c1|", "PersonV1|c3|"]
+
+    @pytest.mark.anyio
+    async def test_long_run_of_repeats_is_acked_between_pages(self, monkeypatch):
+        """A run of repeats at least the interval long is checkpointed at the
+        page boundary instead of waiting for the end of the pass."""
+        monkeypatch.setattr(stream_module, "_SKIPPED_REPEATS_PER_ACK", 2)
+        a, b = self._person(1), self._person(2)
+        client = self._client(
+            [
+                [
+                    self._person_event(a.id, "c1", "person_created"),
+                    self._person_event(a.id, "c2", "person_updated"),
+                    self._person_event(a.id, "c3", "person_updated"),
+                ],
+                [self._person_event(b.id, "c4", "person_created")],
+            ],
+            [a, b],
+        )
+
+        lines = await self._stream_people(client)
+
+        assert [(line["type"], line["ack"]) for line in lines] == [
+            ("PersonV1", "PersonV1|c1|"),
+            ("SyncAckV1", "PersonV1|c3|"),
+            ("PersonV1", "PersonV1|c4|"),
+        ]
+
+    @pytest.mark.anyio
+    async def test_absent_entity_is_read_once_and_never_acked(self):
+        """A person the read did not return is not read again, and its events
+        do not move the checkpoint: they emitted nothing before either."""
+        a, gone = self._person(1), self._person(2)
+        client = self._client(
+            [
+                [
+                    self._person_event(a.id, "c1", "person_created"),
+                    self._person_event(gone.id, "c2", "person_created"),
+                ],
+                [self._person_event(gone.id, "c3", "person_updated")],
+            ],
+            [a],
+        )
+
+        lines = await self._stream_people(client)
+
+        assert [line["ack"] for line in lines] == ["PersonV1|c1|"]
+        assert client.people.list.call_count == 1
+
+    @pytest.mark.anyio
+    async def test_delete_after_a_skipped_repeat_is_still_buffered(self):
+        """Skipping repeats leaves the person's delete event in place."""
+        a = self._person(1)
+        client = self._client(
+            [
+                [
+                    self._person_event(a.id, "c1", "person_created"),
+                    self._person_event(a.id, "c2", "person_updated"),
+                    self._person_event(a.id, "c3", "person_deleted"),
+                ]
+            ],
+            [a],
+        )
+        delete_buffer: list[tuple[str, SyncEntityType]] = []
+
+        lines = [
+            json.loads(line)
+            async for line, _ in _stream_entity_type(
+                gumnut_client=client,
+                gumnut_entity_type="person",
+                sync_entity_type=SyncEntityType.PersonV1,
+                owner_id=TEST_UUID,
+                checkpoint=None,
+                bound=SyncBound(),
+                stats=SyncStreamStats(),
+                checkpoint_map={},
+                delete_buffer=delete_buffer,
+            )
+        ]
+
+        assert [(line["type"], line["ack"]) for line in lines] == [
+            ("PersonV1", "PersonV1|c1|"),
+            ("SyncAckV1", "PersonV1|c2|"),
+        ]
+        assert [kind for _, kind in delete_buffer] == [SyncEntityType.PersonDeleteV1]
+
+    @pytest.mark.anyio
+    async def test_payload_carrying_types_still_emit_every_event(self):
+        """Asset upserts take event-time values, so repeats are not skipped."""
+        client = create_mock_gumnut_client(create_mock_user(self.UPDATED_AT))
+        asset = create_mock_asset_data(self.UPDATED_AT)
+        client.events.get.return_value = create_mock_events_response(
+            [
+                create_mock_event(
+                    entity_type="asset",
+                    entity_id=asset.id,
+                    event_type=event_type,
+                    created_at=self.UPDATED_AT,
+                    cursor=cursor,
+                )
+                for cursor, event_type in [
+                    ("c1", "asset_created"),
+                    ("c2", "asset_updated"),
+                ]
+            ]
+        )
+        client.assets.list.return_value = create_mock_entity_page([asset])
+
+        lines = [
+            json.loads(line)
+            async for line, _ in _stream_entity_type(
+                gumnut_client=client,
+                gumnut_entity_type="asset",
+                sync_entity_type=SyncEntityType.AssetV1,
+                owner_id=TEST_UUID,
+                checkpoint=None,
+                bound=SyncBound(),
+                stats=SyncStreamStats(),
+                checkpoint_map={},
+            )
+        ]
+
+        assert [(line["type"], line["ack"]) for line in lines] == [
+            ("AssetV1", "AssetV1|c1|"),
+            ("AssetV1", "AssetV1|c2|"),
+        ]

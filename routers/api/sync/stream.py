@@ -46,6 +46,7 @@ from routers.api.sync.entity_fetch import (
 )
 from routers.api.sync.events import (
     convert_entity_to_sync_event,
+    make_ack_only_event,
     make_delete_sync_event,
     make_sync_event,
     removed_album_asset_pair,
@@ -169,6 +170,23 @@ _V1_SUPERSEDED_BY_V2: dict[SyncRequestType, SyncRequestType] = {
 _DERIVED_UPSERT_ONLY_TYPES: frozenset[SyncEntityType] = frozenset(
     {SyncEntityType.AlbumUserV1}
 )
+
+# Entity types whose upsert is built from current state alone, so every event
+# for one entity in a sync yields the same row. A pass over one of these emits
+# each entity at its first event and skips the repeats; a first sync replays
+# the whole event history, where repeats far outnumber entities. Faces, assets
+# and albums are excluded: their upserts take event-time values from the event
+# payload, so two events for one entity can differ.
+_CURRENT_STATE_ENTITY_TYPES: frozenset[str] = frozenset(
+    {"person", "metadata", "album_asset", "stack"}
+)
+
+# How many repeats a pass skips before it checkpoints past them with a
+# SyncAckV1 line. A skipped repeat carries no ack, so without one an
+# interrupted sync resumes from the last emitted row and re-reads the skipped
+# stretch. The client sends one ack request per run of same-type lines, so
+# each SyncAckV1 costs it a request; the interval bounds both.
+_SKIPPED_REPEATS_PER_ACK = 5000
 
 # Order for streaming delete events — reverse of FK dependency order.
 # Children are deleted before parents so the client can clean up FK references
@@ -368,6 +386,15 @@ async def _stream_entity_type(
     last_cursor = checkpoint.cursor if checkpoint else None
     count = 0
 
+    # See _CURRENT_STATE_ENTITY_TYPES. absent_ids are entities a read in this
+    # pass did not return; they are not read again.
+    skip_repeats = gumnut_entity_type in _CURRENT_STATE_ENTITY_TYPES
+    emitted_ids: set[str] = set()
+    absent_ids: set[str] = set()
+    # Cursor of the latest skipped repeat since the last emitted row.
+    unacked_cursor: str | None = None
+    skipped_repeats = 0
+
     while True:
         # Read under the sync's shared bound (see SyncBound), and continue from
         # next_cursor rather than the last event's cursor: next_cursor keeps
@@ -395,6 +422,8 @@ async def _stream_entity_type(
             for event in events
             if event.event_type not in _DELETE_EVENT_TYPES
             and event.event_type not in _SKIPPED_EVENT_TYPES
+            and event.entity_id not in emitted_ids
+            and event.entity_id not in absent_ids
         ]
 
         # Batch-fetch entities for upserts
@@ -427,6 +456,8 @@ async def _stream_entity_type(
                     bound,
                 )
             stats.not_found_ids[gumnut_entity_type].update(not_returned)
+            if skip_repeats:
+                absent_ids.update(not_returned)
 
         # Verify that IDs referenced in event payloads (e.g. face_updated's
         # person_id, album_updated's album_cover_asset_id) still exist in
@@ -503,6 +534,9 @@ async def _stream_entity_type(
                 membership = current_memberships.get(pair) if pair is not None else None
                 if membership is not None:
                     # Re-added since: upsert the current row instead.
+                    emitted_ids.add(membership.id)
+                    unacked_cursor = None
+                    skipped_repeats = 0
                     stats.streamed_ids[gumnut_entity_type].add(membership.id)
                     check_fk_references(
                         gumnut_entity_type,
@@ -535,6 +569,11 @@ async def _stream_entity_type(
                 else:
                     stats.delete_event_skips += 1
             else:
+                if event.entity_id in emitted_ids:
+                    unacked_cursor = event.cursor
+                    skipped_repeats += 1
+                    continue
+
                 # Do not omit gated rows: existing clients need V2 hidden
                 # upserts or V1 retractions.
                 suppress_geometry = event.entity_id in suppressed_face_ids
@@ -693,11 +732,23 @@ async def _stream_entity_type(
                 )
                 yield json_line, 1
                 count += 1
+                if skip_repeats:
+                    emitted_ids.add(event.entity_id)
+                    unacked_cursor = None
+                    skipped_repeats = 0
+
+        if unacked_cursor is not None and skipped_repeats >= _SKIPPED_REPEATS_PER_ACK:
+            yield make_ack_only_event(sync_entity_type, unacked_cursor), 0
+            unacked_cursor = None
+            skipped_repeats = 0
 
         last_cursor = events_response.next_cursor
 
         if not events_response.has_more:
             break
+
+    if unacked_cursor is not None:
+        yield make_ack_only_event(sync_entity_type, unacked_cursor), 0
 
     if count > 0:
         logger.debug(
