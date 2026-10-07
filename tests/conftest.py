@@ -378,10 +378,19 @@ class MockSyncCursorPage:
     - ``page = await paginator`` (returns self with .data, used by entity_fetch)
     """
 
-    def __init__(self, items: List[Any]):
+    def __init__(self, items: List[Any], next_page: "MockSyncCursorPage | None" = None):
         self.items = items
         self.data = items
-        self.has_more = False
+        self.next_page = next_page
+        self.has_more = next_page is not None
+
+    def has_next_page(self) -> bool:
+        # Like the SDK, an empty page never has a next one.
+        return bool(self.data) and self.has_more
+
+    async def get_next_page(self) -> "MockSyncCursorPage":
+        assert self.next_page is not None
+        return self.next_page
 
     def __iter__(self):
         return iter(self.items)
