@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-10-03
+last-updated: 2026-10-07
 ---
 
 # Sync Stream Architecture
@@ -20,11 +20,66 @@ the event cursor remains unacknowledged.
 
 ## Event Classification
 
-Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync event from event data), `_SKIPPED_EVENT_TYPES` (ignored), and everything else is treated as an upsert (fetch full entity from the Gumnut API). Delete events are buffered during iteration and yielded in phase 2.
+Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync
+event from event data), `_SKIPPED_EVENT_TYPES` (ignored), and everything else
+is treated as an upsert (fetch full entity from the Gumnut API). Delete events
+are buffered during iteration and yielded in phase 2. An unrecognized event
+type is therefore a re-read, which is how `asset_moved_out` and
+`asset_moved_in` are handled.
 
 ## Deletion Events
 
 `_make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted. The feed is not in commit order, so a later re-add can sort ahead of the removal; the adapter re-reads each removed pair and upserts the current membership instead when it exists.
+
+## Asset Membership Is Read From the Session's Library
+
+An asset can move to another Gumnut library and keep its ID. The Gumnut API
+then records `asset_moved_out` in the library the asset left and
+`asset_moved_in` in the one it joined. Neither carries a payload or names the
+other library, and a move out is not a deletion: the asset may be back before
+the event is read.
+
+So for every asset event that is not `asset_deleted` (the two move types and
+older `asset_created`, `asset_updated`, and trash events alike) the asset pass
+asks the session's library whether it holds the asset now. Every Gumnut call
+in a sync is bound to that library (see
+[Library scope](adapter-architecture.md#library-scope)), and the pass lists
+the event IDs there in every state:
+
+- **Present:** the asset is upserted with its current state.
+- **Absent:** the pass emits `AssetDeleteV1`. The mobile client removes the
+  asset's faces, EXIF row, and album links with it. Only this session's
+  library is affected; a session on the destination library reads the asset
+  as present.
+- **Read failed or incomplete:** nothing is emitted. The read follows every
+  page before an ID counts as absent, and an error ends the stream before the
+  cursor is acknowledged.
+
+A by-ID asset read must not decide membership: it is not scoped to a library,
+so a user who can read both libraries would still get the moved asset back.
+
+The removal is emitted in feed order during phase 1 rather than buffered for
+phase 2, and its ack advances the asset pass's own checkpoint. A later event
+that finds the asset back therefore wins, an interrupted stream cannot
+acknowledge past an undelivered removal, and a library emptied by moves does
+not replay them on every sync. An asset created and permanently deleted
+within one window gets a second, harmless `AssetDeleteV1` from its
+`asset_deleted` event.
+
+An adapter without this behavior skips the absent asset and leaves it on the
+client, so it must not run against a Gumnut API that moves assets.
+
+Two things this pass does not do, which a move depends on the Gumnut API for:
+
+- **Hydrating an arriving asset.** EXIF and face rows are emitted only from
+  `metadata` and `face` events in the session library's feed. An asset that
+  arrives with only `asset_moved_in` syncs without them, so the API must
+  record those events in the destination feed with the move.
+- **Stacks.** An absent stack row is still confirmed with a by-ID read (see
+  [Stacks](#stacks-stacksv1)), which is not scoped to a library. That is
+  correct only while a stack never changes library, so when every asset of a
+  stack moves, the API must delete the stack and create a new one in the
+  destination rather than move it under its ID.
 
 ## Gating Rows Is a State Transition, Never an Omission
 

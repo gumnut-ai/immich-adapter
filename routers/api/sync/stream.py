@@ -21,6 +21,7 @@ from gumnut.types.face_response import FaceResponse
 from gumnut.types.user_response import UserResponse
 
 from routers.immich_models import (
+    SyncAssetDeleteV1,
     SyncAssetFaceDeleteV1,
     SyncEntityType,
     SyncRequestType,
@@ -28,6 +29,7 @@ from routers.immich_models import (
 )
 from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
     safe_uuid_from_face_id,
     safe_uuid_from_user_id,
 )
@@ -427,6 +429,8 @@ async def _stream_entity_type(
                     bound,
                 )
             stats.not_found_ids[gumnut_entity_type].update(not_returned)
+        # An asset absent on an earlier page can be back in the library now.
+        stats.not_found_ids[gumnut_entity_type].difference_update(entities_map)
 
         # Verify that IDs referenced in event payloads (e.g. face_updated's
         # person_id, album_updated's album_cover_asset_id) still exist in
@@ -559,6 +563,33 @@ async def _stream_entity_type(
 
                 # Upsert event — look up fetched entity
                 entity = entities_map.get(event.entity_id)
+                if entity is None and gumnut_entity_type == "asset":
+                    # The library read omitted the asset (moved out or
+                    # deleted): remove it inline, acked on this pass's own
+                    # checkpoint. See sync-stream-architecture.md.
+                    logger.info(
+                        "Asset absent from the session library; removing it",
+                        extra={
+                            "entity_id": event.entity_id,
+                            "event_type": event.event_type,
+                            "cursor": event.cursor,
+                        },
+                    )
+                    stats.absent_asset_deletes += 1
+                    delete_data = SyncAssetDeleteV1(
+                        assetId=safe_uuid_from_asset_id(event.entity_id)
+                    )
+                    yield (
+                        make_sync_event(
+                            SyncEntityType.AssetDeleteV1,
+                            delete_data.model_dump(mode="json"),
+                            event.cursor,
+                            ack_type=sync_entity_type,
+                        ),
+                        1,
+                    )
+                    count += 1
+                    continue
                 if entity is None:
                     # Entity was deleted between event and fetch, or
                     # explicitly missing (e.g., asset fetched but no metadata).
@@ -949,6 +980,8 @@ async def generate_sync_stream(
             summary_extra["fk_reference_warnings"] = stats.fk_warnings
         if stats.suppressed_face_geometry > 0:
             summary_extra["suppressed_face_geometry"] = stats.suppressed_face_geometry
+        if stats.absent_asset_deletes > 0:
+            summary_extra["absent_asset_deletes"] = stats.absent_asset_deletes
 
         logger.info("Sync stream summary", extra=summary_extra)
 

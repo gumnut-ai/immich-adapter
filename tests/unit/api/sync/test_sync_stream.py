@@ -1451,17 +1451,17 @@ class TestGenerateSyncStream:
         mock_client = create_mock_gumnut_client(mock_user)
 
         mock_event = create_mock_event(
-            entity_type="asset",
-            entity_id="nonexistent-asset-id",
-            event_type="asset_created",
+            entity_type="album",
+            entity_id="nonexistent-album-id",
+            event_type="album_created",
             created_at=updated_at,
             cursor="cursor_missing_1",
         )
         mock_client.events.get.return_value = create_mock_events_response([mock_event])
         # Entity not in fetch results — empty page
-        mock_client.assets.list.return_value = create_mock_entity_page([])
+        mock_client.albums.list.return_value = create_mock_entity_page([])
 
-        request = SyncStreamDto(types=[SyncRequestType.AssetsV1])
+        request = SyncStreamDto(types=[SyncRequestType.AlbumsV1])
         checkpoint_map: dict[SyncEntityType, Checkpoint] = {}
 
         events = await collect_stream(
