@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-10-06
+last-updated: 2026-10-07
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -90,7 +90,14 @@ That means the session token a client stores is stable even when the backend lat
 2. Loads `session:{uuid}` from Redis.
 3. Decrypts `stored_jwt` and attaches it to `request.state` for downstream SDK calls.
 4. Calls the route handler.
-5. If the backend response includes `x-new-access-token`, updates `stored_jwt` in place and strips that header before the response reaches the client.
+5. If a response includes `x-new-access-token` before it starts, `AuthMiddleware`
+   stores the new JWT in the session and strips that header before the response
+   reaches the client.
+
+For a streaming response, `AuthMiddleware` reads refresh state when the response
+starts. A refresh captured while the body is generated afterward is dropped;
+the Gumnut API's sliding refresh reissues the token on a later non-streaming
+request.
 
 Clients therefore keep using the same UUID session token across backend JWT refresh cycles.
 
