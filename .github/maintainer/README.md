@@ -1,11 +1,11 @@
 # Codebase cleanup and dependency coverage
 
-`maintainer.md` runs daily codebase cleanup when `MAINTAINER_ENABLED=true`.
-Dependabot owns dependency-update PRs. Cleanup does not poll dependency alerts or
-require an alert-reader credential or indexing receipt. The trusted candidate
-validator rejects dependency manifests/locks and sensitive policy/test/config
-changes. Full affected-app checks, isolated publishing and human handoff remain
-required; a no-op must explain why no material cleanup was justified.
+`maintainer.md` runs daily codebase maintenance when `MAINTAINER_ENABLED=true`.
+Routine dependency scans and security-alert polling are no longer agent goals.
+Agents can still make justified dependency changes as part of useful maintenance,
+following repository dependency policy and full affected-app checks. Existing
+configuration protection, isolated publishing and human handoff remain intact.
+Cleanup needs neither an alert-reader credential nor an indexing receipt.
 
 The dependency submission workflow below is separately gated and is not needed
 for cleanup activation. Enabling Dependabot settings does not establish complete
@@ -53,9 +53,8 @@ A POST acceptance is insufficient: a missing manifest, missing exact package
 URL/version, graph truncation, mismatched inventory, or advanced branch fails.
 Indexing runs on main pushes, every six hours, and manual dispatch when its gate
 is enabled. Keep failed coverage visible rather than treating it as a no-alert
-result. Security alerts and update proposals are handled by GitHub Dependabot;
-cleanup does not provide an advisory-response SLA. Complex upgrade repairs must
-be scoped separately and remain subject to repository dependency policy.
+result. Dependabot settings/configuration determine its alert and update coverage.
+This maintenance workflow does not provide an advisory-response SLA.
 
 Primary contracts:
 - https://docs.github.com/en/rest/dependency-graph/dependency-submission

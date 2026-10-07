@@ -8,14 +8,14 @@ const lock=fs.readFileSync(path.join(__dirname,'../workflows/maintainer.lock.yml
 const match=lock.match(/GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: ("[^\n]+")/);
 assert.ok(match,'compiled handler configuration');
 const config=JSON.parse(JSON.parse(match[1])).create_pull_request;
-test('native publisher admits source cleanup while sensitive paths stay blocked',()=>{
+test('native publisher admits dependency manifests while policy/config paths stay blocked',()=>{
  assert.equal(config.protected_files_policy,'blocked');
- for(const file of ['service.py','app/web/src/example.ts','README.md']) {
+ for(const file of ['package.json','app/web/smoke-tests/package.json','photos-api/pyproject.toml','uv.lock','app/bun.lock']) {
   const patch=`diff --git a/${file} b/${file}\n`;
   assert.equal(checkFileProtection(patch,config).action,'allow',file);
   assert.equal(checkFileProtectionPostApply([file],config).action,'allow',file);
  }
- for(const file of ['.github/workflows/ci.yml','.agents/DAEMON.md','CODEOWNERS','package.json','photos-api/pyproject.toml']) {
+ for(const file of ['.github/workflows/ci.yml','.agents/DAEMON.md','CODEOWNERS']) {
   assert.equal(checkFileProtection(`diff --git a/${file} b/${file}\n`,config).action,'deny',file);
   assert.equal(checkFileProtectionPostApply([file],config).action,'deny',file);
  }

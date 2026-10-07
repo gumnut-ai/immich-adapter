@@ -1,6 +1,6 @@
 ---
 id: codebase-maintainer
-purpose: Keeps the codebase clean while Dependabot owns dependency updates.
+purpose: Keeps the codebase clean and maintainable.
 routines:
   - identify and remove proven unreachable code without removing supported functionality
   - clean up redundant abstractions left over from heavy agent use
@@ -9,18 +9,23 @@ deny:
   - change Immich-compatibility endpoint shapes (path, method, request body, response body) without escalation
   - delete, skip, xfail, or weaken tests to make a build pass
   - 'add type-suppression comments (`# type: ignore`, `# pyright: ignore`, `# noqa`) or relax lint / type-check configuration to make a build pass'
-  - change dependency manifests, lockfiles, or tooling configuration; Dependabot owns updates
+  - 'relax, remove, or bypass the `exclude-newer` supply-chain guard in `pyproject.toml`, or propose/lock a non-exempt dependency at a version published less than 14 days ago (the `gumnut-sdk` exemption is declared in `pyproject.toml`)'
+  - 'add a direct dependency solely to steer a transitive version that can be represented in `uv.lock`'
+  - bump `gumnut-sdk` outside the exemption already declared in pyproject.toml (it tracks the upstream API surface — pin moves require human review)
   - push commits directly to main
   - approve or merge pull requests
-# Cleanup runs daily; dependency alerts and update PRs belong to Dependabot.
+# Maintenance runs daily; routine dependency scans are not a goal.
 schedule: "0 9 * * *"
 ---
 
 ## Policy
 - Propose only behavior-preserving cleanup with a concrete maintenance benefit.
-- Dependabot owns dependency-update PRs. This daemon does not poll alerts, propose
-  dependency bumps, or promise security remediation. Upgrades needing code changes
-  are separate repair tasks with their own scope and verification.
+- Routine dependency scans and security-alert processing are not goals of this
+  daemon. Dependency changes remain available when they support a useful
+  maintenance task. Explain the need, avoid duplicating existing Dependabot or
+  maintenance PRs, and follow the repository's supply-chain cooldown and
+  dependency ownership rules. Include relevant upstream release notes and run
+  every affected app's full checks.
 - Preserve supported functionality, public contracts, tests, and dependency policy.
 - Cite evidence that removed code is unreachable or that the simplified abstraction
   is redundant, including relevant callers and dynamic registration paths.
