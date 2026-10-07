@@ -885,6 +885,62 @@ class TestGenerateSyncStream:
         )
 
     @pytest.mark.anyio
+    async def test_owning_asset_shared_across_pages_is_read_once(self):
+        """A later page reads only the owners no earlier page found exposable."""
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_user = create_mock_user(updated_at)
+        mock_client = create_mock_gumnut_client(mock_user)
+
+        shared_asset = Mock()
+        shared_asset.id = uuid_to_gumnut_asset_id(TEST_UUID)
+        shared_asset.kind = "original"
+        new_asset = Mock()
+        new_asset.id = uuid_to_gumnut_asset_id(uuid4())
+        new_asset.kind = "original"
+        assets = {asset.id: asset for asset in (shared_asset, new_asset)}
+
+        face1 = create_mock_face_data(updated_at)
+        face2 = face1.model_copy(update={"id": uuid_to_gumnut_face_id(uuid4())})
+        face3 = face1.model_copy(
+            update={"id": uuid_to_gumnut_face_id(uuid4()), "asset_id": new_asset.id}
+        )
+        faces = {face.id: face for face in (face1, face2, face3)}
+
+        def event(face: Any, cursor: str) -> Mock:
+            return create_mock_event(
+                entity_type="face",
+                entity_id=face.id,
+                event_type="face_created",
+                created_at=updated_at,
+                cursor=cursor,
+            )
+
+        mock_client.events.get.side_effect = [
+            create_mock_events_response([event(face1, "cursor_1")], has_more=True),
+            create_mock_events_response(
+                [event(face2, "cursor_2"), event(face3, "cursor_3")], has_more=True
+            ),
+            create_mock_events_response([event(face1, "cursor_4")]),
+        ]
+        mock_client.faces.list.side_effect = lambda **kwargs: create_mock_entity_page(
+            [faces[id_] for id_ in kwargs["ids"]]
+        )
+        mock_client.assets.list.side_effect = lambda **kwargs: create_mock_entity_page(
+            [assets[id_] for id_ in kwargs["ids"]]
+        )
+
+        request = SyncStreamDto(types=[SyncRequestType.AssetFacesV1])
+
+        events = await collect_stream(
+            generate_sync_stream(mock_client, request, {}, mock_user)
+        )
+
+        assert [e["type"] for e in events] == ["AssetFaceV1"] * 4 + ["SyncCompleteV1"]
+        assert [
+            call.kwargs["ids"] for call in mock_client.assets.list.call_args_list
+        ] == [[shared_asset.id], [new_asset.id]]
+
+    @pytest.mark.anyio
     async def test_people_still_stream_for_edited_assets(self):
         updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         mock_user = create_mock_user(updated_at)

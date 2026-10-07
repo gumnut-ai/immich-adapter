@@ -400,6 +400,8 @@ async def _stream_entity_type(
     emitted_ids: set[str] = set()
     absent_ids: set[str] = set()
     reported_absent_ids: set[str] = set()
+    # Owning assets the face pass has read and found to expose face geometry.
+    exposable_asset_ids: set[str] = set()
     # Cursor of the latest skipped repeat since the last emitted row.
     unacked_cursor: str | None = None
     skipped_repeats = 0
@@ -440,12 +442,14 @@ async def _stream_entity_type(
             gumnut_client, gumnut_entity_type, upsert_ids
         )
 
-        # Resolve face gates in bulk from their owning assets.
+        # Resolve face gates in bulk from their owning assets, reading only
+        # the owners no earlier page found exposable.
         suppressed_face_ids: set[str] = set()
         if gumnut_entity_type == "face" and entities_map:
             suppressed_face_ids = await fetch_suppressed_face_ids(
                 gumnut_client,
                 [e for e in entities_map.values() if isinstance(e, FaceResponse)],
+                exposable_asset_ids,
             )
 
         # Track entity IDs that were requested but not returned (deleted/404)

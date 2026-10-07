@@ -69,7 +69,7 @@ def _asset(asset_id: str, kind: str = "original") -> Mock:
 async def test_suppressed_face_ids_empty_input_skips_the_read():
     client = Mock()
 
-    assert await fetch_suppressed_face_ids(client, []) == set()
+    assert await fetch_suppressed_face_ids(client, [], set()) == set()
     client.assets.list.assert_not_called()
 
 
@@ -88,7 +88,7 @@ async def test_suppressed_face_ids_partitions_per_asset_and_fails_safe():
         )
     )
 
-    suppressed = await fetch_suppressed_face_ids(client, faces)
+    suppressed = await fetch_suppressed_face_ids(client, faces, set())
 
     assert suppressed == {"face_edited", "face_missing"}
     client.assets.list.assert_called_once()
@@ -109,7 +109,7 @@ async def test_suppressed_face_ids_chunk_at_bulk_id_limit():
         )
     )
 
-    suppressed = await fetch_suppressed_face_ids(client, faces)
+    suppressed = await fetch_suppressed_face_ids(client, faces, set())
 
     assert suppressed == set()
     calls = client.assets.list.call_args_list
@@ -118,3 +118,35 @@ async def test_suppressed_face_ids_chunk_at_bulk_id_limit():
         1,
     ]
     assert [call.kwargs["limit"] for call in calls] == [GUMNUT_API_MAX_BULK_IDS, 1]
+
+
+@pytest.mark.anyio
+async def test_suppressed_face_ids_reads_an_exposable_owner_once():
+    """Only an exposable answer is kept; a suppressed owner is read again."""
+    faces = [
+        _face("face_original", "asset_original"),
+        _face("face_edited", "asset_edited"),
+        _face("face_missing", "asset_missing"),
+    ]
+    client = Mock()
+    client.assets.list = Mock(
+        side_effect=[
+            MockSyncCursorPage(
+                [_asset("asset_original"), _asset("asset_edited", kind="edit")]
+            ),
+            MockSyncCursorPage([_asset("asset_edited"), _asset("asset_missing")]),
+        ]
+    )
+    exposable: set[str] = set()
+
+    first = await fetch_suppressed_face_ids(client, faces, exposable)
+    second = await fetch_suppressed_face_ids(client, faces, exposable)
+    third = await fetch_suppressed_face_ids(client, faces, exposable)
+
+    assert first == {"face_edited", "face_missing"}
+    assert second == set()
+    assert third == set()
+    assert [call.kwargs["ids"] for call in client.assets.list.call_args_list] == [
+        ["asset_original", "asset_edited", "asset_missing"],
+        ["asset_edited", "asset_missing"],
+    ]
