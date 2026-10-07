@@ -98,6 +98,12 @@ forever, and the cursor advances past the discarded event. Emit the hidden
 state instead — a visibility flag where the sync type has one, a retraction
 delete where it doesn't.
 
+The face pass decides the gate from each face's owning asset and, for the rest
+of the pass, does not read again an asset it found exposable (see
+`fetch_suppressed_face_ids`). An edit made after that read is therefore not
+seen by the pass; the row converges as it does for an edit made after the pass
+ends (see `docs/references/asset-edits-and-downloads.md`).
+
 ## Face person_id Handling
 
 `face_created` events have person_id nulled out (face detection never assigns a person). `face_updated` events use the causally-consistent person_id from the event payload instead of current entity state. For every face batch, payload person_ids are collected (see `extract_payload_fk_refs`) and verified against production via `people.list` — IDs that return 404 are recorded in `stats.not_found_ids["person"]` and nulled out on the outgoing event, regardless of whether a `PersonV1` checkpoint exists. This prevents stale payload references (from clustering runs that predate a person's deletion) from leaking across sync cycles and causing FK violations on the client.

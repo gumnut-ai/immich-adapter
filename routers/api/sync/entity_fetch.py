@@ -226,16 +226,25 @@ async def fetch_entities_map(
 async def fetch_suppressed_face_ids(
     gumnut_client: AsyncGumnut,
     faces: list[FaceResponse],
+    exposable_asset_ids: set[str],
 ) -> set[str]:
     """Return face ids whose owning assets do not expose geometry.
 
-    Owners are deduplicated and fetched with ``state="all"``, chunked at
-    ``GUMNUT_API_MAX_BULK_IDS``. Missing owners are suppressed fail-safe. No
-    ``include`` is needed because the predicate reads lean-core ``kind``.
+    ``exposable_asset_ids`` holds the owners an earlier call found exposable.
+    They are not read again, and this call adds the ones it finds. A
+    suppressed owner is read on every call, so a face whose owner is exposable
+    again by a later call gets its visible row back.
+
+    The other owners are deduplicated and fetched with ``state="all"``,
+    chunked at ``GUMNUT_API_MAX_BULK_IDS``. Missing owners are suppressed
+    fail-safe. No ``include`` is needed because the predicate reads lean-core
+    ``kind``.
     """
-    asset_ids = list(dict.fromkeys(face.asset_id for face in faces))
-    if not asset_ids:
-        return set()
+    asset_ids = list(
+        dict.fromkeys(
+            face.asset_id for face in faces if face.asset_id not in exposable_asset_ids
+        )
+    )
 
     fetched_assets: dict[str, AssetResponse] = {}
     for chunk in _batched(asset_ids, GUMNUT_API_MAX_BULK_IDS):
@@ -250,11 +259,11 @@ async def fetch_suppressed_face_ids(
             extra={"asset_ids": sorted(unfetched)},
         )
 
-    exposable_asset_ids = {
+    exposable_asset_ids.update(
         asset.id
         for asset in fetched_assets.values()
         if should_expose_face_geometry(asset)
-    }
+    )
     return {face.id for face in faces if face.asset_id not in exposable_asset_ids}
 
 
