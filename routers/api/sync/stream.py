@@ -172,20 +172,16 @@ _DERIVED_UPSERT_ONLY_TYPES: frozenset[SyncEntityType] = frozenset(
 )
 
 # Entity types whose upsert is built from current state alone, so every event
-# for one entity in a sync yields the same row. A pass over one of these emits
-# each entity at its first event and skips the repeats; a first sync replays
-# the whole event history, where repeats far outnumber entities. Faces, assets
-# and albums are excluded: their upserts take event-time values from the event
-# payload, so two events for one entity can differ.
+# for one entity in a sync yields the same row; a pass emits each entity once.
+# A type whose upsert takes a value from the event payload must stay out. See
+# "Repeated Events for One Entity" in the sync stream architecture doc.
 _CURRENT_STATE_ENTITY_TYPES: frozenset[str] = frozenset(
     {"person", "metadata", "album_asset", "stack"}
 )
 
-# How many repeats a pass skips before it checkpoints past them with a
-# SyncAckV1 line. A skipped repeat carries no ack, so without one an
-# interrupted sync resumes from the last emitted row and re-reads the skipped
-# stretch. The client sends one ack request per run of same-type lines, so
-# each SyncAckV1 costs it a request; the interval bounds both.
+# Skipped repeats that may go unacked before a page ends with a SyncAckV1
+# line. A larger value re-reads more after an interrupted sync; a smaller one
+# costs the client more ack requests. The value is a judgment, not a measurement.
 _SKIPPED_REPEATS_PER_ACK = 5000
 
 # Order for streaming delete events — reverse of FK dependency order.
@@ -387,7 +383,8 @@ async def _stream_entity_type(
     count = 0
 
     # See _CURRENT_STATE_ENTITY_TYPES. absent_ids are entities a read in this
-    # pass did not return; they are not read again.
+    # pass did not return. The feed holds only committed changes, so such an
+    # entity is gone and is not read again.
     skip_repeats = gumnut_entity_type in _CURRENT_STATE_ENTITY_TYPES
     emitted_ids: set[str] = set()
     absent_ids: set[str] = set()
@@ -425,6 +422,7 @@ async def _stream_entity_type(
             and event.entity_id not in emitted_ids
             and event.entity_id not in absent_ids
         ]
+        known_absent_ids = frozenset(absent_ids)
 
         # Batch-fetch entities for upserts
         entities_map, missing_ids = await fetch_entities_map(
@@ -534,9 +532,10 @@ async def _stream_entity_type(
                 membership = current_memberships.get(pair) if pair is not None else None
                 if membership is not None:
                     # Re-added since: upsert the current row instead.
-                    emitted_ids.add(membership.id)
-                    unacked_cursor = None
-                    skipped_repeats = 0
+                    if skip_repeats:
+                        emitted_ids.add(membership.id)
+                        unacked_cursor = None
+                        skipped_repeats = 0
                     stats.streamed_ids[gumnut_entity_type].add(membership.id)
                     check_fk_references(
                         gumnut_entity_type,
@@ -572,6 +571,11 @@ async def _stream_entity_type(
                 if event.entity_id in emitted_ids:
                     unacked_cursor = event.cursor
                     skipped_repeats += 1
+                    stats.repeat_event_skips += 1
+                    continue
+                if event.entity_id in known_absent_ids:
+                    # Reported when the read first missed it.
+                    stats.entity_not_found_skips[gumnut_entity_type] += 1
                     continue
 
                 # Do not omit gated rows: existing clients need V2 hidden
@@ -998,6 +1002,8 @@ async def generate_sync_stream(
             summary_extra["buffered_deletes"] = stats.buffered_deletes
         if stats.fk_warnings > 0:
             summary_extra["fk_reference_warnings"] = stats.fk_warnings
+        if stats.repeat_event_skips > 0:
+            summary_extra["repeat_event_skips"] = stats.repeat_event_skips
         if stats.suppressed_face_geometry > 0:
             summary_extra["suppressed_face_geometry"] = stats.suppressed_face_geometry
 

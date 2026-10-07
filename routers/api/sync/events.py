@@ -134,8 +134,7 @@ def make_sync_event(
 def make_ack_only_event(entity_type: SyncEntityType, cursor: str) -> str:
     """Create a ``SyncAckV1`` line that checkpoints ``entity_type`` at ``cursor``.
 
-    The client treats ``SyncAckV1`` as a no-op and echoes its ack back, so the
-    line moves a checkpoint without delivering a row.
+    The line delivers no row; the client only echoes its ack back.
     """
     return (
         json.dumps(

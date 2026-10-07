@@ -24,15 +24,15 @@ Event types are classified into `_DELETE_EVENT_TYPES` (construct delete sync eve
 
 ## Repeated Events for One Entity
 
-A first sync has no checkpoint, so it replays the library's whole event history, and one entity can appear in it hundreds of times (a person touched by every clustering run, for instance). For the entity types in `_CURRENT_STATE_ENTITY_TYPES` the upsert is built from current state alone, so every one of those events would produce the same row. Their passes emit an entity at its first event and skip the rest, without reading the entity again; an entity a read did not return is likewise not read again.
+A first sync has no checkpoint, so it replays the library's whole event history, and one entity can appear in it once per change ever made to it. For the entity types in `_CURRENT_STATE_ENTITY_TYPES` the upsert is built from current state alone, so every one of those events would produce the same row. Their passes emit an entity at its first event and skip the rest, without reading the entity again; an entity a read did not return is likewise not read again, because the feed holds only committed changes and the entity is therefore gone. The stream summary logs the skipped count as `repeat_event_skips`.
 
 A skipped event carries no ack. So the client's checkpoint still moves past a run of repeats, the pass emits a `SyncAckV1` line — a no-op the client echoes back — acked under the pass's own sync type at the last skipped cursor: once at the end of the pass, and at a page boundary whenever `_SKIPPED_REPEATS_PER_ACK` repeats have gone unacked. The client sends one ack request per run of same-type lines, so these lines are deliberately sparse. Only repeats of an emitted entity move the checkpoint this way; events for an absent entity never emitted a row and still do not.
 
-Faces, assets and albums are excluded because their upserts take event-time values from the event payload (see the handling sections below), so two events for one entity can produce different rows.
+Face, asset and album upserts are excluded because they take event-time values from the event payload (see the handling sections below), so two events for one entity can produce different rows. The album-user row derived from album events is current-state too, but its pass is left as it is: albums have few events.
 
 ## Deletion Events
 
-`_make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted. The feed is not in commit order, so a later re-add can sort ahead of the removal; the adapter re-reads each removed pair and upserts the current membership instead when it exists.
+`make_delete_sync_event()` maps `entity_id` to a UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted. The feed is not in commit order, so a later re-add can sort ahead of the removal; the adapter re-reads each removed pair and upserts the current membership instead when it exists.
 
 ## Gating Rows Is a State Transition, Never an Omission
 
