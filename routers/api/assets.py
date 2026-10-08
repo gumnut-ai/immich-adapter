@@ -62,9 +62,14 @@ from routers.utils.gumnut_client import (
 )
 from routers.utils.error_mapping import invalid_chain_error, map_gumnut_error
 from routers.utils.current_user import get_current_user, get_current_user_id
+from routers.utils.thumbnail_cache import (
+    ThumbnailCacheContext,
+    get_thumbnail_cache_context,
+)
 from pydantic import ValidationError
 
 from services.streaming_upload import StreamingUploadPipeline
+from services.thumbnail_cache import ThumbnailVariant, get_thumbnail_cache, opaque_key
 from services.websockets import (
     AssetEditReadyV2Payload,
     emit_user_event,
@@ -227,6 +232,18 @@ async def _retrieve_and_stream_variant(
     Returns:
         StreamingResponse streaming CDN bytes to the Immich client.
     """
+    selected = await _retrieve_variant(asset_uuid, client, variant)
+    return await stream_from_cdn(
+        selected.url,
+        selected.mimetype,
+        range_header=range_header,
+        forwarded_headers=forwarded_headers,
+    )
+
+
+async def _retrieve_variant(
+    asset_uuid: UUID, client: AsyncGumnut, variant: AssetVariant
+) -> ThumbnailVariant:
     gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
     # `variants` opts into the non-thumbnail asset_urls rungs (small/preview/
     # fullsize/original and their video `_image` equivalents). Once the API
@@ -248,11 +265,10 @@ async def _retrieve_and_stream_variant(
         )
 
     variant_info = asset.asset_urls[variant_key]
-    return await stream_from_cdn(
+    return ThumbnailVariant(
         variant_info.url,
         variant_info.mimetype,
-        range_header=range_header,
-        forwarded_headers=forwarded_headers,
+        asset.thumbhash if isinstance(asset.thumbhash, str) else None,
     )
 
 
@@ -317,6 +333,13 @@ async def _stream_edit_base_variant(
     ``edited=true`` path. An invalid chain returns 502 rather than
     substituting another rendering.
     """
+    selected = await _retrieve_edit_base_variant(asset_uuid, client, variant)
+    return await stream_from_cdn(selected.url, selected.mimetype)
+
+
+async def _retrieve_edit_base_variant(
+    asset_uuid: UUID, client: AsyncGumnut, variant: AssetVariant
+) -> ThumbnailVariant:
     gumnut_asset_id = uuid_to_gumnut_asset_id(asset_uuid)
     versions = await client.assets.versions.list(gumnut_asset_id, include=["variants"])
 
@@ -343,7 +366,7 @@ async def _stream_edit_base_variant(
             detail=f"Asset variant '{variant_key}' not available",
         )
 
-    return await stream_from_cdn(variant_info.url, variant_info.mimetype)
+    return ThumbnailVariant(variant_info.url, variant_info.mimetype)
 
 
 def _immich_checksum_to_base64(checksum: str) -> str:
@@ -1421,6 +1444,8 @@ async def view_asset(
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    c: Annotated[str | None, Query()] = None,
+    cache_context: ThumbnailCacheContext | None = Depends(get_thumbnail_cache_context),
 ) -> StreamingResponse:
     """
     Get a thumbnail for an asset.
@@ -1432,6 +1457,33 @@ async def view_asset(
     """
     preferred_size = size if size is not None else AssetMediaSize.thumbnail
     variant = _IMMICH_SIZE_TO_VARIANT.get(preferred_size, "thumbnail")
+    if isinstance(cache_context, ThumbnailCacheContext):
+
+        async def load() -> ThumbnailVariant:
+            if edited:
+                return await _retrieve_variant(id, client, variant)
+            return await _retrieve_edit_base_variant(id, client, variant)
+
+        cache = get_thumbnail_cache()
+        cache_scope = opaque_key(cache_context.scope, str(id), variant, str(edited))
+        result = await cache.get(
+            cache_scope,
+            c,
+            load,
+            max_age_seconds=cache_context.remaining_seconds(),
+        )
+        try:
+            return await stream_from_cdn(result.variant.url, result.variant.mimetype)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            cache.evict(cache_scope, c, result.variant)
+            if result.outcome != "hit":
+                raise
+            # A cached capability can disappear before its TTL. Reauthorize
+            # once through the live API; never retry an upstream metadata error.
+            selected = await load()
+            return await stream_from_cdn(selected.url, selected.mimetype)
     if edited:
         return await _retrieve_and_stream_variant(id, client, variant)
     return await _stream_edit_base_variant(id, client, variant)

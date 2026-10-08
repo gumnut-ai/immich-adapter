@@ -2,7 +2,7 @@ import logging
 import os
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from config.immich_version import ImmichVersion, load_immich_version
@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # the standard buffered UploadFile path. Set to 0 to stream all uploads
     # (note: streaming skips iOS live photo .MOV detection).
     streaming_upload_threshold_bytes: int = 100 * 1024 * 1024  # 100MB
+
+    # Opt-in: reusing metadata delays backend authorization/freshness checks.
+    # The media-variant reference owns the operational tradeoff.
+    thumbnail_metadata_cache_ttl_seconds: float = Field(default=0, ge=0, le=30)
+    thumbnail_metadata_cache_max_entries: int = Field(default=2048, ge=1, le=10000)
 
     # --- Server-side edit rendering (services/asset_edit_renderer.py) ---
     # Maximum source bytes; enforced against Content-Length and streamed bytes.
