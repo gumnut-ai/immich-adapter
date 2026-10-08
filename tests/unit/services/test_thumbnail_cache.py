@@ -1,9 +1,25 @@
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import sentry_sdk
+from sentry_sdk.transport import Transport
 
 from services.thumbnail_cache import ThumbnailCache, ThumbnailVariant, opaque_key
+
+
+@pytest.fixture
+def metric_count():
+    with patch("services.thumbnail_cache.metrics.count") as count:
+        yield count
+
+
+def lookup_outcomes(count):
+    assert all(
+        call.args == ("thumbnail.cache.lookup", 1) for call in count.call_args_list
+    )
+    return [call.kwargs["attributes"]["cache.outcome"] for call in count.call_args_list]
 
 
 def variant(
@@ -42,7 +58,7 @@ async def test_distinct_versions_and_scopes_do_not_share():
 
 
 @pytest.mark.anyio
-async def test_failures_are_not_cached_or_poisoned():
+async def test_failures_are_not_cached_or_poisoned(metric_count):
     cache = ThumbnailCache(30, 10)
     load = AsyncMock(side_effect=[ValueError("failure"), variant()])
     with pytest.raises(ValueError):
@@ -50,11 +66,12 @@ async def test_failures_are_not_cached_or_poisoned():
     await asyncio.sleep(0)  # run completion cleanup
     assert (await cache.get("scope", "", load)).outcome == "miss"
     assert load.await_count == 2
+    assert lookup_outcomes(metric_count) == ["miss", "miss"]
     await cache.close()
 
 
 @pytest.mark.anyio
-async def test_cancelled_waiter_does_not_cancel_shared_load():
+async def test_cancelled_waiter_does_not_cancel_shared_load(metric_count):
     cache = ThumbnailCache(30, 10)
     started, release = asyncio.Event(), asyncio.Event()
     calls = 0
@@ -71,6 +88,7 @@ async def test_cancelled_waiter_does_not_cancel_shared_load():
         await started.wait()
         second = asyncio.create_task(cache.get("scope", "", load))
         await asyncio.sleep(0)
+        assert lookup_outcomes(metric_count) == ["miss", "coalesced"]
         first.cancel()
         with pytest.raises(asyncio.CancelledError):
             await first
@@ -78,6 +96,7 @@ async def test_cancelled_waiter_does_not_cancel_shared_load():
         assert (await second).outcome == "coalesced"
     assert calls == 1
     assert (await cache.get("scope", "", load)).outcome == "hit"
+    assert lookup_outcomes(metric_count) == ["miss", "coalesced", "hit"]
     await cache.close()
 
 
@@ -105,7 +124,9 @@ async def test_invalidation_fences_running_load_and_new_waiter():
 
 
 @pytest.mark.anyio
-async def test_last_waiter_cancellation_does_not_publish_or_poison_next_request():
+async def test_last_waiter_cancellation_does_not_publish_or_poison_next_request(
+    metric_count,
+):
     cache = ThumbnailCache(30, 10)
     started = asyncio.Event()
     cancelled = asyncio.Event()
@@ -128,6 +149,30 @@ async def test_last_waiter_cancellation_does_not_publish_or_poison_next_request(
         assert (
             await cache.get("scope", "", AsyncMock(return_value=variant()))
         ).outcome == "miss"
+        assert lookup_outcomes(metric_count) == ["miss", "miss"]
+    await cache.close()
+
+
+@pytest.mark.anyio
+async def test_failed_shared_load_counts_each_waiter_decision(metric_count):
+    cache = ThumbnailCache(30, 10)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def load():
+        started.set()
+        await release.wait()
+        raise ValueError("failure")
+
+    async with asyncio.timeout(2):
+        first = asyncio.create_task(cache.get("scope", "", load))
+        await started.wait()
+        second = asyncio.create_task(cache.get("scope", "", load))
+        await asyncio.sleep(0)
+        assert lookup_outcomes(metric_count) == ["miss", "coalesced"]
+        release.set()
+        results = await asyncio.gather(first, second, return_exceptions=True)
+    assert all(isinstance(result, ValueError) for result in results)
+    assert lookup_outcomes(metric_count) == ["miss", "coalesced"]
     await cache.close()
 
 
@@ -146,7 +191,9 @@ async def test_lru_capacity_counts_aliases_and_large_entries_bypass_storage():
 
 
 @pytest.mark.anyio
-async def test_owned_tasks_bounded_even_after_invalidation_and_shutdown_drains():
+async def test_owned_tasks_bounded_even_after_invalidation_and_shutdown_drains(
+    metric_count,
+):
     cache = ThumbnailCache(30, 10, max_in_flight=1)
     started = asyncio.Event()
 
@@ -166,10 +213,11 @@ async def test_owned_tasks_bounded_even_after_invalidation_and_shutdown_drains()
         with pytest.raises(asyncio.CancelledError):
             await first
     assert not cache._tasks
+    assert lookup_outcomes(metric_count) == ["miss", "bypass"]
 
 
 @pytest.mark.anyio
-async def test_loader_timeout_is_not_cached():
+async def test_loader_timeout_is_not_cached(metric_count):
     cache = ThumbnailCache(30, 10, load_timeout_seconds=0.01)
 
     async def blocked():
@@ -181,11 +229,12 @@ async def test_loader_timeout_is_not_cached():
     assert (
         await cache.get("one", "", AsyncMock(return_value=variant()))
     ).outcome == "miss"
+    assert lookup_outcomes(metric_count) == ["miss", "miss"]
     await cache.close()
 
 
 @pytest.mark.anyio
-async def test_default_off_and_expired_credentials_always_load():
+async def test_disabled_and_expired_credentials_always_load(metric_count):
     load = AsyncMock(return_value=variant())
     disabled = ThumbnailCache(0, 10)
     enabled = ThumbnailCache(30, 10)
@@ -195,8 +244,114 @@ async def test_default_off_and_expired_credentials_always_load():
             await enabled.get("scope", "", load, max_age_seconds=-1)
         ).outcome == "bypass"
     assert load.await_count == 4
+    assert lookup_outcomes(metric_count) == ["bypass"] * 4
+    assert [
+        call.kwargs["attributes"]["cache.enabled"]
+        for call in metric_count.call_args_list
+    ] == [False, True, False, True]
+    assert [
+        call.kwargs["attributes"]["cache.ttl_seconds"]
+        for call in metric_count.call_args_list
+    ] == [0, 30, 0, 30]
     await disabled.close()
     await enabled.close()
+
+
+@pytest.mark.anyio
+async def test_bypass_is_counted_before_failed_loader(metric_count):
+    cache = ThumbnailCache(0, 10)
+
+    async def failed_load():
+        assert lookup_outcomes(metric_count) == ["bypass"]
+        raise ValueError("failure")
+
+    with pytest.raises(ValueError):
+        await cache.get("scope", "", failed_load)
+    assert lookup_outcomes(metric_count) == ["bypass"]
+    await cache.close()
+
+
+@pytest.mark.anyio
+async def test_native_metrics_survive_zero_trace_sampling_without_sensitive_attributes():
+    class CaptureTransport(Transport):
+        def __init__(self):
+            super().__init__()
+            self.envelopes = []
+
+        def capture_envelope(self, envelope):
+            self.envelopes.append(envelope)
+
+    transport = CaptureTransport()
+    client = sentry_sdk.Client(
+        dsn="https://public@example.com/1",
+        transport=transport,
+        default_integrations=False,
+        traces_sample_rate=0,
+    )
+    cache = ThumbnailCache(30, 10)
+    sensitive = "credential-library-session-asset-secret"
+    try:
+        with sentry_sdk.isolation_scope(), sentry_sdk.new_scope() as scope:
+            scope.set_client(client)
+            scope.set_user({"id": sensitive})
+            with sentry_sdk.start_transaction(name="thumbnail", op="http.server") as tx:
+                assert tx.sampled is False
+                load = AsyncMock(
+                    return_value=variant("https://cdn.example.com/?secret")
+                )
+                await cache.get(sensitive, "cache-buster-secret", load)
+                await cache.get(sensitive, "cache-buster-secret", load)
+            client.flush()
+        items = [
+            metric
+            for envelope in transport.envelopes
+            for item in envelope.items
+            if item.type == "trace_metric"
+            for metric in item.payload.json["items"]
+        ]
+        assert len(items) == 2
+        assert [item["attributes"]["cache.outcome"]["value"] for item in items] == [
+            "miss",
+            "hit",
+        ]
+        for item in items:
+            assert item["name"] == "thumbnail.cache.lookup"
+            assert item["type"] == "counter"
+            assert item["value"] == 1
+            assert {
+                key: value
+                for key, value in item["attributes"].items()
+                if key.startswith("cache.")
+            } == {
+                "cache.outcome": {
+                    "value": item["attributes"]["cache.outcome"]["value"],
+                    "type": "string",
+                },
+                "cache.enabled": {"value": True, "type": "boolean"},
+                "cache.ttl_seconds": {"value": 30, "type": "integer"},
+            }
+            assert set(item["attributes"]) - {
+                "cache.outcome",
+                "cache.enabled",
+                "cache.ttl_seconds",
+            } <= {
+                "sentry.sdk.name",
+                "sentry.sdk.version",
+                "process.runtime.name",
+                "process.runtime.version",
+                "server.address",
+                "sentry.environment",
+                "sentry.release",
+            }
+        assert "secret" not in json.dumps(items)
+        assert not any(
+            item.type == "transaction"
+            for envelope in transport.envelopes
+            for item in envelope.items
+        )
+    finally:
+        await cache.close()
+        client.close()
 
 
 def test_key_components_are_unambiguous_and_opaque():

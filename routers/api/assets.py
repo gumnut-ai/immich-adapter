@@ -69,7 +69,13 @@ from routers.utils.thumbnail_cache import (
 from pydantic import ValidationError
 
 from services.streaming_upload import StreamingUploadPipeline
-from services.thumbnail_cache import ThumbnailVariant, get_thumbnail_cache, opaque_key
+from services.thumbnail_cache import (
+    ThumbnailVariant,
+    get_thumbnail_cache,
+    opaque_key,
+    record_thumbnail_cache_lookup,
+    record_thumbnail_cache_refresh,
+)
 from services.websockets import (
     AssetEditReadyV2Payload,
     emit_user_event,
@@ -1482,8 +1488,12 @@ async def view_asset(
                 raise
             # A cached capability can disappear before its TTL. Reauthorize
             # once through the live API; never retry an upstream metadata error.
+            record_thumbnail_cache_refresh(cache.ttl_seconds)
             selected = await load()
             return await stream_from_cdn(selected.url, selected.mimetype)
+    record_thumbnail_cache_lookup(
+        "bypass", get_settings().thumbnail_metadata_cache_ttl_seconds
+    )
     if edited:
         return await _retrieve_and_stream_variant(id, client, variant)
     return await _stream_edit_base_variant(id, client, variant)

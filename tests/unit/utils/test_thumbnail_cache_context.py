@@ -82,7 +82,7 @@ def test_invalid_or_expired_session_credential_stays_live(credential):
         )
 
 
-def test_no_bound_library_and_default_off_stay_live():
+def test_no_bound_library_and_explicit_disable_stay_live():
     settings = SimpleNamespace(thumbnail_metadata_cache_ttl_seconds=30)
     with (
         patch("routers.utils.thumbnail_cache.get_settings", return_value=settings),
@@ -93,9 +93,9 @@ def test_no_bound_library_and_default_off_stay_live():
         assert get_thumbnail_cache_context(request("apikey_one", None), Mock()) is None
 
 
-def test_settings_default_off_and_reject_unbounded_cache():
+def test_settings_default_enabled_and_reject_unbounded_cache():
     settings = TestSettings()
-    assert settings.thumbnail_metadata_cache_ttl_seconds == 0
+    assert settings.thumbnail_metadata_cache_ttl_seconds == 30
     for ttl in [-1, 31]:
         with pytest.raises(ValidationError):
             TestSettings(thumbnail_metadata_cache_ttl_seconds=ttl)

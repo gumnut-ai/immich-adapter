@@ -84,6 +84,7 @@ def test_session_rechecked_and_mutations_invalidate_even_after_failure(
         ),
         patch("routers.api.assets.get_thumbnail_cache", return_value=cache),
         patch("routers.utils.thumbnail_cache.get_settings", return_value=settings),
+        patch("services.thumbnail_cache.metrics.count") as count,
         patch(
             "routers.api.assets.stream_from_cdn",
             AsyncMock(side_effect=lambda *args, **kwargs: Response(content=args[0])),
@@ -112,3 +113,12 @@ def test_session_rechecked_and_mutations_invalidate_even_after_failure(
             store.get_by_id.return_value = None
             assert client.get(path, headers=headers).status_code == 401
             assert sdk.assets.retrieve.await_count == 2
+            assert [call.args for call in count.call_args_list] == [
+                ("thumbnail.cache.lookup", 1),
+                ("thumbnail.cache.lookup", 1),
+                ("thumbnail.cache.lookup", 1),
+            ]
+            assert [
+                call.kwargs["attributes"]["cache.outcome"]
+                for call in count.call_args_list
+            ] == ["miss", "hit", "miss"]

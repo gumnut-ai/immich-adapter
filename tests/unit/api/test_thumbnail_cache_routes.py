@@ -125,6 +125,7 @@ async def test_cached_cdn_404_reauthorizes_once_and_upstream_error_propagates(ca
     with (
         patch("routers.api.assets.get_thumbnail_cache", return_value=cache),
         patch("routers.api.assets.stream_from_cdn", new_callable=AsyncMock) as cdn,
+        patch("services.thumbnail_cache.metrics.count") as count,
     ):
         await view_asset(
             id,
@@ -145,7 +146,64 @@ async def test_cached_cdn_404_reauthorizes_once_and_upstream_error_propagates(ca
             )
         assert client.assets.retrieve.await_count == 2
         assert cdn.await_count == 2
+        assert [
+            (call.args[0], call.kwargs["attributes"]) for call in count.call_args_list
+        ] == [
+            (
+                "thumbnail.cache.lookup",
+                {
+                    "cache.outcome": "miss",
+                    "cache.enabled": True,
+                    "cache.ttl_seconds": 30,
+                },
+            ),
+            (
+                "thumbnail.cache.lookup",
+                {
+                    "cache.outcome": "hit",
+                    "cache.enabled": True,
+                    "cache.ttl_seconds": 30,
+                },
+            ),
+            (
+                "thumbnail.cache.refresh",
+                {
+                    "cache.reason": "cdn_404",
+                    "cache.enabled": True,
+                    "cache.ttl_seconds": 30,
+                },
+            ),
+        ]
     await cache.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("ttl", [0, 30], ids=["disabled", "unresolved-credential"])
+async def test_missing_cache_context_counts_bypass_before_live_metadata_failure(ttl):
+    client = Mock()
+    client.assets.retrieve = AsyncMock(side_effect=make_sdk_status_error(403))
+    settings = SimpleNamespace(thumbnail_metadata_cache_ttl_seconds=ttl)
+    with (
+        patch("routers.api.assets.get_settings", return_value=settings),
+        patch("services.thumbnail_cache.metrics.count") as count,
+    ):
+        with pytest.raises(type(client.assets.retrieve.side_effect)):
+            await view_asset(
+                uuid4(),
+                size=AssetMediaSize.thumbnail,
+                edited=True,
+                client=client,
+                cache_context=None,
+            )
+        count.assert_called_once_with(
+            "thumbnail.cache.lookup",
+            1,
+            attributes={
+                "cache.outcome": "bypass",
+                "cache.enabled": ttl > 0,
+                "cache.ttl_seconds": ttl,
+            },
+        )
 
 
 @pytest.mark.anyio

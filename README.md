@@ -122,11 +122,11 @@ pooling, and server-side edit rendering:
 - `REDIS_SOCKET_CONNECT_TIMEOUT`: Redis connection timeout in seconds (default: `5.0`)
 - `REDIS_SOCKET_TIMEOUT`: Redis read/write timeout in seconds (default: `5.0`)
 - `REDIS_HEALTH_CHECK_INTERVAL`: Idle Redis connection health-check interval in seconds (default: `30`)
-- `THUMBNAIL_METADATA_CACHE_TTL_SECONDS`: Optional thumbnail metadata reuse, in
-  seconds (default: `0`, disabled; maximum: `30`). Enabling it delays backend
-  authorization and external asset-state checks by up to that TTL; read the
+- `THUMBNAIL_METADATA_CACHE_TTL_SECONDS`: Thumbnail metadata reuse, in seconds
+  (default and maximum: `30`; `0` disables). Reuse delays backend authorization
+  and external asset-state checks by up to that TTL; read the
   [cache contract](docs/references/media-variant-selection.md#optional-thumbnail-metadata-cache)
-  before enabling it.
+  for the TTL rationale and observability.
 - `THUMBNAIL_METADATA_CACHE_MAX_ENTRIES`: Maximum local thumbnail metadata
   entries, including thumbhash aliases (default: `2048`; range: `1`–`10000`)
 - `EDIT_RENDER_MAX_INPUT_BYTES`: Maximum edit source size in bytes (default: `104857600`)

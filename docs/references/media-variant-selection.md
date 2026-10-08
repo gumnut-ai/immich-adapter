@@ -17,15 +17,22 @@ does; if that backend guarantee changes, gate on the upgraded key's presence.
 
 ## Optional thumbnail metadata cache
 
-`THUMBNAIL_METADATA_CACHE_TTL_SECONDS` defaults to `0` (disabled), accepts
+`THUMBNAIL_METADATA_CACHE_TTL_SECONDS` defaults to `30` seconds, accepts
 `0` through `30`, and controls metadata reuse only for
-`GET /api/assets/{id}/thumbnail`. Enabling `30` requires an explicit deployment
-decision: a hit skips the Gumnut API call that normally checks current backend
-authorization and asset state. Backend API-key/account revocation, library
-membership removal, and edits/trash/delete/restore from other processes or
+`GET /api/assets/{id}/thumbnail`. A hit skips the Gumnut API call that normally
+checks current backend authorization and asset state. Backend API-key/account
+revocation, library membership removal, and edits/trash/delete/restore from other processes or
 clients can therefore take up to the configured TTL to reach this route.
 This applies to newly keyed adapter requests even if the CDN or native client
 already caches media bytes. Setting `0` restores a live API call per request.
+
+The initial 30-second TTL accommodates the observed Immich repeat pattern:
+in a captured burst, an empty-`c` thumbnail request was commonly followed by
+its thumbhash-keyed repeat about 13–15 seconds later. Thirty seconds provides
+headroom for that transition while bounding the authorization and external
+asset-change window. It is an engineering starting point, not a measured
+optimum or a claim about all clients. Compare cache outcomes and upstream
+traffic before tuning it; the maximum keeps that freshness window bounded.
 
 The authentication middleware still loads and checks the Redis session on
 every request, including hits, so adapter session deletion blocks the next
@@ -69,7 +76,36 @@ independently refreshed selections stay warm. An actual cache hit retries
 metadata once through the live API. Upstream metadata failures and failures
 on a fresh CDN lookup are not retried by this cache.
 
-Sentry's `thumbnail.variant` span reports `cache.hit`, `cache.coalesced`, and
-`cache.outcome` (`hit`, `miss`, `coalesced`, or `bypass`). Compare these with
-upstream request counts when evaluating an explicitly enabled deployment;
-process-local hit rates depend on worker routing and mutation traffic.
+### Cache observability
+
+The Sentry counter `thumbnail.cache.lookup` emits once per thumbnail metadata
+lookup decision, before loading or waiting. Its `cache.outcome` attribute is
+`hit`, `miss`, `coalesced`, or `bypass`; `cache.enabled` indicates whether the
+configured TTL is positive, and `cache.ttl_seconds` records that TTL. Bypasses
+include disabled caching, unresolved credentials, expired cache eligibility,
+and in-flight capacity overflow. Failures and cancellations retain their
+decision count. Requests rejected by authentication before a lookup are outside
+this denominator. No credentials, asset identifiers, cache keys, or URLs are
+added as metric attributes.
+
+For a consistent environment, release, time window, and TTL, sum the counter
+grouped by `cache.outcome`. Calculate overall hit rate as
+`hit / (hit + miss + coalesced + bypass)`. For the subset admitted to caching,
+use `hit / (hit + miss + coalesced)`, and report bypass share separately.
+Coalesced requests share an existing load rather than read a stored entry;
+report their share separately instead of classifying them as hits. These are
+lookup decisions, not successful thumbnail deliveries.
+
+`thumbnail.cache.refresh` separately counts live metadata retries after an
+actual cache hit encounters a CDN 404, with `cache.reason=cdn_404` and the same
+configured TTL attributes. It emits before the retry, including failed retries,
+and does not add another incoming lookup. Compare both counters with upstream
+request counts and latency to measure load reduction; SDK retries, failures,
+worker routing, and mutation traffic affect that comparison.
+
+Native metrics are independent of transaction trace sampling. The
+`thumbnail.variant` span still reports `cache.hit`, `cache.coalesced`, and
+`cache.outcome` for timing analysis, including failed or cancelled loads, but
+sampled spans are not the hit-rate denominator. Confirm metric receipt and
+retention in the deployed Sentry project before relying on production ratios;
+transport failures or provider limits can drop telemetry.

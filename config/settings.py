@@ -49,9 +49,9 @@ class Settings(BaseSettings):
     # (note: streaming skips iOS live photo .MOV detection).
     streaming_upload_threshold_bytes: int = 100 * 1024 * 1024  # 100MB
 
-    # Opt-in: reusing metadata delays backend authorization/freshness checks.
+    # Reusing metadata delays backend authorization/freshness checks; 0 disables.
     # The media-variant reference owns the operational tradeoff.
-    thumbnail_metadata_cache_ttl_seconds: float = Field(default=0, ge=0, le=30)
+    thumbnail_metadata_cache_ttl_seconds: float = Field(default=30, ge=0, le=30)
     thumbnail_metadata_cache_max_entries: int = Field(default=2048, ge=1, le=10000)
 
     # --- Server-side edit rendering (services/asset_edit_renderer.py) ---

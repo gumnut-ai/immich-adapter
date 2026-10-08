@@ -9,8 +9,37 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import sentry_sdk
+from sentry_sdk import metrics
 
 from config.settings import get_settings
+
+type CacheOutcome = Literal["hit", "miss", "coalesced", "bypass"]
+
+
+def record_thumbnail_cache_lookup(outcome: CacheOutcome, ttl_seconds: float) -> None:
+    """Count admission decisions independently of loader success and trace sampling."""
+    metrics.count(
+        "thumbnail.cache.lookup",
+        1,
+        attributes={
+            "cache.outcome": outcome,
+            "cache.enabled": ttl_seconds > 0,
+            "cache.ttl_seconds": ttl_seconds,
+        },
+    )
+
+
+def record_thumbnail_cache_refresh(ttl_seconds: float) -> None:
+    """Keep a CDN-triggered live retry outside the incoming lookup denominator."""
+    metrics.count(
+        "thumbnail.cache.refresh",
+        1,
+        attributes={
+            "cache.reason": "cdn_404",
+            "cache.enabled": ttl_seconds > 0,
+            "cache.ttl_seconds": ttl_seconds,
+        },
+    )
 
 
 def opaque_key(*parts: str) -> str:
@@ -33,7 +62,7 @@ class ThumbnailVariant:
 @dataclass(frozen=True)
 class CacheResult:
     variant: ThumbnailVariant
-    outcome: Literal["hit", "miss", "coalesced", "bypass"]
+    outcome: CacheOutcome
 
 
 @dataclass(frozen=True)
@@ -117,11 +146,14 @@ class ThumbnailCache:
         max_age_seconds: float | None = None,
     ) -> CacheResult:
         with sentry_sdk.start_span(op="cache.get", name="thumbnail.variant") as span:
-            result = await self._get(scope, cache_buster, loader, max_age_seconds)
-            span.set_data("cache.hit", result.outcome == "hit")
-            span.set_data("cache.coalesced", result.outcome == "coalesced")
-            span.set_data("cache.outcome", result.outcome)
-            return result
+
+            def record(outcome: CacheOutcome) -> None:
+                record_thumbnail_cache_lookup(outcome, self.ttl_seconds)
+                span.set_data("cache.hit", outcome == "hit")
+                span.set_data("cache.coalesced", outcome == "coalesced")
+                span.set_data("cache.outcome", outcome)
+
+            return await self._get(scope, cache_buster, loader, max_age_seconds, record)
 
     async def _get(
         self,
@@ -129,11 +161,13 @@ class ThumbnailCache:
         cache_buster: str | None,
         loader: Callable[[], Awaitable[ThumbnailVariant]],
         max_age_seconds: float | None,
+        record: Callable[[CacheOutcome], None],
     ) -> CacheResult:
         ttl = self.ttl_seconds
         if max_age_seconds is not None:
             ttl = min(ttl, max_age_seconds)
         if ttl <= 0:
+            record("bypass")
             return CacheResult(await loader(), "bypass")
         key = opaque_key(scope, cache_buster or "")
         now = self._clock()
@@ -143,11 +177,13 @@ class ThumbnailCache:
             entry = None
         if entry is not None:
             self._entries.move_to_end(key)
+            record("hit")
             return CacheResult(entry.variant, "hit")
         task = self._in_flight.get(key)
         outcome: Literal["miss", "coalesced"] = "coalesced"
         if task is None:
             if len(self._tasks) >= self.max_in_flight:
+                record("bypass")
                 return CacheResult(await loader(), "bypass")
             outcome = "miss"
             generation = self._generation
@@ -187,6 +223,7 @@ class ThumbnailCache:
                     finished.exception()
 
             task.add_done_callback(done)
+        record(outcome)
         self._waiters[task] = self._waiters.get(task, 0) + 1
         try:
             await asyncio.wait([task])
