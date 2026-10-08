@@ -13,6 +13,7 @@ from routers.utils.gumnut_client import (
 )
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_user_id
 from services.session_store import get_session_store
+from services.thumbnail_cache import get_thumbnail_cache
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +221,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.is_web_client = is_web_client
 
         # Call the endpoint handler
-        response: Response = await call_next(request)
+        # A mutation may commit upstream before event emission/response fails.
+        # Fence both sides, including failures, to prevent old concurrent reads
+        # repopulating the local metadata cache after an edit/trash/restore.
+        mutating = request.method not in {"GET", "HEAD", "OPTIONS"}
+        if mutating:
+            get_thumbnail_cache().invalidate()
+        try:
+            response: Response = await call_next(request)
+        finally:
+            if mutating:
+                get_thumbnail_cache().invalidate()
 
         # Check if Gumnut backend returned a refreshed token
         # The response hook in gumnut_client.py captures this from backend responses

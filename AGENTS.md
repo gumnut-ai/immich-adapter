@@ -77,7 +77,7 @@ The sections below follow that order, with design docs split by their `status:` 
 | Asset and media index | `docs/references/asset-and-media-handling.md` | Following an older asset/media section citation |
 | Asset field conversion | `docs/references/asset-field-conversion.md` | Include tokens, rating/favorite mapping, dimensions, date fields, DTO normalization, and outbound checksums |
 | Asset edits and downloads | `docs/references/asset-edits-and-downloads.md` | Version-chain roots, edit bases, edit-route concurrency, exact-original downloads, and edited face geometry |
-| Media variant selection | `docs/references/media-variant-selection.md` | Aspect-ratio thumbnail upgrades and video variant-key requirements |
+| Media variant selection | `docs/references/media-variant-selection.md` | Thumbnail upgrades, video variant keys, and optional metadata cache freshness |
 | Asset WebSocket emission | `docs/references/asset-websocket-emission.md` | Best-effort emission, per-ID helpers, bulk-write emission tradeoffs, and event-documentation updates |
 | Pagination and bulk index | `docs/references/pagination-bulk-and-concurrency.md` | Following an older pagination, bulk, or concurrency section citation |
 | Pagination and enumeration | `docs/references/pagination-and-enumeration.md` | Optional pagination forwarding, bounded collection walks, aggregates, per-page limits, and month bounds |
