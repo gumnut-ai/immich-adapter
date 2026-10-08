@@ -103,6 +103,12 @@ The sections below follow that order, with design docs split by their `status:` 
 | Importing with immich-go | `docs/guides/importing-with-immich-go.md` | Bulk-importing a library with the immich-go CLI, `x-api-key` auth via a Gumnut API key |
 | Upgrading the Immich version | `docs/guides/upgrading-immich-version.md` | Evaluating a new Immich release or RC: spec diff, endpoint changes, SDK support, the pin bump, web extraction, and feature classification |
 
+## Active Design Docs
+
+| Topic | Document | Consult when... |
+|-------|----------|-----------------|
+| Cache reuse evaluation | `docs/design-docs/cache-reuse-evaluation.md` | Evaluating thumbnail capacity telemetry, production baseline prerequisites, or additional endpoint reuse |
+
 ## Historical & Deprecated Design Docs
 
 Decision records, not descriptions of the running system — consult them for *why* something was chosen, never for how it works today.
