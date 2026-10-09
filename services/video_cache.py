@@ -1,4 +1,4 @@
-"""Optional video selection reuse; the media-variant reference owns its contract."""
+"""Video selection reuse; the media-variant reference owns its contract."""
 
 import re
 from urllib.parse import parse_qs, urlsplit
@@ -7,6 +7,7 @@ from config.settings import get_settings
 from services.thumbnail_cache import ThumbnailCache, ThumbnailVariant
 
 _cache: ThumbnailCache | None = None
+VIDEO_METADATA_CACHE_TTL_SECONDS = 5.0
 
 
 def is_cacheable_video_selection(variant: ThumbnailVariant) -> bool:
@@ -43,7 +44,7 @@ def get_video_cache() -> ThumbnailCache:
     if _cache is None:
         settings = get_settings()
         _cache = ThumbnailCache(
-            settings.video_metadata_cache_ttl_seconds,
+            VIDEO_METADATA_CACHE_TTL_SECONDS,
             settings.video_metadata_cache_max_entries,
             namespace="video",
             cacheable=is_cacheable_video_selection,

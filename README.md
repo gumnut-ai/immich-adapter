@@ -129,10 +129,6 @@ pooling, and server-side edit rendering:
   for the TTL rationale and observability.
 - `THUMBNAIL_METADATA_CACHE_MAX_ENTRIES`: Maximum local thumbnail metadata
   entries, including thumbhash aliases (default: `2048`; range: `1`–`10000`)
-- `VIDEO_METADATA_CACHE_TTL_SECONDS`: Video playback metadata reuse, in seconds
-  (default: `0`, disabled; maximum: `5`). Enabling delays backend authorization
-  and external asset-state checks; read the
-  [video cache contract](docs/references/media-variant-selection.md#optional-video-playback-metadata-cache).
 - `VIDEO_METADATA_CACHE_MAX_ENTRIES`: Maximum local video metadata entries
   (default: `256`; range: `1`–`10000`)
 - `EDIT_RENDER_MAX_INPUT_BYTES`: Maximum edit source size in bytes (default: `104857600`)
@@ -142,6 +138,10 @@ pooling, and server-side edit rendering:
 - `EDIT_RENDER_TIMEOUT_SECONDS`: Maximum edit-render time, including queue wait, in seconds (default: `60.0`)
 - `EDIT_RENDER_MAX_CONCURRENCY`: Maximum concurrent edit renders (default: `4`)
 - `EDIT_RENDER_SPOOL_MAX_BYTES`: In-memory edit-render spool limit in bytes before disk use (default: `16777216`)
+
+Video playback metadata reuse is always enabled with a fixed five-second
+lifetime. It delays backend authorization and external asset-state checks;
+read the [video cache contract](docs/references/media-variant-selection.md#video-playback-metadata-cache).
 
 The Docker image also lets deployments tune Uvicorn's HTTP connection handling
 without rebuilding the image:

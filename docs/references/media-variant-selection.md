@@ -76,25 +76,25 @@ independently refreshed selections stay warm. An actual cache hit retries
 metadata once through the live API. Upstream metadata failures and failures
 on a fresh CDN lookup are not retried by this cache.
 
-## Optional video playback metadata cache
+## Video playback metadata cache
 
-`VIDEO_METADATA_CACHE_TTL_SECONDS` defaults to `0` (disabled), accepts `0`
-through `5`, and applies only to `GET /api/assets/{id}/video/playback`.
-Enabling it reuses the current original-video URL and MIME type across short
+Video metadata reuse is always enabled with a fixed five-second lifetime,
+defined by `services/video_cache.py::VIDEO_METADATA_CACHE_TTL_SECONDS`,
+and applies only to `GET /api/assets/{id}/video/playback`.
+It reuses the current original-video URL and MIME type across short
 Range bursts. Each request still opens a separate CDN stream with its own
 Range header, status, and response headers. Original downloads and edit-base
 reads remain live. This does not cache media bytes or partial responses.
 
-A positive TTL delays Gumnut API authorization and external asset-state checks
-by up to that duration, including API-key/account revocation, membership
+Reuse delays Gumnut API authorization and external asset-state checks
+by up to five seconds, including API-key/account revocation, membership
 removal, and edits or deletion outside this process. Redis session checks
 remain live on every request. The same credential, session, library, JWT-expiry,
 load bounds, cancellation, mutation fencing, and shutdown rules as the
 thumbnail cache apply, in a separate cache without thumbhash aliases.
 `VIDEO_METADATA_CACHE_MAX_ENTRIES` defaults to `256` and accepts `1` through
-`10000`. The five-second maximum bounds freshness; production request logs
+`10000`. The five-second lifetime bounds freshness; production request logs
 suggest short repeat gaps, but do not establish a hit rate or an optimal TTL.
-Activation is an explicit deployment setting change after accepting this window.
 
 Only video selections using the known `https://assets.gumnut.ai` capability
 format are retained: a single 43-character base64url `verify` signature and
@@ -145,4 +145,4 @@ Video reuse emits the corresponding `video.cache.lookup`, `video.cache.refresh`,
 and `video.variant` names with the same outcome and TTL attributes. Analyze
 video and thumbnail populations separately. These counters measure lookup
 decisions rather than successful playback, and retained-cache effectiveness
-still requires a production observation window after activation.
+still requires a production observation window after deployment.

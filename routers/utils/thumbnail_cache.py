@@ -15,6 +15,7 @@ from routers.utils.gumnut_client import (
     get_bound_library_id,
 )
 from services.thumbnail_cache import opaque_key
+from services.video_cache import VIDEO_METADATA_CACHE_TTL_SECONDS
 
 
 @dataclass(frozen=True)
@@ -62,9 +63,7 @@ def get_video_cache_context(
     request: Request,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> ThumbnailCacheContext | None:
-    return _metadata_cache_context(
-        request, get_settings().video_metadata_cache_ttl_seconds
-    )
+    return _metadata_cache_context(request, VIDEO_METADATA_CACHE_TTL_SECONDS)
 
 
 def _metadata_cache_context(
