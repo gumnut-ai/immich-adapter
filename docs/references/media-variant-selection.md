@@ -76,6 +76,37 @@ independently refreshed selections stay warm. An actual cache hit retries
 metadata once through the live API. Upstream metadata failures and failures
 on a fresh CDN lookup are not retried by this cache.
 
+## Optional video playback metadata cache
+
+`VIDEO_METADATA_CACHE_TTL_SECONDS` defaults to `0` (disabled), accepts `0`
+through `5`, and applies only to `GET /api/assets/{id}/video/playback`.
+Enabling it reuses the current original-video URL and MIME type across short
+Range bursts. Each request still opens a separate CDN stream with its own
+Range header, status, and response headers. Original downloads and edit-base
+reads remain live. This does not cache media bytes or partial responses.
+
+A positive TTL delays Gumnut API authorization and external asset-state checks
+by up to that duration, including API-key/account revocation, membership
+removal, and edits or deletion outside this process. Redis session checks
+remain live on every request. The same credential, session, library, JWT-expiry,
+load bounds, cancellation, mutation fencing, and shutdown rules as the
+thumbnail cache apply, in a separate cache without thumbhash aliases.
+`VIDEO_METADATA_CACHE_MAX_ENTRIES` defaults to `256` and accepts `1` through
+`10000`. The five-second maximum bounds freshness; production request logs
+suggest short repeat gaps, but do not establish a hit rate or an optimal TTL.
+Activation is an explicit deployment setting change after accepting this window.
+
+Only video selections using the known `https://assets.gumnut.ai` capability
+format are retained: a single 43-character base64url `verify` signature and
+optional `dl` parameter. This CDN contract uses an HMAC over the versioned
+object path and has no time expiry. Format checking does not validate the
+signature; the live API authorizes the selection and the CDN verifies each
+stream. Unknown hosts, unsigned URLs, and additional signing parameters are
+not retained because their expiry cannot be bounded here. They can still
+share a fresh in-flight API load. A stored hit that encounters a CDN 404
+evicts that selection and retries live metadata once with the same Range;
+fresh failures, 403s, and other CDN errors propagate without a cache retry.
+
 ### Cache observability
 
 The Sentry counter `thumbnail.cache.lookup` emits once per thumbnail metadata
@@ -109,3 +140,9 @@ Native metrics are independent of transaction trace sampling. The
 sampled spans are not the hit-rate denominator. Confirm metric receipt and
 retention in the deployed Sentry project before relying on production ratios;
 transport failures or provider limits can drop telemetry.
+
+Video reuse emits the corresponding `video.cache.lookup`, `video.cache.refresh`,
+and `video.variant` names with the same outcome and TTL attributes. Analyze
+video and thumbnail populations separately. These counters measure lookup
+decisions rather than successful playback, and retained-cache effectiveness
+still requires a production observation window after activation.

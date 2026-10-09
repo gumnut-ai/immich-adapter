@@ -20,6 +20,14 @@ _cdn_http_client: httpx.AsyncClient | None = None
 _cdn_client_lock = asyncio.Lock()
 
 
+class CDNAssetNotFound(HTTPException):
+    """Keep the CDN denial status while preserving the public 404 response."""
+
+    def __init__(self, upstream_status: int):
+        super().__init__(status_code=404, detail="Asset not found")
+        self.upstream_status = upstream_status
+
+
 async def get_cdn_http_client() -> httpx.AsyncClient:
     """Get or create the singleton async HTTP client for CDN fetches.
 
@@ -158,10 +166,7 @@ async def open_cdn_response(
             },
         )
         await cdn_response.aclose()
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Asset not found",
-        )
+        raise CDNAssetNotFound(cdn_response.status_code)
 
     if cdn_response.status_code == 416:
         logger.warning("CDN range not satisfiable", extra=_cdn_log_context(cdn_url))

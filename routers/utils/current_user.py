@@ -22,7 +22,10 @@ from routers.immich_models import (
     UserResponseDto,
     UserStatus,
 )
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client,
+    get_raw_current_user,
+)
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
 
 
@@ -72,8 +75,10 @@ async def get_current_user_admin(
     if hasattr(request.state, "current_user_admin"):
         return request.state.current_user_admin
 
-    # Fetch from Gumnut backend (SDK errors bubble to the global GumnutError handler)
-    user = await client.users.me()
+    # Use a fresh library-selection read or call the backend. SDK errors
+    # bubble to the global GumnutError handler. Upload dependencies run before
+    # the handler performs any backend mutation.
+    user = await get_raw_current_user(request, client, initial_user_dependency=True)
 
     # Covers `x-api-key` clients, whose credential carries no session, so
     # AuthMiddleware can't attribute them (see `_set_sentry_user` there) and
