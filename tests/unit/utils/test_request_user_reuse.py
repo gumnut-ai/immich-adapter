@@ -266,7 +266,10 @@ async def test_scoped_selection_user_read_reused_once(client, cache):
     client.libraries.list.side_effect = make_sdk_status_error(
         403, "restricted", cls=PermissionDeniedError
     )
-    client.users.me.return_value.effective_immich_library_id = "lib_old"
+    client.users.me.return_value.immich_library_id = "lib_old"
+    client.libraries.retrieve = AsyncMock(
+        return_value=make_gumnut_library("lib_old", datetime.now(timezone.utc))
+    )
     assert await resolve(req, client, cache) == "lib_old"
     user = await get_raw_current_user(req, client)
     assert user.id == client.users.me.return_value.id

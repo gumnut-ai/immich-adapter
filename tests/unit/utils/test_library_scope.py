@@ -47,8 +47,9 @@ LIBRARY_GONE = "Library lib_bound not found or not accessible by user intuser_1"
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("target", ["lib_default", "lib_chosen", None, "missing"])
-async def test_selected_key_binding_reaches_downstream_routes(target):
+@pytest.mark.parametrize("target", ["lib_chosen", None, "missing"])
+@pytest.mark.parametrize("role", ["owner", "collaborator"])
+async def test_selected_key_binding_reaches_downstream_routes(target, role):
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -59,8 +60,17 @@ async def test_selected_key_binding_reaches_downstream_routes(target):
         if request.url.path == "/api/users/me":
             user = {"id": "intuser_test", "immich_library_id": None}
             if target != "missing":
-                user["effective_immich_library_id"] = target
+                user["immich_library_id"] = target
             return httpx.Response(200, json=user)
+        if request.url.path == f"/api/libraries/{target}":
+            return httpx.Response(
+                200,
+                json={
+                    "id": target,
+                    "role": role,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
         assert request.url.params.get("library_id") == target
         return httpx.Response(200, json={"data": [], "has_more": False})
 
@@ -78,7 +88,8 @@ async def test_selected_key_binding_reaches_downstream_routes(target):
             if target in {None, "missing"}:
                 with pytest.raises(HTTPException) as exc_info:
                     await get_authenticated_gumnut_client(request, cache)
-                assert exc_info.value.status_code == (403 if target is None else 503)
+                assert exc_info.value.status_code == 403
+                assert "instead of Default" in exc_info.value.detail
                 assert [r.url.path for r in seen] == ["/api/libraries", "/api/users/me"]
                 cache.remember_for_api_key.assert_not_awaited()
                 return
@@ -90,7 +101,7 @@ async def test_selected_key_binding_reaches_downstream_routes(target):
             await client.faces.list()
             await client.get("/api/stacks", cast_to=dict[str, object])
             await client.events.get()
-            assert {r.url.path for r in seen[2:]} == {
+            assert {r.url.path for r in seen[3:]} == {
                 "/api/assets",
                 "/api/albums",
                 "/api/people",
@@ -207,6 +218,7 @@ class TestResolveLibraryId:
     def unscoped_client(self):
         client = Mock()
         client.libraries.list = AsyncMock(return_value=[])
+        client.libraries.retrieve = AsyncMock()
         client.users.me = AsyncMock(return_value=Mock(immich_library_id=None))
         return client
 
@@ -333,23 +345,23 @@ class TestResolveLibraryId:
         cache.set_session_library.assert_not_awaited()
 
     @pytest.mark.anyio
-    async def test_scoped_key_uses_effective_immich_library(
+    async def test_scoped_key_uses_explicit_immich_library(
         self, cache, unscoped_client, get_client
     ):
         unscoped_client.libraries.list.side_effect = make_sdk_status_error(
             403, "limited to selected libraries", cls=PermissionDeniedError
         )
-        unscoped_client.users.me.return_value = Mock(
-            immich_library_id=None, effective_immich_library_id="lib_default"
-        )
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_new")
+        unscoped_client.libraries.retrieve.return_value = OWNED_NEW
         request = _request(jwt_token=API_KEY, session_token=None)
 
         library_id = await _resolve_library_id(request, API_KEY, cache)
 
-        assert library_id == "lib_default"
-        assert get_bound_library_id() == "lib_default"
-        cache.remember_for_api_key.assert_awaited_once_with(API_KEY, "lib_default")
+        assert library_id == "lib_new"
+        assert get_bound_library_id() == "lib_new"
+        cache.remember_for_api_key.assert_awaited_once_with(API_KEY, "lib_new")
         unscoped_client.users.me.assert_awaited_once()
+        unscoped_client.libraries.retrieve.assert_awaited_once_with("lib_new")
 
     @pytest.mark.anyio
     @pytest.mark.parametrize("target", [None, "", 123])
@@ -359,12 +371,56 @@ class TestResolveLibraryId:
         unscoped_client.libraries.list.side_effect = make_sdk_status_error(
             403, "limited to selected libraries", cls=PermissionDeniedError
         )
-        unscoped_client.users.me.return_value = Mock(effective_immich_library_id=target)
+        unscoped_client.users.me.return_value = Mock(immich_library_id=target)
         with pytest.raises(HTTPException) as exc_info:
             await _resolve_library_id(
                 _request(jwt_token=API_KEY, session_token=None), API_KEY, cache
             )
         assert exc_info.value.status_code == (403 if target is None else 502)
+        assert get_bound_library_id() is None
+        cache.remember_for_api_key.assert_not_awaited()
+        unscoped_client.libraries.retrieve.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("library_status", [403, 404])
+    async def test_scoped_key_cannot_access_explicit_selection(
+        self, cache, unscoped_client, get_client, library_status
+    ):
+        unscoped_client.libraries.list.side_effect = make_sdk_status_error(
+            403, "restricted", cls=PermissionDeniedError
+        )
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_new")
+        unscoped_client.libraries.retrieve.side_effect = make_sdk_status_error(
+            library_status,
+            "inaccessible library",
+            cls=PermissionDeniedError if library_status == 403 else NotFoundError,
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await _resolve_library_id(
+                _request(jwt_token=API_KEY, session_token=None), API_KEY, cache
+            )
+        assert exc_info.value.status_code == 403
+        assert "key must cover" in exc_info.value.detail
+        assert get_bound_library_id() is None
+        cache.remember_for_api_key.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_scoped_key_viewer_selection_is_refused(
+        self, cache, unscoped_client, get_client
+    ):
+        unscoped_client.libraries.list.side_effect = make_sdk_status_error(
+            403, "restricted", cls=PermissionDeniedError
+        )
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_viewer")
+        unscoped_client.libraries.retrieve.return_value = make_gumnut_library(
+            "lib_viewer", datetime.now(timezone.utc), role="viewer"
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await _resolve_library_id(
+                _request(jwt_token=API_KEY, session_token=None), API_KEY, cache
+            )
+        assert exc_info.value.status_code == 403
+        assert "owner or collaborator" in exc_info.value.detail
         assert get_bound_library_id() is None
         cache.remember_for_api_key.assert_not_awaited()
 

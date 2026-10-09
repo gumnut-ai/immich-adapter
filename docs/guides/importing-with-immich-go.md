@@ -31,10 +31,12 @@ A key needs **write** scope to upload; add **delete** scope too if you plan to u
 immich-go subcommands that remove or replace assets.
 
 The key must cover the library selected in the **Immich** section of your
-Gumnut web settings. With **Default** selected, that is the oldest live library
-you own. A key limited to selected libraries works when it includes that
-target; a key covering only another library receives `403` rather than sending
-the import there. See [Library scope](../architecture/adapter-architecture.md#library-scope)
+Gumnut web settings. For a key limited to selected libraries, select a specific
+library covered by the key; **Default** is not supported and returns `403`.
+You must be an owner or collaborator in the selected library. All-libraries
+keys can use **Default**, which resolves to the oldest live library you own.
+A key covering only another library receives `403` rather than sending the
+import there. See [Library scope](../architecture/adapter-architecture.md#library-scope)
 for unavailable choices and when setting changes take effect.
 
 ## Running an import
