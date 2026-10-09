@@ -41,7 +41,6 @@ def test_video_session_rechecked_range_forwarded_and_failed_mutation_invalidates
         5, 10, namespace="video", cacheable=is_cacheable_video_selection
     )
     settings = SimpleNamespace(
-        video_metadata_cache_ttl_seconds=5,
         gumnut_api_base_url="https://api.example.com",
     )
     app = FastAPI()
@@ -104,7 +103,7 @@ def test_video_session_rechecked_range_forwarded_and_failed_mutation_invalidates
             assert sdk.assets.retrieve.await_count == 2
 
 
-def test_disabled_video_cache_performs_live_read_per_range():
+def test_unresolved_video_scope_performs_live_read_per_range():
     app = FastAPI()
     app.include_router(router)
     sdk = Mock()
@@ -126,11 +125,11 @@ def test_disabled_video_cache_performs_live_read_per_range():
     with (
         patch(
             "routers.utils.thumbnail_cache.get_settings",
-            return_value=SimpleNamespace(video_metadata_cache_ttl_seconds=0),
+            return_value=SimpleNamespace(gumnut_api_base_url="https://api.example.com"),
         ),
         patch(
-            "routers.api.assets.get_settings",
-            return_value=SimpleNamespace(video_metadata_cache_ttl_seconds=0),
+            "routers.utils.thumbnail_cache.get_bound_library_id",
+            return_value=None,
         ),
         patch(
             "routers.api.assets.stream_from_cdn",

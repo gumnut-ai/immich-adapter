@@ -83,7 +83,7 @@ from services.thumbnail_cache import (
     record_video_cache_lookup,
     record_video_cache_refresh,
 )
-from services.video_cache import get_video_cache
+from services.video_cache import VIDEO_METADATA_CACHE_TTL_SECONDS, get_video_cache
 from services.websockets import (
     AssetEditReadyV2Payload,
     emit_user_event,
@@ -2025,7 +2025,7 @@ async def play_asset_video(
             return await stream_from_cdn(
                 selected.url, selected.mimetype, range_header=range_header
             )
-    record_video_cache_lookup("bypass", get_settings().video_metadata_cache_ttl_seconds)
+    record_video_cache_lookup("bypass", VIDEO_METADATA_CACHE_TTL_SECONDS)
     return await _retrieve_and_stream_variant(
         id, client, "original", range_header=range_header
     )

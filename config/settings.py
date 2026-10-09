@@ -53,7 +53,6 @@ class Settings(BaseSettings):
     # The media-variant reference owns the operational tradeoff.
     thumbnail_metadata_cache_ttl_seconds: float = Field(default=30, ge=0, le=30)
     thumbnail_metadata_cache_max_entries: int = Field(default=2048, ge=1, le=10000)
-    video_metadata_cache_ttl_seconds: float = Field(default=0, ge=0, le=5)
     video_metadata_cache_max_entries: int = Field(default=256, ge=1, le=10000)
 
     # --- Server-side edit rendering (services/asset_edit_renderer.py) ---

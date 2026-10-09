@@ -9,18 +9,41 @@ from config.settings import TestSettings
 from routers.utils.thumbnail_cache import get_video_cache_context
 from services.thumbnail_cache import ThumbnailVariant
 from services.video_cache import is_cacheable_video_selection
+from services import video_cache
 
 
-def test_video_settings_are_independently_opt_in_and_bounded():
+def test_video_capacity_is_bounded_and_ttl_is_not_configurable():
     settings = TestSettings()
-    assert settings.video_metadata_cache_ttl_seconds == 0
+    assert "video_metadata_cache_ttl_seconds" not in TestSettings.model_fields
     assert settings.thumbnail_metadata_cache_ttl_seconds == 30
-    for ttl in [-1, 5.1]:
-        with pytest.raises(ValidationError):
-            TestSettings(video_metadata_cache_ttl_seconds=ttl)
     for size in [0, 10001]:
         with pytest.raises(ValidationError):
             TestSettings(video_metadata_cache_max_entries=size)
+
+
+@pytest.mark.anyio
+async def test_video_factory_enables_reuse_without_a_ttl_setting(monkeypatch):
+    monkeypatch.setattr(video_cache, "_cache", None)
+    monkeypatch.setattr(video_cache, "get_settings", lambda: TestSettings())
+    cache = video_cache.get_video_cache()
+    assert cache.ttl_seconds == 5
+    variant = ThumbnailVariant(
+        "https://assets.gumnut.ai/version/video?verify=" + "a" * 43,
+        "video/mp4",
+    )
+    calls = 0
+
+    async def load():
+        nonlocal calls
+        calls += 1
+        return variant
+
+    try:
+        assert (await cache.get("scope", None, load)).outcome == "miss"
+        assert (await cache.get("scope", None, load)).outcome == "hit"
+        assert calls == 1
+    finally:
+        await video_cache.close_video_cache()
 
 
 def test_video_context_enabled_independently_of_thumbnails():
@@ -28,7 +51,6 @@ def test_video_context_enabled_independently_of_thumbnails():
     req.state.jwt_token = "apikey_example"
     req.state.session_token = None
     settings = SimpleNamespace(
-        video_metadata_cache_ttl_seconds=5,
         thumbnail_metadata_cache_ttl_seconds=0,
         gumnut_api_base_url="https://api.example.com",
     )
@@ -41,8 +63,6 @@ def test_video_context_enabled_independently_of_thumbnails():
         context = get_video_cache_context(req, Mock())
         assert context is not None
         assert "apikey_example" not in context.scope
-        settings.video_metadata_cache_ttl_seconds = 0
-        assert get_video_cache_context(req, Mock()) is None
 
 
 @pytest.mark.parametrize("suffix", ["", "&dl=movie.mp4"])
