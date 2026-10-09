@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-10-08
+last-updated: 2026-10-09
 ---
 
 # Immich Adapter Architecture
@@ -86,10 +86,15 @@ per request and scopes every Gumnut call to it:
   (or an API key), and is discarded if credential refresh occurred. The user
   response is account-wide, so resolving a library does not change its scope.
   Mutations other than the initial upload dependency keep their live read.
-  Two cases stay unscoped
-  and uncached: a user with no live library at all (the Gumnut API provisions
-  one on first use), and an API key limited to selected libraries, which the
-  API refuses the listing for; its stored choice is not consulted.
+  A user with no live library stays unscoped and uncached; the Gumnut API
+  provisions one on first use. When the credential cannot list libraries,
+  the adapter reads `effective_immich_library_id` from `GET /api/users/me`.
+  The API resolves the usable account choice or oldest live owned fallback
+  before checking the credential's library grant. A key covering that target
+  is bound and cached normally. A null target produces a `403`: granting a
+  different library never redirects Immich. An API without this response
+  field produces a retryable `503`, so deploy API support before this adapter
+  change. The SDK retains the additive response field before regeneration.
 - **Switching.** When a session's re-check resolves a different library — the
   choice changed, became unusable, or became usable again — the session moves
   to it; one whose library can no longer be resolved at all (the `403` above,

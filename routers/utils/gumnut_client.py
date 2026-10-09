@@ -296,20 +296,41 @@ async def _fetch_library_choice(
     """Resolve the library from the Gumnut API: the user's stored choice when
     usable, else the fallback (see ``choose_library``).
 
-    An outcome with no choice leaves the request unscoped: the credential cannot list libraries
-    (an API key limited to selected libraries, whose preference is therefore
-    not consulted), or the user has no live library. A user with only shared
-    libraries and no usable choice is refused with a 403.
+    Credentials unable to list libraries use the effective account target
+    reported by users.me(). An outcome with no choice leaves a user with no
+    live library unscoped. Shared-only users without a usable choice get a 403.
     """
     unscoped = await get_gumnut_client(credential)
     try:
         libraries = await unscoped.libraries.list()
     except PermissionDeniedError:
-        logger.warning(
-            "Credential cannot list libraries; leaving calls unscoped",
-            extra={"path": request.url.path},
-        )
-        return _LibraryChoiceOutcome(None)
+        refresh_before = get_refreshed_token()
+        user = await unscoped.users.me()
+        # SDK response models retain additive fields before regeneration.
+        missing = object()
+        library_id = getattr(user, "effective_immich_library_id", missing)
+        if library_id is missing:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The Gumnut API must support scoped Immich library selection",
+            )
+        if library_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This credential must cover the library selected in the Immich "
+                    "section of your Gumnut web settings, including the default "
+                    "library when Default is selected"
+                ),
+            )
+        if not isinstance(library_id, str) or not library_id:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="The Gumnut API returned an invalid Immich library selection",
+            )
+        if refresh_before is not None or get_refreshed_token() is not None:
+            user = None
+        return _LibraryChoiceOutcome(LibraryChoice(library_id, from_choice=True), user)
     if not libraries:
         logger.info("User has no live library; leaving calls unscoped")
         return _LibraryChoiceOutcome(None)
