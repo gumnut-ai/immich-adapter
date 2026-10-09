@@ -248,21 +248,34 @@ async def test_api_key_fallback_and_library_move_writes_are_preserved(client, ca
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("restricted", [False, True])
-async def test_unscoped_selection_leaves_user_read_live(client, cache, restricted):
+async def test_unscoped_selection_leaves_user_read_live(client, cache):
     client.api_key = "apikey_example"
     req = request(client.api_key)
-    if restricted:
-        client.libraries.list.side_effect = make_sdk_status_error(
-            403, "restricted", cls=PermissionDeniedError
-        )
-    else:
-        client.libraries.list.return_value = []
+    client.libraries.list.return_value = []
     assert await resolve(req, client, cache) is None
     client.users.me.assert_not_awaited()
     await get_raw_current_user(req, client)
     client.users.me.assert_awaited_once()
     cache.remember_for_api_key.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_scoped_selection_user_read_reused_once(client, cache):
+    client.api_key = "apikey_example"
+    req = request(client.api_key)
+    client.libraries.list.side_effect = make_sdk_status_error(
+        403, "restricted", cls=PermissionDeniedError
+    )
+    client.users.me.return_value.immich_library_id = "lib_old"
+    client.libraries.retrieve = AsyncMock(
+        return_value=make_gumnut_library("lib_old", datetime.now(timezone.utc))
+    )
+    assert await resolve(req, client, cache) == "lib_old"
+    user = await get_raw_current_user(req, client)
+    assert user.id == client.users.me.return_value.id
+    client.users.me.assert_awaited_once()
+    await get_raw_current_user(req, client)
+    assert client.users.me.await_count == 2
 
 
 @pytest.mark.anyio

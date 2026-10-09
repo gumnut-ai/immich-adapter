@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-10-08
+last-updated: 2026-10-09
 ---
 
 # Immich Adapter Architecture
@@ -39,7 +39,7 @@ A Gumnut user can own several libraries, and the Gumnut API refuses a call that
 omits `library_id` when more than one is live. The adapter resolves a library
 per request and scopes every Gumnut call to it:
 
-- **Choice.** The user's stored Immich library (`immich_library_id` on
+- **Choice when library listing is permitted.** The user's stored Immich library (`immich_library_id` on
   `GET /api/users/me`, set from the Gumnut web settings) when it is usable:
   listed by `GET /api/libraries` with the caller's `role` as `owner` or
   `collaborator`. Otherwise the fallback: the oldest live library the user
@@ -74,7 +74,7 @@ per request and scopes every Gumnut call to it:
   are trusted for `LIBRARY_RECHECK_SECONDS` (five minutes; the API-key entry's
   TTL), then resolved again, so a changed choice reaches connected clients
   within minutes without a per-request Gumnut call or a push channel. A
-  resolution costs `GET /api/libraries` then `GET /api/users/me` on an
+  normal resolution costs `GET /api/libraries` then `GET /api/users/me` on an
   unscoped client. Parallel requests share one in-flight lookup per credential
   and prior fallback library, if any. This keeps one client's burst from
   multiplying upstream calls while letting sessions with different fallback
@@ -86,10 +86,17 @@ per request and scopes every Gumnut call to it:
   (or an API key), and is discarded if credential refresh occurred. The user
   response is account-wide, so resolving a library does not change its scope.
   Mutations other than the initial upload dependency keep their live read.
-  Two cases stay unscoped
-  and uncached: a user with no live library at all (the Gumnut API provisions
-  one on first use), and an API key limited to selected libraries, which the
-  API refuses the listing for; its stored choice is not consulted.
+  A user with no live library stays unscoped and uncached; the Gumnut API
+  provisions one on first use. When the credential cannot list libraries,
+  the adapter reads the existing `immich_library_id` from `GET /api/users/me`
+  and requires an explicit selection. **Default** produces an actionable `403`:
+  selected-library keys cannot discover the oldest owned library. The adapter
+  fetches the chosen library by ID to verify key access and owner/collaborator
+  eligibility, then binds and caches it normally. An inaccessible selection or
+  viewer role produces `403`; granting a different library never redirects
+  Immich. Owned library metadata can include trashed libraries, so subsequent
+  scoped operations still enforce liveness. This path uses existing API fields
+  and endpoints and needs no separate API deployment or SDK update.
 - **Switching.** When a session's re-check resolves a different library — the
   choice changed, became unusable, or became usable again — the session moves
   to it; one whose library can no longer be resolved at all (the `403` above,

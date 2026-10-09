@@ -8,7 +8,7 @@ import httpx
 from contextvars import ContextVar
 from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request, status
-from gumnut import AsyncGumnut, PermissionDeniedError
+from gumnut import AsyncGumnut, NotFoundError, PermissionDeniedError
 from gumnut.types.user_response import UserResponse
 
 from config.settings import get_settings
@@ -291,25 +291,55 @@ async def get_raw_current_user(
 
 
 async def _fetch_library_choice(
-    request: Request, credential: str, stay_on: str | None
+    credential: str, stay_on: str | None
 ) -> _LibraryChoiceOutcome:
     """Resolve the library from the Gumnut API: the user's stored choice when
     usable, else the fallback (see ``choose_library``).
 
-    An outcome with no choice leaves the request unscoped: the credential cannot list libraries
-    (an API key limited to selected libraries, whose preference is therefore
-    not consulted), or the user has no live library. A user with only shared
-    libraries and no usable choice is refused with a 403.
+    Credentials unable to list libraries require an explicit account choice
+    from users.me(). An outcome with no choice leaves a user with no
+    live library unscoped. Shared-only users without a usable choice get a 403.
     """
     unscoped = await get_gumnut_client(credential)
     try:
         libraries = await unscoped.libraries.list()
     except PermissionDeniedError:
-        logger.warning(
-            "Credential cannot list libraries; leaving calls unscoped",
-            extra={"path": request.url.path},
+        refresh_before = get_refreshed_token()
+        user = await unscoped.users.me()
+        library_id = user.immich_library_id
+        if library_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "API keys limited to selected libraries require an explicit "
+                    "library selection in the Immich section of your Gumnut web "
+                    "settings; choose a library covered by this key instead of Default"
+                ),
+            )
+        if not isinstance(library_id, str) or not library_id:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="The Gumnut API returned an invalid Immich library selection",
+            )
+        inaccessible = HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This key must cover the library selected in the Immich section "
+                "of your Gumnut web settings, where you must be an owner or collaborator"
+            ),
         )
-        return _LibraryChoiceOutcome(None)
+        try:
+            library = await unscoped.libraries.retrieve(library_id)
+        except (PermissionDeniedError, NotFoundError) as exc:
+            raise inaccessible from exc
+        choice = choose_library([library], library_id)
+        if choice is None:
+            raise inaccessible
+        # Owned library metadata can include trashed libraries; scoped asset
+        # calls still enforce liveness, and never fall back to another library.
+        if refresh_before is not None or get_refreshed_token() is not None:
+            user = None
+        return _LibraryChoiceOutcome(choice, user)
     if not libraries:
         logger.info("User has no live library; leaving calls unscoped")
         return _LibraryChoiceOutcome(None)
@@ -355,7 +385,7 @@ async def _fetch_library_choice_once(
     task = _library_choices_in_flight.get(key)
     originating_caller = task is None
     if task is None:
-        task = asyncio.create_task(_fetch_library_choice(request, credential, stay_on))
+        task = asyncio.create_task(_fetch_library_choice(credential, stay_on))
         _library_choices_in_flight[key] = task
 
         def _done(finished: asyncio.Task[_LibraryChoiceOutcome]) -> None:

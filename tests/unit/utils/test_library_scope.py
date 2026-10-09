@@ -17,6 +17,8 @@ from routers.api.albums import create_album
 from routers.api.assets import upload_asset
 from routers.api.faces import create_face
 from routers.api.people import create_person
+from routers.api.search import search_assets
+from routers.immich_models import MetadataSearchDto
 from routers.api.stacks import create_stack
 from routers.utils.gumnut_client import (
     LibraryScope,
@@ -42,6 +44,73 @@ JWT = "test.jwt.token"
 API_KEY = "apikey_abc123"
 SESSION_TOKEN = "550e8400-e29b-41d4-a716-446655440000"
 LIBRARY_GONE = "Library lib_bound not found or not accessible by user intuser_1"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("target", ["lib_chosen", None, "missing"])
+@pytest.mark.parametrize("role", ["owner", "collaborator"])
+async def test_selected_key_binding_reaches_downstream_routes(target, role):
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        assert request.headers["authorization"] == f"Bearer {API_KEY}"
+        if request.url.path == "/api/libraries":
+            return httpx.Response(403, json={"detail": "limited to selected libraries"})
+        if request.url.path == "/api/users/me":
+            user = {"id": "intuser_test", "immich_library_id": None}
+            if target != "missing":
+                user["immich_library_id"] = target
+            return httpx.Response(200, json=user)
+        if request.url.path == f"/api/libraries/{target}":
+            return httpx.Response(
+                200,
+                json={
+                    "id": target,
+                    "role": role,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        assert request.url.params.get("library_id") == target
+        return httpx.Response(200, json={"data": [], "has_more": False})
+
+    cache = AsyncMock()
+    cache.get_for_api_key.return_value = None
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        with (
+            patch(
+                "routers.utils.gumnut_client.get_shared_http_client", return_value=http
+            ),
+            patch("routers.utils.gumnut_client.get_settings") as settings,
+        ):
+            settings.return_value.gumnut_api_base_url = "http://gumnut.test"
+            request = _request(jwt_token=API_KEY, session_token=None)
+            if target in {None, "missing"}:
+                with pytest.raises(HTTPException) as exc_info:
+                    await get_authenticated_gumnut_client(request, cache)
+                assert exc_info.value.status_code == 403
+                assert "instead of Default" in exc_info.value.detail
+                assert [r.url.path for r in seen] == ["/api/libraries", "/api/users/me"]
+                cache.remember_for_api_key.assert_not_awaited()
+                return
+            client = await get_authenticated_gumnut_client(request, cache)
+            result = await search_assets(MetadataSearchDto(), client, Mock())
+            assert result.assets.count == 0
+            await client.albums.list()
+            await client.people.list()
+            await client.faces.list()
+            await client.get("/api/stacks", cast_to=dict[str, object])
+            await client.events.get()
+            assert {r.url.path for r in seen[3:]} == {
+                "/api/assets",
+                "/api/albums",
+                "/api/people",
+                "/api/faces",
+                "/api/stacks",
+                "/api/events",
+            }
+            assert await get_current_library_id(client) == target
+            cache.remember_for_api_key.assert_awaited_once_with(API_KEY, target)
 
 
 def _request(
@@ -149,6 +218,7 @@ class TestResolveLibraryId:
     def unscoped_client(self):
         client = Mock()
         client.libraries.list = AsyncMock(return_value=[])
+        client.libraries.retrieve = AsyncMock()
         client.users.me = AsyncMock(return_value=Mock(immich_library_id=None))
         return client
 
@@ -275,23 +345,84 @@ class TestResolveLibraryId:
         cache.set_session_library.assert_not_awaited()
 
     @pytest.mark.anyio
-    async def test_credential_that_may_not_list_libraries_stays_unscoped(
+    async def test_scoped_key_uses_explicit_immich_library(
         self, cache, unscoped_client, get_client
     ):
-        """A Gumnut API key limited to selected libraries is refused the
-        listing; the request proceeds unscoped rather than failing here."""
         unscoped_client.libraries.list.side_effect = make_sdk_status_error(
             403, "limited to selected libraries", cls=PermissionDeniedError
         )
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_new")
+        unscoped_client.libraries.retrieve.return_value = OWNED_NEW
         request = _request(jwt_token=API_KEY, session_token=None)
 
         library_id = await _resolve_library_id(request, API_KEY, cache)
 
-        assert library_id is None
+        assert library_id == "lib_new"
+        assert get_bound_library_id() == "lib_new"
+        cache.remember_for_api_key.assert_awaited_once_with(API_KEY, "lib_new")
+        unscoped_client.users.me.assert_awaited_once()
+        unscoped_client.libraries.retrieve.assert_awaited_once_with("lib_new")
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("target", [None, "", 123])
+    async def test_scoped_key_without_usable_target_is_refused(
+        self, cache, unscoped_client, get_client, target
+    ):
+        unscoped_client.libraries.list.side_effect = make_sdk_status_error(
+            403, "limited to selected libraries", cls=PermissionDeniedError
+        )
+        unscoped_client.users.me.return_value = Mock(immich_library_id=target)
+        with pytest.raises(HTTPException) as exc_info:
+            await _resolve_library_id(
+                _request(jwt_token=API_KEY, session_token=None), API_KEY, cache
+            )
+        assert exc_info.value.status_code == (403 if target is None else 502)
         assert get_bound_library_id() is None
         cache.remember_for_api_key.assert_not_awaited()
-        # The stored choice is not consulted where the listing is refused.
-        unscoped_client.users.me.assert_not_awaited()
+        unscoped_client.libraries.retrieve.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("library_status", [403, 404])
+    async def test_scoped_key_cannot_access_explicit_selection(
+        self, cache, unscoped_client, get_client, library_status
+    ):
+        unscoped_client.libraries.list.side_effect = make_sdk_status_error(
+            403, "restricted", cls=PermissionDeniedError
+        )
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_new")
+        unscoped_client.libraries.retrieve.side_effect = make_sdk_status_error(
+            library_status,
+            "inaccessible library",
+            cls=PermissionDeniedError if library_status == 403 else NotFoundError,
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await _resolve_library_id(
+                _request(jwt_token=API_KEY, session_token=None), API_KEY, cache
+            )
+        assert exc_info.value.status_code == 403
+        assert "key must cover" in exc_info.value.detail
+        assert get_bound_library_id() is None
+        cache.remember_for_api_key.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_scoped_key_viewer_selection_is_refused(
+        self, cache, unscoped_client, get_client
+    ):
+        unscoped_client.libraries.list.side_effect = make_sdk_status_error(
+            403, "restricted", cls=PermissionDeniedError
+        )
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_viewer")
+        unscoped_client.libraries.retrieve.return_value = make_gumnut_library(
+            "lib_viewer", datetime.now(timezone.utc), role="viewer"
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await _resolve_library_id(
+                _request(jwt_token=API_KEY, session_token=None), API_KEY, cache
+            )
+        assert exc_info.value.status_code == 403
+        assert "owner or collaborator" in exc_info.value.detail
+        assert get_bound_library_id() is None
+        cache.remember_for_api_key.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_api_key_miss_follows_the_stored_choice(
