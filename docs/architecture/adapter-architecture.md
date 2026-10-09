@@ -61,12 +61,13 @@ per request and scopes every Gumnut call to it:
   or versions, in its new library; the Gumnut API authorizes each call against
   that library. Nothing by-id decides what the bound library contains: every
   list, count, search, event read, trash, restore, delete and face call carries
-  the bound library and omits or skips a moved asset, and an album, stack or
-  face write naming one is refused or reports it not found. A stack the asset
-  joined elsewhere is left out, because its members are listed in the bound
-  library. Responses carry no library id, so new code must take membership
-  from a scoped list, never from a by-id read. The clients built without a
-  library make no asset call: library resolution, logout and OAuth sign-in.
+  the bound library and omits or skips a moved asset, and adding one to an
+  album or stack, or drawing a face on it, is refused or reports it not
+  found. A stack the asset joined elsewhere is left out, because its members
+  are listed in the bound library. Responses carry no library id, so new code
+  must take membership from a scoped list, never from a by-id read. The
+  clients built without a library make no asset call: library resolution,
+  logout and OAuth sign-in.
 - **Caching and re-check.** Session-token clients cache the id on the session
   record with when it was resolved and whether it was the stored choice;
   API-key clients, which have no session, under a hashed-key Redis entry. Both

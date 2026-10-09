@@ -2970,6 +2970,25 @@ class TestGetAssetInfo:
         assert result.stack is None
         assert result.id == safe_uuid_from_asset_id(members[0].id)
 
+    @pytest.mark.anyio
+    async def test_get_asset_info_omits_a_stack_with_no_members_in_the_bound_library(
+        self, sample_uuid, mock_current_user
+    ):
+        # An asset that moved to another library can join a stack there; the
+        # library-scoped member list then returns nothing for that stack.
+        stack, members = make_gumnut_stack_with_members(count=2)
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(return_value=members[0])
+        mock_client.stacks.retrieve_stack = AsyncMock(return_value=stack)
+        mock_client.assets.list = Mock(return_value=MockSyncCursorPage([]))
+
+        result = await get_asset_info(
+            sample_uuid, client=mock_client, current_user=mock_current_user
+        )
+
+        assert result.stack is None
+        assert result.id == safe_uuid_from_asset_id(members[0].id)
+
 
 def _make_mock_asset_with_urls(
     variant_map: dict[str, dict[str, str]],
