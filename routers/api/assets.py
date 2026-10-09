@@ -54,7 +54,11 @@ from services.asset_edit_renderer import (
     EditRenderLimitError,
     render_asset_edit,
 )
-from routers.utils.cdn_client import DEFAULT_FORWARDED_HEADERS, stream_from_cdn
+from routers.utils.cdn_client import (
+    DEFAULT_FORWARDED_HEADERS,
+    CDNAssetNotFound,
+    stream_from_cdn,
+)
 from routers.utils.gumnut_client import (
     forget_bound_library_if_gone,
     get_authenticated_gumnut_client,
@@ -65,6 +69,7 @@ from routers.utils.current_user import get_current_user, get_current_user_id
 from routers.utils.thumbnail_cache import (
     ThumbnailCacheContext,
     get_thumbnail_cache_context,
+    get_video_cache_context,
 )
 from pydantic import ValidationError
 
@@ -75,7 +80,10 @@ from services.thumbnail_cache import (
     opaque_key,
     record_thumbnail_cache_lookup,
     record_thumbnail_cache_refresh,
+    record_video_cache_lookup,
+    record_video_cache_refresh,
 )
+from services.video_cache import get_video_cache
 from services.websockets import (
     AssetEditReadyV2Payload,
     emit_user_event,
@@ -1977,6 +1985,7 @@ async def play_asset_video(
     key: str = Query(default=None, alias="key"),
     slug: str = Query(default=None, alias="slug"),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+    cache_context: ThumbnailCacheContext | None = Depends(get_video_cache_context),
 ) -> StreamingResponse:
     """
     Play the video for a specific asset.
@@ -1986,6 +1995,37 @@ async def play_asset_video(
     the initial 200 response so iOS AVPlayer treats the source as seekable.
     """
     range_header = request.headers.get("range")
+    if isinstance(cache_context, ThumbnailCacheContext):
+        cache = get_video_cache()
+        cache_scope = opaque_key(
+            cache_context.scope, str(id), "original", "current-video"
+        )
+
+        async def load() -> ThumbnailVariant:
+            return await _retrieve_variant(id, client, "original")
+
+        result = await cache.get(
+            cache_scope,
+            None,
+            load,
+            max_age_seconds=cache_context.remaining_seconds(),
+        )
+        try:
+            return await stream_from_cdn(
+                result.variant.url, result.variant.mimetype, range_header=range_header
+            )
+        except CDNAssetNotFound as exc:
+            if exc.upstream_status != 404:
+                raise
+            cache.evict(cache_scope, None, result.variant)
+            if result.outcome != "hit":
+                raise
+            record_video_cache_refresh(cache.ttl_seconds)
+            selected = await load()
+            return await stream_from_cdn(
+                selected.url, selected.mimetype, range_header=range_header
+            )
+    record_video_cache_lookup("bypass", get_settings().video_metadata_cache_ttl_seconds)
     return await _retrieve_and_stream_variant(
         id, client, "original", range_header=range_header
     )

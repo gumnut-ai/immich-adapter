@@ -129,6 +129,12 @@ pooling, and server-side edit rendering:
   for the TTL rationale and observability.
 - `THUMBNAIL_METADATA_CACHE_MAX_ENTRIES`: Maximum local thumbnail metadata
   entries, including thumbhash aliases (default: `2048`; range: `1`–`10000`)
+- `VIDEO_METADATA_CACHE_TTL_SECONDS`: Video playback metadata reuse, in seconds
+  (default: `0`, disabled; maximum: `5`). Enabling delays backend authorization
+  and external asset-state checks; read the
+  [video cache contract](docs/references/media-variant-selection.md#optional-video-playback-metadata-cache).
+- `VIDEO_METADATA_CACHE_MAX_ENTRIES`: Maximum local video metadata entries
+  (default: `256`; range: `1`–`10000`)
 - `EDIT_RENDER_MAX_INPUT_BYTES`: Maximum edit source size in bytes (default: `104857600`)
 - `EDIT_RENDER_MAX_PIXELS`: Maximum decoded pixel count (default: `80000000`)
 - `EDIT_RENDER_MAX_DIMENSION`: Maximum source width or height in pixels (default: `30000`)

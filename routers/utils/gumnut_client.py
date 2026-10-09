@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request, status
 from gumnut import AsyncGumnut, PermissionDeniedError
+from gumnut.types.user_response import UserResponse
 
 from config.settings import get_settings
 from services.library_resolver import (
@@ -232,13 +233,70 @@ async def get_gumnut_client(
     )
 
 
+@dataclass(frozen=True)
+class _LibraryChoiceOutcome:
+    choice: LibraryChoice | None
+    user: UserResponse | None = None
+
+
+@dataclass(frozen=True)
+class _RequestUserRead:
+    credential: str
+    user: UserResponse
+
+
+def _user_read_reuse_allowed(request: Request, credential: str) -> bool:
+    """Conservative freshness gate; this never authenticates a credential."""
+    if get_refreshed_token() is not None:
+        return False
+    if getattr(request.state, "jwt_token", None) != credential:
+        return False
+    if request.method not in {"GET", "HEAD"} and not (
+        request.method == "POST"
+        and request.url.path in {"/api/sync/stream", "/api/assets"}
+    ):
+        return False
+    if getattr(request.state, "session_token", None):
+        # Imported lazily because the metadata helper depends on this module.
+        from routers.utils.thumbnail_cache import _jwt_expiry
+
+        return _jwt_expiry(credential) is not None
+    return credential.startswith("apikey_")
+
+
+async def get_raw_current_user(
+    request: Request, client: AsyncGumnut, *, initial_user_dependency: bool = False
+) -> UserResponse:
+    """Consume only this request's successful library-selection user read.
+
+    Later calls stay live, as do uncertain credentials and token refreshes.
+    Upload reuse is limited to the initial user dependency, before the handler
+    performs a backend write. Failures are never retained. The returned copy cannot
+    mutate the shared library-resolution outcome.
+    """
+    seed = getattr(request.state, "library_selection_user", None)
+    request.state.library_selection_user = None
+    if (
+        isinstance(seed, _RequestUserRead)
+        and (
+            request.method != "POST"
+            or request.url.path != "/api/assets"
+            or initial_user_dependency
+        )
+        and client.api_key == seed.credential
+        and _user_read_reuse_allowed(request, seed.credential)
+    ):
+        return seed.user.model_copy(deep=True)
+    return await client.users.me()
+
+
 async def _fetch_library_choice(
     request: Request, credential: str, stay_on: str | None
-) -> LibraryChoice | None:
+) -> _LibraryChoiceOutcome:
     """Resolve the library from the Gumnut API: the user's stored choice when
     usable, else the fallback (see ``choose_library``).
 
-    ``None`` leaves the request unscoped: the credential cannot list libraries
+    An outcome with no choice leaves the request unscoped: the credential cannot list libraries
     (an API key limited to selected libraries, whose preference is therefore
     not consulted), or the user has no live library. A user with only shared
     libraries and no usable choice is refused with a 403.
@@ -251,13 +309,16 @@ async def _fetch_library_choice(
             "Credential cannot list libraries; leaving calls unscoped",
             extra={"path": request.url.path},
         )
-        return None
+        return _LibraryChoiceOutcome(None)
     if not libraries:
         logger.info("User has no live library; leaving calls unscoped")
-        return None
+        return _LibraryChoiceOutcome(None)
 
+    user = None
+    refresh_before = get_refreshed_token()
     try:
-        preferred_id = (await unscoped.users.me()).immich_library_id
+        user = await unscoped.users.me()
+        preferred_id = user.immich_library_id
     except PermissionDeniedError:
         preferred_id = None
     choice = choose_library(libraries, preferred_id, stay_on=stay_on)
@@ -271,14 +332,18 @@ async def _fetch_library_choice(
                 "of your Gumnut web settings, or create one of your own"
             ),
         )
-    return choice
+    # A response hook may have refreshed the credential during the lookup.
+    # Keep that effect, but require the downstream user call to stay live.
+    if refresh_before is not None or get_refreshed_token() is not None:
+        user = None
+    return _LibraryChoiceOutcome(choice, user)
 
 
 # In-flight library resolutions, keyed by what the outcome depends on. A client
 # opening a timeline sends dozens of requests at once; when its library is due
 # a re-check they share one resolution rather than each listing libraries.
 _library_choices_in_flight: dict[
-    tuple[str, str | None], asyncio.Task[LibraryChoice | None]
+    tuple[str, str | None], asyncio.Task[_LibraryChoiceOutcome]
 ] = {}
 
 
@@ -288,11 +353,12 @@ async def _fetch_library_choice_once(
     """``_fetch_library_choice``, shared by the requests that need it at once."""
     key = (credential, stay_on)
     task = _library_choices_in_flight.get(key)
+    originating_caller = task is None
     if task is None:
         task = asyncio.create_task(_fetch_library_choice(request, credential, stay_on))
         _library_choices_in_flight[key] = task
 
-        def _done(finished: asyncio.Task[LibraryChoice | None]) -> None:
+        def _done(finished: asyncio.Task[_LibraryChoiceOutcome]) -> None:
             if _library_choices_in_flight.get(key) is finished:
                 del _library_choices_in_flight[key]
             # Retrieve a failure: with every waiter cancelled nothing else
@@ -304,7 +370,18 @@ async def _fetch_library_choice_once(
     # wait() leaves the task running when this request is cancelled, so one
     # client disconnecting does not cancel the others' result.
     await asyncio.wait([task])
-    return task.result()
+    outcome = task.result()
+    # Waiters share only the library choice. Never seed another request with
+    # a user response (or hook effects) fetched in the originating context.
+    if (
+        originating_caller
+        and outcome.user is not None
+        and _user_read_reuse_allowed(request, credential)
+    ):
+        request.state.library_selection_user = _RequestUserRead(
+            credential, outcome.user.model_copy(deep=True)
+        )
+    return outcome.choice
 
 
 def _unrecorded() -> HTTPException:

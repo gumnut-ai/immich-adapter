@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-10-06
+last-updated: 2026-10-08
 ---
 
 # Immich Adapter Architecture
@@ -64,7 +64,15 @@ per request and scopes every Gumnut call to it:
   unscoped client. Parallel requests share one in-flight lookup per credential
   and prior fallback library, if any. This keeps one client's burst from
   multiplying upstream calls while letting sessions with different fallback
-  libraries resolve independently. Two cases stay unscoped
+  libraries resolve independently. The request originating a lookup can consume
+  its successful current-user response once, before opening a sync stream or
+  during the initial upload user dependency. Ordinary GET/HEAD user reads can
+  also consume it. Other waiters and subsequent requests still read the user
+  live. Reuse requires the same credential and a known unexpired session JWT
+  (or an API key), and is discarded if credential refresh occurred. The user
+  response is account-wide, so resolving a library does not change its scope.
+  Mutations other than the initial upload dependency keep their live read.
+  Two cases stay unscoped
   and uncached: a user with no live library at all (the Gumnut API provisions
   one on first use), and an API key limited to selected libraries, which the
   API refuses the listing for; its stored choice is not consulted.

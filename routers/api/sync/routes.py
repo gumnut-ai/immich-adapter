@@ -35,6 +35,7 @@ from routers.immich_models import (
 from routers.utils.gumnut_client import (
     get_authenticated_gumnut_client,
     get_bound_library_id,
+    get_raw_current_user,
 )
 
 from routers.api.sync.events import bind_sync_epoch, to_ack_string
@@ -401,12 +402,13 @@ async def get_sync_stream(
             },
         )
 
-    # Fetch current user before starting the stream. This ensures auth
+    # Obtain current user before starting the stream; request-local reuse
+    # requires the exact, unrefreshed credential to remain unexpired. Auth
     # errors (e.g. expired JWT) return a proper HTTP 401 instead of being
     # silently swallowed inside the streaming generator after the 200
     # status has already been committed. SDK errors bubble to the global
     # GumnutError handler.
-    current_user = await gumnut_client.users.me()
+    current_user = await get_raw_current_user(http_request, gumnut_client)
 
     return StreamingResponse(
         generate_sync_stream(gumnut_client, request, checkpoint_map, current_user),

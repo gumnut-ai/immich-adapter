@@ -48,6 +48,7 @@ from routers.api.download import close_archive_zip_executor
 from services import websockets
 from services.streaming_upload import close_streaming_http_client
 from services.thumbnail_cache import close_thumbnail_cache
+from services.video_cache import close_video_cache
 from routers.utils.cdn_client import close_cdn_http_client
 from routers.utils.gumnut_client import close_shared_http_client
 from utils.redis_client import check_redis_connection, close_redis_client
@@ -105,6 +106,7 @@ async def lifespan(app: FastAPI):
 
     yield
     await close_thumbnail_cache()
+    await close_video_cache()
     # Ensure singleton HTTP clients are closed on shutdown
     await close_shared_http_client()
     await close_cdn_http_client()

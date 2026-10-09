@@ -1,4 +1,4 @@
-"""Bounded, process-local cache of successful thumbnail variant selections."""
+"""Bounded, process-local variant metadata reuse for thumbnails and videos."""
 
 import asyncio
 import hashlib
@@ -33,6 +33,30 @@ def record_thumbnail_cache_refresh(ttl_seconds: float) -> None:
     """Keep a CDN-triggered live retry outside the incoming lookup denominator."""
     metrics.count(
         "thumbnail.cache.refresh",
+        1,
+        attributes={
+            "cache.reason": "cdn_404",
+            "cache.enabled": ttl_seconds > 0,
+            "cache.ttl_seconds": ttl_seconds,
+        },
+    )
+
+
+def record_video_cache_lookup(outcome: CacheOutcome, ttl_seconds: float) -> None:
+    metrics.count(
+        "video.cache.lookup",
+        1,
+        attributes={
+            "cache.outcome": outcome,
+            "cache.enabled": ttl_seconds > 0,
+            "cache.ttl_seconds": ttl_seconds,
+        },
+    )
+
+
+def record_video_cache_refresh(ttl_seconds: float) -> None:
+    metrics.count(
+        "video.cache.refresh",
         1,
         attributes={
             "cache.reason": "cdn_404",
@@ -87,12 +111,16 @@ class ThumbnailCache:
         max_in_flight: int = 128,
         load_timeout_seconds: float = 60,
         clock: Callable[[], float] = time.monotonic,
+        namespace: Literal["thumbnail", "video"] = "thumbnail",
+        cacheable: Callable[[ThumbnailVariant], bool] | None = None,
     ) -> None:
         self.ttl_seconds = ttl_seconds
         self.max_entries = max_entries
         self.max_in_flight = max_in_flight
         self.load_timeout_seconds = load_timeout_seconds
         self._clock = clock
+        self.namespace = namespace
+        self._cacheable = cacheable
         self._entries: OrderedDict[str, _Entry] = OrderedDict()
         self._in_flight: dict[str, asyncio.Task[ThumbnailVariant]] = {}
         self._tasks: set[asyncio.Task[ThumbnailVariant]] = set()
@@ -145,10 +173,15 @@ class ThumbnailCache:
         *,
         max_age_seconds: float | None = None,
     ) -> CacheResult:
-        with sentry_sdk.start_span(op="cache.get", name="thumbnail.variant") as span:
+        with sentry_sdk.start_span(
+            op="cache.get", name=f"{self.namespace}.variant"
+        ) as span:
 
             def record(outcome: CacheOutcome) -> None:
-                record_thumbnail_cache_lookup(outcome, self.ttl_seconds)
+                if self.namespace == "thumbnail":
+                    record_thumbnail_cache_lookup(outcome, self.ttl_seconds)
+                else:
+                    record_video_cache_lookup(outcome, self.ttl_seconds)
                 span.set_data("cache.hit", outcome == "hit")
                 span.set_data("cache.coalesced", outcome == "coalesced")
                 span.set_data("cache.outcome", outcome)
@@ -197,6 +230,7 @@ class ThumbnailCache:
                 if (
                     generation == self._generation
                     and expires_at > self._clock()
+                    and (self._cacheable is None or self._cacheable(variant))
                     and len(variant.url.encode())
                     + len(variant.mimetype.encode())
                     + len((variant.thumbhash or "").encode())
@@ -207,7 +241,11 @@ class ThumbnailCache:
                     # Only a fetched, known thumbhash proves this empty->hash
                     # transition has the same rendering. Arbitrary c values
                     # remain distinct and require an upstream read.
-                    if not cache_buster and variant.thumbhash:
+                    if (
+                        self.namespace == "thumbnail"
+                        and not cache_buster
+                        and variant.thumbhash
+                    ):
                         self._store(opaque_key(scope, variant.thumbhash), entry)
                 return variant
 

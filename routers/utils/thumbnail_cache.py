@@ -53,7 +53,25 @@ def get_thumbnail_cache_context(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
 ) -> ThumbnailCacheContext | None:
     settings = get_settings()
-    if settings.thumbnail_metadata_cache_ttl_seconds <= 0:
+    return _metadata_cache_context(
+        request, settings.thumbnail_metadata_cache_ttl_seconds
+    )
+
+
+def get_video_cache_context(
+    request: Request,
+    client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
+) -> ThumbnailCacheContext | None:
+    return _metadata_cache_context(
+        request, get_settings().video_metadata_cache_ttl_seconds
+    )
+
+
+def _metadata_cache_context(
+    request: Request, ttl_seconds: float
+) -> ThumbnailCacheContext | None:
+    settings = get_settings()
+    if ttl_seconds <= 0:
         return None
     credential = getattr(request.state, "jwt_token", None)
     session = getattr(request.state, "session_token", None)

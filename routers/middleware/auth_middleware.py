@@ -14,6 +14,7 @@ from routers.utils.gumnut_client import (
 from routers.utils.gumnut_id_conversion import uuid_to_gumnut_user_id
 from services.session_store import get_session_store
 from services.thumbnail_cache import get_thumbnail_cache
+from services.video_cache import get_video_cache
 
 logger = logging.getLogger(__name__)
 
@@ -227,11 +228,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         mutating = request.method not in {"GET", "HEAD", "OPTIONS"}
         if mutating:
             get_thumbnail_cache().invalidate()
+            get_video_cache().invalidate()
         try:
             response: Response = await call_next(request)
         finally:
             if mutating:
                 get_thumbnail_cache().invalidate()
+                get_video_cache().invalidate()
 
         # Check if Gumnut backend returned a refreshed token
         # The response hook in gumnut_client.py captures this from backend responses
