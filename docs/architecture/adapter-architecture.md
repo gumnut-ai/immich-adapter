@@ -52,8 +52,22 @@ per request and scopes every Gumnut call to it:
 - **Binding.** `get_authenticated_gumnut_client` sets the resolved id as the
   SDK client's default query parameter, so query-scoped endpoints carry it
   without the call site knowing. The calls that take `library_id` in a body or
-  form get it from `get_current_library_id`. By-id reads and writes need no
-  library: a record id is unambiguous.
+  form get it from `get_current_library_id`. By-id routes take no library: the
+  Gumnut API finds the record's own and ignores the parameter.
+- **Assets that change library.** A Gumnut asset can move to another library
+  and keep its id, so a by-id call reaches it wherever it is now, on a bound
+  client as much as an unscoped one. Until the sync stream removes it, an
+  Immich client holding the id can still read the asset, and edit its metadata
+  or versions, in its new library; the Gumnut API authorizes each call against
+  that library. Nothing by-id decides what the bound library contains: every
+  list, count, search, event read, trash, restore, delete and face call carries
+  the bound library and omits or skips a moved asset, and adding one to an
+  album or stack, or drawing a face on it, is refused or reports it not
+  found. A stack the asset joined elsewhere is left out, because its members
+  are listed in the bound library. Responses carry no library id, so new code
+  must take membership from a scoped list, never from a by-id read. The
+  clients built without a library make no asset call: library resolution,
+  logout and OAuth sign-in.
 - **Caching and re-check.** Session-token clients cache the id on the session
   record with when it was resolved and whether it was the stored choice;
   API-key clients, which have no session, under a hashed-key Redis entry. Both
