@@ -1,6 +1,6 @@
 ---
 title: "Media Variant Selection"
-last-updated: 2026-10-08
+last-updated: 2026-10-10
 ---
 
 # Media Variant Selection
@@ -40,8 +40,11 @@ request. Session JWTs with missing, malformed, or expired `exp` bypass the
 cache; expiry parsing is only a cache denial gate, never signature validation.
 The Gumnut API validates credentials on misses. Entries expire before the
 session JWT's reported expiry. Credential refresh, session changes, and library
-switches change the isolated cache scope. Restricted API keys without a
-resolved library stay on the live path.
+switches change the isolated cache scope. An explicitly selected-library API
+key can use the cache once the adapter resolves and binds that library; a
+restricted key without a resolved library stays on the live path. See
+[Library scope](../architecture/adapter-architecture.md#library-scope) for the
+selection and eligibility rules.
 
 `services/thumbnail_cache.py::ThumbnailCache` stores only a selected URL, MIME
 type, and optional known thumbhash. Keys hash the backend URL, exact credential,
