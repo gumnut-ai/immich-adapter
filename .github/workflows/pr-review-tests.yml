@@ -1,10 +1,10 @@
 name: PR review workflow checks
 on:
   pull_request:
-    paths: ['.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
+    paths: ['.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
   push:
     branches: [main]
-    paths: ['.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
+    paths: ['.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
 permissions:
   contents: read
 jobs:
@@ -15,6 +15,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check Claude reviewer admission and tool boundaries
+        run: node --test .github/claude-review/*.test.cjs
       - name: Load pinned native review runtime for contract tests
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
