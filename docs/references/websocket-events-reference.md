@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-10-01
+last-updated: 2026-10-10
 ---
 
 # Immich WebSocket Events Reference
@@ -140,7 +140,7 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`, and t
 
 **Trigger**:
 - **Upstream Immich**: emitted from `notification.service.ts` on `StackCreate`, `StackUpdate`, `StackDelete`, and `StackDeleteAll`.
-- **immich-adapter**: emitted from the five mutating stack routes in `routers/api/stacks.py`, one emit per successful mutation — `create_stack`, `update_stack` (only when the cover actually changes; a cover-less PUT is a pure read and emits nothing), `remove_asset_from_stack`, `delete_stack`, and `delete_stacks` (a single emit after a clean bulk dissolve). All are scoped to the owning user's room.
+- **immich-adapter**: emitted from the five mutating stack routes in `routers/api/stacks.py`, one emit per successful mutation — `create_stack`, `update_stack` (whenever the PUT supplies `primaryAssetId`; a cover-less PUT is a pure read and emits nothing), `remove_asset_from_stack`, `delete_stack`, and `delete_stacks` (a single emit after a clean bulk dissolve). All are scoped to the owning user's room.
 
 **Payload shape**: none. Upstream calls `clientSend('on_asset_stack_update', userId)` with no data argument — the repository type `on_asset_stack_update: string[]` is a rest-param (`...data: string[]`) that spreads to zero args, not an id array. The adapter therefore emits with `payload=None` via `emit_user_event`, never `emit_user_event_per_id`.
 
