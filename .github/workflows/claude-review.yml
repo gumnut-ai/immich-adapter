@@ -1,0 +1,168 @@
+name: Claude PR review
+
+# Safe metadata-only use: trusted default-branch checkout, no contributor execution.
+on: # zizmor: ignore[dangerous-triggers]
+  pull_request_target:
+    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to review
+        required: true
+        type: string
+      expected_head:
+        description: Expected PR head (automatic dispatch only)
+        required: false
+        type: string
+      origin_run_id:
+        description: Trusted PR event run (automatic dispatch only)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    if: >-
+      vars.CLAUDE_PR_REVIEW_ENABLED == 'true' &&
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.state == 'open' &&
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      github.event.sender.type == 'User'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: write # Dispatch only the trusted default-branch reviewer.
+    concurrency:
+      group: claude-review-dispatch-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }} # PR target SHA, never the contributor head.
+          persist-credentials: false
+      - name: Dispatch trusted reviewer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLAUDE_REVIEW_ENABLED: ${{ vars.CLAUDE_PR_REVIEW_ENABLED }}
+        run: node .github/claude-review/dispatch.cjs dispatch
+
+  review:
+    if: >-
+      vars.CLAUDE_PR_REVIEW_ENABLED == 'true' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (github.event.sender.type == 'User' || github.event.sender.login == 'github-actions[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: claude-review-${{ inputs.pr_number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write # GitHub's add_issue_comment tool posts the PR summary.
+      actions: read # Verify an automatic dispatch's originating human PR event.
+      checks: write # Report review execution on the actual PR head.
+      id-token: write # Exchange for the official Claude GitHub App's token.
+    steps:
+      # The job admits default-branch dispatches only. Keep the exact trusted SHA.
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate review request
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLAUDE_REVIEW_ENABLED: ${{ vars.CLAUDE_PR_REVIEW_ENABLED }}
+        run: node .github/claude-review/dispatch.cjs prepare
+
+      - name: Require subscription authentication
+        if: steps.prepare.outputs.eligible == 'true'
+        env:
+          CLAUDE_REVIEW_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [[ -z "$CLAUDE_REVIEW_TOKEN" ]]; then
+            echo '::error::Configure CLAUDE_CODE_OAUTH_TOKEN before enabling Claude PR review.'
+            exit 1
+          fi
+
+      - name: Review independently with Claude
+        if: steps.prepare.outputs.eligible == 'true'
+        id: claude
+        # Bundles CLI 2.1.295 and SDK 0.3.295; Opus 5.5 requires CLI >= 2.1.280.
+        uses: anthropics/claude-code-action@2dca132ff0e0c4094ce6048b422c6915a071210b # v1.0.247
+        env:
+          CLAUDE_REVIEW_OWNER: ${{ steps.prepare.outputs.owner }}
+          CLAUDE_REVIEW_REPO: ${{ steps.prepare.outputs.repo }}
+          CLAUDE_REVIEW_PR_NUMBER: ${{ steps.prepare.outputs.pr_number }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Only our validated metadata dispatcher may invoke as a bot.
+          allowed_bots: github-actions
+          # Override the app exchange's default contents:write permission.
+          additional_permissions: |
+            contents: read
+          include_fix_links: 'false'
+          # Post final inline comments directly; no extra classification inference.
+          classify_inline_comments: 'false'
+          prompt: |
+            Independently review PR #${{ steps.prepare.outputs.pr_number }} in ${{ github.repository }}.
+            Trusted policy SHA: ${{ github.sha }}; trusted target branch: ${{ github.event.repository.default_branch }}.
+            Use mcp__github__get_file_contents with that trusted SHA as sha to read
+            .github/claude-review/INSTRUCTIONS.md first, then follow it.
+            Use the live PR head and base, not the event's old snapshot.
+          # Later inline config replaces the action's GitHub MCP v0.17.1;
+          # inherit its exchanged Claude App token, never a publishing fallback.
+          claude_args: >-
+            --model claude-opus-5-5
+            --effort medium
+            --max-turns 50
+            --restricted
+            --strict-mcp-config
+            --permission-mode dontAsk
+            --tools "ToolSearch,Agent"
+            --agents .github/claude-review/agents.json
+            --mcp-config '{"mcpServers":{"github_inline_comment":{"command":"bun","args":["--no-env-file","--config=${GITHUB_ACTION_PATH}/bunfig.toml","run","${GITHUB_ACTION_PATH}/src/mcp/github-inline-comment-server.ts"],"env":{"REPO_OWNER":"${CLAUDE_REVIEW_OWNER}","REPO_NAME":"${CLAUDE_REVIEW_REPO}","PR_NUMBER":"${CLAUDE_REVIEW_PR_NUMBER}","CLASSIFY_INLINE_COMMENTS":"false"}},"github":{"command":"docker","args":["run","-i","--rm","-e","GITHUB_PERSONAL_ACCESS_TOKEN","-e","GITHUB_HOST","ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6","stdio","--toolsets=","--tools=get_file_contents,get_commit,list_commits,search_code,pull_request_read,issue_read,add_issue_comment"],"env":{"GITHUB_PERSONAL_ACCESS_TOKEN":"${GITHUB_TOKEN}","GITHUB_HOST":"${GITHUB_SERVER_URL}"}}}}'
+            --allowedTools "ToolSearch,Agent(haiku-helper),mcp__github__pull_request_read,mcp__github__get_file_contents,mcp__github__get_commit,mcp__github__list_commits,mcp__github__search_code,mcp__github__issue_read,mcp__github__add_issue_comment,mcp__github_inline_comment__create_inline_comment"
+
+      - name: Report safe failure category
+        if: failure() && steps.claude.outcome == 'failure'
+        # Read only the upstream runner artifact, never print its transcript.
+        run: node .github/claude-review/failure-diagnostic.cjs
+
+      - name: Report sanitized Claude usage
+        if: always() && steps.prepare.outputs.eligible == 'true'
+        env:
+          CLAUDE_EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: node .github/claude-review/usage.cjs
+
+      - name: Upload sanitized Claude usage
+        if: always() && steps.prepare.outputs.eligible == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: claude-review-usage
+          path: ${{ runner.temp }}/claude-review-usage.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Require successful inference
+        if: always() && !cancelled() && steps.prepare.outputs.eligible == 'true' && steps.claude.outputs.conclusion != 'success'
+        run: |
+          echo '::error::Claude review did not complete. This PR still needs review; inspect the action logs.'
+          exit 1
+
+      - name: Report review execution
+        if: always() && steps.prepare.outputs.check_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECK_ID: ${{ steps.prepare.outputs.check_id }}
+          REVIEW_JOB_STATUS: ${{ job.status }}
+          CLAUDE_CONCLUSION: ${{ steps.claude.outputs.conclusion }}
+        run: node .github/claude-review/dispatch.cjs finish
