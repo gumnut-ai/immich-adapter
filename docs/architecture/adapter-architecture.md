@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-10-09
+last-updated: 2026-10-12
 ---
 
 # Immich Adapter Architecture
@@ -75,10 +75,11 @@ per request and scopes every Gumnut call to it:
   TTL), then resolved again, so a changed choice reaches connected clients
   within minutes without a per-request Gumnut call or a push channel. A
   normal resolution costs `GET /api/libraries` then `GET /api/users/me` on an
-  unscoped client. Parallel requests share one in-flight lookup per credential
-  and prior fallback library, if any. This keeps one client's burst from
-  multiplying upstream calls while letting sessions with different fallback
-  libraries resolve independently. The request originating a lookup can consume
+  unscoped client. Parallel requests with the same credential, session token,
+  observed library and choice provenance share one in-flight lookup and its
+  conditional Redis write. Different sessions or observations resolve
+  independently, so they cannot share a write's success or fallback result.
+  Completed outcomes are not retained. The request originating a lookup can consume
   its successful current-user response once, before opening a sync stream or
   during the initial upload user dependency. Ordinary GET/HEAD user reads can
   also consume it. Other waiters and subsequent requests still read the user

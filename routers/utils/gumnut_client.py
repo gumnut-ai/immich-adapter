@@ -369,26 +369,83 @@ async def _fetch_library_choice(
     return _LibraryChoiceOutcome(choice, user)
 
 
-# In-flight library resolutions, keyed by what the outcome depends on. A client
-# opening a timeline sends dozens of requests at once; when its library is due
-# a re-check they share one resolution rather than each listing libraries.
+@dataclass(frozen=True)
+class _LibraryResolutionKey:
+    credential: str
+    session_token: str | None
+    previous_library_id: str | None
+    from_choice: bool
+
+    @property
+    def stay_on(self) -> str | None:
+        return None if self.from_choice else self.previous_library_id
+
+
+@dataclass(frozen=True)
+class _LibraryResolutionOutcome:
+    library_id: str | None
+    user: UserResponse | None = None
+
+
+async def _fetch_and_record_library(
+    key: _LibraryResolutionKey, cache: LibraryCache
+) -> _LibraryResolutionOutcome:
+    """Own the lookup and its conditional persistence as one operation."""
+    cached = key.previous_library_id
+    try:
+        outcome = await _fetch_library_choice(key.credential, key.stay_on)
+    except HTTPException:
+        if cached and key.session_token:
+            await cache.set_session_library(key.session_token, cached, "")
+        raise
+    choice = outcome.choice
+    if choice is None:
+        if (
+            cached
+            and key.session_token
+            and not await cache.set_session_library(key.session_token, cached, "")
+        ):
+            raise _unrecorded()
+        return _LibraryResolutionOutcome(None)
+    library_id = choice.library_id
+    if not key.session_token:
+        await cache.remember_for_api_key(key.credential, library_id)
+    else:
+        if cached and cached != library_id:
+            logger.info(
+                "Session library changed; switching and resetting sync",
+                extra={"previous_library_id": cached, "library_id": library_id},
+            )
+        if not await cache.set_session_library(
+            key.session_token,
+            cached or "",
+            library_id,
+            from_choice=choice.from_choice,
+        ):
+            if not cached:
+                raise _unrecorded()
+            library_id = cached
+    return _LibraryResolutionOutcome(library_id, outcome.user)
+
+
+# Keep an operation joinable through persistence. Different sessions or observed
+# library choices cannot share a conditional-write outcome, even with one JWT.
 _library_choices_in_flight: dict[
-    tuple[str, str | None], asyncio.Task[_LibraryChoiceOutcome]
+    _LibraryResolutionKey, asyncio.Task[_LibraryResolutionOutcome]
 ] = {}
 
 
-async def _fetch_library_choice_once(
-    request: Request, credential: str, stay_on: str | None
-) -> LibraryChoice | None:
-    """``_fetch_library_choice``, shared by the requests that need it at once."""
-    key = (credential, stay_on)
+async def _resolve_library_once(
+    request: Request, key: _LibraryResolutionKey, cache: LibraryCache
+) -> str | None:
+    """Share an in-flight lookup/write only across compatible session reads."""
     task = _library_choices_in_flight.get(key)
     originating_caller = task is None
     if task is None:
-        task = asyncio.create_task(_fetch_library_choice(credential, stay_on))
+        task = asyncio.create_task(_fetch_and_record_library(key, cache))
         _library_choices_in_flight[key] = task
 
-        def _done(finished: asyncio.Task[_LibraryChoiceOutcome]) -> None:
+        def _done(finished: asyncio.Task[_LibraryResolutionOutcome]) -> None:
             if _library_choices_in_flight.get(key) is finished:
                 del _library_choices_in_flight[key]
             # Retrieve a failure: with every waiter cancelled nothing else
@@ -401,17 +458,17 @@ async def _fetch_library_choice_once(
     # client disconnecting does not cancel the others' result.
     await asyncio.wait([task])
     outcome = task.result()
-    # Waiters share only the library choice. Never seed another request with
+    # Waiters share only the recorded library. Never seed another request with
     # a user response (or hook effects) fetched in the originating context.
     if (
         originating_caller
         and outcome.user is not None
-        and _user_read_reuse_allowed(request, credential)
+        and _user_read_reuse_allowed(request, key.credential)
     ):
         request.state.library_selection_user = _RequestUserRead(
-            credential, outcome.user.model_copy(deep=True)
+            key.credential, outcome.user.model_copy(deep=True)
         )
-    return outcome.choice
+    return outcome.library_id
 
 
 def _unrecorded() -> HTTPException:
@@ -443,48 +500,21 @@ async def _resolve_library_id(
         checked_at = getattr(request.state, "session_library_checked_at", 0.0)
         from_choice = getattr(request.state, "session_library_from_choice", False)
         is_fresh = time.time() - checked_at < LIBRARY_RECHECK_SECONDS
-        # Staying put applies only to a library the session fell back to.
-        stay_on = None if from_choice else cached
     else:
         cached = await cache.get_for_api_key(credential)
         is_fresh = True  # the cache entry's TTL is the recheck bound
-        stay_on = None
+        from_choice = False
 
     if cached and is_fresh:
         library_id = cached
     else:
-        try:
-            choice = await _fetch_library_choice_once(request, credential, stay_on)
-        except HTTPException:
-            if cached and session_token:
-                await cache.set_session_library(session_token, cached, "")
-            raise
-        if choice is None:
-            if (
-                cached
-                and session_token
-                and not await cache.set_session_library(session_token, cached, "")
-            ):
-                raise _unrecorded()
+        library_id = await _resolve_library_once(
+            request,
+            _LibraryResolutionKey(credential, session_token, cached, from_choice),
+            cache,
+        )
+        if library_id is None:
             return None
-        library_id = choice.library_id
-        if not session_token:
-            await cache.remember_for_api_key(credential, library_id)
-        else:
-            if cached and cached != library_id:
-                logger.info(
-                    "Session library changed; switching and resetting sync",
-                    extra={"previous_library_id": cached, "library_id": library_id},
-                )
-            if not await cache.set_session_library(
-                session_token,
-                cached or "",
-                library_id,
-                from_choice=choice.from_choice,
-            ):
-                if not cached:
-                    raise _unrecorded()
-                library_id = cached
 
     if session_token:
         # Conditional on the bound library, so a request still bound to it

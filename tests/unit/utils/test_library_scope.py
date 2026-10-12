@@ -7,7 +7,9 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
+import fakeredis
 import pytest
+from redis.exceptions import MaxConnectionsError
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from gumnut import AsyncGumnut, NotFoundError, PermissionDeniedError
@@ -36,8 +38,10 @@ from routers.utils.gumnut_client import (
 )
 from services.library_resolver import (
     LIBRARY_RECHECK_SECONDS,
+    LibraryCache,
     get_library_cache,
 )
+from services.session_store import SessionStore
 from tests.conftest import make_gumnut_library, make_sdk_status_error
 
 JWT = "test.jwt.token"
@@ -687,6 +691,69 @@ class TestConcurrentResolution:
         return _request(session_library_id="lib_a", stale=True, **overrides)
 
     @pytest.mark.anyio
+    async def test_session_burst_fits_a_small_write_pool(
+        self, unscoped_client, release
+    ):
+        """Keep the resolution joinable until its conditional write finishes."""
+        entered, finish_write = asyncio.Event(), asyncio.Event()
+        redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+
+        class BoundedRedis:
+            active = 0
+            peak = 0
+            rejected = 0
+            writes = 0
+
+            async def eval(self, *args):
+                if self.active == 2:
+                    self.rejected += 1
+                    raise MaxConnectionsError("Too many connections")
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+                self.writes += 1
+                entered.set()
+                try:
+                    await finish_write.wait()
+                    return await redis.eval(*args)
+                finally:
+                    self.active -= 1
+
+        pool = BoundedRedis()
+        cache = LibraryCache(pool, SessionStore(pool))
+        await redis.hset(
+            f"session:{SESSION_TOKEN}",
+            mapping={"library_id": "lib_a", "sync_epoch": "0", "client_epoch": "0"},
+        )
+        await redis.hset(f"session:{SESSION_TOKEN}:checkpoints", "AssetV1", "cursor")
+
+        async def listing():
+            await release.wait()
+            return [make_gumnut_library(name, BASE) for name in ("lib_a", "lib_b")]
+
+        unscoped_client.libraries.list.side_effect = listing
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_b")
+        try:
+            async with asyncio.timeout(5):
+                tasks = await self._start(cache, *(self._stale() for _ in range(8)))
+                release.set()
+                await entered.wait()
+                # A caller arriving during the Redis write joins the same owner.
+                late = asyncio.create_task(
+                    _resolve_library_id(self._stale(), JWT, cache)
+                )
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                finish_write.set()
+                assert await asyncio.gather(*tasks, late) == ["lib_b"] * 9
+            assert (pool.peak, pool.rejected, pool.writes) == (1, 0, 1)
+            unscoped_client.libraries.list.assert_awaited_once()
+            assert await redis.hget(f"session:{SESSION_TOKEN}", "sync_epoch") == "1"
+            assert not await redis.exists(f"session:{SESSION_TOKEN}:checkpoints")
+        finally:
+            finish_write.set()
+            await redis.aclose()
+
+    @pytest.mark.anyio
     async def test_stale_session_burst_resolves_once(
         self, cache, unscoped_client, release
     ):
@@ -697,8 +764,163 @@ class TestConcurrentResolution:
 
         unscoped_client.libraries.list.assert_awaited_once()
         unscoped_client.users.me.assert_awaited_once()
-        # Each request still records the library on its own session read.
-        assert cache.set_session_library.await_count == 5
+        cache.set_session_library.assert_awaited_once_with(
+            SESSION_TOKEN, "lib_a", "lib_a", from_choice=False
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("difference", ["session", "snapshot", "provenance"])
+    async def test_incompatible_session_reads_keep_separate_write_outcomes(
+        self, cache, unscoped_client, release, difference
+    ):
+        first = self._stale(from_choice=True)
+        second = self._stale(from_choice=True)
+        if difference == "session":
+            second.state.session_token = "another-session"
+        elif difference == "snapshot":
+            second.state.session_library_id = "lib_b"
+        else:
+            second.state.session_library_from_choice = False
+
+        async def record(token, previous, library, **_kwargs):
+            return token == SESSION_TOKEN and previous == "lib_a"
+
+        cache.set_session_library.side_effect = record
+
+        async def listing():
+            await release.wait()
+            return [make_gumnut_library("lib_new", BASE)]
+
+        unscoped_client.libraries.list.side_effect = listing
+        async with asyncio.timeout(5):
+            tasks = await self._start(cache, first, second)
+            release.set()
+            results = await asyncio.gather(*tasks)
+        assert results == [
+            "lib_new",
+            {"snapshot": "lib_b", "session": "lib_a", "provenance": "lib_new"}[
+                difference
+            ],
+        ]
+        assert unscoped_client.libraries.list.await_count == 2
+        assert cache.set_session_library.await_count == 2
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("previous", [None, "lib_a"])
+    async def test_write_failure_reaches_waiters_and_a_later_burst_retries(
+        self, cache, unscoped_client, release, previous
+    ):
+        cache.set_session_library.side_effect = [False, True]
+        release.set()
+        async with asyncio.timeout(5):
+            tasks = await self._start(
+                cache,
+                *(_request(session_library_id=previous, stale=True) for _ in range(3)),
+            )
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            if previous is None:
+                assert all(
+                    isinstance(result, HTTPException) and result.status_code == 503
+                    for result in results
+                )
+            else:
+                assert results == [previous] * 3
+            assert (
+                await _resolve_library_id(
+                    _request(session_library_id=previous, stale=True), JWT, cache
+                )
+                == "lib_a"
+            )
+        assert cache.set_session_library.await_count == 2
+        assert unscoped_client.libraries.list.await_count == 2
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("no_choice", [False, True])
+    async def test_session_clear_is_shared_for_rejected_or_missing_choices(
+        self, cache, unscoped_client, release, no_choice
+    ):
+        async def listing():
+            await release.wait()
+            return (
+                []
+                if no_choice
+                else [make_gumnut_library("lib_shared", BASE, role="collaborator")]
+            )
+
+        unscoped_client.libraries.list.side_effect = listing
+        async with asyncio.timeout(5):
+            tasks = await self._start(cache, *(self._stale() for _ in range(3)))
+            release.set()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        if no_choice:
+            assert results == [None] * 3
+        else:
+            assert all(
+                isinstance(result, HTTPException) and result.status_code == 403
+                for result in results
+            )
+        cache.set_session_library.assert_awaited_once_with(SESSION_TOKEN, "lib_a", "")
+
+    @pytest.mark.anyio
+    async def test_cancelled_origin_during_persistence_leaves_one_shared_write(
+        self, cache, unscoped_client, release
+    ):
+        entered, finish = asyncio.Event(), asyncio.Event()
+
+        async def record(*_args, **_kwargs):
+            entered.set()
+            await finish.wait()
+            return True
+
+        cache.set_session_library.side_effect = record
+        async with asyncio.timeout(5):
+            first, second = await self._start(cache, self._stale(), self._stale())
+            release.set()
+            await entered.wait()
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            finish.set()
+            assert await second == "lib_a"
+        cache.set_session_library.assert_awaited_once()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("race", ["switch", "clear", "delete"])
+    async def test_shared_write_cannot_overwrite_a_session_change(
+        self, unscoped_client, release, race
+    ):
+        redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+        sessions = SessionStore(redis)
+        cache = LibraryCache(redis, sessions)
+        key = f"session:{SESSION_TOKEN}"
+        await redis.hset(key, mapping={"library_id": "lib_a", "sync_epoch": "0"})
+        unscoped_client.users.me.return_value = Mock(immich_library_id="lib_b")
+
+        async def listing():
+            await release.wait()
+            return [make_gumnut_library(name, BASE) for name in ("lib_a", "lib_b")]
+
+        unscoped_client.libraries.list.side_effect = listing
+        try:
+            async with asyncio.timeout(5):
+                tasks = await self._start(cache, *(self._stale() for _ in range(3)))
+                if race == "delete":
+                    await redis.delete(key)
+                else:
+                    assert await sessions.set_library(
+                        SESSION_TOKEN, "lib_a", "lib_c" if race == "switch" else ""
+                    )
+                release.set()
+                assert await asyncio.gather(*tasks) == ["lib_a"] * 3
+            if race == "delete":
+                assert not await redis.exists(key)
+            else:
+                assert await redis.hget(key, "library_id") == (
+                    "lib_c" if race == "switch" else ""
+                )
+                assert await redis.hget(key, "sync_epoch") == "1"
+        finally:
+            await redis.aclose()
 
     @pytest.mark.anyio
     async def test_api_key_burst_resolves_once(self, cache, unscoped_client, release):

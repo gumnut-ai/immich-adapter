@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+import httpx
 import shortuuid
 from uuid import UUID
 from fastapi import Request
@@ -18,6 +19,8 @@ from routers.utils.current_user import get_current_user_admin
 from routers.utils.gumnut_client import (
     _library_choices_in_flight,
     _resolve_library_id,
+    _response_hook,
+    get_refreshed_token,
     get_raw_current_user,
     init_request_scope,
     set_refreshed_token,
@@ -143,6 +146,75 @@ async def test_coalesced_waiter_reads_its_own_user(client, cache):
     assert users[0] is not users[1]
     client.libraries.list.assert_awaited_once()
     assert client.users.me.await_count == 2
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("cancel_origin", [False, True])
+async def test_refresh_context_stays_with_origin_through_shared_write(
+    client, cache, cancel_origin
+):
+    entered, lookup_release = asyncio.Event(), asyncio.Event()
+    write_entered, write_release = asyncio.Event(), asyncio.Event()
+
+    async def libraries():
+        entered.set()
+        await lookup_release.wait()
+        return [make_gumnut_library("lib_old", datetime.now(timezone.utc))]
+
+    async def me():
+        if client.users.me.await_count == 1:
+            await _response_hook(
+                httpx.Response(200, headers={"x-new-access-token": "refreshed"})
+            )
+        return client.users.me.return_value
+
+    async def record(*_args, **_kwargs):
+        # The owned task inherited the originating request's mutable scope.
+        assert get_refreshed_token() == "refreshed"
+        write_entered.set()
+        await write_release.wait()
+        return True
+
+    client.libraries.list.side_effect = libraries
+    client.users.me.side_effect = me
+    cache.set_session_library.side_effect = record
+
+    async def run(req):
+        init_request_scope()
+        library = await _resolve_library_id(req, client.api_key, cache)
+        user = await get_raw_current_user(req, client)
+        return library, get_refreshed_token(), user
+
+    with patch(
+        "routers.utils.gumnut_client.get_gumnut_client", AsyncMock(return_value=client)
+    ):
+        async with asyncio.timeout(5):
+            first = asyncio.create_task(run(request(client.api_key)))
+            await entered.wait()
+            second = asyncio.create_task(run(request(client.api_key)))
+            await asyncio.sleep(0)
+            lookup_release.set()
+            await write_entered.wait()
+            if cancel_origin:
+                first.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await first
+            write_release.set()
+            if not cancel_origin:
+                library, refresh, user = await first
+                assert (library, refresh, user.id) == (
+                    "lib_old",
+                    "refreshed",
+                    client.users.me.return_value.id,
+                )
+            library, refresh, user = await second
+            assert (library, refresh, user.id) == (
+                "lib_old",
+                None,
+                client.users.me.return_value.id,
+            )
+    cache.set_session_library.assert_awaited_once()
+    assert client.users.me.await_count == (2 if cancel_origin else 3)
 
 
 @pytest.mark.anyio
