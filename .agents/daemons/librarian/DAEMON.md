@@ -94,7 +94,8 @@ Prefer corrections that help readers understand or maintain a lasting contract.
 Keep one-time rollout or operator execution instructions with their operational
 record unless a recurring reader need justifies evergreen guidance. Within the
 selected topic and discovery bounds, reconcile related live docs and README
-claims; prefer one canonical explanation with pointers over duplicated contracts.
+claims using [Project Conventions](../../../docs/references/project-conventions.md#project-conventions)
+for the canonical home and pointers.
 
 Lead the PR body with the concrete mismatch, correction, reader or maintenance
 value, and relevant validation. Scale this introduction to the change; a small
