@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-10-07
+last-updated: 2026-10-09
 ---
 
 # Sync Stream Architecture
@@ -9,7 +9,16 @@ The sync stream (`routers/api/sync/stream.py`) consumes events from the Gumnut A
 
 ## Two-Phase Ordering
 
-The stream yields all upserts first (in FK dependency order per `_SYNC_TYPE_ORDER`), then all deletes (in reverse FK order per `_DELETE_TYPE_ORDER`). This prevents FK constraint violations in the mobile client — parents exist before children reference them, and children are cleaned up before parents are removed. See the [sync stream event ordering design doc](../design-docs/sync-stream-event-ordering.md) for the full design rationale and history.
+The stream yields upserts in FK dependency order per `_SYNC_TYPE_ORDER`.
+Delete events are buffered for a final pass in reverse FK order per
+`_DELETE_TYPE_ORDER`. Two retractions are emitted inline during the upsert
+phase: V1 face-geometry gating can emit `AssetFaceDeleteV1`, and an asset
+absent from the session library emits `AssetDeleteV1`. Keeping these
+retractions in feed order lets a later event in the same pass restore the row.
+This puts parents before child upserts and buffered child deletes before parent
+deletes. See the [sync stream event ordering design
+doc](../design-docs/sync-stream-event-ordering.md) for the full design rationale
+and history.
 
 Failure is not isolated per pass: an unhandled fetch error propagates to
 `generate_sync_stream`'s top-level handler and ends the generator without
