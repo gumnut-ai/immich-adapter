@@ -1,6 +1,6 @@
 ---
 title: "Route Errors and Filters"
-last-updated: 2026-10-01
+last-updated: 2026-10-12
 ---
 
 # Route Errors and Filters
@@ -25,6 +25,8 @@ Use `is True` rather than truthiness so `False` / `None` (which mean "no restric
 Favorites are no longer an example of an unsupported filter. Through `routers/utils/rating.py`, explicit true maps to exact set `{5}`, explicit false maps to `{0,1,2,3,4}`, numeric rating filters map to their exact value, and an explicitly-present null rating maps to `{0}` (unrated). Omission alone means no favorite/rating restriction. Apply the same set to every data source a route composes: timeline counts and bucket listing, random-search counts and month pages, search statistics, asset statistics, and map marker listing. Filtering only one half creates internally inconsistent results even when each individual SDK call succeeds.
 
 The deployed API accepts a `ratings` query parameter, but the generated Python SDK currently omits it from the typed list/count/search signatures. Use `rating_extra_query` for this narrow compatibility gap. When bumping the SDK, inspect those signatures and replace the shim once `ratings` is typed; do not leave both forms in one request.
+
+People listings use the same kind of shim: `GET /api/people` and `GET /api/search/person` pass `extra_query={"include_hidden": True}` to `people.list`, because the API leaves hidden people out of listings unless asked and these routes filter hidden people themselves. Apply the same rule when the SDK types `include_hidden`.
 
 This rule applies to *restrictive* filters. The map route accepts and drops
 unsupported broadening flags such as `withPartners=True` and

@@ -517,19 +517,19 @@ class TestGetAllPeople:
         )
 
     @pytest.mark.anyio
-    @pytest.mark.parametrize("with_hidden", [True, False])
-    async def test_get_all_people_requests_hidden_people(
-        self, with_hidden, mock_sync_cursor_page
+    async def test_get_all_people_with_hidden_still_requests_hidden_people(
+        self, mock_sync_cursor_page
     ):
-        """The listing asks the API for hidden people whatever withHidden is.
+        """withHidden only changes the local filter, not the API request.
 
         The API leaves hidden people out unless include_hidden is true, and
-        this endpoint needs them for the hidden count and its own filter.
+        this endpoint needs them for the hidden count whatever withHidden is.
+        The withHidden=false request is pinned by test_get_all_people_success.
         """
         mock_client = Mock()
         mock_client.people.list.return_value = mock_sync_cursor_page([])
 
-        await call_get_all_people(withHidden=with_hidden, client=mock_client)
+        await call_get_all_people(withHidden=True, client=mock_client)
 
         assert mock_client.people.list.call_args.kwargs["extra_query"] == {
             "include_hidden": True

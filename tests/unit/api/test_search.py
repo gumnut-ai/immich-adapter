@@ -90,17 +90,19 @@ class TestSearchPerson:
         )
 
     @pytest.mark.anyio
-    @pytest.mark.parametrize("with_hidden", [True, False])
-    async def test_requests_hidden_people(self, with_hidden, mock_sync_cursor_page):
-        """The search asks the API for hidden people whatever withHidden is.
+    async def test_with_hidden_still_requests_hidden_people(
+        self, mock_sync_cursor_page
+    ):
+        """withHidden only changes the local filter, not the API request.
 
         The API leaves hidden people out unless include_hidden is true, and
-        this endpoint applies withHidden itself.
+        this endpoint applies withHidden itself. The withHidden=false request
+        is pinned by test_returns_matching_people.
         """
         mock_client = Mock()
         mock_client.people.list = Mock(return_value=mock_sync_cursor_page([]))
 
-        await search_person(name="Calvin", withHidden=with_hidden, client=mock_client)
+        await search_person(name="Calvin", withHidden=True, client=mock_client)
 
         assert mock_client.people.list.call_args.kwargs["extra_query"] == {
             "include_hidden": True
