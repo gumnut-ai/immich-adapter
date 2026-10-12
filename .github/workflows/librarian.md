@@ -335,6 +335,10 @@ post-steps:
       [[ "$outcome" == checkout-clean || "$outcome" == docs-lint-passed ]]
 ---
 
+Apply the librarian DAEMON.md Proposal quality section to candidate selection,
+related-document coherence and PR presentation. The evidence required below
+remains in the body, in collapsible details after a proportionate summary.
+
 Read `.agents/daemons/librarian/DAEMON.md` from this checkout and follow its
 policy. Read `.agents/daemons/AGENTS.md` and every repository guidance or
 reference document that `DAEMON.md` directs you to use for the selected change.
