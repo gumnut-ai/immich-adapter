@@ -206,7 +206,14 @@ async def search_person(
     ``withHidden`` mirrors upstream Immich's ``!withHidden``: only an explicit
     true includes hidden people.
     """
-    people = [p async for p in client.people.list(name=name)]
+    # The Gumnut API leaves hidden people out of listings unless asked; this
+    # endpoint filters them itself, so it asks for all of them.
+    people = [
+        p
+        async for p in client.people.list(
+            name=name, extra_query={"include_hidden": True}
+        )
+    ]
     if not withHidden:
         people = [p for p in people if not p.is_hidden]
     return [convert_gumnut_person_to_immich(p) for p in people]

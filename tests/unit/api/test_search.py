@@ -85,7 +85,26 @@ class TestSearchPerson:
         assert len(result) == 1
         assert result[0].name == "Calvin"
         assert result[0].id == safe_uuid_from_person_id(person_id)
-        mock_client.people.list.assert_called_once_with(name="Calvin")
+        mock_client.people.list.assert_called_once_with(
+            name="Calvin", extra_query={"include_hidden": True}
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("with_hidden", [True, False])
+    async def test_requests_hidden_people(self, with_hidden, mock_sync_cursor_page):
+        """The search asks the API for hidden people whatever withHidden is.
+
+        The API leaves hidden people out unless include_hidden is true, and
+        this endpoint applies withHidden itself.
+        """
+        mock_client = Mock()
+        mock_client.people.list = Mock(return_value=mock_sync_cursor_page([]))
+
+        await search_person(name="Calvin", withHidden=with_hidden, client=mock_client)
+
+        assert mock_client.people.list.call_args.kwargs["extra_query"] == {
+            "include_hidden": True
+        }
 
     @pytest.mark.anyio
     async def test_returns_empty_list_when_no_matches(self, mock_sync_cursor_page):

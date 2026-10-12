@@ -257,8 +257,12 @@ async def get_all_people(
     ``withHidden`` mirrors upstream Immich's ``!withHidden``: only an explicit
     true includes hidden people.
     """
+    # The Gumnut API leaves hidden people out of listings unless asked; this
+    # endpoint counts and filters them itself, so it asks for all of them.
     gumnut_people = client.people.list(
-        name_filter="all", limit=GUMNUT_API_MAX_PAGE_SIZE
+        name_filter="all",
+        limit=GUMNUT_API_MAX_PAGE_SIZE,
+        extra_query={"include_hidden": True},
     )
     all_people = [p async for p in gumnut_people]
 
