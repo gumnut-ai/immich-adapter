@@ -511,8 +511,29 @@ class TestGetAllPeople:
         assert result.hidden == 0
         assert result.hasNextPage is False  # No pagination in this case
         mock_client.people.list.assert_called_once_with(
-            name_filter="all", limit=GUMNUT_API_MAX_PAGE_SIZE
+            name_filter="all",
+            limit=GUMNUT_API_MAX_PAGE_SIZE,
+            extra_query={"include_hidden": True},
         )
+
+    @pytest.mark.anyio
+    async def test_get_all_people_with_hidden_still_requests_hidden_people(
+        self, mock_sync_cursor_page
+    ):
+        """withHidden only changes the local filter, not the API request.
+
+        The API leaves hidden people out unless include_hidden is true, and
+        this endpoint needs them for the hidden count whatever withHidden is.
+        The withHidden=false request is pinned by test_get_all_people_success.
+        """
+        mock_client = Mock()
+        mock_client.people.list.return_value = mock_sync_cursor_page([])
+
+        await call_get_all_people(withHidden=True, client=mock_client)
+
+        assert mock_client.people.list.call_args.kwargs["extra_query"] == {
+            "include_hidden": True
+        }
 
     @pytest.mark.anyio
     async def test_get_all_people_with_pagination(
