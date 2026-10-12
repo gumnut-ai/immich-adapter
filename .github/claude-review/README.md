@@ -75,10 +75,11 @@ reviews for that PR. The prompt checks freshness before comments and pins inline
 comments to the reviewed head. Direct publication still has a small race between
 the check and a concurrent push; comments name their reviewed revision and may
 become outdated. This is advisory feedback, not a trusted current-head approval.
-The Claude-specific policy asks for a short verdict synthesizing the review
-dimensions, useful prior-finding status, and material coverage limits. It omits
-separate dimension checklists and investigation narratives. Follow-ups focus on
-updates and affected behavior without repeating resolved or identical findings.
+The Claude-specific policy leads with one clear outcome sentence: looks good
+with no issues found, has concerns, or review incomplete. Short bullets follow
+only for important concerns, prior-finding status, or material coverage limits;
+a clean review needs no implementation walkthrough. Follow-ups avoid repeating
+resolved or identical findings, and the summary retains head/base attribution.
 These review and freshness behaviors are model instructions and require pilot
 verification.
 
