@@ -47,15 +47,19 @@ as `commit_id`, verified path/line/side, and `confirmed: true`. Start with
 is advisory. Explain evidence, consequence, and action in one concise paragraph.
 Use the summary for cross-file findings. Never post a test/probe comment.
 
-Post one compact summary with `mcp__github__add_issue_comment`, starting
-`Claude review — head <full SHA>, base <full SHA>`. Include:
+Post one compact summary with `mcp__github__add_issue_comment`. Lead with one
+headline sentence that makes the outcome clear, for example **Claude review:
+Looks good — no issues found.** or **Claude review: Has concerns — <main concern>.**
+When review is incomplete, use **Claude review: Incomplete — <material gap>.**
+Do not call it clean or say it looks good while unresolved findings or material
+coverage gaps remain.
 
-- **Verdict:** 1–3 sentences assessing the whole change, synthesizing correctness,
-  clarity, simplicity, abstractions, performance, security, and testing as relevant.
-- **Earlier findings:** only when useful, briefly state what was resolved or
-  remains relevant; don't repeat the findings.
-- **Coverage limits:** only material gaps. When review is incomplete, say so;
-  don't call it clean. Otherwise state plainly if there are no new findings.
+Follow the headline with short bullets only for important details: concerns and
+whether they need fixing before merge, useful earlier-finding status, or material
+coverage limits. Omit the bullets when there is nothing important to add; a clean
+review needs no implementation walkthrough or general praise.
+End with `Claude review — head <full SHA>, base <full SHA>` to identify the
+reviewed revision.
 
 Omit separate dimension/checklist sections, diff summaries, independent re-read
 narratives, and lists of concerns investigated but not raised. Do not cap real
