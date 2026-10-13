@@ -63,7 +63,16 @@ solution would change supported behavior or a public contract, report the
 tradeoff for human judgment rather than implementing it.
 
 ## Verification
-Before opening a PR, run the complete suite:
+The native workflow owns privileged sandbox preparation and verification. Its
+pre-agent smoke completes before inference; after the agent prepares a committed
+candidate and emits PR publication intent, trusted host validation runs the full
+checks below before actual publication. The host-only
+`scripts/run_maintainer_sandbox.sh` must not be invoked from the confined agent
+session; do not use sudo or launch a nested AWF runtime. Label deferred host
+checks as pending rather than claiming they passed. Outside the native workflow,
+run these full checks before opening a PR.
+
+The complete suite is required before publication:
 - `uv sync --locked`
 - `uv run ruff format && uv run ruff check`
 - `uv run pyright`
@@ -75,8 +84,9 @@ If any check fails, do not open the PR. Note the failure in an internal log entr
 Propose a change when its concrete maintenance benefit outweighs its complexity
 and review cost. Size is not a quota: a small change can remove a real drift risk
 or clarify ownership. Avoid cosmetic churn, equally complex rewrites, and edits
-made merely to produce a PR. Report a no-op when no worthwhile improvement is
-found.
+made merely to produce a PR. Report a no-op only after completed discovery finds
+no worthwhile improvement.
+Blocked or unfinished discovery must emit report_incomplete, even with no edits.
 
 Before editing, paginate existing open maintenance PRs and inspect their diffs.
 Do not duplicate pending work from any executor or recreate a closed unmerged
