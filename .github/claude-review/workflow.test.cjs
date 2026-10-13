@@ -95,7 +95,7 @@ test('credentialed job uses trusted policy and no contributor executor', () => {
   assert.match(workflow, /--strict-mcp-config\b/);
   assert.match(workflow, /--permission-mode dontAsk\b/);
   assert.doesNotMatch(workflow, /dangerously-skip-permissions|bypassPermissions|track_progress:/);
-  assert.equal(workflow.match(/--tools "([^"]+)"/)?.[1], 'ToolSearch,Agent');
+  assert.equal(workflow.match(/--tools "([^"]+)"/)?.[1], 'ToolSearch,Agent,Read');
   assert.match(workflow, /Trusted policy SHA: \$\{\{ github.sha \}\}/);
 });
 
@@ -103,7 +103,7 @@ test('only GitHub reads, direct comments, and the bounded helper are preapproved
   const tools = workflow.match(/--allowedTools "([^"]+)"/)?.[1].split(',');
   assert.ok(tools);
   const reads = new Set([
-    'ToolSearch', 'mcp__github__pull_request_read', 'mcp__github__issue_read',
+    'ToolSearch', 'Read', 'mcp__github__pull_request_read', 'mcp__github__issue_read',
     'mcp__github__get_file_contents', 'mcp__github__get_commit',
     'mcp__github__list_commits', 'mcp__github__search_code',
   ]);
@@ -190,4 +190,15 @@ test('always reports numeric usage through upstream output without publishing tr
   assert.match(usage, /retention-days: 30/);
   assert.doesNotMatch(usage, /claude-execution-output.json|continue-on-error/);
   assert.doesNotMatch(workflow, /show_full_output: ['"]?true/);
+});
+
+// Read is usable by both agents but constrained by the inherited trusted hook.
+test('local reads use the trusted result-only guard without shell or writes', () => {
+  assert.match(workflow, /--settings \.github\/claude-review\/settings.json/);
+  const settings = JSON.parse(fs.readFileSync(path.join(__dirname, 'settings.json'), 'utf8'));
+  assert.deepEqual(settings.permissions, { deny: ['Read(./**)'] });
+  assert.deepEqual(settings.hooks.PreToolUse, [{ matcher: 'Read', hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.github/claude-review/read-result-guard.cjs"', timeout: 5 }] }]);
+  assert.doesNotMatch(workflow, /--add-dir|--tools "[^"]*(?:Bash|Write|Edit|Grep|Glob)/);
+  const policy = fs.readFileSync(path.join(__dirname, 'INSTRUCTIONS.md'), 'utf8');
+  assert.match(policy, /`Read`.*saved path.*bounded/);
 });

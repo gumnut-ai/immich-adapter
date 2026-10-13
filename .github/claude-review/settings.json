@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.github/claude-review/read-result-guard.cjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

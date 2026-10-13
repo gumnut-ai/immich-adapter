@@ -46,14 +46,17 @@ Restricted mode ignores
 user/project settings, strict MCP configuration limits servers to those supplied
 by the workflow's pinned GitHub server and the action's existing inline-comment
 server, and the built-in tool set only allows MCP discovery and the
-named helper.
+named helper and guarded `Read`.
 Review policy/code reads go through GitHub at explicit SHAs;
-there are no local file reads, shell, or file writes. The optional `haiku-helper`
-uses Haiku 5.5 with GitHub read tools only; Opus owns the assessment and posting.
+native `Read` can recover oversized MCP responses saved in the current session's
+`tool-results` store. A trusted `PreToolUse` guard rejects other files, path
+escapes, and symlinks; a native deny rule also blocks checkout reads. Both agents inherit that guard and can page saved results
+with `offset`/`limit`; shell and file-writing tools remain unavailable. The optional `haiku-helper`
+uses Haiku 5.5 with GitHub reads and the same scoped `Read` tool; Opus owns the assessment and posting.
 The helper cannot publish or spawn other agents. This also keeps
 the action's `.git/config` credential outside the model's readable surface.
 `dontAsk` permits only explicitly allowed MCP reads, comment tools, and the
-named helper; other mutations, including formal review submission, are denied.
+named helper and guarded `Read`; other mutations, including formal review submission, are denied.
 The job grants OIDC only to exchange for the installed official Claude app
 token. `additional_permissions` requests `contents: read`, overriding the
 action's default write scope; PR/issue comments remain writable. No custom

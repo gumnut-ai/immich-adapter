@@ -19,7 +19,11 @@ Use `mcp__github__pull_request_read` for PR metadata and its `get_files`,
 Read inline review threads with `get_review_comments`, starting at `perPage: 5`;
 follow `pageInfo.endCursor` as `after` while `hasNextPage` is true. Reduce the
 page size if needed. For large diffs, prefer paginated `get_files` patches and
-targeted file reads. Report any truncated patch or thread-comment coverage.
+targeted file reads. If a tool saves oversized output to a local file, use
+`Read` on that exact saved path with bounded `offset`/`limit` calls until the
+needed content is covered. The trusted hook permits only this session's saved
+tool results; other local paths are denied. Report any remaining truncated
+patch or thread-comment coverage.
 You may delegate bounded reads to `haiku-helper`; verify its evidence yourself
 and retain responsibility for the verdict and all publication.
 
