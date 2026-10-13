@@ -104,7 +104,8 @@ verification.
 3. Open a small non-draft PR, then push a correction. Verify independent inline
    feedback at the recorded commit, summary delivery as `claude[bot]`, clean
    versus incomplete reporting, and no duplicate findings on the follow-up. Verify both human manual dispatch and automatic dispatch from an eligible PR event.
-   Check cancellation during another head update, and confirm forks/drafts/bot-only triggers skip.
+   Check cancellation during another head update. Confirm authenticated bot events
+   enter the review path, while forks, drafts, and invalid bot identities skip.
    After merging a workflow fix, trigger a fresh eligible PR event. GitHub's
    **Re-run jobs** uses the original event's workflow revision, SHA, and ref;
    it does not pick up the merged fix. Check the run's trusted policy SHA and
