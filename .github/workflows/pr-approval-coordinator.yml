@@ -1,7 +1,7 @@
 name: PR approval coordinator
 on: # zizmor: ignore[dangerous-triggers] -- Trusted default-branch code re-fetches metadata; no source artifacts, contributor checkout, or dependencies.
   workflow_run:
-    workflows: ['*']
+    workflows: ['*', '!PR approval coordinator']
     types: [completed]
   schedule:
     - cron: '*/15 * * * *' # Review-thread resolution has no Actions trigger.
