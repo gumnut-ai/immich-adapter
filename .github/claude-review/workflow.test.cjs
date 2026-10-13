@@ -19,7 +19,7 @@ function context() {
       pull_request: {
         state: 'open', draft: false,
         head: { repo: { full_name: 'gumnut-ai/immich-adapter' } },
-        base: { ref: 'main' },
+        base: { ref: 'main', repo: { full_name: 'gumnut-ai/immich-adapter' } },
       },
     },
   };
@@ -36,12 +36,41 @@ test('disabled and unsafe events cannot reach subscription inference', () => {
     c => { c.event.pull_request.draft = true; },
     c => { c.event.pull_request.state = 'closed'; },
     c => { c.event.pull_request.head.repo.full_name = 'attacker/immich-adapter'; },
+    c => { c.event.pull_request.base.repo.full_name = 'attacker/immich-adapter'; },
     c => { c.event.pull_request.base.ref = 'contributor-branch'; },
-    c => { c.event.sender.type = 'Bot'; },
+    c => { c.event.sender.type = 'Organization'; },
   ]) {
     const c = context();
     alter(c);
     assert.equal(eligible({ CLAUDE_PR_REVIEW_ENABLED: 'true' }, c), false);
+  }
+});
+
+test('metadata dispatcher admits Bot senders for subsequent identity validation', () => {
+  const c = context();
+  c.event.sender = { type: 'Bot', login: 'publisher[bot]' };
+  assert.equal(eligible({ CLAUDE_PR_REVIEW_ENABLED: 'true' }, c), true);
+});
+
+test('review admission limits bot dispatch to the matching GitHub Actions invoker', () => {
+  const expression = workflow.split('  review:')[1].match(/    if: >-\n([\s\S]*?)    runs-on:/)?.[1];
+  assert.ok(expression);
+  const admits = new Function('vars', 'github', 'format', `return (${expression});`);
+  for (const [type, login, actor, expected] of [
+    ['User', 'writer', 'writer', true],
+    ['Bot', 'github-actions[bot]', 'github-actions[bot]', true],
+    ['Bot', 'publisher[bot]', 'publisher[bot]', false],
+    // Job admission is preliminary; dispatch.cjs verifies the actor and origin
+    // before the step that reads subscription credentials.
+    ['Bot', 'github-actions[bot]', 'publisher[bot]', true],
+    ['Organization', 'github-actions[bot]', 'github-actions[bot]', false],
+  ]) {
+    const c = context();
+    c.event_name = 'workflow_dispatch';
+    c.ref = 'refs/heads/main';
+    c.actor = actor;
+    c.event.sender = { type, login };
+    assert.equal(admits({ CLAUDE_PR_REVIEW_ENABLED: 'true' }, c, (template, value) => template.replace('{0}', value)), expected);
   }
 });
 

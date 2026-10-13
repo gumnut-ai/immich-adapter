@@ -14,16 +14,16 @@ verify subscription authentication, model access, review quality, or delivery.
 
 Once enabled, opened, synchronized, ready-for-review, and reopened events review
 open non-draft PRs targeting the default branch. Initial automatic coverage is
-same-repository PRs triggered by human collaborators with write access. Forks,
-bot-only triggers, and other target branches are excluded. A human collaborator's
-push can trigger review of a bot-authored PR. Failed or skipped runs leave review
+same-repository PRs triggered by human collaborators with write access or
+authenticated GitHub Bot senders with exact `<slug>[bot]` identities. Forks and
+other target branches are excluded. Failed or skipped runs leave review
 to Codex or a human; this workflow is not a required approval gate.
 
 The metadata-only `pull_request_target` job checks the initiating human's write
-access and dispatches this workflow at the default branch. It has no OAuth secret
-or OIDC permission. The `workflow_dispatch` review job checks live PR eligibility,
-head freshness, and the originating run's repository, workflow, PR head, and human
-actor before accessing OAuth. A manual default-branch dispatch is also available
+access or the authenticated Bot identity and dispatches this workflow at the
+default branch. It has no OAuth secret or OIDC permission. The `workflow_dispatch` review job checks live PR eligibility,
+head freshness, and the originating run's repository, workflow, PR head, and
+admitted actor before accessing OAuth. A manual default-branch dispatch is also available
 to human writers; supply `pr_number` and leave the origin inputs blank.
 Both checkouts use the exact trusted event SHA, with persisted credentials disabled;
 contributor code, configuration, hooks, and dependencies are never executed.
@@ -129,6 +129,11 @@ CLI 2.1.295 and Agent SDK 0.3.295; verify both when updating the action.
 If subscription capacity proves unsuitable, explicitly switch authentication
 and budgets to API credits in a later change. An exhausted/expired token or
 unavailable model should fail visibly rather than silently change billing.
+
+The summary includes a structured `clean`, `concerns`, or `incomplete` verdict
+with the reviewed head/base for the separate
+[standing approval coordinator](../pr-approval/README.md).
+Claude still posts advisory comments only.
 
 ## Usage reporting
 

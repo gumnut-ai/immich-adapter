@@ -71,6 +71,81 @@ test('verified automatic dispatch creates a native check on the live PR head', a
   assert.deepEqual(f.outputs, [{ eligible: 'true', pr_number: '2645', head_sha: head, check_id: '777', owner: 'gumnut-ai', repo: 'immich-adapter' }]);
 });
 
+test('GitHub bots can open and update eligible bot-authored PRs', async () => {
+  for (const action of ['opened', 'synchronize', 'ready_for_review', 'reopened']) {
+    const f = fixture('dispatch');
+    f.event.action = action;
+    f.event.sender = { type: 'Bot', login: 'gumnut-publisher[bot]' };
+    f.event.pull_request.user = { type: 'Bot', login: 'gumnut-publisher[bot]' };
+    f.responses.permission.permission = 'read';
+    assert.deepEqual(await dispatch(f), { eligible: true });
+    assert.equal(f.calls.some(call => call.route.includes('/collaborators/')), false);
+    assert.deepEqual(writes(f)[0].body, {
+      ref: 'main', inputs: { pr_number: '2645', expected_head: head, origin_run_id: '12345' },
+    });
+  }
+});
+
+test('automatic bot origins require the same authenticated run and PR binding', async () => {
+  const f = fixture();
+  f.responses.origin.actor = { type: 'Bot', login: 'gumnut-publisher[bot]' };
+  assert.deepEqual(await prepare(f), { eligible: true });
+  assert.equal(f.calls.some(call => call.route.endsWith('/actions/runs/9876')), true);
+  assert.equal(f.calls.some(call => call.route.includes('/collaborators/')), false);
+  for (const mutate of [
+    f => { delete f.event.inputs.origin_run_id; },
+    f => { delete f.event.inputs.expected_head; },
+    f => { f.responses.origin.repository.full_name = 'other/immich-adapter'; },
+    f => { f.responses.origin.event = 'workflow_dispatch'; },
+    f => { f.responses.origin.path = '.github/workflows/other.yml'; },
+    f => { f.responses.origin.pull_requests[0].number = 2646; },
+    f => { f.responses.origin.pull_requests[0].head.sha = 'b'.repeat(40); },
+  ]) {
+    const rejectedOrigin = fixture();
+    rejectedOrigin.responses.origin.actor = { type: 'Bot', login: 'gumnut-publisher[bot]' };
+    mutate(rejectedOrigin);
+    await rejected('prepare', rejectedOrigin);
+  }
+});
+
+test('bot identity requires both GitHub Bot type and exact bot login syntax', async () => {
+  for (const actor of [
+    { type: 'Bot', login: 'gumnut-publisher' },
+    { type: 'Bot', login: '[bot]' },
+    { type: 'Bot', login: 'publisher[BOT]' },
+    { type: 'Bot', login: 'publisher[bot]\n' },
+    { type: 'Bot', login: 'publisher[bot]/other' },
+    { type: 'Bot', login: 'publisher/../../other[bot]' },
+    { type: 'Bot', login: null },
+    { type: 'Bot' },
+    { type: 'User', login: 'publisher[bot]' },
+    { type: 'Organization', login: 'publisher[bot]' },
+    { login: 'publisher[bot]' },
+  ]) {
+    for (const mode of ['dispatch', 'prepare']) {
+      const f = fixture(mode);
+      if (mode === 'dispatch') f.event.sender = actor;
+      else f.responses.origin.actor = actor;
+      await rejected(mode, f);
+    }
+  }
+});
+
+test('manual bot dispatch and forged GitHub Actions identities cannot create checks', async () => {
+  for (const actor of [
+    { type: 'Bot', login: 'publisher[bot]' },
+    { type: 'Bot', login: 'github-actions[bot]' },
+    { type: 'User', login: 'github-actions[bot]' },
+    { type: 'Bot', login: 'github-actions' },
+  ]) {
+    const f = fixture();
+    f.event.sender = actor;
+    f.env.GITHUB_ACTOR = actor.login;
+    f.event.inputs = { pr_number: '2645' };
+    await rejected('prepare', f);
+  }
+});
+
 test('human manual dispatch permits writer, maintainer and admin and optional head', async () => {
   for (const permission of ['write', 'maintain', 'admin']) {
     const f = fixture();
@@ -85,17 +160,22 @@ test('human manual dispatch permits writer, maintainer and admin and optional he
 
 test('forks, drafts, closed PRs, other repositories and bases have no write side effects', async () => {
   for (const mode of ['dispatch', 'prepare']) {
-    for (const mutate of [
-      f => { f.responses.pr.head.repo.full_name = 'fork/immich-adapter'; },
-      f => { f.responses.pr.base.repo.full_name = 'fork/immich-adapter'; },
-      f => { f.responses.pr.base.ref = 'release'; },
-      f => { f.responses.pr.state = 'closed'; },
-      f => { f.responses.pr.draft = true; },
-      f => { f.event.repository.full_name = 'fork/immich-adapter'; },
-    ]) {
-      const f = fixture(mode);
-      mutate(f);
-      await rejected(mode, f);
+    for (const actorType of ['User', 'Bot']) {
+      for (const mutate of [
+        f => { f.responses.pr.head.repo.full_name = 'fork/photos'; },
+        f => { f.responses.pr.base.repo.full_name = 'fork/photos'; },
+        f => { f.responses.pr.base.ref = 'release'; },
+        f => { f.responses.pr.state = 'closed'; },
+        f => { f.responses.pr.draft = true; },
+        f => { f.event.repository.full_name = 'fork/photos'; },
+      ]) {
+        const f = fixture(mode);
+        const actor = { type: actorType, login: actorType === 'Bot' ? 'publisher[bot]' : 'writer' };
+        if (mode === 'dispatch') f.event.sender = actor;
+        else f.responses.origin.actor = actor;
+        mutate(f);
+        await rejected(mode, f);
+      }
     }
   }
   const f = fixture();
@@ -105,11 +185,16 @@ test('forks, drafts, closed PRs, other repositories and bases have no write side
 
 test('disabled setting and nonwriters cannot dispatch or create checks', async () => {
   for (const mode of ['dispatch', 'prepare']) {
-    for (const value of [undefined, 'false', 'TRUE', 'true\n']) {
-      const f = fixture(mode);
-      f.env.CLAUDE_REVIEW_ENABLED = value;
-      await rejected(mode, f);
-      assert.deepEqual(f.calls, []);
+    for (const actorType of ['User', 'Bot']) {
+      for (const value of [undefined, 'false', 'TRUE', 'true\n']) {
+        const f = fixture(mode);
+        const actor = { type: actorType, login: actorType === 'Bot' ? 'publisher[bot]' : 'writer' };
+        if (mode === 'dispatch') f.event.sender = actor;
+        else f.responses.origin.actor = actor;
+        f.env.CLAUDE_REVIEW_ENABLED = value;
+        await rejected(mode, f);
+        assert.deepEqual(f.calls, []);
+      }
     }
     for (const permission of ['read', 'triage', undefined]) {
       const f = fixture(mode);
@@ -177,7 +262,7 @@ test('malformed identifiers, hashes and untrusted refs never cause writes', asyn
       else f.event.inputs.expected_head = value;
       await rejected(mode, f);
     }
-    for (const value of ['owner/repo/other', '../immich-adapter', 'owner/..', 'owner/repo\n']) {
+    for (const value of ['owner/repo/other', '../photos', 'owner/..', 'owner/repo\n']) {
       const f = fixture(mode);
       f.env.GITHUB_REPOSITORY = value;
       await rejected(mode, f);

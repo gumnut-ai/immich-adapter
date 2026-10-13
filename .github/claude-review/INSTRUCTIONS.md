@@ -46,6 +46,8 @@ as `commit_id`, verified path/line/side, and `confirmed: true`. Start with
 **Claude review**, a short title, and whether it should be fixed before merge or
 is advisory. Explain evidence, consequence, and action in one concise paragraph.
 Use the summary for cross-file findings. Never post a test/probe comment.
+Append `<!-- gumnut-review-finding/v1 severity=significant -->` to findings
+that should be fixed before merge. Omit that marker on advisory findings.
 
 Post one compact summary with `mcp__github__add_issue_comment`. Lead with one
 headline sentence that makes the outcome clear, for example **Claude review:
@@ -60,6 +62,15 @@ coverage limits. Omit the bullets when there is nothing important to add; a clea
 review needs no implementation walkthrough or general praise.
 End with `Claude review — head <full SHA>, base <full SHA>` to identify the
 reviewed revision.
+
+End the summary with exactly one standalone machine-readable verdict:
+`<!-- gumnut-review-verdict/v1 head=<full SHA> base=<full SHA> verdict=<value> -->`.
+Use `clean` only when review is complete and there are no remaining significant
+concerns, including earlier findings. Use `concerns` when any significant
+concern remains, and `incomplete` when coverage is insufficient for a decision.
+Advisory findings alone do not prevent `clean`. Use the recorded lowercase
+40-character head/base SHAs, not literal placeholders. This is an advisory
+sign-off for the separate approval coordinator, not a formal GitHub approval.
 
 Omit separate dimension/checklist sections, diff summaries, independent re-read
 narratives, and lists of concerns investigated but not raised. Do not cap real
