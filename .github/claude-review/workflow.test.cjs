@@ -197,7 +197,7 @@ test('local reads use the trusted result-only guard without shell or writes', ()
   assert.match(workflow, /--settings \.github\/claude-review\/settings.json/);
   const settings = JSON.parse(fs.readFileSync(path.join(__dirname, 'settings.json'), 'utf8'));
   assert.deepEqual(settings.permissions, { deny: ['Read(./**)'] });
-  assert.deepEqual(settings.hooks.PreToolUse, [{ matcher: 'Read', hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.github/claude-review/read-result-guard.cjs"', timeout: 5 }] }]);
+  assert.deepEqual(settings.hooks.PreToolUse, [{ matcher: 'Read', hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.github/claude-review/read-result-guard.cjs"', timeout: 5, onFailure: 'block' }] }]);
   assert.doesNotMatch(workflow, /--add-dir|--tools "[^"]*(?:Bash|Write|Edit|Grep|Glob)/);
   const policy = fs.readFileSync(path.join(__dirname, 'INSTRUCTIONS.md'), 'utf8');
   assert.match(policy, /`Read`.*saved path.*bounded/);

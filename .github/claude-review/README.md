@@ -50,7 +50,8 @@ named helper and guarded `Read`.
 Review policy/code reads go through GitHub at explicit SHAs;
 native `Read` can recover oversized MCP responses saved in the current session's
 `tool-results` store. A trusted `PreToolUse` guard rejects other files, path
-escapes, and symlinks; a native deny rule also blocks checkout reads. Both agents inherit that guard and can page saved results
+escapes, and symlinks; a native deny rule also blocks checkout reads. Hook failures and timeouts
+also block Read through `onFailure: "block"` (requires CLI 2.1.295+). Both agents inherit that guard and can page saved results
 with `offset`/`limit`; shell and file-writing tools remain unavailable. The optional `haiku-helper`
 uses Haiku 5.5 with GitHub reads and the same scoped `Read` tool; Opus owns the assessment and posting.
 The helper cannot publish or spawn other agents. This also keeps
