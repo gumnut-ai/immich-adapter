@@ -1,6 +1,6 @@
 ---
 title: "Route Errors and Filters"
-last-updated: 2026-10-12
+last-updated: 2026-10-13
 ---
 
 # Route Errors and Filters
@@ -26,7 +26,14 @@ Favorites are no longer an example of an unsupported filter. Through `routers/ut
 
 The deployed API accepts a `ratings` query parameter, but the generated Python SDK currently omits it from the typed list/count/search signatures. Use `rating_extra_query` for this narrow compatibility gap. When bumping the SDK, inspect those signatures and replace the shim once `ratings` is typed; do not leave both forms in one request.
 
-People listings use the same kind of shim: `GET /api/people` and `GET /api/search/person` pass `extra_query={"include_hidden": True}` to `people.list`, because the API leaves hidden people out of listings unless asked and these routes filter hidden people themselves. Apply the same rule when the SDK types `include_hidden`.
+People listings use a pre-emptive shim: `GET /api/people` and
+`GET /api/search/person` pass `extra_query={"include_hidden": True}` to
+`people.list` because the Gumnut API will omit hidden people from listings by
+default once its `include_hidden` support ships. Until then, the API ignores
+the unknown parameter; the adapter still applies Immich's `withHidden` filter
+itself, and `/api/people` counts hidden rows before filtering. Deploy the
+adapter request before that API change, then use the typed SDK argument when
+available without sending both forms.
 
 This rule applies to *restrictive* filters. The map route accepts and drops
 unsupported broadening flags such as `withPartners=True` and
