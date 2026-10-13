@@ -9,7 +9,8 @@ const eventTime = item => Date.parse(item.decision_at || item.submitted_at || it
 const ordered = items => [...items].sort((a, b) => eventTime(a) - eventTime(b) || Number(a.id) - Number(b.id));
 const timestamp = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) && Number.isFinite(Date.parse(value));
 const restLogin = author => author?.__typename === 'Bot' && !author.login?.endsWith('[bot]') ? `${author.login}[bot]` : author?.login;
-const significant = (body, login) => login === CLAUDE ? /<!-- gumnut-review-finding\/v1 severity=significant -->|should be fixed before merge/i.test(body || '') : login === CODEX && /\bP[012]\b/.test(body || '');
+const markedSignificant = body => /<!-- gumnut-review-finding\/v1 severity=significant -->/i.test(body || '');
+const significant = (body, login) => login === CLAUDE ? markedSignificant(body) || /should be fixed before merge/i.test(body || '') : login === CODEX && /\bP[012]\b/.test(body || '');
 const advisory = (body, login) => login === CLAUDE ? /^(?:\*\*)?Claude review[^\n]*\badvisory\b/i.test(body || '') : login === CODEX && /^(?:(?:\*\*)?\[P3\](?:\s|$)|\*\*<sub><sub>!\[P3 Badge\]\(https:\/\/img\.shields\.io\/badge\/P3-[^()\s]+\)<\/sub><\/sub>\s)/.test(body || '') && !significant(body, login);
 const normalizeSpace = text => text.replace(/\s+/g, ' ').trim();
 // Observed hosted output, deliberately narrow. Changed boilerplate is unknown
@@ -166,14 +167,15 @@ function latestWorkflowRuns(runs, head) {
 function commentDecision(comment, login, kind = 'comment', findings = []) {
   const body = comment.body || '';
   const evidence = { url: comment.html_url, commit: comment.commit_id || null, kind };
-  if (significant(body, login)) return { state: 'concerns', ...evidence };
   if (login === CLAUDE) {
+    if (markedSignificant(body)) return { state: 'concerns', ...evidence };
     const markers = outsideFences(body).split(/\r?\n/).filter(line => /^<!-- gumnut-review-verdict\//.test(line));
     const match = markers[0]?.match(/^<!-- gumnut-review-verdict\/v1 head=([0-9a-f]{40}) base=([0-9a-f]{40}) verdict=(clean|concerns|incomplete) -->$/);
     const count = (body.match(/gumnut-review-verdict\//g) || []).length;
     if (count && (count !== 1 || markers.length !== 1 || !match)) return { state: 'malformed', ...evidence };
     if (match) return { state: match[3], ...evidence, commit: match[1], base: match[2] };
   }
+  if (significant(body, login)) return { state: 'concerns', ...evidence };
   if (login === CODEX) {
     // Activity metadata is not a reviewer verdict. Every other nonempty source
     // body must be understood, rather than silently preserving an old clean.

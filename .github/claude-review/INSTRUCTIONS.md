@@ -46,6 +46,7 @@ as `commit_id`, verified path/line/side, and `confirmed: true`. Start with
 **Claude review**, a short title, and whether it should be fixed before merge or
 is advisory. Explain evidence, consequence, and action in one concise paragraph.
 Use the summary for cross-file findings. Never post a test/probe comment.
+Include `advisory` on the first line of advisory findings.
 Append `<!-- gumnut-review-finding/v1 severity=significant -->` to findings
 that should be fixed before merge. Omit that marker on advisory findings.
 

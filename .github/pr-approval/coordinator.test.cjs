@@ -173,6 +173,22 @@ test('complete native reaction pagination and decision timestamps are required',
     await assert.rejects(evaluate(fixture({ comments: [claude(), activity], reactions: [changed] })), /Incomplete Codex reaction/);
   }
 });
+test('structured Claude verdicts distinguish resolved history from current concerns', async () => {
+  const resolved = claude();
+  resolved.body = 'The earlier finding that should be fixed before merge is now resolved.\n' + resolved.body;
+  assert.equal((await evaluate(fixture({ comments: [resolved, codex()] }))).decision, 'approve');
+  const existing = { ...review(bot, 'APPROVED'), body: '<!-- gumnut-pr-approval/v1 -->' };
+  const result = await publish({ ...fixture({ comments: [resolved, codex()], reviews: [existing] }), runURL,
+    publisher: () => { throw Error('resolved history must not withdraw an approval'); } });
+  assert.equal(result.published, false);
+  assert.equal(result.decision, 'approve');
+  const incomplete = claude('incomplete', 3);
+  incomplete.body = 'The earlier finding that should be fixed before merge is resolved, but coverage is incomplete.\n' + incomplete.body;
+  assert.equal((await evaluate(fixture({ comments: [claude(), codex(), incomplete] }))).decision, 'approve');
+  const concern = claude('concerns');
+  concern.body = 'The earlier finding that should be fixed before merge is resolved, but a new concern remains.\n' + concern.body;
+  assert.equal((await evaluate(fixture({ comments: [concern, codex()] }))).decision, 'concerns');
+});
 test('significant concerns cannot be hidden by clean or incomplete wrappers', async () => {
   for (const source of [claude(), claude('incomplete'), codex()]) {
     source.body += source.user.login === 'claude[bot]' ? '\n<!-- gumnut-review-finding/v1 severity=significant -->' : '\n[P1] A remaining concern';
