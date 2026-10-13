@@ -201,4 +201,5 @@ test('local reads use the trusted result-only guard without shell or writes', ()
   assert.doesNotMatch(workflow, /--add-dir|--tools "[^"]*(?:Bash|Write|Edit|Grep|Glob)/);
   const policy = fs.readFileSync(path.join(__dirname, 'INSTRUCTIONS.md'), 'utf8');
   assert.match(policy, /`Read`.*saved path.*bounded/);
+  assert.match(policy, /saved JSON line.*Read's[\s\S]*`perPage: 1`[\s\S]*head\/base SHAs/);
 });
