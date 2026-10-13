@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-10-01
+last-updated: 2026-10-13
 ---
 
 # Development Tools
@@ -51,7 +51,10 @@ Pyright also misses a change from `T | None = None` to `T = <default>`: presence
 
 ## API Compatibility Tool
 
-The `validate_api_compatibility.py` tool ensures that immich-adapter correctly implements the Immich API endpoints.
+The `validate_api_compatibility.py` tool compares endpoint methods, parameters,
+request bodies, and responses in the Immich and adapter OpenAPI specifications.
+For behavior those shapes do not capture, verify the pinned Immich source as
+described in [Verifying upstream behavior](upstream-compatibility.md#verifying-upstream-behavior--read-the-immich-source-not-just-the-spec).
 
 ### Usage
 
