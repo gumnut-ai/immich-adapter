@@ -7,6 +7,18 @@ following repository dependency policy and full affected-app checks. Existing
 configuration protection, isolated publishing and human handoff remain intact.
 Cleanup needs neither an alert-reader credential nor an indexing receipt.
 
+Pre-agent smoke runs the full Python checks inside AWF.
+
+The workflow owns privileged sandbox verification. Its pre-agent smoke completes
+before inference; the agent prepares a committed candidate and emits PR publication
+intent, then trusted host validation runs all affected full checks before actual
+publication. `scripts/run_maintainer_sandbox.sh` is a host-only workflow launcher,
+not an agent command; the confined agent must not invoke it, use sudo, or start a
+nested AWF runtime. Proposal evidence must distinguish completed checks from
+pending host checks. A noop means completed discovery found no worthwhile
+candidate; blocked or unfinished work emits `report_incomplete`, which delivery
+verification rejects.
+
 The dependency submission workflow below is separately gated and is not needed
 for cleanup activation. Enabling Dependabot settings does not establish complete
 locked-dependency coverage or activate this submission workflow.

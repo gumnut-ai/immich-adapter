@@ -261,7 +261,9 @@ post-steps:
 Read the dispatch-revision `.agents/daemons/codebase-maintainer/DAEMON.md`,
 `.agents/daemons/AGENTS.md` and target guidance. Follow all deny rules,
 cooldown, cadence, thresholds, open-PR caps, changelog and human-review policy.
-Record GITHUB_SHA before edits; it is the immutable policy and evidence base.
+Record `git rev-parse HEAD` before edits: the checkout is pinned to the
+immutable dispatch revision, which is the policy and evidence base. No
+environment lookup is needed.
 Focus on useful codebase maintenance rather than routinely scanning for outdated
 dependencies or reprocessing security alerts. Dependency changes are still in
 scope when justified by the maintenance task. Use judgment, check existing
@@ -281,20 +283,27 @@ proposal without material new evidence. If no worthwhile candidate is found,
 report an evidence-backed noop describing the code inspected; closed-history
 clearance is not required for that no-candidate result.
 
-Prepare and run every affected app's full documented lint, format, type, tests,
-and required build checks inside AWF using the trusted helper before proposing.
-Use the repo's pinned tools. The prepared smoke covers Python;
-other targets must prepare and verify successfully before publication. No paid
-provider/service credentials may be used for tests. Runtime preparation failure
+The workflow owns mandatory trusted sandbox verification. Its pre-agent smoke
+has already checked the full Python suite.
+`scripts/run_maintainer_sandbox.sh` is a host-only workflow launcher. Do not
+invoke it, use sudo, or start a nested AWF runtime from this confined session.
+Prepare and commit a supported candidate using the repo's pinned tools. After
+inference, the trusted workflow prepares and runs every affected app's full
+documented lint, format, type, tests, and required build checks inside AWF before
+actual PR publication. Describe these host checks as pending in the PR intent;
+never assert deferred checks passed. No paid provider/service credentials may be used for tests. Runtime preparation failure
 is incomplete work. Preserve supply-chain config and existing tests unchanged;
 if a valid upgrade requires changing either, surface for human escalation.
 The publisher may further block a
 DAEMON-allowed sensitive file; report that delivery blocker, never evade it.
 
 Use gumnut-bot[bot] author and committer. Commit at most three commits, keep a
-clean checkout, and emit exactly one terminal PR or noop safe output. PR branch
+clean checkout, and emit exactly one terminal result: PR publication intent for
+a supported candidate, noop for completed discovery with no worthwhile candidate,
+or report_incomplete for blocked or unfinished work, even if no files changed.
+Never encode a blocker as noop prose. PR branch
 must be `maintainer/<unused-short-topic>`; include the concrete maintenance benefit, affected
-apps, full-check evidence, immutable source SHA and reviewer-selection rationale. Select an eligible human
+apps, completed-check evidence and pending host checks, immutable source SHA and reviewer-selection rationale. Select an eligible human
 through contribution history and call add_reviewer once using the PR temporary
 ID (for example `pull_request_number: "aw_proposal"` for `temporary_id: "aw_proposal"`).
 Exclude logins ending in `[bot]` and known automation accounts, case-insensitively:
