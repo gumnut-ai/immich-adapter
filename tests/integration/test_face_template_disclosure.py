@@ -145,9 +145,15 @@ def _admits_number(node: Any, root: dict[str, Any], open_refs: frozenset[str]) -
     ):
         return True
     # A list of lists of numbers holds points as well as a list holds a vector.
-    return any(
+    if any(
         _admits_number(item, root, open_refs)
         for item in (node.get("items"), *node.get("prefixItems", ()))
+    ):
+        return True
+    # So does a list of objects whose every field is a number: `{x, y}` points.
+    fields = node.get("properties") or {}
+    return bool(fields) and all(
+        _admits_number(field, root, open_refs) for field in fields.values()
     )
 
 
@@ -337,6 +343,19 @@ class _Point(BaseModel):
     y: int
 
 
+class _SyncFaceWithListOfPoints(SyncAssetFaceV2):
+    outline: list[_Point]
+
+
+class _NamedCount(BaseModel):
+    name: str
+    count: int
+
+
+class _SyncFaceWithListOfNamedCounts(SyncAssetFaceV2):
+    tags: list[_NamedCount]
+
+
 class _SyncFaceWithLandmarksUnderAnotherName(SyncAssetFaceV2):
     geometry: dict[str, _Point]
     leftEye: _Point
@@ -376,6 +395,11 @@ class _PageOfFaces(BaseModel):
         ),
         (
             # A map of points with free keys is one of the shapes this cannot see.
+            _SyncFaceWithListOfPoints,
+            {"_SyncFaceWithListOfPoints.outline": {"array of numbers"}},
+        ),
+        (_SyncFaceWithListOfNamedCounts, {}),
+        (
             _SyncFaceWithLandmarksUnderAnotherName,
             {
                 "_SyncFaceWithLandmarksUnderAnotherName.leftEye": {
