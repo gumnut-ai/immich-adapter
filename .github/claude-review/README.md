@@ -30,11 +30,6 @@ contributor code, configuration, hooks, and dependencies are never executed.
 Claude discovers and fetches PR context as needed through GitHub tools, including
 commit history, individual commit diffs, and related code search. Indexed search
 results are discovery hints; relevant files must be read at the recorded SHAs.
-The workflow overrides the action's bundled GitHub MCP v0.17.1 with the
-digest-pinned v1.12.2 release, already used by our native workflows. The action's
-later inline MCP configuration wins by server name and inherits its exchanged
-Claude App token. The server exposes only seven named GitHub tools; the helper
-has the six read tools, and only Opus can post comments.
 The consolidated `pull_request_read` tool paginates files, commits, reviews, and
 comments with `page`/`perPage`, and review threads with `perPage`/`after`.
 Policy starts thread reads at five per page and follows `pageInfo` cursors.
@@ -42,22 +37,55 @@ This controls thread-page size, not every response: full diffs and individual
 files can still be large, patches can be omitted/truncated, and each returned
 thread includes at most 100 comments. Use targeted reads and report material
 coverage gaps; pagination does not establish complete coverage by itself.
-Restricted mode ignores
-user/project settings, strict MCP configuration limits servers to those supplied
-by the workflow's pinned GitHub server and the action's existing inline-comment
-server, and the built-in tool set only allows MCP discovery and the
-named helper and guarded `Read`.
-Review policy/code reads go through GitHub at explicit SHAs;
-native `Read` can recover oversized MCP responses saved in the current session's
-`tool-results` store. A trusted `PreToolUse` guard rejects other files, path
-escapes, and symlinks; a native deny rule also blocks checkout reads. Hook failures and timeouts
-also block Read through `onFailure: "block"` (requires CLI 2.1.295+). Both agents inherit that guard and can read saved results
-with `offset`/`limit` within Read's limits; shell and file-writing tools remain unavailable. The optional `haiku-helper`
-uses Haiku 5.5 with GitHub reads and the same scoped `Read` tool; Opus owns the assessment and posting.
-The helper cannot publish or spawn other agents. This also keeps
-the action's `.git/config` credential outside the model's readable surface.
-`dontAsk` permits only explicitly allowed MCP reads, comment tools, and the
-named helper and guarded `Read`; other mutations, including formal review submission, are denied.
+The official action and SDK remain on the runner. Its documented
+`path_to_claude_code_executable` input invokes our launcher, which runs the full
+pinned CLI in a separate Docker container. The container gets a read-only
+`git archive` of the trusted policy revision, fresh writable scratch/session
+storage, and an explicit environment allowlist. It receives no runner home,
+`.git`, action directory, runner temporary directory, publishing token, OAuth
+token, OIDC variables, or Docker socket. Native `Read`, `Grep`, and `Glob` can
+inspect that filesystem and recover saved oversized tool results without a
+path-denying Read hook. The checkout is the policy revision; changed PR source
+still comes from GitHub at the recorded head/base SHAs.
+
+Two existing GitHub components provide the external services, using the same
+image digests already pinned by our native PR reviewer:
+
+- [AWF API proxy](https://github.com/github/gh-aw-firewall/tree/v0.28.25/containers/api-proxy)
+  injects the real subscription bearer token outside the execution container.
+  Its custom Authorization-header setting is used only in the proxy. The CLI
+  receives a dummy OAuth bootstrap token and `ANTHROPIC_BASE_URL`; it receives
+  no API-key or `apiKeyHelper` configuration. OAuth beta headers and explicit
+  Opus/Haiku model names must survive forwarding.
+- [MCP gateway](https://github.com/github/gh-aw-mcpg/tree/v0.4.25) exposes the two
+  existing GitHub MCP servers over HTTP with fixed tool allowlists. The gateway
+  and backend containers hold the App token and trusted inline-comment action
+  code outside the execution container. Only the gateway gets a Docker socket.
+  Large-response payload files have a dedicated shared directory containing
+  tool results, with a read-only mount in the execution container.
+
+The execution container uses an internal Docker network with no internet
+route. The proxy and gateway join that network and a separate network for
+upstream access. All containers are scoped to one CLI session. The gateway owns its backend
+instances; a session label identifies them for cleanup with the two sidecars on
+completion, failure, or forwarded cancellation. Pinned service images are pulled
+before the credentialed action starts, outside the short startup deadlines. Restricted mode ignores project/user
+settings; strict MCP configuration admits only the two gateway routes. The
+built-in tools are discovery, the named helper, and native read/search tools;
+shell and file-writing tools remain unavailable. `dontAsk` allows the listed
+reads and comments and denies other mutations. The optional `haiku-helper`
+uses Haiku 5.5 with reads only; Opus owns the assessment and posting.
+
+This follows Anthropic's
+[external credential proxy pattern](https://code.claude.com/docs/en/agent-sdk/secure-deployment#the-proxy-pattern)
+and its [subscription gateway requirements](https://code.claude.com/docs/en/llm-gateway#subscriptions-and-gateways).
+The upstream components provide the proxy and MCP transports; the local code
+only launches them and supplies isolated configuration. AWF's generic custom
+header setting supports this composition, but upstream does not claim a tested
+Claude subscription integration. Dummy-credential Linux tests verify the
+transport and isolation; real subscription access and App-authored delivery
+still require the supervised default-branch pilot.
+
 The job grants OIDC only to exchange for the installed official Claude app
 token. `additional_permissions` requests `contents: read`, overriding the
 action's default write scope; PR/issue comments remain writable. No custom
@@ -170,7 +198,7 @@ that comments reached the PR or that Claude completed the intended coverage.
 The credential-free contract tests run in the existing PR workflow checks job:
 
 ```sh
-node --test .github/claude-review/*.test.cjs
+node --test .github/claude-review/*.test.cjs .github/claude-review/runtime/*.test.cjs
 actionlint .github/workflows/claude-review.yml .github/workflows/pr-review-tests.yml
 zizmor .github/workflows/claude-review.yml
 ```

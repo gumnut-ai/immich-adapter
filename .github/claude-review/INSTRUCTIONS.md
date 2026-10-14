@@ -21,11 +21,12 @@ follow `pageInfo.endCursor` as `after` while `hasNextPage` is true. Reduce the
 page size if needed. For large diffs, prefer paginated `get_files` patches and
 targeted file reads. If a tool saves oversized output to a local file, use
 `Read` on that exact saved path with bounded `offset`/`limit` calls until the
-needed content is covered. The trusted hook permits only this session's saved
-tool results; other local paths are denied. If a saved JSON line exceeds Read's
-limit, reduce `get_files` to `perPage: 1` or fetch source at the recorded
-head/base SHAs with `get_file_contents`. Report any remaining truncated
-patch or thread-comment coverage.
+needed content is covered. Native `Read`, `Grep`, and `Glob` can also inspect the
+isolated trusted checkout and session files. The checkout is the trusted policy
+revision, not the PR head; fetch relevant changed source at the recorded head/base
+SHAs through GitHub. If a saved JSON line exceeds Read's limit, reduce `get_files`
+to `perPage: 1` or fetch source at the recorded head/base SHAs with
+`get_file_contents`. Report any remaining truncated patch or thread-comment coverage.
 You may delegate bounded reads to `haiku-helper`; verify its evidence yourself
 and retain responsibility for the verdict and all publication.
 
