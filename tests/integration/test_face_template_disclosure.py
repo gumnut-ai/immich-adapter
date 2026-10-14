@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 
 from main import app
 from routers.immich_models import (
@@ -78,8 +78,10 @@ NUMBER_ARRAYS = {
     "UserConfigFFmpegRealtimeDto.resolutions": "video heights to transcode to",
     "ValidationError.loc": "where in a rejected request the problem is",
     "NumberFilter.in": "search values the client sends",
+    "NumberFilter.in_": "the same field under the name the model gives it",
     "NumberFilter.notIn": "search values the client sends",
     "NumberFilterNullable.in": "search values the client sends",
+    "NumberFilterNullable.in_": "the same field under the name the model gives it",
     "NumberFilterNullable.notIn": "search values the client sends",
 }
 
@@ -256,9 +258,14 @@ def adapter_models() -> list[type[BaseModel]]:
 def scan_models(models: list[type[BaseModel]]) -> dict[str, set[str]]:
     carriers: dict[str, set[str]] = {}
     for model in models:
-        schema = TypeAdapter(model).json_schema(mode="serialization")
-        for field, reasons in find_face_template_carriers(schema).items():
-            carriers.setdefault(field, set()).update(reasons)
+        # A field can be sent under its alias or its own name: REST responses
+        # use the alias, the sync stream and WebSocket events use the name.
+        for by_alias in (True, False):
+            schema = TypeAdapter(model).json_schema(
+                mode="serialization", by_alias=by_alias
+            )
+            for field, reasons in find_face_template_carriers(schema).items():
+                carriers.setdefault(field, set()).update(reasons)
     return carriers
 
 
@@ -339,6 +346,10 @@ class _PersonWithCentroid(BaseModel):
     faceCentroidId: str
 
 
+class _FaceWithLandmarksBehindAnAlias(BaseModel):
+    landmarks: dict[str, int] = Field(default_factory=dict, alias="geometry")
+
+
 class _PageOfFaces(BaseModel):
     faces: list[_SyncFaceWithEmbedding]
 
@@ -386,6 +397,14 @@ class _PageOfFaces(BaseModel):
                 "_SyncFaceWithEmbedding.embedding": {
                     "array of numbers",
                     "property name names a face template",
+                }
+            },
+        ),
+        (
+            _FaceWithLandmarksBehindAnAlias,
+            {
+                "_FaceWithLandmarksBehindAnAlias.landmarks": {
+                    "property name names a face template"
                 }
             },
         ),
