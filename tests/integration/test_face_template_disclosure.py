@@ -112,8 +112,15 @@ _NUMERIC_TYPES = frozenset({"number", "integer"})
 
 
 def names_face_template(property_name: str) -> bool:
-    words = _WORD_BOUNDARY.split(property_name)
-    return any(word.lower() in TEMPLATE_WORDS for word in words)
+    words = [word.lower() for word in _WORD_BOUNDARY.split(property_name)]
+    if any(word in TEMPLATE_WORDS for word in words):
+        return True
+    # "Template" alone names other things, such as `storageTemplate`. Right
+    # after "face" it names the thing itself.
+    return any(
+        first == "face" and second in ("template", "templates")
+        for first, second in zip(words, words[1:])
+    )
 
 
 def _resolve(node: dict[str, Any], root: dict[str, Any]) -> dict[str, Any] | None:
@@ -515,6 +522,8 @@ def test_scan_reads_the_schemas_an_openapi_document_holds():
         "descriptor",
         "leftEye",
         "mouth_right",
+        "faceTemplate",
+        "face_templates",
     ],
 )
 def test_template_words_are_matched_in_camel_and_snake_case(name: str):
