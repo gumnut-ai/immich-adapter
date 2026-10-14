@@ -78,6 +78,16 @@ test('source snapshot archives HEAD excluding git metadata, untracked files and 
   assert.deepEqual(await fs.readdir(destination),['tracked.txt']);
 });
 
+test('failed source archive does not expose untracked content or Git diagnostics', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'review-source-failure-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const repo = path.join(dir, 'repo'); const destination = path.join(dir, 'source');
+  await exec('git', ['init', '--quiet', repo]);
+  await fs.writeFile(path.join(repo, 'untracked-key'), SECRET);
+  await assert.rejects(archiveSource({ repository: repo, destination }), { message: 'Source archive failed' });
+  assert.deepEqual(await fs.readdir(destination), []);
+});
+
 function fakeChild() {
   const child = new EventEmitter();
   child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();

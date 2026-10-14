@@ -9,7 +9,7 @@ const { spawn, execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { pathToFileURL } = require('node:url');
 const { startServices, MODEL_IMAGE, GITHUB_TOOLS } = require('./services.cjs');
-const { archiveSource, sanitizeArgs, dockerArgs, DUMMY_OAUTH } = require('./launcher.cjs');
+const { dockerArgs, DUMMY_OAUTH } = require('./launcher.cjs');
 const exec = promisify(execFile);
 const NODE_IMAGE = 'node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20';
 const AGENT_IMAGE = 'gumnut-claude-review:2.1.295';
@@ -226,41 +226,79 @@ const fs=require('node:fs'),net=require('node:net');
     assert.ok(!(await stateAt(adminURL)).toolCalls.some(call => call.name === 'push_files'));
   });
 
-  await t.test('native Opus and Haiku read the exact large persisted result through the proxy', async () => {
+  await t.test('SDK default spawn launches the real wrapper and recovers large results with Opus and Haiku', async tNative => {
     try {
     const actionDir=await fs.realpath(process.env.CLAUDE_REVIEW_TRUSTED_ACTION_DIR);
     const sdkDir=path.join(actionDir,'node_modules','@anthropic-ai','claude-agent-sdk');
     assert.equal(JSON.parse(await fs.readFile(path.join(sdkDir,'package.json'),'utf8')).version,'0.3.295');
     const { query }=await import(pathToFileURL(path.join(sdkDir,'sdk.mjs')).href);
-    const sourceDir=path.join(dir,'sdk-source');
-    await archiveSource({repository:repo,destination:sourceDir});
-    const cliName=`claude-sdk-${id}`;
+    const launcherDir=path.join(dir,'sdk-launcher');
+    await fs.mkdir(launcherDir);
+    const launcherPath=path.join(launcherDir,'launcher.cjs');
+    for(const file of ['launcher.cjs','identity.cjs']) {
+      const original=path.join(__dirname,file);
+      const copied=path.join(launcherDir,file);
+      await fs.copyFile(original,copied);
+      await fs.chmod(copied,(await fs.stat(original)).mode & 0o777);
+      assert.deepEqual(await fs.readFile(copied),await fs.readFile(original));
+    }
+    assert.ok((await fs.stat(launcherPath)).mode & 0o111);
+    const capturedConfig=path.join(launcherDir,'host-config.json');
+    const cleanupMarker=path.join(launcherDir,'launcher-cleanup.json');
+    tNative.after(async()=>{
+      try {const captured=JSON.parse(await fs.readFile(capturedConfig,'utf8'));await fs.rm(captured.sessionDir,{recursive:true,force:true});}
+      catch(error){if(error.code!=='ENOENT')throw error;}
+    });
+    const preparedServices={network:services.network,modelURL:services.modelURL,mcpConfig:services.mcpConfig,payloadDir:services.payloadDir};
+    // The host fixture owns these running services. Substitute only service
+    // setup; the byte-identical launcher executes normally through SDK default
+    // spawn, argv parsing, source archiving, stdio forwarding and Docker launch.
+    await fs.writeFile(path.join(launcherDir,'services.cjs'),`'use strict';
+const fs=require('node:fs');
+exports.startServices=async({sessionDir,mcpConfig})=>{
+  fs.writeFileSync(${JSON.stringify(capturedConfig)},JSON.stringify({sessionDir,mcpConfig,argv:process.argv.slice(2)}));
+  return {...${JSON.stringify(preparedServices)},close:async()=>{fs.writeFileSync(${JSON.stringify(cleanupMarker)},JSON.stringify({sessionDir}));}};
+};
+`);
     const abortController=new AbortController();
     const deadline=setTimeout(()=>abortController.abort(),90000);
     const events=[];
     let conversation;
     try {
       conversation=query({prompt:'Verify exact large fixture recovery, then ask the Haiku helper to do the same.',options:{
-        cwd:repo,pathToClaudeCodeExecutable:'/opt/claude/node_modules/.bin/claude',
-        env:{PATH:process.env.PATH,CLAUDE_CODE_ENTRYPOINT:'sdk-ts'},abortController,
+        cwd:repo,pathToClaudeCodeExecutable:launcherPath,
+        env:{...env,CLAUDE_CODE_ENTRYPOINT:'sdk-ts'},abortController,
         model:'claude-opus-5-5',maxTurns:8,permissionMode:'dontAsk',settingSources:[],
         tools:['Read','Agent'],allowedTools:['Read','Agent(haiku-helper)','mcp__github__get_file_contents'],
-        mcpServers:services.mcpConfig.mcpServers,
+        mcpServers:hostConfig.mcpServers,
         agents:{'haiku-helper':{description:'Read fixture source',prompt:'Read only the fixture through MCP and Read.',model:'claude-haiku-5-5',tools:['Read','mcp__github__get_file_contents'],maxTurns:6}},
         extraArgs:{restricted:null,settings:'.github/claude-review/settings.json'},
-        spawnClaudeCodeProcess: sdkOptions => {
-          const argv=sanitizeArgs({argv:sdkOptions.args,repository:repo,mcpConfig:services.mcpConfig,secrets:[OAUTH,APP_TOKEN]});
-          diagnostics.cli.argv=argv;
-          const args=dockerArgs({image:AGENT_IMAGE,network:services.network,sourceDir,payloadDir:services.payloadDir,name:cliName,argv,modelURL:services.modelURL});
-          return collect(spawn('docker',args,{env:{PATH:process.env.PATH},signal:sdkOptions.signal,stdio:['pipe','pipe','pipe']}),diagnostics.cli);
-        },
+        stderr: data => {diagnostics.cli.stderr=safe((diagnostics.cli.stderr||'')+data);},
       }});
       for await (const event of conversation) {
         events.push(event);
+        diagnostics.cli.events=(diagnostics.cli.events||[]).concat({type:event.type,subtype:event.subtype}).slice(-20);
         if (event.type === 'result') break;
       }
       assert.ok(events.some(event=>event.type==='result'&&!event.is_error));
-    } finally { clearTimeout(deadline); conversation?.close(); await docker(['rm','--force',cliName]).catch(()=>{}); }
+    } finally { clearTimeout(deadline); conversation?.close(); }
+    const captured=JSON.parse(await fs.readFile(capturedConfig,'utf8'));
+    assert.deepEqual(captured.mcpConfig,hostConfig);
+    assert.ok(captured.argv.some(value=>value.includes('${GITHUB_ACTION_PATH}')));
+    // SDK close is asynchronous. Wait for the real launcher's finally block
+    // before the host fixture tears down the services it owns.
+    const cleanupDeadline=Date.now()+15000;
+    let cleaned=false;
+    while(Date.now()<cleanupDeadline) {
+      try {
+        const marker=JSON.parse(await fs.readFile(cleanupMarker,'utf8'));
+        assert.equal(marker.sessionDir,captured.sessionDir);
+        try {await fs.stat(captured.sessionDir);}
+        catch(error) {if(error.code==='ENOENT'){cleaned=true;break;}throw error;}
+      } catch(error) {if(error.code!=='ENOENT')throw error;}
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    assert.ok(cleaned,'SDK-launched wrapper must close its service handle and remove its session directory');
     const state = await stateAt(adminURL);
     assert.deepEqual(state.failures,[]);
     assert.ok(state.source.length > 50_000);

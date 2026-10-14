@@ -8,7 +8,6 @@ const path = require('node:path');
 const os = require('node:os');
 const { spawn, execFile } = require('node:child_process');
 const { promisify } = require('node:util');
-const { pipeline } = require('node:stream/promises');
 const { randomUUID } = require('node:crypto');
 const exec = promisify(execFile);
 const identity = require('./identity.cjs');
@@ -97,15 +96,15 @@ function dockerArgs({ image, network, sourceDir, payloadDir, name, argv, modelUR
 
 async function archiveSource({ repository, destination }) {
   await fs.mkdir(destination, { recursive: true, mode: 0o755 });
-  const archive = spawn('git', ['-C', repository, 'archive', '--format=tar', 'HEAD'], { stdio: ['ignore', 'pipe', 'pipe'] });
-  const extract = spawn('tar', ['-xf', '-', '-C', destination], { stdio: ['pipe', 'ignore', 'pipe'] });
-  archive.stderr.resume(); extract.stderr.resume();
-  const exited = child => new Promise((resolve, reject) => {
-    child.once('error', () => reject(new Error('Source archive failed')));
-    child.once('close', code => code === 0 ? resolve() : reject(new Error('Source archive failed')));
-  });
-  try { await Promise.all([pipeline(archive.stdout, extract.stdin), exited(archive), exited(extract)]); }
-  catch { archive.kill('SIGTERM'); extract.kill('SIGTERM'); throw new Error('Source archive failed'); }
+  // Await a complete archive before extraction. The tar end marker can close
+  // a streaming consumer before its producer's pipe has finished draining.
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'review-archive-'));
+  const archive = path.join(temporary, 'source.tar');
+  try {
+    await exec('git', ['-C', repository, 'archive', '--format=tar', '--output', archive, 'HEAD']);
+    await exec('tar', ['-xf', archive, '-C', destination]);
+  } catch { throw new Error('Source archive failed'); }
+  finally { await fs.rm(temporary, { recursive: true, force: true }); }
   // HEAD contains the trusted source snapshot, never .git, untracked files or
   // runner/action directories. Do not bind the host checkout itself.
 }

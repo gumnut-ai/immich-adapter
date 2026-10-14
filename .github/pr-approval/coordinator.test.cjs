@@ -256,20 +256,37 @@ test('formal source approvals count and dismissed approval does not', async () =
   assert.equal((await evaluate(fixture({ comments: [], reviews: [review('claude[bot]', 'APPROVED'), review('chatgpt-codex-connector[bot]', 'APPROVED')] }))).decision, 'approve');
   assert.equal((await evaluate(fixture({ comments: [codex()], reviews: [review('claude[bot]', 'DISMISSED')] }))).decision, 'waiting');
 });
-test('newer source dismissal clears old signoff until a later clean declaration', async () => {
+test('dismissal removes only that source review, preserving other signoffs', async () => {
   for (const login of ['claude[bot]', 'chatgpt-codex-connector[bot]']) {
-    const reviews = [review(login, 'APPROVED', 3), review(login, 'DISMISSED', 4)];
-    assert.equal((await evaluate(fixture({ reviews }))).decision, 'waiting');
-    const clean = login === 'claude[bot]' ? claude('clean', 5) : { ...codex(), id: 5, created_at: '2026-10-12T00:05:00Z' };
-    assert.equal((await evaluate(fixture({ reviews, comments: [claude(), codex(), clean] }))).decision, 'approve');
-    assert.equal((await evaluate(fixture({ reviews: [...reviews, review(login, 'APPROVED', 5)] }))).decision, 'approve');
+    const dismissed = review(login, 'DISMISSED', 4);
+    assert.equal((await evaluate(fixture({ reviews: [review(login, 'APPROVED', 3), dismissed] }))).decision, 'approve');
+    assert.equal((await evaluate(fixture({ reviews: [dismissed] }))).decision, 'approve');
+    const comments = login === 'claude[bot]' ? [codex()] : [claude()];
+    assert.equal((await evaluate(fixture({ reviews: [dismissed], comments }))).decision, 'waiting');
   }
 });
-test('latest human changes request blocks until approved or dismissed; unknown bots ignored', async () => {
-  const human = { ...review('alice', 'CHANGES_REQUESTED'), user: { login: 'alice', type: 'User' } };
-  assert.equal((await evaluate(fixture({ reviews: [human] }))).decision, 'concerns');
-  for (const state of ['APPROVED', 'DISMISSED']) assert.equal((await evaluate(fixture({ reviews: [human, { ...human, id: 4, submitted_at: '2026-10-12T01:00:00Z', state }] }))).decision, 'approve');
+test('active human and source dispositions use submission order despite later dismissal or body edits', async () => {
+  for (const login of ['alice', 'claude[bot]', 'chatgpt-codex-connector[bot]']) {
+    const formal = (state, id) => ({ ...review(login, state, id), ...(login === 'alice' ? { user: { login, type: 'User' } } : {}) });
+    const dismissed = formal('DISMISSED', 1), changes = formal('CHANGES_REQUESTED', 3);
+    const lateUpdate = r => ({ ...graphReview(r), updatedAt: '2026-10-12T00:20:00Z', lastEditedAt: '2026-10-12T00:19:00Z' });
+    assert.equal((await evaluate(fixture({ reviews: [dismissed, changes], graphReviews: [lateUpdate(dismissed), graphReview(changes)] }))).decision, 'concerns');
+    const oldApproval = formal('APPROVED', 1);
+    assert.equal((await evaluate(fixture({ reviews: [oldApproval, changes], graphReviews: [lateUpdate(oldApproval), graphReview(changes)] }))).decision, 'concerns');
+    const approval = formal('APPROVED', 5);
+    assert.equal((await evaluate(fixture({ reviews: [changes, approval], graphReviews: [lateUpdate(changes), graphReview(approval)] }))).decision, 'approve');
+    // GitHub changes the dismissed request itself, rather than adding a review.
+    assert.equal((await evaluate(fixture({ reviews: [{ ...changes, state: 'DISMISSED' }] }))).decision, 'approve');
+  }
   assert.equal((await evaluate(fixture({ reviews: [review('unknown[bot]', 'CHANGES_REQUESTED')] }))).decision, 'approve');
+});
+test('editing an old formal approval cannot supersede a later source body concern', async () => {
+  for (const login of ['claude[bot]', 'chatgpt-codex-connector[bot]']) {
+    const approval = review(login, 'APPROVED', 1);
+    const concern = { ...review(login, 'COMMENTED', 3), body: login === 'claude[bot]' ? 'Claude review: should be fixed before merge' : '[P2] Fix this' };
+    const metadata = [{ ...graphReview(approval), updatedAt: '2026-10-12T00:20:00Z', lastEditedAt: '2026-10-12T00:19:00Z' }, graphReview(concern)];
+    assert.equal((await evaluate(fixture({ reviews: [approval, concern], graphReviews: metadata }))).decision, 'concerns');
+  }
 });
 test('significant unresolved replies block even outdated threads; resolved thread clears', async () => {
   for (const [login, body] of [['claude[bot]', '<!-- gumnut-review-finding/v1 severity=significant -->'], ['claude[bot]', 'This should be fixed before merge'], ['chatgpt-codex-connector[bot]', '**[P2] Fix this**']]) {
@@ -300,11 +317,10 @@ test('GraphQL lastEditedAt makes an older body-only concern supersede a newer cl
     assert.equal((await evaluate(fixture({ reviews: [finding], graphReviews: [metadata], comments: [claude(), codex(), clean] }))).decision, 'approve');
   }
 });
-test('GraphQL updatedAt places explicit dismissal after newer-issued clean signoff', async () => {
+test('later source dismissal does not erase an independent clean comment', async () => {
   const dismissed = review('claude[bot]', 'DISMISSED', 1);
   const metadata = { ...graphReview(dismissed), updatedAt: '2026-10-12T00:10:00Z' };
-  assert.equal((await evaluate(fixture({ reviews: [dismissed], graphReviews: [metadata], comments: [claude('clean', 4), codex()] }))).decision, 'waiting');
-  assert.equal((await evaluate(fixture({ reviews: [dismissed], graphReviews: [metadata], comments: [claude('clean', 11), codex()] }))).decision, 'approve');
+  assert.equal((await evaluate(fixture({ reviews: [dismissed], graphReviews: [metadata], comments: [claude('clean', 4), codex()] }))).decision, 'approve');
 });
 test('source review metadata must match exact REST snapshot and cover every source review', async () => {
   const source = review('claude[bot]', 'APPROVED');
@@ -459,6 +475,31 @@ test('App-visible submitted review suppresses duplicate writes when reader lags'
     const p = publisherFixture({ pending: [standing] });
     assert.equal((await publish({ ...fixture(options), runURL, publisher: p.publisher })).published, false);
     assert.equal(p.calls.filter(c => c.method === 'POST').length, 0);
+  }
+});
+test('an older late-dismissed own review cannot hide a newer approval from withdrawal', async () => {
+  const dismissed = { ...review(bot, 'DISMISSED', 3), body: '<!-- gumnut-pr-approval/v1 -->' };
+  const approval = { ...review(bot, 'APPROVED', 4), body: '<!-- gumnut-pr-approval/v1 -->' };
+  const graphReviews = [{ ...graphReview(dismissed), updatedAt: '2026-10-12T00:10:00Z' }, graphReview(approval)];
+  const p = publisherFixture({ pending: [dismissed, approval] });
+  const f = fixture({ reviews: [dismissed, approval], graphReviews, comments: [claude('concerns', 11), codex()], override: (_method, route) => route.endsWith('/reviews/42') ? { ...p.pending, state: 'CHANGES_REQUESTED' } : undefined });
+  const result = await publish({ ...f, runURL, publisher: p.publisher });
+  assert.equal(result.existingApproval.state, 'APPROVED');
+  assert.deepEqual(result.observedDismissalIds, [3]);
+  assert.equal(result.published, true);
+  assert.equal(p.calls.at(-1).body.event, 'REQUEST_CHANGES');
+});
+test('publisher dismissed reviews cannot mask other active dispositions for duplicate suppression', async () => {
+  for (const state of ['APPROVED', 'CHANGES_REQUESTED']) {
+    const dismissed = { ...review(bot, 'DISMISSED', 5), body: '<!-- gumnut-pr-approval/v1 -->' };
+    const active = { ...review(bot, state, 4), body: '<!-- gumnut-pr-approval/v1 -->' };
+    const readerReviews = state === 'APPROVED' ? [dismissed] : [{ ...review(bot, 'APPROVED', 3), body: '<!-- gumnut-pr-approval/v1 -->' }, dismissed];
+    const comments = [claude(state === 'APPROVED' ? 'clean' : 'concerns', 11), codex()];
+    const p = publisherFixture({ pending: [active, dismissed] });
+    const result = await publish({ ...fixture({ reviews: readerReviews, comments }), runURL, publisher: p.publisher });
+    assert.equal(result.published, false);
+    assert.equal(result.existingApproval.state, state);
+    assert(p.calls.every(c => c.method === 'GET'));
   }
 });
 test('explicit coordinator dismissal persists across pushes until a later clean signoff', async () => {

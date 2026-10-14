@@ -41,7 +41,10 @@ and commit match. P0/P1/P2 findings, mixed or unclassified findings, and unknown
 body text do not qualify. Its activity table's `Completed` or `Running` status
 alone is not a sign-off and does not erase an earlier decision.
 Formal source approvals count with empty or
-recognized clean bodies; contradictory or unknown bodies block. Significant
+recognized clean bodies; contradictory or unknown bodies block. Active formal
+approvals and changes requests follow submission order; editing a review body
+does not resubmit its disposition. Dismissing a source or human review removes
+only that review, preserving other active dispositions and independent sign-offs. Significant
 unresolved findings, including outdated threads, and
 human requests for changes prevent approval. Advisory findings do not.
 Unrecognized nonempty reviewer comments or formal review bodies also block;

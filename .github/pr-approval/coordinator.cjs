@@ -149,8 +149,16 @@ function joinReviewMetadata(reviews, metadata, bot) {
     // updatedAt also captures state changes such as dismissal.
     const times = [meta.submittedAt, meta.lastEditedAt, ...(review.state === 'COMMENTED' ? [] : [meta.updatedAt])].filter(timestamp);
     if (!times.length) throw new Error('Review disposition timestamp unavailable');
-    return { ...review, decision_at: new Date(Math.max(...times.map(Date.parse))).toISOString() };
+    return { ...review, submitted_at: meta.submittedAt || review.submitted_at, decision_at: new Date(Math.max(...times.map(Date.parse))).toISOString() };
   });
+}
+
+// Dismissal targets one review; body edits do not resubmit a disposition.
+function latestActiveFormal(reviews) {
+  const latest = new Map();
+  const active = reviews.filter(r => r.user?.login && ['APPROVED', 'CHANGES_REQUESTED'].includes(r.state));
+  for (const review of active.sort((a, b) => Date.parse(a.submitted_at) - Date.parse(b.submitted_at) || Number(a.id) - Number(b.id))) latest.set(review.user.login, review);
+  return latest;
 }
 
 function latestWorkflowRuns(runs, head) {
@@ -215,10 +223,7 @@ async function evaluate({ api, repo, number, bot }) {
   result.observedDismissalIds = [...new Set(ownDismissals.map(r => Number(r.id)))].sort((a, b) => a - b);
   const latestDismissalTime = ownDismissals.length ? Math.max(...ownDismissals.map(r => Date.parse(r.decision_at))) : null;
   const workflowRuns = latestWorkflowRuns(runs, result.head);
-  const latest = new Map();
-  for (const review of ordered(reviews)) {
-    if (review.user?.login && ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) latest.set(review.user.login, review);
-  }
+  const latest = latestActiveFormal(reviews);
   const own = latest.get(bot);
   if (own?.user?.type === 'Bot' && own.body?.includes(MARKER)) result.existingApproval = { id: own.id, state: own.state, url: own.html_url, commit: own.commit_id, decidedAt: own.decision_at };
   let concern = null;
@@ -226,9 +231,11 @@ async function evaluate({ api, repo, number, bot }) {
   for (const [name, login] of [['claude', CLAUDE], ['codex', CODEX]]) {
     const events = comments.filter(c => c.user?.login === login && c.user?.type === 'Bot').map(c => ({ ...c, verdict: commentDecision(c, login) }));
     for (const review of reviews.filter(r => r.user?.login === login && r.user?.type === 'Bot')) {
-      if (review.state === 'APPROVED') events.push({ ...review, verdict: commentDecision(review, login, 'review') || { state: 'clean', url: review.html_url, commit: review.commit_id, kind: 'review' } });
-      if (review.state === 'CHANGES_REQUESTED') events.push({ ...review, verdict: { state: 'concerns', url: review.html_url, commit: review.commit_id, kind: 'review' } });
-      if (review.state === 'DISMISSED') events.push({ ...review, verdict: { state: 'withdrawn', url: review.html_url, commit: review.commit_id, kind: 'review' } });
+      if (review.state === 'APPROVED') {
+        const verdict = commentDecision(review, login, 'review') || { state: 'clean', url: review.html_url, commit: review.commit_id, kind: 'review' };
+        events.push({ ...review, decision_at: verdict.state === 'clean' ? review.submitted_at : review.decision_at, verdict });
+      }
+      if (review.state === 'CHANGES_REQUESTED') events.push({ ...review, decision_at: review.submitted_at, verdict: { state: 'concerns', url: review.html_url, commit: review.commit_id, kind: 'review' } });
       if (review.state === 'COMMENTED') {
         const findings = reviewThreads.flatMap(t => t.comments).filter(c => c.author?.__typename === 'Bot' && c.author.login === login && positive(c.pullRequestReview?.databaseId) && Number(c.pullRequestReview.databaseId) === Number(review.id));
         events.push({ ...review, verdict: commentDecision(review, login, 'review', findings) });
@@ -245,7 +252,7 @@ async function evaluate({ api, repo, number, bot }) {
       }
     }
     let decision, decisionTime;
-    const precedence = { clean: 0, malformed: 1, withdrawn: 2, concerns: 3 };
+    const precedence = { clean: 0, malformed: 1, concerns: 2 };
     for (const event of ordered(events)) if (event.verdict && event.verdict.state !== 'incomplete') {
       const time = eventTime(event);
       if (!Number.isFinite(time)) throw new Error('Reviewer decision timestamp unavailable');
@@ -292,7 +299,7 @@ async function publish({ api, publisher, repo, number, bot, runURL }) {
   // automatically repeating a write, even if its head differs from this run.
   const visible = await pages(publisher, route);
   if (visible.some(r => r.user?.login === bot && r.user?.type === 'Bot' && r.state === 'PENDING' && r.body?.includes(MARKER))) throw new Error('Prior pending publication intent requires operator inspection');
-  const submitted = ordered(visible).filter(r => r.user?.login === bot && r.user?.type === 'Bot' && ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(r.state)).at(-1);
+  const submitted = latestActiveFormal(visible.filter(r => r.user?.type === 'Bot')).get(bot);
   // Check every marked dismissal, including an older review beneath a newer
   // changes request. Only approval may override dismissal; withholding approval
   // through REQUEST_CHANGES remains safe when the reader snapshot lags.
