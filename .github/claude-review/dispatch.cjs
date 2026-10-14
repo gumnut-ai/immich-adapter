@@ -56,6 +56,15 @@ async function writer(api, ctx, login) {
   return ['write', 'maintain', 'admin'].includes(result?.permission);
 }
 
+async function permittedActor(api, ctx, actor) {
+  if (actor?.type === 'Bot') {
+    // GitHub supplies the account type; a bot-looking human login is not enough.
+    return typeof actor.login === 'string' &&
+      /^[A-Za-z0-9][A-Za-z0-9-]*\[bot\]$/.exec(actor.login)?.[0] === actor.login;
+  }
+  return actor?.type === 'User' && await writer(api, ctx, actor.login);
+}
+
 function eligiblePr(pr, ctx, number) {
   return pr?.number === number && pr.state === 'open' && pr.draft === false &&
     pr.head?.repo?.full_name === ctx.fullName && pr.base?.repo?.full_name === ctx.fullName &&
@@ -69,8 +78,8 @@ async function dispatch({ env, event, api }) {
   const number = positiveInteger(event.pull_request?.number);
   const runId = positiveInteger(env.GITHUB_RUN_ID);
   const head = sha(event.pull_request?.head?.sha);
-  if (!eligiblePr(event.pull_request, ctx, number) || event.sender?.type !== 'User') return { eligible: false };
-  if (!(await writer(api, ctx, event.sender.login))) return { eligible: false };
+  if (!eligiblePr(event.pull_request, ctx, number)) return { eligible: false };
+  if (!(await permittedActor(api, ctx, event.sender))) return { eligible: false };
   await api('POST', `${ctx.root}/actions/workflows/claude-review.yml/dispatches`, {
     ref: ctx.branch,
     inputs: { pr_number: String(number), expected_head: head, origin_run_id: String(runId) },
@@ -94,9 +103,9 @@ async function prepare({ env, event, api, output }) {
     requireValid(originId && expectedHead);
     const origin = await api('GET', `${ctx.root}/actions/runs/${originId}`);
     requireValid(origin?.repository?.full_name === ctx.fullName && origin.event === 'pull_request_target' &&
-      [workflowPath, `${workflowPath}@${ctx.branch}`, `${workflowPath}@refs/heads/${ctx.branch}`].includes(origin.path) && origin.actor?.type === 'User' &&
+      [workflowPath, `${workflowPath}@${ctx.branch}`, `${workflowPath}@refs/heads/${ctx.branch}`].includes(origin.path) &&
       Array.isArray(origin.pull_requests) && origin.pull_requests.some(item => item.number === number && item.head?.sha === head));
-    if (!(await writer(api, ctx, origin.actor.login))) return skip();
+    if (!(await permittedActor(api, ctx, origin.actor))) return skip();
   } else {
     requireValid(event.sender?.type === 'User' && event.sender.login === env.GITHUB_ACTOR && !originId);
     if (!(await writer(api, ctx, env.GITHUB_ACTOR))) return skip();

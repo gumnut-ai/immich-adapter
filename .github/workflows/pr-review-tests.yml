@@ -1,10 +1,10 @@
 name: PR review workflow checks
 on:
   pull_request:
-    paths: ['.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
+    paths: ['.node-version', '.github/pr-approval/**', '.github/workflows/pr-approval*', '.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
   push:
     branches: [main]
-    paths: ['.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
+    paths: ['.node-version', '.github/pr-approval/**', '.github/workflows/pr-approval*', '.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
 permissions:
   contents: read
 jobs:
@@ -15,8 +15,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
       - name: Check Claude reviewer admission and tool boundaries
-        run: node --test .github/claude-review/*.test.cjs
+        run: node --test .github/claude-review/*.test.cjs .github/claude-review/runtime/launcher.test.cjs .github/claude-review/runtime/services.test.cjs
+      - name: Check standing approval policy and publication boundaries
+        run: node --test .github/pr-approval/*.test.cjs
       - name: Load pinned native review runtime for contract tests
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,3 +38,35 @@ jobs:
         run: node --test .github/agent-delivery/*.test.cjs .github/librarian/verify-delivery.test.cjs .github/maintainer/verify-delivery.test.cjs
         env:
           GH_AW_SETUP_DIR: ${{ github.workspace }}/.native-gh-aw/actions/setup/js
+
+  claude-container-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Build the pinned execution image
+        run: |
+          docker build --tag gumnut-claude-review:2.1.295 .github/claude-review/runtime
+          node -e 'require("./.github/claude-review/runtime/services.cjs").prepareImages().catch(() => process.exit(1))'
+      - name: Load the pinned official inline-comment backend
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: anthropics/claude-code-action
+          ref: 2dca132ff0e0c4094ce6048b422c6915a071210b
+          path: .trusted-claude-action
+          persist-credentials: false
+      - name: Install the trusted backend dependencies
+        run: |
+          review_bun_image="$(node -p 'require("./.github/claude-review/runtime/services.cjs").BUN_IMAGE')"
+          docker run --rm --entrypoint bun --volume "$GITHUB_WORKSPACE/.trusted-claude-action:/action" --workdir /action "$review_bun_image" install --frozen-lockfile --ignore-scripts --production
+      - name: Verify isolation and transports with dummy credentials
+        env:
+          CLAUDE_REVIEW_RUN_CONTAINER_TESTS: '1'
+          CLAUDE_REVIEW_TRUSTED_ACTION_DIR: ${{ github.workspace }}/.trusted-claude-action
+        run: node --test .github/claude-review/runtime/integration.test.cjs

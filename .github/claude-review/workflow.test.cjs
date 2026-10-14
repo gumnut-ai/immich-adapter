@@ -19,7 +19,7 @@ function context() {
       pull_request: {
         state: 'open', draft: false,
         head: { repo: { full_name: 'gumnut-ai/immich-adapter' } },
-        base: { ref: 'main' },
+        base: { ref: 'main', repo: { full_name: 'gumnut-ai/immich-adapter' } },
       },
     },
   };
@@ -36,12 +36,41 @@ test('disabled and unsafe events cannot reach subscription inference', () => {
     c => { c.event.pull_request.draft = true; },
     c => { c.event.pull_request.state = 'closed'; },
     c => { c.event.pull_request.head.repo.full_name = 'attacker/immich-adapter'; },
+    c => { c.event.pull_request.base.repo.full_name = 'attacker/immich-adapter'; },
     c => { c.event.pull_request.base.ref = 'contributor-branch'; },
-    c => { c.event.sender.type = 'Bot'; },
+    c => { c.event.sender.type = 'Organization'; },
   ]) {
     const c = context();
     alter(c);
     assert.equal(eligible({ CLAUDE_PR_REVIEW_ENABLED: 'true' }, c), false);
+  }
+});
+
+test('metadata dispatcher admits Bot senders for subsequent identity validation', () => {
+  const c = context();
+  c.event.sender = { type: 'Bot', login: 'publisher[bot]' };
+  assert.equal(eligible({ CLAUDE_PR_REVIEW_ENABLED: 'true' }, c), true);
+});
+
+test('review admission limits bot dispatch to the matching GitHub Actions invoker', () => {
+  const expression = workflow.split('  review:')[1].match(/    if: >-\n([\s\S]*?)    runs-on:/)?.[1];
+  assert.ok(expression);
+  const admits = new Function('vars', 'github', 'format', `return (${expression});`);
+  for (const [type, login, actor, expected] of [
+    ['User', 'writer', 'writer', true],
+    ['Bot', 'github-actions[bot]', 'github-actions[bot]', true],
+    ['Bot', 'publisher[bot]', 'publisher[bot]', false],
+    // Job admission is preliminary; dispatch.cjs verifies the actor and origin
+    // before the step that reads subscription credentials.
+    ['Bot', 'github-actions[bot]', 'publisher[bot]', true],
+    ['Organization', 'github-actions[bot]', 'github-actions[bot]', false],
+  ]) {
+    const c = context();
+    c.event_name = 'workflow_dispatch';
+    c.ref = 'refs/heads/main';
+    c.actor = actor;
+    c.event.sender = { type, login };
+    assert.equal(admits({ CLAUDE_PR_REVIEW_ENABLED: 'true' }, c, (template, value) => template.replace('{0}', value)), expected);
   }
 });
 
@@ -66,7 +95,7 @@ test('credentialed job uses trusted policy and no contributor executor', () => {
   assert.match(workflow, /--strict-mcp-config\b/);
   assert.match(workflow, /--permission-mode dontAsk\b/);
   assert.doesNotMatch(workflow, /dangerously-skip-permissions|bypassPermissions|track_progress:/);
-  assert.equal(workflow.match(/--tools "([^"]+)"/)?.[1], 'ToolSearch,Agent');
+  assert.equal(workflow.match(/--tools "([^"]+)"/)?.[1], 'ToolSearch,Agent,Read,Grep,Glob');
   assert.match(workflow, /Trusted policy SHA: \$\{\{ github.sha \}\}/);
 });
 
@@ -74,7 +103,7 @@ test('only GitHub reads, direct comments, and the bounded helper are preapproved
   const tools = workflow.match(/--allowedTools "([^"]+)"/)?.[1].split(',');
   assert.ok(tools);
   const reads = new Set([
-    'ToolSearch', 'mcp__github__pull_request_read', 'mcp__github__issue_read',
+    'ToolSearch', 'Read', 'Grep', 'Glob', 'mcp__github__pull_request_read', 'mcp__github__issue_read',
     'mcp__github__get_file_contents', 'mcp__github__get_commit',
     'mcp__github__list_commits', 'mcp__github__search_code',
   ]);
@@ -114,14 +143,14 @@ test('PR metadata dispatch and inference have separate trust gates', () => {
   assert.match(review, /actions: read/);
   assert.match(review, /checks: write/);
   assert.ok(review.indexOf('dispatch.cjs prepare') < review.indexOf('secrets.CLAUDE_CODE_OAUTH_TOKEN'));
-  assert.equal((review.match(/if: steps.prepare.outputs.eligible == 'true'/g) || []).length, 2);
+  assert.equal((review.match(/if: steps.prepare.outputs.eligible == 'true'/g) || []).length, 3);
   assert.match(review, /dispatch.cjs finish/);
   assert.match(review, /CLAUDE_CONCLUSION: \$\{\{ steps.claude.outputs.conclusion \}\}/);
 });
 
 test('automation retains the upstream inline comment server with app credentials', () => {
   const config = JSON.parse(workflow.match(/--mcp-config '([^']+)'/)[1]);
-  assert.deepEqual(Object.keys(config.mcpServers).sort(), ['github', 'github_inline_comment']);
+  assert.deepEqual(Object.keys(config.mcpServers).sort(), ['github_inline_comment']);
   const server = config.mcpServers.github_inline_comment;
   assert.equal(server.command, 'bun', 'Use setup-bun PATH; action-local copy is conditional on allowed_non_write_users');
   assert.deepEqual(server.args, ['--no-env-file', '--config=${GITHUB_ACTION_PATH}/bunfig.toml', 'run', '${GITHUB_ACTION_PATH}/src/mcp/github-inline-comment-server.ts']);
@@ -129,23 +158,15 @@ test('automation retains the upstream inline comment server with app credentials
   assert.equal(server.env.GITHUB_TOKEN, undefined, 'Inherit the upstream exchanged app token');
 });
 
-test('native paginated reader replaces the bundled server without broad toolsets or credentials', () => {
+test('external gateway owns the effective paginated reader configuration', () => {
   const config = JSON.parse(workflow.match(/--mcp-config '([^']+)'/)[1]);
-  const server = config.mcpServers.github;
-  assert.equal(server.command, 'docker');
-  assert.deepEqual(server.env, {
-    GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}',
-    GITHUB_HOST: '${GITHUB_SERVER_URL}',
-  });
-  assert.deepEqual(server.args.slice(0, 7), ['run', '-i', '--rm', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN', '-e', 'GITHUB_HOST']);
-  assert.equal(server.args[7], 'ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6');
-  assert.deepEqual(server.args.slice(8, 10), ['stdio', '--toolsets=']);
-  assert.equal(server.args.length, 11);
-  assert.deepEqual(server.args[10].replace(/^--tools=/, '').split(',').sort(), [
-    'add_issue_comment', 'get_commit', 'get_file_contents', 'issue_read',
-    'list_commits', 'pull_request_read', 'search_code',
-  ]);
-  assert.doesNotMatch(workflow, /mcp__github__get_pull_request(?:[,"\s]|_)|mcp__github__get_issue_comments/);
+  assert.equal(config.mcpServers.github, undefined, 'No inactive reader configuration in the workflow');
+  const { gatewayConfig, GITHUB_IMAGE, GITHUB_TOOLS, BUN_IMAGE } = require('./runtime/services.cjs');
+  const effective = gatewayConfig({ id: 'fixture', actionDir: '/action', inline: { args: [], env: {} }, githubImage: `sha256:${'a'.repeat(64)}`, bunImage: `sha256:${'b'.repeat(64)}` }).mcpServers.github;
+  assert.equal(effective.container, `sha256:${'a'.repeat(64)}`);
+  assert.match(GITHUB_IMAGE, /github-mcp-server:v1\.12\.2@sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(GITHUB_TOOLS, ['get_file_contents', 'get_commit', 'list_commits', 'search_code', 'pull_request_read', 'issue_read', 'add_issue_comment']);
+  assert.deepEqual(effective.entrypointArgs, ['stdio', '--toolsets=', `--tools=${GITHUB_TOOLS.join(',')}`]);
   const policy = fs.readFileSync(path.join(__dirname, 'INSTRUCTIONS.md'), 'utf8');
   assert.match(policy, /get_review_comments.*perPage: 5/);
   assert.match(policy, /pageInfo.endCursor.*after.*hasNextPage/);
@@ -161,4 +182,15 @@ test('always reports numeric usage through upstream output without publishing tr
   assert.match(usage, /retention-days: 30/);
   assert.doesNotMatch(usage, /claude-execution-output.json|continue-on-error/);
   assert.doesNotMatch(workflow, /show_full_output: ['"]?true/);
+});
+
+test('native reads use a separate credential-free execution container', () => {
+  assert.match(workflow, /path_to_claude_code_executable: \$\{\{ github.workspace \}\}\/\.github\/claude-review\/runtime\/launcher.cjs/);
+  assert.match(workflow, /docker build --tag gumnut-claude-review:2\.1\.295 \.github\/claude-review\/runtime/);
+  assert.doesNotMatch(workflow, /--settings|read-result-guard|--tools "[^"]*(?:Bash|Write|Edit)/);
+  assert.equal(fs.existsSync(path.join(__dirname, 'read-result-guard.cjs')), false);
+  assert.equal(fs.existsSync(path.join(__dirname, 'settings.json')), false);
+  const policy = fs.readFileSync(path.join(__dirname, 'INSTRUCTIONS.md'), 'utf8');
+  assert.match(policy, /Native `Read`, `Grep`, and `Glob`/);
+  assert.match(policy, /checkout is the trusted policy/);
 });

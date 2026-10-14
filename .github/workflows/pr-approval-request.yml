@@ -1,0 +1,58 @@
+name: PR approval request
+run-name: '{"number":"${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}"}'
+on: # zizmor: ignore[dangerous-triggers] -- Metadata bridge with read permissions and no publisher credentials; no contributor checkout.
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  issue_comment:
+    types: [created, edited, deleted]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to reassess
+        required: true
+        type: string
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+jobs:
+  request:
+    name: Approval request
+    if: >-
+      (vars.PR_APPROVAL_MODE == 'shadow' || vars.PR_APPROVAL_MODE == 'publish') &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.issue.pull_request && github.event.comment.user.type == 'Bot' &&
+        (github.event.comment.user.login == 'claude[bot]' ||
+         github.event.comment.user.login == 'chatgpt-codex-connector[bot]')))
+      && (github.event_name != 'pull_request_review_comment' ||
+          (github.event.comment.user.type == 'Bot' &&
+           (github.event.comment.user.login == 'claude[bot]' ||
+            github.event.comment.user.login == 'chatgpt-codex-connector[bot]')))
+      && (github.event_name != 'pull_request_review' ||
+          github.event.review.user.type == 'User' ||
+          github.event.review.user.login == 'claude[bot]' ||
+          github.event.review.user.login == 'chatgpt-codex-connector[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }} # Review events can carry a contributor SHA; execute trusted policy only.
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Validate metadata request
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_APPROVAL_MODE: ${{ vars.PR_APPROVAL_MODE }}
+        run: node .github/pr-approval/request.cjs source
+      - name: Admitted approval request
+        if: steps.request.outputs.eligible == 'true'
+        run: 'true'

@@ -1,0 +1,91 @@
+name: PR approval coordinator
+on: # zizmor: ignore[dangerous-triggers] -- Trusted default-branch code re-fetches metadata; no source artifacts, contributor checkout, or dependencies.
+  workflow_run:
+    workflows: ['*', '!PR approval coordinator']
+    types: [completed]
+  schedule:
+    - cron: '*/15 * * * *' # Review-thread resolution has no Actions trigger.
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  issues: read
+  checks: read
+  statuses: read
+env:
+  PR_APPROVAL_MODE: ${{ vars.PR_APPROVAL_MODE }}
+  PR_APPROVAL_BOT_LOGIN: ${{ vars.PR_APPROVAL_BOT_LOGIN }}
+jobs:
+  assess:
+    name: Approval assessment
+    if: >-
+      (vars.PR_APPROVAL_MODE == 'shadow' || vars.PR_APPROVAL_MODE == 'publish') &&
+      (github.event_name == 'schedule' ||
+       (github.event.workflow_run.name != 'PR approval coordinator' &&
+        ((startsWith(github.event.workflow_run.path, '.github/workflows/pr-approval-request.yml') && github.event.workflow_run.conclusion == 'success') ||
+         (!startsWith(github.event.workflow_run.path, '.github/workflows/pr-approval-request.yml') && github.event.workflow_run.pull_requests[0].number))))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      eligible: ${{ steps.route.outputs.eligible }}
+      numbers: ${{ steps.inspect.outputs.numbers }}
+      actionable: ${{ steps.inspect.outputs.actionable }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Re-fetch routing metadata
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/pr-approval/request.cjs route
+      - name: Assess standing sign-offs
+        id: inspect
+        if: steps.route.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBERS: ${{ steps.route.outputs.numbers }}
+        run: node .github/pr-approval/request.cjs inspect
+  publish:
+    name: Approval publication
+    needs: assess
+    if: vars.PR_APPROVAL_MODE == 'publish' && needs.assess.outputs.eligible == 'true' && needs.assess.outputs.actionable == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        number: ${{ fromJSON(needs.assess.outputs.numbers) }}
+    environment: pr-approval-publisher
+    concurrency:
+      group: pr-approval-${{ matrix.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Create isolated reviewer App token
+        id: app
+        uses: actions/create-github-app-token@v3.0.0
+        with:
+          app-id: ${{ vars.PR_APPROVAL_APP_ID }}
+          private-key: ${{ secrets.PR_APPROVAL_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+      - name: Reassess and publish once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_TOKEN: ${{ steps.app.outputs.token }}
+          PR_NUMBER: ${{ matrix.number }}
+        run: node .github/pr-approval/request.cjs publish
