@@ -4,8 +4,8 @@ A face template is the biometric data derived from a face: its embedding, the
 facial landmarks, and a person's centroid. The Gumnut API never returns one, and
 Immich clients need only a face's bounding box and the person it belongs to. This
 test keeps the adapter from becoming the place one leaks: it fails if any schema
-the adapter publishes gains a field named for a template, or an array of numbers
-that is not listed here with what it holds.
+the adapter publishes gains a field named for a template, a map of numbers, or an
+array of numbers that is not listed here with what it holds.
 
 Faces reach Immich clients over REST routes, the sync stream and WebSocket
 events. Only the first is in the OpenAPI document, so the scan reads two sources:
@@ -16,8 +16,10 @@ events. Only the first is in the OpenAPI document, so the scan reads two sources
 
 What this cannot see is anything a schema does not spell out: a free-form `dict`
 or untyped field, which several upstream Immich DTOs have; what is written into a
-plain string or a map of numbers; and a route that declares no response model or returns a raw
-response. The adapter has no face data of its own to put there. Everything it
+plain string; and a route that declares no response model or returns a raw
+response. It also passes an object with a fixed set of fields that are all
+numbers, because 22 upstream DTOs are that (statistics, crop and rotate
+parameters). The adapter has no face data of its own to put there. Everything it
 knows about a face comes from the Gumnut API, which has the same check on its
 own responses.
 """
@@ -192,7 +194,10 @@ def _walk(
     for item in element_schemas:
         yield from _walk(item, root, field, open_refs)
 
-    yield from _walk(node.get("additionalProperties"), root, field, open_refs)
+    values = node.get("additionalProperties")
+    if _admits_number(values, root, open_refs):
+        yield field, "map of numbers"
+    yield from _walk(values, root, field, open_refs)
 
 
 def find_face_template_carriers(
@@ -366,7 +371,7 @@ class _PersonWithCentroid(BaseModel):
 
 
 class _FaceWithLandmarksBehindAnAlias(BaseModel):
-    landmarks: dict[str, int] = Field(default_factory=dict, alias="geometry")
+    landmarks: str = Field(default="", alias="geometry")
 
 
 class _PageOfFaces(BaseModel):
@@ -402,9 +407,10 @@ class _PageOfFaces(BaseModel):
         (
             _SyncFaceWithLandmarksUnderAnotherName,
             {
+                "_SyncFaceWithLandmarksUnderAnotherName.geometry": {"map of numbers"},
                 "_SyncFaceWithLandmarksUnderAnotherName.leftEye": {
                     "property name names a face template"
-                }
+                },
             },
         ),
         (
