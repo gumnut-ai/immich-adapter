@@ -399,7 +399,6 @@ class _PageOfFaces(BaseModel):
             {"_SyncFaceWithPointPairs.pointPairs": {"array of numbers"}},
         ),
         (
-            # A map of points with free keys is one of the shapes this cannot see.
             _SyncFaceWithListOfPoints,
             {"_SyncFaceWithListOfPoints.outline": {"array of numbers"}},
         ),
