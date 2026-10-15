@@ -1,8 +1,18 @@
 // Reuse reviewer-owned body formats and ordering across reviews and PR comments.
 const {commentDecision, latestActiveFormal, latestReviewDecision} = require('../pr-approval/coordinator.cjs');
-const {bodyBlocking} = require('../pr-review/reviewer.cjs');
+const {bodyBlocking, isReviewCommand} = require('../pr-review/reviewer.cjs');
 const AUTOMATED = new Set(['claude[bot]', 'chatgpt-codex-connector[bot]']);
-const acknowledgement = body => /^(?:(?:looks? (?:good|great)(?: to me)?|lgtm|thanks?(?: you)?|approved?|nice(?: work)?|all good)[.!\s👍✅]*)+$/iu.test(body.trim());
+const acknowledgement = body => /^(?:(?:looks? (?:good|great)(?: to me)?|lgtm|thanks?(?: you)?|approved?|nice(?: work)?|all good|resolved|done|fixed|addressed)[.,!\s👍✅]*)+$/iu.test(body.trim());
+// Human approval clears that author's prose findings, not native thread or
+// formal changes-requested state. Commands and acknowledgements are not work.
+function humanDecision(body) {
+  const text = body.trim();
+  if (isReviewCommand(text) || /^@codex (?:security )?review(?:[ \t]+<!-- gumnut-codex-head:[a-f0-9]{40} -->)?$/i.test(text)) return null;
+  if (acknowledgement(text)) {
+    return /\b(?:looks? (?:good|great)|lgtm|approve(?:d)?|all good|resolved|done|fixed|addressed)\b/i.test(text) ? {state:'clean'} : null;
+  }
+  return {state:'concerns'};
+}
 function pendingReviewBodies(reviews, comments=[]) {
   const formal = latestActiveFormal(reviews), byAuthor = new Map();
   const events = reviews.map(item=>({item,kind:'review'})).concat(
@@ -20,7 +30,9 @@ function pendingReviewBodies(reviews, comments=[]) {
       if (!verdict && item.state === 'APPROVED') verdict = {state:'clean'};
     } else if (kind === 'review' && item.state === 'APPROVED') verdict = {state:'clean'};
     else if (item.body?.trim() && (kind === 'comment' || item.state === 'COMMENTED')) {
-      if (login === 'gumnut-reviewer[bot]' ? bodyBlocking(item.body) : !acknowledgement(item.body)) verdict = {state:'concerns'};
+      verdict = login === 'gumnut-reviewer[bot]'
+        ? (bodyBlocking(item.body) ? {state:'concerns'} : null)
+        : humanDecision(item.body);
     }
     if (!verdict) continue;
     if (!byAuthor.has(login)) byAuthor.set(login, []);

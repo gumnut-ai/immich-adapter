@@ -68,3 +68,24 @@ test('trusted human conversation requests use the same acknowledgement policy as
   approval.submitted_at='2026-10-14T00:03:00Z';
   assert.deepEqual(pendingReviewBodies([approval],[comment]),[]);
 });
+
+test('human commands are informational while substantive appended feedback remains pending',()=>{
+  const comment=body=>({id:90,user:{login:'maintainer',type:'User'},author_association:'MEMBER',body,created_at:'2026-10-14T00:02:00Z'});
+  for (const body of ['/review','/review focus on security','@gumnut-reviewer review focus on correctness','@gumnut-reviewer review','@codex review','@codex security review',`@codex review <!-- gumnut-codex-head:${'a'.repeat(40)} -->`])
+    assert.deepEqual(pendingReviewBodies([], [comment(body)]),[]);
+  for (const body of ['@codex review\nPlease preserve the transaction.','/review focus on security\nPlease preserve the transaction.']) {
+    const request=comment(body);
+    assert.deepEqual(pendingReviewBodies([], [request]).map(item=>item.id),[90]);
+  }
+});
+test('explicit human approval clears prose findings without dismissing formal changes requests',()=>{
+  const request={id:90,user:{login:'maintainer',type:'User'},author_association:'MEMBER',body:'Please fix the paragraph.',created_at:'2026-10-14T00:02:00Z'};
+  for (const body of ['Thanks, looks good!','LGTM. Thanks!','Approved.','Resolved, thanks.','Done','Fixed!','Addressed.']) {
+    const clear={...request,id:91,body,created_at:'2026-10-14T00:03:00Z'};
+    assert.deepEqual(pendingReviewBodies([], [request,clear]),[]);
+    assert.deepEqual(pendingReviewBodies([], [request,{...clear,created_at:request.created_at}]).map(item=>item.id),[90]);
+    const formal=review('maintainer','CHANGES_REQUESTED','Keep formal changes requested',1);
+    assert.deepEqual(pendingReviewBodies([formal],[request,clear]),[formal]);
+  }
+  assert.deepEqual(pendingReviewBodies([], [request,{...request,id:91,body:'Thanks!',created_at:'2026-10-14T00:03:00Z'}]).map(item=>item.id),[90]);
+});
