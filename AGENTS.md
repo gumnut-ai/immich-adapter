@@ -117,7 +117,7 @@ Decision records, not descriptions of the running system — consult them for *w
 |-------|----------|-----------------|
 | Authentication design | `docs/design-docs/auth-design.md` | Why session tokens replaced raw JWTs, and the constraints that forced it — current auth is in `docs/architecture/adapter-architecture.md` |
 | Render deploy with Docker | `docs/design-docs/render-deploy-docker.md` | Why the adapter deploys as a multi-stage Docker image, and the pinned-vs-floating base-image trade-off |
-| Checksum support | `docs/design-docs/checksum-support.md` | Why a dedicated SHA-1 column beat a side table — current checksum rules are in `docs/references/asset-and-media-handling.md` |
+| Checksum support | `docs/design-docs/checksum-support.md` | Why a dedicated SHA-1 column beat a side table — current checksum rules are in `docs/references/asset-field-conversion.md` |
 | Trash soft-delete (adapter) | `docs/design-docs/trash-soft-delete-adapter.md` | The original adapter-side trash design record — current trash/restore semantics are in `docs/architecture/adapter-architecture.md` |
 | Static file sharing | `docs/design-docs/static-file-sharing.md` | Why the adapter serves Immich static files itself and chose Docker extraction — current operation is in the web guide |
 | Sync stream event ordering | `docs/design-docs/sync-stream-event-ordering.md` | Why event replay required parent-first upserts, child-first deletes, and current-state FK verification |

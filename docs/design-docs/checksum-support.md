@@ -1,9 +1,9 @@
 ---
 title: "Checksum Support"
 status: deprecated
-superseded-by: ../references/asset-and-media-handling.md
+superseded-by: ../references/asset-field-conversion.md
 created: 2025-11-25
-last-updated: 2026-10-01
+last-updated: 2026-10-15
 ---
 
 # Asset Checksum & Deduplication Analysis
@@ -12,7 +12,8 @@ last-updated: 2026-10-01
 > that led to storing SHA-1 alongside Gumnut's SHA-256 checksum. It was pruned
 > on 2026-08-05 to the upstream protocol, chosen approach, and trade-offs; large
 > sample payloads and request walkthroughs are owned by the protocol and code.
-> Current adapter behavior lives in [Asset and Media Handling](../references/asset-field-conversion.md#outbound-asset-checksums--emit-base64-sha-1-never-the-sha-256).
+> Current adapter behavior lives in
+> [Asset Field Conversion](../references/asset-field-conversion.md#outbound-asset-checksums--emit-base64-sha-1-never-the-sha-256).
 > Two proposed details did not ship:
 >
 > - **The composite index did not ship.** This doc proposed indexing both `checksum_sha1` and `(library_id, checksum_sha1)`; the backend's asset model carries a single-column index on `checksum_sha1` only. The composite indexes that exist are on the SHA-256 `checksum` column (the `(library_id, checksum)` unique constraint and a live-rows partial index), not on `checksum_sha1`.
