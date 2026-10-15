@@ -19,18 +19,19 @@ function isOwned(pr, repository, role) {
     /^[a-f0-9]{40}$/.test(pr.head.sha) && /^[a-f0-9]{40}$/.test(pr.base.sha);
 }
 async function readFeedback(github, owner, repo, number) {
-  const feedback = [];
+  const feedback = [], rawThreads=[];
   let cursor = null;
   do {
     const result = await github.graphql(`query($owner:String!,$repo:String!,$number:Int!,$cursor:String) {
       repository(owner:$owner,name:$repo) { pullRequest(number:$number) {
         reviewThreads(first:100,after:$cursor) { pageInfo {hasNextPage endCursor}
-          nodes {id isResolved isOutdated path line comments(first:100) {pageInfo {hasNextPage} nodes {id body url createdAt authorAssociation author {login __typename}}}}
+          nodes {id isResolved isOutdated path line comments(first:100) {pageInfo {hasNextPage} nodes {id body url createdAt authorAssociation pullRequestReview {databaseId} author {login __typename}}}}
         }
       }}
     }`, {owner, repo, number, cursor});
     const page = result.repository?.pullRequest?.reviewThreads;
     if (!page || !Array.isArray(page.nodes) || typeof page.pageInfo?.hasNextPage !== "boolean") throw Error("Incomplete review-thread inventory");
+    rawThreads.push(...page.nodes);
     for (const thread of trustedReviewThreads(page.nodes)) {
       const comments=thread.comments.nodes;
       feedback.push({kind:"thread", thread:thread.id, outdated:thread.isOutdated,
@@ -47,7 +48,7 @@ async function readFeedback(github, owner, repo, number) {
   const findings=await github.paginate(github.rest.pulls.listReviewComments,
     {owner, repo, pull_number:number, per_page:100});
   const metadata=await readReviewMetadata({github,repository:`${owner}/${repo}`,number});
-  for (const review of pendingReviewBodies(reviews, comments,metadata,findings)) {
+  for (const review of pendingReviewBodies(reviews, comments,metadata,findings,rawThreads)) {
     feedback.push({kind:'review', id:review.node_id, body:review.body || '',
       url:review.html_url, author:{login:review.user.login},
       createdAt:review.submitted_at || review.created_at, commit:review.commit_id});

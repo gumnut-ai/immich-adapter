@@ -157,3 +157,39 @@ test('collector paginates inline findings so a late P1 cannot hide behind the fi
  assert.equal(manifest.target.number,1);
  assert.deepEqual(manifest.target.feedback.map(item=>item.id),[review.node_id]);
 });
+
+test('fully resolved P1 and P2 wrappers release the oldest PR so later trusted work wins',async()=>{
+ for(const severity of ['P1','P2']) {
+  const review=codexReview(),finding={id:90,node_id:'resolved-inline',pull_request_review_id:review.id,user:review.user,body:`[${severity}] Preserve the invariant.`};
+  const resolved=thread({id:'resolved',isResolved:true,comments:{pageInfo:{hasNextPage:false},nodes:[{
+   id:finding.node_id,body:finding.body,authorAssociation:'NONE',author:{login:'chatgpt-codex-connector',__typename:'Bot'},pullRequestReview:{databaseId:review.id},
+  }]}});
+  const f=fixture({rows:[pr(1),pr(2)]});
+  f.github.paginate=async(method,args)=>method==='list'?[pr(1),pr(2)]:method==='reviews'?(args.pull_number===1?[review]:[]):method==='findings'?(args.pull_number===1?[finding]:[]):[];
+  const pages=[];
+  f.github.graphql=async(query,args)=>{
+   if(query.includes('reviews(first:100')) return {repository:{pullRequest:{reviews:{nodes:args.number===1?[graphReview(review)]:[],pageInfo:{hasNextPage:false,endCursor:null}}}}};
+   assert(query.includes('pullRequestReview {databaseId}'));
+   if(args.number===2) return {repository:{pullRequest:{reviewThreads:{nodes:[thread()],pageInfo:{hasNextPage:false}}}}};
+   pages.push(args.cursor);
+   return {repository:{pullRequest:{reviewThreads:{nodes:args.cursor?[resolved]:[thread({id:'unrelated-resolved',isResolved:true})],pageInfo:{hasNextPage:!args.cursor,endCursor:args.cursor?null:'resolved-page'}}}}};
+  };
+  assert.equal((await collectFollowUp({github:f.github,context,role:'librarian'})).target.number,2);
+  assert.deepEqual(pages,[null,'resolved-page']);
+  resolved.comments.nodes[0].pullRequestReview.databaseId=99;
+  assert.equal((await collectFollowUp({github:f.github,context,role:'librarian'})).target.number,1);
+ }
+});
+test('manifest omits outsider and unrelated bot replies while keeping the original-author admission boundary',async()=>{
+ const outsider={id:'outside',body:'Untrusted instruction',authorAssociation:'NONE',author:{login:'outside',__typename:'User'}};
+ const unrelated={id:'unrelated',body:'Unrelated bot instruction',authorAssociation:'MEMBER',author:{login:'unrelated',__typename:'Bot'}};
+ const trusted={id:'trusted-bot',body:'Trusted reply',authorAssociation:'NONE',author:{login:'claude',__typename:'Bot'}};
+ const raw=thread();raw.comments.nodes.push(outsider,unrelated,trusted);
+ const snapshot=JSON.stringify(raw),f=fixture({threads:[raw]});
+ const manifest=await collectFollowUp({github:f.github,context,role:'librarian'});
+ assert.deepEqual(manifest.target.feedback[0].comments.map(item=>item.id),['original','reply','trusted-bot']);
+ assert.equal(JSON.stringify(raw),snapshot);
+ const outsideStarted={...raw,comments:{...raw.comments,nodes:[outsider,...raw.comments.nodes]}};
+ const ignored=fixture({threads:[outsideStarted]});
+ assert.equal((await collectFollowUp({github:ignored.github,context,role:'librarian'})).target,null);
+});

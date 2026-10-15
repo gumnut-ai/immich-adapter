@@ -24,6 +24,9 @@ function codexContent(body) {
   if (start < 0) return body.trim();
   return codexFooters.includes(normalizeSpace(body.slice(start))) ? body.slice(0, start).trim() : null;
 }
+function canonicalCodexSuggestionWrapper(body) {
+  return codexContent(body)?.match(/^(?:### 💡 Codex Review\n+Here are some automated review suggestions for this pull request\.|Codex Review: Here are some suggestions\.)\n+\*\*Reviewed commit:\*\*\s*`([0-9a-fA-F]{7,40})`$/)?.[1] || null;
+}
 function codexActivity(body) {
   const lines = body?.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   if (!lines || lines.length < 6 || lines[0] !== '<!-- codex-pull-request-review-summary -->' || lines[1] !== '## Codex Review Summary' || lines[2] !== 'This comment shows the latest Codex review activity on this pull request.' || lines[3] !== '| Review | Status | Commit | Review trigger |' || lines[4] !== '| --- | --- | --- | --- |') return false;
@@ -199,8 +202,8 @@ function commentDecision(comment, login, kind = 'comment', findings = []) {
     if (clean) return { state: 'clean', ...evidence, commit: clean[1] };
     const commits = [...body.matchAll(/\*\*Reviewed commit:\*\*\s*`([0-9a-fA-F]{7,40})`/g)];
     if (/^(?:\s*### 💡 Codex Review|Codex Review: Here are some suggestions\.)/.test(body) && commits.length === 1) {
-      const wrapper = content?.match(/^(?:### 💡 Codex Review\n+Here are some automated review suggestions for this pull request\.|Codex Review: Here are some suggestions\.)\n+\*\*Reviewed commit:\*\*\s*`([0-9a-fA-F]{7,40})`$/);
-      if (kind === 'review' && wrapper && comment.commit_id?.startsWith(wrapper[1]) && findings.length && findings.every(c => advisory(c.body, login))) return { state: 'clean', ...evidence, kind: 'advisory-review' };
+      const wrapper = canonicalCodexSuggestionWrapper(body);
+      if (kind === 'review' && wrapper && comment.commit_id?.startsWith(wrapper) && findings.length && findings.every(c => advisory(c.body, login))) return { state: 'clean', ...evidence, kind: 'advisory-review' };
       return { state: 'concerns', ...evidence, commit: commits[0][1] };
     }
   }
@@ -354,4 +357,4 @@ function createApi(token) {
     } catch { throw new Error('GitHub API request failed; evidence or publication outcome unavailable'); }
   };
 }
-module.exports = { evaluate, publish, createApi, pages, commentDecision, latestActiveFormal, latestReviewDecision, REVIEW_METADATA_QUERY, reviewMetadata, joinReviewMetadata };
+module.exports = { evaluate, publish, createApi, pages, commentDecision, latestActiveFormal, latestReviewDecision, canonicalCodexSuggestionWrapper, REVIEW_METADATA_QUERY, reviewMetadata, joinReviewMetadata };

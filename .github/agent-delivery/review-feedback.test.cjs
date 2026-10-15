@@ -173,13 +173,15 @@ test('thread authority comes from the original author and is shared by the pure 
  const human=comment('maintainer','User','MEMBER'),outsider=comment('outside','User','NONE');
  const trusted=thread('trusted',human,outsider),ignored=thread('ignored',outsider,human);
  const publisher=thread('publisher',comment('gumnut-bot','Bot','MEMBER'),human);
- assert.deepEqual(trustedReviewThreads([ignored,publisher,trusted]),[trusted]);
+ const projected={...trusted,comments:{...trusted.comments,nodes:[human]}};
+ assert.deepEqual(trustedReviewThreads([ignored,publisher,trusted]),[projected]);
+ assert.equal(trusted.comments.nodes.length,2);
  assert.deepEqual(trustedReviewThreads([{...trusted,isResolved:true}]),[]);
  assert.throws(()=>trustedReviewThreads([{...trusted,comments:{nodes:[{body:'missing authority'}],pageInfo:{hasNextPage:false}}}]),/author evidence/);
  assert.throws(()=>trustedReviewThreads([{...trusted,comments:{...trusted.comments,pageInfo:{hasNextPage:true}}}]),/thread evidence/);
  const {execFileSync}=require('node:child_process');
  const output=execFileSync(process.execPath,[require.resolve('./review-feedback.cjs')],{input:JSON.stringify({reviews:[],comments:[],metadata:[],threads:[ignored,trusted,publisher]}),encoding:'utf8'});
- assert.deepEqual(JSON.parse(output),{bodies:[],threads:[trusted]});
+ assert.deepEqual(JSON.parse(output),{bodies:[],threads:[projected]});
 });
 
 test('linked same-Bot Codex advisory inline findings classify a review wrapper as clean',()=>{
@@ -195,4 +197,84 @@ test('linked same-Bot Codex advisory inline findings classify a review wrapper a
  const {execFileSync}=require('node:child_process');
  const output=execFileSync(process.execPath,[require.resolve('./review-feedback.cjs')],{input:JSON.stringify({reviews:[wrapper],comments:[],metadata:graph,findings:[linked],threads:[thread]}),encoding:'utf8'});
  assert.deepEqual(JSON.parse(output),{bodies:[],threads:[thread]});
+});
+
+function resolvedEvidence(severity='P1') {
+ const wrapper=submitted('chatgpt-codex-connector[bot]','COMMENTED',`Codex Review: Here are some suggestions.\n\n**Reviewed commit:** \`${'a'.repeat(40)}\``,10);
+ const finding={id:50,node_id:'inline-node',pull_request_review_id:wrapper.id,user:wrapper.user,body:`[${severity}] Preserve the invariant.`};
+ const thread={id:'resolved-thread',isResolved:true,comments:{pageInfo:{hasNextPage:false},nodes:[{
+  id:finding.node_id,body:finding.body,authorAssociation:'NONE',
+  author:{login:'chatgpt-codex-connector',__typename:'Bot'},pullRequestReview:{databaseId:wrapper.id},
+ }]}};
+ return {wrapper,finding,thread};
+}
+test('complete resolved inline proof removes only canonical COMMENTED concern wrappers, including the CLI',()=>{
+ for(const severity of ['P1','P2']) {
+  const {wrapper,finding,thread}=resolvedEvidence(severity);
+  assert.deepEqual(pendingReviewBodies([wrapper],[],[metadata(wrapper)],[finding],[thread]),[]);
+  const {execFileSync}=require('node:child_process');
+  const output=execFileSync(process.execPath,[require.resolve('./review-feedback.cjs')],{input:JSON.stringify({reviews:[wrapper],comments:[],metadata:[metadata(wrapper)],findings:[finding],threads:[thread]}),encoding:'utf8'});
+  assert.deepEqual(JSON.parse(output),{bodies:[],threads:[]});
+ }
+});
+test('missing partial duplicate stale or unauthenticated resolution proof retains the concern',()=>{
+ const base=resolvedEvidence();
+ const clone=()=>JSON.parse(JSON.stringify(base));
+ const cases=[
+  data=>data.thread.isResolved=false,
+  data=>data.thread.comments.pageInfo.hasNextPage=true,
+  data=>delete data.thread.comments.pageInfo,
+  data=>data.thread.comments.nodes=[],
+  data=>delete data.finding.node_id,
+  data=>data.thread.comments.nodes[0].id='different-node',
+  data=>data.thread.comments.nodes[0].author.__typename='User',
+  data=>data.thread.comments.nodes[0].author.login='claude',
+  data=>data.thread.comments.nodes[0].body+=' edited',
+  data=>data.thread.comments.nodes[0].pullRequestReview.databaseId=99,
+  data=>delete data.thread.comments.nodes[0].pullRequestReview,
+  data=>data.finding.pull_request_review_id=99,
+ ];
+ for(const mutate of cases) {
+  const data=clone();mutate(data);
+  assert.deepEqual(pendingReviewBodies([data.wrapper],[],[metadata(data.wrapper)],[data.finding],[data.thread]).map(item=>item.id),[data.wrapper.id]);
+ }
+ const {wrapper,finding,thread}=base;
+ for(const threads of [[],[thread,thread],[{...thread,comments:{...thread.comments,nodes:[...thread.comments.nodes,...thread.comments.nodes]}}],[thread,{...thread,id:'truncated',comments:{nodes:[],pageInfo:{hasNextPage:true}}}]])
+  assert.deepEqual(pendingReviewBodies([wrapper],[],[metadata(wrapper)],[finding],threads).map(item=>item.id),[wrapper.id]);
+ assert.deepEqual(pendingReviewBodies([wrapper],[],[metadata(wrapper)],[finding,finding],[thread]).map(item=>item.id),[wrapper.id]);
+ const second={...finding,id:51,node_id:'second-node'};
+ assert.deepEqual(pendingReviewBodies([wrapper],[],[metadata(wrapper)],[finding,second],[thread]).map(item=>item.id),[wrapper.id]);
+});
+test('resolved wrappers cannot clear independent body findings or formal changes requests',()=>{
+ const {wrapper,finding,thread}=resolvedEvidence();
+ const older=submitted(wrapper.user.login,'COMMENTED','[P1] Keep this independent body concern.',1);
+ const result=pendingReviewBodies([older,wrapper],[],[metadata(older),metadata(wrapper)],[finding],[thread]);
+ assert.deepEqual(result.map(item=>item.id),[older.id]);
+ const formal={...wrapper,state:'CHANGES_REQUESTED'};
+ assert.deepEqual(pendingReviewBodies([formal],[],[metadata(formal)],[finding],[thread]).map(item=>item.id),[formal.id]);
+ const mixed={...wrapper,body:wrapper.body+'\n\n[P2] Also preserve this body invariant.'};
+ assert.deepEqual(pendingReviewBodies([mixed],[],[metadata(mixed)],[finding],[thread]).map(item=>item.id),[mixed.id]);
+ const approved={...wrapper,state:'APPROVED'};
+ assert.deepEqual(pendingReviewBodies([approved],[],[metadata(approved)],[finding],[thread]).map(item=>item.id),[approved.id]);
+});
+test('resolution proof cannot discard a linked REST finding with a different author or actor type',()=>{
+ const {wrapper,finding,thread}=resolvedEvidence();
+ for(const user of [{login:'claude[bot]',type:'Bot'},{login:wrapper.user.login,type:'User'}]) {
+  const other={...finding,id:51,node_id:'other-inline',user};
+  const proof={...thread,comments:{...thread.comments,nodes:[...thread.comments.nodes,
+   {...thread.comments.nodes[0],id:other.node_id},
+  ]}};
+  assert.deepEqual(pendingReviewBodies([wrapper],[],[metadata(wrapper)],[finding,other],[proof]).map(item=>item.id),[wrapper.id]);
+ }
+});
+test('thread projection clones containers and keeps only trusted replies without mutating raw proof',()=>{
+ const {trustedReviewThreads}=require('./review-feedback.cjs');
+ const comment=(login,type,association)=>({id:login,body:'Feedback',author:{login,__typename:type},authorAssociation:association});
+ const original=comment('maintainer','User','MEMBER'),outside=comment('outside','User','NONE'),bot=comment('unrelated','Bot','NONE'),trusted=comment('claude','Bot','NONE');
+ const raw={id:'trusted',isResolved:false,comments:{pageInfo:{hasNextPage:false},nodes:[original,outside,bot,trusted]}};
+ const snapshot=JSON.stringify(raw),projection=trustedReviewThreads([raw]);
+ assert.deepEqual(projection[0].comments.nodes,[original,trusted]);
+ assert.notEqual(projection[0],raw);assert.notEqual(projection[0].comments,raw.comments);assert.notEqual(projection[0].comments.nodes,raw.comments.nodes);
+ assert.equal(JSON.stringify(raw),snapshot);
+ assert.deepEqual(trustedReviewThreads([{...raw,comments:{...raw.comments,nodes:[outside,original,trusted]}}]),[]);
 });
