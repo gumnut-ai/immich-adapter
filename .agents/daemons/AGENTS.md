@@ -56,11 +56,11 @@ a `` `§ <lane-name>` `` badge taken from the lane's filename.
 
 ## Existing PRs before new work
 
-For native PR-producing daemons, inspect review comments and CI on the role's
-open `gumnut-bot[bot]` PRs before looking for new work. Prioritize addressing
-actionable feedback on the existing PR using the role's existing tools, scope
-and checks. If follow-up is blocked, report the PR and blocker instead of
-creating a replacement PR.
+For native PR-producing daemons, inspect review comments on the role's open
+`gumnut-bot[bot]` PRs before looking for new work. Prioritize follow-up within
+existing tools, permissions, scope and limits. Record remaining feedback and
+blockers in the activation result; continue under the workflow's existing
+discovery, open-PR cap and outcome rules. Do not create a replacement PR.
 
 ## Human review for daemon-created PRs
 
