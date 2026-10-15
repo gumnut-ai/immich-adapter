@@ -31,8 +31,6 @@ const bodyBlocking = body => /^(?:\*\*)?🔴 blocking:(?:\*\*)?[ \t]+\S.*$/m.tes
 const ambiguousInline = body => (body || '').split(/\r?\n/)[0].includes('🔴 blocking') && !inlineBlocking(body);
 const ambiguousBody = body => /^(?:\*\*)?🔴 blocking\b/m.test(outsideFences(body)) && !bodyBlocking(body);
 
-const isReviewCommand = body => /^(?:\/review|@gumnut-reviewer review)(?:[ \t]+[^\r\n]*)?$/i.test(body.trim());
-
 function request(context) {
   const p = context.payload;
   if (context.eventName === 'pull_request_target') {
@@ -44,7 +42,7 @@ function request(context) {
   if (context.eventName === 'issue_comment') {
     if (p.action !== 'created' || !p.issue?.pull_request || p.comment?.user?.type !== 'User' || !['OWNER', 'MEMBER', 'COLLABORATOR'].includes(p.comment.author_association)) return null;
     // Complete command lines only; quoted mentions or prose do not authorize work.
-    if (!isReviewCommand(p.comment.body)) return null;
+    if (!/^(?:\/review|@gumnut-reviewer review)(?:[ \t]+[^\r\n]*)?$/i.test(p.comment.body.trim())) return null;
     return { number: p.issue.number, manual: true };
   }
   if (context.eventName === 'workflow_dispatch') {
@@ -206,4 +204,4 @@ async function verifyDelivery({ github, context, number, head, base, agent, dete
   if (!await findingsDelivered(github, context.repo, number, delivered[0])) throw new Error('Formal review delivered but declared inline findings are missing or altered');
   return delivered[0].html_url;
 }
-module.exports = { bodyBlocking, isReviewCommand, request, admitComment, commentRunRequest, marker, coverageDeclaration, covered, admit, assertFresh, validateOutput, preparePublication, inlineMarker, verifyDelivery };
+module.exports = { request, admitComment, commentRunRequest, marker, coverageDeclaration, covered, admit, assertFresh, validateOutput, preparePublication, inlineMarker, verifyDelivery };

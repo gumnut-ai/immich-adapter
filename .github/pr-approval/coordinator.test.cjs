@@ -612,13 +612,3 @@ test('createApi rejects external hosts and invalid routes before requests', asyn
   const api = createApi('secret');
   for (const route of ['https://evil.example/repos/a/b', '//evil.example/repos/a/b', '/users/me', '/repos/a/b/../../users/me']) await assert.rejects(api('GET', route), /route/);
 });
-
-test('exported canonical suggestion-wrapper parser preserves exact recognition and concern classification',()=>{
- const {canonicalCodexSuggestionWrapper,commentDecision}=require('./coordinator.cjs');
- const commit='a'.repeat(40);
- for(const body of [`Codex Review: Here are some suggestions.\n\n**Reviewed commit:** \`${commit}\``,`### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** \`${commit}\``]) {
-  assert.equal(canonicalCodexSuggestionWrapper(body),commit);
-  assert.equal(canonicalCodexSuggestionWrapper(body+'\n\nPlease fix another invariant.'),null);
-  assert.equal(commentDecision({body,commit_id:commit},'chatgpt-codex-connector[bot]','review',[]).state,'concerns');
- }
-});

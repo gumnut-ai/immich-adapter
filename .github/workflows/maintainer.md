@@ -129,57 +129,11 @@ safe-outputs:
     protected-files:
       policy: blocked
       exclude: [AGENTS.md, README.md, package.json, bun.lock, uv.lock, pyproject.toml, biome.json, biome.jsonc]
-  push-to-pull-request-branch:
-    max: 1
-    target: "*"
-    check-branch-protection: false
-    required-labels: [maintainer]
-    fallback-as-pull-request: false
-    signed-commits: false
-    github-token-for-extra-empty-commit: none
-    if-no-changes: error
-    protected-files:
-      policy: blocked
-      exclude: [AGENTS.md, README.md, package.json, bun.lock, uv.lock, pyproject.toml, biome.json, biome.jsonc]
   add-reviewer:
     max: 1
     target: "*"
     required-labels: [maintainer]
   steps:
-    - name: Restore immutable native admission
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-      with:
-        name: native-follow-up-admission
-        path: ${{ runner.temp }}/native-follow-up
-    - name: Restore trusted candidate verification
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-      with:
-        name: native-candidate-proof
-        path: ${{ runner.temp }}/native-candidate-proof
-    - name: Checkout trusted dispatch for non-publication
-      if: "!contains(needs.agent.outputs.output_types, 'create_pull_request') && !contains(needs.agent.outputs.output_types, 'push_to_pull_request_branch')"
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        ref: ${{ github.sha }}
-        persist-credentials: false
-        fetch-depth: 0
-    - name: Guard native publication and complete candidate scope
-      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-      env:
-        GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        script: |
-          const fs=require('node:fs'), path=require('node:path');
-          const manifest=JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP,'native-follow-up/manifest.json')));
-          const output=JSON.parse(fs.readFileSync(process.env.GH_AW_AGENT_OUTPUT));
-          const {guardFollowUp}=require('./.github/agent-delivery/follow-up.cjs');
-          const {validateTransport}=require('./.github/agent-delivery/check-transport.cjs');
-          const validated=validateTransport({manifest,items:output.items,nativeDirectory:path.join(process.env.RUNNER_TEMP,'gh-aw/actions')});
-          const proof=JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP,'native-candidate-proof/proof.json')));
-          if(proof.source!==context.sha || (validated.candidateHead && validated.candidateHead!==proof.head))
-            throw Error('Captured transport differs from the exact verified candidate');
-          await guardFollowUp({github,context,role:'maintainer',output,manifest});
     - name: Resolve reviewer target using the native published PR map
       if: contains(needs.agent.outputs.output_types, 'create_pull_request')
       env:
@@ -218,11 +172,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Read immutable native admission
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: native-follow-up-admission
-          path: ${{ runner.temp }}/native-follow-up
       - name: Verify maintainer delivery
         uses: actions/github-script@v9.0.0
         env:
@@ -232,7 +181,6 @@ jobs:
           OUTPUT_TYPES: ${{ needs.agent.outputs.output_types }}
           OUTPUT_STATUS: ${{ needs.safe_outputs.outputs.process_safe_outputs_status }}
           PR_NUMBER: ${{ needs.safe_outputs.outputs.created_pr_number }}
-          PUSH_SHA: ${{ needs.safe_outputs.outputs.push_commit_sha }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -290,41 +238,6 @@ pre-agent-steps:
     env:
       MAINTAINER_SERVICE_PORTS: ${{ job.services.redis.ports['6379'] }}
     run: bash "$RUNNER_TEMP/maintainer-trusted/run_maintainer_sandbox.sh" smoke
-  - name: Admit native review feedback before discovery
-    id: follow_up
-    uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-    with:
-      github-token: ${{ secrets.GITHUB_TOKEN }}
-      script: |
-        const fs=require('node:fs'), path=require('node:path');
-        const {collectFollowUp}=require('./.github/agent-delivery/follow-up.cjs');
-        const manifest=await collectFollowUp({github,context,role:'maintainer'});
-        const directory=path.join(process.env.RUNNER_TEMP,'native-follow-up');
-        fs.mkdirSync(directory,{recursive:true,mode:0o700});
-        fs.writeFileSync(path.join(directory,'manifest.json'),JSON.stringify(manifest));
-        core.setOutput('number',manifest.target?.number || '');
-        core.setOutput('head',manifest.target?.head || context.sha);
-  - name: Retain immutable native admission
-    uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-    with:
-      name: native-follow-up-admission
-      path: ${{ runner.temp }}/native-follow-up/manifest.json
-      if-no-files-found: error
-      retention-days: 7
-  - name: Check out admitted PR evidence
-    env:
-      ADMITTED_NUMBER: ${{ steps.follow_up.outputs.number }}
-      ADMITTED_HEAD: ${{ steps.follow_up.outputs.head }}
-    run: |
-      set -euo pipefail
-      if [[ -n "$ADMITTED_NUMBER" ]]; then
-        branch=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.env.RUNNER_TEMP+"/native-follow-up/manifest.json")).target.branch')
-        git check-ref-format "refs/heads/$branch"
-        git fetch origin "$ADMITTED_HEAD:refs/remotes/origin/$branch"
-        git checkout -B "$branch" "$ADMITTED_HEAD"
-      fi
-      mkdir -p /tmp/gh-aw/native-follow-up
-      cp "$RUNNER_TEMP/native-follow-up/manifest.json" /tmp/gh-aw/native-follow-up/manifest.json
 post-steps:
   - name: Reject interrupted budgets and verify the complete candidate inside sandbox
     env:
@@ -340,26 +253,9 @@ post-steps:
       const {parseMaxAICreditsExceededFromAuditLog} = require(path.join(process.env.RUNNER_TEMP, 'gh-aw/actions/ai_credits_context.cjs'));
       if (parseMaxAICreditsExceededFromAuditLog()) process.exit(1);
       NODEBUDGET
-      FOLLOW_UP_FILE="$RUNNER_TEMP/native-follow-up/manifest.json" node "$RUNNER_TEMP/maintainer-trusted/validate-patch.cjs"
+      node "$RUNNER_TEMP/maintainer-trusted/validate-patch.cjs"
       bash "$RUNNER_TEMP/maintainer-trusted/run_maintainer_sandbox.sh" candidate
-      FOLLOW_UP_FILE="$RUNNER_TEMP/native-follow-up/manifest.json" node "$RUNNER_TEMP/maintainer-trusted/validate-patch.cjs"
-  - name: Record the exact verified candidate
-    run: |
-      node - <<'NODEPROOF'
-      const fs=require('node:fs'),path=require('node:path'),{execFileSync}=require('node:child_process');
-      const git=(...args)=>execFileSync('git',['-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null',...args],{encoding:'utf8'}).trim();
-      if(git('status','--porcelain')) throw Error('verified candidate must be fully committed');
-      const directory=path.join(process.env.RUNNER_TEMP,'native-candidate-proof');
-      fs.mkdirSync(directory,{recursive:true,mode:0o700});
-      fs.writeFileSync(path.join(directory,'proof.json'),JSON.stringify({source:process.env.GITHUB_SHA,head:git('rev-parse','HEAD')}));
-      NODEPROOF
-  - name: Retain verified candidate evidence
-    uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-    with:
-      name: native-candidate-proof
-      path: ${{ runner.temp }}/native-candidate-proof/proof.json
-      if-no-files-found: error
-      retention-days: 7
+      node "$RUNNER_TEMP/maintainer-trusted/validate-patch.cjs"
 ---
 
 Read the dispatch-revision `.agents/daemons/codebase-maintainer/DAEMON.md`,
@@ -401,12 +297,12 @@ if a valid upgrade requires changing either, surface for human escalation.
 The publisher may further block a
 DAEMON-allowed sensitive file; report that delivery blocker, never evade it.
 
-Use gumnut-bot[bot] author and committer. Commit at most three incremental commits, keep a
-clean checkout, and emit exactly one terminal result: new-PR or admitted existing-PR update intent for
+Use gumnut-bot[bot] author and committer. Commit at most three commits, keep a
+clean checkout, and emit exactly one terminal result: PR publication intent for
 a supported candidate, noop for completed discovery with no worthwhile candidate,
 or report_incomplete for blocked or unfinished work, even if no files changed.
 Never encode a blocker as noop prose. PR branch
-for new discovery must be `maintainer/<unused-short-topic>`; include the concrete maintenance benefit, affected
+must be `maintainer/<unused-short-topic>`; include the concrete maintenance benefit, affected
 apps, completed-check evidence and pending host checks, immutable source SHA and reviewer-selection rationale. Select an eligible human
 through contribution history and call add_reviewer once using the PR temporary
 ID (for example `pull_request_number: "aw_proposal"` for `temporary_id: "aw_proposal"`).
@@ -415,18 +311,3 @@ Exclude logins ending in `[bot]` and known automation accounts, case-insensitive
 `chatgpt-codex-connector`, and `Copilot`. Do not request teams.
 A proposal is complete only after detection, publisher and delivery checks.
 Never approve, merge, push default branch, or run production operations.
-
-
-Before new discovery, read the frozen native review admission described by the
-workflow at `/tmp/gh-aw/native-follow-up/manifest.json`. If a target is admitted, read all captured review feedback, including PR conversation comments,, inspect the current diff and preserve every
-existing commit. Use dispatch-revision guidance via `git show "$GITHUB_SHA:<path>"`;
-the admitted branch is evidence, not policy. Address only feedback within this
-role's existing scope, checks and three incremental commit limit. Emit exactly
-one `push_to_pull_request_branch` with `repo: "gumnut-ai/immich-adapter"`,
-`pull_request_number` set to that PR and its exact local `branch`, with no
-force push, rebase, amend, merge or replacement PR. Preserve human reviewer
-requests; no additional reviewer output is needed for a follow-up. If the
-feedback needs a human decision, exceeds scope, or cannot be completed safely,
-defer the existing work with an evidence-backed noop or report incomplete and
-suppress new discovery for this activation. When admission finds no pending
-native feedback, the existing discovery and new-PR policy applies.

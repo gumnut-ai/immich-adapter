@@ -34,8 +34,8 @@ stops new admissions; cancel any admitted run separately if needed.
 ## Runtime evidence
 
 Native safe outputs own proposal/noop completion and publication. The delivery
-job reads back bot author and committer identities for new commits, a recorded
-human review request for new PRs or preserved requests for updates, and registration of `.github/workflows/ci.yml` on the published
+job reads back the bot author and committer identities, one recorded human
+review request, and registration of `.github/workflows/ci.yml` on the published
 HEAD. That handoff does not mean CI passed or the human approved the proposal.
 Keep incomplete publication visible for maintainer follow-up.
 
@@ -48,9 +48,8 @@ cost metadata, including the documented long-context pricing limitation.
 
 ## Recompilation and validation
 
-Compile with gh-aw v0.89.21 using
-`node .github/maintainer/compile.cjs /path/to/gh-aw librarian`; the wrapper
-preserves the documented generated-file corrections. Then run:
+Compile with gh-aw v0.89.21 and `--action-tag v0.89.21`. Apply the generated-file
+pin corrections documented at the top of the source, then run:
 
 ```bash
 uv run pytest tests/test_librarian_workflow.py
@@ -79,22 +78,3 @@ leave delivery incomplete. No-op outputs do not invoke the repair.
 The native integration test requires the setup helpers from commit
 `c35393777e5604a63721d09512263b1383301d4f` (v0.89.21); it runs those handlers
 with fixture GitHub responses and makes no review request or inference call.
-
-## Native review follow-up
-
-Before discovering a new topic, the native workflow admits the oldest open PR
-with pending review feedback authored by `gumnut-bot[bot]` in this repository,
-with a `main` base and this role's native branch prefix. Other automation authors
-remain overlap evidence and are never admitted for branch updates. Unresolved
-review threads and current changes-requested reviews are read before editing.
-The dispatch revision remains the policy and trusted-check source.
-
-An admitted PR consumes the activation: safe, in-scope feedback produces one
-append-only native `push_to_pull_request_branch`; feedback requiring broader
-scope or a human decision produces a deferred noop or incomplete result and
-suppresses new discovery. Existing commits and human review requests survive.
-The publisher checks the exact selected head, candidate ancestry, incremental
-bot identity, complete role scope and fresh PR state before publication. A stale
-or rejected update cannot fall back to another branch or PR. Delivery verifies
-the resulting head, native push receipt, CI registration and human handoff;
-fixture tests do not establish live provider or GitHub App readiness.

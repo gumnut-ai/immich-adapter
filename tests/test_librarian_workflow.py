@@ -276,14 +276,7 @@ def test_librarian_publisher_uses_only_app_credentials_and_no_issues() -> None:
     for job_name in ("conclusion", "safe_outputs"):
         for step in jobs[job_name].get("steps", []):
             token = step.get("with", {}).get("github-token")
-            if (
-                step.get("name")
-                == "Guard native publication and complete candidate scope"
-            ):
-                assert token == "${{ secrets.GITHUB_TOKEN }}"
-                assert "await guardFollowUp" in step["with"]["script"]
-                assert "validateTransport" in step["with"]["script"]
-            elif token is not None:
+            if token is not None:
                 assert token == "${{ steps.safe-outputs-app-token.outputs.token }}"
             for key, value in step.get("env", {}).items():
                 if key.endswith(("CREATE_ISSUE", "REPORT_AS_ISSUE")):
@@ -322,19 +315,7 @@ def handler_config() -> dict[str, Any]:
 
 def test_librarian_pull_request_policy() -> None:
     handlers = handler_config()
-    push = handlers["push_to_pull_request_branch"]
-    assert push["max"] == 1
-    assert push["target"] == "*"
-    assert push["required_labels"] == ["librarian"]
-    assert push["fallback_as_pull_request"] is False
-    assert push["signed_commits"] is False
-    for field in (
-        "allowed_files",
-        "protected_files",
-        "protected_files_policy",
-        "protect_top_level_dot_folders",
-    ):
-        assert push[field] == handlers["create_pull_request"][field]
+    assert "push_to_pull_request_branch" not in handlers
     config = handlers["create_pull_request"]
     assert config["max"] == 1
     assert config["allowed_branches"] == ["librarian/*"]

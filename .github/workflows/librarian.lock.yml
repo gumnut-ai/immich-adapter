@@ -1,5 +1,5 @@
-# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"87191e32d7f07819aff244aa639691196e5ca5f703a1b899579d9d7e399cca0f","body_hash":"3accf99c78d2ee37ca3bda88c5571b883924c3f5bc169705f90c6d8729e2f3fa","compiler_version":"v0.89.21","strict":true,"agent_id":"codex","agent_model":"gpt-6-luna","engine_versions":{"codex":"0.156.1"},"agent_image_runner":"blacksmith-2vcpu-ubuntu-2404"}
-# gh-aw-manifest: {"version":1,"secrets":["CODEX_API_KEY","COPILOT_GITHUB_TOKEN","GH_AW_DEFAULT_OTLP_ENDPOINT","GH_AW_DEFAULT_OTLP_HEADERS","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","GUMBOT_PRIVATE_KEY","OPENAI_API_KEY"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"v7.0.1"},{"repo":"actions/create-github-app-token","sha":"bcd2ba49218906704ab6c1aa796996da409d3eb1","version":"v3.2.0"},{"repo":"actions/download-artifact","sha":"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c","version":"v8.0.1"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"v9.0.0"},{"repo":"actions/setup-node","sha":"820762786026740c76f36085b0efc47a31fe5020","version":"v7.0.0"},{"repo":"actions/setup-python","sha":"5fda3b95a4ea91299a34e894583c3862153e4b97","version":"v7.0.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"astral-sh/setup-uv","sha":"c18668ad3cf93ea998bef934396af7bb5c839dc7","version":"v10.2.0"},{"repo":"github/gh-aw/actions/setup","sha":"c35393777e5604a63721d09512263b1383301d4f","version":"c35393777e5604a63721d09512263b1383301d4f"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.28.25@sha256:25fbbefb92b690d4e6ef34de8df057c0349e6adf2b7486c0cc56954a8e9a3cd4"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.28.25@sha256:c3c7082e73ba83052c580097e5a9c9c40a11e6f6b6fa0a4710e6859f83a62854"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.28.25@sha256:94cac14372280dbf4a08d021d7b5810a9fd7d73c88802e04a9e05551b1cbcd09"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.4.25","digest":"sha256:9be0a86220e807a0ecc89e53d7453468f7a53fbc6b3d1efd2299025ffe01d086","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.4.25@sha256:9be0a86220e807a0ecc89e53d7453468f7a53fbc6b3d1efd2299025ffe01d086"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f","pinned_image":"ghcr.io/github/gh-aw-node@sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f"},{"image":"ghcr.io/github/github-mcp-server:v1.12.2","digest":"sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6","pinned_image":"ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6"}],"mcp_servers":[{"name":"github","tools":["get_commit","get_file_contents","get_latest_release","get_me","get_pull_request","get_pull_request_comments","get_pull_request_diff","get_pull_request_files","get_pull_request_review_comments","get_pull_request_reviews","get_pull_request_status","get_release_by_tag","get_tag","issue_read","list_branches","list_commits","list_issue_types","list_issues","list_pull_requests","list_releases","list_starred_repositories","list_tags","pull_request_read","search_code","search_issues","search_pull_requests","search_repositories"]},{"name":"safeoutputs","tools":["add_reviewer","create_pull_request","missing_data","missing_tool","noop","push_to_pull_request_branch"]}]}
+# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"3854e09d9fb1a36af46e8ea245047cdf8178906c09fd6d9bc98e9d440edce92f","body_hash":"8c8d2ef97321dbc97bd920b30bcb109d063cf63693f75d972b161d67e5f39f90","compiler_version":"v0.89.21","strict":true,"agent_id":"codex","agent_model":"gpt-6-luna","engine_versions":{"codex":"0.156.1"},"agent_image_runner":"blacksmith-2vcpu-ubuntu-2404"}
+# gh-aw-manifest: {"version":1,"secrets":["CODEX_API_KEY","COPILOT_GITHUB_TOKEN","GH_AW_DEFAULT_OTLP_ENDPOINT","GH_AW_DEFAULT_OTLP_HEADERS","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","GUMBOT_PRIVATE_KEY","OPENAI_API_KEY"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"v7.0.1"},{"repo":"actions/create-github-app-token","sha":"bcd2ba49218906704ab6c1aa796996da409d3eb1","version":"v3.2.0"},{"repo":"actions/download-artifact","sha":"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c","version":"v8.0.1"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"v9.0.0"},{"repo":"actions/setup-node","sha":"820762786026740c76f36085b0efc47a31fe5020","version":"v7.0.0"},{"repo":"actions/setup-python","sha":"5fda3b95a4ea91299a34e894583c3862153e4b97","version":"v7.0.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"astral-sh/setup-uv","sha":"c18668ad3cf93ea998bef934396af7bb5c839dc7","version":"v10.2.0"},{"repo":"github/gh-aw/actions/setup","sha":"c35393777e5604a63721d09512263b1383301d4f","version":"v0.89.21"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.28.25@sha256:25fbbefb92b690d4e6ef34de8df057c0349e6adf2b7486c0cc56954a8e9a3cd4"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.28.25@sha256:c3c7082e73ba83052c580097e5a9c9c40a11e6f6b6fa0a4710e6859f83a62854"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.28.25@sha256:94cac14372280dbf4a08d021d7b5810a9fd7d73c88802e04a9e05551b1cbcd09"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.4.25","digest":"sha256:9be0a86220e807a0ecc89e53d7453468f7a53fbc6b3d1efd2299025ffe01d086","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.4.25@sha256:9be0a86220e807a0ecc89e53d7453468f7a53fbc6b3d1efd2299025ffe01d086"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f","pinned_image":"ghcr.io/github/gh-aw-node@sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f"},{"image":"ghcr.io/github/github-mcp-server:v1.12.2","digest":"sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6","pinned_image":"ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6"}],"mcp_servers":[{"name":"github","tools":["get_commit","get_file_contents","get_latest_release","get_me","get_pull_request","get_pull_request_comments","get_pull_request_diff","get_pull_request_files","get_pull_request_review_comments","get_pull_request_reviews","get_pull_request_status","get_release_by_tag","get_tag","issue_read","list_branches","list_commits","list_issue_types","list_issues","list_pull_requests","list_releases","list_starred_repositories","list_tags","pull_request_read","search_code","search_issues","search_pull_requests","search_repositories"]},{"name":"safeoutputs","tools":["add_reviewer","create_pull_request","missing_data","missing_tool","noop"]}]}
 # This file was automatically generated by gh-aw (v0.89.21). DO NOT EDIT. To debug this workflow, load the skill at https://github.com/github/gh-aw/blob/main/debug.md
 #
 #    ___                   _   _
@@ -300,7 +300,7 @@ jobs:
           GH_AW_ACTIONS_DIR: ${{ runner.temp }}/gh-aw/actions
           GH_AW_PROMPT: ${{ runner.temp }}/gh-aw/aw-prompts/prompt.txt
           GH_AW_SAFE_OUTPUTS: ${{ runner.temp }}/gh-aw/safeoutputs/outputs.jsonl
-          GH_AW_PROMPT_CONFIG: "{\"items\":[{\"content_env\":\"GH_AW_PROMPT_CONTENT_0000\"},{\"file\":\"xpia.md\"},{\"file\":\"temp_folder_prompt.md\"},{\"file\":\"markdown.md\"},{\"file\":\"safe_outputs_prompt.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0001\"},{\"file\":\"safe_outputs_create_pull_request.md\"},{\"file\":\"safe_outputs_push_to_pr_branch.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0002\"},{\"file\":\"mcp_cli_tools_with_safeoutputs_prompt.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0003\"},{\"file\":\"github_mcp_tools_with_safeoutputs_prompt.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0004\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0005\"}]}"
+          GH_AW_PROMPT_CONFIG: "{\"items\":[{\"content_env\":\"GH_AW_PROMPT_CONTENT_0000\"},{\"file\":\"xpia.md\"},{\"file\":\"temp_folder_prompt.md\"},{\"file\":\"markdown.md\"},{\"file\":\"safe_outputs_prompt.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0001\"},{\"file\":\"safe_outputs_create_pull_request.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0002\"},{\"file\":\"mcp_cli_tools_with_safeoutputs_prompt.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0003\"},{\"file\":\"github_mcp_tools_with_safeoutputs_prompt.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0004\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0005\"}]}"
           GH_AW_EXPR_1A3A194A: ${{ github.event.discussion.number || (fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_type == 'discussion' && fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_number) }}
           GH_AW_EXPR_463A214A: ${{ github.event.pull_request.number || (fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_type == 'pull_request' && fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_number) }}
           GH_AW_EXPR_802A9F6A: ${{ github.event.issue.number || (fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_type == 'issue' && fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_number) }}
@@ -310,7 +310,7 @@ jobs:
           GH_AW_GITHUB_RUN_ID: ${{ github.run_id }}
           GH_AW_GITHUB_WORKSPACE: ${{ github.workspace }}
           GH_AW_PROMPT_CONTENT_0000: "<system>\n"
-          GH_AW_PROMPT_CONTENT_0001: "<safe-output-tools>\nTools: create_pull_request, add_reviewer, push_to_pull_request_branch, missing_tool, missing_data, noop\n"
+          GH_AW_PROMPT_CONTENT_0001: "<safe-output-tools>\nTools: create_pull_request, add_reviewer, missing_tool, missing_data, noop\n"
           GH_AW_PROMPT_CONTENT_0002: "</safe-output-tools>\n"
           GH_AW_PROMPT_CONTENT_0003: "<github-context>\nThe following GitHub context information is available for this workflow:\n{{#if github.actor}}\n- **actor**: __GH_AW_GITHUB_ACTOR__\n{{/if}}\n{{#if github.repository}}\n- **repository**: __GH_AW_GITHUB_REPOSITORY__\n{{/if}}\n{{#if github.workspace}}\n- **workspace**: __GH_AW_GITHUB_WORKSPACE__\n{{/if}}\n{{#if github.event.issue.number || (github.aw.context.item_type == 'issue' && github.aw.context.item_number)}}\n- **issue-number**: #__GH_AW_EXPR_802A9F6A__\n{{/if}}\n{{#if github.event.discussion.number || (github.aw.context.item_type == 'discussion' && github.aw.context.item_number)}}\n- **discussion-number**: #__GH_AW_EXPR_1A3A194A__\n{{/if}}\n{{#if github.event.pull_request.number || (github.aw.context.item_type == 'pull_request' && github.aw.context.item_number)}}\n- **pull-request-number**: #__GH_AW_EXPR_463A214A__\n{{/if}}\n{{#if github.event.comment.id || github.aw.context.comment_id}}\n- **comment-id**: __GH_AW_EXPR_FF1D34CE__\n{{/if}}\n{{#if github.run_id}}\n- **workflow-run-id**: __GH_AW_GITHUB_RUN_ID__\n{{/if}}\n- **checkouts**: The following repositories have been checked out and are available in the workspace:\n  - repo `__GH_AW_GITHUB_REPOSITORY__` → `__GH_AW_GITHUB_WORKSPACE__` (cwd) [full history, all branches available as remote-tracking refs]\n  - **Note**: The workspace path reported above may contain a separate shallow, credential-free checkout of the host repository. Use the exact checkout path shown for the repository you need. Before concluding that a branch is unavailable, confirm your working directory matches that path and inspect refs there. If the branch is not present in that checkout and is not listed as an additional fetched ref, it has NOT been checked out. For private repositories you cannot fetch it. If the branch is required and not available, exit with an error and ask the user to add it to the `fetch:` option of the `checkout:` configuration (e.g., `fetch: [\"refs/pulls/open/*\"]` for all open PR refs, or `fetch: [\"main\", \"feature/my-branch\"]` for specific branches).\n  - **Warning: No git credentials are available to the agent.** Credentials are\n    intentionally removed after the checkout step for security. This means any git\n    operation that needs to authenticate to the remote will fail. In private repositories, that includes:\n    - `git fetch`, `git pull`, `git clone`, and `git push` (direct push, not via safe-output tools)\n    - Checking out or switching to a remote branch that is not already fetched\n    - Deepening a shallow clone (`git fetch --unshallow`)\n    - On-demand blob fetches in partial/blobless clones (operations on files not in the initial checkout)\n    Do NOT attempt to configure credentials, run `git credential fill`, or modify `.gitconfig` —\n    authentication will not succeed. If you encounter credential prompts or authentication errors,\n    stop immediately and report the limitation rather than spending turns trying to work around it.\n</github-context>\n\n"
           GH_AW_PROMPT_CONTENT_0004: "</system>\n"
@@ -614,42 +614,7 @@ jobs:
         shell: bash
       - id: sandbox_check
         name: Check the prepared sandbox
-        run: "test -n \"${UV_CACHE_DIR:-}\"\nawf --container-workdir \"$GITHUB_WORKSPACE\" \\\n  --env \"UV_CACHE_DIR=$UV_CACHE_DIR\" -- \\\n  'bash scripts/check_librarian_environment.sh'\n"
-      - id: follow_up
-        name: Admit native review feedback before discovery
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs=require('node:fs'), path=require('node:path');
-            const {collectFollowUp}=require('./.github/agent-delivery/follow-up.cjs');
-            const manifest=await collectFollowUp({github,context,role:'librarian'});
-            const directory=path.join(process.env.RUNNER_TEMP,'native-follow-up');
-            fs.mkdirSync(directory,{recursive:true,mode:0o700});
-            fs.writeFileSync(path.join(directory,'manifest.json'),JSON.stringify(manifest));
-            core.setOutput('number',manifest.target?.number || '');
-            core.setOutput('head',manifest.target?.head || context.sha);
-      - name: Retain immutable native admission
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          if-no-files-found: error
-          name: native-follow-up-admission
-          path: ${{ runner.temp }}/native-follow-up/manifest.json
-          retention-days: 7
-      - env:
-          ADMITTED_HEAD: ${{ steps.follow_up.outputs.head }}
-          ADMITTED_NUMBER: ${{ steps.follow_up.outputs.number }}
-        name: Check out admitted PR evidence
-        run: |-
-          set -euo pipefail
-          if [[ -n "$ADMITTED_NUMBER" ]]; then
-            branch=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.env.RUNNER_TEMP+"/native-follow-up/manifest.json")).target.branch')
-            git check-ref-format "refs/heads/$branch"
-            git fetch origin "$ADMITTED_HEAD:refs/remotes/origin/$branch"
-            git checkout -B "$branch" "$ADMITTED_HEAD"
-          fi
-          mkdir -p /tmp/gh-aw/native-follow-up
-          cp "$RUNNER_TEMP/native-follow-up/manifest.json" /tmp/gh-aw/native-follow-up/manifest.json
+        run: "test -n \"${UV_CACHE_DIR:-}\"\nawf --container-workdir \"$GITHUB_WORKSPACE\" \\\n  --env \"UV_CACHE_DIR=$UV_CACHE_DIR\" -- \\\n  'bash scripts/check_librarian_environment.sh'"
 
       - name: Download container images
         run: bash "${RUNNER_TEMP}/gh-aw/actions/download_docker_images.sh" ghcr.io/github/gh-aw-mcpg:v0.4.25@sha256:9be0a86220e807a0ecc89e53d7453468f7a53fbc6b3d1efd2299025ffe01d086 ghcr.io/github/gh-aw-node@sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6 ghcr.io/github/gh-aw-firewall/agent:0.28.25@sha256:25fbbefb92b690d4e6ef34de8df057c0349e6adf2b7486c0cc56954a8e9a3cd4 ghcr.io/github/gh-aw-firewall/api-proxy:0.28.25@sha256:c3c7082e73ba83052c580097e5a9c9c40a11e6f6b6fa0a4710e6859f83a62854 ghcr.io/github/gh-aw-firewall/squid:0.28.25@sha256:94cac14372280dbf4a08d021d7b5810a9fd7d73c88802e04a9e05551b1cbcd09
@@ -663,7 +628,7 @@ jobs:
         env:
           GH_AW_FILE_ROOT: "${{ runner.temp }}/gh-aw"
           GH_AW_FILE_CONFIG: "{\"files\":[{\"path\":\"safeoutputs/config.json\",\"content_env\":\"GH_AW_SAFE_OUTPUTS_CONFIG\"}]}"
-          GH_AW_SAFE_OUTPUTS_CONFIG: "{\"add_reviewer\":{\"max\":1,\"required_labels\":[\"librarian\"],\"target\":\"*\"},\"create_pull_request\":{\"allowed_branches\":[\"librarian/*\"],\"allowed_files\":[\"README.md\",\"AGENTS.md\",\"**/AGENTS.md\",\"docs/**\"],\"draft\":false,\"fallback_as_issue\":false,\"if_no_changes\":\"error\",\"labels\":[\"librarian\"],\"max\":1,\"max_patch_files\":100,\"max_patch_size\":4096,\"preserve_branch_name\":true,\"protect_top_level_dot_folders\":true,\"protected_files\":[\"package.json\",\"bun.lockb\",\"bunfig.toml\",\"deno.json\",\"deno.jsonc\",\"deno.lock\",\"global.json\",\"NuGet.Config\",\"Directory.Packages.props\",\"mix.exs\",\"mix.lock\",\"go.mod\",\"go.sum\",\"stack.yaml\",\"stack.yaml.lock\",\"pom.xml\",\"build.gradle\",\"build.gradle.kts\",\"settings.gradle\",\"settings.gradle.kts\",\"gradle.properties\",\"package-lock.json\",\"yarn.lock\",\"pnpm-lock.yaml\",\"npm-shrinkwrap.json\",\"requirements.txt\",\"Pipfile\",\"Pipfile.lock\",\"pyproject.toml\",\"setup.py\",\"setup.cfg\",\"Gemfile\",\"Gemfile.lock\",\"uv.lock\",\"CODEOWNERS\",\"DESIGN.md\",\"CONTRIBUTING.md\",\"SECURITY.md\",\"CODE_OF_CONDUCT.md\"],\"protected_files_policy\":\"blocked\",\"signed_commits\":false},\"missing_data\":{},\"missing_tool\":{},\"noop\":{\"max\":1,\"report-as-issue\":\"false\"},\"push_to_pull_request_branch\":{\"allowed_files\":[\"README.md\",\"AGENTS.md\",\"**/AGENTS.md\",\"docs/**\"],\"check_branch_protection\":false,\"fallback_as_pull_request\":false,\"if_no_changes\":\"error\",\"max\":1,\"max_patch_size\":4096,\"protect_top_level_dot_folders\":true,\"protected_files\":[\"package.json\",\"bun.lockb\",\"bunfig.toml\",\"deno.json\",\"deno.jsonc\",\"deno.lock\",\"global.json\",\"NuGet.Config\",\"Directory.Packages.props\",\"mix.exs\",\"mix.lock\",\"go.mod\",\"go.sum\",\"stack.yaml\",\"stack.yaml.lock\",\"pom.xml\",\"build.gradle\",\"build.gradle.kts\",\"settings.gradle\",\"settings.gradle.kts\",\"gradle.properties\",\"package-lock.json\",\"yarn.lock\",\"pnpm-lock.yaml\",\"npm-shrinkwrap.json\",\"requirements.txt\",\"Pipfile\",\"Pipfile.lock\",\"pyproject.toml\",\"setup.py\",\"setup.cfg\",\"Gemfile\",\"Gemfile.lock\",\"uv.lock\",\"CODEOWNERS\",\"DESIGN.md\",\"CONTRIBUTING.md\",\"SECURITY.md\",\"CODE_OF_CONDUCT.md\"],\"protected_files_policy\":\"blocked\",\"required_labels\":[\"librarian\"],\"signed_commits\":false,\"target\":\"*\"},\"report_incomplete\":{}}"
+          GH_AW_SAFE_OUTPUTS_CONFIG: "{\"add_reviewer\":{\"max\":1,\"required_labels\":[\"librarian\"],\"target\":\"*\"},\"create_pull_request\":{\"allowed_branches\":[\"librarian/*\"],\"allowed_files\":[\"README.md\",\"AGENTS.md\",\"**/AGENTS.md\",\"docs/**\"],\"draft\":false,\"fallback_as_issue\":false,\"if_no_changes\":\"error\",\"labels\":[\"librarian\"],\"max\":1,\"max_patch_files\":100,\"max_patch_size\":4096,\"preserve_branch_name\":true,\"protect_top_level_dot_folders\":true,\"protected_files\":[\"package.json\",\"bun.lockb\",\"bunfig.toml\",\"deno.json\",\"deno.jsonc\",\"deno.lock\",\"global.json\",\"NuGet.Config\",\"Directory.Packages.props\",\"mix.exs\",\"mix.lock\",\"go.mod\",\"go.sum\",\"stack.yaml\",\"stack.yaml.lock\",\"pom.xml\",\"build.gradle\",\"build.gradle.kts\",\"settings.gradle\",\"settings.gradle.kts\",\"gradle.properties\",\"package-lock.json\",\"yarn.lock\",\"pnpm-lock.yaml\",\"npm-shrinkwrap.json\",\"requirements.txt\",\"Pipfile\",\"Pipfile.lock\",\"pyproject.toml\",\"setup.py\",\"setup.cfg\",\"Gemfile\",\"Gemfile.lock\",\"uv.lock\",\"CODEOWNERS\",\"DESIGN.md\",\"CONTRIBUTING.md\",\"SECURITY.md\",\"CODE_OF_CONDUCT.md\"],\"protected_files_policy\":\"blocked\",\"signed_commits\":false},\"missing_data\":{},\"missing_tool\":{},\"noop\":{\"max\":1,\"report-as-issue\":\"false\"},\"report_incomplete\":{}}"
         with:
           script: |
             const path = require('path');
@@ -678,8 +643,7 @@ jobs:
             {
               "description_suffixes": {
                 "add_reviewer": " CONSTRAINTS: Maximum 1 reviewer(s) can be added.",
-                "create_pull_request": " CONSTRAINTS: Maximum 1 pull request(s) can be created. Labels [\"librarian\"] will be automatically added.",
-                "push_to_pull_request_branch": " CONSTRAINTS: Maximum 1 push(es) can be made."
+                "create_pull_request": " CONSTRAINTS: Maximum 1 pull request(s) can be created. Labels [\"librarian\"] will be automatically added."
               },
               "repo_params": {},
               "dynamic_tools": []
@@ -824,29 +788,6 @@ jobs:
                     "type": "string",
                     "sanitize": true,
                     "maxLength": 65000
-                  }
-                }
-              },
-              "push_to_pull_request_branch": {
-                "defaultMax": 1,
-                "fields": {
-                  "branch": {
-                    "type": "string",
-                    "sanitize": true,
-                    "maxLength": 256
-                  },
-                  "message": {
-                    "required": true,
-                    "type": "string",
-                    "sanitize": true,
-                    "maxLength": 65000
-                  },
-                  "pull_request_number": {
-                    "issueOrPRNumber": true
-                  },
-                  "repo": {
-                    "type": "string",
-                    "maxLength": 256
                   }
                 }
               },
@@ -1301,10 +1242,8 @@ jobs:
           if [ ! -f /tmp/gh-aw/agent_output.json ]; then
             echo '{"items":[]}' > /tmp/gh-aw/agent_output.json
           fi
-      - env:
-          FOLLOW_UP_HEAD: ${{ steps.follow_up.outputs.head }}
-        name: Verify proposal commit identity
-        run: "awf --container-workdir \"$GITHUB_WORKSPACE\" --env \"GITHUB_SHA=$GITHUB_SHA\" --env \"FOLLOW_UP_HEAD=$FOLLOW_UP_HEAD\" -- \\\n  /bin/bash -c '\n    set -euo pipefail\n    git merge-base --is-ancestor \"$FOLLOW_UP_HEAD\" HEAD\n    [[ $(git rev-list --count \"$FOLLOW_UP_HEAD..HEAD\") -le 3 ]]\n    git log \"$FOLLOW_UP_HEAD..HEAD\" --format=\"%an|%ae|%cn|%ce\" |\n      while IFS= read -r identity; do\n        [[ \"$identity\" == \"gumnut-bot[bot]|333470196+gumnut-bot[bot]@users.noreply.github.com|gumnut-bot[bot]|333470196+gumnut-bot[bot]@users.noreply.github.com\" ]] || exit 1\n      done\n  '\n"
+      - name: Verify proposal commit identity
+        run: "awf --container-workdir \"$GITHUB_WORKSPACE\" --env \"GITHUB_SHA=$GITHUB_SHA\" -- \\\n  /bin/bash -c '\n    set -euo pipefail\n    git log \"$GITHUB_SHA..HEAD\" --format=\"%an|%ae|%cn|%ce\" |\n      while IFS= read -r identity; do\n        [[ \"$identity\" == \"gumnut-bot[bot]|333470196+gumnut-bot[bot]@users.noreply.github.com|gumnut-bot[bot]|333470196+gumnut-bot[bot]@users.noreply.github.com\" ]] || exit 1\n      done\n  '\n"
         shell: bash
       - env:
           AGENT_TIMEOUT: ${{ steps.detect-agent-errors.outputs.agentic_engine_timeout }}
@@ -1318,15 +1257,6 @@ jobs:
         name: Report librarian outcome
         run: "set -euo pipefail\noutcome=unknown\n# Codex can exit 0 after a native budget abort. Do not publish that work.\nbudget_exceeded=$(node - <<'NODE'\nconst path = require('path');\nconst { parseMaxAICreditsExceededFromAuditLog } = require(path.join(\n  process.env.RUNNER_TEMP, 'gh-aw/actions/ai_credits_context.cjs'));\nconsole.log(parseMaxAICreditsExceededFromAuditLog());\nNODE\n)\nif [[ \"$UV_SETUP\" != success || \"$LINTER_SETUP\" != success || \"$TRUSTED_LINTER\" != success || \"$SANDBOX_CHECK\" != success ]]; then\n  outcome=setup-failed\nelif [[ \"$budget_exceeded\" == true ]]; then\n  outcome=budget-interrupted\nelif [[ \"$AGENT_TIMEOUT\" == true || \"$INFERENCE\" == cancelled ]]; then\n  outcome=interrupted\nelif [[ \"$INFERENCE\" == skipped ]]; then\n  outcome=setup-failed\nelif [[ \"$INFERENCE\" != success ]]; then\n  outcome=inference-failed\nelif [[ \"$JOB_STATUS\" == cancelled ]]; then\n  outcome=interrupted\nelif [[ \"$JOB_STATUS\" != success ]]; then\n  outcome=postprocessing-failed\nelif awf --container-workdir \"$GITHUB_WORKSPACE\" --env \"GITHUB_SHA=$GITHUB_SHA\" -- \\\n  /bin/bash -c '\n    status=$(git status --porcelain) || exit 1\n    head=$(git rev-parse --verify HEAD) || exit 1\n    [[ -z \"$status\" && \"$head\" == \"$GITHUB_SHA\" ]]\n  '; then\n  outcome=checkout-clean\nelse\n  outcome=validation-failed\n  if awf --container-workdir \"$GITHUB_WORKSPACE\" \\\n    --mount \"$RUNNER_TEMP/librarian-trusted-lint:/trusted-lint:ro\" \\\n    --mount \"$RUNNER_TEMP/librarian-trusted-lint/uv-cache:/trusted-uv-cache:rw\" \\\n    --env \"GITHUB_SHA=$GITHUB_SHA\" --env \"UV_CACHE_DIR=/trusted-uv-cache\" -- \\\n    /bin/bash -c '\n      set -euo pipefail\n      # A staged patch may not match the file on disk. Reject mixed\n      # index/worktree edits rather than certify only one candidate.\n      git diff --cached --quiet \"$GITHUB_SHA\" || git diff --quiet\n      index_dir=$(mktemp -d)\n      trap \"rm -rf -- \\\"$index_dir\\\"\" EXIT\n      GIT_INDEX_FILE=\"$index_dir/index\" git read-tree \"$GITHUB_SHA\"\n      GIT_INDEX_FILE=\"$index_dir/index\" git add -A\n      GIT_INDEX_FILE=\"$index_dir/index\" git diff --cached \"$GITHUB_SHA\" --check\n      UV_OFFLINE=1 uv run --no-config --locked \\\n        --script /trusted-lint/lint_docs.py --config /trusted-lint/lint_docs.toml --base \"$GITHUB_SHA\"\n    '; then\n    outcome=docs-lint-passed\n  fi\nfi\n{\n  echo \"Librarian source revision: $GITHUB_SHA\"\n  echo \"Librarian result: $outcome\"\n  echo 'Safe-output processing determines the final proposal or no-work result.'\n} >> \"$GITHUB_STEP_SUMMARY\"\n[[ \"$outcome\" == checkout-clean || \"$outcome\" == docs-lint-passed ]]\n"
         shell: bash
-      - name: Record the exact verified candidate
-        run: "node - <<'NODEPROOF'\nconst fs=require('node:fs'),path=require('node:path'),{execFileSync}=require('node:child_process');\nconst git=(...args)=>execFileSync('git',['-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null',...args],{encoding:'utf8'}).trim();\nif(git('status','--porcelain')) throw Error('verified candidate must be fully committed');\nconst directory=path.join(process.env.RUNNER_TEMP,'native-candidate-proof');\nfs.mkdirSync(directory,{recursive:true,mode:0o700});\nfs.writeFileSync(path.join(directory,'proof.json'),JSON.stringify({source:process.env.GITHUB_SHA,head:git('rev-parse','HEAD')}));\nNODEPROOF\n"
-      - name: Retain verified candidate evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          if-no-files-found: error
-          name: native-candidate-proof
-          path: ${{ runner.temp }}/native-candidate-proof/proof.json
-          retention-days: 7
 
       # Small dedicated copy of the agent output so safe-output processing
       # survives a failed or timed-out upload of the larger agent artifact
@@ -1950,9 +1880,6 @@ jobs:
       setup-parent-span-id: ${{ steps.setup.outputs.parent-span-id || steps.setup.outputs.span-id }}
       setup-span-id: ${{ steps.setup.outputs.span-id }}
       setup-trace-id: ${{ steps.setup.outputs.trace-id }}
-    permissions:
-      contents: read
-      actions: read
     steps:
       - name: Setup Scripts
         id: setup
@@ -2045,8 +1972,6 @@ jobs:
       process_safe_outputs_items_warnings: ${{ steps.process_safe_outputs.outputs.items_warnings }}
       process_safe_outputs_processed_count: ${{ steps.process_safe_outputs.outputs.processed_count }}
       process_safe_outputs_status: ${{ steps.process_safe_outputs.outputs.status }}
-      push_commit_sha: ${{ steps.process_safe_outputs.outputs.push_commit_sha }}
-      push_commit_url: ${{ steps.process_safe_outputs.outputs.push_commit_url }}
     steps:
       - name: Setup Scripts
         id: setup
@@ -2100,7 +2025,7 @@ jobs:
           permission-pull-requests: write
           permission-issues: read
       - name: Checkout repository
-        if: (!cancelled()) && needs.agent.result != 'skipped' && contains(needs.agent.outputs.output_types, 'create_pull_request') || (!cancelled()) && needs.agent.result != 'skipped' && contains(needs.agent.outputs.output_types, 'push_to_pull_request_branch')
+        if: (!cancelled()) && needs.agent.result != 'skipped' && contains(needs.agent.outputs.output_types, 'create_pull_request')
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: true
@@ -2108,7 +2033,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_AW_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
       - name: Configure Git credentials
-        if: (!cancelled()) && needs.agent.result != 'skipped' && contains(needs.agent.outputs.output_types, 'create_pull_request') || (!cancelled()) && needs.agent.result != 'skipped' && contains(needs.agent.outputs.output_types, 'push_to_pull_request_branch')
+        if: (!cancelled()) && needs.agent.result != 'skipped' && contains(needs.agent.outputs.output_types, 'create_pull_request')
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_SERVER_URL: ${{ github.server_url }}
@@ -2123,40 +2048,6 @@ jobs:
           GH_HOST="${GITHUB_SERVER_URL#https://}"
           GH_HOST="${GH_HOST#http://}"
           echo "GH_HOST=${GH_HOST}" >> "$GITHUB_ENV"
-      - name: Restore immutable native admission
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: native-follow-up-admission
-          path: ${{ runner.temp }}/native-follow-up
-      - name: Restore trusted candidate verification
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: native-candidate-proof
-          path: ${{ runner.temp }}/native-candidate-proof
-      - name: Checkout trusted dispatch for non-publication
-        if: "!contains(needs.agent.outputs.output_types, 'create_pull_request') && !contains(needs.agent.outputs.output_types, 'push_to_pull_request_branch')"
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: ${{ github.sha }}
-      - name: Guard native publication and complete candidate scope
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs=require('node:fs'), path=require('node:path');
-            const manifest=JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP,'native-follow-up/manifest.json')));
-            const output=JSON.parse(fs.readFileSync(process.env.GH_AW_AGENT_OUTPUT));
-            const {guardFollowUp}=require('./.github/agent-delivery/follow-up.cjs');
-            const {validateTransport}=require('./.github/agent-delivery/check-transport.cjs');
-            const validated=validateTransport({manifest,items:output.items,nativeDirectory:path.join(process.env.RUNNER_TEMP,'gh-aw/actions')});
-            const proof=JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP,'native-candidate-proof/proof.json')));
-            if(proof.source!==context.sha || (validated.candidateHead && validated.candidateHead!==proof.head))
-              throw Error('Captured transport differs from the exact verified candidate');
-            await guardFollowUp({github,context,role:'librarian',output,manifest});
       - name: Resolve reviewer target using the native published PR map
         if: contains(needs.agent.outputs.output_types, 'create_pull_request')
         run: node .github/agent-delivery/prepare-reviewer-handler.cjs
@@ -2175,7 +2066,7 @@ jobs:
           GIT_AUTHOR_NAME: gumnut-bot[bot]
           GIT_COMMITTER_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: gumnut-bot[bot]
-          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"add_reviewer\":{\"max\":1,\"required_labels\":[\"librarian\"],\"target\":\"*\"},\"create_pull_request\":{\"allowed_branches\":[\"librarian/*\"],\"allowed_files\":[\"README.md\",\"AGENTS.md\",\"**/AGENTS.md\",\"docs/**\"],\"draft\":false,\"fallback_as_issue\":false,\"if_no_changes\":\"error\",\"labels\":[\"librarian\"],\"max\":1,\"max_patch_files\":100,\"max_patch_size\":4096,\"preserve_branch_name\":true,\"protect_top_level_dot_folders\":true,\"protected_files\":[\"package.json\",\"bun.lockb\",\"bunfig.toml\",\"deno.json\",\"deno.jsonc\",\"deno.lock\",\"global.json\",\"NuGet.Config\",\"Directory.Packages.props\",\"mix.exs\",\"mix.lock\",\"go.mod\",\"go.sum\",\"stack.yaml\",\"stack.yaml.lock\",\"pom.xml\",\"build.gradle\",\"build.gradle.kts\",\"settings.gradle\",\"settings.gradle.kts\",\"gradle.properties\",\"package-lock.json\",\"yarn.lock\",\"pnpm-lock.yaml\",\"npm-shrinkwrap.json\",\"requirements.txt\",\"Pipfile\",\"Pipfile.lock\",\"pyproject.toml\",\"setup.py\",\"setup.cfg\",\"Gemfile\",\"Gemfile.lock\",\"uv.lock\",\"CODEOWNERS\",\"DESIGN.md\",\"CONTRIBUTING.md\",\"SECURITY.md\",\"CODE_OF_CONDUCT.md\"],\"protected_files_policy\":\"blocked\",\"signed_commits\":false},\"missing_data\":{},\"missing_tool\":{},\"noop\":{\"max\":1,\"report-as-issue\":\"false\"},\"push_to_pull_request_branch\":{\"allowed_files\":[\"README.md\",\"AGENTS.md\",\"**/AGENTS.md\",\"docs/**\"],\"check_branch_protection\":false,\"fallback_as_pull_request\":false,\"if_no_changes\":\"error\",\"max\":1,\"max_patch_size\":4096,\"protect_top_level_dot_folders\":true,\"protected_files\":[\"package.json\",\"bun.lockb\",\"bunfig.toml\",\"deno.json\",\"deno.jsonc\",\"deno.lock\",\"global.json\",\"NuGet.Config\",\"Directory.Packages.props\",\"mix.exs\",\"mix.lock\",\"go.mod\",\"go.sum\",\"stack.yaml\",\"stack.yaml.lock\",\"pom.xml\",\"build.gradle\",\"build.gradle.kts\",\"settings.gradle\",\"settings.gradle.kts\",\"gradle.properties\",\"package-lock.json\",\"yarn.lock\",\"pnpm-lock.yaml\",\"npm-shrinkwrap.json\",\"requirements.txt\",\"Pipfile\",\"Pipfile.lock\",\"pyproject.toml\",\"setup.py\",\"setup.cfg\",\"Gemfile\",\"Gemfile.lock\",\"uv.lock\",\"CODEOWNERS\",\"DESIGN.md\",\"CONTRIBUTING.md\",\"SECURITY.md\",\"CODE_OF_CONDUCT.md\"],\"protected_files_policy\":\"blocked\",\"required_labels\":[\"librarian\"],\"signed_commits\":false,\"target\":\"*\"},\"report_incomplete\":{}}"
+          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"add_reviewer\":{\"max\":1,\"required_labels\":[\"librarian\"],\"target\":\"*\"},\"create_pull_request\":{\"allowed_branches\":[\"librarian/*\"],\"allowed_files\":[\"README.md\",\"AGENTS.md\",\"**/AGENTS.md\",\"docs/**\"],\"draft\":false,\"fallback_as_issue\":false,\"if_no_changes\":\"error\",\"labels\":[\"librarian\"],\"max\":1,\"max_patch_files\":100,\"max_patch_size\":4096,\"preserve_branch_name\":true,\"protect_top_level_dot_folders\":true,\"protected_files\":[\"package.json\",\"bun.lockb\",\"bunfig.toml\",\"deno.json\",\"deno.jsonc\",\"deno.lock\",\"global.json\",\"NuGet.Config\",\"Directory.Packages.props\",\"mix.exs\",\"mix.lock\",\"go.mod\",\"go.sum\",\"stack.yaml\",\"stack.yaml.lock\",\"pom.xml\",\"build.gradle\",\"build.gradle.kts\",\"settings.gradle\",\"settings.gradle.kts\",\"gradle.properties\",\"package-lock.json\",\"yarn.lock\",\"pnpm-lock.yaml\",\"npm-shrinkwrap.json\",\"requirements.txt\",\"Pipfile\",\"Pipfile.lock\",\"pyproject.toml\",\"setup.py\",\"setup.cfg\",\"Gemfile\",\"Gemfile.lock\",\"uv.lock\",\"CODEOWNERS\",\"DESIGN.md\",\"CONTRIBUTING.md\",\"SECURITY.md\",\"CODE_OF_CONDUCT.md\"],\"protected_files_policy\":\"blocked\",\"signed_commits\":false},\"missing_data\":{},\"missing_tool\":{},\"noop\":{\"max\":1,\"report-as-issue\":\"false\"},\"report_incomplete\":{}}"
           GITHUB_TOKEN: ${{ steps.safe-outputs-app-token.outputs.token }}
         with:
           github-token: ${{ steps.safe-outputs-app-token.outputs.token }}
@@ -2223,11 +2114,6 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
-      - name: Read immutable native admission
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: native-follow-up-admission
-          path: ${{ runner.temp }}/native-follow-up
       - name: Verify librarian delivery
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -2237,7 +2123,6 @@ jobs:
           OUTPUT_TYPES: ${{ needs.agent.outputs.output_types }}
           PR_NUMBER: ${{ needs.safe_outputs.outputs.created_pr_number }}
           PUBLISHER: ${{ needs.safe_outputs.result }}
-          PUSH_SHA: ${{ needs.safe_outputs.outputs.push_commit_sha }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |

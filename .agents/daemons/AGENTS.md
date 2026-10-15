@@ -54,6 +54,14 @@ a `` `§ <lane-name>` `` badge taken from the lane's filename.
   silently answer a different question (`git log -G'pydantic'` is an unanchored
   regex, so it reports the date `pydantic-settings` changed).
 
+## Existing PRs before new work
+
+For native PR-producing daemons, inspect review comments and CI on the role's
+open `gumnut-bot[bot]` PRs before looking for new work. Prioritize addressing
+actionable feedback on the existing PR using the role's existing tools, scope
+and checks. If follow-up is blocked, report the PR and blocker instead of
+creating a replacement PR.
+
 ## Human review for daemon-created PRs
 
 When a daemon creates a pull request, request review from one eligible human
