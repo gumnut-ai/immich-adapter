@@ -69,12 +69,14 @@ from routers.utils.current_user import get_current_user, get_current_user_id
 from routers.utils.thumbnail_cache import (
     ThumbnailCacheContext,
     get_thumbnail_cache_context,
+    get_thumbnail_cache_bypass_reason,
     get_video_cache_context,
 )
 from pydantic import ValidationError
 
 from services.streaming_upload import StreamingUploadPipeline
 from services.thumbnail_cache import (
+    CacheBypassReason,
     ThumbnailVariant,
     get_thumbnail_cache,
     opaque_key,
@@ -1460,6 +1462,7 @@ async def view_asset(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     c: Annotated[str | None, Query()] = None,
     cache_context: ThumbnailCacheContext | None = Depends(get_thumbnail_cache_context),
+    cache_bypass_reason: CacheBypassReason = Depends(get_thumbnail_cache_bypass_reason),
 ) -> StreamingResponse:
     """
     Get a thumbnail for an asset.
@@ -1496,11 +1499,20 @@ async def view_asset(
                 raise
             # A cached capability can disappear before its TTL. Reauthorize
             # once through the live API; never retry an upstream metadata error.
-            record_thumbnail_cache_refresh(cache.ttl_seconds)
+            record_thumbnail_cache_refresh(cache.ttl_seconds, cache.max_entries)
             selected = await load()
             return await stream_from_cdn(selected.url, selected.mimetype)
+    cache = get_thumbnail_cache()
+    cache.observe()
+    reason = (
+        cache_bypass_reason
+        if isinstance(cache_bypass_reason, str)
+        else "context_unavailable"
+    )
+    if cache.ttl_seconds <= 0:
+        reason = "disabled"
     record_thumbnail_cache_lookup(
-        "bypass", get_settings().thumbnail_metadata_cache_ttl_seconds
+        "bypass", cache.ttl_seconds, cache.max_entries, reason
     )
     if edited:
         return await _retrieve_and_stream_variant(id, client, variant)

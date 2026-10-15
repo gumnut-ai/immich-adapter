@@ -9,35 +9,50 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import sentry_sdk
-from sentry_sdk import metrics
+from utils import metrics
 
 from config.settings import get_settings
 
 type CacheOutcome = Literal["hit", "miss", "coalesced", "bypass"]
+type CacheBypassReason = Literal[
+    "disabled", "context_unavailable", "credential_expired", "in_flight_capacity"
+]
 
 
-def record_thumbnail_cache_lookup(outcome: CacheOutcome, ttl_seconds: float) -> None:
+def _attributes(ttl_seconds: float, capacity: int) -> dict[str, str | bool | float]:
+    return {
+        "cache.enabled": ttl_seconds > 0,
+        "cache.ttl_seconds": ttl_seconds,
+        "cache.capacity": capacity,
+    }
+
+
+def record_thumbnail_cache_lookup(
+    outcome: CacheOutcome,
+    ttl_seconds: float,
+    capacity: int,
+    bypass_reason: CacheBypassReason | None = None,
+) -> None:
     """Count admission decisions independently of loader success and trace sampling."""
     metrics.count(
         "thumbnail.cache.lookup",
         1,
         attributes={
+            **_attributes(ttl_seconds, capacity),
             "cache.outcome": outcome,
-            "cache.enabled": ttl_seconds > 0,
-            "cache.ttl_seconds": ttl_seconds,
+            **({"cache.bypass_reason": bypass_reason} if bypass_reason else {}),
         },
     )
 
 
-def record_thumbnail_cache_refresh(ttl_seconds: float) -> None:
+def record_thumbnail_cache_refresh(ttl_seconds: float, capacity: int) -> None:
     """Keep a CDN-triggered live retry outside the incoming lookup denominator."""
     metrics.count(
         "thumbnail.cache.refresh",
         1,
         attributes={
             "cache.reason": "cdn_404",
-            "cache.enabled": ttl_seconds > 0,
-            "cache.ttl_seconds": ttl_seconds,
+            **_attributes(ttl_seconds, capacity),
         },
     )
 
@@ -127,8 +142,38 @@ class ThumbnailCache:
         self._waiters: dict[asyncio.Task[ThumbnailVariant], int] = {}
         self._generation = 0
 
-    def invalidate(self) -> None:
+    def _count(self, signal: str, value: int, **attributes: str | bool) -> None:
+        if self.namespace == "thumbnail" and value:
+            metrics.count(
+                f"thumbnail.cache.{signal}",
+                value,
+                attributes={
+                    **_attributes(self.ttl_seconds, self.max_entries),
+                    **attributes,
+                },
+            )
+
+    def observe(self) -> None:
+        """One request-weighted snapshot, including lazy-expired alias keys."""
+        if self.namespace != "thumbnail":
+            return
+        attributes = _attributes(self.ttl_seconds, self.max_entries)
+        for signal, value in (
+            ("occupied_keys", len(self._entries)),
+            ("utilization", len(self._entries) / self.max_entries),
+            ("in_flight", len(self._tasks)),
+            ("detached", len(self._tasks) - len(self._in_flight)),
+        ):
+            metrics.distribution(
+                f"thumbnail.cache.{signal}", value, attributes=attributes
+            )
+        self._count(
+            "observation", 1, **{"cache.full": len(self._entries) == self.max_entries}
+        )
+
+    def invalidate(self, reason: Literal["mutation", "shutdown"] = "mutation") -> None:
         self._generation += 1
+        self._count("removed_keys", len(self._entries), **{"cache.reason": reason})
         self._entries.clear()
         self._in_flight.clear()
 
@@ -147,13 +192,16 @@ class ThumbnailCache:
         }
         if variant.thumbhash:
             keys.add(opaque_key(scope, variant.thumbhash))
+        removed = 0
         for key in keys:
             entry = self._entries.get(key)
             if entry is not None and entry.variant is variant:
                 del self._entries[key]
+                removed += 1
+        self._count("removed_keys", removed, **{"cache.reason": "cdn_failure"})
 
     async def close(self) -> None:
-        self.invalidate()
+        self.invalidate("shutdown")
         tasks = list(self._tasks)
         for task in tasks:
             task.cancel()
@@ -163,7 +211,17 @@ class ThumbnailCache:
         self._entries[key] = entry
         self._entries.move_to_end(key)
         while len(self._entries) > self.max_entries:
-            self._entries.popitem(last=False)
+            _, victim = self._entries.popitem(last=False)
+            self._count(
+                "removed_keys",
+                1,
+                **{
+                    "cache.reason": "capacity",
+                    "cache.victim": "expired"
+                    if victim.expires_at <= self._clock()
+                    else "live",
+                },
+            )
 
     async def get(
         self,
@@ -176,10 +234,15 @@ class ThumbnailCache:
         with sentry_sdk.start_span(
             op="cache.get", name=f"{self.namespace}.variant"
         ) as span:
+            self.observe()
 
-            def record(outcome: CacheOutcome) -> None:
+            def record(
+                outcome: CacheOutcome, reason: CacheBypassReason | None = None
+            ) -> None:
                 if self.namespace == "thumbnail":
-                    record_thumbnail_cache_lookup(outcome, self.ttl_seconds)
+                    record_thumbnail_cache_lookup(
+                        outcome, self.ttl_seconds, self.max_entries, reason
+                    )
                 else:
                     record_video_cache_lookup(outcome, self.ttl_seconds)
                 span.set_data("cache.hit", outcome == "hit")
@@ -194,29 +257,32 @@ class ThumbnailCache:
         cache_buster: str | None,
         loader: Callable[[], Awaitable[ThumbnailVariant]],
         max_age_seconds: float | None,
-        record: Callable[[CacheOutcome], None],
+        record: Callable[[CacheOutcome, CacheBypassReason | None], None],
     ) -> CacheResult:
         ttl = self.ttl_seconds
         if max_age_seconds is not None:
             ttl = min(ttl, max_age_seconds)
         if ttl <= 0:
-            record("bypass")
+            record(
+                "bypass", "disabled" if self.ttl_seconds <= 0 else "credential_expired"
+            )
             return CacheResult(await loader(), "bypass")
         key = opaque_key(scope, cache_buster or "")
         now = self._clock()
         entry = self._entries.get(key)
         if entry is not None and entry.expires_at <= now:
             del self._entries[key]
+            self._count("removed_keys", 1, **{"cache.reason": "lookup_expiration"})
             entry = None
         if entry is not None:
             self._entries.move_to_end(key)
-            record("hit")
+            record("hit", None)
             return CacheResult(entry.variant, "hit")
         task = self._in_flight.get(key)
         outcome: Literal["miss", "coalesced"] = "coalesced"
         if task is None:
             if len(self._tasks) >= self.max_in_flight:
-                record("bypass")
+                record("bypass", "in_flight_capacity")
                 return CacheResult(await loader(), "bypass")
             outcome = "miss"
             generation = self._generation
@@ -225,8 +291,21 @@ class ThumbnailCache:
             expires_at = now + ttl
 
             async def load() -> ThumbnailVariant:
-                async with asyncio.timeout(self.load_timeout_seconds):
-                    variant = await loader()
+                outcome = "success"
+                try:
+                    async with asyncio.timeout(self.load_timeout_seconds):
+                        variant = await loader()
+                except TimeoutError:
+                    outcome = "timeout"
+                    raise
+                except asyncio.CancelledError:
+                    outcome = "cancelled"
+                    raise
+                except Exception:
+                    outcome = "error"
+                    raise
+                finally:
+                    self._count("load", 1, **{"cache.outcome": outcome})
                 if (
                     generation == self._generation
                     and expires_at > self._clock()
@@ -261,7 +340,7 @@ class ThumbnailCache:
                     finished.exception()
 
             task.add_done_callback(done)
-        record(outcome)
+        record(outcome, None)
         self._waiters[task] = self._waiters.get(task, 0) + 1
         try:
             await asyncio.wait([task])

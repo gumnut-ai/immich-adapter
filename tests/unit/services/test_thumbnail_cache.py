@@ -16,10 +16,11 @@ def metric_count():
 
 
 def lookup_outcomes(count):
-    assert all(
-        call.args == ("thumbnail.cache.lookup", 1) for call in count.call_args_list
-    )
-    return [call.kwargs["attributes"]["cache.outcome"] for call in count.call_args_list]
+    return [
+        call.kwargs["attributes"]["cache.outcome"]
+        for call in count.call_args_list
+        if call.args[0] == "thumbnail.cache.lookup"
+    ]
 
 
 def variant(
@@ -248,10 +249,12 @@ async def test_disabled_and_expired_credentials_always_load(metric_count):
     assert [
         call.kwargs["attributes"]["cache.enabled"]
         for call in metric_count.call_args_list
+        if call.args[0] == "thumbnail.cache.lookup"
     ] == [False, True, False, True]
     assert [
         call.kwargs["attributes"]["cache.ttl_seconds"]
         for call in metric_count.call_args_list
+        if call.args[0] == "thumbnail.cache.lookup"
     ] == [0, 30, 0, 30]
     await disabled.close()
     await enabled.close()
@@ -309,12 +312,13 @@ async def test_native_metrics_survive_zero_trace_sampling_without_sensitive_attr
             if item.type == "trace_metric"
             for metric in item.payload.json["items"]
         ]
-        assert len(items) == 2
-        assert [item["attributes"]["cache.outcome"]["value"] for item in items] == [
+        lookups = [item for item in items if item["name"] == "thumbnail.cache.lookup"]
+        assert len(lookups) == 2
+        assert [item["attributes"]["cache.outcome"]["value"] for item in lookups] == [
             "miss",
             "hit",
         ]
-        for item in items:
+        for item in lookups:
             assert item["name"] == "thumbnail.cache.lookup"
             assert item["type"] == "counter"
             assert item["value"] == 1
@@ -329,11 +333,13 @@ async def test_native_metrics_survive_zero_trace_sampling_without_sensitive_attr
                 },
                 "cache.enabled": {"value": True, "type": "boolean"},
                 "cache.ttl_seconds": {"value": 30, "type": "integer"},
+                "cache.capacity": {"value": 10, "type": "integer"},
             }
             assert set(item["attributes"]) - {
                 "cache.outcome",
                 "cache.enabled",
                 "cache.ttl_seconds",
+                "cache.capacity",
             } <= {
                 "sentry.sdk.name",
                 "sentry.sdk.version",

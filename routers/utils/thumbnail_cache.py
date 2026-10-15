@@ -14,7 +14,7 @@ from routers.utils.gumnut_client import (
     get_authenticated_gumnut_client,
     get_bound_library_id,
 )
-from services.thumbnail_cache import opaque_key
+from services.thumbnail_cache import CacheBypassReason, opaque_key
 from services.video_cache import VIDEO_METADATA_CACHE_TTL_SECONDS
 
 
@@ -29,7 +29,7 @@ class ThumbnailCacheContext:
         return self.credential_expires_at - time.time()
 
 
-def _jwt_expiry(credential: str) -> float | None:
+def _jwt_expiry(credential: str, *, allow_expired: bool = False) -> float | None:
     """Read an expiry only to deny cache reuse; upstream verifies signatures.
 
     An entry can only originate from a successful call with exactly this
@@ -44,7 +44,11 @@ def _jwt_expiry(credential: str) -> float | None:
         if isinstance(expiry, bool) or not isinstance(expiry, (int, float)):
             return None
         expiry = float(expiry)
-        return expiry if math.isfinite(expiry) and expiry > time.time() else None
+        return (
+            expiry
+            if math.isfinite(expiry) and (allow_expired or expiry > time.time())
+            else None
+        )
     except (ValueError, TypeError, AttributeError, OverflowError):
         return None
 
@@ -59,6 +63,13 @@ def get_thumbnail_cache_context(
     )
 
 
+def get_thumbnail_cache_bypass_reason(
+    request: Request,
+    context: ThumbnailCacheContext | None = Depends(get_thumbnail_cache_context),
+) -> CacheBypassReason:
+    return getattr(request.state, "metadata_cache_bypass_reason", "context_unavailable")
+
+
 def get_video_cache_context(
     request: Request,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
@@ -70,7 +81,9 @@ def _metadata_cache_context(
     request: Request, ttl_seconds: float
 ) -> ThumbnailCacheContext | None:
     settings = get_settings()
+    request.state.metadata_cache_bypass_reason = "context_unavailable"
     if ttl_seconds <= 0:
+        request.state.metadata_cache_bypass_reason = "disabled"
         return None
     credential = getattr(request.state, "jwt_token", None)
     session = getattr(request.state, "session_token", None)
@@ -82,6 +95,8 @@ def _metadata_cache_context(
     if session:
         expires_at = _jwt_expiry(credential)
         if expires_at is None:
+            if _jwt_expiry(credential, allow_expired=True) is not None:
+                request.state.metadata_cache_bypass_reason = "credential_expired"
             return None
     elif not credential.startswith("apikey_"):
         return None

@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-10-12
+last-updated: 2026-10-15
 ---
 
 # Immich Adapter Architecture
@@ -169,7 +169,7 @@ The Gumnut API owns the OAuth client credentials and performs authorization URL 
 ### Request observability
 
 Sentry request context attaches the adapter session, public user identifier,
-route, and upstream failure metadata where available. The outermost
+route, and upstream failure metadata where available. The
 `ObservabilityTagsMiddleware` also classifies recognized Immich traffic as
 `immich-mobile-ios`, `immich-mobile-android`, or `immich-web`. Mobile
 classification prefers the `deviceType` header and falls back to the native
@@ -184,6 +184,44 @@ URLs, and descriptions, and add `server.address` (and a valid
 `server.port`) for upstream correlation. Never put JWTs, API keys, or captured
 customer payloads in structured fields. Upstream response severity and
 aggregate degradation logging live in [Logging](../references/logging.md).
+
+### Native request and stream metrics
+
+The shared [`GumnutHTTPClient`](../../services/gumnut_http_client.py) emits
+`gumnut.http.attempt` and `gumnut.http.attempt.duration` for every HTTP attempt,
+including each SDK retry and redirect hop. This covers metadata refreshes after
+cached CDN failures. The separate CDN client and direct synchronous streaming
+upload client are outside this series. Bounded attributes are `http.operation`
+(resource family or `other`), `http.status_class` (`1xx` through `5xx`, `none`
+or `other`) and `http.outcome` (`response`, `timeout`, `error`, `cancelled`).
+No raw paths, URLs, credentials or entity identifiers are added.
+
+Timing starts in the last request hook and ends in the first response hook,
+at headers, or on a terminal exception/cancellation before headers. It includes
+pool/connection wait and request upload; it excludes response-body reads,
+subsequent token/library hooks and SDK retry backoff. A body or later hook
+failure retains one response observation; it does not add a second attempt.
+These durations do not isolate pool, DNS, connect or scheduling time. The
+existing credential-refresh and vanished-library hooks retain their ordering
+and behavior. Native metric emission is best-effort and cannot fail requests.
+
+The outer [`StreamMetricsMiddleware`](../../routers/middleware/stream_metrics_middleware.py)
+observes the final ASGI body send outside the response-buffering middleware.
+For streams that started with a 2xx response, `thumbnail.delivery` counts
+`stream.outcome=complete/abort`; `sync.stream` counts `complete/abort/reset`.
+Sync completion additionally requires the generator's `SyncCompleteV1` marker;
+a swallowed upstream error that truncates a 200 stream counts as an abort.
+Auth/metadata failures before a successful response starts are outside these
+stream denominators. Completion means the adapter handed the full body to
+ASGI, not proof of client receipt, application or sync acknowledgement.
+
+Sum counter values for completed deliveries and actual attempts within matched
+environment/release/configuration and workload cohorts. All API operation
+families include other route traffic, so their aggregate divided by thumbnail
+deliveries is a workload ratio, not a causal per-thumbnail cost. Use the
+[cache counters](../references/media-variant-selection.md#cache-observability)
+alongside latency, errors, sync outcomes and verified native metric retention
+and drop coverage before drawing cache-capacity conclusions.
 
 ## Translation boundaries
 

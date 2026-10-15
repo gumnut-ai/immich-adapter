@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from routers.middleware.auth_middleware import AuthMiddleware
 from routers.middleware.observability_middleware import ObservabilityTagsMiddleware
+from routers.middleware.stream_metrics_middleware import StreamMetricsMiddleware
 from routers import static, well_known
 from routers.utils.spa_static_files import SPAStaticFiles
 from routers.api.sync import routes as sync_routes
@@ -133,6 +134,8 @@ app.add_middleware(AuthMiddleware)
 # attribute is attached even on 401s from `AuthMiddleware`.
 # See routers/middleware/observability_middleware.py.
 app.add_middleware(ObservabilityTagsMiddleware)
+# Outside the BaseHTTPMiddleware layers: observe the actual final ASGI send.
+app.add_middleware(StreamMetricsMiddleware)
 
 # Mount Socket.IO app first
 app.mount("/api/socket.io", websockets.socket_app)

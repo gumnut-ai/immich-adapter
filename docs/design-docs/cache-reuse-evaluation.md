@@ -1,16 +1,22 @@
 ---
 title: Cache instrumentation and endpoint reuse evaluation
-status: proposed
+status: active
 created: 2026-10-08
-last-updated: 2026-10-08
+last-updated: 2026-10-15
 ---
 
 # Cache instrumentation and endpoint reuse evaluation
 
 Recommend measuring the existing thumbnail cache before increasing its capacity
 or extending reuse to other endpoints. Retain the current defaults pending a
-usable baseline. This record proposes measurement work; it changes no runtime
+usable baseline. This record defines measurement work; it changes no cache
 behavior and grants no new freshness or authorization window.
+
+The measurement implementation is described by the live
+[cache telemetry contract](../references/media-variant-selection.md#cache-observability)
+and [API/stream boundaries](../architecture/adapter-architecture.md#native-request-and-stream-metrics).
+Production deployment, effective-configuration verification and native receipt
+remain separate prerequisites for the baseline and capacity decision below.
 
 ## Evidence and limits
 
@@ -99,7 +105,7 @@ the incoming-decision and refresh denominators.
 | Expiration / invalidation / CDN removal | Count actual keys removed at lookup expiry, global mutation clear, and CDN-failure eviction separately. Zero-key clears must not masquerade as lost entries. Generation fencing stays intact. |
 | Bypass reason and in-flight observations | Separate disabled/context-unavailable/credential-expired/in-flight-capacity paths with bounded enums. Count owned tasks including invalidated detached tasks when measuring overflow; joinable `_in_flight` alone understates resource use. |
 | Loader outcomes | Success/error/timeout/cancellation at actual loads, distinct from coalesced waiters. Admission misses include failed loads; do not call them successful deliveries. |
-| API HTTP attempts and duration | Add attempt timing/finalization at the existing shared API HTTP client, including each SDK retry and refresh. It currently has only a response hook; preserve its credential-refresh and vanished-library handling. Restrict to the Gumnut API with bounded operation families/status classes, and account for transport exceptions/cancellation without double counting responses. |
+| API HTTP attempts and duration | Time from the shared client's last request hook to response headers or a pre-header terminal exception/cancellation, including each SDK retry and refresh. Preserve credential-refresh and vanished-library handling. Use bounded operation families/status classes; body/hook failures after headers keep one response observation. CDN and direct synchronous uploads stay outside this series. |
 | Delivery and sync outcomes | Successful completed thumbnail streams and sync-complete/abort denominators where native unsampled evidence is absent; producing response headers or starting a stream is not completion. |
 
 No new attribute may contain credentials, user/asset/library IDs, cache keys,
@@ -173,8 +179,9 @@ recommendation even when evidence remains too sparse to tune.
 ## Ranked reuse candidates and contracts
 
 Ranking is by structural opportunity and safety, **not measured savings**.
-The next bounded implementation is the telemetry proposal above. No broader
-cache is approved until repeat-read evidence and its freshness contract exist.
+The telemetry is implemented; authorized deployment and a matched baseline
+remain pending. No broader cache is approved until repeat-read evidence and
+its freshness contract exist.
 
 | Rank / candidate | Exact value, scope and lifetime | Freshness, correctness and expected benefit |
 |---|---|---|
@@ -195,10 +202,10 @@ contracts; a narrow lifetime does not excuse an unbounded collection.
 
 ## Decision and follow-up boundary
 
-Proceed with a separately tracked measurement build, then verify native receipt
-and produce a matched production baseline after authorized deployment. Keep
-capacity, TTL, concurrency, invalidation and endpoint behavior unchanged in
-that build. Defer the ranked reuse candidates until a bounded repeat-read
+After authorized deployment of the measurement implementation, verify native
+receipt and produce a matched production baseline. Capacity, TTL, concurrency,
+invalidation and endpoint behavior remain unchanged. Defer the ranked reuse
+candidates until a bounded repeat-read
 measurement demonstrates worthwhile savings; prefer request-local reuse when
 it avoids a new stale-state contract. Any broader authorization/freshness window
 and any production capacity comparison require a separate decision.

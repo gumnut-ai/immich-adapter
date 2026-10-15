@@ -375,6 +375,7 @@ async def get_sync_stream(
                         "library_moved": library_moved,
                     },
                 )
+                http_request.state.sync_stream_reset = True
                 return StreamingResponse(
                     generate_reset_stream(),
                     media_type="application/jsonlines+json",
@@ -411,6 +412,12 @@ async def get_sync_stream(
     current_user = await get_raw_current_user(http_request, gumnut_client)
 
     return StreamingResponse(
-        generate_sync_stream(gumnut_client, request, checkpoint_map, current_user),
+        generate_sync_stream(
+            gumnut_client,
+            request,
+            checkpoint_map,
+            current_user,
+            completion_state=http_request.scope.setdefault("state", {}),
+        ),
         media_type="application/jsonlines+json",
     )
