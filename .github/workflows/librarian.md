@@ -161,6 +161,13 @@ safe-outputs:
       with:
         name: native-candidate-proof
         path: ${{ runner.temp }}/native-candidate-proof
+    - name: Checkout trusted dispatch for non-publication
+      if: "!contains(needs.agent.outputs.output_types, 'create_pull_request') && !contains(needs.agent.outputs.output_types, 'push_to_pull_request_branch')"
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+        fetch-depth: 0
     - name: Guard native publication and complete candidate scope
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:

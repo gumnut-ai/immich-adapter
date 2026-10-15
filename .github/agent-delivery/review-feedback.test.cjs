@@ -54,3 +54,17 @@ test('all findings since the latest clear are retained across review and comment
   const later={...second,id:40,created_at:'2026-10-14T00:00:04Z'};
   assert.deepEqual(pendingReviewBodies([first],[later,clean,second]).map(item=>item.id),[later.id]);
 });
+
+test('trusted human conversation requests use the same acknowledgement policy as formal reviews',()=>{
+  const comment={id:80,user:{login:'maintainer',type:'User'},author_association:'MEMBER',body:'Please drop the second paragraph.',created_at:'2026-10-14T00:02:00Z'};
+  for (const association of ['OWNER','MEMBER','COLLABORATOR']) {
+    const request={...comment,author_association:association};
+    assert.deepEqual(pendingReviewBodies([], [request]),[{...request,review_feedback_kind:'comment'}]);
+  }
+  assert.deepEqual(pendingReviewBodies([], [{...comment,body:'Thanks! Looks good.'}]),[]);
+  assert.deepEqual(pendingReviewBodies([], [{...comment,author_association:'NONE'}]),[]);
+  assert.deepEqual(pendingReviewBodies([], [{...comment,user:{login:'linear-code[bot]',type:'Bot'}}]),[]);
+  const approval=review('maintainer','APPROVED','',59);
+  approval.submitted_at='2026-10-14T00:03:00Z';
+  assert.deepEqual(pendingReviewBodies([approval],[comment]),[]);
+});

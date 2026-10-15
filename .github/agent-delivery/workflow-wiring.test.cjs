@@ -78,3 +78,39 @@ for(const daemon of ['librarian','maintainer']) {
     assert(source.includes('name: Read immutable native admission'));
   });
 }
+
+for (const daemon of ['librarian','maintainer']) {
+  test(`${daemon} checks out trusted dispatch for noop validation without replacing native publication checkout`,()=>{
+    for (const extension of ['md','lock.yml']) {
+      const text=fs.readFileSync(path.join(__dirname,`../workflows/${daemon}.${extension}`),'utf8');
+      const start=text.indexOf('- name: Checkout trusted dispatch for non-publication');
+      assert(start>=0);
+      const following=text.slice(start).search(/\n\s+- name:/);
+      assert(following>0);
+      const step=text.slice(start,start+following);
+      assert(step.includes('uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'));
+      assert(step.includes('ref: ${{ github.sha }}'));
+      assert(step.includes('persist-credentials: false'));
+      assert(step.includes('fetch-depth: 0'));
+      assert(start<text.indexOf('- name: Guard native publication and complete candidate scope'));
+      const condition=step.match(/\n\s+if: (.+)/)[1].replace(/^"|"$/g,'');
+      for (const [types,expected] of [
+        ['noop',true],['report_incomplete',true],['create_pull_request',false],
+        ['push_to_pull_request_branch',false],['create_pull_request,add_reviewer',false],
+        ['noop,create_pull_request',false],['noop,push_to_pull_request_branch',false],
+      ]) {
+        const expression=condition.replaceAll('needs.agent.outputs.output_types',JSON.stringify(types));
+        assert.equal(Function('contains',`return (${expression})`)((value,part)=>value.includes(part)),expected,`${extension}: ${types}`);
+      }
+      if(extension==='lock.yml') {
+        const safe=text.slice(text.indexOf('  safe_outputs:\n'),text.indexOf('  verify_delivery:\n'));
+        const native=safe.slice(safe.indexOf('- name: Checkout repository\n'),safe.indexOf('- name: Checkout trusted dispatch for non-publication'));
+        assert(native.includes("contains(needs.agent.outputs.output_types, 'create_pull_request')"));
+        assert(native.includes("contains(needs.agent.outputs.output_types, 'push_to_pull_request_branch')"));
+        assert(native.includes('persist-credentials: true'));
+        assert(native.includes('GIT_TOKEN: ${{ steps.safe-outputs-app-token.outputs.token }}'));
+        assert(native.includes('configure_git_credentials.sh'));
+      }
+    }
+  });
+}

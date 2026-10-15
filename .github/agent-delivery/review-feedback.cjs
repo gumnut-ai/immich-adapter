@@ -6,7 +6,8 @@ const acknowledgement = body => /^(?:(?:looks? (?:good|great)(?: to me)?|lgtm|th
 function pendingReviewBodies(reviews, comments=[]) {
   const formal = latestActiveFormal(reviews), byAuthor = new Map();
   const events = reviews.map(item=>({item,kind:'review'})).concat(
-    comments.filter(item=>AUTOMATED.has(item.user?.login) || item.user?.login === 'gumnut-reviewer[bot]')
+    comments.filter(item=>AUTOMATED.has(item.user?.login) || item.user?.login === 'gumnut-reviewer[bot]' ||
+      (item.user?.type === 'User' && ['OWNER','MEMBER','COLLABORATOR'].includes(item.author_association)))
       .map(item=>({item,kind:'comment'})));
   for (const {item,kind} of events) {
     const login = item.user?.login;
