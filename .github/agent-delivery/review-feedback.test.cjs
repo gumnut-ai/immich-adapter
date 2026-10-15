@@ -1,7 +1,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const {pendingReviewBodies} = require('./review-feedback.cjs');
-const review = (login,state,body,id=1) => ({id,node_id:String(id),user:{login},state,body,submitted_at:`2026-10-14T00:00:${String(id).padStart(2,'0')}Z`});
+const review = (login,state,body,id=1) => ({id,node_id:String(id),user:{login,type:login.endsWith('[bot]')?'Bot':'User'},author_association:'MEMBER',state,body,submitted_at:`2026-10-14T00:00:${String(id).padStart(2,'0')}Z`});
 test('body-only native blocking findings are work; clean native summaries are not',()=>{
   const finding=review('gumnut-reviewer[bot]','COMMENTED','🔴 blocking: Preserve the previous commit');
   assert.deepEqual(pendingReviewBodies([finding]),[finding]);
@@ -29,11 +29,11 @@ test('plain human acknowledgements do not occupy the follow-up queue',()=>{
   assert.deepEqual(pendingReviewBodies([finding]),[finding]);
 });
 test('PR conversation findings are pending until a later source clear',()=>{
-  const concern={id:5,user:{login:'claude[bot]'},body:'<!-- gumnut-review-finding/v1 severity=significant -->\nFix lost updates.',created_at:'2026-10-14T00:00:00Z'};
-  const clean={id:6,user:{login:'claude[bot]'},body:`<!-- gumnut-review-verdict/v1 head=${'a'.repeat(40)} base=${'b'.repeat(40)} verdict=clean -->`,created_at:'2026-10-14T00:01:00Z'};
+  const concern={id:5,user:{login:'claude[bot]',type:'Bot'},body:'<!-- gumnut-review-finding/v1 severity=significant -->\nFix lost updates.',created_at:'2026-10-14T00:00:00Z'};
+  const clean={id:6,user:{login:'claude[bot]',type:'Bot'},body:`<!-- gumnut-review-verdict/v1 head=${'a'.repeat(40)} base=${'b'.repeat(40)} verdict=clean -->`,created_at:'2026-10-14T00:01:00Z'};
   assert.equal(pendingReviewBodies([], [concern]).length,1);
   assert.deepEqual(pendingReviewBodies([], [concern,clean]),[]);
-  const notice={id:7,user:{login:'chatgpt-codex-connector[bot]'},body:`<!-- codex-pull-request-review-summary -->\n## Codex Review Summary\nThis comment shows the latest Codex review activity on this pull request.\n| Review | Status | Commit | Review trigger |\n| --- | --- | --- | --- |\n| 📝 **Code Review** | ✅ **Completed** | \`aaaaaaa\` | Manual request |`};
+  const notice={id:7,user:{login:'chatgpt-codex-connector[bot]',type:'Bot'},body:`<!-- codex-pull-request-review-summary -->\n## Codex Review Summary\nThis comment shows the latest Codex review activity on this pull request.\n| Review | Status | Commit | Review trigger |\n| --- | --- | --- | --- |\n| 📝 **Code Review** | ✅ **Completed** | \`aaaaaaa\` | Manual request |`};
   assert.deepEqual(pendingReviewBodies([], [notice]),[]);
 });
 
@@ -88,4 +88,111 @@ test('explicit human approval clears prose findings without dismissing formal ch
     assert.deepEqual(pendingReviewBodies([formal],[request,clear]),[formal]);
   }
   assert.deepEqual(pendingReviewBodies([], [request,{...request,id:91,body:'Thanks!',created_at:'2026-10-14T00:03:00Z'}]).map(item=>item.id),[90]);
+});
+
+const metadata = (item,overrides={}) => ({databaseId:item.id,state:item.state,body:item.body,
+ submittedAt:item.submitted_at,updatedAt:item.submitted_at,lastEditedAt:null,
+ commit:{oid:item.commit_id},author:{login:item.user.login.replace('[bot]',''),__typename:item.user.type},...overrides});
+const submitted = (login,state,body,id=1) => ({...review(login,state,body,id),user:{login,type:login.endsWith('[bot]')?'Bot':'User'},commit_id:'a'.repeat(40)});
+test('joined edited review bodies remain pending after a later clean declaration',()=>{
+ const finding=submitted('claude[bot]','COMMENTED','<!-- gumnut-review-finding/v1 severity=significant -->\nPreserve the invariant.');
+ const clean={id:20,user:finding.user,body:`<!-- gumnut-review-verdict/v1 head=${'a'.repeat(40)} base=${'b'.repeat(40)} verdict=clean -->`,created_at:'2026-10-14T00:00:02Z'};
+ const graph=metadata(finding,{lastEditedAt:'2026-10-14T00:00:03Z',updatedAt:'2026-10-14T00:00:03Z'});
+ const result=pendingReviewBodies([finding],[clean],[graph]);
+ assert.deepEqual(result.map(item=>item.id),[finding.id]);assert.equal(result[0].decision_at,new Date(graph.lastEditedAt).toISOString());
+ const {execFileSync}=require('node:child_process');
+ const output=execFileSync(process.execPath,[require.resolve('./review-feedback.cjs')],{input:JSON.stringify({reviews:[finding],comments:[clean],metadata:[graph]}),encoding:'utf8'});
+ assert.deepEqual(JSON.parse(output),result);
+});
+test('metadata coverage and exact snapshots are required for every submitted human or bot review',()=>{
+ for(const login of ['human','claude[bot]']) {
+  const finding=submitted(login,'COMMENTED','Please preserve the invariant.');
+  for(const rows of [[],[metadata(finding,{lastEditedAt:'invalid'})],[metadata(finding,{body:'different'})],[metadata(finding,{author:{login:'other',__typename:finding.user.type}})],[metadata(finding),metadata(finding)]])
+   assert.throws(()=>pendingReviewBodies([finding],[],rows),/metadata|timestamps/);
+ }
+});
+test('editing formal human approval cannot clear a later finding using its edit time',()=>{
+ const approval=submitted('human','APPROVED','Looks good',1);
+ const finding={id:2,user:{login:'human',type:'User'},author_association:'MEMBER',body:'Please preserve the invariant.',created_at:'2026-10-14T00:00:02Z'};
+ const graph=metadata(approval,{lastEditedAt:'2026-10-14T00:00:03Z',updatedAt:'2026-10-14T00:00:03Z'});
+ assert.deepEqual(pendingReviewBodies([approval],[finding],[graph]).map(item=>item.id),[2]);
+});
+test('async metadata reader reuses coordinator pagination and fails closed on missing or repeated pages',async()=>{
+ const {readReviewMetadata,REVIEW_METADATA_QUERY}=require('./review-feedback.cjs');
+ const rows=[metadata(submitted('human','COMMENTED','Fix the invariant',1)),metadata(submitted('human','APPROVED','Looks good',2))];
+ let calls=0;
+ const github={graphql:async(query,variables)=>{
+  assert.equal(query,REVIEW_METADATA_QUERY);assert.equal(variables.owner,'example');assert.equal(variables.name,'repo');assert.equal(variables.number,7);
+  assert.equal(variables.cursor,calls===0?null:'next');
+  const connection={nodes:[rows[calls]],pageInfo:{hasNextPage:calls===0,endCursor:calls===0?'next':null}};calls++;
+  return {repository:{pullRequest:{reviews:connection}}};
+ }};
+ assert.deepEqual(await readReviewMetadata({github,repository:'example/repo',number:7}),rows);assert.equal(calls,2);
+ for(const page of [null,{nodes:[],pageInfo:{hasNextPage:true,endCursor:null}},{nodes:[],pageInfo:{hasNextPage:true,endCursor:'same'}}]) {
+  github.graphql=async()=>({repository:{pullRequest:{reviews:page}}});
+  await assert.rejects(readReviewMetadata({github,repository:'example/repo',number:7}),/GraphQL|cursor/);
+ }
+});
+
+test('edited automated APPROVED concerns keep edit time instead of immutable approval submission',()=>{
+ const finding=submitted('claude[bot]','APPROVED','<!-- gumnut-review-finding/v1 severity=significant -->\nPreserve the invariant.');
+ const clean={id:20,user:finding.user,body:`<!-- gumnut-review-verdict/v1 head=${'a'.repeat(40)} base=${'b'.repeat(40)} verdict=clean -->`,created_at:'2026-10-14T00:00:02Z'};
+ const graph=metadata(finding,{lastEditedAt:'2026-10-14T00:00:03Z',updatedAt:'2026-10-14T00:00:03Z'});
+ assert.deepEqual(pendingReviewBodies([finding],[clean],[graph]).map(item=>item.id),[finding.id]);
+});
+
+test('review authority is shared across REST and GraphQL and excludes publisher and unrelated bots',()=>{
+ const {trustedReviewer}=require('./review-feedback.cjs');
+ for(const login of ['claude','chatgpt-codex-connector','gumnut-reviewer']) {
+  assert(trustedReviewer({login:`${login}[bot]`,type:'Bot'},'NONE'));
+  assert(trustedReviewer({login,__typename:'Bot'},'NONE'));
+ }
+ for(const association of ['OWNER','MEMBER','COLLABORATOR']) {
+  assert(trustedReviewer({login:'maintainer',type:'User'},association));
+  assert(trustedReviewer({login:'maintainer',__typename:'User'},association));
+ }
+ for(const [user,association] of [[{login:'outside',type:'User'},'NONE'],[{login:'unrelated[bot]',type:'Bot'},'MEMBER'],[{login:'gumnut-bot[bot]',type:'Bot'},'MEMBER'],[{login:'gumnut-bot[bot]',type:'User'},'MEMBER'],[{login:'gumnut-bot',__typename:'Bot'},'OWNER']])
+  assert.equal(trustedReviewer(user,association),false);
+});
+test('only trusted formal reviews including changes requests and trusted conversation comments enter pending work',()=>{
+ const trusted=review('maintainer','CHANGES_REQUESTED','Please fix the invariant.');
+ assert.deepEqual(pendingReviewBodies([trusted]),[trusted]);
+ for(const outsider of [{...trusted,author_association:'NONE'},{...trusted,user:{login:'unrelated[bot]',type:'Bot'}},{...trusted,user:{login:'gumnut-bot[bot]',type:'Bot'}}]) {
+  assert.deepEqual(pendingReviewBodies([outsider]),[]);
+  assert.deepEqual(pendingReviewBodies([{...outsider,state:'COMMENTED'}]),[]);
+  assert.deepEqual(pendingReviewBodies([],[{...outsider,created_at:trusted.submitted_at}]),[]);
+ }
+ const untrustedClear={...trusted,id:2,state:'APPROVED',author_association:'NONE',submitted_at:'2026-10-14T00:01:00Z'};
+ assert.deepEqual(pendingReviewBodies([trusted,untrustedClear]),[trusted]);
+ assert.deepEqual(pendingReviewBodies([trusted,{...untrustedClear,author_association:'MEMBER'}]),[]);
+});
+test('thread authority comes from the original author and is shared by the pure CLI',()=>{
+ const {trustedReviewThreads}=require('./review-feedback.cjs');
+ const comment=(login,type,association)=>({id:login,body:'Please preserve the invariant.',author:{login,__typename:type},authorAssociation:association});
+ const thread=(id,first,reply)=>({id,isResolved:false,comments:{nodes:[first,...(reply?[reply]:[])],pageInfo:{hasNextPage:false}}});
+ const human=comment('maintainer','User','MEMBER'),outsider=comment('outside','User','NONE');
+ const trusted=thread('trusted',human,outsider),ignored=thread('ignored',outsider,human);
+ const publisher=thread('publisher',comment('gumnut-bot','Bot','MEMBER'),human);
+ assert.deepEqual(trustedReviewThreads([ignored,publisher,trusted]),[trusted]);
+ assert.deepEqual(trustedReviewThreads([{...trusted,isResolved:true}]),[]);
+ assert.throws(()=>trustedReviewThreads([{...trusted,comments:{nodes:[{body:'missing authority'}],pageInfo:{hasNextPage:false}}}]),/author evidence/);
+ assert.throws(()=>trustedReviewThreads([{...trusted,comments:{...trusted.comments,pageInfo:{hasNextPage:true}}}]),/thread evidence/);
+ const {execFileSync}=require('node:child_process');
+ const output=execFileSync(process.execPath,[require.resolve('./review-feedback.cjs')],{input:JSON.stringify({reviews:[],comments:[],metadata:[],threads:[ignored,trusted,publisher]}),encoding:'utf8'});
+ assert.deepEqual(JSON.parse(output),{bodies:[],threads:[trusted]});
+});
+
+test('linked same-Bot Codex advisory inline findings classify a review wrapper as clean',()=>{
+ const wrapper=submitted('chatgpt-codex-connector[bot]','COMMENTED',`Codex Review: Here are some suggestions.\n\n**Reviewed commit:** \`${'a'.repeat(40)}\``);
+ const linked={id:50,pull_request_review_id:wrapper.id,user:wrapper.user,body:'[P3] Consider clearer wording.'};
+ const graph=[metadata(wrapper)];
+ assert.deepEqual(pendingReviewBodies([wrapper],[],graph,[linked]),[]);
+ for(const findings of [[],[{...linked,pull_request_review_id:99}],[{...linked,user:{login:'claude[bot]',type:'Bot'}}],
+   [{...linked,user:{...wrapper.user,type:'User'}}],[{...linked,body:'[P1] Preserve data'}],
+   [linked,{...linked,id:51,body:'[P1] Preserve data'}],[{...linked,body:'Please investigate this unclassified concern.'}]])
+   assert.deepEqual(pendingReviewBodies([wrapper],[],graph,findings).map(item=>item.id),[wrapper.id]);
+ const thread={id:'unresolved',isResolved:false,comments:{nodes:[{author:{login:'maintainer',__typename:'User'},authorAssociation:'MEMBER',body:'Preserve this invariant.'}],pageInfo:{hasNextPage:false}}};
+ const {execFileSync}=require('node:child_process');
+ const output=execFileSync(process.execPath,[require.resolve('./review-feedback.cjs')],{input:JSON.stringify({reviews:[wrapper],comments:[],metadata:graph,findings:[linked],threads:[thread]}),encoding:'utf8'});
+ assert.deepEqual(JSON.parse(output),{bodies:[],threads:[thread]});
 });

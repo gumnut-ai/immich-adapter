@@ -113,14 +113,16 @@ async function threads(api, repo, number) {
   throw new Error('Thread pagination limit exceeded');
 }
 
+const REVIEW_METADATA_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:100,after:$cursor){nodes{databaseId state body submittedAt updatedAt lastEditedAt commit{oid} author{login __typename}} pageInfo{hasNextPage endCursor}}}}}`;
+
 async function reviewMetadata(api, repo, number) {
   const [owner, name] = repo.split('/');
-  const query = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:100,after:$cursor){nodes{databaseId state body submittedAt updatedAt lastEditedAt commit{oid} author{login __typename}} pageInfo{hasNextPage endCursor}}}}}`;
+
   const result = new Map();
   const cursors = new Set();
   let cursor = null;
   for (let page = 0; page < 1000; page++) {
-    const data = await graphql(api, query, { owner, name, number: Number(number), cursor });
+    const data = await graphql(api, REVIEW_METADATA_QUERY, { owner, name, number: Number(number), cursor });
     const batch = connection(data.repository?.pullRequest?.reviews);
     for (const review of batch.nodes) {
       if (!positive(review.databaseId) || result.has(Number(review.databaseId))) throw new Error('Incomplete or duplicate GraphQL review metadata');
@@ -134,16 +136,18 @@ async function reviewMetadata(api, repo, number) {
   throw new Error('Review metadata pagination limit exceeded');
 }
 
-function joinReviewMetadata(reviews, metadata, bot) {
+function joinReviewMetadata(reviews, metadata, bot, {requireAll = false} = {}) {
   return reviews.map(review => {
     const source = [CLAUDE, CODEX, bot].includes(review.user?.login) && review.user?.type === 'Bot';
+    const strict = source || (requireAll && review.state !== 'PENDING');
     const meta = metadata.get(Number(review.id));
     if (!meta) {
-      if (source) throw new Error('Source review metadata unavailable');
+      if (strict) throw new Error('Source review metadata unavailable');
       return review;
     }
     if (!timestamp(meta.updatedAt) || (meta.submittedAt !== null && !timestamp(meta.submittedAt)) || (meta.lastEditedAt !== null && !timestamp(meta.lastEditedAt))) throw new Error('Invalid GraphQL review timestamps');
-    if (source && (meta.author?.__typename !== 'Bot' || restLogin(meta.author) !== review.user.login || !['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED', 'PENDING'].includes(review.state) || meta.state !== review.state || typeof review.body !== 'string' || meta.body !== review.body || !sha(review.commit_id) || meta.commit?.oid !== review.commit_id || (review.state !== 'PENDING' && !timestamp(meta.submittedAt)))) throw new Error('Source review metadata differs from REST evidence');
+    if (strict && (meta.author?.__typename !== review.user?.type || restLogin(meta.author) !== review.user.login || !['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED', 'PENDING'].includes(review.state) || meta.state !== review.state || typeof review.body !== 'string' || meta.body !== review.body || !sha(review.commit_id) || meta.commit?.oid !== review.commit_id || (review.state !== 'PENDING' && !timestamp(meta.submittedAt)))) throw new Error('Source review metadata differs from REST evidence');
+    if (requireAll && review.state !== 'PENDING' && (!timestamp(review.submitted_at) || Date.parse(meta.submittedAt) !== Date.parse(review.submitted_at))) throw new Error('Review submission metadata differs from REST evidence');
     // submittedAt is immutable. A COMMENTED concern changes when its body is
     // edited, so lastEditedAt provides the precise edit time. For dispositions,
     // updatedAt also captures state changes such as dismissal.
@@ -350,4 +354,4 @@ function createApi(token) {
     } catch { throw new Error('GitHub API request failed; evidence or publication outcome unavailable'); }
   };
 }
-module.exports = { evaluate, publish, createApi, pages, commentDecision, latestActiveFormal, latestReviewDecision };
+module.exports = { evaluate, publish, createApi, pages, commentDecision, latestActiveFormal, latestReviewDecision, REVIEW_METADATA_QUERY, reviewMetadata, joinReviewMetadata };

@@ -1,5 +1,5 @@
 // Trusted dispatch-source inventory and admission for native daemon PR follow-up.
-const {pendingReviewBodies} = require('./review-feedback.cjs');
+const {pendingReviewBodies,readReviewMetadata,trustedReviewThreads} = require('./review-feedback.cjs');
 const BOT = "gumnut-bot[bot]";
 const POLICIES = Object.freeze({
   librarian: {prefix: "librarian/", label: "librarian"},
@@ -25,16 +25,14 @@ async function readFeedback(github, owner, repo, number) {
     const result = await github.graphql(`query($owner:String!,$repo:String!,$number:Int!,$cursor:String) {
       repository(owner:$owner,name:$repo) { pullRequest(number:$number) {
         reviewThreads(first:100,after:$cursor) { pageInfo {hasNextPage endCursor}
-          nodes {id isResolved isOutdated path line comments(first:100) {pageInfo {hasNextPage} nodes {id body url createdAt author {login}}}}
+          nodes {id isResolved isOutdated path line comments(first:100) {pageInfo {hasNextPage} nodes {id body url createdAt authorAssociation author {login __typename}}}}
         }
       }}
     }`, {owner, repo, number, cursor});
     const page = result.repository?.pullRequest?.reviewThreads;
     if (!page || !Array.isArray(page.nodes) || typeof page.pageInfo?.hasNextPage !== "boolean") throw Error("Incomplete review-thread inventory");
-    for (const thread of page.nodes) {
-      if (thread.isResolved) continue;
-      const comments = thread.comments?.nodes;
-      if (!comments?.length || thread.comments.pageInfo?.hasNextPage !== false) throw Error("Incomplete unresolved thread evidence");
+    for (const thread of trustedReviewThreads(page.nodes)) {
+      const comments=thread.comments.nodes;
       feedback.push({kind:"thread", thread:thread.id, outdated:thread.isOutdated,
         path:thread.path, line:thread.line, comments});
     }
@@ -46,7 +44,10 @@ async function readFeedback(github, owner, repo, number) {
     {owner, repo, pull_number:number, per_page:100});
   const comments = await github.paginate(github.rest.issues.listComments,
     {owner, repo, issue_number:number, per_page:100});
-  for (const review of pendingReviewBodies(reviews, comments)) {
+  const findings=await github.paginate(github.rest.pulls.listReviewComments,
+    {owner, repo, pull_number:number, per_page:100});
+  const metadata=await readReviewMetadata({github,repository:`${owner}/${repo}`,number});
+  for (const review of pendingReviewBodies(reviews, comments,metadata,findings)) {
     feedback.push({kind:'review', id:review.node_id, body:review.body || '',
       url:review.html_url, author:{login:review.user.login},
       createdAt:review.submitted_at || review.created_at, commit:review.commit_id});
