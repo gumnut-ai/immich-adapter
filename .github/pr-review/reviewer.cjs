@@ -204,4 +204,4 @@ async function verifyDelivery({ github, context, number, head, base, agent, dete
   if (!await findingsDelivered(github, context.repo, number, delivered[0])) throw new Error('Formal review delivered but declared inline findings are missing or altered');
   return delivered[0].html_url;
 }
-module.exports = { request, admitComment, commentRunRequest, marker, coverageDeclaration, covered, admit, assertFresh, validateOutput, preparePublication, inlineMarker, verifyDelivery };
+module.exports = { bodyBlocking, request, admitComment, commentRunRequest, marker, coverageDeclaration, covered, admit, assertFresh, validateOutput, preparePublication, inlineMarker, verifyDelivery };

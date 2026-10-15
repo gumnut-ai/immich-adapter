@@ -10,12 +10,22 @@ async function verifyDelivery({
   report,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   attempts = 12,
+  manifest,
 }, policy) {
   const { owner, repo } = context.repo;
   const types = (env.OUTPUT_TYPES || "").split(",").filter(Boolean);
-  const number = Number(env.PR_NUMBER);
-  const hasPR = types.includes("create_pull_request");
+  let number = Number(env.PR_NUMBER);
+  const hasNewPR = types.includes("create_pull_request");
+  const hasPush = types.includes("push_to_pull_request_branch");
+  const hasPR = hasNewPR || hasPush;
   const hasNoop = types.includes("noop");
+  if(hasPush) {
+    if(!manifest) {
+      const fs=require('node:fs'),path=require('node:path');
+      manifest=JSON.parse(fs.readFileSync(path.join(env.RUNNER_TEMP || process.env.RUNNER_TEMP,'native-follow-up/manifest.json')));
+    }
+    number=manifest.target?.number;
+  }
   const failures = [];
   for (const stage of ["AGENT", "DETECTION", "PUBLISHER"]) {
     if (env[stage] !== "success")
@@ -23,10 +33,10 @@ async function verifyDelivery({
   }
   if (env.OUTPUT_STATUS !== "success")
     failures.push(`safe outputs: ${env.OUTPUT_STATUS || "unknown"}`);
-  if (hasPR === hasNoop) failures.push("expected exactly one of PR or noop");
+  if ([hasNewPR,hasPush,hasNoop].filter(Boolean).length !== 1) failures.push("expected exactly one new PR, existing push or noop");
   if (
     types.some(
-      (type) => !["create_pull_request", "add_reviewer", "noop"].includes(type),
+      (type) => !["create_pull_request", "push_to_pull_request_branch", "add_reviewer", "noop"].includes(type),
     )
   )
     failures.push("unexpected or incomplete safe output");
@@ -35,7 +45,7 @@ async function verifyDelivery({
   let ci;
   let reviewers = [];
   // Keep published-PR evidence visible even when another stage failed.
-  if (Number.isSafeInteger(number) && number > 0) {
+  if (Number.isSafeInteger(number) && number > 0 && !hasNoop) {
     pr = (await github.rest.pulls.get({ owner, repo, pull_number: number }))
       .data;
     report(`PR: ${pr.html_url}\nPublished head: ${pr.head.sha}`);
@@ -48,7 +58,19 @@ async function verifyDelivery({
       pr.base.ref !== context.payload.repository.default_branch
     )
       failures.push("unexpected PR identity or branch");
-    const commits = await github.paginate(github.rest.pulls.listCommits, {
+    let commits;
+    if (hasPush) {
+      const admitted=manifest.target;
+      if(manifest.repository!==`${owner}/${repo}` || !admitted || admitted.number!==number ||
+          admitted.branch!==pr.head.ref ||
+          !/^[a-f0-9]{40}$/.test(env.PUSH_SHA || '') || env.PUSH_SHA!==pr.head.sha)
+        throw Error('Incomplete delivery: push receipt does not match admitted PR and current head');
+      const comparison=(await github.rest.repos.compareCommitsWithBasehead({owner,repo,basehead:`${admitted.head}...${pr.head.sha}`})).data;
+      if(comparison.status!=='ahead' || comparison.merge_base_commit?.sha!==admitted.head ||
+          comparison.ahead_by<1 || comparison.ahead_by>3 || comparison.commits.length!==comparison.ahead_by)
+        throw Error('Incomplete delivery: selected head ancestry or incremental commit bound missing');
+      commits=comparison.commits;
+    } else commits = await github.paginate(github.rest.pulls.listCommits, {
       owner,
       repo,
       pull_number: number,
@@ -73,14 +95,17 @@ async function verifyDelivery({
         repo,
         pull_number: number,
       })
-    ).data.users;
-    reviewers = requested.filter(
+    ).data;
+    if(hasPush && (manifest.target.reviewers.some(login=>!requested.users.some(user=>user.login===login)) ||
+        manifest.target.teams.some(slug=>!requested.teams.some(team=>team.slug===slug))))
+      failures.push("existing human reviewer requests were removed");
+    reviewers = requested.users.filter(
       (user) =>
         user.type === "User" &&
         user.login !== pr.user.login &&
         isHumanReviewer(user.login),
     );
-    if (!reviewers.length)
+    if (!reviewers.length && !hasPush)
       failures.push("no eligible human review request recorded");
     report(
       `Requested human reviewers: ${reviewers.map((user) => user.login).join(", ") || "missing"}`,
@@ -118,7 +143,7 @@ async function verifyDelivery({
   } else if (hasPR) {
     failures.push("native publisher returned no PR number");
   }
-  if (hasNoop && types.includes("add_reviewer"))
+  if ((hasNoop || hasPush) && types.includes("add_reviewer"))
     failures.push("native noop is missing or has reviewer output");
   if (failures.length)
     throw new Error(

@@ -251,16 +251,7 @@ async function evaluate({ api, repo, number, bot }) {
         events.push({ ...reaction, verdict: { state: 'clean', url: `https://github.com/${repo}/pull/${number}`, commit: null, kind: 'pr-reaction', reactionId: Number(reaction.id) } });
       }
     }
-    let decision, decisionTime;
-    const precedence = { clean: 0, malformed: 1, concerns: 2 };
-    for (const event of ordered(events)) if (event.verdict && event.verdict.state !== 'incomplete') {
-      const time = eventTime(event);
-      if (!Number.isFinite(time)) throw new Error('Reviewer decision timestamp unavailable');
-      // GitHub timestamps can have only second precision. IDs across comment
-      // and review namespaces cannot prove which same-second decision was later.
-      if (time === decisionTime && precedence[decision.state] > precedence[event.verdict.state]) continue;
-      decision = event.verdict; decisionTime = time;
-    }
+    const { decision, decisionTime } = latestReviewDecision(events);
     if (decision?.state === 'clean') result.signoffs[name] = { ...decision, decidedAt: new Date(decisionTime).toISOString() };
     if (decision?.state === 'concerns' || latest.get(login)?.state === 'CHANGES_REQUESTED') concern = `${name} requested changes: ${decision?.url || latest.get(login)?.html_url || 'review evidence'}`;
     if (decision?.state === 'malformed') malformed = true;
@@ -283,6 +274,30 @@ async function evaluate({ api, repo, number, bot }) {
   if (!checks.length && !statuses.length) return { ...result, decision: 'waiting', reason: 'No current-head CI evidence' };
   if (checks.some(c => c.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(c.conclusion)) || statuses.some(s => s.state !== 'success') || workflowRuns.some(r => r.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(r.conclusion))) return { ...result, decision: 'waiting', reason: 'Observed current-head CI is pending or unsuccessful' };
   return { ...result, decision: 'approve', reason: 'Both standing signoffs, no significant concerns, and current-head CI passed', ci: { url: `https://github.com/${repo}/pull/${number}/checks`, checks: checks.length, statuses: statuses.length, workflows: workflowRuns.length } };
+}
+
+// Share ordering with daemon intake. Keep every finding after the last
+// unambiguous clear; a same-second clear cannot prove any concern was resolved.
+function latestReviewDecision(events) {
+  let decision, decisionTime;
+  let pending = [];
+  const groups = new Map();
+  const precedence = { clean: 0, malformed: 1, concerns: 2 };
+  for (const event of ordered(events)) if (event.verdict && event.verdict.state !== 'incomplete') {
+    const time = eventTime(event);
+    if (!Number.isFinite(time)) throw new Error('Reviewer decision timestamp unavailable');
+    if (!groups.has(time)) groups.set(time, []);
+    groups.get(time).push(event);
+    // IDs across review and comment namespaces cannot settle timestamp ties.
+    if (time === decisionTime && precedence[decision.state] > precedence[event.verdict.state]) continue;
+    decision = event.verdict; decisionTime = time;
+  }
+  for (const group of groups.values()) {
+    const findings = group.filter(event => event.verdict.state !== 'clean');
+    if (findings.length) pending.push(...findings);
+    else pending = [];
+  }
+  return { decision, decisionTime, pending };
 }
 
 async function publish({ api, publisher, repo, number, bot, runURL }) {
@@ -335,4 +350,4 @@ function createApi(token) {
     } catch { throw new Error('GitHub API request failed; evidence or publication outcome unavailable'); }
   };
 }
-module.exports = { evaluate, publish, createApi, pages };
+module.exports = { evaluate, publish, createApi, pages, commentDecision, latestActiveFormal, latestReviewDecision };

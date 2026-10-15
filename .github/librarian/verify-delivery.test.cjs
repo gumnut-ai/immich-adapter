@@ -164,3 +164,23 @@ test("each daemon rejects a PR from the other daemon's branch", async () => {
   await assert.rejects(verifyDelivery(f.args), /unexpected PR identity or branch/);
   assert.match(f.reports.join("\n"), /pull\/7/);
 });
+
+function followUpFixture() {
+  const f=fixture(),prior='a'.repeat(40),published='b'.repeat(40);
+  f.pr.head.sha=published;f.runs[0].head_sha=published;
+  f.args.env.OUTPUT_TYPES='push_to_pull_request_branch';f.args.env.PR_NUMBER='';f.args.env.PUSH_SHA=published;
+  f.args.manifest={repository:'owner/repo',target:{number:7,head:prior,branch:f.pr.head.ref,reviewers:['maintainer'],teams:[]}};
+  f.args.github.rest.pulls.listCommits=async()=>{throw Error('historic human commits must remain untouched');};
+  f.args.github.rest.pulls.listRequestedReviewers=async()=>({data:{users:f.users,teams:[]}});
+  f.comparison={status:'ahead',merge_base_commit:{sha:prior},ahead_by:1,commits:f.commits};
+  f.args.github.rest.repos={compareCommitsWithBasehead:async()=>({data:f.comparison})};
+  return f;
+}
+test('existing update verifies native receipt, append ancestry and only incremental identities',async()=>{
+  const f=followUpFixture();assert.equal(await verifyDelivery(f.args),'delivery-verified');
+});
+test('existing update rejects missing or stale receipt, rewrite and removed human requests',async()=>{
+  for(const mutate of [f=>f.args.env.PUSH_SHA='',f=>f.args.env.PUSH_SHA='c'.repeat(40),f=>f.comparison.merge_base_commit.sha='c'.repeat(40),f=>f.comparison.ahead_by=4,f=>f.args.manifest.target.reviewers.push('reviewer-two'),f=>f.args.manifest.target.teams.push('human-team'),f=>f.commits[0].commit.author.name='Human']) {
+    const f=followUpFixture();mutate(f);await assert.rejects(verifyDelivery(f.args),/Incomplete delivery/);
+  }
+});

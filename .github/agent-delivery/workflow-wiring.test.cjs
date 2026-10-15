@@ -10,7 +10,7 @@ for (const daemon of ["librarian", "maintainer"]) {
     const repair = "run: node .github/agent-delivery/prepare-reviewer-handler.cjs";
     assert.equal(source.split(repair).length, 2);
     assert.equal(lock.split(repair).length, 2);
-    assert.match(source, /safe-outputs:[\s\S]+?  steps:\n    - name: Resolve reviewer target[\s\S]+?if: contains\(needs.agent.outputs.output_types, 'create_pull_request'\)/);
+    assert.match(source, /safe-outputs:[\s\S]+?  steps:\n[\s\S]+?    - name: Resolve reviewer target[\s\S]+?if: contains\(needs.agent.outputs.output_types, 'create_pull_request'\)/);
     const safe = lock.slice(lock.indexOf("  safe_outputs:\n"), lock.indexOf("  verify_delivery:\n"));
     assert.ok(safe.includes(repair));
     assert.ok(safe.indexOf("uses: github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f") < safe.indexOf(repair));
@@ -54,5 +54,27 @@ for (const daemon of ["librarian", "maintainer"]) {
         assert.equal(actual, allowed, `${extension}: ${types}`);
       }
     }
+  });
+}
+
+for(const daemon of ['librarian','maintainer']) {
+  test(`${daemon} bounds existing updates with identical native scope and frozen admission`,()=>{
+    const source=fs.readFileSync(path.join(__dirname,`../workflows/${daemon}.md`),'utf8');
+    const lock=fs.readFileSync(path.join(__dirname,`../workflows/${daemon}.lock.yml`),'utf8');
+    const safe=lock.slice(lock.indexOf('  safe_outputs:\n'),lock.indexOf('  verify_delivery:\n'));
+    const match=safe.match(/GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: ("[^\n]+")/);
+    const config=JSON.parse(JSON.parse(match[1]));
+    assert.equal(config.push_to_pull_request_branch.max,1);
+    assert.equal(config.push_to_pull_request_branch.fallback_as_pull_request,false);
+    assert.equal(config.push_to_pull_request_branch.signed_commits,false);
+    for(const field of ['allowed_files','protected_files','protected_files_policy','protect_top_level_dot_folders'])
+      assert.deepEqual(config.push_to_pull_request_branch[field],config.create_pull_request[field],field);
+    assert(safe.indexOf('Guard native publication')<safe.indexOf('name: Process Safe Outputs'));
+    assert(safe.includes('validated.candidateHead!==proof.head'));
+    assert(source.indexOf('name: Record the exact verified candidate')>source.indexOf('post-steps:'));
+    assert(source.includes('git fetch origin "$ADMITTED_HEAD:refs/remotes/origin/$branch"'));
+    assert(source.indexOf('name: Retain immutable native admission')<source.indexOf('post-steps:'));
+    assert(source.includes('PUSH_SHA: ${{ needs.safe_outputs.outputs.push_commit_sha }}'));
+    assert(source.includes('name: Read immutable native admission'));
   });
 }
