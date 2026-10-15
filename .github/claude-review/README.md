@@ -10,6 +10,15 @@ may create a `COMMENTED` GitHub review to attach findings. The disabled native r
 The new reviewer is **disabled until explicitly enabled**. Static checks do not
 verify subscription authentication, model access, review quality, or delivery.
 
+## Shared implementation
+
+The runtime, metadata routing, helper configuration and sanitized reporting come
+from [gumnut-ai/automation](https://github.com/gumnut-ai/automation), pinned to
+one immutable commit in the caller workflows. This repository retains
+`INSTRUCTIONS.md`, the direct official Claude Action, credentials, permissions
+and activation gates. Shared implementation tests run in the automation
+repository; local workflow tests check the caller boundaries.
+
 ## Coverage and trust
 
 Once enabled, opened, synchronized, ready-for-review, and reopened events review
@@ -57,8 +66,9 @@ image digests already pinned by our native PR reviewer:
   receives a dummy OAuth bootstrap token and `ANTHROPIC_BASE_URL`; it receives
   no API-key or `apiKeyHelper` configuration. OAuth beta headers and explicit
   Opus/Haiku model names must survive forwarding.
-- [MCP gateway](https://github.com/github/gh-aw-mcpg/tree/v0.4.25) exposes the two
-  existing GitHub MCP servers over HTTP with fixed tool allowlists. The gateway
+- [MCP gateway](https://github.com/github/gh-aw-mcpg/tree/v0.4.25) exposes the GitHub reader,
+  inline-comment backend and target-bound summary backend over HTTP with fixed
+  tool allowlists. The gateway
   and backend containers hold the App token and trusted inline-comment action
   code outside the execution container. Only the gateway gets a Docker socket.
   Large-response payload files have a dedicated shared directory containing
@@ -70,7 +80,7 @@ upstream access. All containers are scoped to one CLI session. The gateway owns 
 instances; a session label identifies them for cleanup with the two sidecars on
 completion, failure, or forwarded cancellation. Pinned service images are pulled
 before the credentialed action starts, outside the short startup deadlines. Restricted mode ignores project/user
-settings; strict MCP configuration admits only the two gateway routes. The
+settings; strict MCP configuration admits only the three gateway routes. The
 built-in tools are discovery, the named helper, and native read/search tools;
 shell and file-writing tools remain unavailable. `dontAsk` allows the listed
 reads and comments and denies other mutations. The optional `haiku-helper`
@@ -79,7 +89,7 @@ uses Haiku 5.5 with reads only; Opus owns the assessment and posting.
 This follows Anthropic's
 [external credential proxy pattern](https://code.claude.com/docs/en/agent-sdk/secure-deployment#the-proxy-pattern)
 and its [subscription gateway requirements](https://code.claude.com/docs/en/llm-gateway#subscriptions-and-gateways).
-The upstream components provide the proxy and MCP transports; the local code
+The upstream components provide the proxy and MCP transports; the shared automation
 only launches them and supplies isolated configuration. AWF's generic custom
 header setting supports this composition, but upstream does not claim a tested
 Claude subscription integration. Dummy-credential Linux tests verify the
@@ -195,10 +205,11 @@ that comments reached the PR or that Claude completed the intended coverage.
 
 ## Checks and upstream references
 
-The credential-free contract tests run in the existing PR workflow checks job:
+Caller workflow tests run in the existing PR workflow checks job; shared
+runtime and isolation tests run in the automation repository:
 
 ```sh
-node --test .github/claude-review/*.test.cjs .github/claude-review/runtime/*.test.cjs
+node --test .github/claude-review/*.test.cjs
 actionlint .github/workflows/claude-review.yml .github/workflows/pr-review-tests.yml
 zizmor .github/workflows/claude-review.yml
 ```
