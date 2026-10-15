@@ -57,7 +57,7 @@ Include `advisory` on the first line of advisory findings.
 Append `<!-- gumnut-review-finding/v1 severity=significant -->` to findings
 that should be fixed before merge. Omit that marker on advisory findings.
 
-Post one compact summary with `mcp__github__add_issue_comment`. Lead with one
+Post one compact summary with `mcp__review_summary__add_review_summary`. Lead with one
 headline sentence that makes the outcome clear, for example **Claude review:
 Looks good — no issues found.** or **Claude review: Has concerns — <main concern>.**
 When review is incomplete, use **Claude review: Incomplete — <material gap>.**

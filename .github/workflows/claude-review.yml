@@ -47,10 +47,9 @@ jobs:
           ref: ${{ github.sha }} # PR target SHA, never the contributor head.
           persist-credentials: false
       - name: Dispatch trusted reviewer
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CLAUDE_REVIEW_ENABLED: ${{ vars.CLAUDE_PR_REVIEW_ENABLED }}
-        run: node .github/claude-review/dispatch.cjs dispatch
+        uses: gumnut-ai/automation/actions/claude-dispatch@792f9844161b7001d7c16c986b77322f19ad0cfd # v0.1.0
+        with:
+          enabled: ${{ vars.CLAUDE_PR_REVIEW_ENABLED }}
 
   review:
     if: >-
@@ -67,7 +66,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-      issues: write # GitHub's add_issue_comment tool posts the PR summary.
+      issues: write # The target-bound summary backend posts the PR summary.
       actions: read # Verify an automatic dispatch's originating PR event and actor.
       checks: write # Report review execution on the actual PR head.
       id-token: write # Exchange for the official Claude GitHub App's token.
@@ -78,12 +77,11 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Validate review request
+      - name: Validate review request and prepare isolated runtime
         id: prepare
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CLAUDE_REVIEW_ENABLED: ${{ vars.CLAUDE_PR_REVIEW_ENABLED }}
-        run: node .github/claude-review/dispatch.cjs prepare
+        uses: gumnut-ai/automation/actions/claude-prepare@792f9844161b7001d7c16c986b77322f19ad0cfd # v0.1.0
+        with:
+          enabled: ${{ vars.CLAUDE_PR_REVIEW_ENABLED }}
 
       - name: Require subscription authentication
         if: steps.prepare.outputs.eligible == 'true'
@@ -94,12 +92,6 @@ jobs:
             echo '::error::Configure CLAUDE_CODE_OAUTH_TOKEN before enabling Claude PR review.'
             exit 1
           fi
-
-      - name: Build credential-free Claude execution image
-        if: steps.prepare.outputs.eligible == 'true'
-        run: |
-          docker build --tag gumnut-claude-review:2.1.295 .github/claude-review/runtime
-          node -e 'require("./.github/claude-review/runtime/services.cjs").prepareImages().catch(() => process.exit(1))'
 
       - name: Review independently with Claude
         if: steps.prepare.outputs.eligible == 'true'
@@ -114,7 +106,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # The official SDK and App credentials stay on the runner. The custom
           # executable runs the CLI in an isolated, credential-free container.
-          path_to_claude_code_executable: ${{ github.workspace }}/.github/claude-review/runtime/launcher.cjs
+          path_to_claude_code_executable: ${{ steps.prepare.outputs.launcher }}
           # Only our validated metadata dispatcher may invoke as a bot.
           allowed_bots: github-actions
           # Override the app exchange's default contents:write permission.
@@ -123,57 +115,16 @@ jobs:
           include_fix_links: 'false'
           # Post final inline comments directly; no extra classification inference.
           classify_inline_comments: 'false'
-          prompt: |
-            Independently review PR #${{ steps.prepare.outputs.pr_number }} in ${{ github.repository }}.
-            Trusted policy SHA: ${{ github.sha }}; trusted target branch: ${{ github.event.repository.default_branch }}.
-            Use mcp__github__get_file_contents with that trusted SHA as sha to read
-            .github/claude-review/INSTRUCTIONS.md first, then follow it.
-            Use the live PR head and base, not the event's old snapshot.
-          # External gateway backends use the exchanged Claude App token.
-          # The launcher replaces bundled MCP routes; services.cjs owns the reader.
-          claude_args: >-
-            --model claude-opus-5-5
-            --effort medium
-            --max-turns 50
-            --restricted
-            --strict-mcp-config
-            --permission-mode dontAsk
-            --tools "ToolSearch,Agent,Read,Grep,Glob"
-            --agents .github/claude-review/agents.json
-            --mcp-config '{"mcpServers":{"github_inline_comment":{"command":"bun","args":["--no-env-file","--config=${GITHUB_ACTION_PATH}/bunfig.toml","run","${GITHUB_ACTION_PATH}/src/mcp/github-inline-comment-server.ts"],"env":{"REPO_OWNER":"${CLAUDE_REVIEW_OWNER}","REPO_NAME":"${CLAUDE_REVIEW_REPO}","PR_NUMBER":"${CLAUDE_REVIEW_PR_NUMBER}","CLASSIFY_INLINE_COMMENTS":"false"}}}}'
-            --allowedTools "ToolSearch,Agent(haiku-helper),Read,Grep,Glob,mcp__github__pull_request_read,mcp__github__get_file_contents,mcp__github__get_commit,mcp__github__list_commits,mcp__github__search_code,mcp__github__issue_read,mcp__github__add_issue_comment,mcp__github_inline_comment__create_inline_comment"
+          prompt: ${{ steps.prepare.outputs.prompt }}
+          claude_args: ${{ steps.prepare.outputs.claude_args }}
 
-      - name: Report safe failure category
-        if: failure() && steps.claude.outcome == 'failure'
-        # Read only the upstream runner artifact, never print its transcript.
-        run: node .github/claude-review/failure-diagnostic.cjs
-
-      - name: Report sanitized Claude usage
-        if: always() && steps.prepare.outputs.eligible == 'true'
-        env:
-          CLAUDE_EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
-        run: node .github/claude-review/usage.cjs
-
-      - name: Upload sanitized Claude usage
-        if: always() && steps.prepare.outputs.eligible == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Report review execution and sanitized usage
+        if: always()
+        uses: gumnut-ai/automation/actions/claude-report@792f9844161b7001d7c16c986b77322f19ad0cfd # v0.1.0
         with:
-          name: claude-review-usage
-          path: ${{ runner.temp }}/claude-review-usage.json
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Require successful inference
-        if: always() && !cancelled() && steps.prepare.outputs.eligible == 'true' && steps.claude.outputs.conclusion != 'success'
-        run: |
-          echo '::error::Claude review did not complete. This PR still needs review; inspect the action logs.'
-          exit 1
-
-      - name: Report review execution
-        if: always() && steps.prepare.outputs.check_id != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CHECK_ID: ${{ steps.prepare.outputs.check_id }}
-          REVIEW_JOB_STATUS: ${{ job.status }}
-          CLAUDE_CONCLUSION: ${{ steps.claude.outputs.conclusion }}
-        run: node .github/claude-review/dispatch.cjs finish
+          eligible: ${{ steps.prepare.outputs.eligible }}
+          check-id: ${{ steps.prepare.outputs.check_id }}
+          execution-file: ${{ steps.claude.outputs.execution_file }}
+          conclusion: ${{ steps.claude.outputs.conclusion }}
+          outcome: ${{ steps.claude.outcome }}
+          job-status: ${{ job.status }}

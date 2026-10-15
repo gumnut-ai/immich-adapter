@@ -155,12 +155,15 @@ event-driven jobs; GitHub schedules can be delayed. The workflow owns the interv
    already submitted. Inspect and reconcile any pending publication intent before
    retrying it; credential revocation does not undo an existing review.
 
-## Keep approval policy aligned
+## Shared implementation
 
-This repository keeps a local copy of the shared Gumnut standing-approval
-implementation. Carry policy fixes to the other deployments and compare
-`coordinator.cjs` and `request.cjs` byte-for-byte when updating them.
-Repository-local workflows and sample repository names in tests can differ.
+The coordinator and request routing are maintained in
+[gumnut-ai/automation](https://github.com/gumnut-ai/automation), using the same
+immutable commit as the Claude review workflow. The canonical
+[standing approval policy](https://github.com/gumnut-ai/automation/blob/792f9844161b7001d7c16c986b77322f19ad0cfd/README.md#standing-approval-policy)
+describes the shared decision rules. This repository retains event sources,
+schedules, permissions, activation modes and the protected publisher environment.
+Shared implementation tests run in the automation repository.
 
-Checks: `node --test .github/pr-approval/*.test.cjs`, the existing Claude routing
-tests, `actionlint` and `zizmor` on both new workflows and the Claude workflow.
+Checks: `node --test .github/pr-approval/*.test.cjs .github/claude-review/*.test.cjs`,
+`actionlint` and `zizmor` on the approval and Claude workflows.
