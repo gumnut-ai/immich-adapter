@@ -12,6 +12,8 @@ updates:
       timezone: America/Los_Angeles
     cooldown:
       default-days: 14
+      # Match the first-party exemption in pyproject.toml.
+      exclude: [gumnut-sdk]
     versioning-strategy: lockfile-only
     allow:
       - dependency-type: direct
