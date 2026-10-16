@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: uv
+    # Explicit targeting scopes these options to version updates, keeping
+    # lockfile-only constraints out of default-branch security-update jobs.
+    target-branch: main
+    assignees: [ternarybits]
+    directory: /
+    schedule:
+      interval: daily
+      time: "06:00"
+      timezone: America/Los_Angeles
+    cooldown:
+      default-days: 14
+      # Match the first-party exemption in pyproject.toml.
+      exclude: [gumnut-sdk]
+    versioning-strategy: lockfile-only
+    allow:
+      - dependency-type: direct
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+    groups:
+      python-dependencies:
+        applies-to: version-updates
+        patterns: ["*"]
+    open-pull-requests-limit: 1
