@@ -850,6 +850,7 @@ async def generate_sync_stream(
     request: SyncStreamDto,
     checkpoint_map: dict[SyncEntityType, Checkpoint],
     current_user: UserResponse,
+    completion_state: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Generate sync stream as JSON Lines (newline-delimited JSON).
@@ -1057,6 +1058,8 @@ async def generate_sync_stream(
         logger.info("Sync stream summary", extra=summary_extra)
 
         # Stream completion event
+        if completion_state is not None:
+            completion_state["sync_stream_complete"] = True
         yield make_sync_event(SyncEntityType.SyncCompleteV1, {}, "complete")
         logger.info("Sync stream completed", extra={"user_id": owner_id})
 

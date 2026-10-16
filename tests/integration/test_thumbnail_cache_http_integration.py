@@ -113,12 +113,24 @@ def test_session_rechecked_and_mutations_invalidate_even_after_failure(
             store.get_by_id.return_value = None
             assert client.get(path, headers=headers).status_code == 401
             assert sdk.assets.retrieve.await_count == 2
-            assert [call.args for call in count.call_args_list] == [
+            lookups = [
+                call
+                for call in count.call_args_list
+                if call.args[0] == "thumbnail.cache.lookup"
+            ]
+            assert [call.args for call in lookups] == [
                 ("thumbnail.cache.lookup", 1),
                 ("thumbnail.cache.lookup", 1),
                 ("thumbnail.cache.lookup", 1),
             ]
+            assert [call.kwargs["attributes"]["cache.outcome"] for call in lookups] == [
+                "miss",
+                "hit",
+                "miss",
+            ]
             assert [
-                call.kwargs["attributes"]["cache.outcome"]
+                call.args[1]
                 for call in count.call_args_list
-            ] == ["miss", "hit", "miss"]
+                if call.args[0] == "thumbnail.cache.removed_keys"
+                and call.kwargs["attributes"]["cache.reason"] == "mutation"
+            ] == [2]  # Pre-clear removes both aliases; empty post-clear loses none.

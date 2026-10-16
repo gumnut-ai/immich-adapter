@@ -12,6 +12,7 @@ from gumnut import AsyncGumnut, NotFoundError, PermissionDeniedError
 from gumnut.types.user_response import UserResponse
 
 from config.settings import get_settings
+from services.gumnut_http_client import GumnutHTTPClient
 from services.library_resolver import (
     LIBRARY_RECHECK_SECONDS,
     LibraryCache,
@@ -183,7 +184,7 @@ async def get_shared_http_client() -> httpx.AsyncClient:
     if _shared_http_client is None:
         async with _client_lock:
             if _shared_http_client is None:
-                _shared_http_client = httpx.AsyncClient(
+                _shared_http_client = GumnutHTTPClient(
                     timeout=30.0,
                     limits=httpx.Limits(
                         max_connections=100, max_keepalive_connections=20

@@ -9,7 +9,11 @@ from fastapi import Request
 from pydantic import ValidationError
 
 from config.settings import TestSettings
-from routers.utils.thumbnail_cache import _jwt_expiry, get_thumbnail_cache_context
+from routers.utils.thumbnail_cache import (
+    _jwt_expiry,
+    get_thumbnail_cache_context,
+    get_thumbnail_cache_bypass_reason,
+)
 
 
 def token(exp):
@@ -107,3 +111,26 @@ def test_settings_default_enabled_and_reject_unbounded_cache():
 def test_jwt_expiry_is_only_an_expiry_gate():
     expiry = time.time() + 10
     assert _jwt_expiry(token(expiry)) == expiry
+
+
+@pytest.mark.parametrize(
+    "credential,reason",
+    [
+        (token(0), "credential_expired"),
+        (token("tomorrow"), "context_unavailable"),
+        ("invalid", "context_unavailable"),
+    ],
+)
+def test_bypass_reasons_do_not_misclassify_unknown_expiry(credential, reason):
+    req = request(credential, "session")
+    with (
+        patch(
+            "routers.utils.thumbnail_cache.get_settings",
+            return_value=SimpleNamespace(thumbnail_metadata_cache_ttl_seconds=30),
+        ),
+        patch(
+            "routers.utils.thumbnail_cache.get_bound_library_id", return_value="library"
+        ),
+    ):
+        assert get_thumbnail_cache_context(req, Mock()) is None
+        assert get_thumbnail_cache_bypass_reason(req, None) == reason

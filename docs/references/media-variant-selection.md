@@ -1,6 +1,6 @@
 ---
 title: "Media Variant Selection"
-last-updated: 2026-10-10
+last-updated: 2026-10-15
 ---
 
 # Media Variant Selection
@@ -116,8 +116,10 @@ The Sentry counter `thumbnail.cache.lookup` emits once per thumbnail metadata
 lookup decision, before loading or waiting. Its `cache.outcome` attribute is
 `hit`, `miss`, `coalesced`, or `bypass`; `cache.enabled` indicates whether the
 configured TTL is positive, and `cache.ttl_seconds` records that TTL. Bypasses
-include disabled caching, unresolved credentials, expired cache eligibility,
-and in-flight capacity overflow. Failures and cancellations retain their
+carry `cache.bypass_reason`: `disabled`, `context_unavailable` (including
+unknown/malformed credential expiry), `credential_expired`, or
+`in_flight_capacity`. All thumbnail cache series include `cache.capacity`
+and the configured TTL/enabled attributes. Failures and cancellations retain their
 decision count. Requests rejected by authentication before a lookup are outside
 this denominator. No credentials, asset identifiers, cache keys, or URLs are
 added as metric attributes.
@@ -137,12 +139,50 @@ and does not add another incoming lookup. Compare both counters with upstream
 request counts and latency to measure load reduction; SDK retries, failures,
 worker routing, and mutation traffic affect that comparison.
 
+`thumbnail.cache.occupied_keys` and `thumbnail.cache.utilization` are native
+distributions observed once at each incoming lookup, **before** lazy expiry.
+Aliases and expired-but-stored keys count toward occupancy. The corresponding
+`thumbnail.cache.observation` counter carries `cache.full=true/false`;
+sum its values for `true` divided by the total measures request-weighted
+saturation. This is neither time spent full nor live-entry occupancy, and it
+cannot establish the percentage of workers full. There is no background
+sampler. `thumbnail.cache.in_flight` observes all owned loads, including
+invalidated/detached loads; `thumbnail.cache.detached` observes the subset no
+longer joinable. Overflow bypass loads are outside that owned-task limit.
+
+`thumbnail.cache.removed_keys` counts actual alias keys removed, grouped by
+`cache.reason`: `capacity`, `lookup_expiration`, `mutation`, `cdn_failure`, or
+`shutdown`. Capacity victims also carry `cache.victim=live/expired`, classified
+with the cache clock at eviction. Conservative pre/post mutation clears count
+only keys present on each side, including read-like POSTs; empty clears emit
+no removal. CDN failures remove only matching selections and aliases. These
+are key counts, not distinct assets or requests. A live eviction does not
+prove a later miss was caused by pressure: absent-key causes remain unknown,
+with no per-key history retained.
+
+`thumbnail.cache.load` counts owned loader invocations by
+`cache.outcome=success/error/timeout/cancelled`. Coalesced waiters and bypass
+loads do not add loader counts; successful loads need not be retained or
+delivered. Use [native request and stream metrics](../architecture/adapter-architecture.md#native-request-and-stream-metrics)
+for actual API attempts and completed-stream denominators.
+
 Native metrics are independent of transaction trace sampling. The
 `thumbnail.variant` span still reports `cache.hit`, `cache.coalesced`, and
 `cache.outcome` for timing analysis, including failed or cancelled loads, but
 sampled spans are not the hit-rate denominator. Confirm metric receipt and
 retention in the deployed Sentry project before relying on production ratios;
 transport failures or provider limits can drop telemetry.
+
+Sum counter **values**, never metric rows. Compare matching environment,
+release, TTL/capacity, workload and worker/restart cohorts. Verify native
+receipt, attribute access, retention and drop coverage in the Sentry project
+before reporting ratios; local emission does not establish provider receipt.
+Environment/release and any infrastructure process identity come from native
+SDK context; no per-process identifier is added here. Occupancy distributions
+aggregate request observations across workers when process metadata is absent.
+Keep capacity at 2048 until live evictions coincide with reduced reuse and more
+API traffic. A capacity comparison requires separate approval at fixed TTL,
+with measured memory, errors, latency and sync-completion guardrails.
 
 Video reuse emits the corresponding `video.cache.lookup`, `video.cache.refresh`,
 and `video.variant` names with the same outcome and TTL attributes. Analyze

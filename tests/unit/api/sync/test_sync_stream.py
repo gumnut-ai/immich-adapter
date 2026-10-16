@@ -1588,7 +1588,7 @@ class TestGetSyncStreamEndpoint:
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        mock_request = Mock()
+        mock_request = Mock(scope={})
         mock_request.state.session_token = None
 
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
@@ -1617,7 +1617,7 @@ class TestGetSyncStreamEndpoint:
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        mock_request = Mock()
+        mock_request = Mock(scope={})
         mock_request.state.session_token = str(TEST_SESSION_UUID)
 
         # Create checkpoint with matching updated_at cursor to cause auth user to be skipped
@@ -1663,7 +1663,7 @@ class TestGetSyncStreamEndpoint:
     @pytest.mark.anyio
     async def test_pending_sync_reset_sends_only_reset_event(self):
         """When session has isPendingSyncReset, only SyncResetV1 is sent."""
-        mock_request = Mock()
+        mock_request = Mock(scope={})
         mock_request.state.session_token = str(TEST_SESSION_UUID)
 
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
@@ -1704,7 +1704,7 @@ class TestGetSyncStreamEndpoint:
     async def test_session_moved_off_the_bound_library_sends_reset(self, bound):
         """A concurrent change after this request bound its library (or none)
         would pair its events with another library's sync state."""
-        mock_request = Mock()
+        mock_request = Mock(scope={})
         mock_request.state.session_token = str(TEST_SESSION_UUID)
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
         mock_session_store = AsyncMock(spec=SessionStore)
@@ -1735,7 +1735,7 @@ class TestGetSyncStreamEndpoint:
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        mock_request = Mock()
+        mock_request = Mock(scope={})
         mock_request.state.session_token = str(TEST_SESSION_UUID)
 
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
@@ -1774,7 +1774,7 @@ class TestGetSyncStreamEndpoint:
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
-        mock_request = Mock()
+        mock_request = Mock(scope={})
         mock_request.state.session_token = None
 
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
