@@ -1,6 +1,6 @@
 ---
 title: "Sync Stream Architecture"
-last-updated: 2026-10-09
+last-updated: 2026-10-16
 ---
 
 # Sync Stream Architecture
@@ -38,7 +38,18 @@ type is therefore a re-read, which is how `asset_moved_out` and
 
 ## Repeated Events for One Entity
 
-A first sync has no checkpoint, so it replays the library's whole event history, and one entity can appear in it once per change ever made to it. For the entity types in `_CURRENT_STATE_ENTITY_TYPES` the upsert is built from current state alone, so every one of those events would produce the same row. Their passes emit an entity at its first event and skip the rest, without reading the entity again; a person, album membership or stack a read did not return is likewise not read or reported again, because the feed holds only committed changes and the row is therefore deleted. Metadata is re-read: its read also misses an asset that is trashed or outside the session library, which can change mid-pass. The stream summary logs the skipped count as `repeat_event_skips`.
+A first sync has no checkpoint, so it replays the library's whole event
+history, and one entity can appear in it once per change ever made to it. For
+the entity types in `_CURRENT_STATE_ENTITY_TYPES` the upsert is built from
+current state alone, so every one of those events would produce the same row.
+Their passes emit an entity at its first event and skip the rest, without
+reading the entity again. A person or album-membership ID that a read omits is
+skipped without another read. A missing stack is different: a bulk-read miss
+alone does not establish deletion; the stack-specific guard in
+[Stacks](#stacks-stacksv1) must first explain the absence or confirm it with a
+direct read. Metadata is re-read: its read also misses an asset that is trashed
+or outside the session library, which can change mid-pass. The stream summary
+logs the skipped count as `repeat_event_skips`.
 
 A skipped event carries no ack. So the client's checkpoint still moves past a run of repeats, the pass emits a `SyncAckV1` line — a no-op the client echoes back — acked under the pass's own sync type at the last skipped cursor: once at the end of the pass, and at a page boundary whenever `_SKIPPED_REPEATS_PER_ACK` repeats have gone unacked. The client sends one ack request per run of same-type lines, so these lines are deliberately sparse. Only repeats of an emitted entity move the checkpoint this way; events for an absent entity never emitted a row and still do not.
 
