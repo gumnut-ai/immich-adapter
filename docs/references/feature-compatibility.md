@@ -1,6 +1,6 @@
 ---
 title: "Feature Compatibility"
-last-updated: 2026-09-10
+last-updated: 2026-10-16
 ---
 
 # Feature Compatibility
@@ -19,6 +19,14 @@ translation: uploads, timeline and albums, people and faces, search, map
 markers, stacks, trash, direct video playback, the implemented asset edits, and
 mobile sync. The [adapter architecture](../architecture/adapter-architecture.md)
 describes the current boundaries, translations, and failure behavior.
+
+The declared client-facing face schemas exclude biometric templates such as
+embeddings, facial landmarks, and person centroids.
+`tests/integration/test_face_template_disclosure.py` guards the REST OpenAPI
+document and adapter Pydantic models used by sync and WebSocket payloads against
+template-named fields and numeric containers. It cannot inspect free-form or
+untyped values, raw responses, or string contents; its docstring records those
+limits and the justified numeric-array allowlist.
 
 ### Product-dependent
 
