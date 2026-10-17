@@ -1201,7 +1201,7 @@ def check_freshness(
 EXTERNAL_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
 
 
-def scan_links(tokens) -> tuple[list[tuple[int, str]], bool]:
+def scan_links(tokens) -> tuple[list[tuple[int | None, str]], bool]:
     """One walk, two answers: (links worth resolving, unterminated comment found)."""
     return list(_iter_links_in(tokens)), has_unterminated_comment(tokens)
 
