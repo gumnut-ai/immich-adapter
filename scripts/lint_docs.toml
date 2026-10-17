@@ -25,6 +25,7 @@ map_paths = true
 map_status_section = true
 map_cells = true
 frontmatter = true
+architecture_detail = true
 
 [limits]
 # A recently bumped date stays valid across later pushes to the same branch.
