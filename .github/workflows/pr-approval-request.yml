@@ -49,7 +49,7 @@ jobs:
           package-manager-cache: false
       - name: Validate metadata request
         id: request
-        uses: gumnut-ai/automation/actions/pr-approval@792f9844161b7001d7c16c986b77322f19ad0cfd # v0.1.0
+        uses: gumnut-ai/automation/actions/pr-approval@95174453a681336348811bcfbe473c993e9b9390 # v0.1.1
         with:
           operation: source
           mode: ${{ vars.PR_APPROVAL_MODE }}
