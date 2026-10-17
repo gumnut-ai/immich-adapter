@@ -1,6 +1,6 @@
 ---
 title: Documentation Conventions
-last-updated: 2026-09-24
+last-updated: 2026-10-16
 ---
 
 # Documentation Conventions
@@ -33,6 +33,30 @@ or sweep existing documentation solely to adopt it.
 
 `AGENTS.md` is the quick-reference and Documentation Map. Detailed conventions, examples, and extended rationale belong in the appropriate docs directory.
 
+## Evergreen Level of Detail
+
+Architecture docs own system boundaries, responsibilities, cross-component
+flows, invariants, failure modes, and the rationale needed to understand that
+shape. Reference docs own reusable conventions and traps. Neither is a feature
+manual: a walkthrough of one shipped implementation belongs in its code or
+tests. When readers only need to find that implementation, a stable pointer is
+enough; in an architecture doc, it names a public entry point or module rather
+than a private helper or call site.
+
+Use the refactor test: if the prose must change when code is reorganized but no
+system boundary, invariant, interface contract, failure mode, or reusable rule
+changed, it is code in English and does not belong in an architecture or
+reference doc.
+
+Architecture prose usually fails the test when it cites private symbols or call
+sites, call or commit ordering, lists of the current callers, or copied
+constants. Keep such a detail only when it is itself a contract that several
+components or clients depend on, such as the Immich sync wire shapes. When
+review finds one imprecise, state the invariant it serves instead of making the
+mechanic exact. A lifted rule keeps the scope it has in code; answer a
+counterexample by scoping the rule or pointing at its owner, not by listing
+exceptions.
+
 ## Documentation Checks
 
 `scripts/lint_docs.py` runs in CI and locally from anywhere in the repo. It parses Markdown with `markdown-it-py`, declared in the script's own PEP 723 header, so `uv` resolves the dependency and there is no project to install:
@@ -53,6 +77,7 @@ It checks:
 | `map_status_section` | A design doc's map section matches its status |
 | `map_cells` | Consult-when cells remain one line and under the configured limit |
 | `frontmatter` | Required fields are present, non-empty, and valid |
+| `architecture_detail` | A doc under `docs/architecture/` cites no private symbol (an underscore-led, non-dunder segment of a backticked identifier) and no backticked migration revision ID in a paragraph about revisions |
 
 Only freshness is diff-scoped. The structural checks run repository-wide because moving one doc can break inbound links and map rows outside the diff.
 

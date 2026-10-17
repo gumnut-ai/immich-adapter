@@ -28,6 +28,8 @@ land dark and be enabled once its sweep is done):
   map_status_section  a design doc's map section matches its `status:`
   map_cells           the "Consult when..." cell stays one short line
   frontmatter         per-directory required frontmatter fields
+  architecture_detail an architecture doc cites no private symbol or migration
+                      revision ID in a code span
 
 `freshness` is diff-scoped — it needs a merge-base to compare against. Every
 other check runs repo-wide, which is the point: renaming a doc breaks inbound
@@ -70,7 +72,7 @@ from urllib.parse import unquote as percent_decode
 
 try:
     from markdown_it import MarkdownIt
-    from markdown_it.rules_inline import autolink, image, link
+    from markdown_it.rules_inline import autolink, backtick, image, link
 except ModuleNotFoundError:  # pragma: no cover - exercised by running without uv
     # Inlined rather than routed through `fail()`, which is not defined yet at
     # import time. Same output shape, so the message reads like every other one.
@@ -369,7 +371,8 @@ MD = MarkdownIt("js-default", {"html": True})
 # `](` delimiters in the block source (which needs a separate rule for images,
 # autolinks, escaped delimiters, and reference links, each wrong in its own way),
 # ask the parser: an inline rule runs with `state.pos` at the construct's start,
-# so wrapping the three rules that emit link-ish tokens records it directly.
+# so wrapping the rules that emit link-ish tokens and code spans records it
+# directly.
 SRC_POS = "src_pos"
 
 
@@ -388,8 +391,28 @@ def stamp_source_position(rule):
     return wrapped
 
 
-for _rule_name, _rule in (("link", link), ("image", image), ("autolink", autolink)):
+for _rule_name, _rule in (
+    ("link", link),
+    ("image", image),
+    ("autolink", autolink),
+    ("backticks", backtick),
+):
     MD.inline.ruler.at(_rule_name, stamp_source_position(_rule))
+
+
+def child_line(token, child) -> int | None:
+    """The 1-based source line of an inline token's child.
+
+    The block's own `map` plus the newlines before the child's recorded source
+    offset (see `stamp_source_position`), so it is the parser's answer rather
+    than a reconstruction. None when the block carries no map.
+    """
+    if not token.map:
+        return None
+    offset = child.meta.get(SRC_POS)
+    newlines = token.content.count("\n", 0, offset) if offset is not None else 0
+    return token.map[0] + 1 + newlines
+
 
 HTML_ANCHOR_TAG_RE = re.compile(r"<a\s[^>]*>", re.IGNORECASE | re.DOTALL)
 # `(?<![\w-])`, not `\b`: a hyphen is a non-word character, so `\b` matched the tail
@@ -1178,7 +1201,7 @@ def check_freshness(
 EXTERNAL_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
 
 
-def scan_links(tokens) -> tuple[list[tuple[int, str]], bool]:
+def scan_links(tokens) -> tuple[list[tuple[int | None, str]], bool]:
     """One walk, two answers: (links worth resolving, unterminated comment found)."""
     return list(_iter_links_in(tokens)), has_unterminated_comment(tokens)
 
@@ -1189,15 +1212,10 @@ def _iter_links_in(tokens):
     The label is discarded; comparing it to the target is a separate check. Only
     `link_open` counts — `image` is a distinct token type, so `![](...)` needs no
     lookbehind, and a link inside a code span, fence, or comment emits no token.
-
-    The line comes from the block's own `map` plus the newlines before the token's
-    recorded source offset (see `stamp_source_position`), so it is the parser's
-    answer rather than a reconstruction.
     """
     for token in tokens:
         if token.type != "inline" or not token.map:
             continue
-        block_line = token.map[0] + 1
         for child in token.children or []:
             # Not into an image's children. Those are its *alt text*, and
             # markdown-it still tokenizes link syntax there — `![alt [x][r]](i.png)`
@@ -1205,11 +1223,7 @@ def _iter_links_in(tokens):
             # hyperlink at all, so resolving that destination is a false positive.
             if child.type != "link_open":
                 continue
-            offset = child.meta.get(SRC_POS)
-            line = block_line
-            if offset is not None:
-                line += token.content.count("\n", 0, offset)
-            yield line, (child.attrGet("href") or "").strip()
+            yield child_line(token, child), (child.attrGet("href") or "").strip()
 
 
 def check_links_and_anchors(repo: Repo, enabled: frozenset[str]) -> list[Violation]:
@@ -1860,6 +1874,114 @@ def check_superseded_by(repo: Repo) -> list[Violation]:
 
 
 # --------------------------------------------------------------------------
+# architecture_detail
+# --------------------------------------------------------------------------
+
+# The two most mechanically detectable signs that an architecture doc has become
+# code in English. Deliberately narrow: ordering, caller lists, and the rest of
+# the level-of-detail rule stay with prose review, and every heuristic below
+# trades recall for a false-positive rate low enough that a hit is worth acting
+# on. Only inline code spans are read, so fenced examples, `_emphasis_`, and URL
+# fragments never reach it.
+
+# A code span that is wholly an identifier chain: an optional `<path>::` prefix,
+# then dotted identifiers, each optionally called with unnested arguments
+# (`super()._helper(x)`). Anything else is out of scope rather than parsed
+# further — a file path (`routes/_app.map.tsx`), a subscript (`_meta["..."]`,
+# MCP's public metadata field), or an expression.
+CHAIN_SEGMENT = r"([A-Za-z_]\w*)(?:\([^()]*\))?"
+SYMBOL_CHAIN_RE = re.compile(
+    rf"^(?:[^\s:]+::)?(?P<chain>{CHAIN_SEGMENT}(?:\.{CHAIN_SEGMENT})*)$"
+)
+# Each segment's name, consumed left to right so a call's arguments are skipped.
+CHAIN_SEGMENT_RE = re.compile(rf"{CHAIN_SEGMENT}(?:\.|$)")
+PRIVATE_SEGMENT_RE = re.compile(r"^_+[A-Za-z0-9]\w*$")
+DUNDER_RE = re.compile(r"^__\w+__$")
+# A bare file name parses as a dotted chain, and some frameworks give public
+# files a leading underscore (`_app.tsx`, `_layout.svelte`).
+FILE_SUFFIXES = frozenset(
+    (
+        "astro css html js json jsx md mdx mjs py sh sql svelte toml ts tsx yaml yml"
+    ).split()
+)
+
+# Alembic's generated revision IDs are 12 lowercase hex characters. A bare hash
+# is ambiguous — an abbreviated commit SHA has the same shape — so it counts only
+# as the entire code span (not a UUID tail or part of a migration file name), and
+# only in a block that talks about revisions.
+REVISION_ID_RE = re.compile(r"^(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{12}$")
+REVISION_CONTEXT_RE = re.compile(
+    r"\b(?:revision|migration|alembic|downgrad|upgrad)", re.IGNORECASE
+)
+
+
+def is_architecture_doc(rel: str) -> bool:
+    return "/docs/architecture/" in f"/{rel}"
+
+
+def private_symbol(span: str) -> bool:
+    """Whether a code span names a private symbol.
+
+    True when some segment of the identifier chain has a leading underscore and
+    is not a dunder. Only the part after `::` is a symbol; before it is a module
+    path, which is a stable pointer.
+    """
+    match = SYMBOL_CHAIN_RE.match(span)
+    if not match:
+        return False
+    chain = match["chain"]
+    segments = CHAIN_SEGMENT_RE.findall(chain)
+    if "(" not in chain and len(segments) > 1 and segments[-1] in FILE_SUFFIXES:
+        return False
+    return any(
+        PRIVATE_SEGMENT_RE.match(segment) and not DUNDER_RE.match(segment)
+        for segment in segments
+    )
+
+
+def check_architecture_detail(repo: Repo) -> list[Violation]:
+    violations: list[Violation] = []
+    for rel in repo.docs:
+        if not is_architecture_doc(rel):
+            continue
+        if repo.config.ignored(rel, "architecture_detail"):
+            continue
+        for token in repo.tokens(rel):
+            if token.type != "inline":
+                continue
+            # Read from the rendered text, not the raw source, so a hidden
+            # `<!-- migration -->` or a `/migration/` link target adds no context.
+            visible = " ".join(
+                child.content
+                for child in token.children or []
+                if child.type in ("text", "code_inline")
+            )
+            revision_context = bool(REVISION_CONTEXT_RE.search(visible))
+            for child in token.children or []:
+                if child.type != "code_inline":
+                    continue
+                span = child.content.strip()
+                if private_symbol(span):
+                    message = (
+                        f"`{span}` names a private symbol; point to a public "
+                        f"entry point or module, or state the rule it implements"
+                    )
+                elif revision_context and REVISION_ID_RE.match(span):
+                    message = (
+                        f"`{span}` cites a migration revision; describe the "
+                        f"behavior it established, not the revision that shipped it"
+                    )
+                else:
+                    continue
+                violations.append(
+                    Violation(
+                        "architecture_detail", rel, message, child_line(token, child)
+                    )
+                )
+    return violations
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -1871,6 +1993,7 @@ ALL_CHECKS = (
     "map_status_section",
     "map_cells",
     "frontmatter",
+    "architecture_detail",
 )
 
 
@@ -1879,7 +2002,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="uv run scripts/lint_docs.py",
         description=(
             "Documentation linter — link/anchor resolution, Documentation Map "
-            "rows, frontmatter, and `last-updated:` freshness. Runnable from "
+            "rows, frontmatter, `last-updated:` freshness, and architecture-doc "
+            "level of detail. Runnable from "
             "anywhere inside the repo."
         ),
     )
@@ -1968,6 +2092,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if "frontmatter" in enabled:
         violations.extend(check_frontmatter(repo))
+
+    if "architecture_detail" in enabled:
+        violations.extend(check_architecture_detail(repo))
 
     if args.fix:
         if fixed:
