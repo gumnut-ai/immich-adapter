@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version-file: .python-version
-      - uses: github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f # v0.89.21
+      - uses: github/gh-aw/actions/setup@85fb4251023c2dd043b96e1825abf5cd6d810d72 # v0.90.2
         with:
           destination: ${{ runner.temp }}/gh-aw/actions
       - name: Read uv version
