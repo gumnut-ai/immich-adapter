@@ -18,8 +18,7 @@ the reverse order, children first. Two retractions are emitted inline during
 the upsert phase: V1 face-geometry gating can emit `AssetFaceDeleteV1`, and an
 asset absent from the session library emits `AssetDeleteV1`. Keeping these
 retractions in feed order lets a later event in the same pass restore the row.
-This puts parents before child upserts and buffered child deletes before parent
-deletes. See the [sync stream event ordering design
+See the [sync stream event ordering design
 doc](../design-docs/sync-stream-event-ordering.md) for the full design rationale
 and history.
 
@@ -31,20 +30,19 @@ the event cursor remains unacknowledged.
 
 ## Event Classification
 
-Each event is either a delete, built from the event itself, or an upsert,
-which reads the entity's current state from the Gumnut API. Any event type the
-adapter does not know as a delete is an upsert, so an unfamiliar type is a
-re-read. That is how `asset_moved_out` and `asset_moved_in` are handled.
+Each event is either a delete, built from the event itself, or an upsert, which
+reads the entity's current state from the Gumnut API. Any event type the adapter
+does not know as a delete is an upsert, so an unfamiliar type is a re-read. That
+is how `asset_moved_out` and `asset_moved_in` are handled.
 
 ## Repeated Events for One Entity
 
-A first sync has no checkpoint, so it replays the library's whole event
-history, and one entity can appear in it once per change ever made to it. For
-an entity type whose upsert is built from current state alone, every one of
-those events would produce the same row. Such a pass emits an entity at its
-first event and skips the rest, without reading the entity again. A type whose
-upsert takes any value from the event payload must stay out. The stream summary
-logs the skipped count as `repeat_event_skips`.
+A first sync has no checkpoint, so it replays the library's whole event history,
+and one entity can appear in it once per change ever made to it. For an entity
+type whose upsert is built from current state alone, every one of those events
+would produce the same row. Such a pass emits an entity at its first event and
+skips the rest, without reading the entity again. The stream summary logs the
+skipped count as `repeat_event_skips`.
 
 An entity such a pass could not read is not read or reported again either,
 because the feed holds only committed changes and the row is therefore deleted.
@@ -53,7 +51,14 @@ once the guard in [Stacks](#stacks-stacksv1) has explained or confirmed the
 absence. Metadata is re-read: its read also misses an asset that is trashed or
 outside the session library, which can change mid-pass.
 
-A skipped event carries no ack. So the client's checkpoint still moves past a run of repeats, the pass emits a `SyncAckV1` line — a no-op the client echoes back — acked under the pass's own sync type at the last skipped cursor: once at the end of the pass, and at a page boundary once a set number of repeats have gone unacked. The client sends one ack request per run of same-type lines, so these lines are deliberately sparse. Only repeats of an emitted entity move the checkpoint this way; events for an absent entity never emitted a row and still do not.
+A skipped event carries no ack. So the client's checkpoint still moves past a
+run of repeats, the pass emits a `SyncAckV1` line — a no-op the client echoes
+back — acked under the pass's own sync type at the last skipped cursor: once at
+the end of the pass, and at a page boundary once a set number of repeats have
+gone unacked. The client sends one ack request per run of same-type lines, so
+these lines are deliberately sparse. Only repeats of an emitted entity move the
+checkpoint this way; events for an absent entity never emitted a row and still
+do not.
 
 Face, asset and album upserts are excluded because they take event-time values from the event payload (see the handling sections below), so two events for one entity can produce different rows. The album-user row derived from album events is current-state too, but its pass is left as it is: albums have few events.
 
@@ -61,7 +66,12 @@ Deduplication must not make a pass wait on a type's whole history. A client sync
 
 ## Deletion Events
 
-A delete event names the deleted entity by ID, which the adapter converts to its Immich UUID. For junction table deletions (e.g., `album_asset_removed`), the event's `payload` field carries the foreign keys since the record is hard-deleted. The feed is not in commit order, so a later re-add can sort ahead of the removal; the adapter re-reads each removed pair and upserts the current membership instead when it exists.
+A delete event names the deleted entity by ID, which the adapter converts to its
+Immich UUID. For junction table deletions (e.g., `album_asset_removed`), the
+event's `payload` field carries the foreign keys since the record is
+hard-deleted. The feed is not in commit order, so a later re-add can sort ahead
+of the removal; the adapter re-reads each removed pair and upserts the current
+membership instead when it exists.
 
 ## Asset Membership Is Read From the Session's Library
 
@@ -124,13 +134,20 @@ delete where it doesn't.
 
 The face pass decides the gate from each face's owning asset and, for the rest
 of the pass, does not read again an asset it found exposable (see
-`fetch_suppressed_face_ids`). An edit made after that read is therefore not
-seen by the pass; the row converges as it does for an edit made after the pass
-ends (see `docs/references/asset-edits-and-downloads.md`).
+`routers/api/sync/entity_fetch.py`). An edit made after that read is therefore
+not seen by the pass; the row converges as it does for an edit made after the
+pass ends (see `docs/references/asset-edits-and-downloads.md`).
 
 ## Face person_id Handling
 
-`face_created` events have person_id nulled out (face detection never assigns a person). `face_updated` events use the causally-consistent person_id from the event payload instead of current entity state. Payload person_ids are verified against current Gumnut state before the faces that carry them are emitted; a person the Gumnut API no longer finds is nulled out on the outgoing event, regardless of whether a `PersonV1` checkpoint exists. This prevents stale payload references (from clustering runs that predate a person's deletion) from leaking across sync cycles and causing FK violations on the client.
+`face_created` events have person_id nulled out (face detection never assigns a
+person). `face_updated` events use the causally-consistent person_id from the
+event payload instead of current entity state. Payload person_ids are verified
+against current Gumnut state before the faces that carry them are emitted; a
+person the Gumnut API no longer finds is nulled out on the outgoing event,
+regardless of whether a `PersonV1` checkpoint exists. This prevents stale
+payload references (from clustering runs that predate a person's deletion) from
+leaking across sync cycles and causing FK violations on the client.
 
 ## User Preferences (minimumFaces)
 
@@ -170,34 +187,34 @@ To cover this, `AlbumUsersV1` is its own sync type, read from the same Gumnut
 album events as `AlbumsV1/V2` and streamed **after** the album (FK parent) and
 after the owner `UserV1`. Each album fans out to two sync entities — the album
 (`AlbumV1/V2`) and its owner link (`AlbumUserV1`) — both derived from the same
-`AlbumResponse`. Gumnut is single-user with no album sharing, so every album
-has exactly one album-user: the owner (`role=owner`).
+`AlbumResponse`. Gumnut is single-user with no album sharing, so every album has
+exactly one album-user: the owner (`role=owner`).
 
-The album-user pass streams upserts only. Album-user *deletes* are owned by
-the album pass, which the v3 client always requests alongside it: an
-`album_deleted` event emits `AlbumDeleteV1`, and the client's
-`remoteAlbumUserEntity.albumId` FK cascades on album deletion — re-emitting the
-delete from the album-user pass would duplicate `AlbumDeleteV1`. No
-`AlbumUserDeleteV1` is emitted (Gumnut has no unshare operation).
+The album-user pass streams upserts only. Album-user *deletes* are owned by the
+album pass, which the v3 client always requests alongside it: an `album_deleted`
+event emits `AlbumDeleteV1`, and the client's `remoteAlbumUserEntity.albumId` FK
+cascades on album deletion — re-emitting the delete from the album-user pass
+would duplicate `AlbumDeleteV1`. No `AlbumUserDeleteV1` is emitted (Gumnut has
+no unshare operation).
 
 ## Stacks (StacksV1)
 
-`StacksV1` uses the event cursor and streams before assets. The mobile
-timeline hides an asset whose `stackId` names an unknown stack, so a
-`stack_created` or `stack_updated` event must emit `StackV1` before its member
-assets. The client has no stack foreign key (the column is indexed only); this
-is a visibility constraint. Deletes use the inverse order, with `StackDeleteV1`
-after asset deletes.
+`StacksV1` uses the event cursor and streams before assets. The mobile timeline
+hides an asset whose `stackId` names an unknown stack, so a `stack_created` or
+`stack_updated` event must emit `StackV1` before its member assets. The client
+has no stack foreign key (the column is indexed only); this is a visibility
+constraint. Deletes use the inverse order, with `StackDeleteV1` after asset
+deletes.
 
 `StackV1.primaryAssetId` is required but an unpinned Gumnut stack has no primary
 on its row. Sync therefore reads each stack together with its live member IDs,
 applies the shared effective-primary rule, and carries only the resulting UUID
-into the converter. A stack with a live member and no
-trashed pin costs no further request, which keeps a first sync inside the
-upstream rate limit. Only a pin outside the live members or a stack with no
-live member needs a concurrency-bounded member read. A row without member IDs
-or an empty all-state member read is retryable, because the row still exists;
-propagating the error truncates the stream before its cursor is acked.
+into the converter. A stack with a live member and no trashed pin costs no
+further request, which keeps a first sync inside the upstream rate limit. Only a
+pin outside the live members or a stack with no live member needs a
+concurrency-bounded member read. A row without member IDs or an empty all-state
+member read is retryable, because the row still exists; propagating the error
+truncates the stream before its cursor is acked.
 
 A stack row **absent from the bulk stack read** is likewise retriable —
 skipping it would advance the cursor past the stack while the asset pass still
@@ -252,26 +269,27 @@ the new one. A half-wired version streams without error but loses a guarantee:
   has its own converter, selected by the sync entity type.
 
 The invariant tests in `tests/unit/api/sync/test_sync_v2.py` and
-`test_sync_stream_ordering.py` fail a half-wired addition instead of letting it
-ship. Extend them when adding a version.
+`test_sync_stream_ordering.py` catch some half-wired additions, not all of
+them, so check each point above by hand and extend the tests when adding a
+version.
 
 ## No-Op Request Types
 
 Immich sync types that are accepted but have no Gumnut equivalent (e.g.,
-`AssetEditsV1`, which has no edit-history sync source) are declared as no-ops
-in `stream.py`: the stream emits nothing for them and logs them as intentional
+`AssetEditsV1`, which has no edit-history sync source) are declared as no-ops in
+`stream.py`: the stream emits nothing for them and logs them as intentional
 rather than unsupported. This sync no-op is separate from the implemented HTTP
 edit routes described in
-[`asset-and-media-handling.md`](../references/asset-and-media-handling.md):
-the routes support reading and writing the current Immich edit recipe, but
+[`asset-and-media-handling.md`](../references/asset-and-media-handling.md): the
+routes support reading and writing the current Immich edit recipe, but
 edit-history events are not streamed through this endpoint. A request type is
-supported only by streaming it or declaring it a no-op; accepting one without
-either silently drops it.
+supported only by streaming it or declaring it a no-op; marking one supported
+without either silently drops it.
 
-The v3 mobile client requests these types on every sync, so an undeclared one
-logs an unsupported-type warning each cycle. `UserMetadataV1` is synthesized
-from the user (see [User Preferences](#user-preferences-minimumfaces)) and must
-not be declared a no-op.
+The v3 mobile client requests these types on every sync, so an undeclared one is
+logged as unsupported each cycle. `UserMetadataV1` is synthesized from the user
+(see [User Preferences](#user-preferences-minimumfaces)) and must not be
+declared a no-op.
 
 ## Contract with the Gumnut API
 
