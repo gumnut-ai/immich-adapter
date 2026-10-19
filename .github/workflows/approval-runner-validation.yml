@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: gumnut-ai/automation
-          ref: 95174453a681336348811bcfbe473c993e9b9390 # v0.1.1
+          ref: 4d6cc8a814a4a790c1252d5a7ad72c7ce585ee77 # v0.1.2
           path: .approval-runtime
           persist-credentials: false
       # Synthetic API fixtures cover real submit/readback logic, never a live review.
@@ -37,17 +37,17 @@ jobs:
       # Empty activation is deliberate: exercise composite execution without API writes.
       - name: Inactive request
         id: source
-        uses: gumnut-ai/automation/actions/pr-approval@95174453a681336348811bcfbe473c993e9b9390 # v0.1.1
+        uses: gumnut-ai/automation/actions/pr-approval@4d6cc8a814a4a790c1252d5a7ad72c7ce585ee77 # v0.1.2
         with:
           operation: source
       - name: Inactive routing
         id: route
-        uses: gumnut-ai/automation/actions/pr-approval@95174453a681336348811bcfbe473c993e9b9390 # v0.1.1
+        uses: gumnut-ai/automation/actions/pr-approval@4d6cc8a814a4a790c1252d5a7ad72c7ce585ee77 # v0.1.2
         with:
           operation: route
       - name: Empty assessment
         id: inspect
-        uses: gumnut-ai/automation/actions/pr-approval@95174453a681336348811bcfbe473c993e9b9390 # v0.1.1
+        uses: gumnut-ai/automation/actions/pr-approval@4d6cc8a814a4a790c1252d5a7ad72c7ce585ee77 # v0.1.2
         with:
           operation: inspect
           mode: shadow
