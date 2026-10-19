@@ -22,7 +22,7 @@ export function fixtureConfig(env: Environment) {
   const count = env.IMMICH_SMOKE_ASSET_COUNT!
   requireField(/^[1-9][0-9]*$/.test(count) && Number.isSafeInteger(Number(count)), "IMMICH_SMOKE_ASSET_COUNT")
   return {
-    userId: env.IMMICH_SMOKE_USER_ID!, albumId: env.IMMICH_SMOKE_ALBUM_ID!,
+    userId: env.IMMICH_SMOKE_USER_ID!.toLowerCase(), albumId: env.IMMICH_SMOKE_ALBUM_ID!.toLowerCase(),
     albumName: env.IMMICH_SMOKE_ALBUM_NAME!, assetCount: Number(count),
   }
 }

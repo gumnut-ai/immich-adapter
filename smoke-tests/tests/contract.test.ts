@@ -44,6 +44,20 @@ test("complete fixture accepts user and seeded album with distinct UUIDs", () =>
   validateUser(user, fixture)
   validateAlbum(album, fixture)
 })
+test("uppercase fixture UUIDs match canonical adapter responses and request paths", async () => {
+  const userId = "abcdefab-1234-4567-89ab-abcdefabcdef"
+  const albumId = "fedcbafe-4321-4765-89ab-fedcbafedcba"
+  const canonicalUser = { ...user, id: userId, clusterGroupId: userId }
+  const canonicalAlbum = { ...album, id: albumId, albumUsers: [{ role: "owner", user: canonicalUser }] }
+  const urls: string[] = []
+  await runContract({
+    ...env, IMMICH_SMOKE_USER_ID: userId.toUpperCase(), IMMICH_SMOKE_ALBUM_ID: albumId.toUpperCase(),
+  }, fetchMock(async url => {
+    urls.push(url)
+    return response(urls.length === 1 ? canonicalUser : canonicalAlbum)
+  }))
+  assert.equal(urls[1], `https://immich-adapter-docker.onrender.com/api/albums/${albumId}`)
+})
 for (const [key, value] of Object.entries({
   id: otherId, clusterGroupId: otherId, isAdmin: true, status: "deleted", email: null,
   name: [], createdAt: "yesterday", updatedAt: null, profileChangedAt: "invalid",
