@@ -1,0 +1,20 @@
+{
+  "name": "@gumnut/immich-adapter-smoke-tests",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.2",
+  "scripts": {
+    "check": "bun run typecheck && bun run test && bun run checkly:validate",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests",
+    "checkly:validate": "bun scripts/validate-checkly-project.ts",
+    "checkly:test": "checkly test --config checkly.config.ts --no-record",
+    "checkly:deploy": "checkly deploy --config checkly.config.ts --preserve-resources --no-schedule-on-deploy --force"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "24.13.3",
+    "checkly": "8.20.0",
+    "typescript": "5.9.3"
+  }
+}
