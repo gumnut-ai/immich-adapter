@@ -24,7 +24,7 @@ jobs:
        (github.event.workflow_run.name != 'PR approval coordinator' &&
         ((startsWith(github.event.workflow_run.path, '.github/workflows/pr-approval-request.yml') && github.event.workflow_run.conclusion == 'success') ||
          (!startsWith(github.event.workflow_run.path, '.github/workflows/pr-approval-request.yml') && github.event.workflow_run.pull_requests[0].number))))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     outputs:
       eligible: ${{ steps.route.outputs.eligible }}
@@ -59,7 +59,7 @@ jobs:
     name: Approval publication
     needs: assess
     if: vars.PR_APPROVAL_MODE == 'publish' && needs.assess.outputs.eligible == 'true' && needs.assess.outputs.actionable == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     strategy:
       fail-fast: false

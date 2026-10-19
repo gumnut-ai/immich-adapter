@@ -167,3 +167,21 @@ Shared implementation tests run in the automation repository.
 
 Checks: `node --test .github/pr-approval/*.test.cjs .github/claude-review/*.test.cjs`,
 `actionlint` and `zizmor` on the approval and Claude workflows.
+
+## Runner qualification
+
+The request, assessment and publication jobs use `ubuntu-slim`. The isolated
+reviewer retains its existing runner. Rerun the read-only
+[runner validation workflow](../workflows/approval-runner-validation.yml) with
+`gh workflow run approval-runner-validation.yml --ref main`. It compares five
+independent jobs per runner using the pinned shared approval tests and no-op
+composite operations, without publisher credentials. It also runs when its own
+workflow file changes in a PR.
+
+Synthetic publication tests verify submit/readback and duplicate handling with
+API fixtures; they do not establish a counted GitHub approval. After merging a
+runner change, verify a real admitted request, assessment and protected publisher
+run, read back the review and ruleset result, and compare live job durations and
+per-job rounded costs. Keep the default-branch publisher restriction and current
+activation mode intact. Restore the previous runner labels if acquisition or
+publication fails; inspect pending publication intent before any retry.
