@@ -1,0 +1,66 @@
+name: Approval runner validation
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/approval-runner-validation.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    name: Runner validation (${{ matrix.runner }}, ${{ matrix.sample }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-slim]
+        sample: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Load the pinned approval regression suite
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: gumnut-ai/automation
+          ref: 95174453a681336348811bcfbe473c993e9b9390 # v0.1.1
+          path: .approval-runtime
+          persist-credentials: false
+      # Synthetic API fixtures cover real submit/readback logic, never a live review.
+      - name: Request, assessment and publication regressions
+        run: node --test .approval-runtime/pr-approval/*.test.cjs
+      # Empty activation is deliberate: exercise composite execution without API writes.
+      - name: Inactive request
+        id: source
+        uses: gumnut-ai/automation/actions/pr-approval@95174453a681336348811bcfbe473c993e9b9390 # v0.1.1
+        with:
+          operation: source
+      - name: Inactive routing
+        id: route
+        uses: gumnut-ai/automation/actions/pr-approval@95174453a681336348811bcfbe473c993e9b9390 # v0.1.1
+        with:
+          operation: route
+      - name: Empty assessment
+        id: inspect
+        uses: gumnut-ai/automation/actions/pr-approval@95174453a681336348811bcfbe473c993e9b9390 # v0.1.1
+        with:
+          operation: inspect
+          mode: shadow
+          bot-login: fixture-reviewer[bot]
+          numbers: '[]'
+      - name: Verify no-op results
+        env:
+          SOURCE_ELIGIBLE: ${{ steps.source.outputs.eligible }}
+          ROUTE_ELIGIBLE: ${{ steps.route.outputs.eligible }}
+          ACTIONABLE: ${{ steps.inspect.outputs.actionable }}
+          NUMBERS: ${{ steps.inspect.outputs.numbers }}
+        run: |
+          test "$SOURCE_ELIGIBLE" = false
+          test "$ROUTE_ELIGIBLE" = false
+          test "$ACTIONABLE" = false
+          test "$NUMBERS" = '[]'
