@@ -59,6 +59,12 @@ per-file-target-version = { "scripts/lint_docs.py" = "py311", "scripts/extract-i
 # the default set, so review new hits when bumping it.
 [tool.ruff.lint]
 extend-select = ["E4", "E7", "E9", "F"]
+ignore = [
+    # Broad catches mark deliberate isolation boundaries: Sentry's before_send,
+    # best-effort WebSocket and metrics side effects, cleanup paths, and CLI
+    # top-levels. Narrowing them would change which failures propagate.
+    "BLE001",
+]
 
 # FastAPI declares dependencies and request parameters as call defaults; those
 # calls build immutable markers, so they are safe as defaults.
@@ -69,7 +75,10 @@ extend-immutable-calls = ["fastapi.Body", "fastapi.Depends", "fastapi.Query"]
 # Tests read logging `extra` fields with getattr(record, "name"); pyright cannot
 # see those dynamic LogRecord attributes, so the direct access B009 wants fails
 # type-checking.
-"tests/**" = ["B009"]
+# Tests also build naive local-capture datetimes, which is how the Gumnut API
+# represents a capture time whose zone is unknown (see
+# docs/references/asset-field-conversion.md), and parse date-only strings.
+"tests/**" = ["B009", "DTZ001", "DTZ007"]
 
 # Ruff 0.16 also started formatting Python code blocks in Markdown by default.
 # Doc snippets are often fragments (keyword arguments, partial calls) that it
