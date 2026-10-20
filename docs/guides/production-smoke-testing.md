@@ -74,6 +74,11 @@ schedule a run on deployment. Manual workflow dispatch applies the current
 `main` definition and variables. A later deployment can undo an operator pause
 if the repository variable still requests activation.
 
+The dedicated project reconciles its own resources; removing or renaming a
+check deletes the old resource and its hosted run history on the next deploy.
+Retain required audit evidence before retirement. Unrelated projects and the
+existing shared alert channel remain outside this project's ownership.
+
 ## Validate and activate
 
 Use the existing Checkly native schedule when measured combined usage fits
