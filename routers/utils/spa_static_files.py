@@ -1,12 +1,13 @@
 """Custom StaticFiles handler for Single Page Applications with precompressed file support."""
 
-from fastapi.staticfiles import StaticFiles
-from starlette.responses import FileResponse
-from starlette.exceptions import HTTPException
-from starlette.datastructures import Headers
+import mimetypes
 import os
 import stat
-import mimetypes
+
+from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import Headers
+from starlette.exceptions import HTTPException
+from starlette.responses import FileResponse
 
 
 class SPAStaticFiles(StaticFiles):

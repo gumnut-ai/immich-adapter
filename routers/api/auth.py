@@ -21,9 +21,8 @@ from routers.utils.gumnut_client import (
     get_authenticated_gumnut_client,
     get_authenticated_gumnut_client_optional,
 )
-
-from services.websockets import emit_session_event, WebSocketEvent
 from services.session_store import SessionStore, get_session_store
+from services.websockets import WebSocketEvent, emit_session_event
 
 logger = logging.getLogger(__name__)
 
@@ -109,9 +108,7 @@ async def post_logout(
                 "OAuth provider does not support logout endpoint", exc_info=True
             )
         except Exception:
-            logger.error(
-                "Unexpected error while calling OAuth logout endpoint", exc_info=True
-            )
+            logger.exception("Unexpected error while calling OAuth logout endpoint")
 
     return LogoutResponseDto(
         redirectUri=redirect_uri,

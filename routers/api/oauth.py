@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from gumnut import AsyncGumnut, BadRequestError, omit
 
+from config.settings import get_settings
 from routers.api.constants import STUB_LICENSE_KEY
 from routers.immich_models import (
     LoginResponseDto,
@@ -16,12 +17,11 @@ from routers.immich_models import (
     UserResponseDto,
     UserStatus,
 )
+from routers.utils.cookies import AuthType, set_auth_cookies
+from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_unauthenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
 from routers.utils.oauth_utils import parse_callback_url
-from routers.utils.cookies import AuthType, set_auth_cookies
-from routers.utils.current_user import get_current_user
-from config.settings import get_settings
 from services.session_store import SessionStore, get_session_store
 from utils.jwt_encryption import JWTEncryptionError
 from utils.user_agent import extract_device_info
@@ -111,10 +111,9 @@ async def start_oauth(
         return OAuthAuthorizeResponseDto(url=result.url)
 
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Failed to get OAuth authorization URL",
             extra={"error": str(e)},
-            exc_info=True,
         )
         raise HTTPException(
             status_code=500,
@@ -224,10 +223,9 @@ async def finish_oauth(
         )
 
     except JWTEncryptionError:
-        logger.error(
+        logger.exception(
             "Failed to encrypt JWT for session storage",
             extra={"user_id": result.user.id},
-            exc_info=True,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -241,9 +239,8 @@ async def finish_oauth(
         # the login flow) and logs it at warning level.
         raise
     except Exception:
-        logger.error(
+        logger.exception(
             "Failed to complete OAuth authentication",
-            exc_info=True,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -260,7 +257,7 @@ async def link_oauth_account(
     Link OAuth account to existing user
     This is a stub implementation that returns a fake user response.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return UserAdminResponseDto(
         avatarColor=UserAvatarColor.primary,
         clusterGroupId=current_user.id,
@@ -319,7 +316,7 @@ async def unlink_oauth_account(
     Unlink OAuth account from user
     This is a stub implementation that returns a fake user response.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return UserAdminResponseDto(
         avatarColor=UserAvatarColor.primary,
         clusterGroupId=current_user.id,

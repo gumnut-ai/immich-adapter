@@ -1,16 +1,15 @@
-from fastapi import APIRouter
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
-from datetime import datetime, timezone
-from typing import List
+
+from fastapi import APIRouter
 
 from routers.immich_models import (
     ApiKeyCreateDto,
+    ApiKeyCreateResponseDto,
     ApiKeyResponseDto,
     ApiKeyUpdateDto,
-    ApiKeyCreateResponseDto,
     Permission,
 )
-
 
 router = APIRouter(
     prefix="/api/api-keys",
@@ -20,7 +19,7 @@ router = APIRouter(
 
 
 @router.get("")
-async def get_api_keys() -> List[ApiKeyResponseDto]:
+async def get_api_keys() -> list[ApiKeyResponseDto]:
     """
     Get all API keys.
     This is a stub implementation that returns an empty list.
@@ -38,8 +37,8 @@ async def create_api_key(request: ApiKeyCreateDto) -> ApiKeyCreateResponseDto:
         id=uuid4(),
         name=request.name or "API Key",
         permissions=request.permissions,
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
     )
     # Populate both response shapes for client compatibility.
     return ApiKeyCreateResponseDto(
@@ -63,8 +62,8 @@ async def get_my_api_key() -> ApiKeyResponseDto:
         id=uuid4(),
         name="Current API Key",
         permissions=[Permission.asset_read],
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
     )
 
 
@@ -78,8 +77,8 @@ async def get_api_key(id: UUID) -> ApiKeyResponseDto:
         id=id,
         name="API Key",
         permissions=[Permission.asset_read],
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
     )
 
 
@@ -93,8 +92,8 @@ async def update_api_key(id: UUID, request: ApiKeyUpdateDto) -> ApiKeyResponseDt
         id=id,
         name=request.name or "Updated API Key",
         permissions=request.permissions or [Permission.asset_read],
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
     )
 
 

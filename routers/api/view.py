@@ -1,8 +1,6 @@
-from typing import List
 from fastapi import APIRouter
 
 from routers.immich_models import AssetResponseDto
-
 
 router = APIRouter(
     prefix="/api/view",
@@ -12,7 +10,7 @@ router = APIRouter(
 
 
 @router.get("/folder")
-async def get_assets_by_original_path(path: str) -> List[AssetResponseDto]:
+async def get_assets_by_original_path(path: str) -> list[AssetResponseDto]:
     """
     Get all assets by their original folder path.
     """
@@ -20,7 +18,7 @@ async def get_assets_by_original_path(path: str) -> List[AssetResponseDto]:
 
 
 @router.get("/folder/unique-paths")
-async def get_unique_original_paths() -> List[str]:
+async def get_unique_original_paths() -> list[str]:
     """
     Get a list of unique original folder paths.
     """

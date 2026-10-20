@@ -9,17 +9,16 @@ os.environ["TESTING"] = "1"
 
 import base64
 import hashlib
-
-import pytest
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, Mock
-from datetime import datetime, timedelta, timezone
 from uuid import uuid4
-from typing import List, Any
 
 import httpx
+import pytest
 from gumnut import APIConnectionError, APIStatusError, NotFoundError
 
-from routers.immich_models import UserResponseDto, UserAvatarColor
+from routers.immich_models import UserAvatarColor, UserResponseDto
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
@@ -85,8 +84,8 @@ def sample_gumnut_album():
     album.id = uuid_to_gumnut_album_id(uuid4())
     album.name = "Test Album"
     album.description = "Test Description"
-    album.created_at = datetime.now(timezone.utc)
-    album.updated_at = datetime.now(timezone.utc)
+    album.created_at = datetime.now(UTC)
+    album.updated_at = datetime.now(UTC)
     album.asset_count = 5
     album.album_cover_asset_id = None
     album.start_date = None
@@ -125,7 +124,7 @@ def make_gumnut_asset(
     time every ordering rule in the adapter sorts on; pass distinct values
     whenever a test depends on which asset comes first.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     asset = Mock()
     asset.id = asset_id or uuid_to_gumnut_asset_id(uuid4())
     asset.local_datetime = local_datetime or now
@@ -204,7 +203,7 @@ def make_gumnut_stack(
     stack.asset_count = asset_count
     stack.asset_ids = asset_ids
     stack.origin = origin
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stack.created_at = now
     stack.updated_at = now
     return stack
@@ -232,7 +231,7 @@ def make_gumnut_stack_members(
     A real burst is sub-second, but only the ordering matters here.
     """
     trashed = trashed or set()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     first_captured_at = first_captured_at or now
     return [
         make_gumnut_asset(
@@ -317,8 +316,8 @@ def multiple_gumnut_albums():
         album.id = uuid_to_gumnut_album_id(uuid4())
         album.name = f"Test Album {i}"
         album.description = f"Test Description {i}"
-        album.created_at = datetime.now(timezone.utc)
-        album.updated_at = datetime.now(timezone.utc)
+        album.created_at = datetime.now(UTC)
+        album.updated_at = datetime.now(UTC)
         album.asset_count = i + 1
         album.album_cover_asset_id = None
         album.start_date = None
@@ -378,7 +377,7 @@ class MockSyncCursorPage:
     - ``page = await paginator`` (returns self with .data, used by entity_fetch)
     """
 
-    def __init__(self, items: List[Any], next_page: "MockSyncCursorPage | None" = None):
+    def __init__(self, items: list[Any], next_page: MockSyncCursorPage | None = None):
         self.items = items
         self.data = items
         self.next_page = next_page
@@ -388,7 +387,7 @@ class MockSyncCursorPage:
         # Like the SDK, an empty page never has a next one.
         return bool(self.data) and self.has_more
 
-    async def get_next_page(self) -> "MockSyncCursorPage":
+    async def get_next_page(self) -> MockSyncCursorPage:
         assert self.next_page is not None
         return self.next_page
 
@@ -430,7 +429,7 @@ class MockPaginatedListing:
     test-picked number with neither is what lets the two silently drift.
     """
 
-    def __init__(self, items: List[Any], page_size: int):
+    def __init__(self, items: list[Any], page_size: int):
         self._items = items
         self._page_size = page_size
         self.pages_fetched = 0
@@ -449,7 +448,7 @@ class MockPaginatedListing:
 def mock_sync_cursor_page():
     """Factory for creating mock SyncCursorPage objects."""
 
-    def _create_page(items: List[Any]):
+    def _create_page(items: list[Any]):
         return MockSyncCursorPage(items)
 
     return _create_page
@@ -471,8 +470,8 @@ def sample_gumnut_person():
     thumbnail_variant.mimetype = "image/jpeg"
     person.asset_urls = {"thumbnail": thumbnail_variant}
     person.asset_count = 5
-    person.created_at = datetime.now(timezone.utc)
-    person.updated_at = datetime.now(timezone.utc)
+    person.created_at = datetime.now(UTC)
+    person.updated_at = datetime.now(UTC)
     return person
 
 
@@ -494,8 +493,8 @@ def multiple_gumnut_people():
         thumbnail_variant.mimetype = "image/jpeg"
         person.asset_urls = {"thumbnail": thumbnail_variant}
         person.asset_count = (i + 1) * 5
-        person.created_at = datetime.now(timezone.utc)
-        person.updated_at = datetime.now(timezone.utc)
+        person.created_at = datetime.now(UTC)
+        person.updated_at = datetime.now(UTC)
         people.append(person)
     return people
 
@@ -509,5 +508,5 @@ def mock_current_user():
         name="Test User",
         avatarColor=UserAvatarColor.primary,
         profileImagePath="",
-        profileChangedAt=datetime.now(timezone.utc),
+        profileChangedAt=datetime.now(UTC),
     )

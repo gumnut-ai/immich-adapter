@@ -3,7 +3,7 @@
 import asyncio
 import inspect
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import Mock
 from uuid import UUID
 
@@ -43,11 +43,11 @@ from tests.conftest import (
     MockPaginatedListing,
     MockSyncCursorPage,
     make_gumnut_asset,
-    mock_list_stacks,
     make_gumnut_stack,
     make_gumnut_stack_members,
     make_gumnut_stack_with_members,
     make_sdk_status_error,
+    mock_list_stacks,
 )
 
 
@@ -612,7 +612,7 @@ def test_trashed_member_fixture_is_actually_trashed():
 
     assert members[0].trashed_at is None
     assert isinstance(members[1].trashed_at, datetime)
-    assert members[1].trashed_at.tzinfo is timezone.utc
+    assert members[1].trashed_at.tzinfo is UTC
     assert all(member.stack_id == stack.id for member in members)
 
 

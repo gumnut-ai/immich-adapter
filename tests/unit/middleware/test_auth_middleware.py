@@ -1,16 +1,17 @@
 """Unit tests for AuthMiddleware with mocked session store."""
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
-import httpx
 
+import httpx
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+
 from routers.middleware.auth_middleware import AuthMiddleware
-from services.session_store import Session
 from routers.utils.gumnut_client import _response_hook
+from services.session_store import Session
 from utils.jwt_encryption import JWTEncryptionError
 
 # Test UUIDs for consistent testing
@@ -25,7 +26,7 @@ TEST_JWT = "test.jwt.token"
 
 def create_test_session(session_id: UUID = TEST_SESSION_ID) -> Session:
     """Create a test session."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Session(
         id=session_id,
         user_id=TEST_USER_UUID,

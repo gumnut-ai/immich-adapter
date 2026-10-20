@@ -1,18 +1,14 @@
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from config.exceptions import configure_exception_handlers
-from config.sentry import init_sentry
-from config.logging import init_logging
-from contextlib import asynccontextmanager
 
-from routers.middleware.auth_middleware import AuthMiddleware
-from routers.middleware.observability_middleware import ObservabilityTagsMiddleware
-from routers.middleware.stream_metrics_middleware import StreamMetricsMiddleware
+from config.exceptions import configure_exception_handlers
+from config.logging import init_logging
+from config.sentry import init_sentry
+from config.settings import get_settings
 from routers import static, well_known
-from routers.utils.spa_static_files import SPAStaticFiles
-from routers.api.sync import routes as sync_routes
 from routers.api import (
     activities,
     admin,
@@ -27,8 +23,8 @@ from routers.api import (
     libraries,
     map,
     memories,
-    oauth,
     notifications,
+    oauth,
     partners,
     people,
     public,
@@ -46,14 +42,18 @@ from routers.api import (
     view,
 )
 from routers.api.download import close_archive_zip_executor
+from routers.api.sync import routes as sync_routes
+from routers.middleware.auth_middleware import AuthMiddleware
+from routers.middleware.observability_middleware import ObservabilityTagsMiddleware
+from routers.middleware.stream_metrics_middleware import StreamMetricsMiddleware
+from routers.utils.cdn_client import close_cdn_http_client
+from routers.utils.gumnut_client import close_shared_http_client
+from routers.utils.spa_static_files import SPAStaticFiles
 from services import websockets
 from services.streaming_upload import close_streaming_http_client
 from services.thumbnail_cache import close_thumbnail_cache
 from services.video_cache import close_video_cache
-from routers.utils.cdn_client import close_cdn_http_client
-from routers.utils.gumnut_client import close_shared_http_client
 from utils.redis_client import check_redis_connection, close_redis_client
-from config.settings import get_settings
 
 init_logging()
 init_sentry()

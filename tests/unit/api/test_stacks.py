@@ -1131,9 +1131,11 @@ class TestDeleteStacks:
         client = _removal_client()
         client.stacks.delete = AsyncMock(side_effect=_delete)
 
-        with caplog.at_level(logging.WARNING):
-            with pytest.raises(GumnutError) as exc_info:
-                await _delete_stacks(client, [first, second, third, fourth])
+        with (
+            caplog.at_level(logging.WARNING),
+            pytest.raises(GumnutError) as exc_info,
+        ):
+            await _delete_stacks(client, [first, second, third, fourth])
 
         assert exc_info.value is slow_error
         # Every id was attempted even though an earlier one failed.
@@ -1249,9 +1251,8 @@ class TestStackUpdateWebSocket:
         client = _removal_client()
         client.stacks.delete = AsyncMock(side_effect=make_sdk_status_error(500, "boom"))
 
-        with self._patch_emit() as mock_emit:
-            with pytest.raises(GumnutError):
-                await _delete_stacks(client, [uuid4(), uuid4()])
+        with self._patch_emit() as mock_emit, pytest.raises(GumnutError):
+            await _delete_stacks(client, [uuid4(), uuid4()])
 
         mock_emit.assert_not_awaited()
 

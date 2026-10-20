@@ -1,6 +1,6 @@
 """Tests for sync ack CRUD endpoints."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -57,7 +57,7 @@ class TestGetSyncAck:
         checkpoint_store.get_all.return_value = [
             Checkpoint(
                 entity_type=SyncEntityType.AssetV1,
-                updated_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
+                updated_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
                 cursor="event_cursor_abc",
             )
         ]
@@ -80,7 +80,7 @@ class TestGetSyncAck:
         checkpoint_store.get_all.return_value = [
             Checkpoint(
                 entity_type=SyncEntityType.AssetV1,
-                updated_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
+                updated_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
                 cursor=None,
             )
         ]

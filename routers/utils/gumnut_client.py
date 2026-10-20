@@ -2,11 +2,11 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
 from functools import partial
 
 import httpx
-from contextvars import ContextVar
-from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request, status
 from gumnut import AsyncGumnut, NotFoundError, PermissionDeniedError
 from gumnut.types.user_response import UserResponse
@@ -142,7 +142,7 @@ async def forget_bound_library_if_gone(status_code: int, detail: str) -> None:
     try:
         await library.forget()
     except Exception:
-        logger.error("Failed to drop cached library", exc_info=True)
+        logger.exception("Failed to drop cached library")
 
 
 async def _response_hook(response: httpx.Response) -> None:

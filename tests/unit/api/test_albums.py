@@ -3,46 +3,48 @@
 import asyncio
 import logging
 from copy import copy
-from datetime import datetime, timedelta, timezone
-
-import pytest
-import httpx
-from fastapi import HTTPException
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock, call
-from gumnut import APIStatusError, AsyncGumnut, NotFoundError, omit
-from gumnut.types.albums import AssetsAssociationAddResponse
 from uuid import uuid4
 
-from tests.conftest import make_sdk_connection_error, make_sdk_status_error
-from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
+import httpx
+import pytest
+from fastapi import HTTPException
+from gumnut import APIStatusError, AsyncGumnut, NotFoundError, omit
+from gumnut.types.albums import AssetsAssociationAddResponse
+
 from routers.api.albums import (
-    get_all_albums,
-    get_album_statistics,
+    add_assets_to_album,
+    add_assets_to_albums,
+    create_album,
+    delete_album,
     get_album_info,
     get_album_map_markers,
-    create_album,
-    add_assets_to_album,
-    update_album,
+    get_album_statistics,
+    get_all_albums,
     remove_asset_from_album,
-    delete_album,
-    add_assets_to_albums,
+    update_album,
+)
+from routers.api.albums import (
     router as albums_router,
 )
-from routers.utils.map_markers import GEOTAGGED_WORLD_BBOX
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.immich_models import (
+    AlbumsAddAssetsDto,
     AlbumUserRole,
+    BulkIdErrorReason,
+    BulkIdsDto,
     CreateAlbumDto,
     UpdateAlbumDto,
-    BulkIdsDto,
-    AlbumsAddAssetsDto,
-    BulkIdErrorReason,
 )
 from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
-    safe_uuid_from_asset_id,
 )
+from routers.utils.map_markers import GEOTAGGED_WORLD_BBOX
+from tests.conftest import make_sdk_connection_error, make_sdk_status_error
 
 
 def _add_response(
@@ -165,20 +167,18 @@ class TestGetAllAlbums:
 
         # Naive dates become tz-aware with the wall-clock preserved (keepLocalTime).
         assert result[0].startDate == datetime(
-            2011, 5, 7, 16, 17, 59, 500000, tzinfo=timezone.utc
+            2011, 5, 7, 16, 17, 59, 500000, tzinfo=UTC
         )
         assert result[0].endDate == datetime(
-            2013, 7, 21, 19, 55, 13, 700000, tzinfo=timezone.utc
+            2013, 7, 21, 19, 55, 13, 700000, tzinfo=UTC
         )
         # None stays None.
         assert result[1].startDate is None
         assert result[1].endDate is None
         # Aware dates keep their wall-clock and are re-labeled UTC (not converted),
         # so the album's range matches the local times shown on its assets.
-        assert result[2].startDate == datetime(
-            2020, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-        )
-        assert result[2].endDate == datetime(2020, 1, 2, 22, 30, 0, tzinfo=timezone.utc)
+        assert result[2].startDate == datetime(2020, 1, 1, 10, 0, 0, tzinfo=UTC)
+        assert result[2].endDate == datetime(2020, 1, 2, 22, 30, 0, tzinfo=UTC)
 
     @pytest.mark.anyio
     async def test_get_all_albums_with_asset_id(
@@ -630,8 +630,8 @@ class TestCreateAlbum:
         current_album = copy(sample_gumnut_album)
         current_album.asset_count = sample_gumnut_album.asset_count + 1
         current_album.album_cover_asset_id = gumnut_asset_ids[1]
-        current_album.start_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        current_album.end_date = datetime(2026, 2, 1, tzinfo=timezone.utc)
+        current_album.start_date = datetime(2026, 1, 1, tzinfo=UTC)
+        current_album.end_date = datetime(2026, 2, 1, tzinfo=UTC)
         current_album.updated_at = sample_gumnut_album.updated_at + timedelta(seconds=1)
         mock_client = Mock()
         mock_client.albums.create = AsyncMock(return_value=sample_gumnut_album)

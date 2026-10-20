@@ -6,11 +6,11 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from tests.conftest import make_gumnut_asset, make_sdk_status_error
 from routers.api.assets import view_asset
 from routers.immich_models import AssetMediaSize
 from routers.utils.thumbnail_cache import ThumbnailCacheContext
 from services.thumbnail_cache import ThumbnailCache
+from tests.conftest import make_gumnut_asset, make_sdk_status_error
 
 
 def asset(url="https://cdn.example.com/current", thumbhash="known-hash"):

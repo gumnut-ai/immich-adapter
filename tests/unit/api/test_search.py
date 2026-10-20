@@ -1,17 +1,18 @@
 """Tests for /search/* endpoints."""
 
-import pytest
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
-from datetime import datetime, timezone
+
+import pytest
 
 from routers.api.search import (
     _fetch_month_assets_at_offsets,
     _is_criterion_less_enumeration,
     get_explore_data,
-    search_person,
-    search_assets,
     search_asset_statistics,
+    search_assets,
+    search_person,
     search_random,
     search_smart,
 )
@@ -19,8 +20,8 @@ from routers.immich_models import (
     AssetOrder,
     AssetTypeEnum,
     AssetVisibility,
-    MetadataSearchDto,
     BoolFilter,
+    MetadataSearchDto,
     RandomSearchDto,
     SearchFilter,
     SearchOrder,
@@ -50,8 +51,8 @@ def _make_person(
     person.birth_date = datetime(1990, 1, 1).date()
     person.is_favorite = False
     person.is_hidden = is_hidden
-    person.created_at = datetime.now(timezone.utc)
-    person.updated_at = datetime.now(timezone.utc)
+    person.created_at = datetime.now(UTC)
+    person.updated_at = datetime.now(UTC)
     return person
 
 
@@ -170,6 +171,7 @@ class TestSearchPerson:
     async def test_sdk_error_propagates(self):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -202,9 +204,9 @@ class TestSearchStatistics:
     async def test_returns_total_from_counts(self):
         """Test that statistics sums bucket counts."""
         buckets = [
-            _make_count_bucket(100, datetime(2024, 1, 1, tzinfo=timezone.utc)),
-            _make_count_bucket(200, datetime(2024, 2, 1, tzinfo=timezone.utc)),
-            _make_count_bucket(50, datetime(2024, 3, 1, tzinfo=timezone.utc)),
+            _make_count_bucket(100, datetime(2024, 1, 1, tzinfo=UTC)),
+            _make_count_bucket(200, datetime(2024, 2, 1, tzinfo=UTC)),
+            _make_count_bucket(50, datetime(2024, 3, 1, tzinfo=UTC)),
         ]
         counts_response = Mock()
         counts_response.data = buckets
@@ -266,6 +268,7 @@ class TestSearchStatistics:
     async def test_sdk_error_propagates(self):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -290,7 +293,7 @@ class TestSearchMetadata:
         mock_client = Mock()
         mock_client.search.search = AsyncMock(return_value=search_response)
 
-        taken_after = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        taken_after = datetime(2024, 1, 1, tzinfo=UTC)
         request = MetadataSearchDto(
             description="sunset",
             takenAfter=taken_after,
@@ -507,9 +510,9 @@ class TestSearchMetadata:
         gumnut_asset.original_file_name = "sunset.jpg"
         gumnut_asset.mime_type = "image/jpeg"
         gumnut_asset.thumbhash = None
-        gumnut_asset.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        gumnut_asset.updated_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        gumnut_asset.local_datetime = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        gumnut_asset.created_at = datetime(2024, 6, 1, tzinfo=UTC)
+        gumnut_asset.updated_at = datetime(2024, 6, 1, tzinfo=UTC)
+        gumnut_asset.local_datetime = datetime(2024, 6, 1, tzinfo=UTC)
         gumnut_asset.width = 1920
         gumnut_asset.height = 1080
         gumnut_asset.duration = None
@@ -549,6 +552,7 @@ class TestSearchMetadata:
     async def test_sdk_error_propagates(self, mock_current_user):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -773,7 +777,7 @@ class TestCriterionLessEnumeration:
                     withExif=True,
                     order=AssetOrder.asc,
                     visibility=AssetVisibility.timeline,
-                    trashedAfter=datetime(1, 1, 1, tzinfo=timezone.utc),
+                    trashedAfter=datetime(1, 1, 1, tzinfo=UTC),
                     isFavorite=True,
                     rating=5,
                 )
@@ -816,8 +820,8 @@ class TestCriterionLessEnumeration:
         "request_kwargs",
         [
             {"description": "sunset"},
-            {"takenAfter": datetime(2024, 1, 1, tzinfo=timezone.utc)},
-            {"takenBefore": datetime(2024, 1, 1, tzinfo=timezone.utc)},
+            {"takenAfter": datetime(2024, 1, 1, tzinfo=UTC)},
+            {"takenBefore": datetime(2024, 1, 1, tzinfo=UTC)},
             {"personIds": [uuid4()]},
             {"albumIds": [uuid4()]},
             {"tagIds": [uuid4()]},
@@ -844,7 +848,7 @@ class TestSearchMetadataEnumeration:
     ):
         """A filter-less request lists assets instead of hitting search.search
         (which 400s on an empty criterion and aborts immich-go)."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         assets = [_make_search_asset(now) for _ in range(3)]
 
         mock_client = Mock()
@@ -873,7 +877,7 @@ class TestSearchMetadataEnumeration:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """An empty filter stays on the criterion-less listing path."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         assets = [_make_search_asset(now) for _ in range(2)]
 
         mock_client = Mock()
@@ -953,7 +957,7 @@ class TestSearchMetadataEnumeration:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """Page length supplies deprecated total; nextPage drives traversal."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         assets = [_make_search_asset(now) for _ in range(5)]
 
         mock_client = Mock()
@@ -984,7 +988,7 @@ class TestSearchMetadataEnumeration:
     @pytest.mark.anyio
     async def test_stops_after_requested_page_lookahead(self, mock_current_user):
         """Cursor iteration stops after one asset beyond the requested page."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         assets = [_make_search_asset(now) for _ in range(10)]
         consumed: list[str] = []
 
@@ -1014,7 +1018,7 @@ class TestSearchMetadataEnumeration:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """A full final page has no nextPage when no lookahead asset exists."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         assets = [_make_search_asset(now) for _ in range(4)]
 
         mock_client = Mock()
@@ -1036,7 +1040,7 @@ class TestSearchMetadataEnumeration:
     ):
         """A page beyond the last returns no items and no nextPage, so immich-go
         stops rather than looping."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         assets = [_make_search_asset(now) for _ in range(3)]
 
         mock_client = Mock()
@@ -1075,7 +1079,7 @@ class TestSearchMetadataEnumeration:
     ):
         """size=1000 is clamped to the 200 per-page ceiling, so a >200 library
         is paged rather than dumped in one oversized page."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         assets = [_make_search_asset(now) for _ in range(201)]
 
         mock_client = Mock()
@@ -1096,7 +1100,7 @@ class TestSearchMetadataEnumeration:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """immich-go's trashed pass sends trashedAfter; it selects the trashed set."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         trashed = _make_search_asset(now)
         trashed.trashed_at = now
 
@@ -1105,9 +1109,7 @@ class TestSearchMetadataEnumeration:
         mock_client.search.search = AsyncMock()
 
         result = await search_assets(
-            request=MetadataSearchDto(
-                trashedAfter=datetime(1, 1, 1, tzinfo=timezone.utc)
-            ),
+            request=MetadataSearchDto(trashedAfter=datetime(1, 1, 1, tzinfo=UTC)),
             client=mock_client,
             current_user=mock_current_user,
         )
@@ -1122,11 +1124,11 @@ class TestSearchMetadataEnumeration:
     ):
         """A real trashedAfter drops assets trashed before it (the min sentinel
         immich-go sends keeps everything, but a genuine bound is respected)."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         old = _make_search_asset(now)
-        old.trashed_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        old.trashed_at = datetime(2024, 6, 1, tzinfo=UTC)
         recent = _make_search_asset(now)
-        recent.trashed_at = datetime(2024, 6, 20, tzinfo=timezone.utc)
+        recent.trashed_at = datetime(2024, 6, 20, tzinfo=UTC)
 
         mock_client = Mock()
         mock_client.assets.list = Mock(
@@ -1134,9 +1136,7 @@ class TestSearchMetadataEnumeration:
         )
 
         result = await search_assets(
-            request=MetadataSearchDto(
-                trashedAfter=datetime(2024, 6, 10, tzinfo=timezone.utc)
-            ),
+            request=MetadataSearchDto(trashedAfter=datetime(2024, 6, 10, tzinfo=UTC)),
             client=mock_client,
             current_user=mock_current_user,
         )
@@ -1151,17 +1151,17 @@ class TestSearchMetadataEnumeration:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """Filtered-out trash does not consume a numeric page position."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         old_1 = _make_search_asset(now)
-        old_1.trashed_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        old_1.trashed_at = datetime(2024, 6, 1, tzinfo=UTC)
         recent_1 = _make_search_asset(now)
-        recent_1.trashed_at = datetime(2024, 6, 20, tzinfo=timezone.utc)
+        recent_1.trashed_at = datetime(2024, 6, 20, tzinfo=UTC)
         old_2 = _make_search_asset(now)
-        old_2.trashed_at = datetime(2024, 6, 2, tzinfo=timezone.utc)
+        old_2.trashed_at = datetime(2024, 6, 2, tzinfo=UTC)
         recent_2 = _make_search_asset(now)
-        recent_2.trashed_at = datetime(2024, 6, 21, tzinfo=timezone.utc)
+        recent_2.trashed_at = datetime(2024, 6, 21, tzinfo=UTC)
         recent_3 = _make_search_asset(now)
-        recent_3.trashed_at = datetime(2024, 6, 22, tzinfo=timezone.utc)
+        recent_3.trashed_at = datetime(2024, 6, 22, tzinfo=UTC)
 
         mock_client = Mock()
         mock_client.assets.list = Mock(
@@ -1174,7 +1174,7 @@ class TestSearchMetadataEnumeration:
             request=MetadataSearchDto(
                 size=1,
                 page=2,
-                trashedAfter=datetime(2024, 6, 10, tzinfo=timezone.utc),
+                trashedAfter=datetime(2024, 6, 10, tzinfo=UTC),
             ),
             client=mock_client,
             current_user=mock_current_user,
@@ -1188,7 +1188,7 @@ class TestSearchMetadataEnumeration:
     async def test_with_deleted_reads_all_state(
         self, mock_sync_cursor_page, mock_current_user
     ):
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         mock_client = Mock()
         mock_client.assets.list = Mock(
             return_value=mock_sync_cursor_page([_make_search_asset(now)])
@@ -1209,12 +1209,12 @@ class TestSearchMetadataEnumeration:
         """state=all (withDeleted) with a real trashedAfter keeps live assets and
         recently-trashed ones, but drops trash older than the bound — the bound
         isn't silently ignored just because withDeleted selected state=all."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         live = _make_search_asset(now)  # trashed_at is None
         old_trash = _make_search_asset(now)
-        old_trash.trashed_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        old_trash.trashed_at = datetime(2024, 6, 1, tzinfo=UTC)
         recent_trash = _make_search_asset(now)
-        recent_trash.trashed_at = datetime(2024, 6, 20, tzinfo=timezone.utc)
+        recent_trash.trashed_at = datetime(2024, 6, 20, tzinfo=UTC)
 
         mock_client = Mock()
         mock_client.assets.list = Mock(
@@ -1224,7 +1224,7 @@ class TestSearchMetadataEnumeration:
         result = await search_assets(
             request=MetadataSearchDto(
                 withDeleted=True,
-                trashedAfter=datetime(2024, 6, 10, tzinfo=timezone.utc),
+                trashedAfter=datetime(2024, 6, 10, tzinfo=UTC),
             ),
             client=mock_client,
             current_user=mock_current_user,
@@ -1245,7 +1245,7 @@ class TestSearchMetadataEnumeration:
     ):
         """All Gumnut assets convert to timeline visibility, so immich-go's
         archive/hidden sweeps correctly return nothing rather than the live set."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         assets = [_make_search_asset(now) for _ in range(3)]
 
         mock_client = Mock()
@@ -1274,7 +1274,7 @@ class TestSearchMetadataEnumeration:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """The Gumnut API owns ordering; the adapter must not reorder results."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         assets = [_make_search_asset(now) for _ in range(3)]
         expected_desc = [safe_uuid_from_asset_id(a.id) for a in assets]
 
@@ -1302,7 +1302,7 @@ class TestSearchMetadataEnumeration:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """Forward direction, ignore unsupported fields, and prefer `orderBy`."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         assets = [_make_search_asset(now) for _ in range(3)]
 
         mock_client = Mock()
@@ -1360,7 +1360,7 @@ class TestSearchExplore:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """Cities with enough images produce an exifInfo.city item; recents fill createdAt."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         city_assets = [_make_search_asset(now) for _ in range(5)]
         no_city_asset = _make_search_asset(now)
         full_assets = city_assets + [no_city_asset]
@@ -1401,7 +1401,7 @@ class TestSearchExplore:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """Cities with fewer images than the minimum don't get an explore entry."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         full_assets = [_make_search_asset(now) for _ in range(4)]
         scan_assets = [_scan_view(a, "Perth") for a in full_assets]
 
@@ -1441,7 +1441,7 @@ class TestSearchExplore:
     @pytest.mark.anyio
     async def test_videos_are_ignored(self, mock_sync_cursor_page, mock_current_user):
         """Only images count toward cities and recents, matching the Immich server."""
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         videos = [_make_search_asset(now, mime_type="video/mp4") for _ in range(5)]
         scan_assets = [_scan_view(a, "Hobart") for a in videos]
 
@@ -1465,7 +1465,7 @@ class TestSearchExplore:
     ):
         """Representatives missing from the batched re-fetch are skipped, not 500s."""
         monkeypatch.setattr("routers.api.search.EXPLORE_MIN_ASSETS_PER_CITY", 1)
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         asset = _make_search_asset(now)
         scan_assets = [_scan_view(asset, "Darwin")]
 
@@ -1491,7 +1491,7 @@ class TestSearchExplore:
         """No more than the configured maximum number of cities is returned."""
         monkeypatch.setattr("routers.api.search.EXPLORE_MIN_ASSETS_PER_CITY", 1)
         monkeypatch.setattr("routers.api.search.EXPLORE_MAX_CITIES", 2)
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         full_assets = [_make_search_asset(now) for _ in range(3)]
         scan_assets = [
             _scan_view(asset, city)
@@ -1521,7 +1521,7 @@ class TestSearchExplore:
     ):
         """Assets past EXPLORE_SCAN_LIMIT are never considered."""
         monkeypatch.setattr("routers.api.search.EXPLORE_SCAN_LIMIT", 2)
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         full_assets = [_make_search_asset(now) for _ in range(3)]
         scan_assets = [_scan_view(a, None) for a in full_assets]
 
@@ -1550,7 +1550,7 @@ class TestSearchExplore:
     ):
         """The recents group holds at most EXPLORE_MAX_RECENT_ASSETS items."""
         monkeypatch.setattr("routers.api.search.EXPLORE_MAX_RECENT_ASSETS", 2)
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 1, tzinfo=UTC)
         full_assets = [_make_search_asset(now) for _ in range(3)]
         scan_assets = [_scan_view(a, None) for a in full_assets]
 
@@ -1576,6 +1576,7 @@ class TestSearchExplore:
     async def test_sdk_error_propagates(self, mock_current_user):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -1608,7 +1609,7 @@ class TestSearchRandom:
     async def test_favorite_filter_reaches_counts_and_month_listing(
         self, mock_sync_cursor_page, mock_current_user
     ):
-        favorite = _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+        favorite = _make_search_asset(datetime(2024, 1, 15, tzinfo=UTC))
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
         months = {JAN_2024_AFTER_BOUND: [favorite]}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
@@ -1631,7 +1632,7 @@ class TestSearchRandom:
     async def test_explicit_null_rating_reaches_counts_and_month_listing(
         self, mock_sync_cursor_page, mock_current_user
     ):
-        unrated = _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+        unrated = _make_search_asset(datetime(2024, 1, 15, tzinfo=UTC))
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
         months = {JAN_2024_AFTER_BOUND: [unrated]}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
@@ -1656,7 +1657,7 @@ class TestSearchRandom:
     async def test_false_favorite_reaches_counts_and_month_listing(
         self, mock_sync_cursor_page, mock_current_user
     ):
-        non_favorite = _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+        non_favorite = _make_search_asset(datetime(2024, 1, 15, tzinfo=UTC))
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
         months = {JAN_2024_AFTER_BOUND: [non_favorite]}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
@@ -1714,7 +1715,7 @@ class TestSearchRandom:
         mock_client = Mock()
 
         for request in (
-            RandomSearchDto(takenAfter=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            RandomSearchDto(takenAfter=datetime(2024, 1, 1, tzinfo=UTC)),
             RandomSearchDto(city="Sydney"),
             RandomSearchDto(isMotion=True),
             RandomSearchDto(tagIds=[uuid4()]),
@@ -1731,7 +1732,7 @@ class TestSearchRandom:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """`type` filters the drawn sample by MIME-derived asset type."""
-        taken = datetime(2024, 1, 15, tzinfo=timezone.utc)
+        taken = datetime(2024, 1, 15, tzinfo=UTC)
         image = _make_search_asset(taken)
         video = _make_search_asset(taken, mime_type="video/mp4")
         buckets = [_make_count_bucket(2, datetime(2024, 1, 1))]
@@ -1751,7 +1752,7 @@ class TestSearchRandom:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """A type with no matching assets in the sample yields an empty list."""
-        image = _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
+        image = _make_search_asset(datetime(2024, 1, 15, tzinfo=UTC))
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
         months = {JAN_2024_AFTER_BOUND: [image]}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
@@ -1817,7 +1818,7 @@ class TestSearchRandom:
         self, mock_sync_cursor_page, mock_current_user
     ):
         """Response-shape hints, widening flags, and falsy booleans don't empty the sample."""
-        jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))]
+        jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=UTC))]
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
         months = {JAN_2024_AFTER_BOUND: jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
@@ -1859,12 +1860,10 @@ class TestSearchRandom:
     ):
         """When size >= total, every asset comes back exactly once."""
         feb_assets = [
-            _make_search_asset(datetime(2024, 2, 10, tzinfo=timezone.utc))
-            for _ in range(2)
+            _make_search_asset(datetime(2024, 2, 10, tzinfo=UTC)) for _ in range(2)
         ]
         jan_assets = [
-            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
-            for _ in range(3)
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=UTC)) for _ in range(3)
         ]
         buckets = [
             _make_count_bucket(2, datetime(2024, 2, 1)),
@@ -1893,8 +1892,7 @@ class TestSearchRandom:
     ):
         """Sampled months are fetched with naive month-boundary date windows."""
         jan_assets = [
-            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
-            for _ in range(2)
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=UTC)) for _ in range(2)
         ]
         buckets = [_make_count_bucket(2, datetime(2024, 1, 1))]
         months = {JAN_2024_AFTER_BOUND: jan_assets}
@@ -1918,8 +1916,7 @@ class TestSearchRandom:
     ):
         """A sample smaller than the library returns exactly `size` distinct assets."""
         jan_assets = [
-            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
-            for _ in range(5)
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=UTC)) for _ in range(5)
         ]
         buckets = [_make_count_bucket(5, datetime(2024, 1, 1))]
         months = {JAN_2024_AFTER_BOUND: jan_assets}
@@ -1944,7 +1941,7 @@ class TestSearchRandom:
         from routers.utils.gumnut_id_conversion import uuid_to_gumnut_album_id
 
         album_uuid = uuid4()
-        jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))]
+        jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=UTC))]
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
         months = {JAN_2024_AFTER_BOUND: jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
@@ -1968,7 +1965,7 @@ class TestSearchRandom:
     ):
         """A single-element personIds filter is forwarded to counts and list."""
         person_uuid = uuid4()
-        jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))]
+        jan_assets = [_make_search_asset(datetime(2024, 1, 15, tzinfo=UTC))]
         buckets = [_make_count_bucket(1, datetime(2024, 1, 1))]
         months = {JAN_2024_AFTER_BOUND: jan_assets}
         mock_client = self._client_with_months(mock_sync_cursor_page, months, buckets)
@@ -1995,8 +1992,7 @@ class TestSearchRandom:
     ):
         """A December bucket's window rolls over into January of the next year."""
         dec_assets = [
-            _make_search_asset(datetime(2024, 12, 15, tzinfo=timezone.utc))
-            for _ in range(2)
+            _make_search_asset(datetime(2024, 12, 15, tzinfo=UTC)) for _ in range(2)
         ]
         buckets = [_make_count_bucket(2, datetime(2024, 12, 1))]
         months = {"2024-11-30T23:59:59.999999": dec_assets}
@@ -2018,8 +2014,7 @@ class TestSearchRandom:
     ):
         """With no size, the default (250) is capped at the library total."""
         jan_assets = [
-            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
-            for _ in range(3)
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=UTC)) for _ in range(3)
         ]
         buckets = [_make_count_bucket(3, datetime(2024, 1, 1))]
         months = {JAN_2024_AFTER_BOUND: jan_assets}
@@ -2040,12 +2035,10 @@ class TestSearchRandom:
     ):
         """Global indices map to the correct per-month offsets across buckets."""
         feb_assets = [
-            _make_search_asset(datetime(2024, 2, 10, tzinfo=timezone.utc))
-            for _ in range(2)
+            _make_search_asset(datetime(2024, 2, 10, tzinfo=UTC)) for _ in range(2)
         ]
         jan_assets = [
-            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
-            for _ in range(3)
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=UTC)) for _ in range(3)
         ]
         buckets = [
             _make_count_bucket(2, datetime(2024, 2, 1)),
@@ -2081,8 +2074,7 @@ class TestSearchRandom:
     ):
         """If assets vanish between counts and fetch, the sample comes up short, not 500."""
         jan_assets = [
-            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
-            for _ in range(2)
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=UTC)) for _ in range(2)
         ]
         # Counts claim 4 assets but the month only yields 2.
         buckets = [_make_count_bucket(4, datetime(2024, 1, 1))]
@@ -2114,8 +2106,7 @@ class TestSearchRandom:
                     yield item
 
         jan_assets = [
-            _make_search_asset(datetime(2024, 1, 15, tzinfo=timezone.utc))
-            for _ in range(10)
+            _make_search_asset(datetime(2024, 1, 15, tzinfo=UTC)) for _ in range(10)
         ]
         page = _TrackingPage(jan_assets)
         mock_client = Mock()
@@ -2138,6 +2129,7 @@ class TestSearchRandom:
     async def test_sdk_error_propagates(self, mock_current_user):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()

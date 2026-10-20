@@ -1,11 +1,12 @@
 """Integration tests for OAuth endpoints through auth middleware."""
 
-from datetime import datetime, timezone
-from gumnut import omit
-import pytest
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID
+
+import pytest
 from fastapi.testclient import TestClient
+from gumnut import omit
 
 from main import app
 from routers.utils.cookies import ImmichCookie
@@ -29,7 +30,7 @@ def mock_gumnut_client():
 def mock_session_store():
     """Create a mock SessionStore."""
     store = AsyncMock(spec=SessionStore)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     mock_session = Session(
         id=TEST_SESSION_UUID,
         user_id=str(TEST_USER_UUID),

@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -15,19 +15,13 @@ from utils.redis_protocols import AsyncRedisClient
 class SessionStoreError(Exception):
     """Raised when session store operations fail (e.g., connectivity issues)."""
 
-    pass
-
 
 class SessionDataError(Exception):
     """Raised when session data from Redis is invalid or corrupted."""
 
-    pass
-
 
 class SessionExpiredError(ValueError):
     """Raised when attempting to create a session with an expiration time in the past."""
-
-    pass
 
 
 # KEYS: session hash, activity index. ARGV: session token, activity score or
@@ -165,7 +159,7 @@ class Session:
         }
 
     @classmethod
-    def from_dict(cls, session_id: UUID, data: dict[str, str]) -> "Session":
+    def from_dict(cls, session_id: UUID, data: dict[str, str]) -> Session:
         """
         Create from Redis hash data.
 
@@ -283,7 +277,7 @@ class SessionStore:
             JWTEncryptionError: If JWT encryption fails
         """
         session_id = uuid4()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if expires_at is not None and expires_at <= now:
             raise SessionExpiredError(
@@ -440,7 +434,7 @@ class SessionStore:
         updates = dict(fields or {})
         score = ""
         if touch_activity:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             updates["updated_at"] = now.isoformat()
             score = str(now.timestamp())
 

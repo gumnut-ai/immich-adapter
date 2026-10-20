@@ -12,7 +12,7 @@ upload paths logging filename / device ids / `exc_info`).
 
 import logging
 from enum import Enum
-from typing import Any, TypeVar
+from typing import Any
 
 from fastapi import HTTPException, status
 from gumnut import (
@@ -52,8 +52,6 @@ ERROR_DETAIL_MAX_CHARS = 500
 QUOTA_EXCEEDED_STATUS = status.HTTP_400_BAD_REQUEST
 QUOTA_EXCEEDED_DETAIL = "Quota has been exceeded!"
 
-E = TypeVar("E", bound=Enum)
-
 
 def invalid_chain_error() -> HTTPException:
     """Return the shared 502 for a malformed asset version chain.
@@ -89,7 +87,7 @@ def extract_detail_from_status_error(exc: APIStatusError) -> str:
     return exc.message or f"Upstream HTTP {exc.status_code}"
 
 
-def classify_bulk_item_error(exc: APIStatusError, enum_cls: type[E]) -> E:
+def classify_bulk_item_error[E: Enum](exc: APIStatusError, enum_cls: type[E]) -> E:
     """Classify a per-item APIStatusError as a `BulkIdErrorReason` value.
 
     Maps to the canonical `not_found` / `no_permission` / `unknown` buckets

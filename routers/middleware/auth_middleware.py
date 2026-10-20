@@ -76,21 +76,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
     PROTECTED_PREFIXES = ("/api/",)
 
     # Endpoints that don't require authentication
-    UNAUTHENTICATED_PATHS = {
-        "/api/auth/login",
-        "/api/oauth/authorize",
-        "/api/oauth/callback",
-        "/api/oauth/mobile-redirect",
-        # Public config is fetched by the web login page before any auth.
-        "/api/public/config",
-        "/api/public/config/defaults",
-        "/api/server/config",
-        "/api/server/features",
-        "/api/server/media-types",
-        "/api/server/ping",
-        "/api/server/version",
-        "/api/server/version-history",
-    }
+    UNAUTHENTICATED_PATHS = frozenset(
+        {
+            "/api/auth/login",
+            "/api/oauth/authorize",
+            "/api/oauth/callback",
+            "/api/oauth/mobile-redirect",
+            # Public config is fetched by the web login page before any auth.
+            "/api/public/config",
+            "/api/public/config/defaults",
+            "/api/server/config",
+            "/api/server/features",
+            "/api/server/media-types",
+            "/api/server/ping",
+            "/api/server/version",
+            "/api/server/version-history",
+        }
+    )
 
     def __init__(self, app: ASGIApp):
         super().__init__(app)
@@ -196,9 +198,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     )
                     return self._invalid_token_response()
             except Exception:
-                logger.error(
+                logger.exception(
                     "Error during session lookup",
-                    exc_info=True,
                 )
                 # An exception thrown inside dispatch will get wrapped
                 # by Starlette and not handled by our global exception handler.
@@ -254,10 +255,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 session_store = await get_session_store()
                 await session_store.update_stored_jwt(session_token, refreshed_token)
             except Exception:
-                logger.error(
+                logger.exception(
                     "Failed to update stored JWT after refresh",
                     extra={"path": path},
-                    exc_info=True,
                 )
 
             # Always strip the refresh header - clients don't need it since their

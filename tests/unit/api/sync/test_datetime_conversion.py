@@ -1,8 +1,8 @@
 """Tests for datetime conversion functions."""
 
-from uuid import UUID
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import Mock
+from uuid import UUID
 
 from routers.api.sync.converters import gumnut_asset_to_sync_asset_v1
 from routers.utils.datetime_utils import (
@@ -29,7 +29,7 @@ class TestToImmichLocalDatetime:
 
     def test_utc_datetime_preserves_time_values(self):
         """UTC datetime should preserve the time values as UTC."""
-        dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC)
         result = to_immich_local_datetime(dt)
 
         assert result is not None
@@ -39,7 +39,7 @@ class TestToImmichLocalDatetime:
         assert result.hour == 10
         assert result.minute == 30
         assert result.second == 45
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_timezone_aware_datetime_preserves_local_time_as_utc(self):
         """Timezone-aware datetime should strip timezone and mark as UTC.
@@ -61,7 +61,7 @@ class TestToImmichLocalDatetime:
         assert result.hour == 10  # Still 10, not converted to 18
         assert result.minute == 30
         assert result.second == 45
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_positive_timezone_offset(self):
         """Test with positive timezone offset (e.g., UTC+9 Tokyo)."""
@@ -73,7 +73,7 @@ class TestToImmichLocalDatetime:
         # Should be 15:00:00 UTC (not 06:00:00 UTC)
         assert result is not None
         assert result.hour == 15
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_half_hour_timezone_offset(self):
         """Test with half-hour timezone offset (e.g., UTC+5:30 India)."""
@@ -85,7 +85,7 @@ class TestToImmichLocalDatetime:
         assert result is not None
         assert result.hour == 14
         assert result.minute == 45
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_naive_datetime(self):
         """Naive datetime (no tzinfo) should be marked as UTC."""
@@ -95,7 +95,7 @@ class TestToImmichLocalDatetime:
         assert result is not None
         assert result.hour == 10
         assert result.minute == 30
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
 
 class TestToActualUtc:
@@ -110,13 +110,13 @@ class TestToActualUtc:
 
     def test_utc_datetime_unchanged(self):
         """UTC datetime should remain unchanged."""
-        dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC)
         result = to_actual_utc(dt)
 
         assert result is not None
         assert result.hour == 10
         assert result.minute == 30
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_pst_datetime_converted_to_utc(self):
         """PST datetime should be converted to actual UTC.
@@ -132,7 +132,7 @@ class TestToActualUtc:
         assert result.hour == 18
         assert result.minute == 30
         assert result.second == 45
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_tokyo_datetime_converted_to_utc(self):
         """Tokyo datetime should be converted to actual UTC.
@@ -146,7 +146,7 @@ class TestToActualUtc:
         # 15:00 Tokyo = 06:00 UTC
         assert result is not None
         assert result.hour == 6
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_naive_datetime_assumed_utc(self):
         """Naive datetime should be assumed to be UTC."""
@@ -156,7 +156,7 @@ class TestToActualUtc:
         assert result is not None
         assert result.hour == 10
         assert result.minute == 30
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_date_changes_when_crossing_midnight(self):
         """Verify date changes correctly when UTC conversion crosses midnight."""
@@ -197,7 +197,7 @@ class TestExtractTimezone:
 
     def test_utc_returns_utc_plus_zero(self):
         """UTC timezone should return 'UTC+0'."""
-        dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC)
         assert format_timezone_immich(dt) == "UTC+0"
 
     def test_positive_offset_no_leading_zero(self):
@@ -310,10 +310,10 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         EXIF date so photos show when they were taken, not when files were copied.
         """
         # Photo taken in 2020 (EXIF date)
-        local_datetime = datetime(2020, 5, 15, 10, 30, 0, tzinfo=timezone.utc)
+        local_datetime = datetime(2020, 5, 15, 10, 30, 0, tzinfo=UTC)
         # File was copied to new device in 2024 (file system date)
-        file_created_at = datetime(2024, 12, 1, 14, 0, 0, tzinfo=timezone.utc)
-        file_modified_at = datetime(2024, 12, 1, 14, 0, 0, tzinfo=timezone.utc)
+        file_created_at = datetime(2024, 12, 1, 14, 0, 0, tzinfo=UTC)
+        file_modified_at = datetime(2024, 12, 1, 14, 0, 0, tzinfo=UTC)
 
         asset = self._create_mock_asset(
             local_datetime, file_created_at, file_modified_at
@@ -333,10 +333,10 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         mapping from file_created_at / file_modified_at / local_datetime
         would fail this assertion rather than aliasing to the same value.
         """
-        local_datetime = datetime(2020, 5, 15, 10, 30, 0, tzinfo=timezone.utc)
-        file_created_at = datetime(2024, 12, 1, 14, 0, 0, tzinfo=timezone.utc)
-        file_modified_at = datetime(2024, 12, 2, 9, 0, 0, tzinfo=timezone.utc)
-        created_at = datetime(2023, 3, 7, 8, 15, 0, tzinfo=timezone.utc)
+        local_datetime = datetime(2020, 5, 15, 10, 30, 0, tzinfo=UTC)
+        file_created_at = datetime(2024, 12, 1, 14, 0, 0, tzinfo=UTC)
+        file_modified_at = datetime(2024, 12, 2, 9, 0, 0, tzinfo=UTC)
+        created_at = datetime(2023, 3, 7, 8, 15, 0, tzinfo=UTC)
 
         asset = self._create_mock_asset(
             local_datetime, file_created_at, file_modified_at, created_at=created_at
@@ -354,7 +354,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         # Photo taken at 10:30 AM in PST (UTC-8)
         pst = timezone(timedelta(hours=-8))
         local_datetime = datetime(2024, 1, 15, 10, 30, 0, tzinfo=pst)
-        file_created_at = datetime(2024, 1, 15, 18, 30, 0, tzinfo=timezone.utc)
+        file_created_at = datetime(2024, 1, 15, 18, 30, 0, tzinfo=UTC)
         file_modified_at = file_created_at
 
         asset = self._create_mock_asset(
@@ -366,7 +366,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         assert result.localDateTime is not None
         assert result.localDateTime.hour == 10
         assert result.localDateTime.minute == 30
-        assert result.localDateTime.tzinfo == timezone.utc
+        assert result.localDateTime.tzinfo == UTC
 
     def test_file_created_at_uses_actual_utc(self):
         """fileCreatedAt should be converted to actual UTC (not keepLocalTime).
@@ -380,7 +380,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         # Photo taken at 10:30 AM in PST (UTC-8)
         pst = timezone(timedelta(hours=-8))
         local_datetime = datetime(2024, 1, 15, 10, 30, 0, tzinfo=pst)
-        file_created_at = datetime(2024, 1, 15, 18, 30, 0, tzinfo=timezone.utc)
+        file_created_at = datetime(2024, 1, 15, 18, 30, 0, tzinfo=UTC)
         file_modified_at = file_created_at
 
         asset = self._create_mock_asset(
@@ -392,7 +392,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         assert result.fileCreatedAt is not None
         assert result.fileCreatedAt.hour == 18  # Converted from 10:30 PST to UTC
         assert result.fileCreatedAt.minute == 30
-        assert result.fileCreatedAt.tzinfo == timezone.utc
+        assert result.fileCreatedAt.tzinfo == UTC
 
     def test_file_created_at_and_local_datetime_differ_for_non_utc(self):
         """fileCreatedAt and localDateTime should differ for non-UTC timezones.
@@ -404,7 +404,7 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         # Photo taken at 3:00 PM in Tokyo (UTC+9)
         tokyo = timezone(timedelta(hours=9))
         local_datetime = datetime(2024, 6, 20, 15, 0, 0, tzinfo=tokyo)
-        file_created_at = datetime(2024, 6, 20, 6, 0, 0, tzinfo=timezone.utc)
+        file_created_at = datetime(2024, 6, 20, 6, 0, 0, tzinfo=UTC)
         file_modified_at = file_created_at
 
         asset = self._create_mock_asset(
@@ -426,9 +426,9 @@ class TestGumnutAssetToSyncAssetV1DateHandling:
         Only fileCreatedAt and localDateTime need special handling.
         fileModifiedAt can stay as actual UTC.
         """
-        local_datetime = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-        file_created_at = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-        file_modified_at = datetime(2024, 1, 20, 14, 0, 0, tzinfo=timezone.utc)
+        local_datetime = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
+        file_created_at = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
+        file_modified_at = datetime(2024, 1, 20, 14, 0, 0, tzinfo=UTC)
 
         asset = self._create_mock_asset(
             local_datetime, file_created_at, file_modified_at

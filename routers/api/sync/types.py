@@ -1,7 +1,6 @@
 """Shared type aliases for the sync package."""
 
 from dataclasses import dataclass
-from typing import TypeAlias
 from uuid import UUID
 
 from gumnut.types.album_asset_response import AlbumAssetResponse
@@ -25,7 +24,7 @@ class FetchedStack:
         return self.row.id
 
 
-EntityType: TypeAlias = (
+type EntityType = (
     AssetResponse
     | AlbumResponse
     | AlbumAssetResponse

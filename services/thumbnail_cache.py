@@ -9,9 +9,9 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import sentry_sdk
-from utils import metrics
 
 from config.settings import get_settings
+from utils import metrics
 
 type CacheOutcome = Literal["hit", "miss", "coalesced", "bypass"]
 type CacheBypassReason = Literal[

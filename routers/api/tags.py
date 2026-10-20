@@ -1,17 +1,17 @@
-from fastapi import APIRouter
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
-from typing import List
-from datetime import datetime, timezone
+
+from fastapi import APIRouter
 
 from routers.immich_models import (
-    TagBulkAssetsResponseDto,
-    TagResponseDto,
-    TagCreateDto,
-    TagUpdateDto,
-    TagBulkAssetsDto,
-    TagUpsertDto,
-    BulkIdsDto,
     BulkIdResponseDto,
+    BulkIdsDto,
+    TagBulkAssetsDto,
+    TagBulkAssetsResponseDto,
+    TagCreateDto,
+    TagResponseDto,
+    TagUpdateDto,
+    TagUpsertDto,
 )
 
 router = APIRouter(
@@ -22,7 +22,7 @@ router = APIRouter(
 
 
 @router.get("")
-async def get_all_tags() -> List[TagResponseDto]:
+async def get_all_tags() -> list[TagResponseDto]:
     """
     Get all tags.
     This is a stub implementation that returns an empty list.
@@ -42,13 +42,13 @@ async def create_tag(request: TagCreateDto) -> TagResponseDto:
         value=request.name.lower().replace(" ", "-"),
         color=request.color,
         parentId=str(request.parentId) if request.parentId else None,
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
     )
 
 
 @router.put("")
-async def upsert_tags(request: TagUpsertDto) -> List[TagResponseDto]:
+async def upsert_tags(request: TagUpsertDto) -> list[TagResponseDto]:
     """
     Upsert tags.
     This is a stub implementation that returns an empty list.
@@ -68,8 +68,8 @@ async def get_tag_by_id(id: UUID) -> TagResponseDto:
         value="sample-tag",
         color="#ff0000",
         parentId=None,
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
     )
 
 
@@ -85,8 +85,8 @@ async def update_tag(id: UUID, request: TagUpdateDto) -> TagResponseDto:
         value="updated-tag",
         color=request.color,
         parentId=None,
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
     )
 
 
@@ -100,7 +100,7 @@ async def delete_tag(id: UUID):
 
 
 @router.put("/{id}/assets")
-async def tag_assets(id: UUID, request: BulkIdsDto) -> List[BulkIdResponseDto]:
+async def tag_assets(id: UUID, request: BulkIdsDto) -> list[BulkIdResponseDto]:
     """
     Bulk assign assets to tag.
     This is a stub implementation that returns an empty list.
@@ -109,7 +109,7 @@ async def tag_assets(id: UUID, request: BulkIdsDto) -> List[BulkIdResponseDto]:
 
 
 @router.delete("/{id}/assets")
-async def untag_assets(id: UUID, request: BulkIdsDto) -> List[BulkIdResponseDto]:
+async def untag_assets(id: UUID, request: BulkIdsDto) -> list[BulkIdResponseDto]:
     """
     Bulk remove assets from tag.
     This is a stub implementation that returns an empty list.

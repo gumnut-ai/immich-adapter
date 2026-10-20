@@ -1,16 +1,16 @@
 """Tests for timeline.py endpoints."""
 
 import logging
-
-import pytest
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
-from datetime import datetime, timezone, timedelta
+
+import pytest
 
 from routers.api.timeline import (
-    get_time_buckets,
-    get_time_bucket,
     fetch_asset_counts,
+    get_time_bucket,
+    get_time_buckets,
     month_query_bounds,
     month_window,
 )
@@ -22,17 +22,17 @@ from routers.utils.asset_conversion import ASSET_INCLUDE_METADATA_ONLY
 from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_asset_id,
     safe_uuid_from_stack_id,
-    uuid_to_gumnut_asset_id,
     uuid_to_gumnut_album_id,
+    uuid_to_gumnut_asset_id,
     uuid_to_gumnut_person_id,
 )
 from tests.conftest import (
     MockSyncCursorPage,
     make_gumnut_asset,
-    mock_list_stacks,
     make_gumnut_stack,
     make_gumnut_stack_members,
     make_sdk_status_error,
+    mock_list_stacks,
 )
 
 # Expected date range query for January 2024 — the most common test timeBucket.
@@ -118,7 +118,7 @@ class TestMonthWindow:
             ),
             # Timezone-aware input is stripped to a naive boundary.
             (
-                datetime(2024, 3, 15, tzinfo=timezone.utc),
+                datetime(2024, 3, 15, tzinfo=UTC),
                 datetime(2024, 3, 1),
                 datetime(2024, 4, 1),
             ),
@@ -430,6 +430,7 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_propagates_sdk_error(self):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -444,6 +445,7 @@ class TestGetTimeBuckets:
     async def test_get_time_buckets_propagates_auth_error(self):
         """Authentication errors bubble up as AuthenticationError."""
         from gumnut import AuthenticationError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -601,7 +603,7 @@ class TestGetTimeBucket:
         assets = multiple_gumnut_assets[:2]
         for asset in assets:
             asset.id = uuid_to_gumnut_asset_id(uuid4())
-            asset.local_datetime = datetime(2024, 1, 15, tzinfo=timezone.utc)
+            asset.local_datetime = datetime(2024, 1, 15, tzinfo=UTC)
             asset.created_at = asset.local_datetime
 
         assets[0].metadata = Mock()
@@ -637,7 +639,7 @@ class TestGetTimeBucket:
 
         assets = multiple_gumnut_assets
         assets[0].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
         assets[0].created_at = assets[0].local_datetime
         assets[0].mime_type = "image/jpeg"
         # Portrait dims as the Gumnut API returns them in display space.
@@ -671,13 +673,13 @@ class TestGetTimeBucket:
 
         assets = multiple_gumnut_assets
         assets[0].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
         assets[0].created_at = assets[0].local_datetime
         assets[0].mime_type = "video/mp4"
         assets[0].duration = 65.25
 
         assets[1].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[1].local_datetime = datetime(2024, 1, 16, 10, 0, 0, tzinfo=timezone.utc)
+        assets[1].local_datetime = datetime(2024, 1, 16, 10, 0, 0, tzinfo=UTC)
         assets[1].created_at = assets[1].local_datetime
         assets[1].mime_type = "image/jpeg"
         assets[1].duration = None
@@ -704,12 +706,12 @@ class TestGetTimeBucket:
 
         assets = multiple_gumnut_assets
         assets[0].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
         assets[0].created_at = assets[0].local_datetime
         assets[0].thumbhash = "1QcSHQRnh493V4dIh4eXh1h4kJUI"
 
         assets[1].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[1].local_datetime = datetime(2024, 1, 16, 10, 0, 0, tzinfo=timezone.utc)
+        assets[1].local_datetime = datetime(2024, 1, 16, 10, 0, 0, tzinfo=UTC)
         assets[1].created_at = assets[1].local_datetime
         assets[1].thumbhash = None
 
@@ -733,7 +735,7 @@ class TestGetTimeBucket:
 
         assets = multiple_gumnut_assets
         assets[0].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
         assets[0].created_at = assets[0].local_datetime
         assets[0].mime_type = "image/jpeg"
         assets[0].width = 1920
@@ -766,7 +768,7 @@ class TestGetTimeBucket:
 
         assets = multiple_gumnut_assets
         assets[0].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
         assets[0].created_at = assets[0].local_datetime
         assets[0].mime_type = "image/jpeg"
         assets[0].width = 1920
@@ -851,7 +853,7 @@ class TestGetTimeBucket:
 
         mock_asset = Mock()
         mock_asset.id = uuid_to_gumnut_asset_id(uuid4())
-        mock_asset.local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        mock_asset.local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_asset.created_at = mock_asset.local_datetime
         mock_asset.mime_type = ""
         mock_asset.width = None
@@ -878,7 +880,7 @@ class TestGetTimeBucket:
         mock_client = Mock()
         mock_client.assets.list.return_value = []
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError, match="Invalid isoformat"):
             await call_get_time_bucket(
                 timeBucket="invalid-date-format", client=mock_client
             )
@@ -887,6 +889,7 @@ class TestGetTimeBucket:
     async def test_get_time_bucket_propagates_sdk_error(self):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -901,6 +904,7 @@ class TestGetTimeBucket:
     async def test_get_time_bucket_propagates_auth_error(self):
         """Authentication errors bubble up as AuthenticationError."""
         from gumnut import AuthenticationError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -946,7 +950,7 @@ class TestGetTimeBucket:
 
         asset3 = Mock()
         asset3.id = uuid_to_gumnut_asset_id(uuid4())
-        asset3.local_datetime = datetime(2024, 1, 15, 18, 0, 0, tzinfo=timezone.utc)
+        asset3.local_datetime = datetime(2024, 1, 15, 18, 0, 0, tzinfo=UTC)
         asset3.created_at = asset3.local_datetime
         asset3.mime_type = "video/mp4"
         asset3.width = 3840
@@ -1103,18 +1107,18 @@ class TestGetTimeBucket:
 
         assets = multiple_gumnut_assets
         assets[0].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
         assets[0].mime_type = "image/jpeg"
         assets[0].width = 1920
         assets[0].height = 1080
-        assets[0].trashed_at = datetime(2024, 1, 20, 12, 0, 0, tzinfo=timezone.utc)
+        assets[0].trashed_at = datetime(2024, 1, 20, 12, 0, 0, tzinfo=UTC)
 
         assets[1].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[1].local_datetime = datetime(2024, 1, 25, 16, 0, 0, tzinfo=timezone.utc)
+        assets[1].local_datetime = datetime(2024, 1, 25, 16, 0, 0, tzinfo=UTC)
         assets[1].mime_type = "image/png"
         assets[1].width = 1080
         assets[1].height = 1080
-        assets[1].trashed_at = datetime(2024, 1, 26, 9, 0, 0, tzinfo=timezone.utc)
+        assets[1].trashed_at = datetime(2024, 1, 26, 9, 0, 0, tzinfo=UTC)
 
         mock_client.assets.list.return_value = mock_sync_cursor_page(assets[:2])
 
@@ -1146,7 +1150,7 @@ class TestGetTimeBucket:
         assets = multiple_gumnut_assets
         for asset in assets[:2]:
             asset.id = uuid_to_gumnut_asset_id(uuid4())
-            asset.local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+            asset.local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
             asset.mime_type = "image/jpeg"
             asset.width = 1920
             asset.height = 1080
@@ -1174,11 +1178,11 @@ class TestGetTimeBucket:
 
         assets = multiple_gumnut_assets
         assets[0].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
         assets[0].mime_type = "image/jpeg"
         assets[0].width = 1920
         assets[0].height = 1080
-        assets[0].trashed_at = datetime(2024, 1, 20, 12, 0, 0, tzinfo=timezone.utc)
+        assets[0].trashed_at = datetime(2024, 1, 20, 12, 0, 0, tzinfo=UTC)
 
         mock_client.assets.list.return_value = mock_sync_cursor_page([assets[0]])
 
@@ -1340,7 +1344,7 @@ class TestDateRangeFiltering:
 
         assets = multiple_gumnut_assets
         assets[0].id = uuid_to_gumnut_asset_id(uuid4())
-        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        assets[0].local_datetime = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
         assets[0].mime_type = "image/jpeg"
         assets[0].width = 1920
         assets[0].height = 1080
@@ -1390,7 +1394,7 @@ COLUMNAR_FIELDS = (
 
 
 def _january(day: int) -> datetime:
-    return datetime(2024, 1, day, 10, 0, 0, tzinfo=timezone.utc)
+    return datetime(2024, 1, day, 10, 0, 0, tzinfo=UTC)
 
 
 def _stacked_bucket(*, count: int, first_day: int = 5):

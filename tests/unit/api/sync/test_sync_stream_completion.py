@@ -1,16 +1,16 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
 from routers.api.sync.stream import generate_sync_stream
-from routers.immich_models import SyncStreamDto, SyncRequestType
+from routers.immich_models import SyncRequestType, SyncStreamDto
 from tests.unit.api.sync.conftest import create_mock_gumnut_client, create_mock_user
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("fail", [False, True])
 async def test_only_sync_complete_sets_completion_state(fail):
-    user = create_mock_user(datetime.now(timezone.utc))
+    user = create_mock_user(datetime.now(UTC))
     client = create_mock_gumnut_client(user)
     if fail:
         client.events.get.side_effect = ValueError("upstream failed")

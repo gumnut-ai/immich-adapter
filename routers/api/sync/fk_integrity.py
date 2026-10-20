@@ -5,12 +5,11 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
+from gumnut.types.events_response import Data as EventData
 from pydantic import BaseModel
 
-from gumnut.types.events_response import Data as EventData
-
-from routers.immich_models import SyncEntityType
 from routers.api.sync.types import EntityType
+from routers.immich_models import SyncEntityType
 from services.checkpoint_store import Checkpoint
 
 logger = logging.getLogger(__name__)

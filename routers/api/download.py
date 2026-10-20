@@ -1,6 +1,7 @@
 """Immich-compatible batch download planning and streaming ZIP archives."""
 
 import asyncio
+import contextlib
 import logging
 import posixpath
 import re
@@ -12,7 +13,7 @@ from datetime import datetime
 from itertools import batched
 from stat import S_IFREG
 from threading import Event, Lock
-from typing import Annotated, Any, TypeVar, cast
+from typing import Annotated, Any, cast
 from unicodedata import normalize
 from urllib.parse import quote
 from uuid import UUID
@@ -64,15 +65,16 @@ router = APIRouter(
 # /info reads only lean-core fields (`kind`, `file_size_bytes`).
 _DOWNLOAD_INFO_INCLUDE: list[str] = []
 _DOWNLOAD_ARCHIVE_INCLUDE = ["file_data", "metadata", "variants"]
-_ZIP_MIN_TIMESTAMP = datetime(1980, 1, 1)
-_ZIP_MAX_TIMESTAMP = datetime(2107, 12, 31, 23, 59, 58)
+# ZIP entry timestamps carry no time zone. The bounds stay naive and take the
+# clamped value's zone when applied.
+_ZIP_MIN_TIMESTAMP = datetime(1980, 1, 1)  # noqa: DTZ001
+_ZIP_MAX_TIMESTAMP = datetime(2107, 12, 31, 23, 59, 58)  # noqa: DTZ001
 _ARCHIVE_CDN_CHUNK_SIZE = 64 * 1024
 _ARCHIVE_ZIP_MAX_WORKERS = 8
 _MAX_ARCHIVE_COMPONENT_BYTES = 255
 _UNSAFE_FILENAME_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _archive_zip_executor: ThreadPoolExecutor | None = None
 _archive_zip_executor_lock = Lock()
-_T = TypeVar("_T")
 
 
 @dataclass(slots=True)
@@ -140,13 +142,13 @@ async def _assets_by_ids(
                 yield asset
 
 
-async def _abatched(items: AsyncIterable[_T], size: int) -> AsyncIterator[list[_T]]:
+async def _abatched[T](items: AsyncIterable[T], size: int) -> AsyncIterator[list[T]]:
     """Yield fixed-size lists from an async iterable, the last possibly short.
 
     Bounds how much of a streamed selector is staged at once so a fan-out over
     the batch caps in-flight work without first materializing the whole stream.
     """
-    batch: list[_T] = []
+    batch: list[T] = []
     async for item in items:
         batch.append(item)
         if len(batch) >= size:
@@ -527,11 +529,11 @@ async def _async_archive_zip(
         if future is not None:
             future.cancel()
 
-    def to_sync_iterable(async_iterable: AsyncIterable[_T]) -> Iterable[_T]:
+    def to_sync_iterable[T](async_iterable: AsyncIterable[T]) -> Iterable[T]:
         nonlocal pending_read
         async_iterator = async_iterable.__aiter__()
 
-        async def get_next() -> _T:
+        async def get_next() -> T:
             return await anext(async_iterator)
 
         while True:
@@ -583,10 +585,8 @@ async def _async_archive_zip(
                     except BaseException:
                         break
                 if executor_call.done() and not executor_call.cancelled():
-                    try:
+                    with contextlib.suppress(BaseException):
                         executor_call.result()
-                    except BaseException:
-                        pass
             raise
         if value is done:
             break

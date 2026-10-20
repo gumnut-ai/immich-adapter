@@ -11,9 +11,9 @@ pieces have to land together:
   "likely deleted between event and fetch" warning.
 """
 
-from uuid import UUID
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 
@@ -28,7 +28,7 @@ from tests.unit.api.sync.conftest import (
 class TestGumnutAssetToSyncAssetV1DeletedAt:
     def test_live_asset_deleted_at_none(self):
         """A live asset (trashed_at=None) produces SyncAssetV1.deletedAt=None."""
-        updated_at = datetime(2026, 4, 1, tzinfo=timezone.utc)
+        updated_at = datetime(2026, 4, 1, tzinfo=UTC)
         asset = create_mock_asset_data(updated_at)
         asset.trashed_at = None
 
@@ -45,8 +45,8 @@ class TestGumnutAssetToSyncAssetV1DeletedAt:
         trash; missing it would cause asset_trashed events to manifest as live
         assets with no trash signal.
         """
-        updated_at = datetime(2026, 4, 1, tzinfo=timezone.utc)
-        trashed_at = datetime(2026, 4, 2, 15, 30, tzinfo=timezone.utc)
+        updated_at = datetime(2026, 4, 1, tzinfo=UTC)
+        trashed_at = datetime(2026, 4, 2, 15, 30, tzinfo=UTC)
         asset = create_mock_asset_data(updated_at)
         asset.trashed_at = trashed_at
 

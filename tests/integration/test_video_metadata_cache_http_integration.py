@@ -77,30 +77,24 @@ def test_video_session_rechecked_range_forwarded_and_failed_mutation_invalidates
         patch("routers.api.assets.get_video_cache", return_value=cache),
         patch("routers.utils.thumbnail_cache.get_settings", return_value=settings),
         patch("routers.api.assets.stream_from_cdn", AsyncMock(side_effect=stream)),
+        TestClient(app) as http,
     ):
-        with TestClient(app) as http:
-            path = f"/api/assets/{uuid4()}/video/playback"
-            headers = {"authorization": "Bearer session-token", "range": "bytes=0-1"}
-            first = http.get(path, headers=headers)
-            assert first.status_code == 206
-            assert first.headers["content-range"] == "bytes=0-1"
-            assert first.headers["accept-ranges"] == "bytes"
-            headers["range"] = "bytes=2-999"
-            assert (
-                http.get(path, headers=headers).headers["content-range"]
-                == "bytes=2-999"
-            )
-            assert sdk.assets.retrieve.await_count == 1
-            assert store.get_by_id.await_count == 2
-            assert (
-                http.put("/api/assets/example/edits", headers=headers).status_code
-                == 500
-            )
-            assert "/version/new" in http.get(path, headers=headers).text
-            assert sdk.assets.retrieve.await_count == 2
-            store.get_by_id.return_value = None
-            assert http.get(path, headers=headers).status_code == 401
-            assert sdk.assets.retrieve.await_count == 2
+        path = f"/api/assets/{uuid4()}/video/playback"
+        headers = {"authorization": "Bearer session-token", "range": "bytes=0-1"}
+        first = http.get(path, headers=headers)
+        assert first.status_code == 206
+        assert first.headers["content-range"] == "bytes=0-1"
+        assert first.headers["accept-ranges"] == "bytes"
+        headers["range"] = "bytes=2-999"
+        assert http.get(path, headers=headers).headers["content-range"] == "bytes=2-999"
+        assert sdk.assets.retrieve.await_count == 1
+        assert store.get_by_id.await_count == 2
+        assert http.put("/api/assets/example/edits", headers=headers).status_code == 500
+        assert "/version/new" in http.get(path, headers=headers).text
+        assert sdk.assets.retrieve.await_count == 2
+        store.get_by_id.return_value = None
+        assert http.get(path, headers=headers).status_code == 401
+        assert sdk.assets.retrieve.await_count == 2
 
 
 def test_unresolved_video_scope_performs_live_read_per_range():
@@ -135,9 +129,9 @@ def test_unresolved_video_scope_performs_live_read_per_range():
             "routers.api.assets.stream_from_cdn",
             AsyncMock(return_value=Response(status_code=206)),
         ),
+        TestClient(app) as http,
     ):
-        with TestClient(app) as http:
-            path = f"/api/assets/{uuid4()}/video/playback"
-            for byte_range in ["bytes=0-1", "bytes=2-"]:
-                assert http.get(path, headers={"range": byte_range}).status_code == 206
-            assert sdk.assets.retrieve.await_count == 2
+        path = f"/api/assets/{uuid4()}/video/playback"
+        for byte_range in ["bytes=0-1", "bytes=2-"]:
+            assert http.get(path, headers={"range": byte_range}).status_code == 206
+        assert sdk.assets.retrieve.await_count == 2

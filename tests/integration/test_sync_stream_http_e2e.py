@@ -10,21 +10,21 @@ Test data is derived from real Proxyman captures.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-
 from gumnut.types.album_response import AlbumResponse
 from gumnut.types.asset_response import AssetResponse
+from gumnut.types.face_response import FaceResponse
 from gumnut.types.file_data_response import FileDataResponse
 from gumnut.types.metadata_response import MetadataResponse
-from gumnut.types.face_response import FaceResponse
 from gumnut.types.person_response import PersonResponse
 from gumnut.types.user_response import UserResponse
+
 from main import app
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from services.checkpoint_store import CheckpointStore, get_checkpoint_store
@@ -35,7 +35,7 @@ TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 TEST_USER_UUID = UUID("660e8400-e29b-41d4-a716-446655440001")
 # Generated via: uuid_to_gumnut_id(TEST_USER_UUID, "intuser")
 TEST_GUMNUT_USER_ID = "intuser_LB2VTcVgieV6LNawiPgXG5"
-TEST_USER_UPDATED_AT = datetime(2025, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+TEST_USER_UPDATED_AT = datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
 
 # Test album data
 TEST_ALBUMS_DATA = [
@@ -185,8 +185,8 @@ def create_asset_response(
         mime_type=asset_data["mime_type"],
         original_file_name=asset_data["original_file_name"],
         local_datetime=parse_datetime(asset_data["local_datetime"]),
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
         # File/provenance scalars live on the nested ``file_data`` group
         # (requested via ``include=file_data``); the adapter reads them from there.
         file_data=FileDataResponse(
@@ -206,8 +206,8 @@ def create_metadata_response(asset_id: str, metadata_data: dict) -> MetadataResp
     """Create a MetadataResponse object from test data."""
     return MetadataResponse(
         asset_id=asset_id,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
         make=metadata_data.get("make"),
         model=metadata_data.get("model"),
         lens_model=metadata_data.get("lens_model"),
@@ -225,8 +225,8 @@ def create_face_response(asset_id: str, face_data: dict) -> FaceResponse:
         asset_id=asset_id,
         bounding_box=face_data["bounding_box"],
         source="automatic",
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
         person_id=face_data.get("person_id"),
     )
 
@@ -257,8 +257,8 @@ def create_person_response(
         name=name,
         is_favorite=False,
         is_hidden=False,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
         thumbnail_face_id=thumbnail_face_id,
     )
 
@@ -274,7 +274,7 @@ def create_event(
     event.entity_type = entity_type
     event.entity_id = entity_id
     event.event_type = event_type
-    event.created_at = datetime.now(timezone.utc)
+    event.created_at = datetime.now(UTC)
     event.cursor = cursor
     return event
 
@@ -289,7 +289,7 @@ def create_mock_entity_page(entities: list):
 @pytest.fixture
 def mock_session():
     """Create a mock session that auth middleware will find."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     session = Session(
         id=TEST_SESSION_UUID,
         user_id=str(TEST_USER_UUID),
@@ -894,16 +894,18 @@ class TestSyncStreamAuthErrors:
         app.dependency_overrides[get_session_store] = lambda: mock_session_store
 
         try:
-            with patch(
-                "routers.middleware.auth_middleware.get_session_store",
-                return_value=mock_session_store,
+            with (
+                patch(
+                    "routers.middleware.auth_middleware.get_session_store",
+                    return_value=mock_session_store,
+                ),
+                TestClient(app, base_url="https://testserver") as client,
             ):
-                with TestClient(app, base_url="https://testserver") as client:
-                    response = client.post(
-                        "/api/sync/stream",
-                        json={"types": ["AuthUsersV1"]},
-                        headers={"Authorization": f"Bearer {TEST_SESSION_UUID}"},
-                    )
+                response = client.post(
+                    "/api/sync/stream",
+                    json={"types": ["AuthUsersV1"]},
+                    headers={"Authorization": f"Bearer {TEST_SESSION_UUID}"},
+                )
 
             assert response.status_code == 401
             body = response.json()

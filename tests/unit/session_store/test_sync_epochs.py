@@ -4,7 +4,7 @@ A session's checkpoints and client reset state belong to its sync epoch, and
 only leaving a library advances it (see SessionStore.set_library).
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import fakeredis
@@ -34,7 +34,7 @@ def checkpoints(redis):
 
 
 async def _put_session(redis, library_id: str = "lib_a", **fields: str) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     data = Session(
         id=TOKEN,
         user_id="user_1",

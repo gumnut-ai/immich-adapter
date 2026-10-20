@@ -1,8 +1,11 @@
+from dataclasses import FrozenInstanceError
+
 import pytest
+
 from config.immich_version import (
     ImmichVersion,
-    parse_immich_version,
     load_immich_version,
+    parse_immich_version,
 )
 
 
@@ -22,7 +25,7 @@ class TestImmichVersion:
     def test_version_is_frozen(self):
         """Test that ImmichVersion is immutable."""
         version = ImmichVersion(major=2, minor=2, patch=3)
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             version.major = 3  # type: ignore
 
 

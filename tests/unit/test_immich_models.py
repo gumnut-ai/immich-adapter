@@ -12,7 +12,7 @@ We assert against the committed generated module rather than importing the gener
 whose PEP-723 inline deps (click/requests/pyyaml) are not installed in the test venv.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -59,7 +59,7 @@ def test_datetime_field_dto_instantiates():
     tripped) it. The no-argument construction is only a default-value smoke check.
     """
     assert SharedLinkEditDto().expiresAt is None
-    dto = SharedLinkEditDto(expiresAt=datetime(2024, 1, 1, tzinfo=timezone.utc))
+    dto = SharedLinkEditDto(expiresAt=datetime(2024, 1, 1, tzinfo=UTC))
     assert dto.expiresAt is not None
 
 

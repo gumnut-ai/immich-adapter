@@ -1,8 +1,9 @@
 """Unit tests for Users API endpoints."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
+
 import pytest
 import shortuuid
 
@@ -20,10 +21,10 @@ from routers.immich_models import (
     RecentlyAddedUpdate,
     UserAdminResponseDto,
     UserAvatarColor,
+    UserLicense,
     UserPreferencesResponseDto,
     UserPreferencesUpdateDto,
     UserStatus,
-    UserLicense,
     UserUpdateMeDto,
 )
 
@@ -44,8 +45,8 @@ class TestGetMyUser:
             email="test@example.com",
             name="John Doe",
             isAdmin=True,
-            createdAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-            updatedAt=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+            createdAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+            updatedAt=datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC),
             avatarColor=UserAvatarColor.primary,
             profileImagePath="",
             shouldChangePassword=False,
@@ -55,9 +56,9 @@ class TestGetMyUser:
             quotaUsageInBytes=1024 * 1024 * 1024,
             deletedAt=None,
             oauthId="",
-            profileChangedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+            profileChangedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
             license=UserLicense(
-                activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
                 activationKey="test-key",
                 licenseKey=STUB_LICENSE_KEY,
             ),
@@ -74,8 +75,8 @@ class TestGetMyUser:
         assert result.email == "test@example.com"
         assert result.name == "John Doe"
         assert result.isAdmin is True
-        assert result.createdAt == datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-        assert result.updatedAt == datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        assert result.createdAt == datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+        assert result.updatedAt == datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
         # Assert Immich-specific defaults
         assert result.avatarColor == UserAvatarColor.primary
@@ -99,8 +100,8 @@ class TestGetMyUser:
             email="admin@example.com",
             name="Admin User",
             isAdmin=True,
-            createdAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-            updatedAt=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+            createdAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+            updatedAt=datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC),
             avatarColor=UserAvatarColor.primary,
             profileImagePath="",
             shouldChangePassword=False,
@@ -110,9 +111,9 @@ class TestGetMyUser:
             quotaUsageInBytes=1024 * 1024 * 1024,
             deletedAt=None,
             oauthId="",
-            profileChangedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+            profileChangedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
             license=UserLicense(
-                activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
                 activationKey="test-key",
                 licenseKey=STUB_LICENSE_KEY,
             ),
@@ -137,8 +138,8 @@ class TestGetMyUser:
             email="inactive@example.com",
             name="Inactive User",
             isAdmin=True,
-            createdAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-            updatedAt=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+            createdAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+            updatedAt=datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC),
             avatarColor=UserAvatarColor.primary,
             profileImagePath="",
             shouldChangePassword=False,
@@ -148,9 +149,9 @@ class TestGetMyUser:
             quotaUsageInBytes=1024 * 1024 * 1024,
             deletedAt=None,
             oauthId="",
-            profileChangedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+            profileChangedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
             license=UserLicense(
-                activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                activatedAt=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
                 activationKey="test-key",
                 licenseKey=STUB_LICENSE_KEY,
             ),
@@ -190,8 +191,8 @@ class TestUpdateMyUser:
         user.first_name = "Test"
         user.last_name = "User"
         user.is_active = True
-        user.created_at = datetime.now(timezone.utc)
-        user.updated_at = datetime.now(timezone.utc)
+        user.created_at = datetime.now(UTC)
+        user.updated_at = datetime.now(UTC)
         user.storage_limit_bytes = storage_limit_bytes
         user.storage_used_bytes = storage_used_bytes
         return user

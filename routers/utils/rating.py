@@ -3,7 +3,6 @@
 from collections.abc import Mapping
 from typing import Any
 
-
 FAVORITE_RATING = 5
 NON_FAVORITE_RATINGS = frozenset(range(FAVORITE_RATING))
 RatingFilter = frozenset[int]

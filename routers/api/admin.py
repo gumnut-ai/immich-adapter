@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Query
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
-from datetime import datetime, timezone
-from typing import List
+
+from fastapi import APIRouter, Query
 
 from routers.api.constants import STUB_LICENSE_KEY
 from routers.immich_models import (
+    AdminConfigSmtpDto,
     AlbumsResponse,
     AssetOrder,
     AssetStatsResponseDto,
@@ -23,7 +24,6 @@ from routers.immich_models import (
     RatingsResponse,
     RecentlyAddedResponse,
     SharedLinksResponse,
-    AdminConfigSmtpDto,
     TagsResponse,
     TemplateDto,
     TemplateResponseDto,
@@ -38,7 +38,6 @@ from routers.immich_models import (
     UserPreferencesUpdateDto,
     UserStatus,
 )
-
 
 router = APIRouter(
     prefix="/api/admin",
@@ -89,7 +88,7 @@ async def create_notification(request: NotificationCreateDto) -> NotificationDto
         title=request.title,
         level=request.level or NotificationLevel.info,
         type=request.type or NotificationType.Custom,
-        createdAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
         readAt=None,
     )
 
@@ -123,7 +122,7 @@ async def send_test_email_admin(request: AdminConfigSmtpDto) -> TestEmailRespons
 async def search_users_admin(
     id: UUID = Query(default=None),
     withDeleted: bool = Query(default=None),
-) -> List[UserAdminResponseDto]:
+) -> list[UserAdminResponseDto]:
     """
     Search users.
     This is a stub implementation that returns an empty list.
@@ -151,14 +150,14 @@ async def create_user_admin(request: UserAdminCreateDto) -> UserAdminResponseDto
         status=UserStatus.active,
         storageLabel="admin",
         license=UserLicense(
-            activatedAt=datetime.now(tz=timezone.utc),
+            activatedAt=datetime.now(tz=UTC),
             activationKey="activation-key",
             licenseKey=STUB_LICENSE_KEY,
         ),
-        profileChangedAt=datetime.now(tz=timezone.utc),
-        deletedAt=datetime.now(tz=timezone.utc),
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        profileChangedAt=datetime.now(tz=UTC),
+        deletedAt=datetime.now(tz=UTC),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
         quotaSizeInBytes=1024 * 1024 * 1024,
         quotaUsageInBytes=0,
     )
@@ -183,14 +182,14 @@ async def get_user_admin(id: UUID) -> UserAdminResponseDto:
         status=UserStatus.active,
         storageLabel="user",
         license=UserLicense(
-            activatedAt=datetime.now(tz=timezone.utc),
+            activatedAt=datetime.now(tz=UTC),
             activationKey="activation-key",
             licenseKey=STUB_LICENSE_KEY,
         ),
-        profileChangedAt=datetime.now(tz=timezone.utc),
-        deletedAt=datetime.now(tz=timezone.utc),
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        profileChangedAt=datetime.now(tz=UTC),
+        deletedAt=datetime.now(tz=UTC),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
         quotaSizeInBytes=1024 * 1024 * 1024,
         quotaUsageInBytes=0,
     )
@@ -217,14 +216,14 @@ async def update_user_admin(
         status=UserStatus.active,
         storageLabel="user",
         license=UserLicense(
-            activatedAt=datetime.now(tz=timezone.utc),
+            activatedAt=datetime.now(tz=UTC),
             activationKey="activation-key",
             licenseKey=STUB_LICENSE_KEY,
         ),
-        profileChangedAt=datetime.now(tz=timezone.utc),
-        deletedAt=datetime.now(tz=timezone.utc),
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        profileChangedAt=datetime.now(tz=UTC),
+        deletedAt=datetime.now(tz=UTC),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
         quotaSizeInBytes=request.quotaSizeInBytes or 1024 * 1024 * 1024,
         quotaUsageInBytes=0,
     )
@@ -251,14 +250,14 @@ async def delete_user_admin(
         status=UserStatus.deleted,
         storageLabel="user",
         license=UserLicense(
-            activatedAt=datetime.now(tz=timezone.utc),
+            activatedAt=datetime.now(tz=UTC),
             activationKey="activation-key",
             licenseKey=STUB_LICENSE_KEY,
         ),
-        profileChangedAt=datetime.now(tz=timezone.utc),
-        deletedAt=datetime.now(tz=timezone.utc),
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        profileChangedAt=datetime.now(tz=UTC),
+        deletedAt=datetime.now(tz=UTC),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
         quotaSizeInBytes=1024 * 1024 * 1024,
         quotaUsageInBytes=0,
     )
@@ -303,14 +302,14 @@ async def restore_user_admin(id: UUID) -> UserAdminResponseDto:
         status=UserStatus.active,
         storageLabel="user",
         license=UserLicense(
-            activatedAt=datetime.now(tz=timezone.utc),
+            activatedAt=datetime.now(tz=UTC),
             activationKey="activation-key",
             licenseKey=STUB_LICENSE_KEY,
         ),
-        profileChangedAt=datetime.now(tz=timezone.utc),
-        deletedAt=datetime.now(tz=timezone.utc),
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
+        profileChangedAt=datetime.now(tz=UTC),
+        deletedAt=datetime.now(tz=UTC),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
         quotaSizeInBytes=1024 * 1024 * 1024,
         quotaUsageInBytes=0,
     )

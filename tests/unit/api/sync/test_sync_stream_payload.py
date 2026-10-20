@@ -1,13 +1,12 @@
 """Tests for sync stream payload overrides (face person_id, album cover)."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
-
 from gumnut.types.face_response import FaceResponse
 
 from routers.api.sync.fk_integrity import SyncStreamStats
@@ -66,7 +65,7 @@ class TestFacePersonIdOverride:
         The face_updated event from clustering will deliver the correct
         person_id in the same or a future sync cycle.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -102,7 +101,7 @@ class TestFacePersonIdOverride:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         assert event_data["type"] == "AssetFaceV1"
@@ -133,7 +132,7 @@ class TestFacePersonIdOverride:
         The face_updated event from clustering will deliver person_id=P1
         in the same or a future sync cycle.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -196,7 +195,7 @@ class TestFacePersonIdOverride:
         face_updated) are both within the sync window, so the person is
         delivered before the face.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -268,7 +267,7 @@ class TestFacePersonIdOverride:
         the sync stream delivers the causally-consistent value from event
         time, not a potentially stale current value.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -314,7 +313,7 @@ class TestFacePersonIdOverride:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         # Converter maps person_id through safe_uuid_from_person_id, so the
@@ -339,7 +338,7 @@ class TestFacePersonIdOverride:
         the payload. These should pass through with the entity's current
         person_id unchanged.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -372,7 +371,7 @@ class TestFacePersonIdOverride:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         # Legacy event: should use entity's current person_id
@@ -385,7 +384,7 @@ class TestFacePersonIdOverride:
     @pytest.mark.anyio
     async def test_face_updated_payload_with_null_person_id(self):
         """face_updated with payload person_id=null unassigns the face from its person."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -421,7 +420,7 @@ class TestFacePersonIdOverride:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         assert event_data["data"]["personId"] is None, (
@@ -436,7 +435,7 @@ class TestFacePersonIdOverride:
         is not present in the payload, the handler should not trigger and
         the entity's current person_id should pass through unchanged.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -469,7 +468,7 @@ class TestFacePersonIdOverride:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         # Empty payload: should use entity's current person_id
@@ -504,7 +503,7 @@ class TestAlbumCoverPayloadOverride:
         verification fetch succeeds. Pass an empty list to simulate the asset
         being deleted.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
         mock_client.events.get.return_value = create_mock_events_response([album_event])
@@ -543,7 +542,7 @@ class TestAlbumCoverPayloadOverride:
     @pytest.mark.anyio
     async def test_album_updated_uses_cover_from_payload(self):
         """album_updated events use album_cover_asset_id from event payload, not current state."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
 
         # Album entity's CURRENT state has cover = asset_A (from a later asset addition)
         current_cover_id = uuid_to_gumnut_asset_id(
@@ -583,7 +582,7 @@ class TestAlbumCoverPayloadOverride:
     @pytest.mark.anyio
     async def test_album_updated_without_payload_uses_current_state(self):
         """Legacy album_updated events (no payload) fall through with current state."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
 
         current_cover_id = uuid_to_gumnut_asset_id(TEST_UUID)
         album_data = create_mock_album_data(
@@ -609,7 +608,7 @@ class TestAlbumCoverPayloadOverride:
     @pytest.mark.anyio
     async def test_album_updated_payload_with_null_cover(self):
         """album_updated with payload album_cover_asset_id=null sets cover to null."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
 
         # Album entity's CURRENT state has a cover (asset was added after event)
         current_cover_id = uuid_to_gumnut_asset_id(TEST_UUID)
@@ -657,7 +656,7 @@ class TestFacePayloadOverrideDeletedPerson:
         4. face_updated event's payload overrides person_id to P1
         5. P1 was never streamed -> must null out person_id to avoid FK violation
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -744,7 +743,7 @@ class TestFacePayloadOverrideDeletedPerson:
         This ensures the Fix 5 verification doesn't break incremental syncs
         where the person exists but simply wasn't modified in this window.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -800,7 +799,7 @@ class TestFacePayloadOverrideDeletedPerson:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         # Person was synced in a prior cycle -- person_id should be preserved
@@ -825,7 +824,7 @@ class TestFacePayloadOverrideDeletedPerson:
         - Event 3 should use current state (P2) since payload is null
         - Event 4 should have person_id=P2 from payload
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -961,7 +960,7 @@ class TestFacePayloadOverrideDeletedPerson:
 
         All faces should have their person_id nulled, not just the first one.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1083,7 +1082,7 @@ class TestFacePayloadOverrideDeletedPerson:
           doesn't (404), null out the reference — even though PersonV1 has a
           checkpoint.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1163,7 +1162,7 @@ class TestAlbumPayloadOverrideDeletedAsset:
     @pytest.mark.anyio
     async def test_album_updated_nulls_cover_when_asset_deleted(self):
         """album_updated payload album_cover_asset_id is nulled when asset returns 404."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1247,7 +1246,7 @@ class TestAlbumPayloadOverrideDeletedAsset:
         exists (the checkpoint does not prove the client still holds the
         asset locally — it has already processed the delete).
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1311,7 +1310,7 @@ class TestAssetFaceV2Converter:
     @pytest.mark.anyio
     async def test_face_v2_adds_deleted_at_and_is_visible(self):
         """AssetFaceV2 events include deletedAt=None and isVisible=True."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1343,7 +1342,7 @@ class TestAssetFaceV2Converter:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         assert event_data["type"] == "AssetFaceV2"
@@ -1355,7 +1354,7 @@ class TestAssetFaceV2Converter:
     @pytest.mark.anyio
     async def test_face_v2_updated_uses_payload_person_id(self):
         """face_updated V2 events use payload person_id and include V2 fields."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1399,7 +1398,7 @@ class TestAssetFaceV2Converter:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         assert event_data["type"] == "AssetFaceV2"

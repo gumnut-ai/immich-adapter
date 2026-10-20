@@ -4,13 +4,13 @@ import asyncio
 import base64
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
-
-import pytest
-import httpx
-import shortuuid
 from uuid import UUID
+
+import httpx
+import pytest
+import shortuuid
 from fastapi import Request
 from gumnut import AuthenticationError, PermissionDeniedError
 from gumnut.types.user_response import UserResponse
@@ -20,8 +20,8 @@ from routers.utils.gumnut_client import (
     _library_choices_in_flight,
     _resolve_library_id,
     _response_hook,
-    get_refreshed_token,
     get_raw_current_user,
+    get_refreshed_token,
     init_request_scope,
     set_refreshed_token,
 )
@@ -51,7 +51,7 @@ def clean_scope():
 
 @pytest.fixture
 def client():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     user = UserResponse.model_construct(
         id="intuser_" + shortuuid.encode(UUID("11111111-1111-4111-8111-111111111111")),
         immich_library_id=None,
@@ -123,7 +123,7 @@ async def test_coalesced_waiter_reads_its_own_user(client, cache):
     async def libraries():
         entered.set()
         await release.wait()
-        return [make_gumnut_library("lib_old", datetime.now(timezone.utc))]
+        return [make_gumnut_library("lib_old", datetime.now(UTC))]
 
     client.libraries.list.side_effect = libraries
     owner, waiter = request(client.api_key), request(client.api_key)
@@ -159,7 +159,7 @@ async def test_refresh_context_stays_with_origin_through_shared_write(
     async def libraries():
         entered.set()
         await lookup_release.wait()
-        return [make_gumnut_library("lib_old", datetime.now(timezone.utc))]
+        return [make_gumnut_library("lib_old", datetime.now(UTC))]
 
     async def me():
         if client.users.me.await_count == 1:
@@ -258,11 +258,13 @@ async def test_expired_seed_auth_failure_is_raised_before_stream(client, cache):
     client.users.me.side_effect = make_sdk_status_error(
         401, "expired", cls=AuthenticationError
     )
-    with patch(
-        "routers.utils.thumbnail_cache.time.time", return_value=time.time() + 7200
+    with (
+        patch(
+            "routers.utils.thumbnail_cache.time.time", return_value=time.time() + 7200
+        ),
+        pytest.raises(AuthenticationError),
     ):
-        with pytest.raises(AuthenticationError):
-            await get_raw_current_user(req, client)
+        await get_raw_current_user(req, client)
     assert client.users.me.await_count == 2
 
 
@@ -311,7 +313,7 @@ async def test_api_key_fallback_and_library_move_writes_are_preserved(client, ca
     req = request(client.api_key, cached=True)
     client.users.me.return_value.immich_library_id = "lib_new"
     client.libraries.list.return_value.append(
-        make_gumnut_library("lib_new", datetime.now(timezone.utc))
+        make_gumnut_library("lib_new", datetime.now(UTC))
     )
     assert await resolve(req, client, cache) == "lib_new"
     cache.set_session_library.assert_awaited_with(
@@ -340,7 +342,7 @@ async def test_scoped_selection_user_read_reused_once(client, cache):
     )
     client.users.me.return_value.immich_library_id = "lib_old"
     client.libraries.retrieve = AsyncMock(
-        return_value=make_gumnut_library("lib_old", datetime.now(timezone.utc))
+        return_value=make_gumnut_library("lib_old", datetime.now(UTC))
     )
     assert await resolve(req, client, cache) == "lib_old"
     user = await get_raw_current_user(req, client)

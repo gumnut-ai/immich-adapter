@@ -21,14 +21,13 @@ import re
 import subprocess
 import sys
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
-from datetime import datetime, timezone
 
 import click
 import requests
 import yaml
-
 from spec_preprocess import strip_non_string_patterns
 
 
@@ -40,9 +39,9 @@ def get_container_tag() -> str:
         if content:
             return content
         else:
-            raise Exception(".immich-container-tag file is empty")
+            raise RuntimeError(".immich-container-tag file is empty")
     else:
-        raise Exception(".immich-container-tag file not found")
+        raise RuntimeError(".immich-container-tag file not found")
 
 
 def _parse_spec(text: str) -> dict:
@@ -154,7 +153,7 @@ def main(immich_spec: str, output: str, verbose: bool):
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Create custom header that replicates datamodel-codegen format
-        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        timestamp = datetime.now(UTC).isoformat(timespec="seconds")
         filename = source_label
 
         # Build header lines

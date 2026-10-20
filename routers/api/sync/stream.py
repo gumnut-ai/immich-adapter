@@ -8,32 +8,17 @@ Delegates to submodules for event construction (events), entity fetching
 import json
 import logging
 from collections import defaultdict
-from collections.abc import Iterator, Sequence
+from collections.abc import AsyncGenerator, Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator
+from typing import Any
 from uuid import UUID
 
 from gumnut import AsyncGumnut, NotFoundError
 from gumnut.types.album_response import AlbumResponse
-from gumnut.types.events_response import Data as EventData
 from gumnut.types.asset_response import AssetResponse
+from gumnut.types.events_response import Data as EventData
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.user_response import UserResponse
-
-from routers.immich_models import (
-    SyncAssetDeleteV1,
-    SyncAssetFaceDeleteV1,
-    SyncEntityType,
-    SyncRequestType,
-    SyncStreamDto,
-)
-from routers.utils.concurrency import gather_with_concurrency
-from routers.utils.gumnut_id_conversion import (
-    safe_uuid_from_asset_id,
-    safe_uuid_from_face_id,
-    safe_uuid_from_user_id,
-)
-from services.checkpoint_store import Checkpoint
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.sync.converters import (
@@ -60,6 +45,20 @@ from routers.api.sync.fk_integrity import (
     null_deleted_fk_references,
     payload_override,
 )
+from routers.immich_models import (
+    SyncAssetDeleteV1,
+    SyncAssetFaceDeleteV1,
+    SyncEntityType,
+    SyncRequestType,
+    SyncStreamDto,
+)
+from routers.utils.concurrency import gather_with_concurrency
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
+    safe_uuid_from_face_id,
+    safe_uuid_from_user_id,
+)
+from services.checkpoint_store import Checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -357,7 +356,7 @@ async def _stream_entity_type(
     checkpoint_map: dict[SyncEntityType, Checkpoint],
     delete_buffer: list[tuple[str, SyncEntityType]] | None = None,
     emit_deletes: bool = True,
-) -> AsyncGenerator[tuple[str, int], None]:
+) -> AsyncGenerator[tuple[str, int]]:
     """
     Stream events for a single entity type using the events API.
 
@@ -851,7 +850,7 @@ async def generate_sync_stream(
     checkpoint_map: dict[SyncEntityType, Checkpoint],
     current_user: UserResponse,
     completion_state: dict[str, Any] | None = None,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[str]:
     """
     Generate sync stream as JSON Lines (newline-delimited JSON).
 
@@ -1064,10 +1063,10 @@ async def generate_sync_stream(
         logger.info("Sync stream completed", extra={"user_id": owner_id})
 
     except Exception:
-        logger.error("Error generating sync stream", exc_info=True)
+        logger.exception("Error generating sync stream")
 
 
-async def generate_reset_stream() -> AsyncGenerator[str, None]:
+async def generate_reset_stream() -> AsyncGenerator[str]:
     """
     Generate a sync stream containing only SyncResetV1, acked with the bound
     sync epoch the client resets to.

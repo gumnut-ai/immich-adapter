@@ -143,7 +143,7 @@ class LockedDependencyTests(unittest.TestCase):
             module.uv_packages({"version": 2, "package": []})
 
     def test_cpu_build_retained_with_explicit_conservative_upstream_identity(self):
-        resolved, excluded, limitations = module.uv_packages(
+        resolved, _excluded, limitations = module.uv_packages(
             {
                 "version": 1,
                 "package": [

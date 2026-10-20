@@ -1,5 +1,4 @@
 import logging
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -10,8 +9,8 @@ from routers.immich_models import (
     SessionUpdateDto,
 )
 from routers.utils.current_user import get_current_user_id
-from services.websockets import emit_session_event, WebSocketEvent
 from services.session_store import Session, SessionStore, get_session_store
+from services.websockets import WebSocketEvent, emit_session_event
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +68,7 @@ async def get_sessions(
     request: Request,
     current_user_id: UUID = Depends(get_current_user_id),
     session_store: SessionStore = Depends(get_session_store),
-) -> List[SessionResponseDto]:
+) -> list[SessionResponseDto]:
     """
     Get all sessions for the current user.
 
@@ -93,7 +92,7 @@ async def create_session(session_create: SessionCreateDto) -> None:
     This endpoint is used for casting and requires issuing a new token.
     Currently not supported - returns 204 No Content.
     """
-    return None
+    return
 
 
 @router.delete("", status_code=204)
@@ -132,8 +131,6 @@ async def delete_all_sessions(
                     extra={"session_id": session_token, "error": str(e)},
                     exc_info=True,
                 )
-
-    return None
 
 
 @router.put("/{id}")
@@ -202,8 +199,6 @@ async def delete_session(
         WebSocketEvent.SESSION_DELETE, session_token, session_token
     )
 
-    return None
-
 
 @router.post("/{id}/lock", status_code=204)
 async def lock_session(id: UUID) -> None:
@@ -213,4 +208,4 @@ async def lock_session(id: UUID) -> None:
     This removes elevated access to locked assets from the session.
     Currently not supported - returns 204 No Content.
     """
-    return None
+    return

@@ -36,11 +36,10 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
 )
 from services.websockets import (
+    WebSocketEvent,
     emit_user_event,
     emit_user_event_per_id,
-    WebSocketEvent,
 )
-
 
 router = APIRouter(
     prefix="/api/trash",

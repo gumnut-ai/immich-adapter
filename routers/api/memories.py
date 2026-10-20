@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from datetime import date, datetime, timedelta, timezone
-from typing import Annotated, List
+from datetime import UTC, date, datetime, timedelta
+from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -23,7 +23,6 @@ from routers.immich_models import (
 from routers.utils.asset_conversion import ASSET_INCLUDE, convert_gumnut_asset_to_immich
 from routers.utils.current_user import get_current_user, get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
-
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +94,7 @@ def _local_today(for_param: datetime | None) -> tuple[int, int, int]:
     sends `for`, so this branch is only hit by direct API consumers.
     """
     if for_param is None:
-        today = datetime.now(tz=timezone.utc)
+        today = datetime.now(tz=UTC)
         return today.year, today.month, today.day
     return for_param.year, for_param.month, for_param.day
 
@@ -129,7 +128,9 @@ async def _fetch_assets_for_day(
     `docs/references/pagination-bulk-and-concurrency.md` "Counts and Aggregates").
     """
     try:
-        day_start = datetime(year, month, day)
+        # A local wall-clock day for the local_datetime filters; an offset in
+        # the ISO string would shift the window.
+        day_start = datetime(year, month, day)  # noqa: DTZ001
     except ValueError:
         return []
     day_end = day_start + timedelta(days=1)
@@ -155,7 +156,7 @@ def _build_memory(
     assets: list[AssetResponse],
     current_user: UserResponseDto,
 ) -> MemoryResponseDto:
-    memory_at = datetime(year, month, day, tzinfo=timezone.utc)
+    memory_at = datetime(year, month, day, tzinfo=UTC)
     return MemoryResponseDto(
         id=encode_memory_id(user_uuid, year, month, day),
         assets=[
@@ -187,9 +188,7 @@ def _filters_exclude_synthetic(
         return True
     if is_trashed is True:
         return True
-    if memory_type is not None and memory_type != MemoryType.on_this_day:
-        return True
-    return False
+    return bool(memory_type is not None and memory_type != MemoryType.on_this_day)
 
 
 async def _gather_year_assets(
@@ -237,7 +236,7 @@ async def search_memories(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user_id: UUID = Depends(get_current_user_id),
     current_user: UserResponseDto = Depends(get_current_user),
-) -> List[MemoryResponseDto]:
+) -> list[MemoryResponseDto]:
     """Synthesize OnThisDay memories for the user across a 30-year window."""
     if _filters_exclude_synthetic(
         is_saved=isSaved, is_trashed=isTrashed, memory_type=type
@@ -268,13 +267,13 @@ async def create_memory(
     return MemoryResponseDto(
         id=uuid4(),
         assets=[],
-        createdAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
         data=OnThisDayDto(year=2024),
         isSaved=False,
-        memoryAt=datetime.now(tz=timezone.utc),
+        memoryAt=datetime.now(tz=UTC),
         ownerId=current_user_id,
         type=MemoryType.on_this_day,
-        updatedAt=datetime.now(tz=timezone.utc),
+        updatedAt=datetime.now(tz=UTC),
     )
 
 
@@ -329,13 +328,13 @@ async def update_memory(
     return MemoryResponseDto(
         id=id,
         assets=[],
-        createdAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
         data=OnThisDayDto(year=2024),
         isSaved=request.isSaved or False,
-        memoryAt=request.memoryAt or datetime.now(tz=timezone.utc),
+        memoryAt=request.memoryAt or datetime.now(tz=UTC),
         ownerId=current_user_id,
         type=MemoryType.on_this_day,
-        updatedAt=datetime.now(tz=timezone.utc),
+        updatedAt=datetime.now(tz=UTC),
     )
 
 
@@ -351,7 +350,7 @@ async def delete_memory(id: UUID):
 @router.delete("/{id}/assets")
 async def remove_memory_assets(
     id: UUID, request: BulkIdsDto
-) -> List[BulkIdResponseDto]:
+) -> list[BulkIdResponseDto]:
     """
     Get assets for a memory.
     This is a stub implementation that returns an empty list.
@@ -360,7 +359,7 @@ async def remove_memory_assets(
 
 
 @router.put("/{id}/assets")
-async def add_memory_assets(id: UUID, request: BulkIdsDto) -> List[BulkIdResponseDto]:
+async def add_memory_assets(id: UUID, request: BulkIdsDto) -> list[BulkIdResponseDto]:
     """
     Get assets for a memory.
     This is a stub implementation that returns an empty list.

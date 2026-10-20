@@ -1,43 +1,43 @@
 """Tests for people.py endpoints."""
 
 import asyncio
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
 
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
-from uuid import uuid4
-from datetime import datetime, timezone, timedelta
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
-from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
 from routers.api.people import (
     create_person,
-    update_people,
-    update_person,
-    get_all_people,
     delete_people,
-    get_thumbnail,
+    delete_person,
+    get_all_people,
     get_person,
     get_person_statistics,
-    delete_person,
+    get_thumbnail,
     merge_person,
     reassign_faces,
-)
-from routers.utils.gumnut_id_conversion import (
-    safe_uuid_from_person_id,
-    uuid_to_gumnut_asset_id,
-    uuid_to_gumnut_person_id,
+    update_people,
+    update_person,
 )
 from routers.immich_models import (
     AssetFaceUpdateDto,
     AssetFaceUpdateItem,
-    BulkIdsDto,
     BulkIdErrorReason,
+    BulkIdsDto,
     MergePersonDto,
     PeopleUpdateDto,
     PeopleUpdateItem,
     PersonCreateDto,
     PersonUpdateDto,
+)
+from routers.utils.concurrency import BULK_FANOUT_CONCURRENCY_LIMIT
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_person_id,
+    uuid_to_gumnut_asset_id,
+    uuid_to_gumnut_person_id,
 )
 
 
@@ -95,6 +95,7 @@ class TestCreatePerson:
     async def test_create_person_propagates_auth_error(self):
         """Auth errors bubble up as AuthenticationError."""
         from gumnut import AuthenticationError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -112,6 +113,7 @@ class TestCreatePerson:
     async def test_create_person_propagates_5xx(self):
         """Generic SDK errors bubble up to the global GumnutError handler."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -158,6 +160,7 @@ class TestUpdatePeople:
     async def test_update_people_mixed_results(self):
         """Test bulk people update with some failures."""
         from gumnut import NotFoundError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -320,6 +323,7 @@ class TestUpdatePerson:
     async def test_update_person_not_found(self, sample_uuid):
         """A NotFoundError on update bubbles up to the global handler."""
         from gumnut import NotFoundError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -648,6 +652,7 @@ class TestGetAllPeople:
     async def test_get_all_people_propagates_sdk_error(self):
         """SDK errors bubble up to the global GumnutError handler."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -676,8 +681,8 @@ def _make_person(
     person.thumbnail_face_url = None
     person.asset_urls = None
     person.asset_count = asset_count
-    person.created_at = created_at or datetime.now(timezone.utc)
-    person.updated_at = datetime.now(timezone.utc)
+    person.created_at = created_at or datetime.now(UTC)
+    person.updated_at = datetime.now(UTC)
     return person
 
 
@@ -761,7 +766,7 @@ class TestGetAllPeopleSorting:
     @pytest.mark.anyio
     async def test_created_at_tiebreaker(self, mock_sync_cursor_page):
         """When all other fields match, older people should sort first."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Same name and asset count — created_at is the tiebreaker
         newer = _make_person(name="Alice", asset_count=10, created_at=now)
@@ -888,6 +893,7 @@ class TestDeletePeople:
     async def test_delete_people_not_found_propagates(self):
         """A NotFoundError on delete bubbles up to the global handler."""
         from gumnut import NotFoundError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -905,6 +911,7 @@ class TestDeletePeople:
     async def test_delete_people_propagates_auth_error(self):
         """Auth errors bubble up to the global handler."""
         from gumnut import AuthenticationError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -1007,6 +1014,7 @@ class TestGetThumbnail:
     async def test_get_thumbnail_person_not_found(self, sample_uuid):
         """A NotFoundError bubbles up to the global handler."""
         from gumnut import NotFoundError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -1044,6 +1052,7 @@ class TestGetPerson:
     async def test_get_person_not_found_propagates(self, sample_uuid):
         """A NotFoundError on retrieve bubbles up to the global handler."""
         from gumnut import NotFoundError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -1060,6 +1069,7 @@ class TestGetPerson:
     async def test_get_person_propagates_auth_error(self, sample_uuid):
         """Auth errors bubble up to the global handler."""
         from gumnut import AuthenticationError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -1119,6 +1129,7 @@ class TestGetPersonStatistics:
     async def test_get_person_statistics_not_found_propagates(self, sample_uuid):
         """A NotFoundError on people.retrieve bubbles up to the global handler."""
         from gumnut import NotFoundError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -1153,6 +1164,7 @@ class TestDeletePerson:
     async def test_delete_person_not_found_propagates(self, sample_uuid):
         """A NotFoundError on delete bubbles up to the global handler."""
         from gumnut import NotFoundError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -1169,6 +1181,7 @@ class TestDeletePerson:
     async def test_delete_person_propagates_auth_error(self, sample_uuid):
         """Auth errors bubble up to the global handler."""
         from gumnut import AuthenticationError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -1269,6 +1282,7 @@ class TestMergePerson:
     async def test_merge_person_upstream_error_bubbles(self, sample_uuid):
         """Upstream errors bubble to the global GumnutError handler."""
         from gumnut import NotFoundError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -1375,6 +1389,7 @@ class TestReassignFaces:
         asset_uuid = uuid4()
 
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()

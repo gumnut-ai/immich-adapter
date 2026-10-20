@@ -6,7 +6,7 @@ and Immich formats, handling timezone conversions and Immich's special
 "keepLocalTime" format for localDateTime fields.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import overload
 
 
@@ -34,9 +34,9 @@ def to_actual_utc(dt: datetime | None) -> datetime | None:
         return None
     if dt.tzinfo is None:
         # Naive datetime - assume it's meant to be UTC
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     # Convert timezone-aware datetime to UTC
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(UTC)
 
 
 @overload
@@ -64,7 +64,7 @@ def to_immich_local_datetime(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     # Strip timezone info, then mark as UTC to preserve the local time appearance
-    return dt.replace(tzinfo=None).replace(tzinfo=timezone.utc)
+    return dt.replace(tzinfo=None).replace(tzinfo=UTC)
 
 
 def format_timezone_immich(dt: datetime | None) -> str | None:

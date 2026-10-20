@@ -11,20 +11,14 @@ Events are processed in priority order (assets before exif, etc.).
 """
 
 import logging
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from gumnut import AsyncGumnut
 
-from services.checkpoint_store import (
-    Checkpoint,
-    CheckpointStore,
-    get_checkpoint_store,
-)
-from services.session_store import SessionStore, get_session_store
-
+from routers.api.sync.events import bind_sync_epoch, to_ack_string
+from routers.api.sync.stream import generate_reset_stream, generate_sync_stream
 from routers.immich_models import (
     SyncAckDeleteDto,
     SyncAckDto,
@@ -37,9 +31,12 @@ from routers.utils.gumnut_client import (
     get_bound_library_id,
     get_raw_current_user,
 )
-
-from routers.api.sync.events import bind_sync_epoch, to_ack_string
-from routers.api.sync.stream import generate_reset_stream, generate_sync_stream
+from services.checkpoint_store import (
+    Checkpoint,
+    CheckpointStore,
+    get_checkpoint_store,
+)
+from services.session_store import SessionStore, get_session_store
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +148,7 @@ async def get_sync_ack(
     http_request: Request,
     checkpoint_store: CheckpointStore = Depends(get_checkpoint_store),
     session_store: SessionStore = Depends(get_session_store),
-) -> List[SyncAckDto]:
+) -> list[SyncAckDto]:
     """
     Get sync acknowledgements for the current session.
 
@@ -279,7 +276,7 @@ async def send_sync_ack(
         extra={
             "session_id": session_token,
             "checkpoint_count": len(checkpoints_to_store),
-            "types": [et.value for et in checkpoints_to_store.keys()],
+            "types": [et.value for et in checkpoints_to_store],
         },
     )
     return
@@ -322,7 +319,6 @@ async def delete_sync_ack(
             },
         )
     # else: empty list - do nothing (no-op)
-    return
 
 
 @router.post("/stream")
@@ -399,7 +395,7 @@ async def get_sync_stream(
             f"Loaded {len(checkpoint_map)} checkpoints for sync stream",
             extra={
                 "session_id": session_token,
-                "checkpoint_types": [t.value for t in checkpoint_map.keys()],
+                "checkpoint_types": [t.value for t in checkpoint_map],
             },
         )
 

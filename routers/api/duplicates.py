@@ -1,5 +1,5 @@
-from typing import List
 from uuid import UUID
+
 from fastapi import APIRouter
 
 from routers.immich_models import (
@@ -8,7 +8,6 @@ from routers.immich_models import (
     DuplicateResolveDto,
     DuplicateResponseDto,
 )
-
 
 router = APIRouter(
     prefix="/api/duplicates",
@@ -28,7 +27,7 @@ async def delete_duplicate(id: UUID) -> None:
 
 
 @router.get("")
-async def get_asset_duplicates() -> List[DuplicateResponseDto]:
+async def get_asset_duplicates() -> list[DuplicateResponseDto]:
     """
     Return a list of duplicate assets.
     Gumnut currently does not support finding duplicates, so this is a stub implementation that returns an empty list.
@@ -48,7 +47,7 @@ async def delete_duplicates(request: BulkIdsDto):
 
 
 @router.post("/resolve")
-async def resolve_duplicates(request: DuplicateResolveDto) -> List[BulkIdResponseDto]:
+async def resolve_duplicates(request: DuplicateResolveDto) -> list[BulkIdResponseDto]:
     """
     Resolve duplicate groups by syncing metadata and deleting/trashing duplicates.
     Gumnut currently does not support finding duplicates, so this is a stub implementation that returns an empty list.

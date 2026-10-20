@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta
-from typing import Any, List, Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -23,7 +23,6 @@ from routers.utils.asset_conversion import (
     resolve_capture_datetime,
     resolve_created_at,
 )
-from routers.utils.rating import RatingFilter, rating_extra_query, rating_filter_values
 from routers.utils.current_user import get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.gumnut_id_conversion import (
@@ -31,6 +30,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_person_id,
 )
+from routers.utils.rating import RatingFilter, rating_extra_query, rating_filter_values
 from routers.utils.stack_conversion import TimelineStacks, resolve_timeline_stacks
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ async def get_time_buckets(
     withStacked: bool = Query(default=None),
     bbox: str = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[TimeBucketsResponseDto]:
+) -> list[TimeBucketsResponseDto]:
     if visibility is not None and visibility != AssetVisibility.timeline:
         return []  # Gumnut does not support hidden, archived, or locked assets.
 
@@ -247,10 +247,9 @@ async def get_time_bucket(
             # would turn a feature designed to degrade into a 500 on the app's
             # primary view. ERROR because reaching here means an adapter bug
             # rather than an upstream one.
-            logger.error(
+            logger.exception(
                 "Unexpected error resolving timeline stacks; returning the "
                 "bucket uncollapsed",
-                exc_info=True,
                 extra=degradation_context,
             )
             stacks = TimelineStacks.empty()

@@ -1,11 +1,29 @@
 import logging
 from itertools import batched
-from typing import Annotated, List
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from gumnut import AsyncGumnut, omit
+from pydantic.json_schema import SkipJsonSchema
 
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
+from routers.immich_models import (
+    AddUsersDto,
+    AlbumResponseDto,
+    AlbumsAddAssetsDto,
+    AlbumsAddAssetsResponseDto,
+    AlbumStatisticsResponseDto,
+    BulkIdErrorReason,
+    BulkIdResponseDto,
+    BulkIdsDto,
+    CreateAlbumDto,
+    MapMarkerResponseDto,
+    UpdateAlbumDto,
+    UpdateAlbumUserDto,
+    UserResponseDto,
+)
+from routers.utils.album_conversion import convert_gumnut_album_to_immich
 from routers.utils.bulk import (
     BulkChunkError,
     chunked_per_item_bulk,
@@ -14,34 +32,16 @@ from routers.utils.concurrency import (
     BULK_FANOUT_CONCURRENCY_LIMIT,
     gather_with_concurrency,
 )
+from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import (
     get_authenticated_gumnut_client,
     get_current_library_id,
 )
-from routers.utils.current_user import get_current_user
-from routers.immich_models import (
-    AlbumResponseDto,
-    BulkIdResponseDto,
-    BulkIdsDto,
-    CreateAlbumDto,
-    AlbumsAddAssetsDto,
-    AlbumsAddAssetsResponseDto,
-    AlbumStatisticsResponseDto,
-    MapMarkerResponseDto,
-    UpdateAlbumDto,
-    UpdateAlbumUserDto,
-    AddUsersDto,
-    BulkIdErrorReason,
-    UserResponseDto,
-)
-from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_album_id,
     uuid_to_gumnut_asset_id,
 )
-from routers.utils.album_conversion import convert_gumnut_album_to_immich
 from routers.utils.map_markers import collect_geotagged_markers
-from pydantic.json_schema import SkipJsonSchema
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ async def get_all_albums(
     shared: Annotated[bool | SkipJsonSchema[None], Query(alias="shared")] = None,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
-) -> List[AlbumResponseDto]:
+) -> list[AlbumResponseDto]:
     """
     Fetch albums from Gumnut and convert to AlbumResponseDto format.
     Shared albums are not supported in this adapter and will return an empty list.
@@ -140,7 +140,7 @@ async def get_album_map_markers(
     key: Annotated[str | SkipJsonSchema[None], Query(alias="key")] = None,
     slug: Annotated[str | SkipJsonSchema[None], Query(alias="slug")] = None,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[MapMarkerResponseDto]:
+) -> list[MapMarkerResponseDto]:
     """Return map markers for the GPS-tagged assets in a single album.
 
     New in Immich v3 (the global `/map/markers` dropped its `albumIds` filter),
@@ -251,7 +251,7 @@ async def add_assets_to_album(
     id: UUID,
     request: BulkIdsDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[BulkIdResponseDto]:
+) -> list[BulkIdResponseDto]:
     """
     Add assets to an album using the Gumnut SDK.
     Returns a list of results indicating success/failure for each asset.
@@ -363,7 +363,7 @@ async def remove_asset_from_album(
     id: UUID,
     request: BulkIdsDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[BulkIdResponseDto]:
+) -> list[BulkIdResponseDto]:
     """
     Remove assets from an album using the Gumnut SDK.
     Returns a list of results indicating success/failure for each asset removal.

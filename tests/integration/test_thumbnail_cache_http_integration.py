@@ -89,48 +89,41 @@ def test_session_rechecked_and_mutations_invalidate_even_after_failure(
             "routers.api.assets.stream_from_cdn",
             AsyncMock(side_effect=lambda *args, **kwargs: Response(content=args[0])),
         ),
+        TestClient(app) as client,
     ):
-        with TestClient(app) as client:
-            path = f"/api/assets/{uuid4()}/thumbnail?edited=true&size=thumbnail"
-            headers = {"authorization": "Bearer session-token"}
-            assert (
-                client.get(path, headers=headers).text == "https://cdn.example.com/old"
-            )
-            assert (
-                client.get(path + "&c=known-hash", headers=headers).text
-                == "https://cdn.example.com/old"
-            )
-            assert sdk.assets.retrieve.await_count == 1
-            assert store.get_by_id.await_count == 2
-            assert (
-                client.request(method, mutation_path, headers=headers).status_code
-                == 500
-            )
-            assert (
-                client.get(path, headers=headers).text == "https://cdn.example.com/new"
-            )
-            assert sdk.assets.retrieve.await_count == 2
-            store.get_by_id.return_value = None
-            assert client.get(path, headers=headers).status_code == 401
-            assert sdk.assets.retrieve.await_count == 2
-            lookups = [
-                call
-                for call in count.call_args_list
-                if call.args[0] == "thumbnail.cache.lookup"
-            ]
-            assert [call.args for call in lookups] == [
-                ("thumbnail.cache.lookup", 1),
-                ("thumbnail.cache.lookup", 1),
-                ("thumbnail.cache.lookup", 1),
-            ]
-            assert [call.kwargs["attributes"]["cache.outcome"] for call in lookups] == [
-                "miss",
-                "hit",
-                "miss",
-            ]
-            assert [
-                call.args[1]
-                for call in count.call_args_list
-                if call.args[0] == "thumbnail.cache.removed_keys"
-                and call.kwargs["attributes"]["cache.reason"] == "mutation"
-            ] == [2]  # Pre-clear removes both aliases; empty post-clear loses none.
+        path = f"/api/assets/{uuid4()}/thumbnail?edited=true&size=thumbnail"
+        headers = {"authorization": "Bearer session-token"}
+        assert client.get(path, headers=headers).text == "https://cdn.example.com/old"
+        assert (
+            client.get(path + "&c=known-hash", headers=headers).text
+            == "https://cdn.example.com/old"
+        )
+        assert sdk.assets.retrieve.await_count == 1
+        assert store.get_by_id.await_count == 2
+        assert client.request(method, mutation_path, headers=headers).status_code == 500
+        assert client.get(path, headers=headers).text == "https://cdn.example.com/new"
+        assert sdk.assets.retrieve.await_count == 2
+        store.get_by_id.return_value = None
+        assert client.get(path, headers=headers).status_code == 401
+        assert sdk.assets.retrieve.await_count == 2
+        lookups = [
+            call
+            for call in count.call_args_list
+            if call.args[0] == "thumbnail.cache.lookup"
+        ]
+        assert [call.args for call in lookups] == [
+            ("thumbnail.cache.lookup", 1),
+            ("thumbnail.cache.lookup", 1),
+            ("thumbnail.cache.lookup", 1),
+        ]
+        assert [call.kwargs["attributes"]["cache.outcome"] for call in lookups] == [
+            "miss",
+            "hit",
+            "miss",
+        ]
+        assert [
+            call.args[1]
+            for call in count.call_args_list
+            if call.args[0] == "thumbnail.cache.removed_keys"
+            and call.kwargs["attributes"]["cache.reason"] == "mutation"
+        ] == [2]  # Pre-clear removes both aliases; empty post-clear loses none.

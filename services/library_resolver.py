@@ -102,7 +102,7 @@ class LibraryCache:
         try:
             value = await self._redis.get(_api_key_cache_key(api_key))
         except redis.exceptions.RedisError:
-            logger.error("Failed to read cached library for API key", exc_info=True)
+            logger.exception("Failed to read cached library for API key")
             return None
         return value or None
 
@@ -126,7 +126,7 @@ class LibraryCache:
                 from_choice=from_choice,
             )
         except redis.exceptions.RedisError:
-            logger.error("Failed to record session library", exc_info=True)
+            logger.exception("Failed to record session library")
             return False
 
     async def remember_for_api_key(self, api_key: str, library_id: str) -> None:
@@ -137,13 +137,13 @@ class LibraryCache:
                 ex=LIBRARY_RECHECK_SECONDS,
             )
         except redis.exceptions.RedisError:
-            logger.error("Failed to cache resolved library", exc_info=True)
+            logger.exception("Failed to cache resolved library")
 
     async def forget_api_key(self, api_key: str) -> None:
         try:
             await self._redis.delete(_api_key_cache_key(api_key))
         except redis.exceptions.RedisError:
-            logger.error("Failed to drop cached library", exc_info=True)
+            logger.exception("Failed to drop cached library")
 
 
 async def get_library_cache() -> LibraryCache:

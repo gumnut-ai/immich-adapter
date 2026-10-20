@@ -3,7 +3,7 @@ import logging
 from collections.abc import Iterable
 from enum import Enum
 from http.cookies import SimpleCookie
-from typing import Any, TypeAlias
+from typing import Any
 from uuid import UUID
 
 import socketio
@@ -72,7 +72,7 @@ class WebSocketEvent(Enum):
     PERSON_THUMBNAIL = "on_person_thumbnail"
 
 
-EventPayload: TypeAlias = BaseModel | str | list[str] | None
+type EventPayload = BaseModel | str | list[str] | None
 
 
 class AssetUploadReadyV1Payload(BaseModel):
@@ -117,10 +117,11 @@ def _extract_session_token(environ: dict[str, Any]) -> str | None:
         return token
 
     # Check Bearer token
-    if auth := environ.get("HTTP_AUTHORIZATION", ""):
-        if auth.lower().startswith("bearer "):
-            token = auth[7:].strip()
-            return token or None
+    if (auth := environ.get("HTTP_AUTHORIZATION", "")) and auth.lower().startswith(
+        "bearer "
+    ):
+        token = auth[7:].strip()
+        return token or None
 
     # Check cookie
     if cookie_str := environ.get("HTTP_COOKIE"):

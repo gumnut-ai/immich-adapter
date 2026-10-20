@@ -1,10 +1,9 @@
 """Tests for batched sync entity hydration."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import Mock
 
 import pytest
-
 from gumnut.types.face_response import FaceResponse
 
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
@@ -53,8 +52,8 @@ def _face(face_id: str, asset_id: str) -> FaceResponse:
         asset_id=asset_id,
         bounding_box={"x": 1, "y": 1, "w": 2, "h": 2},
         source="automatic",
-        created_at=datetime(2025, 1, 15, tzinfo=timezone.utc),
-        updated_at=datetime(2025, 1, 15, tzinfo=timezone.utc),
+        created_at=datetime(2025, 1, 15, tzinfo=UTC),
+        updated_at=datetime(2025, 1, 15, tzinfo=UTC),
     )
 
 

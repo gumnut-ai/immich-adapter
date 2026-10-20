@@ -1,11 +1,12 @@
 """Unit tests for Sessions API endpoints."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
+from socketio.exceptions import SocketIOError
 
 from routers.api.sessions import (
     _get_session_token,
@@ -17,10 +18,9 @@ from routers.api.sessions import (
     lock_session,
     update_session,
 )
-from services.websockets import WebSocketEvent
 from routers.immich_models import SessionCreateDto, SessionUpdateDto
 from services.session_store import Session, SessionStore
-from socketio.exceptions import SocketIOError
+from services.websockets import WebSocketEvent
 
 # Test UUIDs for consistent testing
 TEST_SESSION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -34,7 +34,7 @@ class TestHelperFunctions:
 
     def test_session_to_response_dto_current_true(self):
         """Test converting session to DTO when it's the current session."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id="user_1",
@@ -59,7 +59,7 @@ class TestHelperFunctions:
 
     def test_session_to_response_dto_current_false(self):
         """Test converting session to DTO when it's not the current session."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id="user_1",
@@ -81,7 +81,7 @@ class TestHelperFunctions:
 
     def test_session_to_response_dto_empty_app_version(self):
         """Test that empty app_version is converted to None."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id="user_1",
@@ -138,7 +138,7 @@ class TestGetSessions:
     @pytest.fixture
     def sample_sessions(self):
         """Create sample sessions for testing."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         return [
             Session(
@@ -238,7 +238,7 @@ class TestDeleteAllSessions:
         self, mock_request, mock_session_store
     ):
         """Test that delete all sessions keeps the current session."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         sessions = [
             Session(
@@ -284,7 +284,7 @@ class TestDeleteAllSessions:
         self, mock_request, mock_session_store
     ):
         """Test delete all when only current session exists."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         sessions = [
             Session(
@@ -318,7 +318,7 @@ class TestDeleteAllSessions:
         self, mock_request, mock_session_store
     ):
         """Test that delete_all_sessions emits on_session_delete for each deleted session."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         sessions = [
             Session(
@@ -384,7 +384,7 @@ class TestUpdateSession:
     @pytest.mark.anyio
     async def test_update_session_success(self, mock_request, mock_session_store):
         """Test successful session update."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id=str(TEST_USER_ID),
@@ -453,7 +453,7 @@ class TestUpdateSession:
     @pytest.mark.anyio
     async def test_update_session_wrong_user(self, mock_request, mock_session_store):
         """Test update session returns 400 when session belongs to different user."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id="different_user",  # Different user
@@ -485,7 +485,7 @@ class TestUpdateSession:
     @pytest.mark.anyio
     async def test_update_session_no_changes(self, mock_request, mock_session_store):
         """Test update session with no changes still returns session."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id=str(TEST_USER_ID),
@@ -534,7 +534,7 @@ class TestDeleteSession:
     @pytest.mark.anyio
     async def test_delete_session_success(self, mock_request, mock_session_store):
         """Test successful session deletion."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id=str(TEST_USER_ID),
@@ -583,7 +583,7 @@ class TestDeleteSession:
     @pytest.mark.anyio
     async def test_delete_session_wrong_user(self, mock_request, mock_session_store):
         """Test delete session returns 400 when session belongs to different user."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id="different_user",  # Different user
@@ -614,7 +614,7 @@ class TestDeleteSession:
         self, mock_request, mock_session_store
     ):
         """Test that delete_session emits on_session_delete event."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id=str(TEST_USER_ID),
@@ -651,7 +651,7 @@ class TestDeleteSession:
         self, mock_request, mock_session_store
     ):
         """Test that WebSocket emission errors don't fail the session deletion."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id=str(TEST_USER_ID),

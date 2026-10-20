@@ -1,10 +1,10 @@
 """Unit tests for SessionStore with mocked Redis."""
 
-import pytest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
+import pytest
 import redis.exceptions
 
 from services.session_store import (
@@ -39,7 +39,7 @@ class TestSessionDataclass:
 
     def test_to_dict(self):
         """Test Session.to_dict() converts to Redis hash format."""
-        now = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 20, 10, 0, 0, tzinfo=UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id="user_123",
@@ -69,7 +69,7 @@ class TestSessionDataclass:
 
     def test_sync_epochs_round_trip(self):
         """A client behind the session's sync epoch owes a reset."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id="user_123",
@@ -112,12 +112,8 @@ class TestSessionDataclass:
         assert session.device_type == "iOS"
         assert session.device_os == "iOS 17.4"
         assert session.app_version == "1.94.0"
-        assert session.created_at == datetime(
-            2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc
-        )
-        assert session.updated_at == datetime(
-            2025, 1, 20, 10, 30, 0, tzinfo=timezone.utc
-        )
+        assert session.created_at == datetime(2025, 1, 20, 10, 0, 0, tzinfo=UTC)
+        assert session.updated_at == datetime(2025, 1, 20, 10, 30, 0, tzinfo=UTC)
         assert (session.sync_epoch, session.client_epoch) == (0, 0)
         assert session.is_pending_sync_reset is False
         # A hash written before library revalidation existed is due for it.
@@ -125,7 +121,7 @@ class TestSessionDataclass:
         assert session.library_from_choice is False
 
     def test_library_revalidation_fields_round_trip(self):
-        now = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 20, 10, 0, 0, tzinfo=UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id="user_123",
@@ -198,7 +194,7 @@ class TestSessionDataclass:
 
     def test_get_jwt_decrypts_stored_jwt(self):
         """Test get_jwt() decrypts the stored JWT."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=TEST_SESSION_ID,
             user_id="user_123",
@@ -276,7 +272,7 @@ class TestSessionStoreCreate:
             mock_encrypt.return_value = TEST_ENCRYPTED_JWT
 
             # Set expiry to 1 hour in the future
-            expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            expires_at = datetime.now(UTC) + timedelta(hours=1)
 
             session = await session_store.create(
                 jwt_token="test.jwt",
@@ -297,7 +293,7 @@ class TestSessionStoreCreate:
         self, session_store, mock_redis
     ):
         """Test creating a session with past expiration raises SessionExpiredError."""
-        past_time = datetime.now(timezone.utc) - timedelta(hours=1)
+        past_time = datetime.now(UTC) - timedelta(hours=1)
 
         with pytest.raises(SessionExpiredError) as exc_info:
             await session_store.create(
@@ -729,7 +725,7 @@ class TestSessionStoreConditionalWrites:
 
 def _full_session_data() -> dict[str, str]:
     """Build a complete session hash as SessionStore.create would write it."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Session(
         id=TEST_SESSION_ID,
         user_id="user_123",

@@ -1,6 +1,6 @@
 """Unit tests for user agent parsing utilities."""
 
-from utils.user_agent import extract_device_info, DeviceInfo
+from utils.user_agent import DeviceInfo, extract_device_info
 
 
 class TestExtractDeviceInfo:

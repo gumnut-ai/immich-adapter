@@ -1,43 +1,36 @@
 import logging
 import random
-from typing import Annotated, Any, List
-from fastapi import APIRouter, Depends, Query
-from uuid import UUID
 from datetime import datetime
+from typing import Annotated, Any
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query
 from gumnut import AsyncGumnut
 from gumnut.types.asset_response import AssetResponse
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.current_user import get_current_user
-from routers.utils.gumnut_id_conversion import (
-    uuid_to_gumnut_album_id,
-    uuid_to_gumnut_person_id,
-)
-from routers.utils.person_conversion import convert_gumnut_person_to_immich
+from routers.api.timeline import fetch_asset_counts, month_query_bounds
 from routers.immich_models import (
-    PersonResponseDto,
-    SearchAlbumResponseDto,
-    SearchExploreItem,
-    SearchExploreResponseDto,
-    SearchFilter,
     AssetOrder,
     AssetResponseDto,
     AssetTypeEnum,
     AssetVisibility,
+    MetadataSearchDto,
+    PersonResponseDto,
+    PlacesResponseDto,
+    RandomSearchDto,
+    SearchAlbumResponseDto,
+    SearchAssetResponseDto,
+    SearchExploreItem,
+    SearchExploreResponseDto,
+    SearchFilter,
     SearchResponseDto,
     SearchStatisticsResponseDto,
-    SearchAssetResponseDto,
-    MetadataSearchDto,
     SearchSuggestionType,
     SmartSearchDto,
-    RandomSearchDto,
-    PlacesResponseDto,
     StatisticsSearchDto,
     UserResponseDto,
 )
-from routers.api.timeline import fetch_asset_counts, month_query_bounds
-from routers.utils.concurrency import gather_with_concurrency
 from routers.utils.asset_conversion import (
     ASSET_INCLUDE,
     ASSET_INCLUDE_METADATA_ONLY,
@@ -45,6 +38,14 @@ from routers.utils.asset_conversion import (
     mime_type_to_asset_type,
     resolve_asset_location,
 )
+from routers.utils.concurrency import gather_with_concurrency
+from routers.utils.current_user import get_current_user
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_id_conversion import (
+    uuid_to_gumnut_album_id,
+    uuid_to_gumnut_person_id,
+)
+from routers.utils.person_conversion import convert_gumnut_person_to_immich
 from routers.utils.rating import RatingFilter, rating_extra_query, rating_filter_values
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ RANDOM_DEFAULT_SIZE = 250
 async def get_explore_data(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
-) -> List[SearchExploreResponseDto]:
+) -> list[SearchExploreResponseDto]:
     """
     Return curated explore categories: one representative image per city
     ("exifInfo.city", the group the Immich web and mobile explore pages
@@ -185,7 +186,7 @@ async def search_large_assets(
     withDeleted: bool = Query(default=None),
     withExif: bool = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[AssetResponseDto]:
+) -> list[AssetResponseDto]:
     """
     Search for large assets based on minimum file size.
     This is a stub implementation as Gumnut does not currently track file size.
@@ -200,7 +201,7 @@ async def search_person(
     name: str,
     withHidden: Annotated[bool, Query()] = False,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[PersonResponseDto]:
+) -> list[PersonResponseDto]:
     """Search for people by name.
 
     ``withHidden`` mirrors upstream Immich's ``!withHidden``: only an explicit
@@ -223,7 +224,7 @@ async def search_person(
 async def search_places(
     name: str = Query(),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[PlacesResponseDto]:
+) -> list[PlacesResponseDto]:
     """
     Search for places by name.
     This is a stub implementation that returns an empty list.
@@ -240,7 +241,7 @@ async def get_search_suggestions(
     model: str = Query(default=None),
     state: str = Query(default=None),
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[str]:
+) -> list[str]:
     """
     Get search suggestions.
     This is a stub implementation that returns an empty list.
@@ -643,7 +644,7 @@ async def search_smart(
 @router.get("/cities")
 async def get_assets_by_city(
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[AssetResponseDto]:
+) -> list[AssetResponseDto]:
     """
     Get cities for search.
     This is a stub implementation that returns an empty list.
@@ -709,7 +710,7 @@ async def search_random(
     request: RandomSearchDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
-) -> List[AssetResponseDto]:
+) -> list[AssetResponseDto]:
     """
     Return a uniform random sample of live assets.
 

@@ -13,13 +13,9 @@ logger = logging.getLogger(__name__)
 class JWTEncryptionError(Exception):
     """Raised when JWT encryption or decryption fails."""
 
-    pass
-
 
 class MissingEncryptionKeyError(Exception):
     """Raised when SESSION_ENCRYPTION_KEY is not configured."""
-
-    pass
 
 
 @lru_cache(maxsize=1)

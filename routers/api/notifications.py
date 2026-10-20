@@ -1,18 +1,17 @@
-from typing import List
-from zoneinfo import ZoneInfo
-from fastapi import APIRouter, Query
-from uuid import UUID
 from datetime import datetime
+from uuid import UUID
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Query
 
 from routers.immich_models import (
+    NotificationDeleteAllDto,
     NotificationDto,
     NotificationLevel,
     NotificationType,
     NotificationUpdateAllDto,
-    NotificationDeleteAllDto,
     NotificationUpdateDto,
 )
-
 
 router = APIRouter(
     prefix="/api/notifications",
@@ -27,7 +26,7 @@ async def get_notifications(
     level: NotificationLevel = Query(default=None),
     type: NotificationType = Query(default=None),
     unread: bool = Query(default=None),
-) -> List[NotificationDto]:
+) -> list[NotificationDto]:
     """
     Return a list of the user's notifications.
     Gumnut currently does not support notifications, so this is a stub implementation that returns an empty list.

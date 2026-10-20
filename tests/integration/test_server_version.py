@@ -1,9 +1,11 @@
 """Integration tests for server version endpoints."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import Mock, patch
+
+import pytest
 from fastapi.testclient import TestClient
+
 from config.immich_version import ImmichVersion
 from main import app
 
@@ -15,9 +17,11 @@ def client():
     mock_settings = Mock()
     mock_settings.immich_version = ImmichVersion(major=2, minor=2, patch=2)
 
-    with patch("routers.api.server.get_settings", return_value=mock_settings):
-        with TestClient(app) as client:
-            yield client
+    with (
+        patch("routers.api.server.get_settings", return_value=mock_settings),
+        TestClient(app) as client,
+    ):
+        yield client
 
 
 class TestServerVersionEndpoint:
@@ -80,4 +84,4 @@ class TestVersionCheckEndpoint:
         assert len(data["checkedAt"]) > 0
 
         # Should be able to parse as datetime
-        datetime.fromisoformat(data["checkedAt"].replace("Z", "+00:00"))
+        datetime.fromisoformat(data["checkedAt"])

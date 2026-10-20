@@ -1,6 +1,6 @@
 """Tests for sync stream event ordering (upserts before deletes)."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -53,7 +53,7 @@ class TestUpsertsBeforeDeletes:
         first, the mobile client deletes the person locally, and the subsequent
         face insert fails with an FK constraint violation.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -130,7 +130,7 @@ class TestUpsertsBeforeDeletes:
     @pytest.mark.anyio
     async def test_all_upserts_before_any_deletes(self):
         """ALL upserts must come before ANY deletes across entity types."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -227,7 +227,7 @@ class TestUpsertsBeforeDeletes:
     @pytest.mark.anyio
     async def test_deletes_in_reverse_fk_order(self):
         """Delete events are yielded in reverse FK order: faces before persons before assets."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -310,7 +310,7 @@ class TestUpsertsBeforeDeletes:
     @pytest.mark.anyio
     async def test_only_deletes_no_upserts(self):
         """When only delete events exist, they are yielded in reverse FK order."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -344,7 +344,7 @@ class TestUpsertsBeforeDeletes:
     @pytest.mark.anyio
     async def test_empty_delete_buffer(self):
         """Stream works normally with only upserts and no deletes."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -376,7 +376,7 @@ class TestUpsertsBeforeDeletes:
     @pytest.mark.anyio
     async def test_delete_chronological_order_within_type(self):
         """Multiple deletes of the same type maintain chronological (cursor) order."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -499,7 +499,7 @@ class TestFaceV1V2DedupGuard:
     @pytest.mark.anyio
     async def test_both_v1_and_v2_requested_emits_only_v2(self):
         """When both AssetFacesV1 and V2 are requested, only V2 events are emitted."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -532,7 +532,7 @@ class TestFaceV1V2DedupGuard:
     @pytest.mark.anyio
     async def test_only_v1_requested_emits_v1(self):
         """When only AssetFacesV1 is requested, V1 events are emitted."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -561,7 +561,7 @@ class TestFaceV1V2DedupGuard:
     @pytest.mark.anyio
     async def test_only_v2_requested_emits_v2(self):
         """When only AssetFacesV2 is requested, V2 events are emitted."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -601,7 +601,7 @@ class TestNoopRequestTypes:
     @pytest.mark.anyio
     async def test_noop_type_alongside_real_type_completes(self):
         """Requesting AssetEditsV1 alongside a real type completes without error."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 

@@ -141,6 +141,7 @@ class TestRestoreAssets:
         call in try/except must break this test.
         """
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -150,11 +151,11 @@ class TestRestoreAssets:
 
         request = BulkIdsDto(ids=[uuid4()])
 
-        with patch("routers.api.trash.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(APIStatusError):
-                await restore_assets(
-                    request, client=mock_client, current_user_id=uuid4()
-                )
+        with (
+            patch("routers.api.trash.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(APIStatusError),
+        ):
+            await restore_assets(request, client=mock_client, current_user_id=uuid4())
 
 
 class TestRestoreTrash:
@@ -255,6 +256,7 @@ class TestRestoreTrash:
     async def test_propagates_sdk_error(self):
         """SDK errors on bulk restore bubble to the global GumnutError handler."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -266,9 +268,11 @@ class TestRestoreTrash:
         trashed_assets = [_make_trashed_asset_mock(gid) for gid in gumnut_ids]
         mock_client.assets.list = Mock(return_value=MockSyncCursorPage(trashed_assets))
 
-        with patch("routers.api.trash.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(APIStatusError):
-                await restore_trash(client=mock_client, current_user_id=uuid4())
+        with (
+            patch("routers.api.trash.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(APIStatusError),
+        ):
+            await restore_trash(client=mock_client, current_user_id=uuid4())
 
 
 class TestEmptyTrash:
@@ -368,6 +372,7 @@ class TestEmptyTrash:
     async def test_propagates_sdk_error(self):
         """SDK errors on bulk hard-delete bubble to the global GumnutError handler."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -379,6 +384,8 @@ class TestEmptyTrash:
         trashed_assets = [_make_trashed_asset_mock(gid) for gid in gumnut_ids]
         mock_client.assets.list = Mock(return_value=MockSyncCursorPage(trashed_assets))
 
-        with patch("routers.api.trash.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(APIStatusError):
-                await empty_trash(client=mock_client, current_user_id=uuid4())
+        with (
+            patch("routers.api.trash.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(APIStatusError),
+        ):
+            await empty_trash(client=mock_client, current_user_id=uuid4())

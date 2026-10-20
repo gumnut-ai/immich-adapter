@@ -3,10 +3,10 @@
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
+import pytest
 from fastapi import HTTPException, Request
 from gumnut import BadRequestError
 from starlette.datastructures import URL
-import pytest
 
 from routers.api.oauth import finish_oauth, rewrite_redirect_uri
 from routers.immich_models import OAuthCallbackDto

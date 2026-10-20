@@ -1,26 +1,26 @@
 """Tests for current_user.py dependency injection functions."""
 
-import pytest
-import shortuuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
-from datetime import datetime, timezone
 
+import pytest
+import shortuuid
 
 from routers.api.constants import STUB_LICENSE_KEY
-from routers.utils.current_user import (
-    get_current_user_admin,
-    get_current_user,
-    get_current_user_id,
-    map_user_quota,
-    ImmichUserQuota,
-)
 from routers.immich_models import (
     UserAdminResponseDto,
-    UserResponseDto,
-    UserStatus,
     UserAvatarColor,
     UserLicense,
+    UserResponseDto,
+    UserStatus,
+)
+from routers.utils.current_user import (
+    ImmichUserQuota,
+    get_current_user,
+    get_current_user_admin,
+    get_current_user_id,
+    map_user_quota,
 )
 
 
@@ -43,8 +43,8 @@ class TestGetCurrentUserAdmin:
         mock_user.first_name = "Test"
         mock_user.last_name = "User"
         mock_user.is_active = True
-        mock_user.created_at = datetime.now(timezone.utc)
-        mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.created_at = datetime.now(UTC)
+        mock_user.updated_at = datetime.now(UTC)
         mock_user.storage_limit_bytes = 100 * 1000**3
         mock_user.storage_used_bytes = 5 * 1000**3
         mock_client.users.me = AsyncMock(return_value=mock_user)
@@ -81,8 +81,8 @@ class TestGetCurrentUserAdmin:
         mock_user.first_name = "Test"
         mock_user.last_name = "User"
         mock_user.is_active = True
-        mock_user.created_at = datetime.now(timezone.utc)
-        mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.created_at = datetime.now(UTC)
+        mock_user.updated_at = datetime.now(UTC)
         mock_user.storage_limit_bytes = 100 * 1000**3
         mock_user.storage_used_bytes = 5 * 1000**3
         mock_client.users.me = AsyncMock(return_value=mock_user)
@@ -110,8 +110,8 @@ class TestGetCurrentUserAdmin:
         mock_user.first_name = "Test"
         mock_user.last_name = "User"
         mock_user.is_active = True
-        mock_user.created_at = datetime.now(timezone.utc)
-        mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.created_at = datetime.now(UTC)
+        mock_user.updated_at = datetime.now(UTC)
         mock_user.storage_limit_bytes = 100 * 1000**3
         mock_user.storage_used_bytes = 5 * 1000**3
         mock_client.users.me = AsyncMock(return_value=mock_user)
@@ -145,8 +145,8 @@ class TestGetCurrentUserAdmin:
         mock_user.first_name = None
         mock_user.last_name = None
         mock_user.is_active = True
-        mock_user.created_at = datetime.now(timezone.utc)
-        mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.created_at = datetime.now(UTC)
+        mock_user.updated_at = datetime.now(UTC)
         mock_user.storage_limit_bytes = 100 * 1000**3
         mock_user.storage_used_bytes = 5 * 1000**3
         mock_client.users.me = AsyncMock(return_value=mock_user)
@@ -172,8 +172,8 @@ class TestGetCurrentUserAdmin:
         mock_user.first_name = "Test"
         mock_user.last_name = "User"
         mock_user.is_active = False
-        mock_user.created_at = datetime.now(timezone.utc)
-        mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.created_at = datetime.now(UTC)
+        mock_user.updated_at = datetime.now(UTC)
         mock_user.storage_limit_bytes = 100 * 1000**3
         mock_user.storage_used_bytes = 5 * 1000**3
         mock_client.users.me = AsyncMock(return_value=mock_user)
@@ -204,8 +204,8 @@ class TestGetCurrentUserAdmin:
         mock_user.first_name = "Test"
         mock_user.last_name = "User"
         mock_user.is_active = True
-        mock_user.created_at = datetime.now(timezone.utc)
-        mock_user.updated_at = datetime.now(timezone.utc)
+        mock_user.created_at = datetime.now(UTC)
+        mock_user.updated_at = datetime.now(UTC)
         # What the SDK yields when the Gumnut API omits the storage fields
         mock_user.storage_limit_bytes = None
         mock_user.storage_used_bytes = None
@@ -256,7 +256,7 @@ class TestGetCurrentUser:
     async def test_get_current_user_conversion(self):
         """Test conversion from UserAdminResponseDto to UserResponseDto."""
         # Setup - create a UserAdminResponseDto
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         user_admin = UserAdminResponseDto(
             id=UUID("123e4567-e89b-12d3-a456-426614174000"),
             clusterGroupId=UUID("123e4567-e89b-12d3-a456-426614174000"),
@@ -302,7 +302,7 @@ class TestGetCurrentUserId:
     async def test_get_current_user_id_extraction(self):
         """Test extraction of UUID from UserAdminResponseDto."""
         # Setup - create a UserAdminResponseDto
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         test_uuid = UUID("123e4567-e89b-12d3-a456-426614174000")
         user_admin = UserAdminResponseDto(
             id=test_uuid,

@@ -5,9 +5,9 @@ from routers.immich_models import (
     QueueCommandDto,
     QueueName,
     QueueResponseLegacyDto,
+    QueuesResponseLegacyDto,
     QueueStatisticsDto,
     QueueStatusLegacyDto,
-    QueuesResponseLegacyDto,
 )
 
 router = APIRouter(

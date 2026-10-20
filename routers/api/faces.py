@@ -1,5 +1,4 @@
 import logging
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
@@ -13,6 +12,7 @@ from routers.immich_models import (
     PersonResponseDto,
     SourceType,
 )
+from routers.utils.asset_conversion import should_expose_face_geometry
 from routers.utils.gumnut_client import (
     get_authenticated_gumnut_client,
     get_current_library_id,
@@ -23,9 +23,7 @@ from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_face_id,
     uuid_to_gumnut_person_id,
 )
-from routers.utils.asset_conversion import should_expose_face_geometry
 from routers.utils.person_conversion import convert_gumnut_person_to_immich
-
 
 router = APIRouter(
     prefix="/api/faces",
@@ -82,7 +80,7 @@ async def reassign_faces_by_id(
 async def get_faces(
     id: UUID,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[AssetFaceResponseDto]:
+) -> list[AssetFaceResponseDto]:
     """Get all faces detected in an asset."""
     gumnut_asset_id = uuid_to_gumnut_asset_id(id)
 
@@ -111,7 +109,7 @@ async def get_faces(
                 extra={"person_id": person_id, "asset_id": gumnut_asset_id},
             )
 
-    result: List[AssetFaceResponseDto] = []
+    result: list[AssetFaceResponseDto] = []
     for face in faces:
         bb = face.bounding_box or {}
         person = people_by_id.get(face.person_id) if face.person_id else None

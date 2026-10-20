@@ -1,7 +1,8 @@
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
+
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
@@ -35,7 +36,7 @@ class TestOAuthCookieSecurity:
 
         # Mock the SessionStore
         mock_session_store = AsyncMock(spec=SessionStore)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_session = Session(
             id=TEST_SESSION_UUID,
             user_id=str(TEST_USER_UUID),

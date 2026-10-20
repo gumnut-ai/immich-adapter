@@ -1,6 +1,6 @@
 """Tests for stacks in the event-driven sync stream."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
@@ -43,7 +43,7 @@ from tests.unit.api.sync.conftest import (
     create_mock_user,
 )
 
-UPDATED_AT = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+UPDATED_AT = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
 
 
 def _events_by_type(mapping):
@@ -106,8 +106,8 @@ class TestAssetStackIdConversion:
 
 class TestStackConverter:
     def test_maps_all_fields(self):
-        created = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        updated = datetime(2025, 2, 2, tzinfo=timezone.utc)
+        created = datetime(2025, 1, 1, tzinfo=UTC)
+        updated = datetime(2025, 2, 2, tzinfo=UTC)
         stack = make_gumnut_stack()
         stack.created_at = created
         stack.updated_at = updated

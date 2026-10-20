@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from pydantic import AnyUrl
+
 from routers.api.constants import FIXED_LOGIN_CONFIG
 from routers.immich_models import (
     AdminConfigBackupsDto,
@@ -7,10 +8,10 @@ from routers.immich_models import (
     AdminConfigDatabaseBackupDto,
     AdminConfigDto,
     AdminConfigDuplicateDetectionDto,
-    AdminConfigFFmpegDto,
-    AdminConfigFFmpegRealtimeDto,
     AdminConfigFacesDto,
     AdminConfigFacialRecognitionDto,
+    AdminConfigFFmpegDto,
+    AdminConfigFFmpegRealtimeDto,
     AdminConfigGeneratedFullsizeImageDto,
     AdminConfigGeneratedImageDto,
     AdminConfigImageDto,
@@ -44,8 +45,8 @@ from routers.immich_models import (
     AdminConfigTrashDto,
     AdminConfigUserDto,
     AudioCodec,
-    CQMode,
     Colorspace,
+    CQMode,
     HlsVideoResolution,
     ImageFormat,
     LogLevel,
@@ -58,7 +59,6 @@ from routers.immich_models import (
     VideoCodec,
     VideoContainer,
 )
-
 
 router = APIRouter(
     prefix="/api/system-config",
