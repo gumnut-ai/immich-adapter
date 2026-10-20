@@ -49,8 +49,8 @@ def mock_session_store():
 def client(mock_gumnut_client, mock_session_store):
     """Create a test client with full middleware stack and mocked dependencies."""
     # Override the dependency injection
-    app.dependency_overrides[get_unauthenticated_gumnut_client] = (
-        lambda: mock_gumnut_client
+    app.dependency_overrides[get_unauthenticated_gumnut_client] = lambda: (
+        mock_gumnut_client
     )
     app.dependency_overrides[get_session_store] = lambda: mock_session_store
     yield TestClient(app, base_url="https://testserver")

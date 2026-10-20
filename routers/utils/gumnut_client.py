@@ -158,7 +158,7 @@ async def _response_hook(response: httpx.Response) -> None:
         await response.aread()
         try:
             detail = response.json().get("detail")
-        except (ValueError, AttributeError):
+        except ValueError, AttributeError:
             return
         if isinstance(detail, str):
             await forget_bound_library_if_gone(response.status_code, detail)

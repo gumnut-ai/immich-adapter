@@ -42,6 +42,25 @@ dev = [
     # Runs the session and checkpoint Lua scripts in unit tests.
     "fakeredis[lua]>=2.30",
     "pyright>=1.1.403",
-    "ruff>=0.9.2",
+    "ruff>=0.16",
     "socksio>=1.0.0",
 ]
+
+[tool.ruff]
+# The standalone PEP 723 scripts declare their own, older `requires-python`
+# (lint_docs.py is also kept byte-identical to the photos copy). Format them for
+# that floor so py3.14-only syntax, such as PEP 758's unparenthesized
+# `except A, B:`, is never written into them.
+per-file-target-version = { "scripts/lint_docs.py" = "py311", "scripts/extract-immich-web.py" = "py312", "tools/*.py" = "py312" }
+
+# Ruff 0.16 widened its default rule set from 59 to 413 rules. Pin the pre-0.16
+# defaults so a ruff upgrade never changes which rules we enforce; adopting more
+# rules is a deliberate change to this list.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+# Ruff 0.16 also started formatting Python code blocks in Markdown by default.
+# Doc snippets are often fragments (keyword arguments, partial calls) that it
+# rewrites into different code, so keep the formatter on .py files only.
+[tool.ruff.format]
+exclude = ["*.md"]

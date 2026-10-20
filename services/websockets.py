@@ -157,7 +157,7 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
     try:
         session_store = await get_session_store()
         session = await session_store.get_by_id(session_token)
-    except (SessionStoreError, SessionDataError):
+    except SessionStoreError, SessionDataError:
         logger.exception(
             "WebSocket auth failed - session lookup error",
             extra={"sid": sid, "session_token": session_token},
