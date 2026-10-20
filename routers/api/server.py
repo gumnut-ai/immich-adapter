@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
-from typing import List
+from datetime import UTC, datetime
 from uuid import UUID
+
 from fastapi import APIRouter
 from shortuuid import uuid
 
@@ -9,16 +9,16 @@ from routers.api.constants import FIXED_LOGIN_CONFIG, STUB_LICENSE_KEY
 from routers.immich_models import (
     LicenseKeyDto,
     LicenseResponseDto,
-    ServerApkLinksDto,
-    ServerFeaturesDto,
-    ServerConfigDto,
     ServerAboutResponseDto,
+    ServerApkLinksDto,
+    ServerConfigDto,
+    ServerFeaturesDto,
+    ServerMediaTypesResponseDto,
     ServerPingResponse,
     ServerStatsResponseDto,
     ServerStorageResponseDto,
     ServerVersionHistoryResponseDto,
     ServerVersionResponseDto,
-    ServerMediaTypesResponseDto,
     UserLicense,
     VersionCheckStateResponseDto,
 )
@@ -201,7 +201,7 @@ async def get_storage() -> ServerStorageResponseDto:
 
 
 @router.get("/version-history")
-async def get_version_history() -> List[ServerVersionHistoryResponseDto]:
+async def get_version_history() -> list[ServerVersionHistoryResponseDto]:
     version = get_settings().immich_version
     return [
         ServerVersionHistoryResponseDto(
@@ -277,7 +277,7 @@ async def get_version_check() -> VersionCheckStateResponseDto:
     """
     version = get_settings().immich_version
     return VersionCheckStateResponseDto(
-        checkedAt=str(datetime.now(timezone.utc)),
+        checkedAt=str(datetime.now(UTC)),
         releaseVersion=str(version),
     )
 
@@ -292,7 +292,7 @@ async def get_server_license() -> LicenseResponseDto:
         root=UserLicense(
             licenseKey=STUB_LICENSE_KEY,
             activationKey=str(uuid()),
-            activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+            activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=UTC),
         )
     )
 
@@ -316,6 +316,6 @@ async def set_server_license(request: LicenseKeyDto) -> LicenseResponseDto:
         root=UserLicense(
             licenseKey=request.licenseKey,
             activationKey=request.activationKey,
-            activatedAt=datetime.now(timezone.utc),
+            activatedAt=datetime.now(UTC),
         )
     )

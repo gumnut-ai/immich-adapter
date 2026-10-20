@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, List
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from gumnut import AsyncGumnut
@@ -9,7 +9,6 @@ from routers.immich_models import MapMarkerResponseDto, MapReverseGeocodeRespons
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
 from routers.utils.map_markers import collect_geotagged_markers
 from routers.utils.rating import rating_filter_values
-
 
 router = APIRouter(
     prefix="/api/map",
@@ -27,7 +26,7 @@ async def get_map_markers(
     withPartners: Annotated[bool | SkipJsonSchema[None], Query()] = None,
     withSharedAlbums: Annotated[bool | SkipJsonSchema[None], Query()] = None,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[MapMarkerResponseDto]:
+) -> list[MapMarkerResponseDto]:
     """Return a bounded list of markers for the caller's GPS-tagged assets.
 
     `withPartners` / `withSharedAlbums` are accepted for client-compatibility
@@ -61,7 +60,7 @@ async def get_map_markers(
 async def reverse_geocode(
     lat: float = Query(format="double"),
     lon: float = Query(format="double"),
-) -> List[MapReverseGeocodeResponseDto]:
+) -> list[MapReverseGeocodeResponseDto]:
     """
     Reverse geocode a latitude and longitude to a human-readable address.
     Gumnut currently does not support reverse geocoding, so this is a stub implementation that returns an array.

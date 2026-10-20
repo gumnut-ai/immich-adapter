@@ -1,7 +1,7 @@
 """Tests for memories.py endpoints."""
 
 import inspect
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 from uuid import UUID, uuid4
 
@@ -159,12 +159,12 @@ class TestSearchMemories:
         pulled off the parsed datetime as-is, regardless of its tz offset."""
         client = Mock()
         # Pretend the user has one asset in 2024 on the requested local date.
-        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
+        captured = datetime(2024, 5, 4, 12, 0, tzinfo=UTC)
         asset = _make_asset(uuid4(), captured)
         _stub_assets_per_year(client, {2024: [asset]})
 
         # `for` = 2026-05-04 carrying a UTC tag (the `keepLocalTime` hack).
-        for_param = datetime(2026, 5, 4, 23, 0, tzinfo=timezone.utc)
+        for_param = datetime(2026, 5, 4, 23, 0, tzinfo=UTC)
         result = await _call_search(
             client=client,
             current_user_id=mock_current_user.id,
@@ -191,7 +191,7 @@ class TestSearchMemories:
     @pytest.mark.anyio
     async def test_drops_years_with_no_assets(self, mock_current_user):
         client = Mock()
-        captured = datetime(2022, 5, 4, 12, 0, tzinfo=timezone.utc)
+        captured = datetime(2022, 5, 4, 12, 0, tzinfo=UTC)
         # Two non-empty years in the window; the rest should be filtered.
         _stub_assets_per_year(
             client,
@@ -205,7 +205,7 @@ class TestSearchMemories:
             client=client,
             current_user_id=mock_current_user.id,
             current_user=mock_current_user,
-            for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
+            for_param=datetime(2026, 5, 4, tzinfo=UTC),
         )
 
         years = [m.data.year for m in result]
@@ -250,7 +250,7 @@ class TestSearchMemories:
         on_this_day filter must not short-circuit; any future non-OTD type
         would short-circuit."""
         client = Mock()
-        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
+        captured = datetime(2024, 5, 4, 12, 0, tzinfo=UTC)
         _stub_assets_per_year(client, {2024: [_make_asset(uuid4(), captured)]})
 
         result = await _call_search(
@@ -258,7 +258,7 @@ class TestSearchMemories:
             current_user_id=mock_current_user.id,
             current_user=mock_current_user,
             type=MemoryType.on_this_day,
-            for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
+            for_param=datetime(2026, 5, 4, tzinfo=UTC),
         )
 
         assert len(result) == 1
@@ -269,15 +269,15 @@ class TestSearchMemories:
         year, so a Sydney user just past midnight on Jan 1 still sees the year
         that just ended in their local time."""
         client = Mock()
-        captured = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        captured = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
         _stub_assets_per_year(client, {2026: [_make_asset(uuid4(), captured)]})
 
         # `for` says it's Jan 1, 2027 in the user's local time (the
         # `keepLocalTime` hack again). Server clock could still be Dec 31
         # 2026 UTC at this moment.
-        for_param = datetime(2027, 1, 1, 0, 30, tzinfo=timezone.utc)
+        for_param = datetime(2027, 1, 1, 0, 30, tzinfo=UTC)
         # Patch the UTC clock to confirm the window does NOT depend on it.
-        fake_now = datetime(2026, 12, 31, 14, 0, tzinfo=timezone.utc)
+        fake_now = datetime(2026, 12, 31, 14, 0, tzinfo=UTC)
         with patch("routers.api.memories.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
@@ -311,14 +311,14 @@ class TestSearchMemories:
         passthrough must keep fanning out — guards against a predicate
         inversion that flipped to `is not None`."""
         client = Mock()
-        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
+        captured = datetime(2024, 5, 4, 12, 0, tzinfo=UTC)
         _stub_assets_per_year(client, {2024: [_make_asset(uuid4(), captured)]})
 
         result = await _call_search(
             client=client,
             current_user_id=mock_current_user.id,
             current_user=mock_current_user,
-            for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
+            for_param=datetime(2026, 5, 4, tzinfo=UTC),
             isSaved=isSaved,
         )
 
@@ -331,14 +331,14 @@ class TestSearchMemories:
         self, mock_current_user, isTrashed
     ):
         client = Mock()
-        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
+        captured = datetime(2024, 5, 4, 12, 0, tzinfo=UTC)
         _stub_assets_per_year(client, {2024: [_make_asset(uuid4(), captured)]})
 
         result = await _call_search(
             client=client,
             current_user_id=mock_current_user.id,
             current_user=mock_current_user,
-            for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
+            for_param=datetime(2026, 5, 4, tzinfo=UTC),
             isTrashed=isTrashed,
         )
 
@@ -352,7 +352,7 @@ class TestSearchMemories:
         `_fetch_assets_for_day`, asyncio.gather fail-fast tanks the call
         with a 500."""
         client = Mock()
-        captured = datetime(2020, 2, 29, 12, 0, tzinfo=timezone.utc)
+        captured = datetime(2020, 2, 29, 12, 0, tzinfo=UTC)
         # Only leap years 2020 and 2016 have assets.
         _stub_assets_per_year(
             client,
@@ -366,7 +366,7 @@ class TestSearchMemories:
             client=client,
             current_user_id=mock_current_user.id,
             current_user=mock_current_user,
-            for_param=datetime(2024, 2, 29, tzinfo=timezone.utc),
+            for_param=datetime(2024, 2, 29, tzinfo=UTC),
         )
 
         years = [m.data.year for m in result]
@@ -377,7 +377,7 @@ class TestSearchMemories:
         """A transient backend error on one year must not tank the other 29.
         Pins `asyncio.gather(return_exceptions=True)` behavior."""
         client = Mock()
-        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
+        captured = datetime(2024, 5, 4, 12, 0, tzinfo=UTC)
         good_asset = _make_asset(uuid4(), captured)
         other_asset = _make_asset(uuid4(), captured.replace(year=2022))
 
@@ -397,7 +397,7 @@ class TestSearchMemories:
             client=client,
             current_user_id=mock_current_user.id,
             current_user=mock_current_user,
-            for_param=datetime(2026, 5, 4, tzinfo=timezone.utc),
+            for_param=datetime(2026, 5, 4, tzinfo=UTC),
         )
 
         # 2024 raised → dropped; 2025 and 2022 survive.
@@ -412,7 +412,7 @@ class TestSearchMemories:
         uses today UTC. Pin a fake `now()` so the test is deterministic."""
         client = Mock()
         client.assets.list = Mock(return_value=MockSyncCursorPage([]))
-        fake_now = datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc)
+        fake_now = datetime(2026, 7, 15, 10, 0, tzinfo=UTC)
         with patch("routers.api.memories.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
@@ -438,7 +438,7 @@ class TestFetchAssetsForDay:
 
         Uses a paginating mock so removing the `break` in the implementation
         would cause the iterator to walk every page and fail this test."""
-        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
+        captured = datetime(2024, 5, 4, 12, 0, tzinfo=UTC)
         many_assets = [_make_asset(uuid4(), captured) for _ in range(5)]
         listing = MockPaginatedListing(many_assets, page_size=2)
 
@@ -476,7 +476,7 @@ class TestGetMemory:
     async def test_returns_memory_for_valid_id(self, mock_current_user):
         user_uuid = mock_current_user.id
         memory_id = encode_memory_id(user_uuid, 2024, 5, 4)
-        captured = datetime(2024, 5, 4, 12, 0, tzinfo=timezone.utc)
+        captured = datetime(2024, 5, 4, 12, 0, tzinfo=UTC)
         client = Mock()
         client.assets.list = Mock(
             return_value=MockSyncCursorPage([_make_asset(uuid4(), captured)])

@@ -1,47 +1,63 @@
 """Tests for assets.py endpoints."""
 
 import asyncio
+import base64
 import json
+from datetime import UTC, datetime, timedelta, timezone
+from io import BytesIO
+from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
+from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
-from datetime import datetime, timedelta, timezone
-from io import BytesIO
-from typing import Any
-from unittest.mock import Mock, AsyncMock, patch
-from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from uuid import UUID, uuid4
-import base64
-
 from socketio.exceptions import SocketIOError
 
-from services.websockets import WebSocketEvent
-
-from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.assets import (
     _extract_upload_fields,
     _immich_checksum_to_base64,
     _parse_datetime,
     bulk_upload_check,
     copy_asset,
-    upload_asset,
-    update_assets,
+    delete_asset_metadata,
     delete_assets,
+    download_asset,
+    get_asset_info,
+    get_asset_metadata,
+    get_asset_metadata_by_key,
+    get_asset_ocr,
     get_asset_statistics,
+    play_asset_video,
     run_asset_jobs,
     update_asset,
-    get_asset_info,
-    get_asset_ocr,
-    view_asset,
-    download_asset,
-    get_asset_metadata,
     update_asset_metadata,
-    delete_asset_metadata,
-    get_asset_metadata_by_key,
-    play_asset_video,
+    update_assets,
+    upload_asset,
+    view_asset,
+)
+from routers.api.assets import (
     router as assets_router,
+)
+from routers.api.constants import GUMNUT_API_MAX_BULK_IDS, GUMNUT_API_MAX_PAGE_SIZE
+from routers.immich_models import (
+    AssetBulkDeleteDto,
+    AssetBulkUpdateDto,
+    AssetBulkUploadCheckDto,
+    AssetBulkUploadCheckItem,
+    AssetCopyDto,
+    AssetJobName,
+    AssetJobsDto,
+    AssetMediaResponseDto,
+    AssetMediaSize,
+    AssetMediaStatus,
+    AssetMetadataUpsertDto,
+    AssetMetadataUpsertItemDto,
+    AssetUploadAction,
+    AssetVisibility,
+    UpdateAssetDto,
 )
 from routers.utils.current_user import get_current_user
 from routers.utils.gumnut_client import get_authenticated_gumnut_client
@@ -50,27 +66,11 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_stack_id,
     uuid_to_gumnut_asset_id,
 )
+from services.websockets import WebSocketEvent
 from tests.conftest import (
     MockSyncCursorPage,
     make_gumnut_stack_with_members,
     make_sdk_status_error,
-)
-from routers.immich_models import (
-    AssetBulkUploadCheckDto,
-    AssetBulkUploadCheckItem,
-    AssetCopyDto,
-    AssetMediaResponseDto,
-    AssetVisibility,
-    AssetBulkUpdateDto,
-    AssetBulkDeleteDto,
-    AssetJobsDto,
-    AssetJobName,
-    UpdateAssetDto,
-    AssetMetadataUpsertDto,
-    AssetMetadataUpsertItemDto,
-    AssetMediaSize,
-    AssetMediaStatus,
-    AssetUploadAction,
 )
 
 
@@ -352,8 +352,8 @@ class TestUploadAsset:
         mock_gumnut_asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "test.jpg"
-        mock_gumnut_asset.created_at = datetime.now(timezone.utc)
-        mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.created_at = datetime.now(UTC)
+        mock_gumnut_asset.updated_at = datetime.now(UTC)
         mock_gumnut_asset.mime_type = "image/jpeg"
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
@@ -440,6 +440,7 @@ class TestUploadAsset:
     async def test_upload_asset_api_error(self, mock_current_user):
         """An auth error during upload is mapped to 401 via map_gumnut_error."""
         from gumnut import AuthenticationError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -502,8 +503,8 @@ class TestUploadAsset:
         mock_gumnut_asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "test.jpg"
-        mock_gumnut_asset.created_at = datetime.now(timezone.utc)
-        mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.created_at = datetime.now(UTC)
+        mock_gumnut_asset.updated_at = datetime.now(UTC)
         mock_gumnut_asset.local_datetime = mock_gumnut_asset.created_at
         mock_gumnut_asset.file_data.file_created_at = mock_gumnut_asset.created_at
         mock_gumnut_asset.file_data.file_modified_at = mock_gumnut_asset.updated_at
@@ -612,8 +613,8 @@ class TestUploadAsset:
         mock_gumnut_asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "video.mp4"
-        mock_gumnut_asset.created_at = datetime.now(timezone.utc)
-        mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.created_at = datetime.now(UTC)
+        mock_gumnut_asset.updated_at = datetime.now(UTC)
         mock_gumnut_asset.mime_type = "video/mp4"
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
@@ -676,8 +677,8 @@ class TestUploadAsset:
         mock_gumnut_asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "video.mp4"
-        mock_gumnut_asset.created_at = datetime.now(timezone.utc)
-        mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.created_at = datetime.now(UTC)
+        mock_gumnut_asset.updated_at = datetime.now(UTC)
         mock_gumnut_asset.local_datetime = mock_gumnut_asset.created_at
         mock_gumnut_asset.file_data.file_created_at = mock_gumnut_asset.created_at
         mock_gumnut_asset.file_data.file_modified_at = mock_gumnut_asset.updated_at
@@ -753,8 +754,8 @@ class TestUploadAsset:
         mock_gumnut_asset.file_data.checksum_sha1 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
         mock_gumnut_asset.thumbhash = None
         mock_gumnut_asset.original_file_name = "test.jpg"
-        mock_gumnut_asset.created_at = datetime.now(timezone.utc)
-        mock_gumnut_asset.updated_at = datetime.now(timezone.utc)
+        mock_gumnut_asset.created_at = datetime.now(UTC)
+        mock_gumnut_asset.updated_at = datetime.now(UTC)
         mock_gumnut_asset.mime_type = "image/jpeg"
         mock_gumnut_asset.width = 1920
         mock_gumnut_asset.height = 1080
@@ -1021,17 +1022,19 @@ class TestUploadAsset:
         mock_pipeline_instance.execute = AsyncMock(return_value={})
         mock_pipeline_instance.last_status_code = 200
 
-        with patch(
-            "routers.api.assets.StreamingUploadPipeline",
-            return_value=mock_pipeline_instance,
+        with (
+            patch(
+                "routers.api.assets.StreamingUploadPipeline",
+                return_value=mock_pipeline_instance,
+            ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await upload_asset(
-                    request=request,
-                    client=Mock(),
-                    current_user=mock_current_user,
-                    settings=settings,
-                )
+            await upload_asset(
+                request=request,
+                client=Mock(),
+                current_user=mock_current_user,
+                settings=settings,
+            )
 
         assert exc_info.value.status_code == 502
 
@@ -1055,17 +1058,19 @@ class TestUploadAsset:
         mock_pipeline_instance.execute = AsyncMock(return_value={"id": "asset_123"})
         mock_pipeline_instance.last_status_code = None
 
-        with patch(
-            "routers.api.assets.StreamingUploadPipeline",
-            return_value=mock_pipeline_instance,
+        with (
+            patch(
+                "routers.api.assets.StreamingUploadPipeline",
+                return_value=mock_pipeline_instance,
+            ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await upload_asset(
-                    request=request,
-                    client=Mock(),
-                    current_user=mock_current_user,
-                    settings=settings,
-                )
+            await upload_asset(
+                request=request,
+                client=Mock(),
+                current_user=mock_current_user,
+                settings=settings,
+            )
 
         assert exc_info.value.status_code == 502
 
@@ -1102,15 +1107,15 @@ class TestUploadAsset:
                 "routers.api.assets.forget_bound_library_if_gone",
                 new_callable=AsyncMock,
             ) as forget,
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await upload_asset(
-                    request=request,
-                    client=Mock(),
-                    current_user=mock_current_user,
-                    settings=settings,
-                    library_id="lib_x",
-                )
+            await upload_asset(
+                request=request,
+                client=Mock(),
+                current_user=mock_current_user,
+                settings=settings,
+                library_id="lib_x",
+            )
 
         assert exc_info.value.status_code == 404
         forget.assert_awaited_once_with(404, "Library lib_x not found")
@@ -1438,8 +1443,8 @@ class TestUpdateAssets:
         a, b = uuid4(), uuid4()
         mock_client.assets.list = self._mock_read(
             {
-                a: datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc),
-                b: datetime(2020, 1, 2, 9, 0, 0, tzinfo=timezone.utc),
+                a: datetime(2024, 6, 15, 14, 30, 0, tzinfo=UTC),
+                b: datetime(2020, 1, 2, 9, 0, 0, tzinfo=UTC),
             }
         )
         request = AssetBulkUpdateDto(ids=[a, b], timeZone="America/Los_Angeles")
@@ -1464,7 +1469,7 @@ class TestUpdateAssets:
         mock_client = Mock()
         mock_client.assets.bulk_update_assets = AsyncMock(return_value=None)
         a, b = uuid4(), uuid4()
-        base_a = datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc)
+        base_a = datetime(2024, 6, 15, 14, 30, 0, tzinfo=UTC)
         base_b = datetime(2020, 1, 2, 9, 0, 0)
         mock_client.assets.list = self._mock_read({a: base_a, b: base_b})
         request = AssetBulkUpdateDto(ids=[a, b], dateTimeRelative=3600)
@@ -1927,6 +1932,7 @@ class TestUpdateAssets:
         break this test.
         """
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -1954,6 +1960,7 @@ class TestUpdateAssets:
         this test.
         """
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -2243,7 +2250,7 @@ class TestUpdateAsset:
 
         mock_client.assets.update_asset.assert_awaited_once_with(
             uuid_to_gumnut_asset_id(sample_uuid),
-            original_datetime=datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc),
+            original_datetime=datetime(2024, 6, 15, 14, 30, 0, tzinfo=UTC),
         )
 
     @pytest.mark.anyio
@@ -2692,6 +2699,7 @@ class TestDeleteAssets:
         per-id loop did) must break this test.
         """
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -2711,6 +2719,7 @@ class TestDeleteAssets:
     async def test_delete_assets_force_true_propagates_sdk_error(self):
         """SDK errors on bulk hard-delete bubble to the global GumnutError handler."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -2774,6 +2783,7 @@ class TestGetAssetStatistics:
     async def test_get_asset_statistics_propagates_sdk_error(self):
         """SDK errors bubble up to the global GumnutError handler."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -2904,6 +2914,7 @@ class TestGetAssetInfo:
     ):
         """A NotFoundError on retrieve bubbles up to the global handler."""
         from gumnut import NotFoundError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -3138,6 +3149,7 @@ class TestViewAsset:
     async def test_view_asset_not_found_propagates(self, sample_uuid):
         """A NotFoundError on retrieve bubbles up to the global handler."""
         from gumnut import NotFoundError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -3869,6 +3881,7 @@ class TestDownloadAsset:
     @pytest.mark.anyio
     async def test_edited_false_not_found_propagates(self, sample_uuid):
         from gumnut import NotFoundError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -4075,28 +4088,28 @@ class TestParseDateTime:
     """Tests for _parse_datetime helper."""
 
     def test_valid_iso_with_z_suffix(self):
-        fallback = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        fallback = datetime(2000, 1, 1, tzinfo=UTC)
         result = _parse_datetime("2023-06-15T10:30:00Z", fallback)
         assert result.year == 2023
         assert result.month == 6
         assert result.tzinfo is not None
 
     def test_naive_datetime_gets_fallback_tz(self):
-        fallback = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        fallback = datetime(2000, 1, 1, tzinfo=UTC)
         result = _parse_datetime("2023-06-15T10:30:00", fallback)
         assert result.year == 2023
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_invalid_string_returns_fallback(self):
-        fallback = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        fallback = datetime(2000, 1, 1, tzinfo=UTC)
         assert _parse_datetime("not-a-date", fallback) == fallback
 
     def test_empty_string_returns_fallback(self):
-        fallback = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        fallback = datetime(2000, 1, 1, tzinfo=UTC)
         assert _parse_datetime("", fallback) == fallback
 
     def test_none_returns_fallback(self):
-        fallback = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        fallback = datetime(2000, 1, 1, tzinfo=UTC)
         assert _parse_datetime(None, fallback) == fallback
 
 
@@ -4430,9 +4443,9 @@ class TestAssetEdits:
         background task rotates it would hand the client its pre-edit cache
         key and leave the viewer on the browser-cached old rendering.
         """
-        from tests.conftest import make_gumnut_asset
         from routers.api.assets import apply_asset_edits
         from routers.immich_models import AssetEditsCreateDto
+        from tests.conftest import make_gumnut_asset
 
         monkeypatch.setattr("routers.api.assets._EDIT_EVENT_DEADLINE_SECONDS", 5.0)
 
@@ -4636,6 +4649,7 @@ class TestAssetEdits:
         """A failed post-delete refresh keeps the 204: the edit version is
         already gone, so a 5xx would misreport the restore as failed."""
         from gumnut import APIConnectionError
+
         from routers.api.assets import remove_asset_edits
         from tests.conftest import make_gumnut_asset
 
@@ -4774,6 +4788,7 @@ class TestAssetEdits:
         self, sample_uuid, mock_current_user
     ):
         from gumnut import APIStatusError
+
         from routers.api.assets import apply_asset_edits
         from routers.immich_models import AssetEditsCreateDto
 
@@ -4805,6 +4820,7 @@ class TestAssetEdits:
         self, sample_uuid, mock_current_user
     ):
         from gumnut import APIStatusError
+
         from routers.api.assets import apply_asset_edits
         from routers.immich_models import AssetEditsCreateDto
 
@@ -4905,6 +4921,7 @@ class TestAssetEdits:
         failure must not surface as a 5xx (which would misreport a committed
         edit as failed and invite a retry); it logs and skips emission."""
         from gumnut import APIConnectionError
+
         from routers.api.assets import apply_asset_edits
         from routers.immich_models import AssetEditsCreateDto
         from tests.conftest import make_gumnut_asset
@@ -4972,9 +4989,9 @@ class TestAssetEdits:
     async def test_delete_root_is_idempotent_but_still_emits_ready(
         self, sample_uuid, mock_current_user
     ):
-        from tests.conftest import make_gumnut_asset
         from routers.api.assets import remove_asset_edits
         from services.websockets import WebSocketEvent
+        from tests.conftest import make_gumnut_asset
 
         client = self._client(
             [self._version(position=0)],
@@ -5000,9 +5017,9 @@ class TestAssetEdits:
     async def test_delete_edit_sends_exact_tip_and_restores(
         self, sample_uuid, mock_current_user
     ):
-        from tests.conftest import make_gumnut_asset
         from routers.api.assets import remove_asset_edits
         from services.websockets import WebSocketEvent
+        from tests.conftest import make_gumnut_asset
 
         versions = [
             self._version(position=0),
@@ -5060,6 +5077,7 @@ class TestAssetEdits:
         self, sample_uuid, mock_current_user
     ):
         from gumnut import APIStatusError
+
         from routers.api.assets import remove_asset_edits
 
         versions = [
@@ -5083,9 +5101,9 @@ class TestAssetEdits:
     async def test_put_superseded_commit_suppresses_events(
         self, sample_uuid, mock_current_user
     ):
-        from tests.conftest import make_gumnut_asset
         from routers.api.assets import apply_asset_edits
         from routers.immich_models import AssetEditsCreateDto
+        from tests.conftest import make_gumnut_asset
 
         # Another edit-route write won between this request's append and the
         # retrieve (current kind is "edit"): that winner emits its own event,
@@ -5119,10 +5137,10 @@ class TestAssetEdits:
     async def test_put_superseded_by_external_writer_emits_refreshed_state(
         self, sample_uuid, mock_current_user
     ):
-        from tests.conftest import make_gumnut_asset
         from routers.api.assets import apply_asset_edits
         from routers.immich_models import AssetEditsCreateDto
         from services.websockets import AssetEditReadyV2Payload, WebSocketEvent
+        from tests.conftest import make_gumnut_asset
 
         # An external (non-edit-route) writer won between this request's
         # append and the retrieve. Nothing else emits AssetEditReadyV2, so
@@ -5163,9 +5181,9 @@ class TestAssetEdits:
     async def test_delete_restores_buried_external_survivor_and_emits(
         self, sample_uuid, mock_current_user
     ):
-        from tests.conftest import make_gumnut_asset
         from routers.api.assets import remove_asset_edits
         from services.websockets import WebSocketEvent
+        from tests.conftest import make_gumnut_asset
 
         # An external rendering buried under the edit tip is the survivor —
         # the suppression guard must key on it, not on the root.
@@ -5197,8 +5215,8 @@ class TestAssetEdits:
     async def test_delete_superseded_restore_suppresses_events(
         self, sample_uuid, mock_current_user
     ):
-        from tests.conftest import make_gumnut_asset
         from routers.api.assets import remove_asset_edits
+        from tests.conftest import make_gumnut_asset
 
         versions = [
             self._version(position=0),

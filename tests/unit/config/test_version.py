@@ -1,8 +1,9 @@
 import pytest
+
 from config.immich_version import (
     ImmichVersion,
-    parse_immich_version,
     load_immich_version,
+    parse_immich_version,
 )
 
 

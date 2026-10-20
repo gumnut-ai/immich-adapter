@@ -7,7 +7,7 @@ one library, so for every asset event the adapter asks that library whether it
 holds the asset now: present means upsert, absent means remove.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID
@@ -30,7 +30,7 @@ from tests.unit.api.sync.conftest import (
     create_mock_user,
 )
 
-NOW = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
 ASSET_ID = uuid_to_gumnut_asset_id(TEST_UUID)
 
 

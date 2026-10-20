@@ -2,17 +2,17 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock, call
 from uuid import UUID, uuid4
 
 import pytest
 
-from routers.api.sync.routes import get_sync_stream
+from routers.api.sync import stream as stream_module
 from routers.api.sync.converters import gumnut_album_to_sync_album_user_v1
 from routers.api.sync.fk_integrity import SyncStreamStats
-from routers.api.sync import stream as stream_module
+from routers.api.sync.routes import get_sync_stream
 from routers.api.sync.stream import (
     EVENTS_PAGE_SIZE,
     SyncBound,
@@ -55,8 +55,8 @@ from tests.unit.api.sync.conftest import (
     create_mock_events_response,
     create_mock_face_data,
     create_mock_face_owning_asset_page,
-    create_mock_metadata_data,
     create_mock_gumnut_client,
+    create_mock_metadata_data,
     create_mock_person_data,
     create_mock_session,
     create_mock_user,
@@ -73,7 +73,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_always_streams_sync_complete(self):
         """SyncCompleteV1 is always streamed at the end."""
-        mock_user = create_mock_user(datetime.now(timezone.utc))
+        mock_user = create_mock_user(datetime.now(UTC))
         mock_client = create_mock_gumnut_client(mock_user)
 
         request = SyncStreamDto(types=[])
@@ -93,7 +93,7 @@ class TestGenerateSyncStream:
 
         Ack format: "SyncEntityType|cursor|"
         """
-        user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(user_updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -124,7 +124,7 @@ class TestGenerateSyncStream:
 
         Ack format: "SyncEntityType|cursor|"
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -163,7 +163,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_closes_stream_on_exception(self):
         """Stream closes without yielding an error event when an exception occurs."""
-        mock_user = create_mock_user(datetime.now(timezone.utc))
+        mock_user = create_mock_user(datetime.now(UTC))
         mock_client = create_mock_gumnut_client(mock_user)
         # Simulate an error during event fetching inside the generator
         mock_client.events.get = AsyncMock(side_effect=Exception("API error"))
@@ -186,7 +186,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_auth_user_when_requested(self):
         """Auth user is streamed when AuthUsersV1 is requested."""
-        user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(user_updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -212,7 +212,7 @@ class TestGenerateSyncStream:
         quotaUsageInBytes is a required int on SyncAuthUserV1, so a None upstream
         usage (rollout) coerces to 0; quotaSizeInBytes stays None (unlimited).
         """
-        user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(user_updated_at)
         # What the SDK yields when an older Gumnut API omits the storage fields
         mock_user.storage_limit_bytes = None
@@ -233,7 +233,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_user_when_requested(self):
         """User is streamed when UsersV1 is requested."""
-        user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(user_updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -256,8 +256,8 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_skips_entity_when_checkpoint_matches(self):
         """User entity is skipped when checkpoint cursor matches updated_at."""
-        user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        checkpoint_time = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+        user_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
+        checkpoint_time = datetime(2025, 1, 20, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(user_updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -279,9 +279,9 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_entity_when_user_updated_since_checkpoint(self):
         """User entity is re-streamed when updated_at differs from checkpoint cursor."""
-        user_updated_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
-        old_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        checkpoint_time = datetime(2025, 1, 16, 10, 0, 0, tzinfo=timezone.utc)
+        user_updated_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=UTC)
+        old_updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
+        checkpoint_time = datetime(2025, 1, 16, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(user_updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -304,7 +304,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_entity_when_no_checkpoint(self):
         """User entity is streamed when no checkpoint exists."""
-        user_updated_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+        user_updated_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(user_updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -325,7 +325,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_assets_when_requested(self):
         """Assets are streamed when AssetsV1 is requested."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -356,7 +356,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_albums_when_requested(self):
         """Albums are streamed when AlbumsV1 is requested."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -392,7 +392,7 @@ class TestGenerateSyncStream:
         never display. The adapter derives that owner link from the same album
         events, streamed after the album itself (FK parent ordering).
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -433,7 +433,7 @@ class TestGenerateSyncStream:
         client's album-user FK cascades on album deletion, so the derived
         album-user pass skips deletes to avoid a duplicate AlbumDeleteV1.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -472,7 +472,7 @@ class TestGenerateSyncStream:
         a converter that swapped the two fields would still pass it. This pins
         them to distinct sources (album.id vs. owner_id) so a swap is caught.
         """
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         album = create_mock_album_data(updated_at)  # album.id derives from TEST_UUID
         owner_id = UUID("11111111-1111-1111-1111-111111111111")  # distinct from album
 
@@ -485,7 +485,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_metadata_when_requested(self):
         """Metadata is streamed (as AssetExifV1) when AssetExifsV1 is requested."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -526,7 +526,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_people_when_requested(self):
         """People are streamed when PeopleV1 is requested."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -556,7 +556,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_faces_when_requested(self):
         """Faces are streamed when AssetFacesV1 is requested."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -586,7 +586,7 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_edited_asset_suppresses_face_rows_without_n_plus_one(self, caplog):
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -637,7 +637,7 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_mixed_page_suppresses_only_edited_assets_faces(self):
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -697,7 +697,7 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_unknown_non_original_kind_suppresses_face_rows(self):
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -725,7 +725,7 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_missing_owning_asset_suppresses_face_rows(self):
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -749,7 +749,7 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_face_v2_rows_suppressed_for_edited_assets(self):
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -778,7 +778,7 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_face_v2_edit_then_restore_transitions_checkpointed(self):
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -840,7 +840,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_v1_retraction_emits_inline_before_same_stream_restore_upsert(self):
         """Keep retractions inline so a later-page restore upsert wins."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -887,7 +887,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_owning_asset_shared_across_pages_is_read_once(self):
         """A later page reads only the owners no earlier page found exposable."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -942,7 +942,7 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_people_still_stream_for_edited_assets(self):
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -994,7 +994,7 @@ class TestGenerateSyncStream:
 
     @pytest.mark.anyio
     async def test_face_delete_events_still_emitted_for_edited_assets(self):
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1025,7 +1025,7 @@ class TestGenerateSyncStream:
     async def test_streams_user_metadata_preferences_with_min_faces(self):
         """UserMetadataV1 emits a synthesized preferences row with minimumFaces=1
         so people with 1-2 faces still appear in the client's People tab."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1050,7 +1050,7 @@ class TestGenerateSyncStream:
     async def test_user_metadata_skipped_when_checkpoint_matches(self):
         """The preferences row is not re-emitted once the client has acked the
         current user cursor (unchanged user record)."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1072,7 +1072,7 @@ class TestGenerateSyncStream:
     async def test_user_metadata_reemitted_when_user_changed(self):
         """A client acked under an older user cursor gets the preferences row
         re-emitted when the user record changes — same delta semantics as UserV1."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1095,7 +1095,7 @@ class TestGenerateSyncStream:
     async def test_streams_user_then_user_metadata_in_fk_order(self):
         """When both are requested, UserV1 is emitted before UserMetadataV1 so the
         userId FK parent exists on the client first; a reorder regression fails here."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1117,7 +1117,7 @@ class TestGenerateSyncStream:
     ):
         """Requested-but-no-op v3 types stream nothing (just SyncCompleteV1) and do
         not trip the 'unsupported types' log — the point of _NOOP_REQUEST_TYPES."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1144,7 +1144,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_album_assets_when_requested(self):
         """Album-to-asset links are streamed when AlbumToAssetsV1 is requested."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1182,7 +1182,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_album_asset_removed_event(self):
         """album_asset_removed events with payload produce AlbumToAssetDeleteV1."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1224,7 +1224,7 @@ class TestGenerateSyncStream:
     async def test_bulk_removal_from_one_album_reads_the_album_once(self):
         """Several removals from one small album read its members in one call
         instead of one call per pair; a re-added pair still upserts."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1276,7 +1276,7 @@ class TestGenerateSyncStream:
     async def test_removals_from_a_deleted_album_read_no_members(self):
         """A deleted album has no members, so its removals delete without
         reading pairs."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1320,7 +1320,7 @@ class TestGenerateSyncStream:
     async def test_album_asset_removed_but_readded_streams_the_membership(self):
         """A removal whose pair is a member again (re-added by a transaction
         that sorts ahead of it) upserts the current row instead of deleting."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1359,7 +1359,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_skips_album_asset_removed_without_payload(self):
         """album_asset_removed events without payload are gracefully skipped."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1391,7 +1391,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_asset_delete_event(self):
         """Asset delete events are converted to Immich AssetDeleteV1."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1420,7 +1420,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_album_delete_event(self):
         """Album delete events are converted to Immich AlbumDeleteV1."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1448,7 +1448,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_person_delete_event(self):
         """Person delete events are converted to Immich PersonDeleteV1."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1476,7 +1476,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_streams_face_delete_event(self):
         """Face delete events are converted to Immich AssetFaceDeleteV1."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1504,7 +1504,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_skips_missing_entity(self):
         """Entity deleted between event and fetch is silently skipped."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1533,7 +1533,7 @@ class TestGenerateSyncStream:
     @pytest.mark.anyio
     async def test_mixed_upsert_and_delete_events(self):
         """Upsert and delete events are processed in order."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1584,7 +1584,7 @@ class TestGetSyncStreamEndpoint:
         """Endpoint returns StreamingResponse with jsonlines media type."""
         from fastapi.responses import StreamingResponse
 
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1613,7 +1613,7 @@ class TestGetSyncStreamEndpoint:
     @pytest.mark.anyio
     async def test_loads_checkpoints_when_session_token_present(self):
         """Checkpoints are loaded from store when session token is valid."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1623,7 +1623,7 @@ class TestGetSyncStreamEndpoint:
         # Create checkpoint with matching updated_at cursor to cause auth user to be skipped
         checkpoint = Checkpoint(
             entity_type=SyncEntityType.AuthUserV1,
-            updated_at=datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc),
+            updated_at=datetime(2025, 1, 20, 10, 0, 0, tzinfo=UTC),
             cursor=updated_at.isoformat(),
         )
         mock_checkpoint_store = AsyncMock(spec=CheckpointStore)
@@ -1731,7 +1731,7 @@ class TestGetSyncStreamEndpoint:
     @pytest.mark.anyio
     async def test_request_reset_clears_checkpoints(self):
         """When request.reset=True, all checkpoints are cleared before streaming."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1770,7 +1770,7 @@ class TestGetSyncStreamEndpoint:
     @pytest.mark.anyio
     async def test_request_reset_without_session_does_not_clear(self):
         """When request.reset=True but no session, checkpoints are not cleared."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1815,7 +1815,7 @@ class TestSyncBound:
 
     @pytest.mark.anyio
     async def test_later_entity_types_pass_the_first_as_of(self):
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
 
@@ -1843,7 +1843,7 @@ class TestStreamEntityTypePagination:
     @pytest.mark.anyio
     async def test_first_call_uses_checkpoint_cursor(self):
         """First API call uses cursor from checkpoint as after_cursor."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
 
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -1879,7 +1879,7 @@ class TestStreamEntityTypePagination:
     @pytest.mark.anyio
     async def test_first_call_without_checkpoint_omits_after_cursor(self):
         """First API call without checkpoint omits after_cursor parameter."""
-        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+        sync_started_at = datetime(2025, 1, 20, 10, 0, 0, tzinfo=UTC)
 
         mock_user = create_mock_user(sync_started_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -1908,7 +1908,7 @@ class TestStreamEntityTypePagination:
     async def test_pagination_continues_from_next_cursor_under_one_bound(self):
         """Later pages pass the previous page's next_cursor, not its last
         event's cursor, and the first read's as_of."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
 
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -2002,7 +2002,7 @@ class TestStreamEntityTypePagination:
     @pytest.mark.anyio
     async def test_stops_when_has_more_is_false(self):
         """Pagination stops when has_more is False, even with full page."""
-        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        updated_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
 
         mock_user = create_mock_user(updated_at)
         mock_client = create_mock_gumnut_client(mock_user)
@@ -2060,7 +2060,7 @@ class TestStreamEntityTypePagination:
 class TestRepeatedEntityEvents:
     """A pass over a current-state entity type emits each entity once."""
 
-    UPDATED_AT = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+    UPDATED_AT = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
 
     def _person(self, n: int) -> Mock:
         person = create_mock_person_data(self.UPDATED_AT)

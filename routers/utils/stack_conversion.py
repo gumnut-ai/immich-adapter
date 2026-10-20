@@ -389,7 +389,7 @@ class TimelineStacks:
     """
 
     @classmethod
-    def empty(cls) -> "TimelineStacks":
+    def empty(cls) -> TimelineStacks:
         """The inert resolution: collapses nothing, badges nothing.
 
         Every whole-bucket degradation returns this, so "the failure paths

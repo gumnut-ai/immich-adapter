@@ -1,9 +1,8 @@
-from fastapi import APIRouter, Depends
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
-from datetime import datetime, timezone
-from typing import List
 
-from routers.utils.current_user import get_current_user_id
+from fastapi import APIRouter, Depends
+
 from routers.immich_models import (
     CreateLibraryDto,
     LibraryResponseDto,
@@ -12,7 +11,7 @@ from routers.immich_models import (
     ValidateLibraryDto,
     ValidateLibraryResponseDto,
 )
-
+from routers.utils.current_user import get_current_user_id
 
 router = APIRouter(
     prefix="/api/libraries",
@@ -22,7 +21,7 @@ router = APIRouter(
 
 
 @router.get("")
-async def get_all_libraries() -> List[LibraryResponseDto]:
+async def get_all_libraries() -> list[LibraryResponseDto]:
     """
     Get all libraries.
     This is a stub implementation that returns an empty list.
@@ -45,9 +44,9 @@ async def create_library(
         assetCount=0,
         importPaths=request.importPaths or [],
         exclusionPatterns=request.exclusionPatterns or [],
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
-        refreshedAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
+        refreshedAt=datetime.now(tz=UTC),
     )
 
 
@@ -66,9 +65,9 @@ async def get_library(
         assetCount=0,
         importPaths=[],
         exclusionPatterns=[],
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
-        refreshedAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
+        refreshedAt=datetime.now(tz=UTC),
     )
 
 
@@ -89,9 +88,9 @@ async def update_library(
         assetCount=0,
         importPaths=request.importPaths or [],
         exclusionPatterns=request.exclusionPatterns or [],
-        createdAt=datetime.now(tz=timezone.utc),
-        updatedAt=datetime.now(tz=timezone.utc),
-        refreshedAt=datetime.now(tz=timezone.utc),
+        createdAt=datetime.now(tz=UTC),
+        updatedAt=datetime.now(tz=UTC),
+        refreshedAt=datetime.now(tz=UTC),
     )
 
 

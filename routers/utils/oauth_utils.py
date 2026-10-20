@@ -42,4 +42,4 @@ def parse_callback_url(callback_url: str) -> dict[str, str | None]:
         }
 
     except Exception as e:
-        raise ValueError(f"Failed to parse OAuth callback URL: {str(e)}")
+        raise ValueError(f"Failed to parse OAuth callback URL: {e!s}")

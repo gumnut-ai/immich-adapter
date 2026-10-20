@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta, timezone
+import logging
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
+
 from fastapi import APIRouter, Depends, Query, Response
 from gumnut import AsyncGumnut
-from uuid import UUID, uuid4
-from typing import List
-import logging
 
 from routers.api.constants import DEFAULT_DOWNLOAD_ARCHIVE_SIZE, STUB_LICENSE_KEY
 from routers.immich_models import (
@@ -17,7 +17,10 @@ from routers.immich_models import (
     DownloadResponse,
     EmailNotificationsResponse,
     FoldersResponse,
+    LicenseKeyDto,
+    LicenseResponseDto,
     MemoriesResponse,
+    OnboardingDto,
     OnboardingResponseDto,
     PeopleResponse,
     PurchaseResponse,
@@ -30,20 +33,17 @@ from routers.immich_models import (
     UserLicense,
     UserPreferencesResponseDto,
     UserPreferencesUpdateDto,
+    UserResponseDto,
     UserStatus,
     UserUpdateMeDto,
-    UserResponseDto,
-    OnboardingDto,
-    LicenseResponseDto,
-    LicenseKeyDto,
 )
-from routers.utils.gumnut_client import get_authenticated_gumnut_client
-from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
 from routers.utils.current_user import (
     get_current_user_admin,
     get_current_user_id,
     map_user_quota,
 )
+from routers.utils.gumnut_client import get_authenticated_gumnut_client
+from routers.utils.gumnut_id_conversion import safe_uuid_from_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ async def update_my_user(
         oauthId="",
         profileChangedAt=user.updated_at,
         license=UserLicense(
-            activatedAt=datetime.now(tz=timezone.utc),
+            activatedAt=datetime.now(tz=UTC),
             activationKey=str(uuid4()),
             licenseKey=STUB_LICENSE_KEY,
         ),
@@ -135,7 +135,7 @@ async def get_user_license() -> LicenseResponseDto:
         root=UserLicense(
             licenseKey=STUB_LICENSE_KEY,
             activationKey=str(uuid4()),
-            activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+            activatedAt=datetime(1900, 1, 1, 0, 0, 0, tzinfo=UTC),
         )
     )
 
@@ -150,7 +150,7 @@ async def set_user_license(request: LicenseKeyDto) -> LicenseResponseDto:
         root=UserLicense(
             licenseKey=request.licenseKey,
             activationKey=request.activationKey,
-            activatedAt=datetime.now(timezone.utc),
+            activatedAt=datetime.now(UTC),
         )
     )
 
@@ -229,7 +229,7 @@ async def get_my_calendar_heatmap(
     date parsing stays valid; `type` is accepted for wire compatibility and
     ignored.
     """
-    today = datetime.now(tz=timezone.utc).date()
+    today = datetime.now(tz=UTC).date()
     resolved_to = to or today.isoformat()
     resolved_from = from_ or (today - timedelta(days=364)).isoformat()
     return CalendarHeatmapResponseDto.model_validate(
@@ -264,7 +264,7 @@ async def create_profile_image(
     This is a stub implementation that returns fake updated user data.
     """
     return CreateProfileImageResponseDto(
-        profileChangedAt=datetime.now(tz=timezone.utc),
+        profileChangedAt=datetime.now(tz=UTC),
         profileImagePath="path/to/new/profile/image.jpg",
         userId=current_user_id,
     )
@@ -290,7 +290,7 @@ async def get_user(id: UUID) -> UserResponseDto:
         email="user@example.com",
         id=id,
         name="User",
-        profileChangedAt=datetime.now(tz=timezone.utc),
+        profileChangedAt=datetime.now(tz=UTC),
         profileImagePath="",
     )
 
@@ -305,7 +305,7 @@ async def get_user_profile_image(id: UUID):
 
 
 @router.get("")
-async def search_users() -> List[UserResponseDto]:
+async def search_users() -> list[UserResponseDto]:
     """
     Search users.
     This is a stub implementation that returns an empty list.

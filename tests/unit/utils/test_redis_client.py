@@ -1,8 +1,8 @@
 """Unit tests for Redis client utilities."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 import redis.exceptions
 
 from utils.redis_client import (

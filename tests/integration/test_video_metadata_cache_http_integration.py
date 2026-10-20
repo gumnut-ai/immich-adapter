@@ -135,9 +135,9 @@ def test_unresolved_video_scope_performs_live_read_per_range():
             "routers.api.assets.stream_from_cdn",
             AsyncMock(return_value=Response(status_code=206)),
         ),
+        TestClient(app) as http,
     ):
-        with TestClient(app) as http:
-            path = f"/api/assets/{uuid4()}/video/playback"
-            for byte_range in ["bytes=0-1", "bytes=2-"]:
-                assert http.get(path, headers={"range": byte_range}).status_code == 206
-            assert sdk.assets.retrieve.await_count == 2
+        path = f"/api/assets/{uuid4()}/video/playback"
+        for byte_range in ["bytes=0-1", "bytes=2-"]:
+            assert http.get(path, headers={"range": byte_range}).status_code == 206
+        assert sdk.assets.retrieve.await_count == 2

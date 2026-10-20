@@ -5,8 +5,8 @@ from contextvars import copy_context
 import pytest
 from fastapi import HTTPException
 
-from routers.api.sync.routes import _parse_ack
 from routers.api.sync.events import bind_sync_epoch, to_ack_string
+from routers.api.sync.routes import _parse_ack
 from routers.immich_models import SyncEntityType
 
 

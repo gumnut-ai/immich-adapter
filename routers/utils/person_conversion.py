@@ -5,9 +5,10 @@ This module provides shared functionality for converting person data from the Gu
 to the Immich API format, including handling of datetime fields and person metadata.
 """
 
-from datetime import datetime, date, timezone
+from datetime import UTC, date, datetime
 
 from gumnut.types.person_response import PersonResponse
+
 from routers.immich_models import PersonResponseDto
 from routers.utils.gumnut_id_conversion import safe_uuid_from_person_id
 
@@ -27,7 +28,7 @@ def _extract_person_fields(
     person_id = gumnut_person.id
     person_name = gumnut_person.name or "Unknown Person"
     birth_date = gumnut_person.birth_date or datetime(
-        1970, 1, 1, tzinfo=timezone.utc
+        1970, 1, 1, tzinfo=UTC
     )  # Default date if None
     is_favorite = gumnut_person.is_favorite
     is_hidden = gumnut_person.is_hidden
@@ -40,7 +41,7 @@ def _extract_person_fields(
 
     # Ensure updated_at is a datetime object
     if updated_at is None:
-        updated_at = datetime.now(tz=timezone.utc)
+        updated_at = datetime.now(tz=UTC)
     elif not isinstance(updated_at, datetime):
         # If it's not already a datetime (e.g., it's a string), parse it
         try:
@@ -48,9 +49,9 @@ def _extract_person_fields(
                 iso_string: str = updated_at.replace("Z", "+00:00")
                 updated_at = datetime.fromisoformat(iso_string)
             else:
-                updated_at = datetime.now(tz=timezone.utc)
+                updated_at = datetime.now(tz=UTC)
         except ValueError, AttributeError:
-            updated_at = datetime.now(tz=timezone.utc)
+            updated_at = datetime.now(tz=UTC)
 
     return (
         person_id,

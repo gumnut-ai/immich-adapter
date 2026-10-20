@@ -1,9 +1,11 @@
 """Integration tests for server version endpoints."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import Mock, patch
+
+import pytest
 from fastapi.testclient import TestClient
+
 from config.immich_version import ImmichVersion
 from main import app
 

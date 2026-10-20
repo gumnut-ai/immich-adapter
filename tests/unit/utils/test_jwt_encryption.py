@@ -1,8 +1,8 @@
 """Unit tests for JWT encryption utilities."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 from cryptography.fernet import Fernet
 
 from utils.jwt_encryption import (
@@ -12,7 +12,6 @@ from utils.jwt_encryption import (
     decrypt_jwt,
     encrypt_jwt,
 )
-
 
 # Test JWT token
 TEST_JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"

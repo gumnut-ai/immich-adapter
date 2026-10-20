@@ -1,10 +1,11 @@
 """Tests for faces.py endpoints."""
 
-import pytest
-from fastapi import HTTPException
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
-from datetime import datetime, timezone
+
+import pytest
+from fastapi import HTTPException
 
 from routers.api.faces import (
     create_face,
@@ -40,8 +41,8 @@ def _make_face(
     face.person_id = person_id
     face.bounding_box = bounding_box or {"x": 100, "y": 200, "w": 300, "h": 400}
     face.source = source
-    face.created_at = datetime.now(timezone.utc)
-    face.updated_at = datetime.now(timezone.utc)
+    face.created_at = datetime.now(UTC)
+    face.updated_at = datetime.now(UTC)
     face.thumbnail_url = None
     return face
 
@@ -73,8 +74,8 @@ def _make_person(person_id: str, name: str = "Test Person") -> Mock:
     person.birth_date = datetime(1990, 1, 1).date()
     person.is_favorite = False
     person.is_hidden = False
-    person.created_at = datetime.now(timezone.utc)
-    person.updated_at = datetime.now(timezone.utc)
+    person.created_at = datetime.now(UTC)
+    person.updated_at = datetime.now(UTC)
     return person
 
 
@@ -250,6 +251,7 @@ class TestGetFaces:
     async def test_sdk_error_propagates(self):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         asset_uuid = uuid4()
@@ -328,6 +330,7 @@ class TestDeleteFace:
     async def test_sdk_error_propagates(self):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         face_uuid = uuid4()
@@ -379,6 +382,7 @@ class TestReassignFace:
     async def test_sdk_error_propagates(self):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         face_uuid = uuid4()
@@ -735,6 +739,7 @@ class TestCreateFace:
     async def test_sdk_error_propagates(self):
         """SDK errors bubble up; the global GumnutError handler maps them."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         asset_uuid = uuid4()

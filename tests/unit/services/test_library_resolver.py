@@ -1,7 +1,7 @@
 """Unit tests for library resolution and the per-credential cache."""
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,7 +21,7 @@ from tests.conftest import make_gumnut_library
 class TestFirstOwnedLibraryId:
     def test_picks_oldest_even_when_listed_newest_first(self):
         """The API lists live libraries newest first; the choice is the oldest."""
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         libraries = [
             make_gumnut_library("lib_new", base + timedelta(days=2)),
             make_gumnut_library("lib_mid", base + timedelta(days=1)),
@@ -31,7 +31,7 @@ class TestFirstOwnedLibraryId:
         assert first_owned_library_id(libraries) == "lib_old"
 
     def test_ties_break_on_id(self):
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         libraries = [
             make_gumnut_library("lib_b", base),
             make_gumnut_library("lib_a", base),
@@ -44,7 +44,7 @@ class TestFirstOwnedLibraryId:
 
     @pytest.mark.parametrize("role", ["viewer", "collaborator"])
     def test_older_joined_library_does_not_win(self, role):
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         libraries = [
             make_gumnut_library("lib_owned", base + timedelta(days=1)),
             make_gumnut_library("lib_joined", base, role=role),
@@ -53,7 +53,7 @@ class TestFirstOwnedLibraryId:
         assert first_owned_library_id(libraries) == "lib_owned"
 
     def test_oldest_owned_wins_among_several(self):
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         libraries = [
             make_gumnut_library("lib_owned_newer", base + timedelta(days=3)),
             make_gumnut_library("lib_owned_older", base + timedelta(days=2)),
@@ -63,13 +63,13 @@ class TestFirstOwnedLibraryId:
         assert first_owned_library_id(libraries) == "lib_owned_older"
 
     def test_none_when_only_joined_libraries(self):
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         libraries = [make_gumnut_library("lib_joined", base, role="collaborator")]
 
         assert first_owned_library_id(libraries) is None
 
 
-BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+BASE = datetime(2026, 1, 1, tzinfo=UTC)
 OWNED_OLD = make_gumnut_library("lib_owned_old", BASE)
 OWNED_NEW = make_gumnut_library("lib_owned_new", BASE + timedelta(days=1))
 SHARED = make_gumnut_library(

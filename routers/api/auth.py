@@ -21,9 +21,8 @@ from routers.utils.gumnut_client import (
     get_authenticated_gumnut_client,
     get_authenticated_gumnut_client_optional,
 )
-
-from services.websockets import emit_session_event, WebSocketEvent
 from services.session_store import SessionStore, get_session_store
+from services.websockets import WebSocketEvent, emit_session_event
 
 logger = logging.getLogger(__name__)
 

@@ -1,10 +1,10 @@
 from fastapi import APIRouter
+
 from routers.immich_models import (
     AdminOnboardingUpdateDto,
     ReverseGeocodingStateResponseDto,
     VersionCheckStateResponseDto,
 )
-
 
 router = APIRouter(
     prefix="/api/system-metadata",

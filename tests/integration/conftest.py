@@ -1,7 +1,8 @@
 """Integration test configuration and shared fixtures."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 
 @pytest.fixture(autouse=True)

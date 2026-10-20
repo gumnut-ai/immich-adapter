@@ -1,9 +1,10 @@
 """Unit tests for CheckpointStore with mocked Redis."""
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import UUID
+
+import pytest
 
 from routers.immich_models import SyncEntityType
 from services.checkpoint_store import (
@@ -21,7 +22,7 @@ class TestCheckpointDataclass:
 
     def test_to_redis_value(self):
         """Test Checkpoint.to_redis_value() converts to pipe-delimited format."""
-        updated = datetime(2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc)
+        updated = datetime(2025, 1, 20, 10, 30, 45, tzinfo=UTC)
 
         checkpoint = Checkpoint(
             entity_type=SyncEntityType.AssetV1,
@@ -35,7 +36,7 @@ class TestCheckpointDataclass:
 
     def test_to_redis_value_without_cursor(self):
         """Test to_redis_value with no cursor outputs empty string."""
-        updated = datetime(2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc)
+        updated = datetime(2025, 1, 20, 10, 30, 45, tzinfo=UTC)
 
         checkpoint = Checkpoint(
             entity_type=SyncEntityType.AssetV1,
@@ -54,9 +55,7 @@ class TestCheckpointDataclass:
         checkpoint = Checkpoint.from_redis_value(SyncEntityType.AssetV1, value)
 
         assert checkpoint.entity_type == SyncEntityType.AssetV1
-        assert checkpoint.updated_at == datetime(
-            2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc
-        )
+        assert checkpoint.updated_at == datetime(2025, 1, 20, 10, 30, 45, tzinfo=UTC)
         assert checkpoint.cursor == "event_abc123"
 
     def test_from_redis_value_empty_cursor(self):
@@ -100,7 +99,7 @@ class TestCheckpointDataclass:
         """Test that to_redis_value and from_redis_value are inverses."""
         original = Checkpoint(
             entity_type=SyncEntityType.PersonV1,
-            updated_at=datetime(2025, 1, 19, 14, 0, 0, tzinfo=timezone.utc),
+            updated_at=datetime(2025, 1, 19, 14, 0, 0, tzinfo=UTC),
             cursor="event_person456",
         )
 
@@ -202,9 +201,7 @@ class TestCheckpointStoreGet:
 
         assert checkpoint is not None
         assert checkpoint.entity_type == SyncEntityType.AssetV1
-        assert checkpoint.updated_at == datetime(
-            2025, 1, 20, 10, 30, 45, tzinfo=timezone.utc
-        )
+        assert checkpoint.updated_at == datetime(2025, 1, 20, 10, 30, 45, tzinfo=UTC)
         assert checkpoint.cursor == "event_asset123"
 
     @pytest.mark.anyio

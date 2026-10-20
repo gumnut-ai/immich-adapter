@@ -6,13 +6,13 @@ Submission contract: docs.github.com/en/rest/dependency-graph/dependency-submiss
 """
 
 import hashlib
-from fnmatch import fnmatchcase
 import json
 import os
 import re
 import subprocess
 import sys
 import tomllib
+from fnmatch import fnmatchcase
 from pathlib import PurePosixPath
 from urllib.parse import quote
 

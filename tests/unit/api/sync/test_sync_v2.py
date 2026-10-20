@@ -41,7 +41,6 @@ from routers.immich_models import (
 from routers.utils import asset_conversion
 from tests.unit.api.sync.conftest import TEST_UUID
 
-
 # --- Payload shape (model_fields only — no instantiation) --------------------
 
 

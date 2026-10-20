@@ -10,7 +10,6 @@ import httpx
 
 from utils import metrics
 
-
 _OPERATION_FAMILIES = frozenset(
     {
         "assets",

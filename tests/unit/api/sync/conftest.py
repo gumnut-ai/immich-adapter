@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID
@@ -93,8 +93,8 @@ def create_mock_session(
         device_type="iOS",
         device_os="iOS 17",
         app_version="1.94.0",
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
         client_epoch=-1 if is_pending_sync_reset else 0,
     )
 
@@ -113,7 +113,7 @@ def create_mock_session_store(session: Session | None = None) -> AsyncMock:
     return store
 
 
-async def collect_stream(stream: AsyncGenerator[str, None]) -> list[dict]:
+async def collect_stream(stream: AsyncGenerator[str]) -> list[dict]:
     """Collect all events from an async generator into a list of dicts."""
     events = []
     async for line in stream:
@@ -289,22 +289,22 @@ def create_mock_entity_page(entities: list, next_page: Any = None):
 
 
 __all__ = [
-    "TEST_UUID",
     "TEST_SESSION_UUID",
-    "create_mock_user",
-    "create_mock_gumnut_client",
-    "create_mock_session",
-    "create_mock_checkpoint_store",
-    "create_mock_session_store",
+    "TEST_UUID",
     "collect_stream",
+    "create_mock_album_asset_data",
+    "create_mock_album_data",
+    "create_mock_asset_data",
+    "create_mock_checkpoint_store",
+    "create_mock_entity_page",
     "create_mock_event",
     "create_mock_events_response",
-    "create_mock_asset_data",
-    "create_mock_album_data",
-    "create_mock_album_asset_data",
-    "create_mock_metadata_data",
-    "create_mock_person_data",
     "create_mock_face_data",
     "create_mock_face_owning_asset_page",
-    "create_mock_entity_page",
+    "create_mock_gumnut_client",
+    "create_mock_metadata_data",
+    "create_mock_person_data",
+    "create_mock_session",
+    "create_mock_session_store",
+    "create_mock_user",
 ]

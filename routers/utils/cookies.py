@@ -1,5 +1,6 @@
-from fastapi import Response
 from enum import Enum
+
+from fastapi import Response
 
 # 400-day Max-Age on auth cookies. Without an explicit Max-Age these become
 # session cookies, which iOS HTTPCookieStorage holds in memory only and drops

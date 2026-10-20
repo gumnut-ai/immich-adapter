@@ -1,25 +1,24 @@
 """Unit tests for WebSocket infrastructure with authentication."""
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
+import pytest
 from pydantic import BaseModel
 
 from routers.api.server import get_server_version
+from services.session_store import Session, SessionStoreError
 from services.websockets import (
+    WebSocketEvent,
     _extract_session_token,
     _sid_to_user,
     connect,
     disconnect,
-    emit_user_event,
     emit_session_event,
+    emit_user_event,
     sio,
-    WebSocketEvent,
 )
-from services.session_store import Session, SessionStoreError
-
 
 # Test UUIDs for consistent testing
 TEST_SESSION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -32,7 +31,7 @@ def create_test_session(
     user_id: str = TEST_USER_ID,
 ) -> Session:
     """Create a test session."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Session(
         id=session_id,
         user_id=user_id,
@@ -452,7 +451,7 @@ class TestEmitUserEvent:
             event_time: datetime
 
         payload = TimestampPayload(
-            event_time=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+            event_time=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
         )
         await emit_user_event(WebSocketEvent.UPLOAD_SUCCESS, "user_123", payload)
 
@@ -488,14 +487,14 @@ class TestEmitUserEvent:
         """
         from socketio.exceptions import SocketIOError
 
-        with patch.object(
-            sio, "emit", new_callable=AsyncMock, side_effect=SocketIOError("boom")
+        with (
+            patch.object(
+                sio, "emit", new_callable=AsyncMock, side_effect=SocketIOError("boom")
+            ),
+            caplog.at_level("WARNING", logger="services.websockets"),
         ):
-            with caplog.at_level("WARNING", logger="services.websockets"):
-                # Must not raise.
-                await emit_user_event(
-                    WebSocketEvent.ASSET_DELETE, "user_123", "asset-id"
-                )
+            # Must not raise.
+            await emit_user_event(WebSocketEvent.ASSET_DELETE, "user_123", "asset-id")
 
         assert any(
             "Failed to emit WebSocket user event" in r.message for r in caplog.records
@@ -551,14 +550,14 @@ class TestEmitSessionEvent:
         """SocketIOError is logged at WARN and never propagated to callers."""
         from socketio.exceptions import SocketIOError
 
-        with patch.object(
-            sio, "emit", new_callable=AsyncMock, side_effect=SocketIOError("boom")
+        with (
+            patch.object(
+                sio, "emit", new_callable=AsyncMock, side_effect=SocketIOError("boom")
+            ),
+            caplog.at_level("WARNING", logger="services.websockets"),
         ):
-            with caplog.at_level("WARNING", logger="services.websockets"):
-                # Must not raise.
-                await emit_session_event(
-                    WebSocketEvent.SESSION_DELETE, "session_123", None
-                )
+            # Must not raise.
+            await emit_session_event(WebSocketEvent.SESSION_DELETE, "session_123", None)
 
         assert any(
             "Failed to emit WebSocket session event" in r.message

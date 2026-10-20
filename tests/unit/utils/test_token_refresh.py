@@ -1,21 +1,22 @@
 import asyncio
-import pytest
-import httpx
 from contextvars import copy_context
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import UUID
+
+import httpx
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from routers.middleware.auth_middleware import AuthMiddleware
 from routers.utils.gumnut_client import (
     _response_hook,
-    get_refreshed_token,
     clear_refreshed_token,
+    get_refreshed_token,
+    get_shared_http_client,
     init_request_scope,
     set_refreshed_token,
-    get_shared_http_client,
 )
 from services.session_store import Session
 
@@ -25,7 +26,7 @@ TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
 def make_session(session_id: UUID, jwt: str = "decrypted-jwt-token") -> Session:
     """Build a test Session whose get_jwt() returns the given decrypted JWT."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     session = Session(
         id=session_id,
         user_id=f"user_{session_id}",

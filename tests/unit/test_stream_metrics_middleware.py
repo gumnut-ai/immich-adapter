@@ -6,8 +6,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
-from starlette.middleware.base import BaseHTTPMiddleware
 from sentry_sdk import metrics
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from routers.middleware.stream_metrics_middleware import StreamMetricsMiddleware
 

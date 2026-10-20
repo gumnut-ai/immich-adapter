@@ -1361,8 +1361,7 @@ def raw_cell_count(line: str) -> int:
     row as having four cells.
     """
     body = line.strip()
-    if body.startswith("|"):
-        body = body[1:]
+    body = body.removeprefix("|")
     if body.endswith("|"):
         run = len(body) - 1 - len(body[:-1].rstrip("\\"))
         if run % 2 == 0:
@@ -1899,8 +1898,9 @@ PRIVATE_SEGMENT_RE = re.compile(r"^_+[A-Za-z0-9]\w*$")
 DUNDER_RE = re.compile(r"^__\w+__$")
 # A bare file name parses as a dotted chain, and some frameworks give public
 # files a leading underscore (`_app.tsx`, `_layout.svelte`).
+# A split word list keeps this table compact (SIM905 would expand it).
 FILE_SUFFIXES = frozenset(
-    (
+    (  # noqa: SIM905
         "astro css html js json jsx md mdx mjs py sh sql svelte toml ts tsx yaml yml"
     ).split()
 )

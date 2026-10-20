@@ -7,8 +7,8 @@ adapter surfaces on ``exifInfo.exifImageWidth/Height`` for mobile clients
 that re-derive display dims locally.
 """
 
+from datetime import UTC, datetime
 from uuid import UUID
-from datetime import datetime, timezone
 
 import pytest
 
@@ -21,9 +21,8 @@ from tests.unit.api.sync.conftest import (
     create_mock_metadata_data,
 )
 
-
 OWNER_UUID = UUID("22222222-2222-2222-2222-222222222222")
-UPDATED_AT = datetime(2026, 5, 1, tzinfo=timezone.utc)
+UPDATED_AT = datetime(2026, 5, 1, tzinfo=UTC)
 
 
 @pytest.mark.parametrize("orientation", [None, 1, 2, 3, 4, 5, 6, 7, 8])

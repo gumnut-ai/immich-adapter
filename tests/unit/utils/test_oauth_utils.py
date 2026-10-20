@@ -1,4 +1,5 @@
 import pytest
+
 from routers.utils.oauth_utils import parse_callback_url
 
 

@@ -1,29 +1,20 @@
 import logging
-from typing import Annotated, Any, List
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
-from pydantic.json_schema import SkipJsonSchema
-
 from gumnut import AsyncGumnut
 from gumnut.types import PersonResponse
+from pydantic.json_schema import SkipJsonSchema
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
-from routers.utils.bulk import classify_bulk_item_call
-from routers.utils.cdn_client import stream_from_cdn
-from routers.utils.concurrency import gather_with_concurrency
-from routers.utils.error_mapping import log_upstream_response
-from routers.utils.gumnut_client import (
-    get_authenticated_gumnut_client,
-    get_current_library_id,
-)
 from routers.immich_models import (
     AssetFaceUpdateDto,
     AssetFaceUpdateItem,
+    BulkIdErrorReason,
     BulkIdResponseDto,
     BulkIdsDto,
-    BulkIdErrorReason,
     MergePersonDto,
     PeopleResponseDto,
     PeopleUpdateDto,
@@ -32,6 +23,14 @@ from routers.immich_models import (
     PersonResponseDto,
     PersonStatisticsResponseDto,
     PersonUpdateDto,
+)
+from routers.utils.bulk import classify_bulk_item_call
+from routers.utils.cdn_client import stream_from_cdn
+from routers.utils.concurrency import gather_with_concurrency
+from routers.utils.error_mapping import log_upstream_response
+from routers.utils.gumnut_client import (
+    get_authenticated_gumnut_client,
+    get_current_library_id,
 )
 from routers.utils.gumnut_id_conversion import (
     uuid_to_gumnut_asset_id,
@@ -120,7 +119,7 @@ async def create_person(
 async def update_people(
     people_data: PeopleUpdateDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[BulkIdResponseDto]:
+) -> list[BulkIdResponseDto]:
     """
     Update multiple people by their ids.
     """
@@ -386,7 +385,7 @@ async def merge_person(
     id: UUID,
     request: MergePersonDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[BulkIdResponseDto]:
+) -> list[BulkIdResponseDto]:
     """Merge one or more source people into the target person at ``{id}``."""
     if not request.ids:
         return []
@@ -415,7 +414,7 @@ async def reassign_faces(
     id: UUID,
     request: AssetFaceUpdateDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[PersonResponseDto]:
+) -> list[PersonResponseDto]:
     """Reassign faces to a person.
 
     The URL {id} is the target person (who to reassign faces TO).

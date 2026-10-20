@@ -7,9 +7,9 @@ from pydantic import ValidationError
 
 from config.settings import TestSettings
 from routers.utils.thumbnail_cache import get_video_cache_context
+from services import video_cache
 from services.thumbnail_cache import ThumbnailVariant
 from services.video_cache import is_cacheable_video_selection
-from services import video_cache
 
 
 def test_video_capacity_is_bounded_and_ttl_is_not_configurable():

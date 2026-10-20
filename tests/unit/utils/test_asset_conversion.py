@@ -10,7 +10,7 @@ The DTO conversion sites in ``routers/utils/asset_conversion.py`` must surface
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import Mock
 from uuid import UUID, uuid4
 
@@ -18,20 +18,16 @@ import pytest
 from gumnut.types.asset_response import AssetResponse
 from gumnut.types.file_data_response import FileDataResponse
 
+from routers.api.sync.converters import (
+    gumnut_asset_to_sync_asset_v1,
+    gumnut_asset_to_sync_asset_v2,
+    gumnut_metadata_to_sync_exif_v1,
+)
 from routers.immich_models import (
     AssetStackResponseDto,
     PersonResponseDto,
     UserAvatarColor,
     UserResponseDto,
-)
-from routers.utils.gumnut_id_conversion import (
-    safe_uuid_from_stack_id,
-    uuid_to_gumnut_person_id,
-)
-from routers.api.sync.converters import (
-    gumnut_asset_to_sync_asset_v1,
-    gumnut_asset_to_sync_asset_v2,
-    gumnut_metadata_to_sync_exif_v1,
 )
 from routers.utils.asset_conversion import (
     build_asset_upload_ready_payload,
@@ -41,13 +37,17 @@ from routers.utils.asset_conversion import (
     extract_sync_exif,
     format_duration,
     normalize_rating,
-    resolve_capture_datetime,
     resolve_asset_location,
+    resolve_capture_datetime,
     resolve_file_modified_at,
     resolve_immich_checksum,
     should_expose_face_geometry,
 )
 from routers.utils.datetime_utils import to_actual_utc
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_stack_id,
+    uuid_to_gumnut_person_id,
+)
 from tests.conftest import make_gumnut_asset, make_gumnut_stack
 
 
@@ -56,12 +56,12 @@ class TestDateResolution:
     ``fileModifiedAt`` prefers EXIF ``metadata.modified_datetime`` because
     the Gumnut API does not resolve a separate modify-time field."""
 
-    LOCAL_DT = datetime(2017, 6, 3, 9, 15, 0, tzinfo=timezone.utc)
-    METADATA_DT = datetime(2018, 7, 4, 10, 30, 0, tzinfo=timezone.utc)
-    FILE_CREATED_DT = datetime(2019, 8, 5, 12, 0, 0, tzinfo=timezone.utc)
-    FILE_MODIFIED_DT = datetime(2019, 8, 6, 13, 0, 0, tzinfo=timezone.utc)
-    CREATED_DT = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-    UPDATED_DT = datetime(2026, 1, 2, 0, 0, 0, tzinfo=timezone.utc)
+    LOCAL_DT = datetime(2017, 6, 3, 9, 15, 0, tzinfo=UTC)
+    METADATA_DT = datetime(2018, 7, 4, 10, 30, 0, tzinfo=UTC)
+    FILE_CREATED_DT = datetime(2019, 8, 5, 12, 0, 0, tzinfo=UTC)
+    FILE_MODIFIED_DT = datetime(2019, 8, 6, 13, 0, 0, tzinfo=UTC)
+    CREATED_DT = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+    UPDATED_DT = datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC)
 
     def _set_dates(
         self,
@@ -144,8 +144,8 @@ class TestDateResolution:
     ):
         tokyo = timezone(timedelta(hours=9))
         local_datetime = datetime(2024, 6, 20, 15, 0, 0, tzinfo=tokyo)
-        expected_file_created_at = datetime(2024, 6, 20, 6, 0, 0, tzinfo=timezone.utc)
-        expected_local_date_time = datetime(2024, 6, 20, 15, 0, 0, tzinfo=timezone.utc)
+        expected_file_created_at = datetime(2024, 6, 20, 6, 0, 0, tzinfo=UTC)
+        expected_local_date_time = datetime(2024, 6, 20, 15, 0, 0, tzinfo=UTC)
         self._set_dates(
             sample_gumnut_asset,
             local_datetime=local_datetime,
@@ -213,7 +213,7 @@ class TestConvertGumnutAssetToImmichTrashState:
         The Immich UI keys "In trash" indicator off this flag, so it must
         reflect the live trashed_at state on every read path.
         """
-        sample_gumnut_asset.trashed_at = datetime(2026, 4, 1, tzinfo=timezone.utc)
+        sample_gumnut_asset.trashed_at = datetime(2026, 4, 1, tzinfo=UTC)
 
         result = convert_gumnut_asset_to_immich(sample_gumnut_asset, mock_current_user)
 
@@ -228,7 +228,7 @@ def _make_gumnut_person() -> Mock:
     person.birth_date = None
     person.is_favorite = False
     person.is_hidden = False
-    person.updated_at = datetime.now(timezone.utc)
+    person.updated_at = datetime.now(UTC)
     return person
 
 
@@ -289,7 +289,7 @@ class TestBuildAssetUploadReadyPayloadTrashState:
         non-null on the asset returned by the upload pipeline. The wire payload
         must reflect the truth from the source rather than a hardcoded None.
         """
-        trashed_at = datetime(2026, 4, 1, tzinfo=timezone.utc)
+        trashed_at = datetime(2026, 4, 1, tzinfo=UTC)
         sample_gumnut_asset.trashed_at = trashed_at
 
         payload = build_asset_upload_ready_payload(
@@ -940,8 +940,8 @@ class TestFileDataSourcing:
     ``file_data`` would surface here as an empty checksum / wrong modify-time.
     """
 
-    DT = datetime(2024, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
-    MTIME = datetime(2024, 3, 2, 8, 30, 0, tzinfo=timezone.utc)
+    DT = datetime(2024, 3, 1, 12, 0, 0, tzinfo=UTC)
+    MTIME = datetime(2024, 3, 2, 8, 30, 0, tzinfo=UTC)
     SHA1_B64 = "PaDX6+c+Lhjpm5/ciXUROL1ryaU="
 
     def _file_data(self) -> FileDataResponse:
@@ -1024,7 +1024,7 @@ class TestIsEditedMapping:
             name="Test User",
             avatarColor=UserAvatarColor.primary,
             profileImagePath="",
-            profileChangedAt=datetime.now(timezone.utc),
+            profileChangedAt=datetime.now(UTC),
         )
 
     def _is_edited_everywhere(self, kind: str) -> set[bool]:

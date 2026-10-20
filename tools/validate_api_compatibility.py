@@ -21,7 +21,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 from urllib.parse import urlparse
 
 import click
@@ -39,7 +39,7 @@ class SpecFetcher:
     """Handles fetching OpenAPI specs from URLs or local files."""
 
     @staticmethod
-    def fetch(spec_path: str) -> Dict[str, Any]:
+    def fetch(spec_path: str) -> dict[str, Any]:
         """
         Fetch OpenAPI spec from URL or file path.
 
@@ -93,7 +93,7 @@ class EndpointFilter:
     """Filters OpenAPI specs to specific endpoints."""
 
     @staticmethod
-    def filter_spec(spec: Dict[str, Any], endpoints: List[str]) -> Dict[str, Any]:
+    def filter_spec(spec: dict[str, Any], endpoints: list[str]) -> dict[str, Any]:
         """
         Filter OpenAPI spec to only include specified endpoints.
 
@@ -140,7 +140,7 @@ class EndpointFilter:
 class SpecComparator:
     """Compares two OpenAPI specifications."""
 
-    def __init__(self, immich_spec: Dict[str, Any], adapter_spec: Dict[str, Any]):
+    def __init__(self, immich_spec: dict[str, Any], adapter_spec: dict[str, Any]):
         self.immich_spec = immich_spec
         self.adapter_spec = adapter_spec
         self.differences = []
@@ -315,7 +315,7 @@ class SpecComparator:
         else:
             return str(value)
 
-    def compare(self) -> List[Dict[str, Any]]:
+    def compare(self) -> list[dict[str, Any]]:
         """
         Compare the two specifications.
 
@@ -457,7 +457,7 @@ class SpecComparator:
         self._compare_responses(display_path, method, immich_method, adapter_method)
 
     def _compare_parameters(
-        self, path: str, method: str, immich_method: Dict, adapter_method: Dict
+        self, path: str, method: str, immich_method: dict, adapter_method: dict
     ):
         """Compare parameters between methods."""
         immich_params = immich_method.get("parameters", [])
@@ -548,7 +548,7 @@ class SpecComparator:
                     )
 
     def _compare_request_body(
-        self, path: str, method: str, immich_method: Dict, adapter_method: Dict
+        self, path: str, method: str, immich_method: dict, adapter_method: dict
     ):
         """Compare request body between methods."""
         immich_body = immich_method.get("requestBody")
@@ -628,7 +628,7 @@ class SpecComparator:
                     )
 
     def _compare_responses(
-        self, path: str, method: str, immich_method: Dict, adapter_method: Dict
+        self, path: str, method: str, immich_method: dict, adapter_method: dict
     ):
         """Compare responses between methods."""
         immich_responses = immich_method.get("responses", {})
@@ -718,7 +718,7 @@ class SpecComparator:
                     self.current_adapter_schema = None
 
 
-def display_results(differences: List[Dict[str, Any]], verbose: bool = False) -> int:
+def display_results(differences: list[dict[str, Any]], verbose: bool = False) -> int:
     """
     Display comparison results in a formatted table.
 

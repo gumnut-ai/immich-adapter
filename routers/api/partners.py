@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import List
 from uuid import UUID
 from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter
 
 from routers.immich_models import (
@@ -32,7 +32,7 @@ fake_partner: PartnerResponseDto = PartnerResponseDto(
 @router.get("")
 async def get_partners(
     direction: PartnerDirection,
-) -> List[PartnerResponseDto]:
+) -> list[PartnerResponseDto]:
     """
     Return a list of partners.
     This is a stub implementation that returns an empty list.

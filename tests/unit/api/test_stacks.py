@@ -1249,9 +1249,8 @@ class TestStackUpdateWebSocket:
         client = _removal_client()
         client.stacks.delete = AsyncMock(side_effect=make_sdk_status_error(500, "boom"))
 
-        with self._patch_emit() as mock_emit:
-            with pytest.raises(GumnutError):
-                await _delete_stacks(client, [uuid4(), uuid4()])
+        with self._patch_emit() as mock_emit, pytest.raises(GumnutError):
+            await _delete_stacks(client, [uuid4(), uuid4()])
 
         mock_emit.assert_not_awaited()
 

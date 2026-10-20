@@ -141,6 +141,7 @@ class TestRestoreAssets:
         call in try/except must break this test.
         """
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -255,6 +256,7 @@ class TestRestoreTrash:
     async def test_propagates_sdk_error(self):
         """SDK errors on bulk restore bubble to the global GumnutError handler."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()
@@ -368,6 +370,7 @@ class TestEmptyTrash:
     async def test_propagates_sdk_error(self):
         """SDK errors on bulk hard-delete bubble to the global GumnutError handler."""
         from gumnut import APIStatusError
+
         from tests.conftest import make_sdk_status_error
 
         mock_client = Mock()

@@ -22,7 +22,6 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
-
 from lint_docs import (
     anchors_in,
     blank_frontmatter,
@@ -2935,7 +2934,7 @@ def _script_metadata() -> dict:
     import tomllib
 
     source = SCRIPT.read_text(encoding="utf-8")
-    block = re.search(r"^# /// script$(.*?)^# ///$", source, re.M | re.S)
+    block = re.search(r"^# /// script$(.*?)^# ///$", source, re.MULTILINE | re.DOTALL)
     assert block is not None, "lint_docs.py must carry a PEP 723 script block"
     # Exactly one comment level, per PEP 723's reference algorithm. Stripping two
     # (`removeprefix("# ").removeprefix("#")`) mangles a TOML comment *inside* the

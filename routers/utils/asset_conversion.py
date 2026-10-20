@@ -11,11 +11,7 @@ from typing import NamedTuple
 from uuid import UUID
 
 from gumnut.types.asset_response import AssetResponse
-from routers.utils.datetime_utils import (
-    format_timezone_immich,
-    to_actual_utc,
-    to_immich_local_datetime,
-)
+
 from routers.immich_models import (
     AssetResponseDto,
     AssetStackResponseDto,
@@ -26,13 +22,18 @@ from routers.immich_models import (
     SyncAssetV1,
     UserResponseDto,
 )
-from services.websockets import AssetUploadReadyV1Payload
+from routers.utils.datetime_utils import (
+    format_timezone_immich,
+    to_actual_utc,
+    to_immich_local_datetime,
+)
 from routers.utils.gumnut_id_conversion import (
     immich_stack_id,
     safe_uuid_from_asset_id,
 )
-from routers.utils.rating import FAVORITE_RATING
 from routers.utils.person_conversion import convert_gumnut_person_to_immich
+from routers.utils.rating import FAVORITE_RATING
+from services.websockets import AssetUploadReadyV1Payload
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +136,7 @@ def resolve_immich_checksum(gumnut_asset: AssetResponse) -> str:
     return checksum_sha1
 
 
-def normalize_rating(rating: float | int | None) -> int | None:
+def normalize_rating(rating: float | None) -> int | None:
     """Bound a rating to the Immich DTO's valid 1-5 range, or None.
 
     ``ExifResponseDto.rating`` is constrained ``ge=1, le=5``, so any value

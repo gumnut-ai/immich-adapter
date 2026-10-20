@@ -3,8 +3,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
-import pytest
 import httpx
+import pytest
 from fastapi import HTTPException, Request, Response
 
 from routers.api.assets import play_asset_video

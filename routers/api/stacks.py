@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, List
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -8,10 +8,10 @@ from pydantic.json_schema import SkipJsonSchema
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.immich_models import (
-    StackResponseDto,
-    StackCreateDto,
-    StackUpdateDto,
     BulkIdsDto,
+    StackCreateDto,
+    StackResponseDto,
+    StackUpdateDto,
     UserResponseDto,
 )
 from routers.utils.concurrency import gather_with_concurrency
@@ -74,7 +74,7 @@ def _build_representable_response(
 
 async def _search_by_primary_asset(
     client: AsyncGumnut, primary_asset_id: UUID, current_user: UserResponseDto
-) -> List[StackResponseDto]:
+) -> list[StackResponseDto]:
     """Return the stack whose *effective* cover is `primary_asset_id`, if any.
 
     The Gumnut API's own `primary_asset_id` filter on `list_stacks` is the
@@ -122,7 +122,7 @@ async def search_stacks(
     primaryAssetId: Annotated[UUID | SkipJsonSchema[None], Query()] = None,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
     current_user: UserResponseDto = Depends(get_current_user),
-) -> List[StackResponseDto]:
+) -> list[StackResponseDto]:
     """List the caller's stacks, optionally narrowed to one by its cover asset.
 
     Immich's `searchStacks` takes no pagination parameters, so the walk below
@@ -402,7 +402,6 @@ async def delete_stack(
     # Realtime hint that the stack dissolved (upstream StackDelete ->
     # on_asset_stack_update).
     await emit_user_event(WebSocketEvent.STACK_UPDATE, current_user_id)
-    return
 
 
 @router.delete("/{id}/assets/{assetId}", status_code=204)
@@ -427,4 +426,3 @@ async def remove_asset_from_stack(
     # on_asset_stack_update); a below-two-members dissolve is covered by the
     # same hint.
     await emit_user_event(WebSocketEvent.STACK_UPDATE, current_user_id)
-    return

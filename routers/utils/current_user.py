@@ -5,7 +5,7 @@ This module provides lazy-loaded user data that is cached per-request to avoid
 repeated calls to the Gumnut backend.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
@@ -121,7 +121,7 @@ async def get_current_user_admin(
         oauthId="",
         profileChangedAt=user.updated_at,
         license=UserLicense(
-            activatedAt=datetime.now(tz=timezone.utc),
+            activatedAt=datetime.now(tz=UTC),
             activationKey=str(uuid4()),
             licenseKey=STUB_LICENSE_KEY,
         ),

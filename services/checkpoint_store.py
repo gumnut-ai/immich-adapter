@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -18,8 +18,6 @@ logger = logging.getLogger(__name__)
 
 class CheckpointDataError(Exception):
     """Raised when checkpoint data from Redis is invalid or corrupted."""
-
-    pass
 
 
 @dataclass
@@ -48,7 +46,7 @@ class Checkpoint:
         return f"{self.updated_at.isoformat()}|{cursor}"
 
     @classmethod
-    def from_redis_value(cls, entity_type: SyncEntityType, value: str) -> "Checkpoint":
+    def from_redis_value(cls, entity_type: SyncEntityType, value: str) -> Checkpoint:
         """
         Create from Redis stored value.
 
@@ -232,7 +230,7 @@ class CheckpointStore:
         if not checkpoints:
             return True
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mapping: dict[str, str] = {}
 
         for entity_type, cursor in checkpoints:

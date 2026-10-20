@@ -8,14 +8,14 @@ import pytest
 
 from routers.api.constants import GUMNUT_API_MAX_PAGE_SIZE
 from routers.api.map import get_map_markers
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
+    uuid_to_gumnut_asset_id,
+)
 from routers.utils.map_markers import (
     GEOTAGGED_WORLD_BBOX,
     MAP_MARKERS_CAP,
     MAX_ASSETS_SCANNED,
-)
-from routers.utils.gumnut_id_conversion import (
-    safe_uuid_from_asset_id,
-    uuid_to_gumnut_asset_id,
 )
 from tests.conftest import MockPaginatedListing, MockSyncCursorPage
 

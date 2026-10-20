@@ -20,8 +20,8 @@ from gumnut.types.asset_response import AssetResponse
 from routers.api.constants import GUMNUT_API_MAX_BULK_IDS
 from routers.api.download import (
     _abatched,
-    _ArchiveAsset,
     _archive_content_disposition,
+    _ArchiveAsset,
     _assets_by_ids,
     _assets_for_info,
     _build_download_info,
@@ -754,13 +754,15 @@ async def test_archive_propagates_cdn_read_failure_and_closes_response() -> None
     response.aiter_bytes = aiter_bytes
     archive = _stream_archive([_compact_archive_asset(asset)])
 
-    with patch(
-        "routers.api.download.open_cdn_response",
-        new_callable=AsyncMock,
-        return_value=response,
+    with (
+        patch(
+            "routers.api.download.open_cdn_response",
+            new_callable=AsyncMock,
+            return_value=response,
+        ),
+        pytest.raises(httpx.ReadError, match="CDN connection lost"),
     ):
-        with pytest.raises(httpx.ReadError, match="CDN connection lost"):
-            _ = [chunk async for chunk in archive]
+        _ = [chunk async for chunk in archive]
 
     response.aclose.assert_awaited_once()
 

@@ -1,10 +1,10 @@
 """Tests for cdn_client.py CDN streaming helper."""
 
 import logging
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 
 from routers.utils.cdn_client import iter_cdn_response_bytes, stream_from_cdn
@@ -147,13 +147,15 @@ class TestStreamFromCdn:
         mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
-        with patch(
-            "routers.utils.cdn_client.get_cdn_http_client",
-            new_callable=AsyncMock,
-            return_value=mock_client,
+        with (
+            patch(
+                "routers.utils.cdn_client.get_cdn_http_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await stream_from_cdn("https://cdn.example.com/asset.jpg", "image/jpeg")
+            await stream_from_cdn("https://cdn.example.com/asset.jpg", "image/jpeg")
 
         assert exc_info.value.status_code == 404
         cdn_response.aclose.assert_called_once()
@@ -191,13 +193,15 @@ class TestStreamFromCdn:
         mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
-        with patch(
-            "routers.utils.cdn_client.get_cdn_http_client",
-            new_callable=AsyncMock,
-            return_value=mock_client,
+        with (
+            patch(
+                "routers.utils.cdn_client.get_cdn_http_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await stream_from_cdn("https://cdn.example.com/asset.jpg", "image/jpeg")
+            await stream_from_cdn("https://cdn.example.com/asset.jpg", "image/jpeg")
 
         assert exc_info.value.status_code == 404
         cdn_response.aclose.assert_called_once()
@@ -210,17 +214,19 @@ class TestStreamFromCdn:
         mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
-        with patch(
-            "routers.utils.cdn_client.get_cdn_http_client",
-            new_callable=AsyncMock,
-            return_value=mock_client,
+        with (
+            patch(
+                "routers.utils.cdn_client.get_cdn_http_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await stream_from_cdn(
-                    "https://cdn.example.com/video.mp4",
-                    "video/mp4",
-                    range_header="bytes=99999999-",
-                )
+            await stream_from_cdn(
+                "https://cdn.example.com/video.mp4",
+                "video/mp4",
+                range_header="bytes=99999999-",
+            )
 
         assert exc_info.value.status_code == 416
         cdn_response.aclose.assert_called_once()
@@ -295,13 +301,15 @@ class TestStreamFromCdn:
         mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
-        with patch(
-            "routers.utils.cdn_client.get_cdn_http_client",
-            new_callable=AsyncMock,
-            return_value=mock_client,
+        with (
+            patch(
+                "routers.utils.cdn_client.get_cdn_http_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await stream_from_cdn("https://cdn.example.com/asset.jpg", "image/jpeg")
+            await stream_from_cdn("https://cdn.example.com/asset.jpg", "image/jpeg")
 
         assert exc_info.value.status_code == 502
         cdn_response.aclose.assert_called_once()
@@ -314,13 +322,15 @@ class TestStreamFromCdn:
         mock_client.build_request = Mock(return_value=Mock())
         mock_client.send = AsyncMock(return_value=cdn_response)
 
-        with patch(
-            "routers.utils.cdn_client.get_cdn_http_client",
-            new_callable=AsyncMock,
-            return_value=mock_client,
+        with (
+            patch(
+                "routers.utils.cdn_client.get_cdn_http_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await stream_from_cdn("https://cdn.example.com/asset.jpg", "image/jpeg")
+            await stream_from_cdn("https://cdn.example.com/asset.jpg", "image/jpeg")
 
         assert exc_info.value.status_code == 502
         cdn_response.aclose.assert_called_once()
@@ -336,12 +346,14 @@ class TestStreamFromCdn:
             side_effect=httpx.ConnectError("Connection refused")
         )
 
-        with patch(
-            "routers.utils.cdn_client.get_cdn_http_client",
-            new_callable=AsyncMock,
-            return_value=mock_client,
+        with (
+            patch(
+                "routers.utils.cdn_client.get_cdn_http_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await stream_from_cdn("https://cdn.example.com/asset.jpg", "image/jpeg")
+            await stream_from_cdn("https://cdn.example.com/asset.jpg", "image/jpeg")
 
         assert exc_info.value.status_code == 502

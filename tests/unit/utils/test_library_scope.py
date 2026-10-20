@@ -3,16 +3,16 @@
 import asyncio
 import inspect
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
-import httpx
 import fakeredis
+import httpx
 import pytest
-from redis.exceptions import MaxConnectionsError
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from gumnut import AsyncGumnut, NotFoundError, PermissionDeniedError
+from redis.exceptions import MaxConnectionsError
 
 from config.exceptions import configure_exception_handlers
 from routers.api.albums import create_album
@@ -20,8 +20,8 @@ from routers.api.assets import upload_asset
 from routers.api.faces import create_face
 from routers.api.people import create_person
 from routers.api.search import search_assets
-from routers.immich_models import MetadataSearchDto
 from routers.api.stacks import create_stack
+from routers.immich_models import MetadataSearchDto
 from routers.utils.gumnut_client import (
     LibraryScope,
     _library_choices_in_flight,
@@ -72,7 +72,7 @@ async def test_selected_key_binding_reaches_downstream_routes(target, role):
                 json={
                     "id": target,
                     "role": role,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
             )
         assert request.url.params.get("library_id") == target
@@ -204,7 +204,7 @@ class TestDefaultQueryBinding:
         assert client.default_query == {"library_id": "lib_bound"}
 
 
-BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+BASE = datetime(2026, 1, 1, tzinfo=UTC)
 OWNED_OLD = make_gumnut_library("lib_old", BASE)
 OWNED_NEW = make_gumnut_library("lib_new", BASE + timedelta(days=1))
 SHARED = make_gumnut_library("lib_shared", BASE, role="collaborator")
@@ -251,7 +251,7 @@ class TestResolveLibraryId:
     async def test_session_miss_lists_oldest_live_library_and_caches(
         self, cache, unscoped_client, get_client
     ):
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         unscoped_client.libraries.list.return_value = [
             make_gumnut_library("lib_new", base.replace(day=2)),
             make_gumnut_library("lib_old", base),
@@ -273,7 +273,7 @@ class TestResolveLibraryId:
     async def test_session_miss_skips_an_older_joined_library(
         self, cache, unscoped_client, get_client
     ):
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         unscoped_client.libraries.list.return_value = [
             make_gumnut_library("lib_owned", base.replace(day=2)),
             make_gumnut_library("lib_joined", base, role="collaborator"),
@@ -305,7 +305,7 @@ class TestResolveLibraryId:
         self, cache, unscoped_client, get_client
     ):
         unscoped_client.libraries.list.return_value = [
-            make_gumnut_library("lib_only", datetime(2026, 1, 1, tzinfo=timezone.utc))
+            make_gumnut_library("lib_only", datetime(2026, 1, 1, tzinfo=UTC))
         ]
         request = _request(jwt_token=API_KEY, session_token=None)
 
@@ -334,7 +334,7 @@ class TestResolveLibraryId:
         unscoped_client.libraries.list.return_value = [
             make_gumnut_library(
                 "lib_joined",
-                datetime(2026, 1, 1, tzinfo=timezone.utc),
+                datetime(2026, 1, 1, tzinfo=UTC),
                 role="collaborator",
             )
         ]
@@ -417,7 +417,7 @@ class TestResolveLibraryId:
         )
         unscoped_client.users.me.return_value = Mock(immich_library_id="lib_viewer")
         unscoped_client.libraries.retrieve.return_value = make_gumnut_library(
-            "lib_viewer", datetime.now(timezone.utc), role="viewer"
+            "lib_viewer", datetime.now(UTC), role="viewer"
         )
         with pytest.raises(HTTPException) as exc_info:
             await _resolve_library_id(

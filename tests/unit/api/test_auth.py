@@ -1,6 +1,6 @@
 """Unit tests for Auth API functions."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import UUID
 
@@ -10,7 +10,8 @@ from fastapi.testclient import TestClient
 from socketio.exceptions import SocketIOError
 
 from config.exceptions import configure_exception_handlers
-from routers.api.auth import post_logout, router as auth_router, validate_access_token
+from routers.api.auth import post_logout, validate_access_token
+from routers.api.auth import router as auth_router
 from routers.middleware.auth_middleware import AuthMiddleware
 from routers.utils.cookies import ImmichCookie
 from services.session_store import Session, SessionStore
@@ -282,7 +283,7 @@ class TestValidateAccessTokenIntegration:
     def mock_session_store(self):
         """SessionStore that returns a session whose decrypted JWT is TEST_JWT."""
         store = AsyncMock(spec=SessionStore)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             id=self.TEST_SESSION_ID,
             user_id="user_123",

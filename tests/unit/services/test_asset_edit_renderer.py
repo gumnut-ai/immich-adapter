@@ -20,12 +20,12 @@ import services.asset_edit_renderer as renderer_module
 from config.settings import Settings, get_settings
 from routers.utils.asset_edit_conversion import CropBox, EditRecipe
 from services.asset_edit_renderer import (
-    RenderdEdit,
     EditRenderError,
     EditRenderInputError,
     EditRenderLimitError,
     EditRenderSourceError,
     EditRenderTimeoutError,
+    RenderdEdit,
     render_asset_edit,
 )
 
@@ -1137,24 +1137,28 @@ class TestConcurrencyBound:
         release = threading.Event()
         entered: list[str] = []
 
-        with patch.object(
-            renderer_module, "_render_sync", make_blocking_render_sync(release, entered)
+        with (
+            patch.object(
+                renderer_module,
+                "_render_sync",
+                make_blocking_render_sync(release, entered),
+            ),
+            patch.object(renderer_module, "get_settings", return_value=settings),
         ):
-            with patch.object(renderer_module, "get_settings", return_value=settings):
-                try:
-                    first = asyncio.create_task(run_stub_render())
-                    second = asyncio.create_task(run_stub_render())
-                    async with asyncio.timeout(10):
-                        while not entered:
-                            await asyncio.sleep(0.01)
-                        # Give the second render every chance to start; the
-                        # single-worker pool must hold it back.
-                        await asyncio.sleep(0.1)
-                        assert len(entered) == 1
-                finally:
-                    release.set()
+            try:
+                first = asyncio.create_task(run_stub_render())
+                second = asyncio.create_task(run_stub_render())
                 async with asyncio.timeout(10):
-                    await asyncio.gather(first, second)
+                    while not entered:
+                        await asyncio.sleep(0.01)
+                    # Give the second render every chance to start; the
+                    # single-worker pool must hold it back.
+                    await asyncio.sleep(0.1)
+                    assert len(entered) == 1
+            finally:
+                release.set()
+            async with asyncio.timeout(10):
+                await asyncio.gather(first, second)
         assert len(entered) == 2
 
     async def test_waiting_render_downloads_nothing_until_admitted(

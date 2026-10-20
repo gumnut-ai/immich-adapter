@@ -1,37 +1,69 @@
 import asyncio
-from collections.abc import Sequence
-from itertools import batched
-from typing import Annotated, Any, List, Literal, NamedTuple, cast
-from uuid import UUID, uuid4
 import base64
 import logging
-from datetime import datetime, timedelta, timezone
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
+from itertools import batched
+from typing import Annotated, Any, Literal, NamedTuple, cast
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 import sentry_sdk
-
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
     Query,
     Request,
-    UploadFile,
     Response,
+    UploadFile,
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
-from starlette.requests import ClientDisconnect
 from gumnut import AsyncGumnut, NotFoundError
 from gumnut.types.asset_bulk_update_assets_params import Update, UpdateChange
 from gumnut.types.asset_response import AssetResponse
+from pydantic import ValidationError
+from starlette.requests import ClientDisconnect
 
 from config.settings import Settings, get_settings
 from routers.api.constants import (
     GUMNUT_API_MAX_BULK_IDS,
     GUMNUT_API_MAX_PAGE_SIZE,
     GUMNUT_UPLOAD_DEVICE_ID,
+)
+from routers.api.sync.converters import gumnut_asset_to_sync_asset_v2
+from routers.immich_models import (
+    AssetBulkDeleteDto,
+    AssetBulkUpdateDto,
+    AssetBulkUploadCheckDto,
+    AssetBulkUploadCheckResponseDto,
+    AssetCopyDto,
+    AssetEditActionItemResponseDto,
+    AssetEditsCreateDto,
+    AssetEditsResponseDto,
+    AssetJobsDto,
+    AssetMediaResponseDto,
+    AssetMediaSize,
+    AssetMediaStatus,
+    AssetMetadataResponseDto,
+    AssetMetadataUpsertDto,
+    AssetOcrResponseDto,
+    AssetResponseDto,
+    AssetStatsResponseDto,
+    AssetTypeEnum,
+    AssetVisibility,
+    SyncAssetEditV1,
+    UpdateAssetDto,
+    UserResponseDto,
+)
+from routers.utils.asset_conversion import (
+    ASSET_INCLUDE,
+    ASSET_INCLUDE_METADATA_ONLY,
+    build_asset_upload_ready_payload,
+    convert_gumnut_asset_to_immich,
+    mime_type_to_asset_type,
 )
 from routers.utils.asset_edit_conversion import (
     AssetEditValidationError,
@@ -48,32 +80,40 @@ from routers.utils.asset_version_chain import (
     select_edit_base,
     select_root,
 )
+from routers.utils.cdn_client import (
+    DEFAULT_FORWARDED_HEADERS,
+    CDNAssetNotFound,
+    stream_from_cdn,
+)
+from routers.utils.current_user import get_current_user, get_current_user_id
+from routers.utils.error_mapping import invalid_chain_error, map_gumnut_error
+from routers.utils.gumnut_client import (
+    forget_bound_library_if_gone,
+    get_authenticated_gumnut_client,
+    get_current_library_id,
+)
+from routers.utils.gumnut_id_conversion import (
+    safe_uuid_from_asset_id,
+    uuid_to_gumnut_asset_id,
+)
+from routers.utils.rating import (
+    FAVORITE_RATING,
+    rating_extra_query,
+    rating_filter_values,
+)
+from routers.utils.stack_conversion import build_asset_stack_summary, hydrate_stack
+from routers.utils.thumbnail_cache import (
+    ThumbnailCacheContext,
+    get_thumbnail_cache_bypass_reason,
+    get_thumbnail_cache_context,
+    get_video_cache_context,
+)
 from services.asset_edit_renderer import (
     EditRenderError,
     EditRenderInputError,
     EditRenderLimitError,
     render_asset_edit,
 )
-from routers.utils.cdn_client import (
-    DEFAULT_FORWARDED_HEADERS,
-    CDNAssetNotFound,
-    stream_from_cdn,
-)
-from routers.utils.gumnut_client import (
-    forget_bound_library_if_gone,
-    get_authenticated_gumnut_client,
-    get_current_library_id,
-)
-from routers.utils.error_mapping import invalid_chain_error, map_gumnut_error
-from routers.utils.current_user import get_current_user, get_current_user_id
-from routers.utils.thumbnail_cache import (
-    ThumbnailCacheContext,
-    get_thumbnail_cache_context,
-    get_thumbnail_cache_bypass_reason,
-    get_video_cache_context,
-)
-from pydantic import ValidationError
-
 from services.streaming_upload import StreamingUploadPipeline
 from services.thumbnail_cache import (
     CacheBypassReason,
@@ -88,53 +128,11 @@ from services.thumbnail_cache import (
 from services.video_cache import VIDEO_METADATA_CACHE_TTL_SECONDS, get_video_cache
 from services.websockets import (
     AssetEditReadyV2Payload,
+    WebSocketEvent,
     emit_user_event,
     emit_user_event_per_id,
-    WebSocketEvent,
-)
-from routers.api.sync.converters import gumnut_asset_to_sync_asset_v2
-from routers.immich_models import (
-    AssetBulkDeleteDto,
-    AssetEditActionItemResponseDto,
-    AssetEditsCreateDto,
-    AssetEditsResponseDto,
-    AssetBulkUpdateDto,
-    AssetBulkUploadCheckDto,
-    AssetBulkUploadCheckResponseDto,
-    AssetCopyDto,
-    AssetJobsDto,
-    AssetMediaSize,
-    AssetMediaResponseDto,
-    AssetMediaStatus,
-    AssetMetadataResponseDto,
-    AssetOcrResponseDto,
-    AssetMetadataUpsertDto,
-    AssetResponseDto,
-    AssetStatsResponseDto,
-    AssetVisibility,
-    SyncAssetEditV1,
-    UserResponseDto,
-    UpdateAssetDto,
-)
-from routers.utils.gumnut_id_conversion import (
-    safe_uuid_from_asset_id,
-    uuid_to_gumnut_asset_id,
-)
-from routers.utils.asset_conversion import (
-    ASSET_INCLUDE,
-    ASSET_INCLUDE_METADATA_ONLY,
-    build_asset_upload_ready_payload,
-    convert_gumnut_asset_to_immich,
-    mime_type_to_asset_type,
-)
-from routers.utils.stack_conversion import build_asset_stack_summary, hydrate_stack
-from routers.utils.rating import (
-    FAVORITE_RATING,
-    rating_extra_query,
-    rating_filter_values,
 )
 from utils.livephoto import is_live_photo_video
-from routers.immich_models import AssetTypeEnum
 
 logger = logging.getLogger(__name__)
 
@@ -492,7 +490,7 @@ def _extract_upload_fields(fields: dict[str, str]) -> UploadFields:
         raise ValueError("Missing required field: fileCreatedAt")
 
     file_modified_at_str = fields.get("fileModifiedAt") or None
-    file_created_at = _parse_datetime(file_created_at_str, datetime.now(timezone.utc))
+    file_created_at = _parse_datetime(file_created_at_str, datetime.now(UTC))
     file_modified_at = _parse_datetime(file_modified_at_str, file_created_at)
 
     return UploadFields(file_created_at, file_modified_at)
@@ -1939,7 +1937,7 @@ async def remove_asset_edits(
 async def get_asset_metadata(
     id: UUID,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[AssetMetadataResponseDto]:
+) -> list[AssetMetadataResponseDto]:
     """
     Retrieve metadata for a specific asset.
     This is a stub implementation as Gumnut does not support querying asset metadata.
@@ -1953,7 +1951,7 @@ async def update_asset_metadata(
     id: UUID,
     request: AssetMetadataUpsertDto,
     client: AsyncGumnut = Depends(get_authenticated_gumnut_client),
-) -> List[AssetMetadataResponseDto]:
+) -> list[AssetMetadataResponseDto]:
     """
     Update metadata for a specific asset.
     This is a stub implementation as Gumnut does not support updating asset metadata.

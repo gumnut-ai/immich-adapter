@@ -413,5 +413,5 @@ class StreamingUploadPipeline:
             if parser_future is not None:
                 try:
                     await asyncio.wait_for(parser_future, timeout=5)
-                except asyncio.TimeoutError, Exception:
+                except TimeoutError, Exception:
                     pass

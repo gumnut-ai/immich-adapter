@@ -13,6 +13,20 @@ from gumnut.types.events_response import Data as EventData
 from gumnut.types.face_response import FaceResponse
 from gumnut.types.person_response import PersonResponse
 
+from routers.api.sync.converters import (
+    gumnut_album_asset_to_sync_album_to_asset_v1,
+    gumnut_album_to_sync_album_user_v1,
+    gumnut_album_to_sync_album_v1,
+    gumnut_album_to_sync_album_v2,
+    gumnut_asset_to_sync_asset_v1,
+    gumnut_asset_to_sync_asset_v2,
+    gumnut_face_to_sync_face_v1,
+    gumnut_face_to_sync_face_v2,
+    gumnut_metadata_to_sync_exif_v1,
+    gumnut_person_to_sync_person_v1,
+    gumnut_stack_to_sync_stack_v1,
+)
+from routers.api.sync.types import EntityType, FetchedStack
 from routers.immich_models import (
     SyncAlbumDeleteV1,
     SyncAlbumToAssetDeleteV1,
@@ -29,21 +43,6 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_person_id,
     safe_uuid_from_stack_id,
 )
-
-from routers.api.sync.converters import (
-    gumnut_album_asset_to_sync_album_to_asset_v1,
-    gumnut_album_to_sync_album_user_v1,
-    gumnut_album_to_sync_album_v1,
-    gumnut_album_to_sync_album_v2,
-    gumnut_asset_to_sync_asset_v1,
-    gumnut_asset_to_sync_asset_v2,
-    gumnut_face_to_sync_face_v1,
-    gumnut_face_to_sync_face_v2,
-    gumnut_metadata_to_sync_exif_v1,
-    gumnut_person_to_sync_person_v1,
-    gumnut_stack_to_sync_stack_v1,
-)
-from routers.api.sync.types import EntityType, FetchedStack
 
 logger = logging.getLogger(__name__)
 

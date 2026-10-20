@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
-from typing import List
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Query
+
 from routers.immich_models import (
     AssetIdsDto,
     AssetIdsResponseDto,
@@ -14,7 +14,6 @@ from routers.immich_models import (
 )
 from routers.utils.current_user import get_current_user_id
 
-
 router = APIRouter(
     prefix="/api/shared-links",
     tags=["shared-links"],
@@ -25,7 +24,7 @@ router = APIRouter(
 @router.get("")
 async def get_all_shared_links(
     albumId: UUID = Query(default=None),
-) -> List[SharedLinkResponseDto]:
+) -> list[SharedLinkResponseDto]:
     """
     Get all shared links
     This is a stub implementation that returns an empty list.
@@ -42,7 +41,7 @@ async def create_shared_link(
     Create a shared link
     This is a stub implementation that returns a fake shared link response.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return SharedLinkResponseDto(
         album=None,
         allowDownload=True,
@@ -70,7 +69,7 @@ async def login_shared_link(
     Login to a shared link with a password.
     This is a stub implementation that returns a fake shared link response.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return SharedLinkResponseDto(
         album=None,
         allowDownload=True,
@@ -99,7 +98,7 @@ async def get_my_shared_link(
     Get my shared link
     This is a stub implementation that returns a fake shared link response.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return SharedLinkResponseDto(
         album=None,
         allowDownload=True,
@@ -127,7 +126,7 @@ async def get_shared_link_by_id(
     Get a shared link by ID
     This is a stub implementation that returns a fake shared link response.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return SharedLinkResponseDto(
         album=None,
         allowDownload=True,
@@ -156,7 +155,7 @@ async def update_shared_link(
     Update a shared link
     This is a stub implementation that returns a fake shared link response.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return SharedLinkResponseDto(
         album=None,
         allowDownload=True,
@@ -188,7 +187,7 @@ async def remove_shared_link(id: UUID):
 async def add_shared_link_assets(
     id: UUID,
     request: AssetIdsDto,
-) -> List[AssetIdsResponseDto]:
+) -> list[AssetIdsResponseDto]:
     """
     Add assets to a shared link
     This is a stub implementation that returns an empty list.
@@ -200,7 +199,7 @@ async def add_shared_link_assets(
 async def remove_shared_link_assets(
     id: UUID,
     request: AssetIdsDto,
-) -> List[AssetIdsResponseDto]:
+) -> list[AssetIdsResponseDto]:
     """
     Remove assets from a shared link
     This is a stub implementation that returns an empty list.
