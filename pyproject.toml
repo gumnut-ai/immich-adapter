@@ -53,11 +53,17 @@ dev = [
 # `except A, B:`, is never written into them.
 per-file-target-version = { "scripts/lint_docs.py" = "py311", "scripts/extract-immich-web.py" = "py312", "tools/*.py" = "py312" }
 
-# Ruff 0.16 widened its default rule set from 59 to 413 rules. Pin the pre-0.16
-# defaults so a ruff upgrade never changes which rules we enforce; adopting more
-# rules is a deliberate change to this list.
+# Enforce ruff's default rule set. Ruff 0.16 widened it from 59 to 413 rules
+# but dropped 18 of the earlier defaults (E401, E402, most of E7, F403, F405,
+# F406, F722); extend-select keeps those enforced too. A ruff upgrade can change
+# the default set, so review new hits when bumping it.
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F"]
+extend-select = ["E4", "E7", "E9", "F"]
+
+# FastAPI declares dependencies and request parameters as call defaults; those
+# calls build immutable markers, so they are safe as defaults.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Body", "fastapi.Depends", "fastapi.Query"]
 
 # Ruff 0.16 also started formatting Python code blocks in Markdown by default.
 # Doc snippets are often fragments (keyword arguments, partial calls) that it
