@@ -53,12 +53,12 @@ dev = [
 # `except A, B:`, is never written into them.
 per-file-target-version = { "scripts/lint_docs.py" = "py311", "scripts/extract-immich-web.py" = "py312", "tools/*.py" = "py312" }
 
-# Enforce ruff's default rule set. Ruff 0.16 widened it from 59 to 413 rules
-# but dropped 18 of the earlier defaults (E401, E402, most of E7, F403, F405,
-# F406, F722); extend-select keeps those enforced too. A ruff upgrade can change
-# the default set, so review new hits when bumping it.
+# Enforce ruff's default rule set as-is. Ruff 0.16 widened it from 59 to 413
+# rules and dropped 18 earlier defaults as opinionated or covered elsewhere: the
+# formatter (E70x), the type checker (F722, star imports), and F406 returns in
+# 0.17's defaults (astral-sh/ruff#27199). A ruff upgrade can change the default
+# set, so review new hits when bumping it.
 [tool.ruff.lint]
-extend-select = ["E4", "E7", "E9", "F"]
 ignore = [
     # Broad catches mark deliberate isolation boundaries: Sentry's before_send,
     # best-effort WebSocket and metrics side effects, cleanup paths, and CLI
