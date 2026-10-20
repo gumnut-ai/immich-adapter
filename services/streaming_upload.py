@@ -407,5 +407,5 @@ class StreamingUploadPipeline:
             self._drain_and_signal_parser_exit()
 
             if parser_future is not None:
-                with contextlib.suppress(TimeoutError, Exception):
+                with contextlib.suppress(Exception):
                     await asyncio.wait_for(parser_future, timeout=5)

@@ -13,7 +13,7 @@ from datetime import datetime
 from itertools import batched
 from stat import S_IFREG
 from threading import Event, Lock
-from typing import Annotated, Any, TypeVar, cast
+from typing import Annotated, Any, cast
 from unicodedata import normalize
 from urllib.parse import quote
 from uuid import UUID
@@ -75,7 +75,6 @@ _MAX_ARCHIVE_COMPONENT_BYTES = 255
 _UNSAFE_FILENAME_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _archive_zip_executor: ThreadPoolExecutor | None = None
 _archive_zip_executor_lock = Lock()
-_T = TypeVar("_T")
 
 
 @dataclass(slots=True)
@@ -530,11 +529,11 @@ async def _async_archive_zip(
         if future is not None:
             future.cancel()
 
-    def to_sync_iterable(async_iterable: AsyncIterable[_T]) -> Iterable[_T]:
+    def to_sync_iterable[T](async_iterable: AsyncIterable[T]) -> Iterable[T]:
         nonlocal pending_read
         async_iterator = async_iterable.__aiter__()
 
-        async def get_next() -> _T:
+        async def get_next() -> T:
             return await anext(async_iterator)
 
         while True:

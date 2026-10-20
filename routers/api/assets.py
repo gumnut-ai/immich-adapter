@@ -465,7 +465,9 @@ def _parse_datetime(value: str | None, fallback: datetime) -> datetime:
     if not value:
         return fallback
     try:
-        dt = datetime.fromisoformat(value)
+        # The replace also accepts a date-only value with Z, which fromisoformat
+        # rejects on its own.
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))  # noqa: FURB162
         # Normalize naive datetimes to match the fallback's timezone
         if dt.tzinfo is None and fallback.tzinfo is not None:
             dt = dt.replace(tzinfo=fallback.tzinfo)
@@ -1289,7 +1291,8 @@ def _parse_update_original_datetime(value: str | None) -> datetime | None:
     if value is None:
         return None
     try:
-        return datetime.fromisoformat(value)
+        # See _parse_datetime: the replace keeps date-only Z values parseable.
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))  # noqa: FURB162
     except (ValueError, AttributeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
