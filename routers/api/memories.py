@@ -188,9 +188,7 @@ def _filters_exclude_synthetic(
         return True
     if is_trashed is True:
         return True
-    if memory_type is not None and memory_type != MemoryType.on_this_day:
-        return True
-    return False
+    return bool(memory_type is not None and memory_type != MemoryType.on_this_day)
 
 
 async def _gather_year_assets(

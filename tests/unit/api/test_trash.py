@@ -151,11 +151,11 @@ class TestRestoreAssets:
 
         request = BulkIdsDto(ids=[uuid4()])
 
-        with patch("routers.api.trash.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(APIStatusError):
-                await restore_assets(
-                    request, client=mock_client, current_user_id=uuid4()
-                )
+        with (
+            patch("routers.api.trash.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(APIStatusError),
+        ):
+            await restore_assets(request, client=mock_client, current_user_id=uuid4())
 
 
 class TestRestoreTrash:
@@ -268,9 +268,11 @@ class TestRestoreTrash:
         trashed_assets = [_make_trashed_asset_mock(gid) for gid in gumnut_ids]
         mock_client.assets.list = Mock(return_value=MockSyncCursorPage(trashed_assets))
 
-        with patch("routers.api.trash.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(APIStatusError):
-                await restore_trash(client=mock_client, current_user_id=uuid4())
+        with (
+            patch("routers.api.trash.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(APIStatusError),
+        ):
+            await restore_trash(client=mock_client, current_user_id=uuid4())
 
 
 class TestEmptyTrash:
@@ -382,6 +384,8 @@ class TestEmptyTrash:
         trashed_assets = [_make_trashed_asset_mock(gid) for gid in gumnut_ids]
         mock_client.assets.list = Mock(return_value=MockSyncCursorPage(trashed_assets))
 
-        with patch("routers.api.trash.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(APIStatusError):
-                await empty_trash(client=mock_client, current_user_id=uuid4())
+        with (
+            patch("routers.api.trash.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(APIStatusError),
+        ):
+            await empty_trash(client=mock_client, current_user_id=uuid4())

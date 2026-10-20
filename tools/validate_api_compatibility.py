@@ -329,11 +329,9 @@ class SpecComparator:
         adapter_paths_raw = self.adapter_spec.get("paths", {})
 
         # Create normalized path mappings
-        immich_paths_normalized = {
-            self._normalize_path(p): p for p in immich_paths_raw.keys()
-        }
+        immich_paths_normalized = {self._normalize_path(p): p for p in immich_paths_raw}
         adapter_paths_normalized = {
-            self._normalize_path(p): p for p in adapter_paths_raw.keys()
+            self._normalize_path(p): p for p in adapter_paths_raw
         }
 
         # Compare normalized paths
@@ -398,16 +396,16 @@ class SpecComparator:
         adapter_path = self.adapter_spec["paths"][adapter_path_key]
 
         # Get methods from both
-        immich_methods = set(
+        immich_methods = {
             k
-            for k in immich_path.keys()
+            for k in immich_path
             if k in ["get", "post", "put", "delete", "patch", "head", "options"]
-        )
-        adapter_methods = set(
+        }
+        adapter_methods = {
             k
-            for k in adapter_path.keys()
+            for k in adapter_path
             if k in ["get", "post", "put", "delete", "patch", "head", "options"]
-        )
+        }
 
         missing_methods = immich_methods - adapter_methods
         extra_methods = adapter_methods - immich_methods

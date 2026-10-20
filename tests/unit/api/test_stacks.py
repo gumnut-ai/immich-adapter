@@ -1131,9 +1131,11 @@ class TestDeleteStacks:
         client = _removal_client()
         client.stacks.delete = AsyncMock(side_effect=_delete)
 
-        with caplog.at_level(logging.WARNING):
-            with pytest.raises(GumnutError) as exc_info:
-                await _delete_stacks(client, [first, second, third, fourth])
+        with (
+            caplog.at_level(logging.WARNING),
+            pytest.raises(GumnutError) as exc_info,
+        ):
+            await _delete_stacks(client, [first, second, third, fourth])
 
         assert exc_info.value is slow_error
         # Every id was attempted even though an earlier one failed.

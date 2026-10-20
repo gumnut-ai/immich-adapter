@@ -39,9 +39,9 @@ def get_container_tag() -> str:
         if content:
             return content
         else:
-            raise Exception(".immich-container-tag file is empty")
+            raise RuntimeError(".immich-container-tag file is empty")
     else:
-        raise Exception(".immich-container-tag file not found")
+        raise RuntimeError(".immich-container-tag file not found")
 
 
 def _parse_spec(text: str) -> dict:

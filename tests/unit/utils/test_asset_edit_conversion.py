@@ -4,6 +4,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -64,7 +65,7 @@ V = MirrorAxis.vertical
 
 
 class TestOrientationNormalization:
-    EIGHT_STATES = [
+    EIGHT_STATES: ClassVar = [
         ([rotate(0)], 0, False),  # identity via explicit rotate 0
         ([rotate(90)], 90, False),
         ([rotate(180)], 180, False),
@@ -604,6 +605,7 @@ class TestPurity:
         )
         result = subprocess.run(
             [sys.executable, "-c", code],
+            check=False,
             cwd=repo_root,
             capture_output=True,
             text=True,

@@ -163,9 +163,11 @@ class TestConnectHandler:
     @pytest.fixture
     def mock_sio(self):
         """Create mock Socket.IO server methods."""
-        with patch.object(sio, "enter_room", new_callable=AsyncMock) as mock_enter:
-            with patch.object(sio, "emit", new_callable=AsyncMock) as mock_emit:
-                yield {"enter_room": mock_enter, "emit": mock_emit}
+        with (
+            patch.object(sio, "enter_room", new_callable=AsyncMock) as mock_enter,
+            patch.object(sio, "emit", new_callable=AsyncMock) as mock_emit,
+        ):
+            yield {"enter_room": mock_enter, "emit": mock_emit}
 
     @pytest.fixture(autouse=True)
     def clear_sid_tracking(self):

@@ -212,7 +212,9 @@ async def _render(
             release_admission_threadsafe()
 
     try:
-        input_file = tempfile.SpooledTemporaryFile(
+        # The render worker owns and closes this file once it starts; the
+        # except branch below closes it only when no worker will.
+        input_file = tempfile.SpooledTemporaryFile(  # noqa: SIM115
             max_size=settings.edit_render_spool_max_bytes
         )
         await _download_source(source_url, input_file, settings, gumnut_asset_id)
@@ -458,7 +460,8 @@ class _CappedFile:
 
 def _encode(image: Image.Image, settings: Settings) -> RenderdEdit:
     """Encode transparency as PNG and opaque pixels as JPEG, without EXIF."""
-    output: IO[bytes] = tempfile.SpooledTemporaryFile(
+    # The returned RenderdEdit owns this file; closing it here would empty it.
+    output: IO[bytes] = tempfile.SpooledTemporaryFile(  # noqa: SIM115
         max_size=settings.edit_render_spool_max_bytes
     )
     try:

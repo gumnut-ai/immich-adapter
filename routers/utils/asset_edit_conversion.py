@@ -331,7 +331,7 @@ def _synthesized_row_id(
     # stamping UUIDv4 bits satisfies Immich's validator. The prefix and key
     # encoding are pinned by golden tests. These IDs represent current state,
     # not user-action history.
-    key = "\n".join((_EDIT_ROW_ID_KEY_PREFIX, asset_id, version_id, action.value))
+    key = f"{_EDIT_ROW_ID_KEY_PREFIX}\n{asset_id}\n{version_id}\n{action.value}"
     digest = bytearray(hashlib.sha256(key.encode("utf-8")).digest()[:16])
     digest[6] = (digest[6] & 0x0F) | 0x40  # version 4
     digest[8] = (digest[8] & 0x3F) | 0x80  # RFC 4122 variant

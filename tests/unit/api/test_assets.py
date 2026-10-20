@@ -5,7 +5,7 @@ import base64
 import json
 from datetime import UTC, datetime, timedelta, timezone
 from io import BytesIO
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -453,14 +453,16 @@ class TestUploadAsset:
         request = _make_mock_request()
         settings = _make_mock_settings()
 
-        with pytest.raises(HTTPException) as exc_info:
-            with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-                await upload_asset(
-                    request=request,
-                    client=mock_client,
-                    current_user=mock_current_user,
-                    settings=settings,
-                )
+        with (
+            pytest.raises(HTTPException) as exc_info,
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+        ):
+            await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
 
         assert exc_info.value.status_code == 401
 
@@ -805,14 +807,16 @@ class TestUploadAsset:
         request = _make_mock_request(content_length=1024)
         settings = _make_mock_settings(threshold=100 * 1024 * 1024)
 
-        with pytest.raises(HTTPException):
-            with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-                await upload_asset(
-                    request=request,
-                    client=mock_client,
-                    current_user=mock_current_user,
-                    settings=settings,
-                )
+        with (
+            pytest.raises(HTTPException),
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+        ):
+            await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
 
         # Buffered path was used (form() was called)
         request.form.assert_called_once()
@@ -863,14 +867,16 @@ class TestUploadAsset:
         request = _make_mock_request(content_length=threshold)
         settings = _make_mock_settings(threshold=threshold)
 
-        with pytest.raises(HTTPException):
-            with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-                await upload_asset(
-                    request=request,
-                    client=mock_client,
-                    current_user=mock_current_user,
-                    settings=settings,
-                )
+        with (
+            pytest.raises(HTTPException),
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+        ):
+            await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
 
         # At boundary → buffered path (form() called)
         request.form.assert_called_once()
@@ -890,14 +896,16 @@ class TestUploadAsset:
         del request.headers["content-length"]
         settings = _make_mock_settings(threshold=100 * 1024 * 1024)
 
-        with pytest.raises(HTTPException):
-            with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-                await upload_asset(
-                    request=request,
-                    client=mock_client,
-                    current_user=mock_current_user,
-                    settings=settings,
-                )
+        with (
+            pytest.raises(HTTPException),
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+        ):
+            await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
 
         request.form.assert_called_once()
 
@@ -915,14 +923,16 @@ class TestUploadAsset:
         request.headers["content-length"] = "not-a-number"
         settings = _make_mock_settings(threshold=100 * 1024 * 1024)
 
-        with pytest.raises(HTTPException):
-            with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-                await upload_asset(
-                    request=request,
-                    client=mock_client,
-                    current_user=mock_current_user,
-                    settings=settings,
-                )
+        with (
+            pytest.raises(HTTPException),
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+        ):
+            await upload_asset(
+                request=request,
+                client=mock_client,
+                current_user=mock_current_user,
+                settings=settings,
+            )
 
         request.form.assert_called_once()
 
@@ -2117,14 +2127,16 @@ class TestUpdateAsset:
 
         request = UpdateAssetDto(latitude=37.7749)
 
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(HTTPException) as exc_info:
-                await update_asset(
-                    sample_uuid,
-                    request,
-                    client=mock_client,
-                    current_user=mock_current_user,
-                )
+        with (
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
 
         assert exc_info.value.status_code == 422
         mock_client.assets.update_asset.assert_not_awaited()
@@ -2138,14 +2150,16 @@ class TestUpdateAsset:
 
         request = UpdateAssetDto(longitude=-122.4194)
 
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(HTTPException) as exc_info:
-                await update_asset(
-                    sample_uuid,
-                    request,
-                    client=mock_client,
-                    current_user=mock_current_user,
-                )
+        with (
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
 
         assert exc_info.value.status_code == 422
         mock_client.assets.update_asset.assert_not_awaited()
@@ -2168,14 +2182,16 @@ class TestUpdateAsset:
 
         request = UpdateAssetDto.model_validate(payload)
 
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(HTTPException) as exc_info:
-                await update_asset(
-                    sample_uuid,
-                    request,
-                    client=mock_client,
-                    current_user=mock_current_user,
-                )
+        with (
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
 
         assert exc_info.value.status_code == 422
         mock_client.assets.update_asset.assert_not_awaited()
@@ -2284,14 +2300,16 @@ class TestUpdateAsset:
 
         request = UpdateAssetDto(dateTimeOriginal="not-a-datetime")
 
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(HTTPException) as exc_info:
-                await update_asset(
-                    sample_uuid,
-                    request,
-                    client=mock_client,
-                    current_user=mock_current_user,
-                )
+        with (
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await update_asset(
+                sample_uuid,
+                request,
+                client=mock_client,
+                current_user=mock_current_user,
+            )
 
         assert exc_info.value.status_code == 422
         mock_client.assets.update_asset.assert_not_awaited()
@@ -2709,11 +2727,11 @@ class TestDeleteAssets:
 
         request = AssetBulkDeleteDto(ids=[uuid4()], force=False)
 
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(APIStatusError):
-                await delete_assets(
-                    request, client=mock_client, current_user_id=uuid4()
-                )
+        with (
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(APIStatusError),
+        ):
+            await delete_assets(request, client=mock_client, current_user_id=uuid4())
 
     @pytest.mark.anyio
     async def test_delete_assets_force_true_propagates_sdk_error(self):
@@ -2729,11 +2747,11 @@ class TestDeleteAssets:
 
         request = AssetBulkDeleteDto(ids=[uuid4()], force=True)
 
-        with patch("routers.api.assets.emit_user_event", new_callable=AsyncMock):
-            with pytest.raises(APIStatusError):
-                await delete_assets(
-                    request, client=mock_client, current_user_id=uuid4()
-                )
+        with (
+            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+            pytest.raises(APIStatusError),
+        ):
+            await delete_assets(request, client=mock_client, current_user_id=uuid4())
 
 
 class TestGetAssetStatistics:
@@ -4250,7 +4268,7 @@ class TestAssetEdits:
             )
         ]
 
-    RECIPE_PARAMS = {"version": 1, "angle": 90, "mirror": False}
+    RECIPE_PARAMS: ClassVar = {"version": 1, "angle": 90, "mirror": False}
 
     @pytest.fixture
     def edit_http_app(self, mock_current_user):
@@ -4729,14 +4747,14 @@ class TestAssetEdits:
         with (
             patch("routers.api.assets.render_asset_edit", fake_render),
             patch("routers.api.assets.emit_user_event", emit),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await apply_asset_edits(
-                    id=sample_uuid,
-                    request=AssetEditsCreateDto(edits=self._crop_edits()),
-                    client=client,
-                    current_user=mock_current_user,
-                )
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
         assert exc_info.value.status_code == 409
         assert render_calls == []
         client.assets.versions.with_raw_response.append.assert_not_awaited()
@@ -4752,16 +4770,18 @@ class TestAssetEdits:
 
         client = self._client([self._version(position=0, width=50, height=50)])
         emit = AsyncMock()
-        with patch("routers.api.assets.emit_user_event", emit):
-            with pytest.raises(HTTPException) as exc_info:
-                await apply_asset_edits(
-                    id=sample_uuid,
-                    request=AssetEditsCreateDto(
-                        edits=self._crop_edits(x=0, y=0, width=100, height=100)
-                    ),
-                    client=client,
-                    current_user=mock_current_user,
-                )
+        with (
+            patch("routers.api.assets.emit_user_event", emit),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(
+                    edits=self._crop_edits(x=0, y=0, width=100, height=100)
+                ),
+                client=client,
+                current_user=mock_current_user,
+            )
         assert exc_info.value.status_code == 400
         client.assets.versions.with_raw_response.append.assert_not_awaited()
         emit.assert_not_awaited()
@@ -4802,14 +4822,14 @@ class TestAssetEdits:
         with (
             patch("routers.api.assets.render_asset_edit", fake_render),
             patch("routers.api.assets.emit_user_event", emit),
+            pytest.raises(APIStatusError),
         ):
-            with pytest.raises(APIStatusError):
-                await apply_asset_edits(
-                    id=sample_uuid,
-                    request=AssetEditsCreateDto(edits=self._crop_edits()),
-                    client=client,
-                    current_user=mock_current_user,
-                )
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
         # A losing CAS is never retried against a newly fetched tip.
         client.assets.versions.list.assert_awaited_once()
         client.assets.versions.with_raw_response.append.assert_awaited_once()
@@ -4834,14 +4854,14 @@ class TestAssetEdits:
             with (
                 patch("routers.api.assets.render_asset_edit", fake_render),
                 patch("routers.api.assets.emit_user_event", emit),
+                pytest.raises(APIStatusError) as exc_info,
             ):
-                with pytest.raises(APIStatusError) as exc_info:
-                    await apply_asset_edits(
-                        id=sample_uuid,
-                        request=AssetEditsCreateDto(edits=self._crop_edits()),
-                        client=client,
-                        current_user=mock_current_user,
-                    )
+                await apply_asset_edits(
+                    id=sample_uuid,
+                    request=AssetEditsCreateDto(edits=self._crop_edits()),
+                    client=client,
+                    current_user=mock_current_user,
+                )
             # Untouched by the route: the global GumnutError handler owns the
             # Immich-shaped response (including the 507 -> 400 quota remap).
             assert exc_info.value.response.status_code == status_code
@@ -4873,14 +4893,14 @@ class TestAssetEdits:
             with (
                 patch("routers.api.assets.render_asset_edit", fake_render),
                 patch("routers.api.assets.emit_user_event", emit),
+                pytest.raises(HTTPException) as exc_info,
             ):
-                with pytest.raises(HTTPException) as exc_info:
-                    await apply_asset_edits(
-                        id=sample_uuid,
-                        request=AssetEditsCreateDto(edits=self._crop_edits()),
-                        client=client,
-                        current_user=mock_current_user,
-                    )
+                await apply_asset_edits(
+                    id=sample_uuid,
+                    request=AssetEditsCreateDto(edits=self._crop_edits()),
+                    client=client,
+                    current_user=mock_current_user,
+                )
             assert exc_info.value.status_code == expected_status, error.code
             client.assets.versions.with_raw_response.append.assert_not_awaited()
             emit.assert_not_awaited()
@@ -5063,11 +5083,13 @@ class TestAssetEdits:
         ]
         client = self._client(versions)
         emit = AsyncMock()
-        with patch("routers.api.assets.emit_user_event", emit):
-            with pytest.raises(HTTPException) as exc_info:
-                await remove_asset_edits(
-                    id=sample_uuid, client=client, current_user=mock_current_user
-                )
+        with (
+            patch("routers.api.assets.emit_user_event", emit),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await remove_asset_edits(
+                id=sample_uuid, client=client, current_user=mock_current_user
+            )
         assert exc_info.value.status_code == 409
         client.assets.versions.delete.assert_not_awaited()
         emit.assert_not_awaited()
@@ -5089,11 +5111,13 @@ class TestAssetEdits:
             side_effect=make_sdk_status_error(409, "buried version")
         )
         emit = AsyncMock()
-        with patch("routers.api.assets.emit_user_event", emit):
-            with pytest.raises(APIStatusError):
-                await remove_asset_edits(
-                    id=sample_uuid, client=client, current_user=mock_current_user
-                )
+        with (
+            patch("routers.api.assets.emit_user_event", emit),
+            pytest.raises(APIStatusError),
+        ):
+            await remove_asset_edits(
+                id=sample_uuid, client=client, current_user=mock_current_user
+            )
         client.assets.versions.delete.assert_awaited_once()
         emit.assert_not_awaited()
 
@@ -5279,21 +5303,23 @@ class TestAssetEdits:
 
         client = self._client([self._version(position=0)])
         emit = AsyncMock()
-        with patch("routers.api.assets.emit_user_event", emit):
-            with pytest.raises(HTTPException) as exc_info:
-                await apply_asset_edits(
-                    id=sample_uuid,
-                    request=AssetEditsCreateDto(
-                        edits=[
-                            AssetEditActionItemDto(
-                                action=AssetEditAction.rotate,
-                                parameters=RotateParameters(angle=0),
-                            )
-                        ]
-                    ),
-                    client=client,
-                    current_user=mock_current_user,
-                )
+        with (
+            patch("routers.api.assets.emit_user_event", emit),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(
+                    edits=[
+                        AssetEditActionItemDto(
+                            action=AssetEditAction.rotate,
+                            parameters=RotateParameters(angle=0),
+                        )
+                    ]
+                ),
+                client=client,
+                current_user=mock_current_user,
+            )
         # A non-empty list reducing to no transformation must not commit a
         # lossy re-encode that reads back as zero edits; "remove all edits"
         # is DELETE on this route.
@@ -5316,14 +5342,14 @@ class TestAssetEdits:
         with (
             patch("routers.api.assets.render_asset_edit", fake_render),
             patch("routers.api.assets.emit_user_event", emit),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await apply_asset_edits(
-                    id=sample_uuid,
-                    request=AssetEditsCreateDto(edits=self._crop_edits()),
-                    client=client,
-                    current_user=mock_current_user,
-                )
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
         assert exc_info.value.status_code == 502
         client.assets.versions.with_raw_response.append.assert_not_awaited()
         emit.assert_not_awaited()
@@ -5339,14 +5365,16 @@ class TestAssetEdits:
         # base: tip selection succeeds but select_edit_base cannot.
         client = self._client([self._version(position=0, kind="edit")])
         emit = AsyncMock()
-        with patch("routers.api.assets.emit_user_event", emit):
-            with pytest.raises(HTTPException) as exc_info:
-                await apply_asset_edits(
-                    id=sample_uuid,
-                    request=AssetEditsCreateDto(edits=self._crop_edits()),
-                    client=client,
-                    current_user=mock_current_user,
-                )
+        with (
+            patch("routers.api.assets.emit_user_event", emit),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await apply_asset_edits(
+                id=sample_uuid,
+                request=AssetEditsCreateDto(edits=self._crop_edits()),
+                client=client,
+                current_user=mock_current_user,
+            )
         assert exc_info.value.status_code == 502
         client.assets.versions.with_raw_response.append.assert_not_awaited()
         emit.assert_not_awaited()

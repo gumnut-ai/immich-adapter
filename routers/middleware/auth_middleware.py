@@ -76,21 +76,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
     PROTECTED_PREFIXES = ("/api/",)
 
     # Endpoints that don't require authentication
-    UNAUTHENTICATED_PATHS = {
-        "/api/auth/login",
-        "/api/oauth/authorize",
-        "/api/oauth/callback",
-        "/api/oauth/mobile-redirect",
-        # Public config is fetched by the web login page before any auth.
-        "/api/public/config",
-        "/api/public/config/defaults",
-        "/api/server/config",
-        "/api/server/features",
-        "/api/server/media-types",
-        "/api/server/ping",
-        "/api/server/version",
-        "/api/server/version-history",
-    }
+    UNAUTHENTICATED_PATHS = frozenset(
+        {
+            "/api/auth/login",
+            "/api/oauth/authorize",
+            "/api/oauth/callback",
+            "/api/oauth/mobile-redirect",
+            # Public config is fetched by the web login page before any auth.
+            "/api/public/config",
+            "/api/public/config/defaults",
+            "/api/server/config",
+            "/api/server/features",
+            "/api/server/media-types",
+            "/api/server/ping",
+            "/api/server/version",
+            "/api/server/version-history",
+        }
+    )
 
     def __init__(self, app: ASGIApp):
         super().__init__(app)

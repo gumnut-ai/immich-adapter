@@ -24,6 +24,7 @@ knows about a face comes from the Gumnut API, which has the same check on its
 own responses.
 """
 
+import itertools
 import re
 import sys
 from collections.abc import Iterator
@@ -119,7 +120,7 @@ def names_face_template(property_name: str) -> bool:
     # after "face" it names the thing itself.
     return any(
         first == "face" and second in ("template", "templates")
-        for first, second in zip(words, words[1:])
+        for first, second in itertools.pairwise(words)
     )
 
 

@@ -135,7 +135,7 @@ async def test_other_routes_and_rejected_requests_are_outside_stream_denominator
     monkeypatch.setattr(metrics, "count", count)
     for route, status in [("/other", 200), ("/api/assets/{id}/thumbnail", 401)]:
 
-        async def app(scope, receive, send):
+        async def app(scope, receive, send, status=status):
             await send({"type": "http.response.start", "status": status})
             await send({"type": "http.response.body", "body": b""})
 

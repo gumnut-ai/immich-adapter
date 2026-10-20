@@ -48,7 +48,7 @@ class TestParseAck:
         ack = "AssetV1|event_cursor_abc"
         result = _parse_ack(ack)
         assert result is not None
-        entity_type, cursor, epoch = result
+        entity_type, cursor, _epoch = result
 
         assert entity_type == SyncEntityType.AssetV1
         assert cursor == "event_cursor_abc"
@@ -73,7 +73,7 @@ class TestParseAck:
         ack = "AssetV1|event_cursor_abc|extra_field|"
         result = _parse_ack(ack)
         assert result is not None
-        entity_type, cursor, epoch = result
+        entity_type, cursor, _epoch = result
 
         assert entity_type == SyncEntityType.AssetV1
         assert cursor == "event_cursor_abc"

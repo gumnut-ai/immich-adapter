@@ -143,13 +143,13 @@ async def _assets_by_ids(
                 yield asset
 
 
-async def _abatched(items: AsyncIterable[_T], size: int) -> AsyncIterator[list[_T]]:
+async def _abatched[T](items: AsyncIterable[T], size: int) -> AsyncIterator[list[T]]:
     """Yield fixed-size lists from an async iterable, the last possibly short.
 
     Bounds how much of a streamed selector is staged at once so a fan-out over
     the batch caps in-flight work without first materializing the whole stream.
     """
-    batch: list[_T] = []
+    batch: list[T] = []
     async for item in items:
         batch.append(item)
         if len(batch) >= size:

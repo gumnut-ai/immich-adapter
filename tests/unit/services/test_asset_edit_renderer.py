@@ -630,10 +630,10 @@ class TestSourceAcquisition:
         with (
             patch.object(renderer_module, "open_cdn_response", open_mock),
             patch.object(renderer_module, "get_settings", return_value=render_settings),
+            pytest.raises(EditRenderInputError) as exc_info,
         ):
-            with pytest.raises(EditRenderInputError) as exc_info:
-                async with render_asset_edit(client, ASSET_ID, IDENTITY):
-                    pass
+            async with render_asset_edit(client, ASSET_ID, IDENTITY):
+                pass
         assert exc_info.value.code == "unsupported_image"
         open_mock.assert_not_awaited()
 
@@ -742,10 +742,10 @@ class TestInputValidationAndLimits:
             ),
             patch.object(renderer_module, "get_settings", return_value=render_settings),
             caplog.at_level(logging.WARNING, logger="services.asset_edit_renderer"),
+            pytest.raises(EditRenderSourceError) as exc_info,
         ):
-            with pytest.raises(EditRenderSourceError) as exc_info:
-                async with render_asset_edit(client, ASSET_ID, IDENTITY):
-                    pass  # pragma: no cover
+            async with render_asset_edit(client, ASSET_ID, IDENTITY):
+                pass  # pragma: no cover
         assert exc_info.value.code == "source_fetch_failed"
         assert response.closed
         record = next(
@@ -842,7 +842,8 @@ class RecordingTempFactory:
         self.files: list[IO[bytes]] = []
 
     def SpooledTemporaryFile(self, **kwargs: Any) -> IO[bytes]:
-        file: IO[bytes] = tempfile.SpooledTemporaryFile(**kwargs)
+        # The code under test owns the returned file, as with the real factory.
+        file: IO[bytes] = tempfile.SpooledTemporaryFile(**kwargs)  # noqa: SIM115
         self.files.append(file)
         return file
 
@@ -878,10 +879,10 @@ class TestLifetimeAndCleanup:
                 renderer_module, "open_cdn_response", AsyncMock(return_value=response)
             ),
             patch.object(renderer_module, "get_settings", return_value=render_settings),
+            pytest.raises(RuntimeError, match="version create failed"),
         ):
-            with pytest.raises(RuntimeError, match="version create failed"):
-                async with render_asset_edit(client, ASSET_ID, IDENTITY):
-                    raise RuntimeError("version create failed")
+            async with render_asset_edit(client, ASSET_ID, IDENTITY):
+                raise RuntimeError("version create failed")
         assert all(file.closed for file in factory.files)
 
     async def test_temp_files_cleaned_on_validation_failure(
@@ -896,10 +897,10 @@ class TestLifetimeAndCleanup:
                 renderer_module, "open_cdn_response", AsyncMock(return_value=response)
             ),
             patch.object(renderer_module, "get_settings", return_value=render_settings),
+            pytest.raises(EditRenderInputError),
         ):
-            with pytest.raises(EditRenderInputError):
-                async with render_asset_edit(client, ASSET_ID, IDENTITY):
-                    pass
+            async with render_asset_edit(client, ASSET_ID, IDENTITY):
+                pass
         assert all(file.closed for file in factory.files)
 
     async def test_timeout_raises_and_reaps_abandoned_result(
@@ -959,10 +960,10 @@ class TestLifetimeAndCleanup:
                 renderer_module, "open_cdn_response", AsyncMock(side_effect=cdn_error)
             ),
             patch.object(renderer_module, "get_settings", return_value=render_settings),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                async with render_asset_edit(client, ASSET_ID, IDENTITY):
-                    pass  # pragma: no cover
+            async with render_asset_edit(client, ASSET_ID, IDENTITY):
+                pass  # pragma: no cover
         assert exc_info.value is cdn_error
         assert len(factory.files) == 1  # only the input spool was created
         assert all(file.closed for file in factory.files)

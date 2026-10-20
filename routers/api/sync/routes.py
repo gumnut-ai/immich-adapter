@@ -276,7 +276,7 @@ async def send_sync_ack(
         extra={
             "session_id": session_token,
             "checkpoint_count": len(checkpoints_to_store),
-            "types": [et.value for et in checkpoints_to_store.keys()],
+            "types": [et.value for et in checkpoints_to_store],
         },
     )
     return
@@ -395,7 +395,7 @@ async def get_sync_stream(
             f"Loaded {len(checkpoint_map)} checkpoints for sync stream",
             extra={
                 "session_id": session_token,
-                "checkpoint_types": [t.value for t in checkpoint_map.keys()],
+                "checkpoint_types": [t.value for t in checkpoint_map],
             },
         )
 

@@ -6,6 +6,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from fastapi import HTTPException, Request, Response
+from gumnut import APIStatusError
 
 from routers.api.assets import play_asset_video
 from routers.utils.cdn_client import CDNAssetNotFound
@@ -233,7 +234,7 @@ async def test_metadata_failure_is_live_and_never_cached():
         patch("routers.api.assets.stream_from_cdn", AsyncMock()) as cdn,
     ):
         for _ in range(2):
-            with pytest.raises(Exception):
+            with pytest.raises(APIStatusError):
                 await play_asset_video(
                     asset_id,
                     request(),

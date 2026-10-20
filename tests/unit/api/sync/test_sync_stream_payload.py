@@ -101,7 +101,7 @@ class TestFacePersonIdOverride:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         assert event_data["type"] == "AssetFaceV1"
@@ -313,7 +313,7 @@ class TestFacePersonIdOverride:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         # Converter maps person_id through safe_uuid_from_person_id, so the
@@ -371,7 +371,7 @@ class TestFacePersonIdOverride:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         # Legacy event: should use entity's current person_id
@@ -420,7 +420,7 @@ class TestFacePersonIdOverride:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         assert event_data["data"]["personId"] is None, (
@@ -468,7 +468,7 @@ class TestFacePersonIdOverride:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         # Empty payload: should use entity's current person_id
@@ -799,7 +799,7 @@ class TestFacePayloadOverrideDeletedPerson:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         # Person was synced in a prior cycle -- person_id should be preserved
@@ -1342,7 +1342,7 @@ class TestAssetFaceV2Converter:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         assert event_data["type"] == "AssetFaceV2"
@@ -1398,7 +1398,7 @@ class TestAssetFaceV2Converter:
             results.append(item)
 
         assert len(results) == 1
-        json_line, count = results[0]
+        json_line, _count = results[0]
         event_data = json.loads(json_line.strip())
 
         assert event_data["type"] == "AssetFaceV2"

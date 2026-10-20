@@ -150,6 +150,7 @@ def test_librarian_report_rejects_failed_postprocessing(
     summary = tmp_path / "summary.md"
     result = subprocess.run(
         ["bash", "-c", report["run"]],
+        check=False,
         env={
             **os.environ,
             "UV_SETUP": "success",
@@ -195,6 +196,7 @@ def test_librarian_report_does_not_call_failed_status_probe_clean(
     summary = tmp_path / "summary.md"
     result = subprocess.run(
         ["bash", "-c", report["run"]],
+        check=False,
         env={
             **os.environ,
             "PATH": f"{binaries}:{os.environ['PATH']}",
@@ -229,6 +231,7 @@ def test_librarian_report_rejects_successful_budget_abort(
     summary = tmp_path / "summary.md"
     result = subprocess.run(
         ["bash", "-c", report["run"]],
+        check=False,
         env={
             **os.environ,
             "TEST_BUDGET_EXCEEDED": "true",

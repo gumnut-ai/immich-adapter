@@ -880,7 +880,7 @@ class TestGetTimeBucket:
         mock_client = Mock()
         mock_client.assets.list.return_value = []
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError, match="Invalid isoformat"):
             await call_get_time_bucket(
                 timeBucket="invalid-date-format", client=mock_client
             )
