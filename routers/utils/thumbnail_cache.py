@@ -49,7 +49,7 @@ def _jwt_expiry(credential: str, *, allow_expired: bool = False) -> float | None
             if math.isfinite(expiry) and (allow_expired or expiry > time.time())
             else None
         )
-    except (ValueError, TypeError, AttributeError, OverflowError):
+    except ValueError, TypeError, AttributeError, OverflowError:
         return None
 
 

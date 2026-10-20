@@ -49,7 +49,7 @@ def _extract_person_fields(
                 updated_at = datetime.fromisoformat(iso_string)
             else:
                 updated_at = datetime.now(tz=timezone.utc)
-        except (ValueError, AttributeError):
+        except ValueError, AttributeError:
             updated_at = datetime.now(tz=timezone.utc)
 
     return (

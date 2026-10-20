@@ -36,7 +36,7 @@ def _set_sentry_user(session_user_id: str) -> None:
     """
     try:
         user_id = uuid_to_gumnut_user_id(UUID(session_user_id))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         logger.warning(
             "Session user id is not a UUID; skipping Sentry attribution",
             extra={"session_user_id": session_user_id},

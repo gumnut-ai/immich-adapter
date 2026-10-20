@@ -31,7 +31,7 @@ def redact_sensitive_cdn_url(url: str) -> str:
         if redacted_query == parsed.query:
             return url
         return urlunsplit(parsed._replace(query=redacted_query))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return url
 
 

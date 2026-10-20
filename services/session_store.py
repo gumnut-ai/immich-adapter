@@ -398,7 +398,7 @@ class SessionStore:
                 try:
                     session_uuid = UUID(session_token)
                     sessions.append(Session.from_dict(session_uuid, data))
-                except (SessionDataError, ValueError):
+                except SessionDataError, ValueError:
                     # Treat corrupted sessions as orphaned
                     orphaned_tokens.append(session_token)
             else:
@@ -667,7 +667,7 @@ class SessionStore:
                     delete_pipe.srem(f"user:{session.user_id}:sessions", session_token)
                     delete_pipe.zrem("sessions:by_updated_at", session_token)
                     count += 1
-                except (SessionDataError, ValueError):
+                except SessionDataError, ValueError:
                     # Session data is corrupted, just remove what we can
                     delete_pipe.delete(f"session:{session_token}")
                     delete_pipe.delete(f"session:{session_token}:checkpoints")

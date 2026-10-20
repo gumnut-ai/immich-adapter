@@ -352,7 +352,7 @@ async def get_sync_stream(
     if session_token:
         try:
             session_uuid = UUID(session_token)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             # Invalid session token - continue without session features
             pass
 
