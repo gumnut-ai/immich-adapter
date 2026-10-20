@@ -15,6 +15,7 @@ the buffered path where the check runs.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import queue
 import threading
@@ -164,10 +165,8 @@ class StreamingUploadPipeline:
                 self._chunk_queue.put(None, timeout=0.1)
                 return
             except queue.Full:
-                try:
+                with contextlib.suppress(queue.Empty):
                     self._chunk_queue.get_nowait()
-                except queue.Empty:
-                    pass
 
     async def _feed_chunks(self) -> None:
         """Read request body and enqueue chunks for the parser thread."""
@@ -377,10 +376,9 @@ class StreamingUploadPipeline:
                     await parser_future
                 except Exception:
                     if self._parse_error is not None:
-                        logger.error(
+                        logger.exception(
                             "Parser error after upload completed",
                             extra={"error": str(self._parse_error)},
-                            exc_info=True,
                         )
 
                 span.set_data("upload.filename", self._form_parser.filename)
@@ -403,15 +401,11 @@ class StreamingUploadPipeline:
                 # is logged by asyncio at error level on garbage collection.
                 # The failure itself still reaches the caller through the pipe
                 # error, so swallowing it here loses nothing.
-                try:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
                     await feed_task
-                except asyncio.CancelledError, Exception:
-                    pass
 
             self._drain_and_signal_parser_exit()
 
             if parser_future is not None:
-                try:
+                with contextlib.suppress(TimeoutError, Exception):
                     await asyncio.wait_for(parser_future, timeout=5)
-                except TimeoutError, Exception:
-                    pass

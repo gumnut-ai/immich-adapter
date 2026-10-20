@@ -247,10 +247,9 @@ async def get_time_bucket(
             # would turn a feature designed to degrade into a 500 on the app's
             # primary view. ERROR because reaching here means an adapter bug
             # rather than an upstream one.
-            logger.error(
+            logger.exception(
                 "Unexpected error resolving timeline stacks; returning the "
                 "bucket uncollapsed",
-                exc_info=True,
                 extra=degradation_context,
             )
             stacks = TimelineStacks.empty()

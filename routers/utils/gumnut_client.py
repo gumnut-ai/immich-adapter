@@ -142,7 +142,7 @@ async def forget_bound_library_if_gone(status_code: int, detail: str) -> None:
     try:
         await library.forget()
     except Exception:
-        logger.error("Failed to drop cached library", exc_info=True)
+        logger.exception("Failed to drop cached library")
 
 
 async def _response_hook(response: httpx.Response) -> None:

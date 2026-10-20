@@ -13,6 +13,7 @@ Example: ./scripts/extract-immich-web.py -t release ./web-files
 """
 
 import argparse
+import contextlib
 import shutil
 import subprocess
 import sys
@@ -81,27 +82,21 @@ def cleanup(container_id: str | None, temp_dir: Path | None) -> None:
     """Clean up temporary resources."""
     if container_id:
         print_info(f"Cleaning up container: {container_id}")
-        try:
+        with contextlib.suppress(Exception):
             run_command(["docker", "rm", container_id], check=False)
-        except Exception:
-            pass
 
     if temp_dir and temp_dir.exists():
         print_info(f"Removing temporary directory: {temp_dir}")
-        try:
+        with contextlib.suppress(Exception):
             shutil.rmtree(temp_dir)
-        except Exception:
-            pass
 
 
 def get_directory_size(path: Path) -> str | None:
     """Get human-readable size of directory using du command."""
-    try:
+    with contextlib.suppress(Exception):
         result = run_command(["du", "-sh", str(path)], check=False, capture_output=True)
         if result.returncode == 0:
             return result.stdout.split()[0]
-    except Exception:
-        pass
     return None
 
 

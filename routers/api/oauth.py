@@ -111,10 +111,9 @@ async def start_oauth(
         return OAuthAuthorizeResponseDto(url=result.url)
 
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Failed to get OAuth authorization URL",
             extra={"error": str(e)},
-            exc_info=True,
         )
         raise HTTPException(
             status_code=500,
@@ -224,10 +223,9 @@ async def finish_oauth(
         )
 
     except JWTEncryptionError:
-        logger.error(
+        logger.exception(
             "Failed to encrypt JWT for session storage",
             extra={"user_id": result.user.id},
-            exc_info=True,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -241,9 +239,8 @@ async def finish_oauth(
         # the login flow) and logs it at warning level.
         raise
     except Exception:
-        logger.error(
+        logger.exception(
             "Failed to complete OAuth authentication",
-            exc_info=True,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

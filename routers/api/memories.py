@@ -128,7 +128,9 @@ async def _fetch_assets_for_day(
     `docs/references/pagination-bulk-and-concurrency.md` "Counts and Aggregates").
     """
     try:
-        day_start = datetime(year, month, day)
+        # A local wall-clock day for the local_datetime filters; an offset in
+        # the ISO string would shift the window.
+        day_start = datetime(year, month, day)  # noqa: DTZ001
     except ValueError:
         return []
     day_end = day_start + timedelta(days=1)

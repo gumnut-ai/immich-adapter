@@ -196,9 +196,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     )
                     return self._invalid_token_response()
             except Exception:
-                logger.error(
+                logger.exception(
                     "Error during session lookup",
-                    exc_info=True,
                 )
                 # An exception thrown inside dispatch will get wrapped
                 # by Starlette and not handled by our global exception handler.
@@ -254,10 +253,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 session_store = await get_session_store()
                 await session_store.update_stored_jwt(session_token, refreshed_token)
             except Exception:
-                logger.error(
+                logger.exception(
                     "Failed to update stored JWT after refresh",
                     extra={"path": path},
-                    exc_info=True,
                 )
 
             # Always strip the refresh header - clients don't need it since their

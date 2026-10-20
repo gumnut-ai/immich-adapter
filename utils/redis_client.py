@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import os
 from urllib.parse import urlparse
 
@@ -53,9 +54,8 @@ async def close_redis_client() -> None:
     global _redis_client
     if _redis_client is not None:
         try:
-            await _redis_client.aclose()
-        except Exception:
-            pass
+            with contextlib.suppress(Exception):
+                await _redis_client.aclose()
         finally:
             _redis_client = None
 

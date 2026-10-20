@@ -108,9 +108,7 @@ async def post_logout(
                 "OAuth provider does not support logout endpoint", exc_info=True
             )
         except Exception:
-            logger.error(
-                "Unexpected error while calling OAuth logout endpoint", exc_info=True
-            )
+            logger.exception("Unexpected error while calling OAuth logout endpoint")
 
     return LogoutResponseDto(
         redirectUri=redirect_uri,

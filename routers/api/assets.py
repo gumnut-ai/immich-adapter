@@ -851,10 +851,9 @@ async def _upload_streaming(
             status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="Upload timed out"
         )
     except httpx.HTTPError as e:
-        logger.error(
+        logger.exception(
             "Streaming upload connection error",
             extra={"error": str(e), "strategy": "streaming"},
-            exc_info=True,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="Upload failed"

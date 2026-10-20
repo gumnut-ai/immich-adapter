@@ -1063,7 +1063,7 @@ async def generate_sync_stream(
         logger.info("Sync stream completed", extra={"user_id": owner_id})
 
     except Exception:
-        logger.error("Error generating sync stream", exc_info=True)
+        logger.exception("Error generating sync stream")
 
 
 async def generate_reset_stream() -> AsyncGenerator[str]:
