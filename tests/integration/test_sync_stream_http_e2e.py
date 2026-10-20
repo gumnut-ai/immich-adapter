@@ -336,6 +336,7 @@ def mock_gumnut_user():
         last_name="User",
         favorite_display_mode="rating",
         demo_mode_enabled=False,
+        face_detection_available=True,
         is_superuser=False,
         is_active=True,
         is_verified=True,
@@ -497,8 +498,8 @@ def client(mock_gumnut_client, mock_checkpoint_store, mock_session_store):
     - Session store (via dependency override AND patch for middleware)
     """
     # Override FastAPI dependencies
-    app.dependency_overrides[get_authenticated_gumnut_client] = (
-        lambda: mock_gumnut_client
+    app.dependency_overrides[get_authenticated_gumnut_client] = lambda: (
+        mock_gumnut_client
     )
     app.dependency_overrides[get_checkpoint_store] = lambda: mock_checkpoint_store
     app.dependency_overrides[get_session_store] = lambda: mock_session_store
@@ -886,8 +887,8 @@ class TestSyncStreamAuthErrors:
             )
         )
 
-        app.dependency_overrides[get_authenticated_gumnut_client] = (
-            lambda: expired_client
+        app.dependency_overrides[get_authenticated_gumnut_client] = lambda: (
+            expired_client
         )
         app.dependency_overrides[get_checkpoint_store] = lambda: mock_checkpoint_store
         app.dependency_overrides[get_session_store] = lambda: mock_session_store
