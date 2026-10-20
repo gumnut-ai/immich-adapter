@@ -65,6 +65,12 @@ extend-select = ["E4", "E7", "E9", "F"]
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Body", "fastapi.Depends", "fastapi.Query"]
 
+[tool.ruff.lint.per-file-ignores]
+# Tests read logging `extra` fields with getattr(record, "name"); pyright cannot
+# see those dynamic LogRecord attributes, so the direct access B009 wants fails
+# type-checking.
+"tests/**" = ["B009"]
+
 # Ruff 0.16 also started formatting Python code blocks in Markdown by default.
 # Doc snippets are often fragments (keyword arguments, partial calls) that it
 # rewrites into different code, so keep the formatter on .py files only.
