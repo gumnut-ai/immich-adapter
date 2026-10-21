@@ -25,7 +25,7 @@ schedule: "0 9 * * *"
   maintenance task. Explain the need, avoid duplicating existing Dependabot or
   maintenance PRs, and follow the repository's supply-chain cooldown and
   dependency ownership rules. Include relevant upstream release notes and run
-  every affected app's full checks.
+  checks appropriate to the affected code under repository guidance.
 - Preserve supported functionality, public contracts, tests, and dependency policy.
 - Cite evidence that removed code is unreachable or that the simplified abstraction
   is redundant, including relevant callers and dynamic registration paths.
@@ -63,22 +63,16 @@ solution would change supported behavior or a public contract, report the
 tradeoff for human judgment rather than implementing it.
 
 ## Verification
-The native workflow owns privileged sandbox preparation and verification. Its
-pre-agent smoke completes before inference; after the agent prepares a committed
-candidate and emits PR publication intent, trusted host validation runs the full
-checks below before actual publication. The host-only
-`scripts/run_maintainer_sandbox.sh` must not be invoked from the confined agent
-session; do not use sudo or launch a nested AWF runtime. Label deferred host
-checks as pending rather than claiming they passed. Outside the native workflow,
-run these full checks before opening a PR.
+Use the repository's pinned tools and follow its required local checks. Select
+additional targeted checks from the changed behavior, callers and failure paths.
+Record what ran, its result, and any checks still pending. A failed required local
+check or an environment blocker is incomplete work; do not hide it as a no-op.
 
-The complete suite is required before publication:
-- `uv sync --locked`
-- `uv run ruff format && uv run ruff check`
-- `uv run pyright`
-- `uv run pytest`
-
-If any check fails, do not open the PR. Note the failure in an internal log entry and report incomplete work.
+The native workflow enforces candidate scope, configuration and commit identity
+before isolated publication. Ordinary PR CI runs the standard suites, and
+independent review assesses behavioral equivalence and the maintenance benefit.
+Passing CI alone does not establish that a cleanup preserves supported behavior.
+Do not use sudo or launch a nested AWF runtime from the confined agent session.
 
 ## Thresholds
 Propose a change when its concrete maintenance benefit outweighs its complexity
