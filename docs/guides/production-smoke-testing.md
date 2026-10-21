@@ -1,6 +1,6 @@
 ---
 title: Production API Smoke Testing
-last-updated: 2026-10-19
+last-updated: 2026-10-21
 ---
 
 # Production API Smoke Testing
@@ -18,27 +18,28 @@ issue before activation. They own provisioning, quota review, failure triage,
 and the launch audit. Failures use the existing shared production Slack
 channel; resolve its Checkly channel ID from the account.
 
-Create a separately named adapter-smoke Gumnut API key for the safe demo
-identity. Grant only the read permissions needed for current-user, library
-resolution, and album metadata. Prefer a key scoped to the demo library;
-the identity's selected Immich library must be covered by that key. Verify
-the key against the deployed adapter before activation. Do not broaden
-permissions or change the identity's library selection to make the check pass
-without a separate decision.
+Reuse the dedicated read-only production smoke key for the safe demo identity.
+It must permit current-user, library resolution, and album metadata reads, and
+cover the identity's selected Immich library. Verify the key against the
+deployed adapter before activation. Do not broaden permissions or change the
+identity's library selection to make the check pass without a separate decision.
 
-Store the key in the shared production password manager, the adapter
-repository's Actions secret `IMMICH_SMOKE_API_KEY`, and the Checkly group's
-encrypted secret of the same name. The workflow maps the GitHub value to
-Checkly's deployment-time `CHECKLY_SECRET_IMMICH_SMOKE_API_KEY`; the runtime
-name remains `IMMICH_SMOKE_API_KEY`. Never put a literal key in commands,
-source, issues, or result artifacts. Restrict check-code administration to
-operators because check code can access runtime secrets.
+The shared production password manager remains the recovery copy. GitHub
+Actions receives the key through the organization secret `PROD_SMOKE_API_KEY`,
+restricted to the repositories that run production smoke checks. The workflow
+maps that value to Checkly's deployment-time
+`CHECKLY_SECRET_IMMICH_SMOKE_API_KEY`; the adapter group's encrypted secret and
+runtime name remain `IMMICH_SMOKE_API_KEY`. No separate adapter credential or
+repository secret is needed. Avoid repository or environment secrets with the
+same GitHub name: they override the organization value and can hide a rotation.
 
-Use a separately named Checkly service API key in the repository Actions
-secret `CHECKLY_API_KEY`. It deploys definitions and is distinct from the
-read-only runtime key. Record its consumers and rotation owner privately.
-Provisioning is an operator action; the catalog creates no identities,
-libraries, albums, credentials, or alert channels.
+The organization secret `CHECKLY_API_KEY` supplies the existing Checkly service
+credential for deploying definitions. It is distinct from the read-only Gumnut
+key. Record both credentials' consumers and rotation owner privately. Never put
+literal keys in commands, source, issues, or result artifacts. Restrict
+check-code administration to operators because check code can access runtime
+secrets. The catalog creates no identities, libraries, albums, credentials,
+or alert channels.
 
 ## Fixture and configuration
 
@@ -131,12 +132,15 @@ deactivation is valid; synchronize the repository variable before another
 deployment. Muting suppresses notifications while requests continue, so it
 is not a maintenance pause.
 
-For planned key rotation, pause, create a replacement with the same narrow
-scopes, update the password manager and GitHub secret, and deploy the Checkly
-secret while inactive. Validate a hosted run before revoking the old key and
-resuming. If compromise is suspected, revoke the exposed key immediately;
-do not wait for successful replacement. Rotate the Checkly service key
-separately if affected. A pause cannot prevent use of a stolen credential.
+For planned key rotation, pause every smoke group using the shared credential.
+Create a replacement with the same read-only scopes, update the password
+manager and organization secret, and redeploy every consumer's Checkly secret
+while inactive. Validate each catalog with a hosted run before revoking the old
+key and resuming. Check for repository or environment overrides before calling
+the rotation complete. If compromise is suspected, revoke the exposed key
+immediately; do not wait for successful replacement. Rotate the shared Checkly
+service key separately if affected. A pause cannot prevent use of a stolen
+credential.
 
 For fixture maintenance, pause before changing the demo corpus, recheck the
 deployed mapping, and update expectations. Resume after a recorded hosted run
