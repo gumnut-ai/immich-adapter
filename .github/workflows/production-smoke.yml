@@ -1,0 +1,83 @@
+name: Production smoke definitions
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["smoke-tests/**", ".github/workflows/production-smoke.yml"]
+  push:
+    branches: [main]
+    paths: ["smoke-tests/**", ".github/workflows/production-smoke.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate smoke catalog without production traffic
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: smoke-tests/.bun-version
+      - run: bun install --frozen-lockfile
+        working-directory: smoke-tests
+      - run: bun run check
+        working-directory: smoke-tests
+
+  deploy:
+    name: Deploy production smoke definitions
+    needs: validate
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' &&
+      vars.IMMICH_SMOKE_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: smoke-tests/.bun-version
+      - run: bun install --frozen-lockfile
+        working-directory: smoke-tests
+      - name: Validate and deploy definitions without running checks
+        working-directory: smoke-tests
+        env:
+          CHECKLY_API_KEY: ${{ secrets.CHECKLY_API_KEY }}
+          CHECKLY_ACCOUNT_ID: ${{ vars.CHECKLY_ACCOUNT_ID }}
+          CHECKLY_SECRET_IMMICH_SMOKE_API_KEY: ${{ secrets.IMMICH_SMOKE_API_KEY }}
+          CHECKLY_SLACK_CHANNEL_ID: ${{ vars.CHECKLY_SLACK_CHANNEL_ID }}
+          IMMICH_SMOKE_USER_ID: ${{ vars.IMMICH_SMOKE_USER_ID }}
+          IMMICH_SMOKE_ALBUM_ID: ${{ vars.IMMICH_SMOKE_ALBUM_ID }}
+          IMMICH_SMOKE_ALBUM_NAME: ${{ vars.IMMICH_SMOKE_ALBUM_NAME }}
+          IMMICH_SMOKE_ASSET_COUNT: ${{ vars.IMMICH_SMOKE_ASSET_COUNT }}
+          SMOKE_SCHEDULE_ACTIVE: ${{ vars.IMMICH_SMOKE_SCHEDULE_ACTIVE || 'false' }}
+        run: |
+          set -euo pipefail
+          for name in CHECKLY_API_KEY CHECKLY_ACCOUNT_ID CHECKLY_SECRET_IMMICH_SMOKE_API_KEY; do
+            if [[ -z "${!name//[[:space:]]/}" ]]; then
+              echo "::error::Missing required secret or variable: $name"
+              exit 1
+            fi
+          done
+          bun run checkly:test -- --list
+          bun run checkly:deploy

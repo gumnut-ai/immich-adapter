@@ -1,0 +1,7 @@
+.checkly/
+.env
+.env.*
+node_modules/
+test-results/
+!checks/lib/
+!checks/lib/**
