@@ -19,3 +19,8 @@ The [operator guide](../docs/guides/production-smoke-testing.md) owns credential
 custody, fixture selection, activation evidence, pause/resume, and incident
 handling. The deployment workflow is opt-in and the schedule defaults to
 inactive. Merging this catalog alone does not activate monitoring.
+
+The production smoke workflow also has explicit `inspect`, recorded `test`,
+and `deploy` operations on `main`. Use them through the operator guide to
+verify and pin the safe demo fixture, then validate the hosted catalog using
+injected CI credentials.

@@ -9,6 +9,8 @@
     "test": "bun test tests",
     "checkly:validate": "bun scripts/validate-checkly-project.ts",
     "checkly:test": "checkly test --config checkly.config.ts --no-record",
+    "checkly:test:recorded": "checkly test --config checkly.config.ts --record",
+    "inspect:fixture": "bun scripts/inspect-fixture.ts",
     "checkly:deploy": "checkly deploy --config checkly.config.ts --no-schedule-on-deploy --force"
   },
   "devDependencies": {
