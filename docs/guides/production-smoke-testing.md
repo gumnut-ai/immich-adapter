@@ -96,6 +96,9 @@ For example, `gh workflow run production-smoke.yml --ref main -f operation=inspe
 verifies the fixture before its values are pinned in repository variables.
 Inspection fails on another identity, multiple libraries, or a missing,
 ambiguous, or empty curated album; it does not silently choose a substitute.
+Inspection requires list-libraries access to verify that the demo identity has
+exactly one live library; a key restricted to selected libraries may run the
+pinned catalog but cannot perform this inspection.
 Reinspection during maintenance is evidence to review, not permission to
 overwrite the pinned fixture automatically.
 

@@ -47,30 +47,34 @@ async function readJson(url: string, field: string, headers: Record<string, stri
       let response: Response | undefined
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
       try {
-        response = await fetcher(url, {
-          method: "GET", headers, redirect: "manual", signal: controller.signal,
-        })
-        requireValue(response.status === 200, field)
-        const length = response.headers.get("content-length")
-        requireValue(length === null || (/^[0-9]+$/.test(length) && Number(length) <= MAX_BODY_BYTES), field)
-        requireValue(response.body, field)
-        reader = response.body.getReader()
-        const decoder = new TextDecoder("utf-8", { fatal: true })
-        let bytes = 0
-        let text = ""
-        while (true) {
-          const chunk = await reader.read()
-          if (chunk.done) break
-          bytes += chunk.value.byteLength
-          requireValue(bytes <= MAX_BODY_BYTES, field)
-          text += decoder.decode(chunk.value, { stream: true })
+        try {
+          response = await fetcher(url, {
+            method: "GET", headers, redirect: "manual", signal: controller.signal,
+          })
+        } catch { throw new ContractError(field, "transport failure") }
+        if (response.status !== 200) throw new ContractError(field, `HTTP status ${response.status}`)
+        try {
+          const length = response.headers.get("content-length")
+          requireValue(length === null || (/^[0-9]+$/.test(length) && Number(length) <= MAX_BODY_BYTES), field)
+          requireValue(response.body, field)
+          reader = response.body.getReader()
+          const decoder = new TextDecoder("utf-8", { fatal: true })
+          let bytes = 0
+          let text = ""
+          while (true) {
+            const chunk = await reader.read()
+            if (chunk.done) break
+            bytes += chunk.value.byteLength
+            requireValue(bytes <= MAX_BODY_BYTES, field)
+            text += decoder.decode(chunk.value, { stream: true })
+          }
+          text += decoder.decode()
+          return JSON.parse(text) as unknown
+        } catch {
+          // Body and parse failures can embed credentials or payloads.
+          // Never propagate the original exception or attach it as a cause.
+          throw new ContractError(field, "body or JSON failure")
         }
-        text += decoder.decode()
-        return JSON.parse(text) as unknown
-      } catch {
-        // Transport, body, and parse failures can embed credentials or payloads.
-        // Never propagate the original exception or attach it as a cause.
-        throw new ContractError(field, "request failed")
       } finally {
         if (reader) void reader.cancel().catch(() => {})
         else if (response?.body) void response.body.cancel().catch(() => {})

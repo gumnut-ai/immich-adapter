@@ -133,18 +133,18 @@ test("inspection CLI reports a sanitized missing-credential diagnostic", () => {
 test("network exceptions cannot disclose secrets or payloads", async () => {
   await assert.rejects(discoverFixture(env, (async () => { throw new Error(secret) }) as unknown as Fetch), error => {
     assert.ok(error instanceof Error)
-    assert.equal(error.message, "Gumnut user: request failed")
+    assert.equal(error.message, "Gumnut user: transport failure")
     assert.equal(error.stack?.includes(secret), false)
     assert.equal("cause" in error, false)
     return true
   })
 })
-for (const status of [301, 302, 307, 401, 500]) test(`rejects HTTP ${status} without following redirects or retrying`, async () => {
+for (const status of [301, 302, 307, 401, 403, 500]) test(`rejects HTTP ${status} without following redirects or retrying`, async () => {
   let calls = 0
   await assert.rejects(discoverFixture(env, (async () => {
     calls++
     return new Response(secret, { status, headers: { location: "https://example.com" } })
-  }) as unknown as Fetch))
+  }) as unknown as Fetch), new RegExp(`Gumnut user: HTTP status ${status}`))
   assert.equal(calls, 1)
 })
 test("bounds responses using both Content-Length and actual streamed bytes", async () => {
