@@ -1,6 +1,6 @@
 ---
 title: "Pagination and Enumeration"
-last-updated: 2026-10-01
+last-updated: 2026-10-18
 ---
 
 # Pagination and Enumeration
@@ -27,9 +27,25 @@ Generated Immich DTO constraints can exceed the backend's per-page cap — e.g.,
 
 ## Unpaginated Immich endpoints — cap the walk and log it
 
-A few Immich endpoints take no pagination parameters at all (`GET /map/markers`, `GET /stacks`), so the client cannot ask for a second page and the adapter must either answer with the whole library or truncate. Truncate: pick a cap, `break` out of the walk, and log the counts plus a truncation flag — that log is the only signal a library has outgrown the endpoint, and the input to deciding the read needs a different shape. See `MAP_MARKERS_CAP` (`routers/utils/map_markers.py`) and `SEARCH_STACKS_CAP` (`routers/api/stacks.py`).
+A few Immich endpoints take no pagination parameters at all (`GET /map/markers`,
+`GET /stacks`), so the client cannot ask for a second page and the adapter must
+either answer with the whole library or truncate. Truncate: pick a cap, `break`
+out of the walk, and log the counts plus a flag. That gives operators evidence
+about whether the response shape needs to change. See `MAP_MARKERS_CAP`
+(`routers/utils/map_markers.py`) and `SEARCH_STACKS_CAP`
+(`routers/api/stacks.py`).
 
-Test the cap **before** admitting an item, not after appending it, and set the flag on the same branch that breaks. Deriving the flag from `len(items) >= CAP` after the loop makes a library of exactly `CAP` items report truncation that never happened, which costs the flag the meaning the paragraph above gives it. The cost is one lookahead item — you only know the walk was cut short by seeing the item you declined — which can pull in one extra upstream page. `SEARCH_STACKS_CAP` is the worked example; `map_markers.py` predates the rule and still tests after appending, so copy the stacks shape rather than that one.
+Test the cap **before** admitting an item, not after appending it, and set the
+flag on the same branch that breaks. Deriving the flag from `len(items) >= CAP`
+after the loop makes a library of exactly `CAP` items report truncation that
+never happened, which costs the flag the meaning the paragraph above gives it.
+The cost is one lookahead item — you only know the walk was cut short by seeing
+the item you declined — which can pull in one extra upstream page.
+`SEARCH_STACKS_CAP` is the worked example. `map_markers.py` remains an
+exception: it sets `marker_cap_hit` and `scan_cap_hit` as soon as the
+corresponding bound is reached, so a library exactly at either bound can set a
+flag even when no marker was omitted. Until the map walk adopts the lookahead,
+treat those fields as bound-reached signals, not proof of truncation.
 
 Name the boolean after the truncation, not after one bound (`stack_search_truncated`, not `stack_cap_hit`) once a second bound can set it, and record which bound fired in its own field. A flag named for the cap that also fires for a member budget sends an operator to the wrong constant.
 
