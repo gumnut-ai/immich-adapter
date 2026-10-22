@@ -15,12 +15,14 @@ resolver tools, inspecting their outputs, assessing compatibility and exposure,
 and deciding what work is useful. Let it use existing tools directly rather
 than building custom collectors, validators, or orchestration around those tasks.
 
-Custom workflow code belongs only in guardrails around the agent that CI does
-not already enforce. Prefer native permissions, credential isolation, resource
-limits, and existing configuration over custom implementations. Keep privileged
-publication and uncertain-write recovery outside the agent's control where
-those boundaries require enforcement. Repetition or a desire for structured
-shared input alone does not justify a wrapper.
+Custom workflow code must enforce a boundary around the agent and must not
+duplicate existing CI. Missing CI coverage alone does not justify a workflow
+check; removing a quality gate does not require adding an equivalent CI gate.
+Prefer native permissions, credential isolation, resource limits, and existing
+configuration over custom implementations. Keep privileged publication and
+uncertain-write recovery outside the agent's control where those boundaries
+require enforcement. Repetition or a desire for structured shared input alone
+does not justify a wrapper.
 
 ## Validate the Proposal
 
