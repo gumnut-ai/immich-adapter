@@ -10,28 +10,27 @@ and their supporting scripts in this repository.
 
 ## Separate Judgment From Enforcement
 
-Assign investigation, prioritization, compatibility analysis, and evidence
-interpretation to the agent. Scripts can inventory sources, call native audit
-or resolver tools, validate their outputs, and enforce objective limits.
-Keep relevant facts available for agent investigation instead of treating a
-heuristic as a final decision about semantic eligibility. An AST can count
-removed tests; deciding whether their coverage is obsolete needs evidence and
-judgment.
+The agent owns investigation: inventorying sources, invoking native audit and
+resolver tools, inspecting their outputs, assessing compatibility and exposure,
+and deciding what work is useful. Let it use existing tools directly rather
+than building custom collectors, validators, or orchestration around those tasks.
 
-Keep credential isolation, permissions, scope limits, objective supply-chain
-rules, budgets, publication identity, and uncertain-write recovery mechanical.
-Use existing configuration and standard tools where they already own a rule.
-This division preserves safeguards while avoiding a parallel script
-implementation of the agent's reasoning.
+Custom workflow code belongs only in guardrails around the agent that CI does
+not already enforce. Prefer native permissions, credential isolation, resource
+limits, and existing configuration over custom implementations. Keep privileged
+publication and uncertain-write recovery outside the agent's control where
+those boundaries require enforcement. Repetition or a desire for structured
+shared input alone does not justify a wrapper.
 
 ## Validate the Proposal
 
-Honor required local checks and reuse standard project commands rather than
-building a second workflow-specific implementation of the full CI matrix.
-Ordinary PR CI and independent review assess the proposed change. Passing
-checks or successfully publishing a PR does not establish that removing
-coverage is justified or that a document is factually correct; review those
-claims against the evidence.
+Follow the repository's existing testing guidance and use its documented
+commands. The agent chooses and runs appropriate local checks, recording
+failures and unavailable checks accurately. Ordinary PR CI and independent
+review assess the proposed change; workflow-specific scripts do not duplicate
+checks CI already owns. Passing checks or publishing a PR does not establish
+that removing coverage is justified or that a document is factually correct;
+review those claims against the evidence.
 
 Test observable behavior and shared contracts at the layer that owns them,
 including meaningful failure cases. Existing caller or integration coverage
