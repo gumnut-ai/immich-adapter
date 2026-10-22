@@ -69,6 +69,7 @@ The sections below follow that order, with design docs split by their `status:` 
 | Topic | Document | Consult when... |
 |-------|----------|-----------------|
 | Project conventions | `docs/references/project-conventions.md` | Python style, repository organization, public-repository wording, and pull requests |
+| Agent workflow design | `docs/references/agent-workflows.md` | Authoring or reviewing agent workflows, daemon policies, and supporting scripts — judgment, safeguards, validation, and test coverage |
 | Routes and compatibility index | `docs/references/routes-dtos-and-upstream-compatibility.md` | Following an older route, DTO, or compatibility section citation |
 | Route and DTO contracts | `docs/references/route-and-dto-contracts.md` | Error envelopes, middleware state transfer, parameter declarations, explicit nulls, mobile parsing, and web local-wall-clock query values |
 | Upstream compatibility | `docs/references/upstream-compatibility.md` | Pinned upstream verification, Immich/SDK version bumps, and promoting or removing endpoints |

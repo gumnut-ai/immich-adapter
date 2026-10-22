@@ -25,6 +25,8 @@ a `` `§ <lane-name>` `` badge taken from the lane's filename.
 
 ## Repo conventions
 
+- Follow [Agent Workflow Design](../../docs/references/agent-workflows.md) when
+  authoring or reviewing daemon policies and their supporting scripts.
 - Keep `<daemon-id>` and the frontmatter `id` in sync with each other.
 - Verify policy and lane changes through the owning workflow's contract checks
   and review the resulting guidance. Maintain the role list below in the same change.
