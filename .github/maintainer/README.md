@@ -3,21 +3,19 @@
 `maintainer.md` runs daily codebase maintenance when `MAINTAINER_ENABLED=true`.
 Routine dependency scans and security-alert polling are no longer agent goals.
 Agents can still make justified dependency changes as part of useful maintenance,
-following repository dependency policy and full affected-app checks. Existing
+following repository dependency policy and verification guidance. Existing
 configuration protection, isolated publishing and human handoff remain intact.
 Cleanup needs neither an alert-reader credential nor an indexing receipt.
 
-Pre-agent smoke runs the full Python checks inside AWF.
-
-The workflow owns privileged sandbox verification. Its pre-agent smoke completes
-before inference; the agent prepares a committed candidate and emits PR publication
-intent, then trusted host validation runs all affected full checks before actual
-publication. `scripts/run_maintainer_sandbox.sh` is a host-only workflow launcher,
-not an agent command; the confined agent must not invoke it, use sudo, or start a
-nested AWF runtime. Proposal evidence must distinguish completed checks from
-pending host checks. A noop means completed discovery found no worthwhile
-candidate; blocked or unfinished work emits `report_incomplete`, which delivery
-verification rejects.
+The workflow prepares pinned tools and preserves trusted candidate guards before
+inference. The agent investigates useful changes and runs checks under repository
+guidance, including required local checks. Trusted host validation enforces basic
+scope, configuration and commit identity before isolated publication; ordinary PR
+CI runs the standard suites and independent review assesses quality. There is no
+second full-suite sandbox before inference or publication. Check evidence must
+distinguish completed local checks from pending PR CI. A noop means completed
+discovery found no worthwhile candidate; blocked or unfinished work emits
+`report_incomplete`, which delivery verification rejects.
 
 The dependency submission workflow below is separately gated and is not needed
 for cleanup activation. Enabling Dependabot settings does not establish complete
