@@ -72,13 +72,43 @@ The [workflow](../../.github/workflows/production-smoke.yml) validates fork
 pull requests without secrets or production traffic. Deployment runs only from
 `main`, when explicitly enabled, preserves other projects, and does not
 schedule a run on deployment. Manual workflow dispatch applies the current
-`main` definition and variables. A later deployment can undo an operator pause
+`main` definition and variables only with the `deploy` operation. A later
+deployment can undo an operator pause
 if the repository variable still requests activation.
 
 The dedicated project reconciles its own resources; removing or renaming a
 check deletes the old resource and its hosted run history on the next deploy.
 Retain required audit evidence before retirement. Unrelated projects and the
 existing shared alert channel remain outside this project's ownership.
+
+## Manual CI operations
+
+Dispatch the production smoke workflow from `main` to use the shared injected
+credentials without retrieving their values. Its operation choices are:
+
+| Operation | Effect |
+|-----------|--------|
+| `inspect` (default) | Read the safe demo identity, its sole live library, and the curated `Architecture` album; verify the deployed adapter mapping and emit only the four fixture variables |
+| `test` | Execute the configured catalog as a recorded hosted Checkly test session, with scheduling inactive in the test definition |
+| `deploy` | Apply definitions when `IMMICH_SMOKE_DEPLOY_ENABLED=true`; the schedule follows the repository activation variable |
+
+For example, `gh workflow run production-smoke.yml --ref main -f operation=inspect`
+verifies the fixture before its values are pinned in repository variables.
+Inspection fails on another identity, multiple libraries, or a missing,
+ambiguous, or empty curated album; it does not silently choose a substitute.
+Inspection requires list-libraries access to verify that the demo identity has
+exactly one live library; a key restricted to selected libraries may run the
+pinned catalog but cannot perform this inspection.
+Reinspection during maintenance is evidence to review, not permission to
+overwrite the pinned fixture automatically.
+
+With the fixture and Checkly variables configured, dispatch `operation=test`.
+Keep its Actions run URL and recorded Checkly result URL as distinct evidence.
+The test uses the group's encrypted runtime secret, populated from the injected
+organization credential. No secret values or raw
+personal responses belong in outputs or artifacts. These manual operations
+neither change demo content nor activate the recurring monitor, and manual
+test sessions do not count as scheduled coverage or alert-delivery proof.
 
 ## Validate and activate
 
