@@ -35,7 +35,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -74,13 +74,13 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
       - name: Create isolated reviewer App token
         id: app
-        uses: actions/create-github-app-token@v3.0.0
+        uses: actions/create-github-app-token@v3.2.0
         with:
           app-id: ${{ vars.PR_APPROVAL_APP_ID }}
           private-key: ${{ secrets.PR_APPROVAL_APP_PRIVATE_KEY }}
