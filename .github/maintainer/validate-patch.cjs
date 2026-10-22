@@ -6,7 +6,6 @@ const git=(...args)=>execFileSync('git',args,{encoding:'utf8'});
 const base=process.env.GITHUB_SHA;
 if(!/^[0-9a-f]{40}$/.test(base||'')) throw Error('missing immutable dispatch revision');
 if(git('status','--porcelain').trim()) throw Error('candidate must be fully committed');
-git('diff',base,'HEAD','--check');
 const paths=git('diff','--name-only',base,'HEAD').trim().split('\n').filter(Boolean);
 for(const path of paths){
  if(path.startsWith('.') || /(^|\/)(tests?|__tests__|database\/alembic\/versions)(\/|$)/.test(path) || /(^|\/)([^/]*config[^/]*|AGENTS\.md|DAEMON\.md|Dockerfile|render\.yaml|[^/]*\.ya?ml)$/.test(path))
@@ -35,4 +34,4 @@ for(const path of paths){
 for(const identity of git('log',base+'..HEAD','--format=%an|%ae|%cn|%ce').trim().split('\n').filter(Boolean)){
  if(identity!=='gumnut-bot[bot]|333470196+gumnut-bot[bot]@users.noreply.github.com|gumnut-bot[bot]|333470196+gumnut-bot[bot]@users.noreply.github.com') throw Error('unexpected proposal commit identity');
 }
-console.log('candidate policy files/identity/whitespace checked; semantic deny rules still require detection and human review');
+console.log('candidate policy files/identity checked; semantic deny rules still require detection and human review');

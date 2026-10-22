@@ -155,7 +155,6 @@ def test_librarian_report_rejects_failed_postprocessing(
             **os.environ,
             "UV_SETUP": "success",
             "LINTER_SETUP": "success",
-            "TRUSTED_LINTER": "success",
             "SANDBOX_CHECK": "success",
             "INFERENCE": "success",
             "AGENT_TIMEOUT": "false",
@@ -202,7 +201,6 @@ def test_librarian_report_does_not_call_failed_status_probe_clean(
             "PATH": f"{binaries}:{os.environ['PATH']}",
             "UV_SETUP": "success",
             "LINTER_SETUP": "success",
-            "TRUSTED_LINTER": "success",
             "SANDBOX_CHECK": "success",
             "INFERENCE": "success",
             "AGENT_TIMEOUT": "false",
@@ -218,6 +216,88 @@ def test_librarian_report_does_not_call_failed_status_probe_clean(
     )
     assert result.returncode != 0
     assert "Librarian result: validation-failed" in summary.read_text()
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_librarian_report_requires_committed_candidate(
+    tmp_path, native_budget_parser, dirty
+):
+    report = next(
+        step
+        for step in librarian_jobs()["agent"]["steps"]
+        if step.get("name") == "Report librarian outcome"
+    )
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    awf = binaries / "awf"
+    awf.write_text(
+        '#!/bin/bash\nwhile [[ "$1" != -- ]]; do shift; done\nshift\nexec "$@"\n'
+    )
+    awf.chmod(0o755)
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True
+    ).strip()
+    # The fake AWF executable and native parser are test infrastructure.
+    (tmp_path / ".gitignore").write_text("*\n")
+    subprocess.run(["git", "add", "-f", ".gitignore"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "candidate",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    if dirty:
+        (tmp_path / ".gitignore").write_text("*\n# uncommitted\n")
+    summary = tmp_path / "summary.md"
+    result = subprocess.run(
+        ["bash", "-c", report["run"]],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{binaries}:{os.environ['PATH']}",
+            "UV_SETUP": "success",
+            "LINTER_SETUP": "success",
+            "SANDBOX_CHECK": "success",
+            "INFERENCE": "success",
+            "AGENT_TIMEOUT": "false",
+            "JOB_STATUS": "success",
+            "GITHUB_SHA": sha,
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "GITHUB_WORKSPACE": str(tmp_path),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) is (not dirty)
+    expected = "validation-failed" if dirty else "candidate-ready"
+    assert f"Librarian result: {expected}" in summary.read_text()
 
 
 def test_librarian_report_rejects_successful_budget_abort(
@@ -237,7 +317,6 @@ def test_librarian_report_rejects_successful_budget_abort(
             "TEST_BUDGET_EXCEEDED": "true",
             "UV_SETUP": "success",
             "LINTER_SETUP": "success",
-            "TRUSTED_LINTER": "success",
             "SANDBOX_CHECK": "success",
             "INFERENCE": "success",
             "AGENT_TIMEOUT": "false",

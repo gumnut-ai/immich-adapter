@@ -48,10 +48,11 @@ cost metadata, including the documented long-context pricing limitation.
 
 ## Recompilation and validation
 
-Compile with gh-aw v0.89.21 and `--action-tag v0.89.21`. Apply the generated-file
-pin corrections documented at the top of the source, then run:
+Compile with gh-aw v0.89.21 using the repository helper, which preserves the
+reviewed generated-file corrections, then run:
 
 ```bash
+node .github/maintainer/compile.cjs /path/to/pinned-gh-aw librarian
 uv run pytest tests/test_librarian_workflow.py
 node --test .github/librarian/verify-delivery.test.cjs .github/maintainer/verify-delivery.test.cjs .github/agent-delivery/workflow-wiring.test.cjs
 GH_AW_SETUP_DIR=/path/to/pinned-gh-aw/actions/setup/js node --test .github/agent-delivery/reviewer-handler.test.cjs
@@ -78,3 +79,8 @@ leave delivery incomplete. No-op outputs do not invoke the repair.
 The native integration test requires the setup helpers from commit
 `c35393777e5604a63721d09512263b1383301d4f` (v0.89.21); it runs those handlers
 with fixture GitHub responses and makes no review request or inference call.
+
+The agent invokes repository lint commands directly and records their results.
+The workflow preflight checks tool readiness; post-processing enforces runtime
+completion and committed proposal identity. Ordinary PR CI owns documentation
+lint validation after publication, and independent review assesses factual quality.
