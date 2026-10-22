@@ -63,7 +63,7 @@ solution would change supported behavior or a public contract, report the
 tradeoff for human judgment rather than implementing it.
 
 ## Verification
-Use the repository's pinned tools and follow its required local checks. Select
+Use the repository's pinned tools and follow its [required local checks](../../../AGENTS.md#pre-commit-commands). Select
 additional targeted checks from the changed behavior, callers and failure paths.
 Record what ran, its result, and any checks still pending. A failed required local
 check or an environment blocker is incomplete work; do not hide it as a no-op.
