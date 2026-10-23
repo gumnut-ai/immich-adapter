@@ -2,7 +2,7 @@
 const fs=require('node:fs');const {execFileSync}=require('node:child_process');
 const compiler=process.argv[2];
 const workflow=process.argv[3]||'maintainer';
-if(!compiler || !['maintainer','librarian'].includes(workflow)) throw Error('usage: node .github/maintainer/compile.cjs /path/to/gh-aw [maintainer|librarian]');
+if(!compiler || !['maintainer','librarian','dependency-maintenance'].includes(workflow)) throw Error('usage: node .github/maintainer/compile.cjs /path/to/gh-aw [maintainer|librarian|dependency-maintenance]');
 execFileSync(compiler,['compile',workflow,'--action-tag','c35393777e5604a63721d09512263b1383301d4f','--no-check-update'],{stdio:'inherit'});
 const source=fs.readFileSync(`.github/workflows/${workflow}.md`,'utf8');
 const images=Object.fromEntries([...source.matchAll(/^      (agent|apiProxy|squid): (ghcr[^\n]+)$/gm)].map(m=>[m[1],m[2]]));
@@ -15,7 +15,16 @@ const admissionEnd=text.indexOf('\n  safe_outputs:\n',admissionStart);
 if(admissionStart<0 || admissionEnd<0) throw Error('expected admission job boundaries');
 const admission=text.slice(admissionStart,admissionEnd);
 if((admission.match(/^  [a-z_]+:$/gm)||[]).length!==1 || /\n    permissions:/.test(admission) || !admission.includes('\n    steps:')) throw Error('admission permission correction point drift');
-if(workflow==='maintainer') text=text.slice(0,admissionStart)+admission.replace('\n    steps:', '\n    permissions:\n      contents: read\n      actions: read\n    steps:')+text.slice(admissionEnd);
+if(['maintainer','dependency-maintenance'].includes(workflow)) text=text.slice(0,admissionStart)+admission.replace('\n    steps:', '\n    permissions:\n      contents: read\n      actions: read\n    steps:')+text.slice(admissionEnd);
+// v0.89.21 leaks safe-outputs.environment into pre-activation. Keep the
+// publisher environment confined to native publication and conclusion jobs.
+if(workflow==='dependency-maintenance') {
+  let job;
+  text=text.split('\n').filter(line=>{
+    const match=line.match(/^  ([a-z_]+):$/); if(match) job=match[1];
+    return line!=='    environment: gumbot-publisher' || ['safe_outputs','conclusion'].includes(job);
+  }).join('\n');
+}
 const start=text.indexOf('  detection:\n');
 if(start<0) throw Error('detector missing');
 let detector=text.slice(start);
@@ -30,5 +39,8 @@ for(const [action,sha,version] of [
   ['github/gh-aw/actions/setup','c35393777e5604a63721d09512263b1383301d4f','v0.89.21'],
   ['oven-sh/setup-bun','0c5077e51419868618aeaa5fe8019c62421857d6','v2.2.0'],
 ]) text=text.replace(new RegExp(`(${action}@${sha})(?: # [^\n]*)?$`,'gm'),`$1 # ${version}`);
+// Preserve reviewed source labels/annotations that native compilation replaces with a SHA.
+for (const [, ref, annotation] of source.matchAll(/^\s*(?:- )?uses: (\S+@[a-f0-9]{40}) # (.+)$/gm))
+  text = text.split(`${ref} # ${ref.split('@')[1]}`).join(`${ref} # ${annotation}`);
 fs.writeFileSync(`.github/workflows/${workflow}.lock.yml`,text);
 execFileSync('python3',['.github/agent-delivery/correct-publisher-permissions.py'],{stdio:'inherit'});

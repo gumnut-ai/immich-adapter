@@ -79,7 +79,9 @@ repository maintainer. Resolve the GitHub account from that evidence rather
 than guessing a login from a commit name or email. Exclude the PR author, bots,
 and known automation accounts; confirm the candidate can review this repository.
 
-Request review when opening the PR or immediately afterward, and verify that
+Dependency-maintenance defers handoff to a later activation after passing
+exact-head CI and known mergeability, as its role policy specifies. Other roles
+request review when opening the PR or immediately afterward, and verify that
 GitHub recorded the request. Briefly record the selection rationale in the
 activation result. If no eligible human can be identified or the request fails,
 keep the PR, report the unresolved reviewer assignment and reason in the
@@ -88,6 +90,7 @@ activation result, and do not claim the human-review handoff succeeded.
 ## Role policies
 
 - `codebase-maintainer/` — proposes useful codebase maintenance without routine dependency scans.
+- `dependency-maintenance/` — repairs dependency PRs and proposes useful compatible updates daily.
 - `librarian/` — keeps this repo's documentation current and complete.
 - `pr-review/` — reviews pull requests under repo-authored policy, across the lanes
   in `pr-review/references/lanes/`.

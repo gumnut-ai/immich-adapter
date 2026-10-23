@@ -16,11 +16,8 @@ deny:
   - moving a design doc from `proposed` to `active`, or deprecating a `proposed` or `active` doc as rejected or abandoned — accepting or abandoning a decision is a human call
   - 'changing a design doc''s `status:` because of its age, or on evidence weaker than the merged history described under Lifecycle Policy'
   - deleting a design doc or removing its Documentation Map row
-# Every 6h, not daily: docs drift with every merge to main, and a docs-only PR
-# is cheap to review, so a faster loop keeps the gap between a code change and
-# its doc fix short. The 3-open-PR cap below is what bounds the churn; the
-# PR-merge watch stays dropped (#290) so activations stay batched.
-schedule: "0 */6 * * *"
+# Batch documentation discovery once daily; existing proposal caps bound churn.
+schedule: "0 12 * * *"
 ---
 
 ## Policy

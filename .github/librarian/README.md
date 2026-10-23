@@ -4,7 +4,7 @@
 `librarian.lock.yml` is its executable native gh-aw workflow. The librarian
 reads the dispatch revision and `.agents/daemons/librarian/DAEMON.md`, samples
 recent changes plus one adapter area, and proposes at most one documentation
-PR. The existing policy owns lifecycle evidence, scope, three-open-PR and
+PR on a daily 12:00 UTC schedule when enabled. The existing policy owns lifecycle evidence, scope, three-open-PR and
 one-transition caps, three commits, and human reviewer selection.
 
 ## Provisioning and activation
