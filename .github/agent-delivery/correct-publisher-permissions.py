@@ -4,6 +4,9 @@ import re
 from pathlib import Path
 
 for source in Path(".github/workflows").glob("*.md"):
+    # Dependency compilation and corrections belong to pinned shared automation.
+    if source.stem == "dependency-maintenance":
+        continue
     if "environment: gumbot-publisher" not in source.read_text():
         continue
     path = source.with_suffix(".lock.yml")

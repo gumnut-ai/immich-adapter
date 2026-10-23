@@ -38,12 +38,14 @@ pipeline is created.
 Compile with gh-aw v0.89.21:
 
 ```bash
-node .github/maintainer/compile.cjs /path/to/pinned-gh-aw dependency-maintenance
+node /path/to/automation/dependency-maintenance/compile.cjs /path/to/gh-aw
 uv run pytest tests/test_dependency_maintenance_workflow.py tests/test_librarian_workflow.py
 uv run --no-config --locked --script scripts/lint_docs.py --base origin/main
 git diff --check
 ```
 
-The helper applies the existing reviewed detector-image, admission-permission
-and publisher-permission corrections. Contract tests run in the existing pytest
+Use the reviewed `automation` checkout pinned by workflow CI, running from this
+repository root. The shared compiler owns dependency detector-image,
+admission-permission and publisher-permission corrections; the local maintainer
+compiler handles only the other daemon roles. Contract tests run in the existing pytest
 suite; no separate CI dispatcher or duplicate quality gate is needed.
