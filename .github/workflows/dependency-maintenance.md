@@ -170,8 +170,9 @@ safe-outputs:
       script: |
         return await require(process.env.DEPENDENCY_MAINTENANCE_TRUSTED + '/delivery.cjs').handoff({ github, context, item });
   steps:
+    # Reviewed unreleased commit; no version tag exists for this action yet.
     - name: Constrain native dependency delivery
-      uses: gumnut-ai/automation/actions/dependency-delivery@38e220e56a4a3530acaccad28e278736c0a314b3 # dependency delivery
+      uses: gumnut-ai/automation/actions/dependency-delivery@38e220e56a4a3530acaccad28e278736c0a314b3 # zizmor: ignore[ref-version-mismatch]
   noop:
     report-as-issue: false
   missing-tool:
