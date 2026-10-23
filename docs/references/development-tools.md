@@ -110,6 +110,11 @@ this way).
 `renovate.json` owns the enabled managers, grouping, release-age gates,
 schedule, and dependency dashboard settings.
 
+The daily [dependency maintenance overlay](../../.github/dependency-maintenance/README.md)
+inspects bot work before useful uncovered updates. It preserves release-age
+policy and compatible API behavior; human review and ordinary PR CI remain
+required. The legacy dependency-snapshot collector remains disabled.
+
 ### Not Managed by Renovate
 
 The `github/gh-aw` runtime must be upgraded together with its compiler, generated workflows, and delivery helper hashes. Its action references are excluded from automatic updates so a runtime-only bump cannot break safe-output PR delivery.

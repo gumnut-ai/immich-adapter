@@ -5,7 +5,7 @@ description: Run the adapter documentation librarian from reviewed main policy.
 # publisher-permission corrections; commit the resulting SHA-pinned lockfile.
 
 on:
-  schedule: "0 */6 * * *"
+  schedule: "0 12 * * *"
   workflow_dispatch:
   roles: [admin, maintainer, write]
   steps:
