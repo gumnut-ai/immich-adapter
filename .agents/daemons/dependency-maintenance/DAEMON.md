@@ -4,6 +4,9 @@ purpose: Advances mechanical dependency PRs and proposes useful uncovered update
 schedule: "0 15 * * *"
 ---
 
+Apply the shared dependency-maintenance instructions embedded by the owning
+workflow, together with the repository policy below.
+
 ## Scope and priorities
 
 Own one bounded dependency-maintenance activation in the adapter. Read the
@@ -14,17 +17,9 @@ compatibility bounds and generated-artifact procedures. Keep judgment with the
 agent and validate proposals through documented checks, normal CI and independent
 review; do not invent a second collector, classifier or CI dispatcher.
 
-Inspect open role PRs and trusted review feedback first, then current Dependabot
-and Renovate PRs targeting main. Verify author identity through GitHub metadata.
 Start with PRs created or updated in the last 30 days, and inspect older open PRs
 so unresolved work cannot age out. Paginate relevant reads. Use recent merged or
 closed PRs for overlap and failure context, never to reopen rejected proposals.
-
-Prioritize critical security exposure, actionable feedback on existing role PRs,
-repairable bot PRs, then useful uncovered updates. Consider age and benefit;
-leave a permanently blocked PR for a relevant evidence change. Diagnose CI
-failures from their logs and distinguish update regressions from unrelated or
-transient failures before changing code or requesting a justified rerun.
 
 Compare tracked manifests, locks, runtime/tool pins and script/build inputs with
 actual bot coverage. Consider compatible transitive updates, constrained ranges,
@@ -42,12 +37,6 @@ PR title or package-name match alone does not establish a fix.
 
 ## Repair and proposal boundaries
 
-Prefer repairing the original same-repository bot PR. Use the pre-fetched origin
-branch with the same local branch name and preserve its head as the incremental
-baseline. Append fixes without rewriting bot or human commits. If the live head
-changes, investigate the new candidate on a later activation. The native
-publisher rejects stale heads and does not force-push or replace PRs.
-
 Make at most one topical code proposal: repair one existing PR or open/update
 one role PR. A coordinated runtime bump may span its related roots and artifacts;
 otherwise batch by lock root or project. Use at most three new commits, one new
@@ -58,11 +47,6 @@ versions, useful change, related PR/advisory evidence and checks in the PR.
 These are agent-owned limits: paginate and count current role PRs before new
 work, choose one proposal across both native code tools, and record deferrals.
 
-Regenerate artifacts using the candidate's pinned toolchain. Native protected
-files remain blocked, including workflows and active automation controls;
-unsupported changes or artifact transport are explicit human blockers. Do not
-publish new Git LFS pointers: the pinned native transport does not upload their
-objects. Inspect Git attributes for affected files before choosing publication.
 Never weaken tests, add retries or suppressions just to pass CI, relax policy or add
 cooldown exceptions. Preserve dependency cooldowns and the first-party exemption. Inspect Python
 manifests, locks, PEP 723 script metadata/locks and codegen tool pins. Read the
@@ -71,14 +55,6 @@ and [Immich upgrade guide](../../../docs/guides/upgrading-immich-version.md)
 before proposing compatible coordinated codegen or Immich pin updates. Immich
 pins remain a compatibility decision: only changes preserving the existing
 contract belong here; no major retarget, generated API rewrite or auth change.
-
-
-Do not undertake major migrations, incompatible parent upgrades, broad product
-refactors, public contract, auth or billing decisions. Explain the blocker and
-clearing action in the activation outcome. Critical severity changes priority,
-never grants a cooldown bypass. Human-directed exceptions remain outside this
-role. Never approve, merge, delete branches, close/replace PRs, change bot ignore
-settings, mutate issues or direct production operations.
 
 ## Human handoff and outcomes
 

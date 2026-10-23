@@ -1,5 +1,11 @@
 # Codebase cleanup and dependency coverage
 
+Common maintainer and librarian instructions are imported from an immutable
+`automation` revision and embedded during compilation. Local daemon policies
+retain scope, limits, required checks and exceptions. The pinned shared
+`actions/daemon-delivery` adapter owns native reviewer target resolution and
+account exclusions; repository delivery readback remains local.
+
 `maintainer.md` runs daily codebase maintenance when `MAINTAINER_ENABLED=true`.
 Routine dependency scans and security-alert polling are no longer agent goals.
 Agents can still make justified dependency changes as part of useful maintenance,

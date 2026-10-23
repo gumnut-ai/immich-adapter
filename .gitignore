@@ -217,3 +217,4 @@ static/*
 
 # "local" indicates the file is intended for local, user-specific settings that shouldn't be shared across a team
 .claude/settings.local.json
+.shared-automation/

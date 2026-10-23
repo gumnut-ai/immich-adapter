@@ -137,7 +137,9 @@ safe-outputs:
       if: contains(needs.agent.outputs.output_types, 'create_pull_request')
       env:
         GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      run: node .github/agent-delivery/prepare-reviewer-handler.cjs
+      uses: gumnut-ai/automation/actions/daemon-delivery@41fd5969c952c348b031cd238d042f682387558b # zizmor: ignore[ref-version-mismatch]
+      with:
+        validate-proposal: true
   noop:
     report-as-issue: false
   missing-tool:
@@ -171,6 +173,14 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Load pinned shared daemon helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: gumnut-ai/automation
+          ref: 41fd5969c952c348b031cd238d042f682387558b
+          path: .shared-automation
+          persist-credentials: false
+          sparse-checkout: daemon-delivery
       - name: Verify librarian delivery
         uses: actions/github-script@v9.0.0
         env:
@@ -297,11 +307,16 @@ post-steps:
         echo 'Safe-output processing determines the final proposal or no-work result.'
       } >> "$GITHUB_STEP_SUMMARY"
       [[ "$outcome" == candidate-ready ]]
+inlined-imports: true
+imports:
+  - gumnut-ai/automation/daemons/librarian.md@41fd5969c952c348b031cd238d042f682387558b
+
 ---
 
-Apply the librarian DAEMON.md Proposal quality section to candidate selection,
-related-document coherence and PR presentation. The evidence required below
-remains in the body, in collapsible details after a proportionate summary.
+Apply the shared librarian instructions and local Proposal quality policy to
+candidate selection, related-document coherence and PR presentation. The evidence
+required below remains in the body, in collapsible details after a proportionate
+summary.
 
 Read `.agents/daemons/librarian/DAEMON.md` from this checkout and follow its
 policy. Read `.agents/daemons/AGENTS.md` and every repository guidance or

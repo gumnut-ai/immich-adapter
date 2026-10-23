@@ -55,7 +55,7 @@ reviewed generated-file corrections, then run:
 node .github/maintainer/compile.cjs /path/to/pinned-gh-aw librarian
 uv run pytest tests/test_librarian_workflow.py
 node --test .github/librarian/verify-delivery.test.cjs .github/maintainer/verify-delivery.test.cjs .github/agent-delivery/workflow-wiring.test.cjs
-GH_AW_SETUP_DIR=/path/to/pinned-gh-aw/actions/setup/js node --test .github/agent-delivery/reviewer-handler.test.cjs
+node --test .github/agent-delivery/workflow-wiring.test.cjs
 actionlint .github/workflows/librarian.lock.yml
 uv run --no-config --locked --script scripts/lint_docs.py --base origin/main
 git diff --check

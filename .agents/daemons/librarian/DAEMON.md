@@ -20,6 +20,9 @@ deny:
 schedule: "0 12 * * *"
 ---
 
+Apply the shared librarian instructions embedded by the owning
+workflow, together with the repository policy below.
+
 ## Policy
 - Act by default. When a doc is clearly stale, fix it instead of only flagging it.
 - Preserve author voice — match the tone and style of existing docs in the same directory.
@@ -87,20 +90,9 @@ excerpts compact and deduplicated.
 
 ## Proposal quality
 
-Prefer corrections that help readers understand or maintain a lasting contract.
-Keep one-time rollout or operator execution instructions with their operational
-record unless a recurring reader need justifies evergreen guidance. Within the
-selected topic and discovery bounds, reconcile related live docs and README
+Within the selected topic and discovery bounds, reconcile related live docs and README
 claims using [Project Conventions](../../../docs/references/project-conventions.md#project-conventions)
 for the canonical home and pointers.
-
-Lead the PR body with the concrete mismatch, correction, reader or maintenance
-value, and relevant validation. Scale this introduction to the change; a small
-factual correction usually needs only a few sentences. Retain the workflow's
-required audit evidence in a collapsible `<details>` section after the summary,
-including source revisions, inventory/cap/overlap evidence, reviewer rationale,
-discovery coverage and limitations. Preserve required role markers and literal
-publication fields. Details retain evidence; they do not replace required checks.
 
 ## Human review
 
