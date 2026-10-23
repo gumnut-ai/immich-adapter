@@ -20,6 +20,12 @@
       "commitMessageTopic": "GitHub Actions"
     },
     {
+      "description": "Upgrade gh-aw with its compiler, generated workflows, and pinned delivery helper hashes together",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["github/gh-aw", "github/gh-aw/**"],
+      "enabled": false
+    },
+    {
       "matchManagers": ["dockerfile"],
       "groupName": "container base images",
       "commitMessageTopic": "container base images"

@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-10-13
+last-updated: 2026-10-22
 ---
 
 # Development Tools
@@ -109,5 +109,7 @@ this way).
 schedule, and dependency dashboard settings.
 
 ### Not Managed by Renovate
+
+The `github/gh-aw` runtime must be upgraded together with its compiler, generated workflows, and delivery helper hashes. Its action references are excluded from automatic updates so a runtime-only bump cannot break safe-output PR delivery.
 
 The `ghcr.io/immich-app/immich-server` image is intentionally excluded. The adapter treats the target Immich version as a coordinated compatibility decision, not a routine dependency bump, so update it manually via the [Upgrading the Immich Target Version](../guides/upgrading-immich-version.md) guide, which ends with the pin-bump mechanics in [Routes, DTOs, and Upstream Compatibility](./upstream-compatibility.md#bumping-the-immich-version).

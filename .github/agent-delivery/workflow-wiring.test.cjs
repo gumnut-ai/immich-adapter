@@ -13,7 +13,9 @@ for (const daemon of ["librarian", "maintainer"]) {
     assert.match(source, /safe-outputs:[\s\S]+?  steps:\n    - name: Resolve reviewer target[\s\S]+?if: contains\(needs.agent.outputs.output_types, 'create_pull_request'\)/);
     const safe = lock.slice(lock.indexOf("  safe_outputs:\n"), lock.indexOf("  verify_delivery:\n"));
     assert.ok(safe.includes(repair));
-    assert.ok(safe.indexOf("uses: github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f") < safe.indexOf(repair));
+    const setupIndex = safe.indexOf("uses: github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f");
+    assert.ok(setupIndex >= 0, "safe outputs must use the runtime pinned by the reviewer helper hashes");
+    assert.ok(setupIndex < safe.indexOf(repair));
     assert.ok(safe.indexOf("ref: ${{ github.sha }}") < safe.indexOf(repair));
     assert.ok(safe.indexOf(repair) < safe.indexOf("name: Process Safe Outputs"));
     assert.match(safe, /if: contains\(needs.agent.outputs.output_types, 'create_pull_request'\)\n        run: node/);
