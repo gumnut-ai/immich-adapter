@@ -22,7 +22,8 @@ test('native publisher admits dependency manifests while policy/config paths sta
 });
 test('compiled trusted admission alone has explicit read scopes',()=>{
  const admission=lock.slice(lock.indexOf('  pre_activation:\n'),lock.indexOf('\n  safe_outputs:\n'));
- assert.match(admission,/\n    permissions:\n      contents: read\n      actions: read\n/);
+ const permissions = admission.match(/\n    permissions:\n((?:      [\w-]+: \w+\n)+)/)?.[1] || '';
+ assert.deepEqual(Object.fromEntries([...permissions.matchAll(/^      ([\w-]+): (\w+)$/gm)].map(match => [match[1], match[2]])), { actions: 'read', contents: 'read' });
  assert.match(lock,/\npermissions: \{\}\n/);
 });
 

@@ -5,6 +5,9 @@ description: Advance adapter dependency PRs and propose uncovered compatible upd
 # The shared compiler owns the pinned native version and generated-only corrections.
 
 on:
+  permissions:
+    actions: read
+    contents: read
   schedule:
     - cron: "0 15 * * *"
   workflow_dispatch:
@@ -168,7 +171,7 @@ safe-outputs:
   steps:
     # Reviewed unreleased commit; no version tag exists for this action yet.
     - name: Constrain native dependency delivery
-      uses: gumnut-ai/automation/actions/dependency-delivery@41fd5969c952c348b031cd238d042f682387558b # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/dependency-delivery@ec2bba2086ad77a4db2a13aa17ac97b3b2149463 # zizmor: ignore[ref-version-mismatch]
   noop:
     report-as-issue: false
   missing-tool:
@@ -217,7 +220,7 @@ pre-agent-steps:
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/dependency-maintenance.md@41fd5969c952c348b031cd238d042f682387558b
+  - gumnut-ai/automation/daemons/dependency-maintenance.md@ec2bba2086ad77a4db2a13aa17ac97b3b2149463
 
 ---
 

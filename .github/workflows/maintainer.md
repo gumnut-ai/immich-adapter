@@ -2,12 +2,13 @@
 description: Propose useful codebase maintenance without routine dependency-update scans.
 # Compile this source with github/gh-aw v0.89.21 using
 # --action-tag c35393777e5604a63721d09512263b1383301d4f. Commit its SHA-pinned lockfile.
-# Until gh-aw propagates sandbox.agent.images into detection, manually copy
-# those three digests into detection image downloads AND awf-config.json
-# container.images, replacing container.imageTag.
-# This is a temporary generated-file correction, not a compiler fork.
+# Regenerate with .github/maintainer/compile.cjs; it applies the pinned shared
+# native-toolchain compatibility corrections.
 
 on:
+  permissions:
+    actions: read
+    contents: read
   schedule:
     - cron: "0 9 * * *"
   workflow_dispatch:
@@ -99,8 +100,7 @@ safe-outputs:
   staged: false
   timeout-minutes: 10
   environment: gumbot-publisher
-  # Native reviewer label checks need Issues read; after compilation run
-  # python3 .github/agent-delivery/correct-publisher-permissions.py
+  # The shared pinned compatibility helper restores Issues read for label checks.
   github-app:
     client-id: ${{ vars.GUMBOT_CLIENT_ID }}
     private-key: ${{ secrets.GUMBOT_PRIVATE_KEY }}
@@ -138,7 +138,7 @@ safe-outputs:
       if: contains(needs.agent.outputs.output_types, 'create_pull_request')
       env:
         GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      uses: gumnut-ai/automation/actions/daemon-delivery@41fd5969c952c348b031cd238d042f682387558b # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/daemon-delivery@ec2bba2086ad77a4db2a13aa17ac97b3b2149463 # zizmor: ignore[ref-version-mismatch]
       with:
         validate-proposal: true
   noop:
@@ -178,7 +178,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: gumnut-ai/automation
-          ref: 41fd5969c952c348b031cd238d042f682387558b
+          ref: ec2bba2086ad77a4db2a13aa17ac97b3b2149463
           path: .shared-automation
           persist-credentials: false
           sparse-checkout: daemon-delivery
@@ -253,7 +253,7 @@ post-steps:
       node "$RUNNER_TEMP/maintainer-trusted/validate-patch.cjs"
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/codebase-maintainer.md@41fd5969c952c348b031cd238d042f682387558b
+  - gumnut-ai/automation/daemons/codebase-maintainer.md@ec2bba2086ad77a4db2a13aa17ac97b3b2149463
 
 ---
 

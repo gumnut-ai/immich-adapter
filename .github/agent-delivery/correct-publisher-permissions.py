@@ -1,26 +1,21 @@
-"""Restore Issues read for gh-aw 0.89.21 publisher label checks after compilation."""
+"""Apply the pinned shared Issues-read correction to this repository's publishers."""
 
-import re
+import subprocess
 from pathlib import Path
 
 for source in Path(".github/workflows").glob("*.md"):
-    # Dependency compilation and corrections belong to pinned shared automation.
-    if source.stem == "dependency-maintenance":
+    if (
+        source.stem == "dependency-maintenance"
+        or "environment: gumbot-publisher" not in source.read_text()
+    ):
         continue
-    if "environment: gumbot-publisher" not in source.read_text():
-        continue
-    path = source.with_suffix(".lock.yml")
-    text = path.read_text()
-    pattern = r"(?ms)(      - name: Generate GitHub App token\n        id: safe-outputs-app-token\n.*?)(?=      - name:|\Z)"
-    blocks = list(re.finditer(pattern, text))
-    assert len(blocks) == 2, f"{path}: pinned publisher token steps changed"
-    for match in reversed(blocks):
-        block = match[0]
-        anchor = "          permission-pull-requests: write\n"
-        assert block.count(anchor) == 1, f"{path}: publisher permissions changed"
-        if "          permission-issues: read\n" not in block:
-            block = block.replace(
-                anchor, anchor + "          permission-issues: read\n"
-            )
-        text = text[: match.start()] + block + text[match.end() :]
-    path.write_text(text)
+    subprocess.run(
+        [
+            "node",
+            ".shared-automation/native-toolchain/gh-aw-v0.89.21.cjs",
+            str(source),
+            str(source.with_suffix(".lock.yml")),
+            "correctPublisherIssuesRead",
+        ],
+        check=True,
+    )

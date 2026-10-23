@@ -53,3 +53,9 @@ repository root. The shared compiler owns dependency detector-image,
 admission-permission and publisher-permission corrections; the local maintainer
 compiler handles only the other daemon roles. Contract tests run in the existing pytest
 suite; no separate CI dispatcher or duplicate quality gate is needed.
+
+Local compile helpers load `native-toolchain` from the same immutable
+`.shared-automation` checkout as workflow CI. Common detector, action-annotation
+and publisher-permission compatibility is owned by
+[`automation`](https://github.com/gumnut-ai/automation/tree/ec2bba2086ad77a4db2a13aa17ac97b3b2149463/native-toolchain);
+Repository-specific policy corrections remain local.
