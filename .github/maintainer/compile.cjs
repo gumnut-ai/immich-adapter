@@ -39,8 +39,8 @@ for(const [action,sha,version] of [
   ['github/gh-aw/actions/setup','c35393777e5604a63721d09512263b1383301d4f','v0.89.21'],
   ['oven-sh/setup-bun','0c5077e51419868618aeaa5fe8019c62421857d6','v2.2.0'],
 ]) text=text.replace(new RegExp(`(${action}@${sha})(?: # [^\n]*)?$`,'gm'),`$1 # ${version}`);
-// Native compilation drops inline audit annotations on custom action steps.
-if (/dependency-delivery@[a-f0-9]{40} # zizmor: ignore\[ref-version-mismatch\]/.test(source))
-  text = text.replace(/^(\s+uses: gumnut-ai\/automation\/actions\/dependency-delivery@[a-f0-9]{40}) #[^\n]+/gm, '$1 # zizmor: ignore[ref-version-mismatch]');
+// Preserve reviewed source labels/annotations that native compilation replaces with a SHA.
+for (const [, ref, annotation] of source.matchAll(/^\s*(?:- )?uses: (\S+@[a-f0-9]{40}) # (.+)$/gm))
+  text = text.split(`${ref} # ${ref.split('@')[1]}`).join(`${ref} # ${annotation}`);
 fs.writeFileSync(`.github/workflows/${workflow}.lock.yml`,text);
 execFileSync('python3',['.github/agent-delivery/correct-publisher-permissions.py'],{stdio:'inherit'});

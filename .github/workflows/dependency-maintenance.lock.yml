@@ -47,7 +47,7 @@
 #   - actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
 #   - astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 #   - github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f # v0.89.21
-#   - gumnut-ai/automation/actions/dependency-delivery@38e220e56a4a3530acaccad28e278736c0a314b3 # 38e220e56a4a3530acaccad28e278736c0a314b3
+#   - gumnut-ai/automation/actions/dependency-delivery@38e220e56a4a3530acaccad28e278736c0a314b3 # zizmor: ignore[ref-version-mismatch]
 #
 # Container images used:
 #   - ghcr.io/github/gh-aw-mcpg:v0.4.25@sha256:9be0a86220e807a0ecc89e53d7453468f7a53fbc6b3d1efd2299025ffe01d086
