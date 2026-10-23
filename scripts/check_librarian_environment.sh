@@ -39,6 +39,5 @@ echo "rg=$(rg --version | head -n 1)"
 echo "origin_main=$(git rev-parse origin/main)"
 echo "merge_base=$(git merge-base HEAD origin/main)"
 
-# Preparation must have populated the standalone script environment already.
-# Offline mode makes an accidental package download fail in the agent sandbox.
-UV_OFFLINE=1 uv run --no-config --locked --script scripts/lint_docs.py --base origin/main
+# Proposal validation belongs to agent-selected checks and ordinary PR CI.
+# The preflight checks runtime readiness without running documentation lint.

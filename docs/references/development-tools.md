@@ -70,9 +70,11 @@ Both `--immich-spec` and `--adapter-spec` accept local file paths as well as URL
 
 ### Exit Codes
 
-The tool returns an exit code equal to the number of error-level incompatibilities found:
+The tool returns an exit code equal to the number of error-level incompatibilities
+found during comparison:
 
-- `0`: All specified endpoints are compatible
+- `0`: No error-level incompatibilities were found. If `--endpoints` matches no
+  paths in either specification, the tool warns and exits `0` without comparing.
 - `>0`: Number of incompatible differences found
 
 ### CI Integration

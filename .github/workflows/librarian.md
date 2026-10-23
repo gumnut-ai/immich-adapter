@@ -1,13 +1,8 @@
 ---
 description: Run the adapter documentation librarian from reviewed main policy.
-# Compile this source with github/gh-aw v0.89.21 using
-# --action-tag v0.89.21. Commit its SHA-pinned lockfile.
-# Until gh-aw propagates sandbox.agent.images into detection, manually copy
-# those three digests into detection image downloads AND awf-config.json
-# container.images, replacing container.imageTag.
-# Preserve github/gh-aw/actions/setup@c35393777e5604a63721d09512263b1383301d4f
-# after compilation if the compiler emits the mutable release tag.
-# These are temporary generated-file corrections, not a compiler fork.
+# Regenerate with node .github/maintainer/compile.cjs /path/to/gh-aw librarian
+# using github/gh-aw v0.89.21. The helper applies reviewed image-pin and
+# publisher-permission corrections; commit the resulting SHA-pinned lockfile.
 
 on:
   schedule: "0 */6 * * *"
@@ -218,7 +213,7 @@ steps:
       version: ${{ steps.uv-version.outputs.version }}
       # Agent-writable dependencies must not be persisted into future jobs.
       enable-cache: false
-      # AWF hides runner HOME; /tmp is shared with offline validation.
+      # AWF hides runner HOME; /tmp makes the prepared cache available to the agent.
       cache-local-path: /tmp/scheduled-care-uv-cache
   - name: Prepare locked documentation linter
     id: linter_setup
@@ -231,18 +226,6 @@ pre-agent-steps:
     run: |
       git config user.name 'gumnut-bot[bot]'
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
-  - name: Preserve trusted checks
-    id: trusted_linter
-    shell: bash
-    run: |
-      set -euo pipefail
-      trusted_dir="$RUNNER_TEMP/librarian-trusted-lint"
-      mkdir -m 700 "$trusted_dir"
-      # Keep validation dependencies outside the agent-writable /tmp cache.
-      cp -a "${UV_CACHE_DIR:?prepared cache required}" "$trusted_dir/uv-cache"
-      for file in lint_docs.py lint_docs.py.lock lint_docs.toml; do
-        git show "$GITHUB_SHA:scripts/$file" > "$trusted_dir/$file"
-      done
   - name: Check the prepared sandbox
     id: sandbox_check
     run: |
@@ -268,7 +251,6 @@ post-steps:
     env:
       UV_SETUP: ${{ steps.uv_setup.outcome }}
       LINTER_SETUP: ${{ steps.linter_setup.outcome }}
-      TRUSTED_LINTER: ${{ steps.trusted_linter.outcome }}
       SANDBOX_CHECK: ${{ steps.sandbox_check.outcome }}
       INFERENCE: ${{ steps.agentic_execution.outcome }}
       AGENT_TIMEOUT: ${{ steps.detect-agent-errors.outputs.agentic_engine_timeout }}
@@ -284,7 +266,7 @@ post-steps:
       console.log(parseMaxAICreditsExceededFromAuditLog());
       NODE
       )
-      if [[ "$UV_SETUP" != success || "$LINTER_SETUP" != success || "$TRUSTED_LINTER" != success || "$SANDBOX_CHECK" != success ]]; then
+      if [[ "$UV_SETUP" != success || "$LINTER_SETUP" != success || "$SANDBOX_CHECK" != success ]]; then
         outcome=setup-failed
       elif [[ "$budget_exceeded" == true ]]; then
         outcome=budget-interrupted
@@ -300,39 +282,21 @@ post-steps:
         outcome=postprocessing-failed
       elif awf --container-workdir "$GITHUB_WORKSPACE" --env "GITHUB_SHA=$GITHUB_SHA" -- \
         /bin/bash -c '
+          set -euo pipefail
           status=$(git status --porcelain) || exit 1
-          head=$(git rev-parse --verify HEAD) || exit 1
-          [[ -z "$status" && "$head" == "$GITHUB_SHA" ]]
+          git merge-base --is-ancestor "$GITHUB_SHA" HEAD
+          [[ -z "$status" ]]
         '; then
-        outcome=checkout-clean
+        outcome=candidate-ready
       else
         outcome=validation-failed
-        if awf --container-workdir "$GITHUB_WORKSPACE" \
-          --mount "$RUNNER_TEMP/librarian-trusted-lint:/trusted-lint:ro" \
-          --mount "$RUNNER_TEMP/librarian-trusted-lint/uv-cache:/trusted-uv-cache:rw" \
-          --env "GITHUB_SHA=$GITHUB_SHA" --env "UV_CACHE_DIR=/trusted-uv-cache" -- \
-          /bin/bash -c '
-            set -euo pipefail
-            # A staged patch may not match the file on disk. Reject mixed
-            # index/worktree edits rather than certify only one candidate.
-            git diff --cached --quiet "$GITHUB_SHA" || git diff --quiet
-            index_dir=$(mktemp -d)
-            trap "rm -rf -- \"$index_dir\"" EXIT
-            GIT_INDEX_FILE="$index_dir/index" git read-tree "$GITHUB_SHA"
-            GIT_INDEX_FILE="$index_dir/index" git add -A
-            GIT_INDEX_FILE="$index_dir/index" git diff --cached "$GITHUB_SHA" --check
-            UV_OFFLINE=1 uv run --no-config --locked \
-              --script /trusted-lint/lint_docs.py --config /trusted-lint/lint_docs.toml --base "$GITHUB_SHA"
-          '; then
-          outcome=docs-lint-passed
-        fi
       fi
       {
         echo "Librarian source revision: $GITHUB_SHA"
         echo "Librarian result: $outcome"
         echo 'Safe-output processing determines the final proposal or no-work result.'
       } >> "$GITHUB_STEP_SUMMARY"
-      [[ "$outcome" == checkout-clean || "$outcome" == docs-lint-passed ]]
+      [[ "$outcome" == candidate-ready ]]
 ---
 
 Apply the librarian DAEMON.md Proposal quality section to candidate selection,
@@ -364,7 +328,7 @@ with the implementation. This is a bounded rotating sample, not a durable
 coverage cursor; activations on the same UTC day revisit that area. Record the
 selection date with the evidence.
 
-Run the prepared locked documentation linter during discovery with
+Invoke the repository documentation linter directly during discovery with
 `--base <dispatch-sha>`; report structural findings separately from factual
 mismatches. Follow DAEMON.md for validation after edits. Choose the strongest
 actionable topic from recent-change inspection, the rotating sample or lint
@@ -419,7 +383,7 @@ PR or review request exists yet. Exclude logins ending in `[bot]` and known auto
 `CharlieHelps`, `CharlieCreates`, `github-actions`, `gumnut-bot`,
 `chatgpt-codex-connector`, and `Copilot`. Do not request teams. Apply the verified
 DAEMON.md caps and status-transition limits before publishing; when they leave no
-room, report the verified deferral. Use the prepared locked linter and
+room, report the verified deferral. Use the repository linter directly and
 relevant repository guidance to validate any edit. Check whitespace in the
 entire candidate change, including new files. If there is no justified edit,
 call the `noop` safe-output tool with the dispatch revision, recent commits and
