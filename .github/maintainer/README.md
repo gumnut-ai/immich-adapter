@@ -1,5 +1,10 @@
 # Codebase cleanup and dependency coverage
 
+The pinned compiler bypasses its action cache for some generated steps. This
+wrapper preserves reviewed artifact and generated Node action pins while leaving
+the source-owned pre-agent Node step alone. Workflow CI checks all three daemon
+lockfiles regenerate without changes.
+
 Common maintainer and librarian instructions are imported from an immutable
 `automation` revision and embedded during compilation. Local daemon policies
 retain scope, limits, required checks and exceptions. The pinned shared

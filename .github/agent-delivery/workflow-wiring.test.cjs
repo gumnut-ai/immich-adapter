@@ -58,16 +58,27 @@ for (const [name, labels] of workflows) {
   test(`${name} rejects reviewer-only publication before native processing`, () => {
     for (const extension of ["md", "lock.yml"]) {
       const text = fs.readFileSync(path.join(__dirname, `../workflows/${name}.${extension}`), "utf8");
-      const admission = (publisher(text).match(/^    if: (.+(?:\n {6}.+)*)/m)?.[1] || "").replace(/\s+/g, " ");
+      const match = publisher(text).match(/^    if: (.+)((?:\n      .+)*)/m);
+      assert.ok(match, "publisher admission condition");
+      const admission = match[1] === ">" ? match[2].trim().replace(/\s+/g, " ") : match[1];
       const guard = "(!contains(needs.agent.outputs.output_types, 'add_reviewer') || contains(needs.agent.outputs.output_types, 'create_pull_request'))";
       assert.ok(admission.includes(guard));
       assert.ok(admission.includes("needs.agent.result == 'success'"));
       assert.ok(admission.includes("needs.detection.outputs.detection_success == 'true'"));
       for (const [types, allowed] of [["add_reviewer", false], ["noop,add_reviewer", false], ["create_pull_request,add_reviewer", true], ["noop", true], ["create_pull_request", true]]) {
-        assert.equal(vm.runInNewContext(guard, {
-          contains: (value, item) => value.includes(item),
-          needs: { agent: { outputs: { output_types: types } } },
-        }), allowed, `${extension}: ${types}`);
+        for (const agentResult of ["success", "failure"]) {
+          for (const detectionSuccess of ["true", "false"]) {
+            assert.equal(vm.runInNewContext(admission, {
+              contains: (value, item) => value.includes(item),
+              cancelled: () => false,
+              needs: {
+                agent: { result: agentResult, outputs: { output_types: types } },
+                detection: { result: "success", outputs: { detection_success: detectionSuccess } },
+              },
+            }), allowed && agentResult === "success" && detectionSuccess === "true",
+            `${extension}: ${types}, ${agentResult}, detection=${detectionSuccess}`);
+          }
+        }
       }
     }
   });

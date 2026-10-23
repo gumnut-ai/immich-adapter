@@ -25,6 +25,16 @@ if(!detector.includes(tag)) throw Error('expected detector imageTag correction p
 detector=detector.replace(tag,'"images":'+JSON.stringify(images));
 text=text.slice(0,start)+detector;
 if(text.split('\n').some(line=>line.includes('uses: github/gh-aw/actions/setup@') && !line.includes('c35393777e5604a63721d09512263b1383301d4f'))) throw Error('setup action SHA drift');
+// v0.89.21 has embedded pins that bypass the action cache in some jobs.
+// Keep reviewed artifact pins and generated Node steps; retain source-owned Node steps.
+for (const [pattern, replacement, count] of [
+  [/uses: actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1/g, 'uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2', 9],
+  [/uses: actions\/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1/g, 'uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2', 8],
+  [/(- name: Setup Node.js\n\s+uses: actions\/setup-node@)820762786026740c76f36085b0efc47a31fe5020 # v7.0.0/g, (_, prefix) => prefix + '949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0', 3],
+]) {
+  if ([...text.matchAll(pattern)].length !== count) throw Error('reviewed action pin correction point drift');
+  text = text.replace(pattern, replacement);
+}
 // Preserve release labels on SHA-pinned action references after compilation.
 for(const [action,sha,version] of [
   ['github/gh-aw/actions/setup','c35393777e5604a63721d09512263b1383301d4f','v0.89.21'],
