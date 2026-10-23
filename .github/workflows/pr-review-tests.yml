@@ -1,10 +1,10 @@
 name: PR review workflow checks
 on:
   pull_request:
-    paths: ['.node-version', '.github/pr-approval/**', '.github/workflows/pr-approval*', '.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
+    paths: ['.node-version', '.github/pr-approval/**', '.github/workflows/pr-approval*', '.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*', '.github/dependency-maintenance/**', '.github/workflows/dependency-maintenance*']
   push:
     branches: [main]
-    paths: ['.node-version', '.github/pr-approval/**', '.github/workflows/pr-approval*', '.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*']
+    paths: ['.node-version', '.github/pr-approval/**', '.github/workflows/pr-approval*', '.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*', '.github/dependency-maintenance/**', '.github/workflows/dependency-maintenance*']
 permissions:
   contents: read
 jobs:
@@ -38,3 +38,23 @@ jobs:
         run: node --test .github/agent-delivery/*.test.cjs .github/librarian/verify-delivery.test.cjs .github/maintainer/verify-delivery.test.cjs
         env:
           GH_AW_SETUP_DIR: ${{ github.workspace }}/.native-gh-aw/actions/setup/js
+      - name: Load pinned shared dependency compiler
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: gumnut-ai/automation
+          ref: 75910daada265c8082bac469628d85cd7acc63d3
+          path: .shared-automation
+          persist-credentials: false
+          sparse-checkout: dependency-maintenance
+      - name: Check generated dependency workflow matches source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          compiler="${RUNNER_TEMP}/gh-aw-v0.89.21"
+          curl --fail --silent --show-error --location \
+            https://github.com/github/gh-aw/releases/download/v0.89.21/linux-amd64 \
+            --output "$compiler"
+          echo "1c74ff5fc28b1891d32b67f4348a9b7f750946b6d4a721e909187a848868016b  $compiler" | sha256sum --check
+          chmod +x "$compiler"
+          node .shared-automation/dependency-maintenance/compile.cjs "$compiler"
+          git diff --exit-code -- .github/workflows/dependency-maintenance.lock.yml

@@ -1,11 +1,8 @@
 ---
 description: Advance adapter dependency PRs and propose uncovered compatible updates.
-# Compile this source with github/gh-aw v0.89.21 using
-# --action-tag c35393777e5604a63721d09512263b1383301d4f. Commit its SHA-pinned lockfile.
-# Until gh-aw propagates sandbox.agent.images into detection, manually copy
-# those three digests into detection image downloads AND awf-config.json
-# container.images, replacing container.imageTag.
-# This is a temporary generated-file correction, not a compiler fork.
+# Compile from the consumer root using a reviewed immutable automation checkout:
+# node /path/to/automation/dependency-maintenance/compile.cjs /path/to/gh-aw
+# The shared compiler owns the pinned native version and generated-only corrections.
 
 on:
   schedule:
@@ -104,8 +101,7 @@ safe-outputs:
   staged: false
   timeout-minutes: 10
   environment: gumbot-publisher
-  # Native reviewer label checks need Issues read; after compilation run
-  # python3 .github/agent-delivery/correct-publisher-permissions.py
+  # Native label checks need Issues read; the shared compiler restores it.
   github-app:
     client-id: ${{ vars.GUMBOT_CLIENT_ID }}
     private-key: ${{ secrets.GUMBOT_PRIVATE_KEY }}
@@ -172,7 +168,7 @@ safe-outputs:
   steps:
     # Reviewed unreleased commit; no version tag exists for this action yet.
     - name: Constrain native dependency delivery
-      uses: gumnut-ai/automation/actions/dependency-delivery@38e220e56a4a3530acaccad28e278736c0a314b3 # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/dependency-delivery@75910daada265c8082bac469628d85cd7acc63d3 # zizmor: ignore[ref-version-mismatch]
   noop:
     report-as-issue: false
   missing-tool:
