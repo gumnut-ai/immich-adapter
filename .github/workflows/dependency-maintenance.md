@@ -168,7 +168,7 @@ safe-outputs:
   steps:
     # Reviewed unreleased commit; no version tag exists for this action yet.
     - name: Constrain native dependency delivery
-      uses: gumnut-ai/automation/actions/dependency-delivery@75910daada265c8082bac469628d85cd7acc63d3 # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/dependency-delivery@41fd5969c952c348b031cd238d042f682387558b # zizmor: ignore[ref-version-mismatch]
   noop:
     report-as-issue: false
   missing-tool:
@@ -215,6 +215,10 @@ pre-agent-steps:
     run: |
       git config user.name 'gumnut-bot[bot]'
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
+inlined-imports: true
+imports:
+  - gumnut-ai/automation/daemons/dependency-maintenance.md@41fd5969c952c348b031cd238d042f682387558b
+
 ---
 
 Read the dispatch-revision `.agents/daemons/dependency-maintenance/DAEMON.md`,

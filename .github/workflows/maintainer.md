@@ -138,7 +138,9 @@ safe-outputs:
       if: contains(needs.agent.outputs.output_types, 'create_pull_request')
       env:
         GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      run: node .github/agent-delivery/prepare-reviewer-handler.cjs
+      uses: gumnut-ai/automation/actions/daemon-delivery@41fd5969c952c348b031cd238d042f682387558b # zizmor: ignore[ref-version-mismatch]
+      with:
+        validate-proposal: true
   noop:
     report-as-issue: false
   missing-tool:
@@ -172,6 +174,14 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Load pinned shared daemon helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: gumnut-ai/automation
+          ref: 41fd5969c952c348b031cd238d042f682387558b
+          path: .shared-automation
+          persist-credentials: false
+          sparse-checkout: daemon-delivery
       - name: Verify maintainer delivery
         uses: actions/github-script@v9.0.0
         env:
@@ -241,6 +251,10 @@ post-steps:
       if (parseMaxAICreditsExceededFromAuditLog()) process.exit(1);
       NODEBUDGET
       node "$RUNNER_TEMP/maintainer-trusted/validate-patch.cjs"
+inlined-imports: true
+imports:
+  - gumnut-ai/automation/daemons/codebase-maintainer.md@41fd5969c952c348b031cd238d042f682387558b
+
 ---
 
 Read the dispatch-revision `.agents/daemons/codebase-maintainer/DAEMON.md`,

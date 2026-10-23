@@ -49,13 +49,15 @@ cost metadata, including the documented long-context pricing limitation.
 ## Recompilation and validation
 
 Compile with gh-aw v0.89.21 using the repository helper, which preserves the
-reviewed generated-file corrections, then run:
+reviewed generated-file corrections. Before running Node tests, check out
+`gumnut-ai/automation` at the immutable revision in
+`.github/workflows/pr-review-tests.yml` into `.shared-automation` with credentials
+persistence disabled, as CI does. Then run:
 
 ```bash
 node .github/maintainer/compile.cjs /path/to/pinned-gh-aw librarian
 uv run pytest tests/test_librarian_workflow.py
 node --test .github/librarian/verify-delivery.test.cjs .github/maintainer/verify-delivery.test.cjs .github/agent-delivery/workflow-wiring.test.cjs
-GH_AW_SETUP_DIR=/path/to/pinned-gh-aw/actions/setup/js node --test .github/agent-delivery/reviewer-handler.test.cjs
 actionlint .github/workflows/librarian.lock.yml
 uv run --no-config --locked --script scripts/lint_docs.py --base origin/main
 git diff --check
@@ -66,8 +68,9 @@ budget wiring and abort handling, immutable firewall pins, isolated publisher
 credentials, docs-only publication scope, and incomplete delivery behavior.
 They do not prove live App access or sandbox setup.
 
-Both daemons install the shared reviewer repair in `.github/agent-delivery`
-before native safe-output processing, only for an activation proposing a PR.
+Both daemons invoke the pinned `gumnut-ai/automation/actions/daemon-delivery`
+action before native safe-output processing, only for an activation proposing a
+PR. It installs the reviewed helper in a fresh runner-temporary directory.
 It checks complete SHA-256 hashes of the v0.89.21 native helpers before patching,
 orders `add_reviewer` after its temporary PR dependency, and resolves only a PR
 published by the same activation in this repository. The native handler still
@@ -76,7 +79,8 @@ accepted; bot suffixes and known automation logins are excluded case-insensitive
 by the shared predicate used in both delivery verifiers. API or patch failures
 leave delivery incomplete. No-op outputs do not invoke the repair.
 
-The native integration test requires the setup helpers from commit
+Shared runtime integration tests live in `gumnut-ai/automation`. They require
+the native setup helpers from commit
 `c35393777e5604a63721d09512263b1383301d4f` (v0.89.21); it runs those handlers
 with fixture GitHub responses and makes no review request or inference call.
 
@@ -84,3 +88,6 @@ The agent invokes repository lint commands directly and records their results.
 The workflow preflight checks tool readiness; post-processing enforces runtime
 completion and committed proposal identity. Ordinary PR CI owns documentation
 lint validation after publication, and independent review assesses factual quality.
+
+The dedicated PR-review workflow owns Node daemon suites. Ordinary Python tests
+do not fetch shared automation or forward execution to the Node suites.

@@ -1,5 +1,9 @@
 # Daily dependency maintenance
 
+Common dependency-maintenance instructions are imported from an immutable
+`automation` revision and embedded in the compiled workflow. The local
+`DAEMON.md` retains repository scope, limits, checks and exceptions.
+
 The reviewed `.github/workflows/dependency-maintenance.md` source and compiled
 `.lock.yml` schedule one activation daily at 15:00 UTC. After merge to the default
 branch the overlay is enabled without a repository-variable gate; disable the

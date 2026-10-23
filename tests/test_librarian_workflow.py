@@ -44,14 +44,6 @@ def native_budget_parser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("TEST_BUDGET_EXCEEDED", "false")
 
 
-def test_librarian_delivery_readback() -> None:
-    subprocess.run(
-        ["node", "--test", ".github/librarian/verify-delivery.test.cjs"],
-        cwd=ROOT,
-        check=True,
-    )
-
-
 def test_librarian_job_allows_inference_timeout_finalization() -> None:
     job = librarian_jobs()["agent"]
     inference = next(
