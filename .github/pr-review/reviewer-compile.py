@@ -1,41 +1,33 @@
 """Normalize pinned compiler images, dependencies, and publisher sanitizer parity."""
 
-import json
 import re
-import shlex
+import subprocess
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
 path = root / ".github/workflows/pr-review.lock.yml"
-source = (root / ".github/workflows/pr-review.md").read_text()
+source = root / ".github/workflows/pr-review.md"
+subprocess.run(
+    [
+        "node",
+        str(root / ".shared-automation/native-toolchain/gh-aw-v0.89.21.cjs"),
+        str(source),
+        str(path),
+        "correctDetectorImages",
+        "normalizeActionReferences",
+    ],
+    check=True,
+)
+subprocess.run(
+    [
+        "node",
+        str(root / ".github/maintainer/reviewed-action-pins.cjs"),
+        str(path),
+        "pr-review",
+    ],
+    check=True,
+)
 lock = path.read_text()
-pins = dict(re.findall(r"      (agent|apiProxy|squid): (ghcr.io/[^\n]+)", source))
-if len(pins) != 3:
-    raise SystemExit("Expected three source firewall image pins")
-start = lock.index("  detection:\n")
-prefix, detector = lock[:start], lock[start:]
-for image in pins.values():
-    detector = re.sub(re.escape(image.split("@")[0]) + r"(?!@)", image, detector)
-lines = detector.splitlines(keepends=True)
-for index, line in enumerate(lines):
-    if (
-        line.strip().startswith("printf")
-        and "awf-config.json" in line
-        and "network" in line
-    ):
-        config = json.loads(shlex.split(line)[2])
-        config["container"].pop("imageTag", None)
-        config["container"]["images"] = pins
-        encoded = json.dumps(config, separators=(",", ":"))
-        lines[index] = (
-            "          printf '%s\\n' '"
-            + encoded
-            + '\' > "${RUNNER_TEMP}/gh-aw/awf-config.json"\n'
-        )
-        break
-else:
-    raise SystemExit("Expected native detection configuration")
-lock = prefix + "".join(lines)
 lock = lock.replace(
     "      - pre_activation\n      - pre_activation\n", "      - pre_activation\n"
 )

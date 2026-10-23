@@ -85,3 +85,9 @@ then combine native run accounting with per-job runner estimates and actual
 provider invoices. Review admission denied by a budget is uncovered work and
 must be handled through a human review or a separately admitted retry. Do not
 claim the monthly goal from per-run settings.
+
+Local compile helpers load `native-toolchain` from the same immutable
+`.shared-automation` checkout as workflow CI. Common detector, action-annotation
+and publisher-permission compatibility is owned by
+[`automation`](https://github.com/gumnut-ai/automation/tree/ec2bba2086ad77a4db2a13aa17ac97b3b2149463/native-toolchain);
+Repository-specific policy corrections remain local.

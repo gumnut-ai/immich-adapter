@@ -84,3 +84,9 @@ Primary contracts:
 - https://bun.sh/docs/pm/lockfile
 - https://github.com/oven-sh/bun/blob/main/packages/bun-types/bun.d.ts
 - https://packaging.python.org/en/latest/specifications/version-specifiers/#local-version-identifiers
+
+Local compile helpers load `native-toolchain` from the same immutable
+`.shared-automation` checkout as workflow CI. Common detector, action-annotation
+and publisher-permission compatibility is owned by
+[`automation`](https://github.com/gumnut-ai/automation/tree/ec2bba2086ad77a4db2a13aa17ac97b3b2149463/native-toolchain);
+Repository-specific policy corrections remain local.
