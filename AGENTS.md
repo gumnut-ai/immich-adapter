@@ -62,7 +62,7 @@ The sections below follow that order, with design docs split by their `status:` 
 | Adapter architecture | `docs/architecture/adapter-architecture.md` | Adapter boundary, request and data translation, persistence/custody routing, timeline stack collapse, trash, sync/realtime routing, Sentry request observability, and failure behavior |
 | Sync stream architecture | `docs/architecture/sync-stream-architecture.md` | Sync stream event processing, FK ordering, event classification, face/album handling, adding new sync type versions |
 | WebSocket implementation | `docs/architecture/websocket-implementation.md` | WebSocket connections, real-time sync, event handling |
-| Session & checkpoint implementation | `docs/architecture/session-checkpoint-implementation.md` | Session management, checkpoint tracking, sync state |
+| Session & checkpoint implementation | `docs/architecture/session-checkpoint-implementation.md` | Credential custody, epoch isolation, reset/recovery, and session lifecycle |
 
 ## References
 
@@ -90,8 +90,8 @@ The sections below follow that order, with design docs split by their `status:` 
 | Documentation conventions | `docs/references/documentation-conventions.md` | Writing or maintaining docs — frontmatter, map rows, lifecycle, freshness, path citations |
 | GitHub Actions best practices | `docs/references/github-actions-best-practices.md` | Writing or reviewing workflows — action pins, permissions, untrusted triggers, shell interpolation, zizmor |
 | WebSocket events reference | `docs/references/websocket-events-reference.md` | WebSocket event types, payload formats |
-| Session & checkpoint reference | `docs/references/session-checkpoint-reference.md` | Session/checkpoint object shapes, field definitions |
-| Immich sync communication | `docs/references/immich-sync-communication.md` | Immich client-server sync protocol, message formats |
+| Session & checkpoint reference | `docs/references/session-checkpoint-reference.md` | Redis session/checkpoint records, serialization, indexes, and corrupt values |
+| Immich sync communication | `docs/references/immich-sync-communication.md` | Sync request/response envelopes, ack compatibility, completion, and reset shapes |
 | Uvicorn settings | `docs/references/uvicorn-settings.md` | Server configuration, worker settings, timeouts, the Render `$PORT` binding contract |
 | Development tools | `docs/references/development-tools.md` | Model generation, API compatibility, OpenAPI spec, Renovate automation |
 
