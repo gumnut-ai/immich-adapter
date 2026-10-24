@@ -1,11 +1,13 @@
 ---
 title: "Session and Checkpoint Storage Reference"
-last-updated: 2026-10-01
+last-updated: 2026-10-23
 ---
 
 # Session and Checkpoint Storage Reference
 
-This reference defines the Redis records owned by `SessionStore` and `CheckpointStore`. For OAuth, request authentication, refresh, sync, acknowledgement, and logout flow, read the [session and checkpoint architecture](../architecture/session-checkpoint-implementation.md).
+This reference defines the Redis records owned by `SessionStore` and
+`CheckpointStore`. For credential custody, epoch isolation, and lifecycle
+boundaries, read the [session and checkpoint architecture](../architecture/session-checkpoint-implementation.md).
 
 The adapter uses core Redis data structures only; it does not require RedisJSON or RediSearch.
 
@@ -57,14 +59,6 @@ The current reader accepts exactly two pipe-delimited components and parses the 
 
 A malformed checkpoint value is logged and skipped by `CheckpointStore.get` or `get_all`. The affected entity type therefore has no usable checkpoint and re-syncs from its normal starting position. This fail-open-to-resync behavior is safer than resuming from an ambiguous cursor.
 
-The ack wire format is distinct from Redis storage:
-
-| Boundary | Format |
-|----------|--------|
-| Immich client ↔ adapter | `{SyncEntityType}|{cursor}|{epoch}` |
-| Adapter checkpoint hash | field = `SyncEntityType`; value = `{updated_at}|{cursor}` |
-
-An ack issued before epoch support may omit the epoch or leave its final
-component empty; `POST /api/sync/ack` treats either form as the session's
-current epoch. See the [sync wire reference](immich-sync-communication.md#acknowledgements)
-for parsing and reset behavior.
+The client ack is a separate wire contract, not a serialized checkpoint value.
+See the [sync wire reference](immich-sync-communication.md#acknowledgements)
+for its format, legacy parsing, and reset behavior.

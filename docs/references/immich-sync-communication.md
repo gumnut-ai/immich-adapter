@@ -1,6 +1,6 @@
 ---
 title: "Immich Sync Wire Reference"
-last-updated: 2026-10-01
+last-updated: 2026-10-23
 ---
 
 # Immich Sync Wire Reference
@@ -19,7 +19,9 @@ This reference describes the Immich v3 sync shapes the adapter accepts and emits
 ```
 
 - `types` contains generated `SyncRequestType` values. Do not copy an enum count into documentation; regeneration can add values without changing the protocol.
-- `reset=true` clears the session's current sync epoch's stored checkpoints before streaming.
+- `reset=true` clears the session's current sync epoch's stored checkpoints
+  before normal streaming. The [required client-reset gate](../architecture/session-checkpoint-implementation.md#library-and-epoch-isolation)
+  takes precedence.
 - The adapter implements some request types, synthesizes user metadata, and explicitly accepts unsupported feature families as no-ops. `_SYNC_TYPE_ORDER`, `_NOOP_REQUEST_TYPES`, and `_SUPPORTED_REQUEST_TYPES` in `routers/api/sync/stream.py` own that classification.
 - When both V1 and its supported V2 successor are requested, `_V1_SUPERSEDED_BY_V2` suppresses the duplicate V1 pass.
 
@@ -66,8 +68,8 @@ Every emitted line for a session-bound stream includes:
 {SyncEntityType}|{cursor}|{epoch}
 ```
 
-The epoch is the session's bound sync epoch. An ack issued before epoch support
-or without a bound epoch has an empty final component for compatibility. The
+The epoch is the session's bound sync epoch. Streams without a bound session
+emit an empty final component; older adapters also issued that form. The
 cursor is opaque and must not contain `|`; `routers/api/sync/events.py::to_ack_string`
 logs that invalid condition. Most event-backed records carry the Gumnut API
 events cursor. User-derived rows use the user's `updated_at` value, and the
@@ -79,17 +81,32 @@ The client acknowledges processed positions with `POST /api/sync/ack`:
 {"acks":["AssetV2|cursor-example-001|0","AlbumV2|cursor-example-002|0"]}
 ```
 
-`routers/api/sync/routes.py::_parse_ack` validates the entity enum, parses the
-optional epoch, skips malformed or empty-cursor values, and stores the last
-value for duplicate entity types in one request. A missing or empty epoch is
-treated as the session's current epoch for compatibility. `GET /api/sync/ack`
-reconstructs the same wire strings from stored checkpoints. A `SyncResetV1`
-acknowledgement clears the checkpoints for its epoch and marks the client
-current only if the session is still at that epoch; other acknowledgements in
-that request are ignored.
+Acknowledgement endpoints require a session token; API keys receive HTTP 403.
+`routers/api/sync/routes.py` owns their behavior:
+
+- `POST /api/sync/ack` rejects invalid entity types with HTTP 400 and skips
+  strings missing a cursor component or carrying an empty cursor. For duplicate
+  entity types, the last accepted ack wins. An epoch made of ASCII decimal
+  digits selects that epoch; missing, empty, or other epoch text means the
+  session's current epoch for legacy compatibility. Extra trailing components
+  are ignored. Acks for another epoch are dropped, and storage rechecks the
+  epoch atomically before writing. Accepted batches update session activity.
+- `GET /api/sync/ack` returns `SyncAckDto[]` from the current epoch's stored
+  checkpoints, reconstructing the wire strings and omitting empty cursors.
+- `DELETE /api/sync/ack` clears the current epoch's checkpoints when `types` is
+  omitted, clears only the named types for a non-empty list, and does nothing
+  for an empty list.
+
+A `SyncResetV1` acknowledgement clears the checkpoints for its epoch and marks
+the client current only if the session is still at that epoch; other
+acknowledgements in that request are ignored. A stale reset ack changes neither
+reset nor checkpoint state. Epoch isolation and the client-reset handshake are
+described in the [session architecture](../architecture/session-checkpoint-implementation.md#library-and-epoch-isolation).
 
 ## Completion and reset
 
-- `SyncCompleteV1` terminates every successfully generated stream, including a stream with no entity changes.
+- `SyncCompleteV1` terminates every successfully generated normal stream,
+  including a stream with no entity changes. Its ack uses the cursor
+  `complete`; a reset-only stream instead carries `SyncResetV1|reset|{epoch}`.
 - A session whose client owes a reset (its `client_epoch` differs from the session's `sync_epoch`) receives `SyncResetV1` and no normal entity stream.
 - An unhandled hydration or transport failure ends the generator without `SyncCompleteV1`; see [sync stream architecture](../architecture/sync-stream-architecture.md) for retry and ordering rationale.

@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-10-15
+last-updated: 2026-10-23
 ---
 
 # Immich Adapter Architecture
@@ -133,7 +133,7 @@ per request and scopes every Gumnut call to it:
 5. Global exception handling maps supported upstream failures into Immich's error envelope.
 6. Asset/session mutations may emit Socket.IO events after the backend operation succeeds.
 
-For session creation, credential custody, JWT refresh, checkpoint flow, and logout, read [Session and Checkpoint Implementation](session-checkpoint-implementation.md). For room membership and realtime failure behavior, read [WebSocket Implementation](websocket-implementation.md).
+For credential custody, JWT refresh, epoch isolation, and session lifecycle, read [Session and Checkpoint Implementation](session-checkpoint-implementation.md). For room membership and realtime failure behavior, read [WebSocket Implementation](websocket-implementation.md).
 
 ### Public login configuration
 
