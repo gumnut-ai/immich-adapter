@@ -4537,7 +4537,7 @@ class TestAssetEdits:
     async def test_put_slow_render_spends_the_event_deadline(
         self, sample_uuid, mock_current_user, monkeypatch
     ):
-        """The clients arm their 10-second wait before sending, so the poll
+        """Immich web arms its 10-second wait before sending, so the poll
         deadline is measured from route entry: a render that outlives it
         still gets one post-commit read, then emits with whatever thumbhash
         that read returns instead of starting a fresh wait."""
