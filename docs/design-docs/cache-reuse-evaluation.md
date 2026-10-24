@@ -2,21 +2,27 @@
 title: Cache instrumentation and endpoint reuse evaluation
 status: active
 created: 2026-10-08
-last-updated: 2026-10-15
+last-updated: 2026-10-23
 ---
 
 # Cache instrumentation and endpoint reuse evaluation
 
-Recommend measuring the existing thumbnail cache before increasing its capacity
-or extending reuse to other endpoints. Retain the current defaults pending a
-usable baseline. This record defines measurement work; it changes no cache
-behavior and grants no new freshness or authorization window.
+Measure the existing thumbnail cache before increasing its capacity or
+extending reuse to other endpoints. Retain the current defaults pending a
+usable baseline. This evaluation remains active because effective production
+settings, native metric receipt and a matched baseline are still unverified in
+the available records; merged implementation does not establish those results.
 
-The measurement implementation is described by the live
-[cache telemetry contract](../references/media-variant-selection.md#cache-observability)
+Two parts have shipped in the repository: request-local `users.me` reuse in
+[PR #465](https://github.com/gumnut-ai/immich-adapter/pull/465), and measurement
+instrumentation in
+[PR #487](https://github.com/gumnut-ai/immich-adapter/pull/487).
+Current contracts live in
+[Library scope](../architecture/adapter-architecture.md#library-scope),
+[cache observability](../references/media-variant-selection.md#cache-observability)
 and [API/stream boundaries](../architecture/adapter-architecture.md#native-request-and-stream-metrics).
-Production deployment, effective-configuration verification and native receipt
-remain separate prerequisites for the baseline and capacity decision below.
+This record retains the measurement rationale, historical evidence and open
+capacity/reuse decisions. It grants no new freshness or authorization window.
 
 ## Evidence and limits
 
@@ -64,64 +70,58 @@ capacity adequacy, or production load reduction.
 
 ## Existing reuse and route-to-call inventory
 
-This is a route-family inventory of upstream work, not a generated endpoint
-catalog. SDK cursor walks and retries can make several HTTP attempts per call.
-Local compatibility stubs have no reusable API result. Authenticated routes
-also resolve library scope; routes needing a user DTO fetch it lazily once per
-request through [`current_user`](../../routers/utils/current_user.py).
+The inventory identified existing reuse rather than evidence of savings.
+SDK cursor walks and retries can make several HTTP attempts per call; high
+route volume alone does not demonstrate duplicate reads.
 
-| Route family and source | Upstream calls / existing reuse | Evaluation |
-|---|---|---|
-| Library resolution, [`gumnut_client`](../../routers/utils/gumnut_client.py), [`library_resolver`](../../services/library_resolver.py) | `libraries.list`, `users.me` on bounded recheck; session choice / API-key Redis TTL; process single-flight keyed by credential and fallback choice | Already addresses the burst stampede. Do not introduce another library/auth cache. |
-| Thumbnail, [`assets.view_asset`](../../routers/api/assets.py) | Edited rendering: `assets.retrieve(include=variants)`; edit base: `assets.versions.list(include=variants)`; then CDN stream | Existing credential/session/library/asset/variant/edited/cache-buster scope and miss sharing. CDN 404 after a stored hit performs one live refresh. |
-| Upload / import, [`assets`](../../routers/api/assets.py) | `assets.check_existence`; buffered SDK create or direct streaming upload; event-emission asset retrieval | Existence and post-write hydration must remain live. Distinct new assets dominate this family; high volume is not repeat-read evidence. |
-| Asset detail / statistics / edits, [`assets`](../../routers/api/assets.py) | Asset retrieve/list; stack retrieve and hydration; version-list reads and writes; bulk mutations | Different include/state/version contracts from thumbnail selections. Do not use a cached signed URL as an asset DTO. |
-| Timeline, [`timeline`](../../routers/api/timeline.py) | `assets.counts`; filtered cursor walk of `assets.list` | Repeated filters are plausible but not established. Counts and page membership change on uploads, trash, rating, albums and external writes. |
-| Search / explore, [`search`](../../routers/api/search.py) | Filtered asset walks, result hydration by IDs, `search.search`, `people.list` | Parameters/include/ordering/page state differ; query identity alone is insufficient. |
-| Albums / maps / memories, [`albums`](../../routers/api/albums.py), [`map`](../../routers/api/map.py), [`memories`](../../routers/api/memories.py) | Album list/retrieve and membership mutations; asset walks for markers/memories | Map uses bounded scan/marker limits in [`map_markers`](../../routers/utils/map_markers.py); no shared result cache. Album access checks must stay live. |
-| People / faces, [`people`](../../routers/api/people.py), [`faces`](../../routers/api/faces.py) | People list/retrieve/update; thumbnail retrieves person then streams its URL; faces reads owner, face list, unique people | Face response already retrieves each distinct person once per request. Process reuse adds freshness/revocation risk. |
-| Stacks, [`stacks`](../../routers/api/stacks.py), [`stack_conversion`](../../routers/utils/stack_conversion.py) | Stack rows plus member asset walks; shared hydration helpers and collection bulk reads | Preserve all-page membership, live-cover selection and `state=all`; sharing across requests needs a membership/version contract. |
-| Sync, [`stream`](../../routers/api/sync/stream.py), [`entity_fetch`](../../routers/api/sync/entity_fetch.py) | `events.get`; chunked current-state entity and FK reads; stack validation; membership reads | Pass-local entity deduplication already skips repeat current-state events. Positive face-owner exposability is reused across pages; suppressed/missing owners are reread to converge. Never cache event pages/checkpoints across passes. |
-| Downloads / trash, [`download`](../../routers/api/download.py), [`trash`](../../routers/api/trash.py) | Album authorization, asset cursor walks, versions including exact-original selection; live trash enumeration before mutation | Streaming bytes, signed capabilities, exact-original versions and destructive selections remain live. |
-| Users / auth / OAuth, [`users`](../../routers/api/users.py), [`auth`](../../routers/api/auth.py), [`oauth`](../../routers/api/oauth.py) | `users.me`, logout, auth URL and exchange; Redis sessions/checkpoints elsewhere | Validation, token refresh, quota and logout are not cache-expansion candidates. |
-| Other compatibility surfaces | Local/static responses or unsupported stubs, owned by their route modules | No upstream call to eliminate; adding a cache would add complexity. |
+- Library selection already uses stored choices and in-flight sharing;
+  request-local current-user reuse now avoids a second `users.me` read for an
+  eligible originating request. The live
+  [library contract](../architecture/adapter-architecture.md#library-scope)
+  owns scope, freshness and waiter isolation.
+- [Thumbnail and video metadata reuse](../references/media-variant-selection.md)
+  have separate lifetimes and retain selections, not asset DTOs or media bytes.
+  Their presence does not authorize reuse by other endpoints.
+- [Sync](../architecture/sync-stream-architecture.md) already deduplicates
+  current-state entity reads within a pass. Positive face-owner exposability
+  can be reused across pages; suppressed or missing owners are reread so edits
+  can converge. Event pages and checkpoints must remain live across passes.
+- Asset detail, timeline, search, albums/maps/memories, people and stacks have
+  different state, membership, include and pagination contracts. Their remaining
+  opportunities and constraints are ranked below; the route modules own their
+  call inventories. Upload existence checks, post-write hydration, downloads
+  and destructive selections cannot inherit a thumbnail selection's freshness
+  window. Local compatibility stubs have no upstream result to reuse.
 
-The library-choice changes and sync reuse are present in the baseline, including
+The historical baseline already included
 [library single-flight](https://github.com/gumnut-ai/immich-adapter/pull/447),
 [stored choice](https://github.com/gumnut-ai/immich-adapter/pull/412), and
 [face-owner reuse](https://github.com/gumnut-ai/immich-adapter/pull/459).
-Their lifetimes and invalidation rules are independent of the thumbnail TTL.
+Request-local user reuse and video metadata reuse arrived later in PR #465;
+neither has measured savings in that baseline.
 
 ## Minimal instrumentation proposal
 
-Use the existing cache owner and native Sentry metrics, without a background
-sampler, tombstone map or second cache. Existing lookup/refresh counters remain
-the incoming-decision and refresh denominators.
+The proposal is implemented by PR #487. Its policy remains measurement only:
+no second cache, background sampler or per-key history, and no change to
+cache admission, invalidation, cancellation or authorization. The live
+[cache telemetry contract](../references/media-variant-selection.md#cache-observability)
+owns occupancy, removal, bypass, in-flight and loader signal definitions;
+[native request and stream metrics](../architecture/adapter-architecture.md#native-request-and-stream-metrics)
+owns HTTP-attempt and completed-stream boundaries.
 
-| Signal | Emission boundary and meaning |
-|---|---|
-| Occupied keys / configured capacity / utilization | One observation at entry to each thumbnail lookup, before its lazy expiry removal. Count aliases and expired-but-stored keys. Include configured TTL and capacity in all cache series. A saturation counter increments when this observation equals capacity. This measures **request-weighted** full occupancy, not time spent full or live-entry occupancy. |
-| Capacity eviction, `live` / `expired` | At `_store` victim removal, classify with the existing monotonic clock and victim expiry. Count alias keys; two evictions can belong to one asset. A live eviction is not proof of a later miss. |
-| Expiration / invalidation / CDN removal | Count actual keys removed at lookup expiry, global mutation clear, and CDN-failure eviction separately. Zero-key clears must not masquerade as lost entries. Generation fencing stays intact. |
-| Bypass reason and in-flight observations | Separate disabled/context-unavailable/credential-expired/in-flight-capacity paths with bounded enums. Count owned tasks including invalidated detached tasks when measuring overflow; joinable `_in_flight` alone understates resource use. |
-| Loader outcomes | Success/error/timeout/cancellation at actual loads, distinct from coalesced waiters. Admission misses include failed loads; do not call them successful deliveries. |
-| API HTTP attempts and duration | Time from the shared client's last request hook to response headers or a pre-header terminal exception/cancellation, including each SDK retry and refresh. Preserve credential-refresh and vanished-library handling. Use bounded operation families/status classes; body/hook failures after headers keep one response observation. CDN and direct synchronous uploads stay outside this series. |
-| Delivery and sync outcomes | Successful completed thumbnail streams and sync-complete/abort denominators where native unsampled evidence is absent; producing response headers or starting a stream is not completion. |
+The decision requires request-weighted occupancy, live versus expired capacity
+victims, actual loads versus coalesced waiters, and completed deliveries rather
+than response starts. These distinguish pressure from expiry, mutation clears
+and failed work without claiming why an absent key missed. Counter values,
+not row counts or sampled spans, supply the denominators. Attributes must stay
+bounded and exclude credentials, identifiers, cache keys, raw paths, signed
+URLs and filenames. Without native process metadata, occupancy describes
+observations across workers, not the percentage of workers full.
 
-No new attribute may contain credentials, user/asset/library IDs, cache keys,
-raw request paths, signed URLs or filenames. Environment/release come from SDK
-context. Use process identity only if native infrastructure metadata supplies
-it within a reviewed cardinality budget; do not invent a process label.
-Without process metadata, distributions describe observations across workers,
-not the percentage of workers full. Prefer distributions for request-weighted
-occupancy; a provider's last-value gauge rollup may not preserve that denominator.
-
-An absent key cannot reveal whether an earlier capacity eviction or mutation
-caused its miss. Keep it unknown. Removal counts plus hit/bypass/expiration
-rates can indicate pressure without keeping per-key history. Every instrument
-must preserve loader, cancellation, invalidation and auth behavior. Verify alias
-accounting, live/expired victims with an injected clock, overflow/detached work,
-retries, failed streams and attribute privacy in the separate build.
+Implementation and local emission do not prove production receipt. Effective
+settings, provider attribute access, retention/drop coverage and a matched
+workload remain prerequisites for the decision below.
 
 ## Baseline and capacity decision
 
@@ -155,8 +155,10 @@ Reproducible query specifications, using the provider's validated field schema:
 - Saturation share is full-occupancy observations / all occupancy observations.
   Eviction-live share is live victims / all capacity victims, with raw key
   counts beside it. These have different denominators from incoming requests.
-  Pair removal pressure with API attempts per completed thumbnail request,
+  Pair removal pressure with API attempts, completed thumbnail deliveries,
   end-to-end latency, errors and sync completion; include retries/refreshes.
+  Aggregate API attempts include other routes: attempts / completed thumbnails
+  is a workload ratio, not causal per-thumbnail cost.
 
 Lazy expiry inflates stored occupancy. Thumbhash aliases reduce the distinct
 asset capacity. Mutation invalidation affects all credential scopes in a
@@ -170,7 +172,7 @@ live capacity eviction is negligible or mutation/expiry/bypass dominates.
 If live eviction accompanies reduced reuse and more API attempts, propose a
 separately approved reversible comparison at fixed TTL: compare the current
 capacity to one bounded larger value with comparable workload and worker count.
-Measure RSS/peak memory, live evictions, attempts per completed request,
+Measure RSS/peak memory, live evictions, the API-attempt workload ratio,
 latency/errors and sync completion. Do not multiply the entry cap by URL bytes
 and call it measured memory: aliases may share a value and Python adds overhead.
 Rollback if memory pressure or correctness guardrails regress. Record the
@@ -179,13 +181,15 @@ recommendation even when evidence remains too sparse to tune.
 ## Ranked reuse candidates and contracts
 
 Ranking is by structural opportunity and safety, **not measured savings**.
-The telemetry is implemented; authorized deployment and a matched baseline
-remain pending. No broader cache is approved until repeat-read evidence and
-its freshness contract exist.
+Rank 1 is implemented; it is retained to record the narrow accepted scope.
+Ranks 2–4 remain deferred. Telemetry implementation is merged, while effective
+production settings, native receipt and a matched baseline remain unverified.
+No broader cache is approved until repeat-read evidence and its freshness
+contract exist.
 
 | Rank / candidate | Exact value, scope and lifetime | Freshness, correctness and expected benefit |
 |---|---|---|
-| 1. Request-local `users.me` reuse during a library recheck | Raw user response, scoped to backend, exact credential/session and request; library binding/fallback choice preserved. Reuse only within that request. Current DTO cache already handles normal dependency repeats. | `_fetch_library_choice` and `get_current_user_admin` can each read `users.me` on a stale request. Saving at most one call in that subset is plausible; measure its frequency first. Never make the shared library-resolution task mutate another request's state; share explicit results only after token-refresh/library-binding semantics are reviewed. No cached validation result or reuse across mutation boundaries. |
+| 1. Request-local `users.me` reuse — implemented | A successful library-selection user read can be consumed once by the originating request, through [`get_raw_current_user`](../../routers/utils/gumnut_client.py) and [`get_current_user_admin`](../../routers/utils/current_user.py). See [Library scope](../architecture/adapter-architecture.md#library-scope) for the credential and mutation boundaries. | Saves at most one duplicate call in eligible requests; frequency and savings remain unmeasured. No reuse across requests, coalesced waiters or later mutation boundaries, and no cached authorization result. The [reuse tests](../../tests/unit/utils/test_request_user_reuse.py) cover freshness, token refresh, waiter isolation, failure and upload-dependency boundaries. |
 | 2. Person thumbnail selection | Successful thumbnail URL/mimetype only, keyed by backend, credential/session, bound library, person, all rendering/cache-buster parameters and relevant person/cover state. Separate value namespace from asset thumbnail metadata, bounded process owner only after approval. | Repeated identical reads are unproven in this window. Person merge, reassignment, cover edits, deletion and external changes need invalidation; revocation/permission lag needs explicit approval. Clamp to credential/capability expiry; never negative-cache errors. Require miss coalescing, bounded tasks, waiter cancellation, loader timeout and live CDN-404 refresh. Existing thumbnail TTL does not authorize it. |
 | 3. Timeline counts / repeated browse query | Counts or a specific page, keyed by backend, credential/session/library, every normalized filter, order, include and cursor. Prefer request-local reuse first; process TTL only with a new contract. | Uploads/trash/rating/album membership and external changes alter results. Independent count/page snapshots must not create gaps/duplicates or hide new data. Sparse browsing evidence; reject process caching for now. Bound result size and coalesce only identical safe reads; never cache page iterators. |
 | 4. Stack hydration within one read request | Complete member list and cover input for identical stack/state/include/order, within the same backend/credential/library request; bounded by request work. | First demonstrate duplicate hydration not already removed by bulk helpers. A version or membership change invalidates cover assumptions. Keep mutation preconditions and exact-original downloads live; errors and partial pagination cannot become successful cached results. Little observed traffic justifies no build yet. |
@@ -202,10 +206,12 @@ contracts; a narrow lifetime does not excuse an unbounded collection.
 
 ## Decision and follow-up boundary
 
-After authorized deployment of the measurement implementation, verify native
-receipt and produce a matched production baseline. Capacity, TTL, concurrency,
-invalidation and endpoint behavior remain unchanged. Defer the ranked reuse
-candidates until a bounded repeat-read
-measurement demonstrates worthwhile savings; prefer request-local reuse when
-it avoids a new stale-state contract. Any broader authorization/freshness window
-and any production capacity comparison require a separate decision.
+Verify the deployed measurement version, effective settings and native receipt
+under a separately authorized representative workload, then produce a matched
+production baseline. This documentation reconciliation changes no capacity,
+TTL, concurrency, invalidation or endpoint behavior. Keep request-local user
+reuse within its shipped contract; defer candidates 2–4 until bounded
+repeat-read evidence demonstrates worthwhile savings. Prefer request-local
+reuse when it avoids a new stale-state contract. Any broader authorization or
+freshness window and any production capacity comparison require a separate
+decision.
