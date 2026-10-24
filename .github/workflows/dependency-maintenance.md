@@ -88,7 +88,16 @@ engine:
     GIT_AUTHOR_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
     GIT_COMMITTER_NAME: gumnut-bot[bot]
     GIT_COMMITTER_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
-  args: ["-c", "model_provider=\"openai-proxy\"", "-c", "model_reasoning_effort=\"xhigh\""]
+  # gh-aw v0.89.21 emits regex anchors, but Codex uses wildcard filters.
+  # Keep AWF's proxy and setup-action PATH; pass only these named variables.
+  args:
+    - "-c"
+    - 'model_provider="openai-proxy"'
+    - "-c"
+    - 'model_reasoning_effort="xhigh"'
+    - "-c"
+    - >-
+      'shell_environment_policy={inherit="all",include_only=["PATH","HOME","USER","LOGNAME","SHELL","TMPDIR","TEMP","TMP","LANG","LC_ALL","LC_CTYPE","HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY","SSL_CERT_FILE","SSL_CERT_DIR","NODE_EXTRA_CA_CERTS","REQUESTS_CA_BUNDLE","UV_PYTHON_INSTALL_DIR","pythonLocation","GIT_AUTHOR_NAME","GIT_AUTHOR_EMAIL","GIT_COMMITTER_NAME","GIT_COMMITTER_EMAIL"]}'
 sandbox:
   agent:
     version: v0.28.25
@@ -99,7 +108,7 @@ sandbox:
       apiProxy: ghcr.io/github/gh-aw-firewall/api-proxy:0.28.25@sha256:c3c7082e73ba83052c580097e5a9c9c40a11e6f6b6fa0a4710e6859f83a62854
       squid: ghcr.io/github/gh-aw-firewall/squid:0.28.25@sha256:94cac14372280dbf4a08d021d7b5810a9fd7d73c88802e04a9e05551b1cbcd09
 network:
-  allowed: [defaults, github, python, firewall-api.socket.dev]
+  allowed: [defaults, github, python, firewall-api.socket.dev, api.osv.dev]
 safe-outputs:
   staged: false
   timeout-minutes: 10
