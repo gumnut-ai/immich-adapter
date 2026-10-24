@@ -73,7 +73,7 @@ tools:
     toolsets: [repos, issues, pull_requests, actions, users, dependabot]
     # The repository Actions token reads this repo and public upstream evidence.
     allowed-repos: all
-    min-integrity: none
+    min-integrity: approved
 checkout:
   ref: ${{ github.sha }}
   fetch-depth: 0

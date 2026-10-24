@@ -22,7 +22,8 @@ The legacy dependency-snapshot collector stays disabled and is not an input.
 The agent uses the repository Actions token through read-only GitHub tools
 with native `allowed-repos: all`: its current repository and public upstream
 release evidence are accessible, while other private repositories remain outside
-this token's authority. Native sink-visibility checks remain enabled.
+this token's authority. Native `approved` integrity filters upstream content; sink-visibility checks
+remain enabled.
 Native safe outputs publish new PRs or append repairs to eligible existing
 same-repository bot PRs. The SHA-pinned `gumnut-ai/automation` dependency-delivery
 action runs only in the isolated publisher, prepares trusted controls outside
