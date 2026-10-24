@@ -14,12 +14,16 @@ The dispatch-revision `.agents/daemons/dependency-maintenance/DAEMON.md` owns
 selection, deduplication, compatibility, one-code-proposal and two-open-role-PR
 caps, three new commits, and up to five readiness-only handoffs. The role first
 inspects existing dependency PRs and feedback, then uncovered Python, script,
-codegen and compatible Immich pins. Existing Renovate and Dependabot automation
+smoke-test Bun, codegen and compatible Immich pins. Existing Renovate and Dependabot automation
 remains authoritative for its configured coverage and release-age policy.
 Major migrations, generated API rewrites and auth changes require human work.
 The legacy dependency-snapshot collector stays disabled and is not an input.
 
-The agent receives brokered read-only GitHub tools and ordinary local tools.
+The agent uses the repository Actions token through read-only GitHub tools
+with native `allowed-repos: all`: its current repository and public upstream
+release evidence are accessible, while other private repositories remain outside
+this token's authority. Native `approved` integrity filters upstream content; sink-visibility checks
+remain enabled.
 Native safe outputs publish new PRs or append repairs to eligible existing
 same-repository bot PRs. The SHA-pinned `gumnut-ai/automation` dependency-delivery
 action runs only in the isolated publisher, prepares trusted controls outside
@@ -38,6 +42,11 @@ Keep publisher credentials out of the agent; no production service credentials
 are used. Native limits bound individual execution and rolling admission;
 manual dispatch skips the daily admission check. No report or cost-measurement
 pipeline is created.
+
+The smoke-test Bun pin is installed by setup-bun and exposed read-only from
+`/home/runner/.bun/bin/bun` on the selected Linux runner into AWF. Verify its
+version inside the sandbox after deployment. Compatible smoke-test manifests and
+locks may be proposed; production smoke execution remains operator-owned.
 
 Compile with gh-aw v0.89.21:
 

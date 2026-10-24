@@ -17,7 +17,8 @@ def test_dependency_overlay_delivery_and_permissions() -> None:
     assert source[True]["schedule"] == [{"cron": "0 15 * * *"}]
     assert "vars." not in source["if"]
     assert set(source["permissions"].values()) == {"read"}
-    assert source["tools"]["github"]["allowed-repos"] == ["gumnut-ai/immich-adapter"]
+    assert source["tools"]["github"]["allowed-repos"] == "all"
+    assert source["tools"]["github"]["read-only"] is True
     assert source["engine"]["harness"]["max-retries"] == 0
     outputs = source["safe-outputs"]
     assert outputs["environment"] == "gumbot-publisher"
