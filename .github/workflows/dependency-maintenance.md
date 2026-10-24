@@ -59,6 +59,8 @@ runtimes:
   python:
     version: "3.14"
 permissions:
+  checks: read
+  statuses: read
   contents: read
   actions: read
   issues: read

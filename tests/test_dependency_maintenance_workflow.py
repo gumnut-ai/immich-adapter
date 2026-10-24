@@ -17,6 +17,9 @@ def test_dependency_overlay_delivery_and_permissions() -> None:
     assert source[True]["schedule"] == [{"cron": "0 15 * * *"}]
     assert "vars." not in source["if"]
     assert set(source["permissions"].values()) == {"read"}
+    for scope in ("checks", "statuses"):
+        assert source["permissions"][scope] == "read"
+        assert compiled["jobs"]["agent"]["permissions"][scope] == "read"
     assert source["tools"]["github"]["allowed-repos"] == "all"
     assert source["tools"]["github"]["read-only"] is True
     assert source["engine"]["harness"]["max-retries"] == 0
