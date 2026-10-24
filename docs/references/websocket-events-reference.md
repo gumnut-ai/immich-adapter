@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-10-10
+last-updated: 2026-10-23
 ---
 
 # Immich WebSocket Events Reference
@@ -10,26 +10,27 @@ events the adapter does not emit are marked upstream-only.
 
 ## Summary Table
 
-Client columns are read from the pinned upstream source for **both** clients (`web/src/lib/` and `mobile/lib/` at the tag in `.immich-container-tag`); "Not used" means neither registers a handler, not that web alone doesn't.
+Client columns report registered handlers in both pinned upstream clients
+(`web/src/` and `mobile/lib/` at the tag in `.immich-container-tag`).
 
 | Event | Trigger | Payload | Web Client | Mobile Client |
 |-------|---------|---------|------------|---------------|
-| `on_upload_success` | Images: upload write completes; videos: deferred emit to wait for still-image variants | `AssetResponseDto` | Global listener | Legacy listener |
-| `AssetUploadReadyV1` | Emitted alongside `on_upload_success` with the same image/video timing split | `SyncAssetV1` + `SyncAssetExifV1` | Not used | v2 sync protocol |
+| `on_upload_success` | Images: upload write completes; videos: deferred emit to wait for still-image variants | `AssetResponseDto` | Timeline/viewer listeners | Not used |
+| `AssetUploadReadyV1` | Emitted alongside `on_upload_success` with the same image/video timing split | `SyncAssetV1` + `SyncAssetExifV1` | Not used | Batched sync |
 | `AssetEditReadyV2` | Edit-route write commits (PUT and DELETE on `/api/assets/{id}/edits`) | `SyncAssetV2` + `SyncAssetEditV1[]` | Editor apply/remove wait | Upserts asset + edit rows |
 | `on_asset_delete` | Asset permanently deleted | `assetId: string` | Global listener | Listener |
 | `on_asset_trash` | Asset moved to trash | `assetIds: string[]` | Global listener | Listener |
-| `on_asset_restore` | Asset restored from trash | `assetIds: string[]` | Global listener | Listener |
+| `on_asset_restore` | Asset restored from trash | `assetIds: string[]` | Declared, not subscribed | Listener |
 | `on_asset_update` | Sidecar metadata extracted (upstream) / description, location, datetime, favorite, or rating edited, or edit-route write committed (adapter) | `AssetResponseDto` | Global listener | Listener |
-| `on_asset_stack_update` | Stack created/updated/deleted | None | Declared, not subscribed | Not referenced |
-| `on_asset_hidden` | Upstream only: asset visibility changed | `assetId: string` | Global listener | Listener |
-| `on_person_thumbnail` | Upstream only: person thumbnail generated | `personId: string` | Page-specific | Not used |
+| `on_asset_stack_update` | Stack created/updated/deleted | None | Declared, not subscribed | Triggers sync |
+| `on_asset_hidden` | Upstream only: asset visibility changed | `assetId: string` | Declared, not subscribed | Listener |
+| `on_person_thumbnail` | Upstream only: person thumbnail generated | `personId: string` | Global bridge + component listeners | Not used |
 | `on_session_delete` | Session invalidated (upstream) / session deleted (adapter) | `sessionId: string` | Global (triggers logout) | Not used |
 | `on_notification` | Upstream only: in-app notification created | `NotificationDto` | Global (refreshes panel) | Not used |
-| `on_config_update` | Upstream only: system config changed | None | Global listener | Listener |
-| `on_new_release` | Upstream only: new version available | `ReleaseNotification` | Global listener | Listener |
-| `on_server_version` | Connection established | `ServerVersionResponseDto` | Global listener | Not documented |
-| `on_user_delete` | Upstream only: user account deleted | `userId: string` | Global listener | Not documented |
+| `on_config_update` | Upstream only: system config changed | None | Declared, not subscribed | Listener |
+| `on_new_release` | Upstream only: new version available | `ReleaseEventV1` | Global listener | Listener |
+| `on_server_version` | Connection established | `ServerVersionResponseDto` | Global listener | Not used |
+| `on_user_delete` | Upstream only: user account deleted | `userId: string` | Global listener | Not used |
 
 ---
 
@@ -39,36 +40,41 @@ Client columns are read from the pinned upstream source for **both** clients (`w
 
 **Upstream trigger**: Emitted when the `AssetGenerateThumbnails` job completes (`job.service.ts`).
 
-**Adapter trigger**:
-- **Images**: emitted synchronously from the upload handler. Image variants (`thumbnail`, `preview`, `fullsize`) are CDN-resized URLs to the same uploaded file, so they're available the moment the upload write completes.
-- **Videos**: emission is **deferred** by `_VIDEO_EMIT_DELAY_SECONDS` (defined in `routers/api/assets.py`) via a detached `asyncio.create_task`. Video still-image variants (`thumbnail_image`, `preview_image`, `fullsize_image`) live at a separate `derived_path` that only exists after the Gumnut API's ffmpeg extraction finishes — without the delay, the Immich web client receives `on_upload_success`, inserts the asset into the timeline grid, then renders "Error loading image" because the thumbnail URL still 404s. The HTTP `POST /api/assets` 201 response is **not** delayed; only the WebSocket emission waits.
+**Adapter trigger**: Successful uploads, owned by `upload_asset` in
+`routers/api/assets.py`.
+- **Images**: emitted before the HTTP response; CDN-resized image variants
+  are available when the upload commits.
+- **Videos**: deferred to allow the Gumnut API to extract still-image variants
+  before timeline insertion. This delay reduces thumbnail 404s; it does not
+  verify readiness or delay the HTTP `POST /api/assets` 201 response.
 
 **Sent to**: Asset owner (by userId)
 **Payload**: Full `AssetResponseDto` (see `routers/immich_models.py`)
 
 **Client handling**:
-- **Web**: Global listener via `websocketEvents`
-- **Mobile**: Legacy listener; being replaced by `AssetUploadReadyV1`
+- **Web**: Timeline and asset-viewer listeners via `websocketEvents`.
+- **Mobile**: Not used; subscribes to versioned upload-ready events instead.
 
-**Note**: Immich has a TODO to deprecate this in favor of `AssetUploadReadyV1`.
+**Note**: Pinned upstream plans to remove this in favor of its versioned
+upload-ready event (`AssetUploadReadyV2` in `job.service.ts`).
 
 ---
 
 ### `AssetUploadReadyV1`
 
-**Upstream trigger**: Emitted alongside `on_upload_success` when thumbnail generation completes (`job.service.ts`).
+**Upstream status**: Pinned `job.service.ts` emits `AssetUploadReadyV2` alongside
+`on_upload_success` when thumbnail generation completes. The adapter emits V1;
+pinned mobile still accepts and batches it in `WebsocketNotifier`.
 
-**Adapter trigger**:
-- Emitted from the same helper as `on_upload_success`, so the timing stays aligned across both upload-success events.
-- **Images**: emitted synchronously from the upload handler.
-- **Videos**: emitted after the same `_VIDEO_EMIT_DELAY_SECONDS` deferral used for `on_upload_success`, so mobile clients do not hear about a new upload before the video's still-image variants usually exist.
+**Adapter trigger**: Paired with `on_upload_success`, including its synchronous
+image timing and deferred video timing.
 
 **Sent to**: Asset owner (by userId)
 **Payload**: Compact sync format — `SyncAssetV1` asset + `SyncAssetExifV1` exif (see `routers/immich_models.py`). The asset's `stackId` reflects burst-stack membership (mapped via `immich_stack_id`) and is `null` for a loose asset — usually the case at upload time, since bursts are detected afterward.
 
 **Client handling**:
 - **Web**: Not used
-- **Mobile**: v2 sync protocol. Batches events and updates local SQLite database for real-time multi-device sync.
+- **Mobile**: Batches events and updates local SQLite for real-time sync.
 
 ---
 
@@ -76,21 +82,51 @@ Client columns are read from the pinned upstream source for **both** clients (`w
 
 **Upstream trigger**: Emitted when the `AssetEditThumbnailGeneration` job finishes re-rendering an edited asset (`job.service.ts`), for both edit apply and edit removal.
 
-**Adapter trigger**: Emitted from `_emit_edit_committed_events` in `routers/api/assets.py` after an edits-route write commits — a successful `PUT /api/assets/{id}/edits` (append or in-place replace) or `DELETE /api/assets/{id}/edits` (including the idempotent root-current delete, which changes nothing but must still emit). Never emitted on a failed or CAS-losing write.
-
-- **Superseded before the refresh**: when the post-commit retrieve shows another write already replaced this one (`current_version_id` differs), the outcome depends on the winner's kind. A newer `edit`/`edit:*` current version came through these routes — the event's only emitter — and emits its own consistent event, which still resolves this client's wait (it filters on `asset.id` alone), so this request's stale event is suppressed. Any other winner (`original`, `external:*`) never emits, so this request emits the refreshed asset row with an empty edit list instead, matching how GET reads root and opaque tips.
-- **Readiness wait**: the adapter bakes synchronously inside the request, but the event means "the edited renders are ready to fetch": on receipt the clients re-read the asset and key image URLs on `thumbhash` (the `c=` cache param), which the Gumnut API recomputes from the new current version in a background task. So before emitting, the adapter polls the asset until `thumbhash` rotates away from its pre-commit value (`_retrieve_asset_for_edit_event`); at the deadline it emits anyway — the commit is durable and the next asset read heals the display. The deadline is measured from route entry, not from the commit: both clients arm their 10-second wait *before* sending, so a slow render and upload spend from the same budget, and a commit inside the window never has its event pushed past it by the poll (a late poll would trade a success with a briefly stale cache key for a failure toast on a durable write). Writes that store nothing skip the wait: the idempotent root-current delete, and a PUT whose rendered bytes and params exactly duplicate the current version (an unchanged re-save; the Gumnut API answers `200` with the existing version instead of `201`).
-- **Ordering**: the emission is awaited just before returning, so the event precedes the HTTP response.
-- **Failure semantics**: everything after the durable write is best-effort — transport failures are swallowed, and if the post-commit asset read or payload conversion fails, the route logs, returns success, and emits neither event. The client's wait then times out, and its retry re-applies the same wholesale recipe idempotently, whereas a 5xx would misreport a committed write as failed.
+**Adapter trigger**: Successful `PUT`/`DELETE /api/assets/{id}/edits`, including
+unchanged re-saves and idempotent root-current deletes. Failed or CAS-losing
+writes never emit. The route owners are `apply_asset_edits` and
+`remove_asset_edits` in `routers/api/assets.py`.
 
 **Sent to**: Asset owner (by userId)
 **Payload**: `{ asset: SyncAssetV2, edit: SyncAssetEditV1[] }` — the refreshed sync asset row plus the complete current edit-action list (empty after a delete). See `AssetEditReadyV2Payload` in `services/websockets.py`.
 
+**Readiness and durability**:
+- Wait for the refreshed `thumbhash`, the clients' image cache key, before
+  notifying. The Gumnut API refreshes it asynchronously after the rendered
+  bytes commit. The readiness deadline is measured from **route entry**:
+  rendering and upload share the web editor's already-running 10-second
+  budget. At the deadline, emit the available state rather than extending the
+  readiness wait; the write is durable and a later asset read heals a stale
+  cache key. Writes storing nothing need no readiness wait.
+- Never pair a stale recipe with a newer asset. A superseding `edit`/`edit:*`
+  write emits its own consistent event, satisfying the web wait's asset-ID
+  filter, so suppress the older notification. A superseding root or opaque
+  (`external:*`) writer does not emit this event; publish its refreshed state
+  with an empty edit list instead.
+- Notification is awaited before the HTTP response, but post-commit refresh,
+  payload conversion, and transport failures remain best-effort: log and keep
+  the committed write successful, even if an event is lost. A notification
+  timeout must not be mistaken for a rolled-back write. Normal sync converges
+  asset metadata, but its `AssetEditsV1` pass is a no-op: it cannot recover a
+  missed edit-recipe payload.
+
 **Client handling**:
-- **Web**: The editor's apply flow registers a one-shot 10-second wait for this event, filtered on `payload.asset.id`, *before* sending the PUT/DELETE, and treats a timeout as a failed apply. A normal committed edit write emits exactly one event; a durable write may still return success without an event if post-commit refresh or payload conversion fails (see **Failure semantics**).
-- **Mobile**: Its editor's `applyEdits` arms the same 10-second `asset.id`-filtered wait before the PUT/DELETE. On receipt the event is dispatched to `syncWebsocketEditV2`, which upserts `payload.asset` through the v2 asset-sync path and replaces the asset's local edit rows with `payload.edit` (an event arriving while one is still processing is dropped, not queued). A malformed payload (non-object, missing `asset`) is logged and dropped, so the adapter must always send both fields.
+- **Web**: `EditManager.applyEdits` registers an asset-ID-filtered, one-shot
+  10-second wait **before** the PUT/DELETE and reports timeout as a failed apply.
+- **Mobile**: `applyEdits` waits for either edit-ready version **after** the HTTP
+  apply completes, swallowing timeout errors. The adapter's pre-response emit
+  can arrive before this listener is registered, leaving the action waiting
+  for the full 10-second timeout even though the write succeeded.
+  Independently, its socket handler
+  upserts `asset` through v2 sync and replaces local edit rows with `edit`.
+  Malformed payloads are logged and dropped; both fields are required. Events
+  arriving while WebSocket sync is busy are dropped rather than queued.
 
 **Companion event**: the same commit also emits `on_asset_update` with the full refreshed `AssetResponseDto`, which the editor panel and timeline use to refresh `isEdited`, dimensions, MIME type, and URLs without a reload.
+
+Pinned client owners: [web editor](https://github.com/immich-app/immich/blob/v3.2.0/web/src/lib/managers/edit/edit-manager.svelte.ts),
+[mobile editor](https://github.com/immich-app/immich/blob/v3.2.0/mobile/lib/presentation/actions/edit_asset.action.dart),
+and [mobile sync](https://github.com/immich-app/immich/blob/v3.2.0/mobile/lib/domain/services/sync_stream.service.dart).
 
 ---
 
@@ -136,19 +172,22 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`, and t
 ### `on_asset_stack_update`
 
 **Sent to**: Stack owner (by userId)
-**Payload**: none — the event carries no data (see below)
+**Payload**: none. Do not send an ID array; the upstream repository's
+`string[]` type is a rest parameter permitting zero arguments. The adapter's
+wire contract is owned by `services/websockets.py::WebSocketEvent.STACK_UPDATE`.
 
 **Trigger**:
 - **Upstream Immich**: emitted from `notification.service.ts` on `StackCreate`, `StackUpdate`, `StackDelete`, and `StackDeleteAll`.
-- **immich-adapter**: emitted from the five mutating stack routes in `routers/api/stacks.py`, one emit per successful mutation — `create_stack`, `update_stack` (whenever the PUT supplies `primaryAssetId`; a cover-less PUT is a pure read and emits nothing), `remove_asset_from_stack`, `delete_stack`, and `delete_stacks` (a single emit after a clean bulk dissolve). All are scoped to the owning user's room.
-
-**Payload shape**: none. Upstream calls `clientSend('on_asset_stack_update', userId)` with no data argument — the repository type `on_asset_stack_update: string[]` is a rest-param (`...data: string[]`) that spreads to zero args, not an id array. The adapter therefore emits with `payload=None` via `emit_user_event`, never `emit_user_event_per_id`.
+- **immich-adapter**: successful stack mutations in `routers/api/stacks.py`
+  notify once per mutation, including once for a clean bulk dissolve. Read-only
+  requests and partial bulk failures do not emit.
 
 **Client handling**:
 - **Web**: Declared in the `Events` type map but **not subscribed** — no `.on('on_asset_stack_update', …)` handler is registered.
-- **Mobile**: Not referenced.
+- **Mobile**: `WebsocketNotifier` subscribes and enqueues remote sync in
+  [the pinned socket provider](https://github.com/immich-app/immich/blob/v3.2.0/mobile/lib/providers/websocket.provider.dart).
 
-**Note**: Because no current Immich client subscribes, this emission is upstream-parity / forward-compat rather than an immediate UI trigger. The durable convergence path for stack changes is the event-driven sync stream, not this hint.
+The event is a best-effort sync hint; the sync stream owns durable convergence.
 
 ---
 
@@ -160,7 +199,7 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`, and t
 **Payload**: `assetId: string`
 
 **Client handling**:
-- **Web**: Global listener
+- **Web**: Declared, not subscribed.
 - **Mobile**: Listener
 
 ---
@@ -179,10 +218,12 @@ event channel, but has no current emission call site.
 `/api/people/${personId}/thumbnail?updatedAt=${person.updatedAt}`
 ```
 
-When received, the client updates `person.updatedAt` to force the browser to fetch the fresh thumbnail.
+People views refresh their thumbnail cache key on receipt.
 
 **Client handling**:
-- **Web**: Page-specific listener (not global). Only active on `/explore`, `/people`, `/people/[personId]`. When on other pages, the event is received but ignored.
+- **Web**: `websocket.ts` globally bridges to `PersonThumbnailReady` for
+  component consumers, including explore and the face side panel. People pages
+  also subscribe directly to refresh thumbnail cache keys.
 - **Mobile**: Does NOT listen to this event.
 
 ---
@@ -199,7 +240,7 @@ When received, the client updates `person.updatedAt` to force the browser to fet
 - Password change with `invalidateSessions: true` (does NOT emit individual events)
 
 **Client handling**:
-- **Web**: Global listener. Triggers `authManager.logout()`.
+- **Web**: Global listener. Triggers logout navigation through the auth manager.
 - **Mobile**: Not used.
 
 **Adapter timing**: Logout and session-deletion requests await
@@ -242,10 +283,10 @@ Otherwise as in the Summary Table; emitted from `notification.service.ts`.
 **Trigger**: Emitted when background job detects new GitHub release (`version.service.ts`).
 **Adapter status**: Upstream-only; this adapter does not emit this event.
 **Sent to**: All connected clients (broadcast)
-**Payload**: `ReleaseNotification` (see `routers/immich_models.py`)
+**Payload**: `ReleaseEventV1` (see `routers/immich_models.py`)
 
 **Client handling**:
-- **Web**: Global listener. Updates `websocketStore.release`.
+- **Web**: Global listener. Dispatches `ReleaseEvent` to the release manager.
 - **Mobile**: Listener
 
 ---
@@ -273,8 +314,14 @@ Per-event subscriptions are listed in the Summary Table's Web/Mobile columns and
 
 ### Web Client (`websocket.ts`)
 
-A few events have **global listeners** that are always active when connected (`on_server_version`, `on_new_release`, `on_session_delete`, `on_notification`). The rest are **page-specific listeners** subscribed via `websocketEvents.on()` — notably `on_person_thumbnail`, which is only active on people-related pages.
+`websocket.ts` owns global socket listeners, often bridging into the app event
+manager. Components and pages can also subscribe directly via
+`websocketEvents.on()`. A declaration in the `Events` type map alone does not
+register a listener.
 
 ### Mobile Client (`websocket.provider.dart`)
 
-The mobile client uses `AssetUploadReadyV1` in v2 sync mode and the `on_asset_*` events in legacy mode (see the Summary Table). It does not listen to `on_person_thumbnail`, `on_session_delete`, or `on_notification`.
+The mobile client registers both upload-ready versions, `AssetEditReadyV2`,
+and the `on_asset_*` sync hints without a legacy-mode switch. It does not
+listen to `on_upload_success`, `on_person_thumbnail`, `on_session_delete`,
+or `on_notification`.

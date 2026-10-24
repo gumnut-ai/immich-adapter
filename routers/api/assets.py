@@ -1611,7 +1611,7 @@ def _edit_rows_to_sync_edits(
 
 # AssetEditReadyV2 means "the edited renders are ready to fetch", so its
 # retrieve waits for the refreshed thumbhash (the client's image cache key)
-# to land. Both clients arm a 10-second wait for the event *before* sending
+# to land. Immich web arms a 10-second wait for the event *before* sending
 # the request, so the deadline is measured from route entry — the render and
 # upload spend from the same budget — with margin for request latency.
 _EDIT_EVENT_DEADLINE_SECONDS = 8.5

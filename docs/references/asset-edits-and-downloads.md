@@ -1,6 +1,6 @@
 ---
 title: "Asset Edits and Downloads"
-last-updated: 2026-10-01
+last-updated: 2026-10-23
 ---
 
 # Asset Edits and Downloads
@@ -77,8 +77,9 @@ exactly `0`, `90`, `180`, or `270` degrees. Other integers within the generated
 bounds are rejected with HTTP 400. Values that fail model validation return HTTP
 422. The internal validation code is `invalid_angle`; the HTTP response exposes
 only the explanatory message.
-The emission contract for committed writes is owned by
-`docs/references/websocket-events-reference.md` § `AssetEditReadyV2`.
+The [edit-event contract](websocket-events-reference.md#asseteditreadyv2)
+owns readiness deadlines, supersession, and best-effort committed-write
+notifications.
 
 **Suppress face geometry while an edited rendering is current.** Gumnut stores
 face boxes in the original upload's pixel space, so they are invalid over
