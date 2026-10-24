@@ -114,7 +114,10 @@ writes never emit. The route owners are `apply_asset_edits` and
 - **Web**: `EditManager.applyEdits` registers an asset-ID-filtered, one-shot
   10-second wait **before** the PUT/DELETE and reports timeout as a failed apply.
 - **Mobile**: `applyEdits` waits for either edit-ready version **after** the HTTP
-  apply completes, swallowing timeout errors. Independently, its socket handler
+  apply completes, swallowing timeout errors. The adapter's pre-response emit
+  can arrive before this listener is registered, leaving the action waiting
+  for the full 10-second timeout even though the write succeeded.
+  Independently, its socket handler
   upserts `asset` through v2 sync and replaces local edit rows with `edit`.
   Malformed payloads are logged and dropped; both fields are required. Events
   arriving while WebSocket sync is busy are dropped rather than queued.
