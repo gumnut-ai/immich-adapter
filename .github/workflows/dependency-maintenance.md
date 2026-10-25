@@ -179,7 +179,7 @@ safe-outputs:
           type: string
           required: true
         reviewer:
-          description: Eligible human login selected using contribution history and repository access.
+          description: Human candidate selected from contribution history; publisher verifies account and repository write access.
           type: string
           required: true
       script: |
@@ -240,7 +240,7 @@ pre-agent-steps:
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/dependency-maintenance.md@a5ac3c62a1cf69a8a325cb8e2f3abfb6ebe7cc33
+  - gumnut-ai/automation/daemons/dependency-maintenance.md@7c0711437a246b526bb2fbc127ac778c97dbbc83
 
 ---
 
