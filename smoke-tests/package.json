@@ -14,7 +14,7 @@
     "checkly:deploy": "checkly deploy --config checkly.config.ts --no-schedule-on-deploy --force"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
+    "@playwright/test": "1.64.0",
     "@types/node": "24.13.3",
     "checkly": "8.20.0",
     "typescript": "5.9.3"
