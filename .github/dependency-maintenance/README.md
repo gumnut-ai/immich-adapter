@@ -72,5 +72,5 @@ suite; no separate CI dispatcher or duplicate quality gate is needed.
 Local compile helpers load `native-toolchain` from the same immutable
 `.shared-automation` checkout as workflow CI. Common detector, action-annotation
 and publisher-permission compatibility is owned by
-[`automation`](https://github.com/gumnut-ai/automation/tree/6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c/native-toolchain);
+[`automation`](https://github.com/gumnut-ai/automation/tree/187e77e153bd935ee55e56082f4aeea4a27aa67d/native-toolchain);
 Repository-specific policy corrections remain local.

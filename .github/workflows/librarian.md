@@ -138,9 +138,14 @@ safe-outputs:
       if: contains(needs.agent.outputs.output_types, 'create_pull_request')
       env:
         GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      uses: gumnut-ai/automation/actions/daemon-delivery@6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/daemon-delivery@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
       with:
         validate-proposal: true
+    - name: Validate every captured native proposal
+      if: contains(needs.agent.outputs.output_types, 'create_pull_request')
+      env:
+        GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
+      run: node "$DAEMON_DELIVERY_TRUSTED/native-transport.cjs" -- node "$GITHUB_WORKSPACE/.github/librarian/validate-patch.cjs"
   noop:
     report-as-issue: false
   missing-tool:
@@ -178,7 +183,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: gumnut-ai/automation
-          ref: 6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c
+          ref: 187e77e153bd935ee55e56082f4aeea4a27aa67d
           path: .shared-automation
           persist-credentials: false
           sparse-checkout: daemon-delivery
@@ -245,17 +250,6 @@ pre-agent-steps:
         --env "UV_CACHE_DIR=$UV_CACHE_DIR" -- \
         'bash scripts/check_librarian_environment.sh'
 post-steps:
-  - name: Verify proposal commit identity
-    shell: bash
-    run: |
-      awf --container-workdir "$GITHUB_WORKSPACE" --env "GITHUB_SHA=$GITHUB_SHA" -- \
-        /bin/bash -c '
-          set -euo pipefail
-          git log "$GITHUB_SHA..HEAD" --format="%an|%ae|%cn|%ce" |
-            while IFS= read -r identity; do
-              [[ "$identity" == "gumnut-bot[bot]|333470196+gumnut-bot[bot]@users.noreply.github.com|gumnut-bot[bot]|333470196+gumnut-bot[bot]@users.noreply.github.com" ]] || exit 1
-            done
-        '
   - name: Report librarian outcome
     if: always()
     shell: bash

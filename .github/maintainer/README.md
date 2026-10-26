@@ -20,10 +20,13 @@ following repository dependency policy and verification guidance. Existing
 configuration protection, isolated publishing and human handoff remain intact.
 Cleanup needs neither an alert-reader credential nor an indexing receipt.
 
-The workflow prepares pinned tools and preserves trusted candidate guards before
-inference. The agent investigates useful changes and runs checks under repository
-guidance, including required local checks. Trusted host validation enforces basic
-scope, configuration and commit identity before isolated publication. Ordinary test
+The workflow prepares pinned tools before inference. The agent investigates useful changes and runs checks under repository
+guidance, including required local checks. Before native publication, a shared
+preflight reconstructs every captured
+bundle or patch and runs the dispatch-source validator outside that candidate.
+It enforces scope, configuration and commit identity for the exact artifact,
+independently of the agent’s final checkout. The stdlib-only manifest check uses
+publisher Python 3.11+ without installing project dependencies. Ordinary test
 refactors and coverage additions are eligible; test-runner controls, automation,
 policy and migration paths remain protected. The path guard does not prove test
 semantics. It identifies controls by their actual paths or runner-discovered
@@ -98,5 +101,5 @@ Primary contracts:
 Local compile helpers load `native-toolchain` from the same immutable
 `.shared-automation` checkout as workflow CI. Common detector, action-annotation
 and publisher-permission compatibility is owned by
-[`automation`](https://github.com/gumnut-ai/automation/tree/6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c/native-toolchain);
+[`automation`](https://github.com/gumnut-ai/automation/tree/187e77e153bd935ee55e56082f4aeea4a27aa67d/native-toolchain);
 Repository-specific policy corrections remain local.

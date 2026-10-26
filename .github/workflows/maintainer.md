@@ -139,9 +139,14 @@ safe-outputs:
       if: contains(needs.agent.outputs.output_types, 'create_pull_request')
       env:
         GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      uses: gumnut-ai/automation/actions/daemon-delivery@6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/daemon-delivery@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
       with:
         validate-proposal: true
+    - name: Validate every captured native proposal
+      if: contains(needs.agent.outputs.output_types, 'create_pull_request')
+      env:
+        GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
+      run: node "$DAEMON_DELIVERY_TRUSTED/native-transport.cjs" -- node "$GITHUB_WORKSPACE/.github/maintainer/validate-patch.cjs"
   noop:
     report-as-issue: false
   missing-tool:
@@ -179,7 +184,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: gumnut-ai/automation
-          ref: 6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c
+          ref: 187e77e153bd935ee55e56082f4aeea4a27aa67d
           path: .shared-automation
           persist-credentials: false
           sparse-checkout: daemon-delivery
@@ -230,15 +235,12 @@ pre-agent-steps:
     with:
       node-version: "24.21.0"
       package-manager-cache: false
-  - name: Preserve trusted candidate guards
+  - name: Set proposal commit identity
     run: |
-      mkdir -p "$RUNNER_TEMP/maintainer-trusted"
-      git show "$GITHUB_SHA:.github/maintainer/validate-patch.cjs" > "$RUNNER_TEMP/maintainer-trusted/validate-patch.cjs"
-      git show "$GITHUB_SHA:.github/maintainer/validate-pyproject.py" > "$RUNNER_TEMP/maintainer-trusted/validate-pyproject.py"
       git config user.name 'gumnut-bot[bot]'
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 post-steps:
-  - name: Reject interrupted budgets and validate candidate boundaries
+  - name: Reject interrupted budgets
     env:
       INFERENCE: ${{ steps.agentic_execution.outcome }}
       AGENT_TIMEOUT: ${{ steps.detect-agent-errors.outputs.agentic_engine_timeout }}
@@ -251,7 +253,6 @@ post-steps:
       const {parseMaxAICreditsExceededFromAuditLog} = require(path.join(process.env.RUNNER_TEMP, 'gh-aw/actions/ai_credits_context.cjs'));
       if (parseMaxAICreditsExceededFromAuditLog()) process.exit(1);
       NODEBUDGET
-      node "$RUNNER_TEMP/maintainer-trusted/validate-patch.cjs"
 inlined-imports: true
 imports:
   - gumnut-ai/automation/daemons/codebase-maintainer.md@ec2bba2086ad77a4db2a13aa17ac97b3b2149463

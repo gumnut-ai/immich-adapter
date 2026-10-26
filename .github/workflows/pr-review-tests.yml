@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: gumnut-ai/automation
-          ref: 6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c
+          ref: 187e77e153bd935ee55e56082f4aeea4a27aa67d
           path: .shared-automation
           persist-credentials: false
           sparse-checkout: |

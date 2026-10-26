@@ -188,7 +188,7 @@ safe-outputs:
   steps:
     # Reviewed immutable commit includes delivery repairs beyond the released tag.
     - name: Constrain native dependency delivery
-      uses: gumnut-ai/automation/actions/dependency-delivery@6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/dependency-delivery@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
   noop:
     report-as-issue: false
   missing-tool:
@@ -241,7 +241,7 @@ pre-agent-steps:
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/dependency-maintenance.md@6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c
+  - gumnut-ai/automation/daemons/dependency-maintenance.md@187e77e153bd935ee55e56082f4aeea4a27aa67d
 
 ---
 

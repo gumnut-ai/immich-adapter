@@ -1,4 +1,4 @@
-// Trusted dispatch-revision validator, mounted read-only outside the candidate.
+// Trusted dispatch-revision validator, executed outside the candidate tree.
 const {execFileSync}=require('node:child_process');
 const fs=require('node:fs');
 const {join}=require('node:path');
@@ -28,7 +28,7 @@ for(const path of paths){
    throw Error('sensitive policy/config/migration file requires escalation: '+path);
  if(/(^|\/)pyproject\.toml$/.test(path)){
    const old=git('show',base+':'+path), now=fs.readFileSync(path,'utf8');
-   execFileSync('uv', ['run', '--no-project', '--no-config', 'python',
+   execFileSync('python3', [
      join(__dirname, 'validate-pyproject.py')],
      {input: JSON.stringify([old, now]), encoding:'utf8'});
  }
