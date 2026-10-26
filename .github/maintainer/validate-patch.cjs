@@ -6,7 +6,7 @@ const git=(...args)=>execFileSync('git',args,{encoding:'utf8'});
 const base=process.env.GITHUB_SHA;
 if(!/^[0-9a-f]{40}$/.test(base||'')) throw Error('missing immutable dispatch revision');
 if(git('status','--porcelain').trim()) throw Error('candidate must be fully committed');
-const paths=git('diff','--name-only',base,'HEAD').trim().split('\n').filter(Boolean);
+const paths=git('diff','--no-renames','--name-only',base,'HEAD').trim().split('\n').filter(Boolean);
 // Ordinary tests may change; runner controls remain protected. Test weakening
 // is a semantic deny rule assessed by detection and independent review.
 // Match controls by their actual location or automatic-discovery basename.

@@ -39,6 +39,7 @@ async function verifyDelivery({
     pr = (await github.rest.pulls.get({ owner, repo, pull_number: number }))
       .data;
     report(`PR: ${pr.html_url}\nPublished head: ${pr.head.sha}`);
+    report("Readback scope: this native PR receipt only. Additional published PRs are not checked here; native status covers publication processing, not aggregate reviewer or CI readiness.");
     if (!hasPR || hasNoop)
       failures.push("published PR conflicts with terminal output");
     if (
@@ -124,7 +125,7 @@ async function verifyDelivery({
     throw new Error(
       `Incomplete delivery: ${failures.join("; ")}. Retain any published PR for maintainer follow-up.`,
     );
-  return pr ? "delivery-verified" : "noop-awaiting-native-conclusion";
+  return pr ? "first-created-pr-readback-verified" : "noop-awaiting-native-conclusion";
 }
 
 module.exports = { verifyDelivery };

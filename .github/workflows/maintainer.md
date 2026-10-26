@@ -200,7 +200,7 @@ jobs:
             try {
               const result = await verifyDelivery({ github, context, env: process.env,
                 report: text => core.summary.addRaw(text + '\n\n') });
-              core.summary.addRaw('Handoff check: ' + result + '\nNative conclusion and the final Actions status determine run completion.\n');
+              core.summary.addRaw('Receipt readback: ' + result + '\nNative conclusion covers publication processing; this readback does not establish aggregate reviewer or CI readiness.\n');
             } catch (error) {
               core.summary.addRaw('Result: incomplete\n' + error.message + '\n');
               core.setFailed(error.message);

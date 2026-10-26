@@ -9,7 +9,9 @@ Common maintainer and librarian instructions are imported from an immutable
 `automation` revision and embedded during compilation. Local daemon policies
 retain scope, limits, required checks and exceptions. The pinned shared
 `actions/daemon-delivery` adapter owns native reviewer target resolution and
-account exclusions; repository delivery readback remains local.
+account exclusions; repository delivery readback remains local. It checks the first native created-PR
+receipt only; native status covers publication processing, not aggregate reviewer
+or CI readiness.
 
 `maintainer.md` runs daily codebase maintenance when `MAINTAINER_ENABLED=true`.
 Routine dependency scans and security-alert polling are no longer agent goals.
@@ -96,5 +98,5 @@ Primary contracts:
 Local compile helpers load `native-toolchain` from the same immutable
 `.shared-automation` checkout as workflow CI. Common detector, action-annotation
 and publisher-permission compatibility is owned by
-[`automation`](https://github.com/gumnut-ai/automation/tree/c16a498466eb1ebac6451b581b6cb76163b6f5ce/native-toolchain);
+[`automation`](https://github.com/gumnut-ai/automation/tree/6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c/native-toolchain);
 Repository-specific policy corrections remain local.

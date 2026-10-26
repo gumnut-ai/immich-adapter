@@ -160,7 +160,7 @@ event-driven jobs; GitHub schedules can be delayed. The workflow owns the interv
 The coordinator and request routing are maintained in
 [gumnut-ai/automation](https://github.com/gumnut-ai/automation), using the same
 immutable commit as the Claude review workflow. The canonical
-[standing approval policy](https://github.com/gumnut-ai/automation/blob/c16a498466eb1ebac6451b581b6cb76163b6f5ce/README.md#standing-approval-policy)
+[standing approval policy](https://github.com/gumnut-ai/automation/blob/6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c/README.md#standing-approval-policy)
 describes the shared decision rules. This repository retains event sources,
 schedules, permissions, activation modes and the protected publisher environment.
 Shared implementation tests run in the automation repository.

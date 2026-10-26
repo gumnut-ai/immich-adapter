@@ -34,9 +34,11 @@ stops new admissions; cancel any admitted run separately if needed.
 ## Runtime evidence
 
 Native safe outputs own proposal/noop completion and publication. The delivery
-job reads back the bot author and committer identities, one recorded human
-review request, and registration of `.github/workflows/ci.yml` on the published
-HEAD. That handoff does not mean CI passed or the human approved the proposal.
+job checks the first native created-PR receipt: bot identities, a recorded human
+review request and registration of `.github/workflows/ci.yml` at that head. Other
+published PRs are outside this readback; native status covers publication
+processing, not aggregate handoff readiness. This does not prove CI passed or
+human approval.
 Keep incomplete publication visible for maintainer follow-up.
 
 Native AI credit limits are estimates, not provider invoice ceilings. The source

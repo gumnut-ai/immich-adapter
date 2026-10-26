@@ -89,5 +89,5 @@ claim the monthly goal from per-run settings.
 Local compile helpers load `native-toolchain` from the same immutable
 `.shared-automation` checkout as workflow CI. Common detector, action-annotation
 and publisher-permission compatibility is owned by
-[`automation`](https://github.com/gumnut-ai/automation/tree/c16a498466eb1ebac6451b581b6cb76163b6f5ce/native-toolchain);
+[`automation`](https://github.com/gumnut-ai/automation/tree/6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c/native-toolchain);
 Repository-specific policy corrections remain local.
