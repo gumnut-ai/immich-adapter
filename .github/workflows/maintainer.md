@@ -138,7 +138,7 @@ safe-outputs:
       if: contains(needs.agent.outputs.output_types, 'create_pull_request')
       env:
         GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      uses: gumnut-ai/automation/actions/daemon-delivery@ec2bba2086ad77a4db2a13aa17ac97b3b2149463 # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/daemon-delivery@c16a498466eb1ebac6451b581b6cb76163b6f5ce # zizmor: ignore[ref-version-mismatch]
       with:
         validate-proposal: true
   noop:
@@ -178,7 +178,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: gumnut-ai/automation
-          ref: ec2bba2086ad77a4db2a13aa17ac97b3b2149463
+          ref: c16a498466eb1ebac6451b581b6cb76163b6f5ce
           path: .shared-automation
           persist-credentials: false
           sparse-checkout: daemon-delivery
@@ -289,8 +289,10 @@ independent review assesses behavioral equivalence and maintenance value. Record
 completed checks and failures accurately, and label unrun checks as pending.
 Do not use sudo or start a nested AWF runtime from this confined session. No paid
 provider/service credentials may be used for tests. Runtime preparation failure
-is incomplete work. Preserve supply-chain config and existing tests unchanged;
-if a valid upgrade requires changing either, surface for human escalation.
+is incomplete work. Preserve supply-chain and test-runner configuration. Behavior-preserving test
+refactors and coverage additions are eligible; never delete, skip, xfail or weaken
+tests to make checks pass. Escalate changes to automation, policy, configuration
+or migrations.
 The publisher may further block a
 DAEMON-allowed sensitive file; report that delivery blocker, never evade it.
 

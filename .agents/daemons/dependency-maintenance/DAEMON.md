@@ -78,7 +78,9 @@ and emit no duplicate action for the same PR. The isolated operation executes
 the selected action once and reads it back; a failure is an incomplete handoff.
 Emit at most five readiness-only handoffs per activation.
 
-Use native no-op only after completed discovery finds no useful code work or
-handoff. Missing evidence/tools, denied resources and failed checks are incomplete
-work; use native `missing_data` or `missing_tool`, not no-op. Keep verified findings and capacity deferrals visible in native outcomes.
+Follow the shared outcome rules: noop requires completed no-work discovery;
+blocked investigation or selected-proposal checks require `report_incomplete`
+when no validated delivery can proceed. Keep unrelated discovery gaps and
+capacity deferrals in the proposal body and native activation context without
+combining successful delivery with an incomplete signal.
 This daemon creates no separate report and performs no cost measurement.

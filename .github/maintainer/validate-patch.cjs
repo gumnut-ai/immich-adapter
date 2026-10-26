@@ -7,9 +7,11 @@ const base=process.env.GITHUB_SHA;
 if(!/^[0-9a-f]{40}$/.test(base||'')) throw Error('missing immutable dispatch revision');
 if(git('status','--porcelain').trim()) throw Error('candidate must be fully committed');
 const paths=git('diff','--name-only',base,'HEAD').trim().split('\n').filter(Boolean);
+// Ordinary tests may change; runner controls remain protected. Test weakening
+// is a semantic deny rule assessed by detection and independent review.
 for(const path of paths){
- if(path.startsWith('.') || /(^|\/)(tests?|__tests__|database\/alembic\/versions)(\/|$)/.test(path) || /(^|\/)([^/]*config[^/]*|AGENTS\.md|DAEMON\.md|Dockerfile|render\.yaml|[^/]*\.ya?ml)$/.test(path))
-   throw Error('sensitive policy/test/config file requires escalation: '+path);
+ if(path.startsWith('.') || /(^|\/)(conftest\.py|pytest\.ini|setup\.cfg|tox\.ini)(\/|$)/.test(path) || /(^|\/)database\/alembic\/versions(\/|$)/.test(path) || /(^|\/)([^/]*config[^/]*|AGENTS\.md|DAEMON\.md|Dockerfile|render\.yaml|[^/]*\.ya?ml)$/.test(path))
+   throw Error('sensitive policy/config/migration file requires escalation: '+path);
  if(/(^|\/)pyproject\.toml$/.test(path)){
    const old=git('show',base+':'+path), now=fs.readFileSync(path,'utf8');
    execFileSync('uv', ['run', '--no-project', '--no-config', 'python',

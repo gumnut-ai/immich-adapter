@@ -31,7 +31,13 @@ the candidate checkout, constrains output targets and reads back human handoffs.
 It exposes `DEPENDENCY_MAINTENANCE_TRUSTED` for the native handoff handler.
 Workflows and active automation controls remain native protected files; a
 blocked update is a human delivery blocker. CI and independent human review
-remain required. The overlay never approves, merges, replaces or closes PRs.
+remain required. A selected proposal must pass its own required checks before
+publication. An incomplete audit of unrelated roots does not block independently
+validated delivery; the PR body and native activation outcome retain inspected
+and deferred roots, missing evidence and coverage limitations. If blocked
+investigation or selected-proposal checks leave no validated work to deliver,
+use `report_incomplete`; do not combine successful delivery with an incomplete
+signal. The overlay never approves, merges, replaces or closes PRs.
 A readiness handoff requires the unchanged exact head to have passing required
 checks, no actionable findings and known mergeability with main.
 
@@ -66,5 +72,5 @@ suite; no separate CI dispatcher or duplicate quality gate is needed.
 Local compile helpers load `native-toolchain` from the same immutable
 `.shared-automation` checkout as workflow CI. Common detector, action-annotation
 and publisher-permission compatibility is owned by
-[`automation`](https://github.com/gumnut-ai/automation/tree/ec2bba2086ad77a4db2a13aa17ac97b3b2149463/native-toolchain);
+[`automation`](https://github.com/gumnut-ai/automation/tree/c16a498466eb1ebac6451b581b6cb76163b6f5ce/native-toolchain);
 Repository-specific policy corrections remain local.
