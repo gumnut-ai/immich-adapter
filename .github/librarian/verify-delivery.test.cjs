@@ -79,7 +79,7 @@ function fixture() {
 
 test("reads back App identity, both commit identities, human request, and CI on final head", async () => {
   const f = fixture();
-  assert.equal(await verifyDelivery(f.args), "delivery-verified");
+  assert.equal(await verifyDelivery(f.args), "first-created-pr-readback-verified");
   assert.match(f.reports.join("\n"), /actions\/runs\/8/);
 });
 

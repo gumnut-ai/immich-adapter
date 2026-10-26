@@ -47,7 +47,7 @@ jobs:
           ref: ${{ github.sha }} # PR target SHA, never the contributor head.
           persist-credentials: false
       - name: Dispatch trusted reviewer
-        uses: gumnut-ai/automation/actions/claude-dispatch@4d6cc8a814a4a790c1252d5a7ad72c7ce585ee77 # v0.1.2
+        uses: gumnut-ai/automation/actions/claude-dispatch@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
         with:
           enabled: ${{ vars.CLAUDE_PR_REVIEW_ENABLED }}
 
@@ -79,7 +79,7 @@ jobs:
 
       - name: Validate review request and prepare isolated runtime
         id: prepare
-        uses: gumnut-ai/automation/actions/claude-prepare@4d6cc8a814a4a790c1252d5a7ad72c7ce585ee77 # v0.1.2
+        uses: gumnut-ai/automation/actions/claude-prepare@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
         with:
           enabled: ${{ vars.CLAUDE_PR_REVIEW_ENABLED }}
 
@@ -120,7 +120,7 @@ jobs:
 
       - name: Report review execution and sanitized usage
         if: always()
-        uses: gumnut-ai/automation/actions/claude-report@4d6cc8a814a4a790c1252d5a7ad72c7ce585ee77 # v0.1.2
+        uses: gumnut-ai/automation/actions/claude-report@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
         with:
           eligible: ${{ steps.prepare.outputs.eligible }}
           check-id: ${{ steps.prepare.outputs.check_id }}

@@ -41,7 +41,7 @@ jobs:
           package-manager-cache: false
       - name: Re-fetch routing metadata
         id: route
-        uses: gumnut-ai/automation/actions/pr-approval@4d6cc8a814a4a790c1252d5a7ad72c7ce585ee77 # v0.1.2
+        uses: gumnut-ai/automation/actions/pr-approval@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
         with:
           operation: route
           mode: ${{ vars.PR_APPROVAL_MODE }}
@@ -49,7 +49,7 @@ jobs:
       - name: Assess standing sign-offs
         id: inspect
         if: steps.route.outputs.eligible == 'true'
-        uses: gumnut-ai/automation/actions/pr-approval@4d6cc8a814a4a790c1252d5a7ad72c7ce585ee77 # v0.1.2
+        uses: gumnut-ai/automation/actions/pr-approval@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
         with:
           operation: inspect
           mode: ${{ vars.PR_APPROVAL_MODE }}
@@ -88,7 +88,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-pull-requests: write
       - name: Reassess and publish once
-        uses: gumnut-ai/automation/actions/pr-approval@4d6cc8a814a4a790c1252d5a7ad72c7ce585ee77 # v0.1.2
+        uses: gumnut-ai/automation/actions/pr-approval@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
         with:
           operation: publish
           mode: ${{ vars.PR_APPROVAL_MODE }}

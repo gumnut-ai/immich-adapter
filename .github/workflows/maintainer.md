@@ -97,6 +97,7 @@ sandbox:
 network:
   allowed: [defaults, github]
 safe-outputs:
+  # Native transport capacity; work-count and reviewer caps stay in agent policy.
   staged: false
   timeout-minutes: 10
   environment: gumbot-publisher
@@ -112,7 +113,7 @@ safe-outputs:
     GIT_COMMITTER_NAME: gumnut-bot[bot]
     GIT_COMMITTER_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
   create-pull-request:
-    max: 1
+    max: 10
     draft: false
     # Direct App-authenticated pushes preserve bot author AND committer.
     # GitHub-signed replay can replace the committer with GitHub's identity.
@@ -130,7 +131,7 @@ safe-outputs:
       policy: blocked
       exclude: [AGENTS.md, README.md, package.json, bun.lock, uv.lock, pyproject.toml, biome.json, biome.jsonc]
   add-reviewer:
-    max: 1
+    max: 100
     target: "*"
     required-labels: [maintainer]
   steps:
@@ -138,9 +139,14 @@ safe-outputs:
       if: contains(needs.agent.outputs.output_types, 'create_pull_request')
       env:
         GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      uses: gumnut-ai/automation/actions/daemon-delivery@ec2bba2086ad77a4db2a13aa17ac97b3b2149463 # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/daemon-delivery@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
       with:
         validate-proposal: true
+    - name: Validate every captured native proposal
+      if: contains(needs.agent.outputs.output_types, 'create_pull_request')
+      env:
+        GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
+      run: node "$DAEMON_DELIVERY_TRUSTED/native-transport.cjs" -- node "$GITHUB_WORKSPACE/.github/maintainer/validate-patch.cjs"
   noop:
     report-as-issue: false
   missing-tool:
@@ -178,7 +184,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: gumnut-ai/automation
-          ref: ec2bba2086ad77a4db2a13aa17ac97b3b2149463
+          ref: 187e77e153bd935ee55e56082f4aeea4a27aa67d
           path: .shared-automation
           persist-credentials: false
           sparse-checkout: daemon-delivery
@@ -199,7 +205,7 @@ jobs:
             try {
               const result = await verifyDelivery({ github, context, env: process.env,
                 report: text => core.summary.addRaw(text + '\n\n') });
-              core.summary.addRaw('Handoff check: ' + result + '\nNative conclusion and the final Actions status determine run completion.\n');
+              core.summary.addRaw('Receipt readback: ' + result + '\nNative conclusion covers publication processing; this readback does not establish aggregate reviewer or CI readiness.\n');
             } catch (error) {
               core.summary.addRaw('Result: incomplete\n' + error.message + '\n');
               core.setFailed(error.message);
@@ -229,15 +235,12 @@ pre-agent-steps:
     with:
       node-version: "24.21.0"
       package-manager-cache: false
-  - name: Preserve trusted candidate guards
+  - name: Set proposal commit identity
     run: |
-      mkdir -p "$RUNNER_TEMP/maintainer-trusted"
-      git show "$GITHUB_SHA:.github/maintainer/validate-patch.cjs" > "$RUNNER_TEMP/maintainer-trusted/validate-patch.cjs"
-      git show "$GITHUB_SHA:.github/maintainer/validate-pyproject.py" > "$RUNNER_TEMP/maintainer-trusted/validate-pyproject.py"
       git config user.name 'gumnut-bot[bot]'
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 post-steps:
-  - name: Reject interrupted budgets and validate candidate boundaries
+  - name: Reject interrupted budgets
     env:
       INFERENCE: ${{ steps.agentic_execution.outcome }}
       AGENT_TIMEOUT: ${{ steps.detect-agent-errors.outputs.agentic_engine_timeout }}
@@ -250,7 +253,6 @@ post-steps:
       const {parseMaxAICreditsExceededFromAuditLog} = require(path.join(process.env.RUNNER_TEMP, 'gh-aw/actions/ai_credits_context.cjs'));
       if (parseMaxAICreditsExceededFromAuditLog()) process.exit(1);
       NODEBUDGET
-      node "$RUNNER_TEMP/maintainer-trusted/validate-patch.cjs"
 inlined-imports: true
 imports:
   - gumnut-ai/automation/daemons/codebase-maintainer.md@ec2bba2086ad77a4db2a13aa17ac97b3b2149463
@@ -289,8 +291,10 @@ independent review assesses behavioral equivalence and maintenance value. Record
 completed checks and failures accurately, and label unrun checks as pending.
 Do not use sudo or start a nested AWF runtime from this confined session. No paid
 provider/service credentials may be used for tests. Runtime preparation failure
-is incomplete work. Preserve supply-chain config and existing tests unchanged;
-if a valid upgrade requires changing either, surface for human escalation.
+is incomplete work. Preserve supply-chain and test-runner configuration. Behavior-preserving test
+refactors and coverage additions are eligible; never delete, skip, xfail or weaken
+tests to make checks pass. Escalate changes to automation, policy, configuration
+or migrations.
 The publisher may further block a
 DAEMON-allowed sensitive file; report that delivery blocker, never evade it.
 

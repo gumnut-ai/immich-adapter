@@ -117,6 +117,7 @@ sandbox:
 network:
   allowed: [defaults, github, python, firewall-api.socket.dev, api.osv.dev]
 safe-outputs:
+  # Native transport capacity; work-count and reviewer caps stay in agent policy.
   staged: false
   timeout-minutes: 10
   environment: gumbot-publisher
@@ -132,7 +133,7 @@ safe-outputs:
     GIT_COMMITTER_NAME: gumnut-bot[bot]
     GIT_COMMITTER_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
   create-pull-request:
-    max: 1
+    max: 10
     base-branch: main
     branch-prefix: dependency-maintenance/
     stacked: false
@@ -152,7 +153,7 @@ safe-outputs:
       policy: blocked
       exclude: [AGENTS.md, README.md, package.json, bun.lock, .bun-version, uv.lock, pyproject.toml, .python-version, .uv-version, Dockerfile]
   push-to-pull-request-branch:
-    max: 1
+    max: 10
     target: "*"
     signed-commits: true
     fallback-as-pull-request: false
@@ -185,9 +186,9 @@ safe-outputs:
       script: |
         return await require(process.env.DEPENDENCY_MAINTENANCE_TRUSTED + '/delivery.cjs').handoff({ github, context, item });
   steps:
-    # Reviewed unreleased commit; no version tag exists for this action yet.
+    # Reviewed immutable commit includes delivery repairs beyond the released tag.
     - name: Constrain native dependency delivery
-      uses: gumnut-ai/automation/actions/dependency-delivery@ec2bba2086ad77a4db2a13aa17ac97b3b2149463 # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/dependency-delivery@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
   noop:
     report-as-issue: false
   missing-tool:
@@ -240,7 +241,7 @@ pre-agent-steps:
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/dependency-maintenance.md@7c0711437a246b526bb2fbc127ac778c97dbbc83
+  - gumnut-ai/automation/daemons/dependency-maintenance.md@187e77e153bd935ee55e56082f4aeea4a27aa67d
 
 ---
 
@@ -284,12 +285,12 @@ Request no handoff for a PR changed in this run:
 its new CI must run first, and a later daily run can hand it off. Preserve prior
 human assignments and review requests. Emit at most five readiness-only handoffs.
 
-An admitted run always investigates, including no-work runs. Use native `noop`
-only when discovery completed with no useful code work or handoff, and
-`missing_data` for blocked or unfinished work (or `missing_tool` for unavailable tools), including missing evidence,
-required tools or failed checks. Do not mix noop/incomplete with publication or
-handoff outputs: useful known work can be prepared locally, then a future run
-can complete it. Explain the inspected scope, blockers and deferrals in the
-native activation outcome; do not create reports, issue comments or cost
-measurement machinery. Never approve, merge, delete branches, modify default
-branch state, close/replace PRs, or direct production operations.
+An admitted run always investigates, including no-work runs. Follow the shared
+outcome rules for validated delivery, incomplete investigation and completed
+no-work discovery. Keep unrelated discovery gaps and deferrals in the proposal
+body and native activation context; do not combine successful delivery with
+`missing_data`, `missing_tool` or `report_incomplete`. If blocked investigation
+or selected-proposal checks leave no deliverable, emit `report_incomplete`.
+Do not create reports, issue comments or cost measurement machinery. Never
+approve, merge, delete branches, modify default branch state, close/replace PRs,
+or direct production operations.

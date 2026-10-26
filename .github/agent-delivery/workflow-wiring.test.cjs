@@ -48,7 +48,7 @@ for (const [name, labels] of workflows) {
     const match = job.match(/GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: ("[^\n]+")/);
     assert.ok(match, "native safe-output handler configuration");
     const config = JSON.parse(JSON.parse(match[1]));
-    assert.equal(config.add_reviewer.max, 1);
+    assert.equal(config.add_reviewer.max, 100);
     assert.equal(config.add_reviewer.target, "*");
     assert.deepEqual(config.add_reviewer.required_labels, labels);
     assert.match(lock, /"compiler_version":"v0.89.21"/);
@@ -83,4 +83,21 @@ for (const [name, labels] of workflows) {
     }
   });
 
+}
+
+for (const name of ['maintainer', 'librarian']) {
+  test(`${name} validates every captured artifact in the publisher using dispatch code`, () => {
+    for (const extension of ['md', 'lock.yml']) {
+      const text = fs.readFileSync(path.join(__dirname, `../workflows/${name}.${extension}`), 'utf8');
+      const job = extension === 'md' ? text.split('\nsafe-outputs:\n')[1].split('\njobs:\n')[0] : publisher(text);
+      const readableJob = job.replace(/\\"/g, '"');
+      assert.match(job, /name: Validate every captured native proposal/);
+      assert.ok(job.includes("GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}"));
+      assert.ok(readableJob.includes('node "$DAEMON_DELIVERY_TRUSTED/native-transport.cjs" -- '));
+      const validator = name === 'retirement' ? 'python3 "$GITHUB_WORKSPACE/.github/retirement/validate-retirement.py" "$GITHUB_SHA"' : `node "$GITHUB_WORKSPACE/.github/${name}/validate-patch.cjs"`;
+      assert.ok(readableJob.includes(validator));
+      if (extension === 'lock.yml') assert.ok(job.indexOf('Validate every captured native proposal') < job.indexOf('name: Process Safe Outputs'));
+      assert.doesNotMatch(text, /maintainer-trusted|retirement-trusted/);
+    }
+  });
 }

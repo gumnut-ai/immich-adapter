@@ -391,7 +391,7 @@ def test_librarian_pull_request_policy() -> None:
     handlers = handler_config()
     assert "push_to_pull_request_branch" not in handlers
     config = handlers["create_pull_request"]
-    assert config["max"] == 1
+    assert config["max"] == 10
     assert config["allowed_branches"] == ["librarian/*"]
     assert config["preserve_branch_name"] is True
     assert config["fallback_as_issue"] is False

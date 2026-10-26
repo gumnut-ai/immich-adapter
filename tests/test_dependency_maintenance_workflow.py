@@ -35,7 +35,7 @@ def test_dependency_overlay_delivery_and_permissions() -> None:
     )
     for tool in ("create-pull-request", "push-to-pull-request-branch"):
         config = outputs[tool]
-        assert config["max"] == 1
+        assert config["max"] == 10
         assert config["protected-files"]["policy"] == "blocked"
         assert not any(
             path.startswith((".github", ".agents"))

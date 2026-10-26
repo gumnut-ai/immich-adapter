@@ -9,7 +9,9 @@ Common maintainer and librarian instructions are imported from an immutable
 `automation` revision and embedded during compilation. Local daemon policies
 retain scope, limits, required checks and exceptions. The pinned shared
 `actions/daemon-delivery` adapter owns native reviewer target resolution and
-account exclusions; repository delivery readback remains local.
+account exclusions; repository delivery readback remains local. It checks the first native created-PR
+receipt only; native status covers publication processing, not aggregate reviewer
+or CI readiness.
 
 `maintainer.md` runs daily codebase maintenance when `MAINTAINER_ENABLED=true`.
 Routine dependency scans and security-alert polling are no longer agent goals.
@@ -18,11 +20,22 @@ following repository dependency policy and verification guidance. Existing
 configuration protection, isolated publishing and human handoff remain intact.
 Cleanup needs neither an alert-reader credential nor an indexing receipt.
 
-The workflow prepares pinned tools and preserves trusted candidate guards before
-inference. The agent investigates useful changes and runs checks under repository
-guidance, including required local checks. Trusted host validation enforces basic
-scope, configuration and commit identity before isolated publication; ordinary PR
-CI runs the standard suites and independent review assesses quality. There is no
+The workflow prepares pinned tools before inference. The agent investigates useful changes and runs checks under repository
+guidance, including required local checks. Before native publication, a shared
+preflight reconstructs every captured
+bundle or patch and runs the dispatch-source validator outside that candidate.
+It enforces scope, configuration and commit identity for the exact artifact,
+independently of the agent’s final checkout. The stdlib-only manifest check uses
+publisher Python 3.11+ without installing project dependencies. Ordinary test
+refactors and coverage additions are eligible; test-runner controls, automation,
+policy and migration paths remain protected. The path guard does not prove test
+semantics. It identifies controls by their actual paths or runner-discovered
+basenames; config-named tests and YAML fixtures remain eligible. Root `config/`
+runtime settings, runner configuration, dependency automation, dot-folder
+automation and credentials still require escalation. Detection and independent
+review must still reject deleted, skipped, xfail or weakened tests used to make
+checks pass. Ordinary PR CI runs the standard suites and independent review
+assesses quality. There is no
 second full-suite sandbox before inference or publication. Check evidence must
 distinguish completed local checks from pending PR CI. A noop means completed
 discovery found no worthwhile candidate; blocked or unfinished work emits
@@ -88,5 +101,5 @@ Primary contracts:
 Local compile helpers load `native-toolchain` from the same immutable
 `.shared-automation` checkout as workflow CI. Common detector, action-annotation
 and publisher-permission compatibility is owned by
-[`automation`](https://github.com/gumnut-ai/automation/tree/ec2bba2086ad77a4db2a13aa17ac97b3b2149463/native-toolchain);
+[`automation`](https://github.com/gumnut-ai/automation/tree/187e77e153bd935ee55e56082f4aeea4a27aa67d/native-toolchain);
 Repository-specific policy corrections remain local.
