@@ -117,6 +117,7 @@ sandbox:
 network:
   allowed: [defaults, github, python, firewall-api.socket.dev, api.osv.dev]
 safe-outputs:
+  # Native transport capacity; work-count and reviewer caps stay in agent policy.
   staged: false
   timeout-minutes: 10
   environment: gumbot-publisher
@@ -132,7 +133,7 @@ safe-outputs:
     GIT_COMMITTER_NAME: gumnut-bot[bot]
     GIT_COMMITTER_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
   create-pull-request:
-    max: 1
+    max: 10
     base-branch: main
     branch-prefix: dependency-maintenance/
     stacked: false
@@ -152,7 +153,7 @@ safe-outputs:
       policy: blocked
       exclude: [AGENTS.md, README.md, package.json, bun.lock, .bun-version, uv.lock, pyproject.toml, .python-version, .uv-version, Dockerfile]
   push-to-pull-request-branch:
-    max: 1
+    max: 10
     target: "*"
     signed-commits: true
     fallback-as-pull-request: false
@@ -187,7 +188,7 @@ safe-outputs:
   steps:
     # Reviewed immutable commit includes delivery repairs beyond the released tag.
     - name: Constrain native dependency delivery
-      uses: gumnut-ai/automation/actions/dependency-delivery@c16a498466eb1ebac6451b581b6cb76163b6f5ce # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/dependency-delivery@6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c # zizmor: ignore[ref-version-mismatch]
   noop:
     report-as-issue: false
   missing-tool:
@@ -240,7 +241,7 @@ pre-agent-steps:
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/dependency-maintenance.md@c16a498466eb1ebac6451b581b6cb76163b6f5ce
+  - gumnut-ai/automation/daemons/dependency-maintenance.md@6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c
 
 ---
 

@@ -48,7 +48,7 @@ for (const [name, labels] of workflows) {
     const match = job.match(/GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: ("[^\n]+")/);
     assert.ok(match, "native safe-output handler configuration");
     const config = JSON.parse(JSON.parse(match[1]));
-    assert.equal(config.add_reviewer.max, 1);
+    assert.equal(config.add_reviewer.max, 100);
     assert.equal(config.add_reviewer.target, "*");
     assert.deepEqual(config.add_reviewer.required_labels, labels);
     assert.match(lock, /"compiler_version":"v0.89.21"/);

@@ -94,6 +94,7 @@ sandbox:
 network:
   allowed: [defaults]
 safe-outputs:
+  # Native transport capacity; work-count and reviewer caps stay in agent policy.
   staged: false
   timeout-minutes: 10
   environment: gumbot-publisher
@@ -110,7 +111,7 @@ safe-outputs:
     GIT_COMMITTER_NAME: gumnut-bot[bot]
     GIT_COMMITTER_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
   create-pull-request:
-    max: 1
+    max: 10
     draft: false
     # Direct App-authenticated pushes preserve bot author AND committer.
     # GitHub-signed replay can replace the committer with GitHub's identity.
@@ -129,7 +130,7 @@ safe-outputs:
       policy: blocked
       exclude: [AGENTS.md, README.md]
   add-reviewer:
-    max: 1
+    max: 100
     target: "*"
     required-labels: [librarian]
   steps:
@@ -137,7 +138,7 @@ safe-outputs:
       if: contains(needs.agent.outputs.output_types, 'create_pull_request')
       env:
         GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      uses: gumnut-ai/automation/actions/daemon-delivery@c16a498466eb1ebac6451b581b6cb76163b6f5ce # zizmor: ignore[ref-version-mismatch]
+      uses: gumnut-ai/automation/actions/daemon-delivery@6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c # zizmor: ignore[ref-version-mismatch]
       with:
         validate-proposal: true
   noop:
@@ -177,7 +178,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: gumnut-ai/automation
-          ref: c16a498466eb1ebac6451b581b6cb76163b6f5ce
+          ref: 6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c
           path: .shared-automation
           persist-credentials: false
           sparse-checkout: daemon-delivery

@@ -9,8 +9,22 @@ if(git('status','--porcelain').trim()) throw Error('candidate must be fully comm
 const paths=git('diff','--name-only',base,'HEAD').trim().split('\n').filter(Boolean);
 // Ordinary tests may change; runner controls remain protected. Test weakening
 // is a semantic deny rule assessed by detection and independent review.
+// Match controls by their actual location or automatic-discovery basename.
+// A filename containing "config", or a YAML extension, does not make data a control.
+const protectedPaths=new Set([
+ 'renovate.json', 'render.yaml', 'scripts/lint_docs.toml',
+ 'smoke-tests/checkly.config.ts', 'smoke-tests/tsconfig.json',
+]);
+const protectedBasenames=new Set([
+ 'AGENTS.md', 'DAEMON.md', 'CODEOWNERS', 'conftest.py', 'pytest.ini',
+ 'setup.cfg', 'tox.ini', 'pyrightconfig.json', 'uv.toml', 'bunfig.toml',
+ 'Dockerfile',
+]);
 for(const path of paths){
- if(path.startsWith('.') || /(^|\/)(conftest\.py|pytest\.ini|setup\.cfg|tox\.ini)(\/|$)/.test(path) || /(^|\/)database\/alembic\/versions(\/|$)/.test(path) || /(^|\/)([^/]*config[^/]*|AGENTS\.md|DAEMON\.md|Dockerfile|render\.yaml|[^/]*\.ya?ml)$/.test(path))
+ if(path.startsWith('.') || path.startsWith('config/') || protectedPaths.has(path) ||
+    protectedBasenames.has(path.split('/').at(-1)) ||
+    /(^|\/)\.github(\/|$)/.test(path) ||
+    /(^|\/)database\/alembic\/versions(\/|$)/.test(path))
    throw Error('sensitive policy/config/migration file requires escalation: '+path);
  if(/(^|\/)pyproject\.toml$/.test(path)){
    const old=git('show',base+':'+path), now=fs.readFileSync(path,'utf8');

@@ -24,9 +24,13 @@ guidance, including required local checks. Trusted host validation enforces basi
 scope, configuration and commit identity before isolated publication. Ordinary test
 refactors and coverage additions are eligible; test-runner controls, automation,
 policy and migration paths remain protected. The path guard does not prove test
-semantics: detection and independent review must still reject deleted, skipped,
-xfail or weakened tests used to make checks pass. Ordinary PR
-CI runs the standard suites and independent review assesses quality. There is no
+semantics. It identifies controls by their actual paths or runner-discovered
+basenames; config-named tests and YAML fixtures remain eligible. Root `config/`
+runtime settings, runner configuration, dependency automation, dot-folder
+automation and credentials still require escalation. Detection and independent
+review must still reject deleted, skipped, xfail or weakened tests used to make
+checks pass. Ordinary PR CI runs the standard suites and independent review
+assesses quality. There is no
 second full-suite sandbox before inference or publication. Check evidence must
 distinguish completed local checks from pending PR CI. A noop means completed
 discovery found no worthwhile candidate; blocked or unfinished work emits

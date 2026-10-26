@@ -49,7 +49,7 @@ jobs:
           package-manager-cache: false
       - name: Validate metadata request
         id: request
-        uses: gumnut-ai/automation/actions/pr-approval@c16a498466eb1ebac6451b581b6cb76163b6f5ce # zizmor: ignore[ref-version-mismatch]
+        uses: gumnut-ai/automation/actions/pr-approval@6e7e2d021e2a394e9e7709cedf2455b6ee8bd44c # zizmor: ignore[ref-version-mismatch]
         with:
           operation: source
           mode: ${{ vars.PR_APPROVAL_MODE }}
