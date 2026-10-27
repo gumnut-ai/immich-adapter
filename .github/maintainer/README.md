@@ -1,49 +1,51 @@
 # Codebase cleanup and dependency coverage
 
-The pinned compiler bypasses its action cache for some generated steps. This
-wrapper preserves reviewed artifact and generated Node action pins while leaving
-the source-owned pre-agent Node step alone. Workflow CI checks all three daemon
-lockfiles regenerate without changes.
+`.github/workflows/maintainer.md` is the source for the checked-in
+`maintainer.lock.yml`. Compile it directly with unmodified GH-AW v0.89.21;
+no generated YAML corrections, runtime patches or delivery adapters are used.
+Shared instructions are embedded from immutable imports. Local daemon policy owns
+scope, investigation, checks, caps, deduplication and human selection.
 
-Common maintainer and librarian instructions are imported from an immutable
-`automation` revision and embedded during compilation. Local daemon policies
-retain scope, limits, required checks and exceptions. The pinned shared
-`actions/daemon-delivery` adapter owns native reviewer target resolution and
-account exclusions; repository delivery readback remains local. It checks the first native created-PR
-receipt only; native status covers publication processing, not aggregate reviewer
-or CI readiness.
+The daily schedule is 09:00 UTC. Admission requires `MAINTAINER_ENABLED=true`. Dispatch
+accepts only the default branch and no prompt context. Compilation and CI do not
+establish hosted execution, credential access or activation. Changes on an
+unmerged branch do not change the active default-branch workflow.
 
-`maintainer.md` runs daily codebase maintenance when `MAINTAINER_ENABLED=true`.
-Routine dependency scans and security-alert polling are no longer agent goals.
-Agents can still make justified dependency changes as part of useful maintenance,
-following repository dependency policy and verification guidance. Existing
-configuration protection, isolated publishing and human handoff remain intact.
-Cleanup needs neither an alert-reader credential nor an indexing receipt.
+The agent has read-only GitHub access. Native safe outputs publish through the
+separate `gumbot-publisher` environment using the existing `GUMBOT_CLIENT_ID`
+variable and `GUMBOT_PRIVATE_KEY` secret for the repository-scoped App.
+`CODEX_API_KEY` supports inference and detection. Publication requires a successful
+agent job and native threat detection. The existing installed App permissions
+include Contents, Pull requests, Issues and Workflows write, and Administration
+read; native token minting requests the permissions needed by configured outputs.
+The agent never receives the App key or publisher token.
 
-The workflow prepares pinned tools before inference. The agent investigates useful changes and runs checks under repository
-guidance, including required local checks. Before native publication, a shared
-preflight reconstructs every captured
-bundle or patch and runs the dispatch-source validator outside that candidate.
-It enforces scope, configuration and commit identity for the exact artifact,
-independently of the agent’s final checkout. The stdlib-only manifest check uses
-publisher Python 3.11+ without installing project dependencies. Ordinary test
-refactors and coverage additions are eligible; test-runner controls, automation,
-policy and migration paths remain protected. The path guard does not prove test
-semantics. It identifies controls by their actual paths or runner-discovered
-basenames; config-named tests and YAML fixtures remain eligible. Root `config/`
-runtime settings, runner configuration, dependency automation, dot-folder
-automation and credentials still require escalation. Detection and independent
-review must still reject deleted, skipped, xfail or weakened tests used to make
-checks pass. Ordinary PR CI runs the standard suites and independent review
-assesses quality. There is no
-second full-suite sandbox before inference or publication. Check evidence must
-distinguish completed local checks from pending PR CI. A noop means completed
-discovery found no worthwhile candidate; blocked or unfinished work emits
-`report_incomplete`, which delivery verification rejects.
+Native publication creates same-repository PRs. Workflow and security-file edits
+within the role's scope may be proposed for ordinary CI and human review. There is
+no custom path validator or captured-head rejection. Native transport cannot
+upload Git LFS objects; defer proposals requiring new uploads. This role creates
+proposals rather than repairing dependency branches. Inspect uncertain publication
+through GitHub readback before retrying.
 
-The dependency submission workflow below is separately gated and is not needed
-for cleanup activation. Enabling Dependabot settings does not establish complete
-locked-dependency coverage or activate this submission workflow.
+Human handoff uses a native numeric review target on a later
+activation, after exact-head checks pass, actionable findings are resolved and
+mergeability with main is known. Never hand off code changed in the same run.
+Existing eligible assignments, pending requests and current-head reviews satisfy
+their actions. No daemon approves, merges, creates a report or measures cost.
+Native budgets bound execution and rolling admission; manual dispatch bypasses
+the daily admission check. Preserve completed check evidence and distinguish
+publication, readiness, review, merge and deployment.
+
+```bash
+gh-aw compile maintainer --action-tag v0.89.21 --no-check-update
+node --test .github/maintainer/native-policy.test.cjs
+uv run --no-config --locked --script scripts/lint_docs.py --base origin/main
+git diff --check
+```
+
+Workflow CI regenerates all three maintenance lockfiles directly and compares
+them byte for byte. The separate PR reviewer retains its existing compatibility
+code until its own migration; its helpers are not part of maintenance publication.
 
 ## Optional locked dependency indexing
 
@@ -97,9 +99,3 @@ Primary contracts:
 - https://bun.sh/docs/pm/lockfile
 - https://github.com/oven-sh/bun/blob/main/packages/bun-types/bun.d.ts
 - https://packaging.python.org/en/latest/specifications/version-specifiers/#local-version-identifiers
-
-Local compile helpers load `native-toolchain` from the same immutable
-`.shared-automation` checkout as workflow CI. Common detector, action-annotation
-and publisher-permission compatibility is owned by
-[`automation`](https://github.com/gumnut-ai/automation/tree/187e77e153bd935ee55e56082f4aeea4a27aa67d/native-toolchain);
-Repository-specific policy corrections remain local.

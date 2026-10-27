@@ -1,8 +1,7 @@
 ---
 description: Run the adapter documentation librarian from reviewed main policy.
-# Regenerate with node .github/maintainer/compile.cjs /path/to/gh-aw librarian
-# using github/gh-aw v0.89.21. The helper applies reviewed image-pin and
-# publisher-permission corrections; commit the resulting SHA-pinned lockfile.
+# Compile directly with unmodified GH-AW v0.89.21:
+# gh-aw compile librarian --action-tag v0.89.21 --no-check-update
 
 on:
   schedule: "0 12 * * *"
@@ -60,15 +59,22 @@ runtimes:
   python:
     version: "3.14"
 permissions:
+  actions: read
+  checks: read
+  statuses: read
   contents: read
   issues: read
   pull-requests: read
 tools:
+  bash: ["*"]
   github:
+    read-only: true
+    toolsets: [repos, issues, pull_requests, actions, users]
     github-token: ${{ secrets.GITHUB_TOKEN }}
 checkout:
   ref: ${{ github.sha }}
   fetch-depth: 0
+  fetch: ["librarian/*"]
 engine:
   id: codex
   version: "0.156.1"
@@ -81,10 +87,18 @@ engine:
     GIT_AUTHOR_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
     GIT_COMMITTER_NAME: gumnut-bot[bot]
     GIT_COMMITTER_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
-  args: ["-c", "model_provider=\"openai-proxy\"", "-c", "model_reasoning_effort=\"xhigh\""]
+  args:
+    - "-c"
+    - 'model_provider="openai-proxy"'
+    - "-c"
+    - 'model_reasoning_effort="xhigh"'
+    - "-c"
+    - >-
+      'shell_environment_policy={inherit="all",include_only=["PATH","HOME","USER","LOGNAME","SHELL","TMPDIR","TEMP","TMP","LANG","LC_ALL","LC_CTYPE","HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY","SSL_CERT_FILE","SSL_CERT_DIR","NODE_EXTRA_CA_CERTS","REQUESTS_CA_BUNDLE","UV_CACHE_DIR","UV_PYTHON_INSTALL_DIR","pythonLocation","GIT_AUTHOR_NAME","GIT_AUTHOR_EMAIL","GIT_COMMITTER_NAME","GIT_COMMITTER_EMAIL"]}'
 sandbox:
   agent:
     version: v0.28.25
+    runtime: docker-sudo-iptables
     model-fallback: false
     token-steering: false
     images:
@@ -98,20 +112,16 @@ safe-outputs:
   staged: false
   timeout-minutes: 10
   environment: gumbot-publisher
-  # Native reviewer label checks need Issues read; after compilation run
-  # python3 .github/agent-delivery/correct-publisher-permissions.py
   github-app:
     client-id: ${{ vars.GUMBOT_CLIENT_ID }}
     private-key: ${{ secrets.GUMBOT_PRIVATE_KEY }}
     owner: gumnut-ai
     repositories: [immich-adapter]
-  env:
-    GIT_AUTHOR_NAME: gumnut-bot[bot]
-    GIT_AUTHOR_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
-    GIT_COMMITTER_NAME: gumnut-bot[bot]
-    GIT_COMMITTER_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
   create-pull-request:
     max: 10
+    base-branch: main
+    branch-prefix: librarian/
+    stacked: false
     draft: false
     # Direct App-authenticated pushes preserve bot author AND committer.
     # GitHub-signed replay can replace the committer with GitHub's identity.
@@ -122,30 +132,14 @@ safe-outputs:
     allowed-branches: ["librarian/*"]
     fallback-as-issue: false
     if-no-changes: error
-    # A same-repository PR's CI runs its branch before review, so CI, workflow,
-    # manifest, and dot-folder files (including .agents/ daemon policy) stay
-    # blocked. Other AGENTS.md and README files are editable.
-    allowed-files: [README.md, AGENTS.md, "**/AGENTS.md", "docs/**"]
-    protected-files:
-      policy: blocked
-      exclude: [AGENTS.md, README.md]
+    protected-files: allowed
+    allow-workflows: true
   add-reviewer:
     max: 100
     target: "*"
-    required-labels: [librarian]
-  steps:
-    - name: Resolve reviewer target using the native published PR map
-      if: contains(needs.agent.outputs.output_types, 'create_pull_request')
-      env:
-        GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      uses: gumnut-ai/automation/actions/daemon-delivery@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
-      with:
-        validate-proposal: true
-    - name: Validate every captured native proposal
-      if: contains(needs.agent.outputs.output_types, 'create_pull_request')
-      env:
-        GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      run: node "$DAEMON_DELIVERY_TRUSTED/native-transport.cjs" -- node "$GITHUB_WORKSPACE/.github/librarian/validate-patch.cjs"
+  assign-to-user:
+    max: 100
+    target: "*"
   noop:
     report-as-issue: false
   missing-tool:
@@ -164,53 +158,8 @@ jobs:
   agent:
     timeout-minutes: 45
   safe_outputs:
-    if: needs.agent.result == 'success' && needs.detection.outputs.detection_success == 'true' && (!contains(needs.agent.outputs.output_types, 'add_reviewer') || contains(needs.agent.outputs.output_types, 'create_pull_request'))
-  verify_delivery:
-    needs: [agent, detection, safe_outputs]
-    if: always() && needs.agent.result != 'skipped'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-      actions: read
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Load pinned shared daemon helpers
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: gumnut-ai/automation
-          ref: 187e77e153bd935ee55e56082f4aeea4a27aa67d
-          path: .shared-automation
-          persist-credentials: false
-          sparse-checkout: daemon-delivery
-      - name: Verify librarian delivery
-        uses: actions/github-script@v9.0.0
-        env:
-          AGENT: ${{ needs.agent.result }}
-          DETECTION: ${{ needs.detection.result }}
-          PUBLISHER: ${{ needs.safe_outputs.result }}
-          OUTPUT_TYPES: ${{ needs.agent.outputs.output_types }}
-          OUTPUT_STATUS: ${{ needs.safe_outputs.outputs.process_safe_outputs_status }}
-          PR_NUMBER: ${{ needs.safe_outputs.outputs.created_pr_number }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { verifyDelivery } = require('./.github/librarian/verify-delivery.cjs');
-            core.summary.addHeading('Librarian delivery');
-            try {
-              const result = await verifyDelivery({ github, context, env: process.env,
-                report: text => core.summary.addRaw(text + '\n\n') });
-              core.summary.addRaw('Receipt readback: ' + result + '\nNative conclusion covers publication processing; this readback does not establish aggregate reviewer or CI readiness.\n');
-            } catch (error) {
-              core.summary.addRaw('Result: incomplete\n' + error.message + '\n');
-              core.setFailed(error.message);
-            } finally {
-              await core.summary.write();
-            }
+    if: needs.agent.result == 'success' && needs.detection.outputs.detection_success == 'true'
+
 steps:
   - name: Read uv version
     id: uv-version
@@ -231,6 +180,8 @@ steps:
       enable-cache: false
       # AWF hides runner HOME; /tmp makes the prepared cache available to the agent.
       cache-local-path: /tmp/scheduled-care-uv-cache
+  - name: Prepare pinned Python for AWF
+    run: bash scripts/prepare_maintainer_python.sh
   - name: Prepare locked documentation linter
     id: linter_setup
     run: |
@@ -242,66 +193,6 @@ pre-agent-steps:
     run: |
       git config user.name 'gumnut-bot[bot]'
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
-  - name: Check the prepared sandbox
-    id: sandbox_check
-    run: |
-      test -n "${UV_CACHE_DIR:-}"
-      awf --container-workdir "$GITHUB_WORKSPACE" \
-        --env "UV_CACHE_DIR=$UV_CACHE_DIR" -- \
-        'bash scripts/check_librarian_environment.sh'
-post-steps:
-  - name: Report librarian outcome
-    if: always()
-    shell: bash
-    env:
-      UV_SETUP: ${{ steps.uv_setup.outcome }}
-      LINTER_SETUP: ${{ steps.linter_setup.outcome }}
-      SANDBOX_CHECK: ${{ steps.sandbox_check.outcome }}
-      INFERENCE: ${{ steps.agentic_execution.outcome }}
-      AGENT_TIMEOUT: ${{ steps.detect-agent-errors.outputs.agentic_engine_timeout }}
-      JOB_STATUS: ${{ job.status }}
-    run: |
-      set -euo pipefail
-      outcome=unknown
-      # Codex can exit 0 after a native budget abort. Do not publish that work.
-      budget_exceeded=$(node - <<'NODE'
-      const path = require('path');
-      const { parseMaxAICreditsExceededFromAuditLog } = require(path.join(
-        process.env.RUNNER_TEMP, 'gh-aw/actions/ai_credits_context.cjs'));
-      console.log(parseMaxAICreditsExceededFromAuditLog());
-      NODE
-      )
-      if [[ "$UV_SETUP" != success || "$LINTER_SETUP" != success || "$SANDBOX_CHECK" != success ]]; then
-        outcome=setup-failed
-      elif [[ "$budget_exceeded" == true ]]; then
-        outcome=budget-interrupted
-      elif [[ "$AGENT_TIMEOUT" == true || "$INFERENCE" == cancelled ]]; then
-        outcome=interrupted
-      elif [[ "$INFERENCE" == skipped ]]; then
-        outcome=setup-failed
-      elif [[ "$INFERENCE" != success ]]; then
-        outcome=inference-failed
-      elif [[ "$JOB_STATUS" == cancelled ]]; then
-        outcome=interrupted
-      elif [[ "$JOB_STATUS" != success ]]; then
-        outcome=postprocessing-failed
-      elif awf --container-workdir "$GITHUB_WORKSPACE" --env "GITHUB_SHA=$GITHUB_SHA" -- \
-        /bin/bash -c '
-          set -euo pipefail
-          status=$(git status --porcelain) || exit 1
-          git merge-base --is-ancestor "$GITHUB_SHA" HEAD
-          [[ -z "$status" ]]
-        '; then
-        outcome=candidate-ready
-      else
-        outcome=validation-failed
-      fi
-      {
-        echo "Librarian source revision: $GITHUB_SHA"
-        echo "Librarian result: $outcome"
-        echo 'Safe-output processing determines the final proposal or no-work result.'
-      } >> "$GITHUB_STEP_SUMMARY"
-      [[ "$outcome" == candidate-ready ]]
 inlined-imports: true
 imports:
   - gumnut-ai/automation/daemons/librarian.md@ec2bba2086ad77a4db2a13aa17ac97b3b2149463
@@ -383,12 +274,8 @@ deterministically from the candidate's documentation area using lowercase
 letters, digits, `.`, `_`, `-`; preserve that candidate identity on reruns.
 Before retrying uncertain publication, reconcile the existing branch and PR.
 If the prior outcome cannot be established, stop as incomplete work rather
-than create another identity. Use a `temporary_id` such as
-`aw_proposal`. Select one eligible human using the contribution-history policy
-in `.agents/daemons/AGENTS.md`; record the account, history evidence and
-selection rationale in the PR body. Call `add_reviewer` once, with that account
-and `pull_request_number: "aw_proposal"`, using the PR's actual temporary ID.
-The tools declare outputs that will be published later; do not claim that the
+than create another identity. Select one eligible human using contribution history and record the evidence
+in the PR body. Request numeric handoff on a later activation; do not claim that the
 PR or review request exists yet. Exclude logins ending in `[bot]` and known automation accounts, case-insensitively:
 `CharlieHelps`, `CharlieCreates`, `github-actions`, `gumnut-bot`,
 `chatgpt-codex-connector`, and `Copilot`. Do not request teams. Apply the verified
@@ -404,7 +291,7 @@ Do not claim repository-wide documentation health from this bounded sample.
 A failed required source or validation check is incomplete work. Unavailable
 evidence needed to clear a supported candidate prevents its proposal and must
 be reported as incomplete candidate clearance, not a successful no-work result.
-Choose exactly one terminal outcome: PR proposal or noop. Never emit noop alongside a PR proposal. A text-only answer does not
+Choose one native outcome: delivery, completed no-work noop, or report_incomplete for blocked work. Never emit noop alongside a PR proposal. A text-only answer does not
 establish a completed no-work run.
 If preparation, inference, or validation fails, report that specific phase and
 the source revision. A timeout or interruption leaves the proposal incomplete.
@@ -413,3 +300,13 @@ safe-output processing determines whether a valid no-work result exists.
 
 The proposal's PR checks and human review are its gate. Do not push or change
 the default branch yourself.
+
+Use native publication only. Keep scope, limits, readiness, deduplication and human
+selection in agent policy. Workflow and security-file changes may be proposed
+through ordinary human-reviewed PRs when within the role's scope. Native transport
+does not upload Git LFS objects; defer proposals requiring new LFS uploads.
+Never retry uncertain publication blindly; reconcile the actual branch and PR.
+
+Follow the shared human-review readiness and deduplication policy in
+`.agents/daemons/AGENTS.md`. Use native numeric PR targets on a later activation;
+never use a fresh-PR temporary alias or hand off code changed in this activation.

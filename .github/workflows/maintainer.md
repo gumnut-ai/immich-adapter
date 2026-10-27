@@ -1,9 +1,7 @@
 ---
 description: Propose useful codebase maintenance without routine dependency-update scans.
-# Compile this source with github/gh-aw v0.89.21 using
-# --action-tag c35393777e5604a63721d09512263b1383301d4f. Commit its SHA-pinned lockfile.
-# Regenerate with .github/maintainer/compile.cjs; it applies the pinned shared
-# native-toolchain compatibility corrections.
+# Compile directly with unmodified GH-AW v0.89.21:
+# gh-aw compile maintainer --action-tag v0.89.21 --no-check-update
 
 on:
   permissions:
@@ -61,16 +59,22 @@ runtimes:
   python:
     version: "3.14"
 permissions:
+  checks: read
+  statuses: read
   contents: read
   actions: read
   issues: read
   pull-requests: read
 tools:
+  bash: ["*"]
   github:
+    read-only: true
+    toolsets: [repos, issues, pull_requests, actions, users]
     github-token: ${{ secrets.GITHUB_TOKEN }}
 checkout:
   ref: ${{ github.sha }}
   fetch-depth: 0
+  fetch: ["maintainer/*"]
 engine:
   id: codex
   version: "0.156.1"
@@ -83,7 +87,14 @@ engine:
     GIT_AUTHOR_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
     GIT_COMMITTER_NAME: gumnut-bot[bot]
     GIT_COMMITTER_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
-  args: ["-c", "model_provider=\"openai-proxy\"", "-c", "model_reasoning_effort=\"xhigh\""]
+  args:
+    - "-c"
+    - 'model_provider="openai-proxy"'
+    - "-c"
+    - 'model_reasoning_effort="xhigh"'
+    - "-c"
+    - >-
+      'shell_environment_policy={inherit="all",include_only=["PATH","HOME","USER","LOGNAME","SHELL","TMPDIR","TEMP","TMP","LANG","LC_ALL","LC_CTYPE","HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY","SSL_CERT_FILE","SSL_CERT_DIR","NODE_EXTRA_CA_CERTS","REQUESTS_CA_BUNDLE","UV_CACHE_DIR","UV_PYTHON_INSTALL_DIR","pythonLocation","GIT_AUTHOR_NAME","GIT_AUTHOR_EMAIL","GIT_COMMITTER_NAME","GIT_COMMITTER_EMAIL"]}'
 sandbox:
   agent:
     version: v0.28.25
@@ -101,19 +112,16 @@ safe-outputs:
   staged: false
   timeout-minutes: 10
   environment: gumbot-publisher
-  # The shared pinned compatibility helper restores Issues read for label checks.
   github-app:
     client-id: ${{ vars.GUMBOT_CLIENT_ID }}
     private-key: ${{ secrets.GUMBOT_PRIVATE_KEY }}
     owner: gumnut-ai
     repositories: [immich-adapter]
-  env:
-    GIT_AUTHOR_NAME: gumnut-bot[bot]
-    GIT_AUTHOR_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
-    GIT_COMMITTER_NAME: gumnut-bot[bot]
-    GIT_COMMITTER_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
   create-pull-request:
     max: 10
+    base-branch: main
+    branch-prefix: maintainer/
+    stacked: false
     draft: false
     # Direct App-authenticated pushes preserve bot author AND committer.
     # GitHub-signed replay can replace the committer with GitHub's identity.
@@ -124,29 +132,14 @@ safe-outputs:
     allowed-branches: ["maintainer/*"]
     fallback-as-issue: false
     if-no-changes: error
-    # A same-repository PR's CI runs its branch before review, so CI, workflow,
-    # and dot-folder files (including .agents/ daemon policy) stay blocked.
-    # Dependency changes retain the existing trusted configuration checks.
-    protected-files:
-      policy: blocked
-      exclude: [AGENTS.md, README.md, package.json, bun.lock, uv.lock, pyproject.toml, biome.json, biome.jsonc]
+    protected-files: allowed
+    allow-workflows: true
   add-reviewer:
     max: 100
     target: "*"
-    required-labels: [maintainer]
-  steps:
-    - name: Resolve reviewer target using the native published PR map
-      if: contains(needs.agent.outputs.output_types, 'create_pull_request')
-      env:
-        GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      uses: gumnut-ai/automation/actions/daemon-delivery@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
-      with:
-        validate-proposal: true
-    - name: Validate every captured native proposal
-      if: contains(needs.agent.outputs.output_types, 'create_pull_request')
-      env:
-        GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-      run: node "$DAEMON_DELIVERY_TRUSTED/native-transport.cjs" -- node "$GITHUB_WORKSPACE/.github/maintainer/validate-patch.cjs"
+  assign-to-user:
+    max: 100
+    target: "*"
   noop:
     report-as-issue: false
   missing-tool:
@@ -165,53 +158,8 @@ jobs:
   agent:
     timeout-minutes: 90
   safe_outputs:
-    if: needs.agent.result == 'success' && needs.detection.outputs.detection_success == 'true' && (!contains(needs.agent.outputs.output_types, 'add_reviewer') || contains(needs.agent.outputs.output_types, 'create_pull_request'))
-  verify_delivery:
-    needs: [agent, detection, safe_outputs]
-    if: always() && needs.agent.result != 'skipped'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-      actions: read
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Load pinned shared daemon helpers
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: gumnut-ai/automation
-          ref: 187e77e153bd935ee55e56082f4aeea4a27aa67d
-          path: .shared-automation
-          persist-credentials: false
-          sparse-checkout: daemon-delivery
-      - name: Verify maintainer delivery
-        uses: actions/github-script@v9.0.0
-        env:
-          AGENT: ${{ needs.agent.result }}
-          DETECTION: ${{ needs.detection.result }}
-          PUBLISHER: ${{ needs.safe_outputs.result }}
-          OUTPUT_TYPES: ${{ needs.agent.outputs.output_types }}
-          OUTPUT_STATUS: ${{ needs.safe_outputs.outputs.process_safe_outputs_status }}
-          PR_NUMBER: ${{ needs.safe_outputs.outputs.created_pr_number }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { verifyDelivery } = require('./.github/maintainer/verify-delivery.cjs');
-            core.summary.addHeading('Maintenance delivery');
-            try {
-              const result = await verifyDelivery({ github, context, env: process.env,
-                report: text => core.summary.addRaw(text + '\n\n') });
-              core.summary.addRaw('Receipt readback: ' + result + '\nNative conclusion covers publication processing; this readback does not establish aggregate reviewer or CI readiness.\n');
-            } catch (error) {
-              core.summary.addRaw('Result: incomplete\n' + error.message + '\n');
-              core.setFailed(error.message);
-            } finally {
-              await core.summary.write();
-            }
+    if: needs.agent.result == 'success' && needs.detection.outputs.detection_success == 'true'
+
 steps:
   - name: Read uv version
     id: uv-version
@@ -230,6 +178,8 @@ steps:
       enable-cache: true
       cache-suffix: maintainer-agent
       cache-dependency-glob: "uv.lock"
+  - name: Prepare pinned Python for AWF
+    run: bash scripts/prepare_maintainer_python.sh
 pre-agent-steps:
   - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
     with:
@@ -239,20 +189,6 @@ pre-agent-steps:
     run: |
       git config user.name 'gumnut-bot[bot]'
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
-post-steps:
-  - name: Reject interrupted budgets
-    env:
-      INFERENCE: ${{ steps.agentic_execution.outcome }}
-      AGENT_TIMEOUT: ${{ steps.detect-agent-errors.outputs.agentic_engine_timeout }}
-    run: |
-      set -euo pipefail
-      test "$INFERENCE" = success
-      test "$AGENT_TIMEOUT" != true
-      node - <<'NODEBUDGET'
-      const path = require('path');
-      const {parseMaxAICreditsExceededFromAuditLog} = require(path.join(process.env.RUNNER_TEMP, 'gh-aw/actions/ai_credits_context.cjs'));
-      if (parseMaxAICreditsExceededFromAuditLog()) process.exit(1);
-      NODEBUDGET
 inlined-imports: true
 imports:
   - gumnut-ai/automation/daemons/codebase-maintainer.md@ec2bba2086ad77a4db2a13aa17ac97b3b2149463
@@ -295,8 +231,7 @@ is incomplete work. Preserve supply-chain and test-runner configuration. Behavio
 refactors and coverage additions are eligible; never delete, skip, xfail or weaken
 tests to make checks pass. Escalate changes to automation, policy, configuration
 or migrations.
-The publisher may further block a
-DAEMON-allowed sensitive file; report that delivery blocker, never evade it.
+
 
 Use gumnut-bot[bot] author and committer. Commit at most three commits, keep a
 clean checkout, and emit exactly one terminal result: PR publication intent for
@@ -304,12 +239,20 @@ a supported candidate, noop for completed discovery with no worthwhile candidate
 or report_incomplete for blocked or unfinished work, even if no files changed.
 Never encode a blocker as noop prose. PR branch
 must be `maintainer/<unused-short-topic>`; include the concrete maintenance benefit, affected
-apps, completed-check evidence and pending CI checks, immutable source SHA and reviewer-selection rationale. Select an eligible human
-through contribution history and call add_reviewer once using the PR temporary
-ID (for example `pull_request_number: "aw_proposal"` for `temporary_id: "aw_proposal"`).
+apps, completed-check evidence and pending CI checks, immutable source SHA and reviewer-selection rationale. Select an eligible human through contribution history for a later numeric handoff.
 Exclude logins ending in `[bot]` and known automation accounts, case-insensitively:
 `CharlieHelps`, `CharlieCreates`, `github-actions`, `gumnut-bot`,
 `chatgpt-codex-connector`, and `Copilot`. Do not request teams.
-Publication is complete only after detection, publisher and delivery checks.
+Publication requires successful native detection and safe-output processing.
 The change still requires ordinary PR CI and independent review before merge.
 Never approve, merge, push default branch, or run production operations.
+
+Use native publication only. Keep scope, limits, readiness, deduplication and human
+selection in agent policy. Workflow and security-file changes may be proposed
+through ordinary human-reviewed PRs when within the role's scope. Native transport
+does not upload Git LFS objects; defer proposals requiring new LFS uploads.
+Never retry uncertain publication blindly; reconcile the actual branch and PR.
+
+Follow the shared human-review readiness and deduplication policy in
+`.agents/daemons/AGENTS.md`. Use native numeric PR targets on a later activation;
+never use a fresh-PR temporary alias or hand off code changed in this activation.

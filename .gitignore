@@ -218,3 +218,6 @@ static/*
 # "local" indicates the file is intended for local, user-specific settings that shouldn't be shared across a team
 .claude/settings.local.json
 .shared-automation/
+
+# Native compiler remote-import cache; imports are embedded in lockfiles.
+.github/aw/imports/

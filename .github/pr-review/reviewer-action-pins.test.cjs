@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-for (const workflow of ['pr-review', 'librarian', 'maintainer']) {
+for (const workflow of ['pr-review']) {
   test(`${workflow} retains reviewed generated action versions`, () => {
     const lock = fs.readFileSync(path.join(__dirname, `../workflows/${workflow}.lock.yml`), 'utf8');
     assert.equal((lock.match(/uses: actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9/g) || []).length, 9);

@@ -35,8 +35,8 @@ additional targeted checks from the changed behavior, callers and failure paths.
 Record what ran, its result, and any checks still pending. A failed required local
 check or an environment blocker is incomplete work; do not hide it as a no-op.
 
-The native workflow enforces candidate scope, configuration and commit identity
-before isolated publication. Ordinary PR CI runs the standard suites, and
+The agent follows the role scope, configuration and commit identity policy.
+Native safe outputs isolate publication; there is no custom candidate validator. Ordinary PR CI runs the standard suites, and
 independent review assesses behavioral equivalence and the maintenance benefit.
 Passing CI alone does not establish that a cleanup preserves supported behavior.
 Do not use sudo or launch a nested AWF runtime from the confined agent session.
@@ -47,4 +47,7 @@ Do not use sudo or launch a nested AWF runtime from the confined agent session.
 
 ## Human review
 
-When creating a PR, follow [Human review for daemon-created PRs](../AGENTS.md#human-review-for-daemon-created-prs) to select and request a human reviewer.
+Follow [Human review for daemon-created PRs](../AGENTS.md#human-review-for-daemon-created-prs)
+to select an eligible human. Request numeric handoff on a later activation after
+exact-head CI passes and mergeability is known; never hand off code changed in
+this activation.

@@ -96,4 +96,7 @@ for the canonical home and pointers.
 
 ## Human review
 
-When creating a PR, follow [Human review for daemon-created PRs](../AGENTS.md#human-review-for-daemon-created-prs) to select and request a human reviewer.
+Follow [Human review for daemon-created PRs](../AGENTS.md#human-review-for-daemon-created-prs)
+to select an eligible human. Request numeric handoff on a later activation after
+exact-head CI passes and mergeability is known; never hand off code changed in
+this activation.
