@@ -67,8 +67,8 @@ _DOWNLOAD_INFO_INCLUDE: list[str] = []
 _DOWNLOAD_ARCHIVE_INCLUDE = ["file_data", "metadata", "variants"]
 # ZIP entry timestamps carry no time zone. The bounds stay naive and take the
 # clamped value's zone when applied.
-_ZIP_MIN_TIMESTAMP = datetime(1980, 1, 1)  # noqa: DTZ001
-_ZIP_MAX_TIMESTAMP = datetime(2107, 12, 31, 23, 59, 58)  # noqa: DTZ001
+_ZIP_MIN_TIMESTAMP = datetime(1980, 1, 1)
+_ZIP_MAX_TIMESTAMP = datetime(2107, 12, 31, 23, 59, 58)
 _ARCHIVE_CDN_CHUNK_SIZE = 64 * 1024
 _ARCHIVE_ZIP_MAX_WORKERS = 8
 _MAX_ARCHIVE_COMPONENT_BYTES = 255
