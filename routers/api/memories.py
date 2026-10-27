@@ -130,7 +130,7 @@ async def _fetch_assets_for_day(
     try:
         # A local wall-clock day for the local_datetime filters; an offset in
         # the ISO string would shift the window.
-        day_start = datetime(year, month, day)  # noqa: DTZ001
+        day_start = datetime(year, month, day)
     except ValueError:
         return []
     day_end = day_start + timedelta(days=1)
