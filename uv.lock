@@ -350,7 +350,7 @@ wheels = [
 
 [[package]]
 name = "gumnut-sdk"
-version = "0.178.0"
+version = "0.179.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -360,9 +360,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/be/edcc130b1f2c9983a0b4cd7c188cd21b0736bd8e0be67093b7091193587c/gumnut_sdk-0.178.0.tar.gz", hash = "sha256:8a9b366672de7e393c506d275a9baa8d2f17e5818f700b6e86b75a7329dc7168", size = 421215, upload-time = "2026-10-20T05:28:47.903Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/13/21/b0d075afccd7349b400825bf2dfe4dd892ce6d493359aa5b0712c2a1e5f5/gumnut_sdk-0.179.1.tar.gz", hash = "sha256:4e142e9233d3b4370789c3b286c48525ecd81da30e08e4a116c0af1da4d20df5", size = 421692, upload-time = "2026-10-27T17:55:38.963Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/b2/4710102eca582bee86079438fdd658dc180bec257a063044dd8da3c9f28e/gumnut_sdk-0.178.0-py3-none-any.whl", hash = "sha256:e5bd592b1a2c1f445725297f9316757b0cd13b741620ac5c37f6bf49c366ad37", size = 264440, upload-time = "2026-10-20T05:28:49.389Z" },
+    { url = "https://files.pythonhosted.org/packages/14/f8/e454da0d26d6ab2ca7df740dbe35e7581378481b8468f50050bcf72e32ec/gumnut_sdk-0.179.1-py3-none-any.whl", hash = "sha256:e15d66a8a43c839401365613dfac8fe4609dfe634f31b6f4e694170c522ee3d7", size = 264323, upload-time = "2026-10-27T17:55:37.623Z" },
 ]
 
 [[package]]
@@ -828,16 +828,17 @@ wheels = [
 
 [[package]]
 name = "pydantic-settings"
-version = "2.15.0"
+version = "2.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "typing-extensions" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/68/ca/31c57507b13119d7d3cfa1576dad2911a4861e3be07b579395f4e9d393f9/pydantic_settings-2.15.0.tar.gz", hash = "sha256:694b793e84f766ba76a90ebdefc01d0a9a045dab0382bee70393da93712ad117", size = 261253, upload-time = "2026-08-07T09:24:57.419Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2e/3b/a5d2294799b53b448319978cfb5bd139d5a9d45e862af91661614f14c922/pydantic_settings-2.16.0.tar.gz", hash = "sha256:5b6c578049ede4db0e2ef3b4eaa4ad4069cfa9211f83fb38df899dfade50a614", size = 301031, upload-time = "2026-10-14T12:44:09.998Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/a4/2bffa9f8e804325a09867f0e9d30795c80ea9f8d62560bd1b6ad6220eb2f/pydantic_settings-2.15.0-py3-none-any.whl", hash = "sha256:0ba092c291c94baceb5eff768aa0d56400a457585bc0175925a5a5510303da42", size = 69413, upload-time = "2026-08-07T09:24:55.839Z" },
+    { url = "https://files.pythonhosted.org/packages/53/f4/b987bf8c51e5b19a95fa66d1ee596074141e085d9c2ddf97920803c7029b/pydantic_settings-2.16.0-py3-none-any.whl", hash = "sha256:7e73acf7f61936a15e5a3b6eedaea29f133357faf7272f2607ba479b049dd7f2", size = 80364, upload-time = "2026-10-14T12:44:08.233Z" },
 ]
 
 [[package]]
