@@ -117,6 +117,16 @@ sandbox:
 network:
   allowed: [defaults, github, python, firewall-api.socket.dev, api.osv.dev]
 safe-outputs:
+  # Native checkout persists the job token; use the publisher App for Git pushes.
+  steps:
+  - name: Authenticate publication checkout with the publisher App
+    if: contains(needs.agent.outputs.output_types, 'create_pull_request') || contains(needs.agent.outputs.output_types, 'push_to_pull_request_branch')
+    uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    with:
+      ref: ${{ github.sha }}
+      fetch-depth: 0
+      persist-credentials: true
+      token: ${{ steps.safe-outputs-app-token.outputs.token }}
   # Native transport capacity; work-count and reviewer caps stay in agent policy.
   staged: false
   timeout-minutes: 10
@@ -146,7 +156,7 @@ safe-outputs:
   push-to-pull-request-branch:
     max: 10
     target: "*"
-    signed-commits: true
+    signed-commits: false
     fallback-as-pull-request: false
     github-token-for-extra-empty-commit: none
     if-no-changes: error

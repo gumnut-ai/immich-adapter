@@ -6,6 +6,23 @@ for (const role of ['dependency-maintenance', 'librarian', 'maintainer']) {
   const source = fs.readFileSync(path.join(__dirname, `../workflows/${role}.md`), 'utf8');
   const lock = fs.readFileSync(path.join(__dirname, `../workflows/${role}.lock.yml`), 'utf8');
   test(`${role} uses native publication with isolated credentials and failure gating`, () => {
+
+    const publisher = lock.match(/^  safe_outputs:\n[\s\S]*?(?=^  [a-z_]+:\n|(?![\s\S]))/m)?.[0];
+    assert.ok(publisher, 'missing publisher job');
+    const hook = publisher.match(/      - name: Authenticate publication checkout with the publisher App\n([\s\S]*?)(?=      - name:)/)?.[1];
+    assert.ok(hook, 'missing publisher checkout credential replacement');
+    assert.match(hook, /token: \$\{\{ steps.safe-outputs-app-token.outputs.token \}\}/);
+    assert.match(hook, /ref: \$\{\{ github.sha \}\}/);
+    assert.match(hook, /persist-credentials: true/);
+    assert.match(hook, /contains\(needs.agent.outputs.output_types, 'create_pull_request'\)/);
+    assert.match(hook, /contains\(needs.agent.outputs.output_types, 'push_to_pull_request_branch'\)/);
+    assert.ok(publisher.indexOf('id: safe-outputs-app-token') < publisher.indexOf('name: Authenticate publication checkout'));
+    assert.ok(publisher.indexOf('name: Authenticate publication checkout') < publisher.indexOf('id: process_safe_outputs'));
+    const encoded = publisher.match(/GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: ("[^\n]+")/);
+    assert.ok(encoded, 'missing native handlers');
+    const handlers = JSON.parse(JSON.parse(encoded[1]));
+    assert.ok(handlers.create_pull_request, 'creation must remain enabled');
+    for (const handler of [handlers.create_pull_request, handlers.push_to_pull_request_branch].filter(Boolean)) assert.equal(handler.signed_commits, false, 'Git publication must preserve file modes');
     assert.match(source, /read-only: true/);
     assert.match(source, /environment: gumbot-publisher/);
     assert.match(source, /repositories: \[immich-adapter\]/);
