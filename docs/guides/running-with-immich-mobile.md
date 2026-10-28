@@ -1,6 +1,6 @@
 ---
 title: "Running with Immich Mobile"
-last-updated: 2026-08-11
+last-updated: 2026-10-28
 ---
 
 # Running with Immich Mobile
@@ -110,19 +110,45 @@ Set up a reverse proxy so the mobile client connects to your dev machine (which 
 
 ### Generic Reverse Proxy Setup
 
-* Choose local listen endpoint: `http://<dev-machine-ip>:<port>`
-* Configure upstream: `https://<real-immich-host>:<port>`
-* Set Immich mobile "Server Endpoint URL" to the local listen endpoint
+The mobile app must reach an HTTPS listener to complete OAuth. Set its server
+URL to the proxy's HTTPS local endpoint. An HTTP listener can forward
+already-authenticated API traffic, but it cannot complete mobile OAuth.
+
+* Choose local listen endpoint: `https://<dev-machine-ip>:<port>`
+* Configure the upstream to forward to the immich-adapter host and port
+* Set Immich mobile "Server Endpoint URL" to the HTTPS local endpoint
 * Ensure device can reach dev machine IP (same Wi-Fi/VPN)
-* _TLS note:_ if intercepting HTTPS, you may need to trust a local CA on the device and set "Allow self-signed SSL certificates" in the Advanced section of the mobile client Settings; if not intercepting, use simple pass-through/forwarding mode
+* If the proxy terminates HTTPS and forwards HTTP to the adapter, forward
+  `X-Forwarded-Proto: https` and preserve the original `Host` header, including
+  the device-facing port. The adapter changes only the callback scheme; its
+  host and port come from `Host` (`rewrite_redirect_uri` in
+  [`routers/api/oauth.py`](../../routers/api/oauth.py)).
+* To inspect request and response contents, terminate TLS at the proxy. The
+  certificate presented to the device must be trusted there; for a local CA,
+  install it on the device and enable "Allow self-signed SSL certificates" in
+  the mobile client's Advanced settings.
+* HTTPS pass-through can preserve OAuth, but the proxy cannot inspect the
+  encrypted HTTP traffic.
 
 ### Proxyman Setup
+
+[Proxyman's reverse-proxy setup](https://proxyman.com/docs/advanced-features/reverse-proxy)
+documents an HTTP local listener. Its "Force Using SSL when connecting to
+Remote Port" option enables TLS to the upstream server; it does not create an
+HTTPS listener for the mobile app. Use the direct HTTPS adapter setup in
+steps 1–5 above for mobile OAuth. The controls below configure the proxy
+listener; they do not provide an OAuth traffic-capture workflow.
 
 * Select "Reverse Proxy..." from the "Tools Menu"
 * Check "Enable Reverse Proxy Tool" if not already checked
 * Click "+" in the lower left to create a new reverse proxy
-* Specify a name for the proxy, the local port, the remote host or IP address, and the remote port
-* If you are using OAuth with the Immich mobile client, you will need to run immich-adapter with a SSL certificate, and you will need to check "Force Using SSL when connecting to Remote Port"
+* Specify a name, a local port, and the adapter's host and port
+* If the adapter uses HTTPS, check "Force Using SSL when connecting to Remote Port"
+* Enable "Preserve Host in Header" so the adapter receives the device-facing host and port
 * Click "Add" to create and start the reverse proxy
 
-With Proxyman, if you are using OAuth, you will not specify https for the protocol of the immich-adapter server as the SSL connection is handled by Proxyman.
+Proxyman documents client connections to `http://<dev-machine-ip>:<local-port>`.
+Do not use an HTTPS URL for this listener based on the Remote Port SSL setting.
+To inspect mobile OAuth itself, configure a trusted device-facing HTTPS
+listener with the forwarding behavior described above; the Proxyman steps
+here do not establish that arrangement.
