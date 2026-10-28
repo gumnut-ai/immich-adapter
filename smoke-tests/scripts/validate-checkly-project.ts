@@ -8,7 +8,8 @@ import { Bundler } from "../node_modules/checkly/dist/services/check-parser/bund
 import { parseProject } from "../node_modules/checkly/dist/services/project-parser.js"
 
 const directory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-const runtime = { name: "2026.04", dependencies: { "@playwright/test": "1.62.1" }, multiStepSupport: true }
+// Hosted runtime dependencies: https://www.checklyhq.com/docs/platform/runtimes/runtime-specification/
+const runtime = { name: "2026.04", dependencies: { "@playwright/test": "1.58.2" }, multiStepSupport: true }
 // Placeholders exist only in this no-traffic validator. No production fallback.
 Object.assign(process.env, {
   CHECKLY_SECRET_IMMICH_SMOKE_API_KEY: "validation-placeholder",
