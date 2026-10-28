@@ -25,7 +25,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Build exact committed dependency inventory without installs
         env:
@@ -35,7 +35,7 @@ jobs:
           SCANNED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) python3 .github/maintainer/dependency-snapshot.py "$SOURCE_SHA" > /tmp/maintainer-input/dependency-snapshot.json
       - name: Mint repository-only dependency submission token
         id: publisher
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.GUMBOT_CLIENT_ID }}
           private-key: ${{ secrets.GUMBOT_PRIVATE_KEY }}
