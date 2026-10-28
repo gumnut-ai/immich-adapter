@@ -58,25 +58,9 @@ contract belong here; no major retarget, generated API rewrite or auth change.
 
 ## Human handoff and outcomes
 
-Publish code proposals for ordinary CI, and revisit them on a later daily run.
-Before a readiness-only handoff, inspect the exact current head: required checks
-passed, no unresolved actionable findings or known relevant failures, and known
-mergeability with main. Pending/missing checks or unknown mergeability mean
-waiting, never ready. Missing human approval is expected, not a reason to approve
-automatically. Do not hand off a PR whose code you changed in this activation.
-
-Select an eligible human using the shared daemon contribution-history policy.
-Inspect current assignments, requested reviewers and completed reviews before
-calling `handoff_dependency_pr`. Existing eligible assignments and pending
-requests satisfy their respective actions. A completed eligible review on the
-current head also satisfies review delivery; older-head reviews do not. Treat
-unresolved changes requested as feedback to address before any readiness handoff.
-Call with the PR number, observed full head SHA, eligible login and only the
-missing `action`: `assign` or `request_review`. If both are missing, issue one
-call for each; if both are satisfied, issue neither. Preserve existing humans
-and emit no duplicate action for the same PR. The isolated operation executes
-the selected action once and reads it back; a failure is an incomplete handoff.
-Emit at most five readiness-only handoffs per activation.
+Follow [Human review for daemon-created PRs](../AGENTS.md#human-review-for-daemon-created-prs)
+for later clean-head handoff. A clean dependency PR needs both an eligible human
+assignment and review delivery; emit only missing actions.
 
 Follow the shared outcome rules: noop requires completed no-work discovery;
 blocked investigation or selected-proposal checks require `report_incomplete`

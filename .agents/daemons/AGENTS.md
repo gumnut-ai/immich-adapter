@@ -66,8 +66,8 @@ activation. Follow existing discovery, caps and outcome rules; don't replace PRs
 
 ## Human review for daemon-created PRs
 
-When a daemon creates a pull request, request review from one eligible human
-GitHub user. A PR assignee or a mention in its body is not a review request.
+For a daemon-created pull request, select one eligible human GitHub reviewer
+and request review on the later readiness activation described below. A PR assignee or a mention in its body is not a review request.
 Preserve existing review requests; an existing eligible human reviewer satisfies
 this requirement.
 
@@ -79,13 +79,22 @@ repository maintainer. Resolve the GitHub account from that evidence rather
 than guessing a login from a commit name or email. Exclude the PR author, bots,
 and known automation accounts; confirm the candidate can review this repository.
 
-Dependency-maintenance defers handoff to a later activation after passing
-exact-head CI and known mergeability, as its role policy specifies. Other roles
-request review when opening the PR or immediately afterward, and verify that
-GitHub recorded the request. Briefly record the selection rationale in the
-activation result. If no eligible human can be identified or the request fails,
-keep the PR, report the unresolved reviewer assignment and reason in the
-activation result, and do not claim the human-review handoff succeeded.
+Before new discovery or applying creation caps, inspect existing same-repository
+PRs managed by the role and targeting main for missing human review requests. Creation caps do not
+skip this readiness inspection. Request review only after the exact current head
+has passed required checks, has no known relevant failures or unresolved
+actionable findings, and is clean and mergeable with main. Never hand off code
+changed in this activation; new proposals wait for CI and a later activation.
+Use native `add_reviewer` with numeric `pull_request_number`. Preserve existing
+humans; an eligible pending request or completed review on the current head
+satisfies review delivery. Assignment alone does not satisfy that requirement.
+When a role requires assignment, use native `assign_to_user` with numeric
+`issue_number` only if an eligible assignment is missing. If both assignment
+and review delivery are missing, emit one call for each; if both are satisfied,
+emit neither. Assignment is required only where the role policy calls for it.
+Emit only missing actions, at most five readiness-only handoffs per activation.
+Inspect actual publication results; failed or unconfirmed actions remain
+incomplete handoffs. Never approve, merge, delete branches or operate production.
 
 ## Role policies
 

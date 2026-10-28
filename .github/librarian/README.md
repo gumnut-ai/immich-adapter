@@ -1,95 +1,48 @@
 # Scheduled documentation librarian
 
-`.github/workflows/librarian.md` is the reviewed source;
-`librarian.lock.yml` is its executable native gh-aw workflow. The librarian
-reads the dispatch revision and `.agents/daemons/librarian/DAEMON.md`, samples
-recent changes plus one adapter area, and proposes at most one documentation
-PR on a daily 12:00 UTC schedule when enabled. The existing policy owns lifecycle evidence, scope, three-open-PR and
-one-transition caps, three commits, and human reviewer selection.
+`.github/workflows/librarian.md` is the source for the checked-in
+`librarian.lock.yml`. Compile it directly with unmodified GH-AW v0.89.21;
+no generated YAML corrections, runtime patches or delivery adapters are used.
+Shared instructions are embedded from immutable imports. Local daemon policy owns
+scope, investigation, checks, caps, deduplication and human selection.
 
-## Provisioning and activation
+The daily schedule is 12:00 UTC. Admission requires `LIBRARIAN_ENABLED=true`. Dispatch
+accepts only the default branch and no prompt context. Compilation and CI do not
+establish hosted execution, credential access or activation. Changes on an
+unmerged branch do not change the active default-branch workflow.
 
-The workflow remains disabled unless repository variable `LIBRARIAN_ENABLED`
-is exactly `true`. Provision before enabling it:
+The agent has read-only GitHub access. Native safe outputs publish through the
+separate `gumbot-publisher` environment using the existing `GUMBOT_CLIENT_ID`
+variable and `GUMBOT_PRIVATE_KEY` secret for the repository-scoped App.
+`CODEX_API_KEY` supports inference and detection. Publication requires a successful
+agent job and native threat detection. The existing installed App permissions
+include Contents, Pull requests, Issues and Workflows write, and Administration
+read; native token minting requests the permissions needed by configured outputs.
+The agent never receives the App key or publisher token.
 
-- Repository secret `CODEX_API_KEY`: the OpenAI API credential for isolated
-  inference and threat detection. The agent receives read-only GitHub access.
-- Environment `gumbot-publisher`: variable `GUMBOT_CLIENT_ID` and secret
-  `GUMBOT_PRIVATE_KEY` for the installed gumnut-bot GitHub App. Install the App
-  on this repository with Contents and Pull requests write plus Issues read.
-  Issues read supports native PR label checks. Approve the added permission
-  on existing installations before enabling the updated workflow; token
-  creation fails if the installation has not granted a requested scope.
-  The App private key is available only to native publication/conclusion jobs.
-- Blacksmith access for the configured inference and detection runner.
+Native publication creates same-repository PRs. Workflow and security-file edits
+within the role's scope may be proposed for ordinary CI and human review. There is
+no custom path validator or captured-head rejection. Native transport cannot
+upload Git LFS objects; defer proposals requiring new uploads. This role creates
+proposals rather than repairing dependency branches. Inspect uncertain publication
+through GitHub readback before retrying.
 
-Keep the gate disabled until an operator admits one bounded manual validation
-on reviewed default-branch code and inspects native completion, costs, and any
-published proposal. The dispatch rejects additional prompt context and branch
-overrides. Do not enable scheduled execution solely because compilation or
-ordinary CI passes. Hosted-daemon coverage and overlap must be verified
-separately before retiring the prior executor. Setting the variable to `false`
-stops new admissions; cancel any admitted run separately if needed.
-
-## Runtime evidence
-
-Native safe outputs own proposal/noop completion and publication. The delivery
-job checks the first native created-PR receipt: bot identities, a recorded human
-review request and registration of `.github/workflows/ci.yml` at that head. Other
-published PRs are outside this readback; native status covers publication
-processing, not aggregate handoff readiness. This does not prove CI passed or
-human approval.
-Keep incomplete publication visible for maintainer follow-up.
-
-Native AI credit limits are estimates, not provider invoice ceilings. The source
-owns inference, detection and rolling daily admission limits; manual dispatch
-skips the native daily admission check. Include inference, detection, runner,
-failed and no-op runs in the shared monthly automation budget. Native admission
-does not enforce that portfolio budget. Check the provider invoice and native
-cost metadata, including the documented long-context pricing limitation.
-
-## Recompilation and validation
-
-Compile with gh-aw v0.89.21 using the repository helper, which preserves the
-reviewed generated-file corrections. Before running Node tests, check out
-`gumnut-ai/automation` at the immutable revision in
-`.github/workflows/pr-review-tests.yml` into `.shared-automation` with credentials
-persistence disabled, as CI does. Then run:
+Human handoff uses a native numeric review target on a later
+activation, after exact-head checks pass, actionable findings are resolved and
+mergeability with main is known. Never hand off code changed in the same run.
+Existing eligible assignments, pending requests and current-head reviews satisfy
+their actions. No daemon approves, merges, creates a report or measures cost.
+Native budgets bound execution and rolling admission; manual dispatch bypasses
+the daily admission check. Preserve completed check evidence and distinguish
+publication, readiness, review, merge and deployment.
 
 ```bash
-node .github/maintainer/compile.cjs /path/to/pinned-gh-aw librarian
-uv run pytest tests/test_librarian_workflow.py
-node --test .github/librarian/verify-delivery.test.cjs .github/maintainer/verify-delivery.test.cjs .github/agent-delivery/workflow-wiring.test.cjs
-actionlint .github/workflows/librarian.lock.yml
+gh-aw compile librarian --action-tag v0.89.21 --no-check-update
+node --test .github/maintainer/native-policy.test.cjs
 uv run --no-config --locked --script scripts/lint_docs.py --base origin/main
 git diff --check
 ```
 
-Use the repository's pinned uv version from `AGENTS.md`. Tests check native
-budget wiring and abort handling, immutable firewall pins, isolated publisher
-credentials, docs-only publication scope, and incomplete delivery behavior.
-They do not prove live App access or sandbox setup.
-
-Both daemons invoke the pinned `gumnut-ai/automation/actions/daemon-delivery`
-action before native safe-output processing, only for an activation proposing a
-PR. It installs the reviewed helper in a fresh runner-temporary directory.
-It checks complete SHA-256 hashes of the v0.89.21 native helpers before patching,
-orders `add_reviewer` after its temporary PR dependency, and resolves only a PR
-published by the same activation in this repository. The native handler still
-owns label checks and the review-request API. Exactly one human login is
-accepted; bot suffixes and known automation logins are excluded case-insensitively
-by the shared predicate used in both delivery verifiers. API or patch failures
-leave delivery incomplete. No-op outputs do not invoke the repair.
-
-Shared runtime integration tests live in `gumnut-ai/automation`. They require
-the native setup helpers from commit
-`c35393777e5604a63721d09512263b1383301d4f` (v0.89.21); it runs those handlers
-with fixture GitHub responses and makes no review request or inference call.
-
-The agent invokes repository lint commands directly and records their results.
-The workflow preflight checks tool readiness; post-processing enforces runtime
-completion and committed proposal identity. Ordinary PR CI owns documentation
-lint validation after publication, and independent review assesses factual quality.
-
-The dedicated PR-review workflow owns Node daemon suites. Ordinary Python tests
-do not fetch shared automation or forward execution to the Node suites.
+Workflow CI regenerates all three maintenance lockfiles directly and compares
+them byte for byte. The separate PR reviewer retains its existing compatibility
+code until its own migration; its helpers are not part of maintenance publication.

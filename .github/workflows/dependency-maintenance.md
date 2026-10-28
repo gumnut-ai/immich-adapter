@@ -1,8 +1,7 @@
 ---
 description: Advance adapter dependency PRs and propose uncovered compatible updates.
-# Compile from the consumer root using a reviewed immutable automation checkout:
-# node /path/to/automation/dependency-maintenance/compile.cjs /path/to/gh-aw
-# The shared compiler owns the pinned native version and generated-only corrections.
+# Compile directly with unmodified GH-AW v0.89.21:
+# gh-aw compile dependency-maintenance --action-tag v0.89.21 --no-check-update
 
 on:
   permissions:
@@ -105,6 +104,7 @@ engine:
 sandbox:
   agent:
     version: v0.28.25
+    runtime: docker-sudo-iptables
     model-fallback: false
     token-steering: false
     # AWF replaces HOME; expose only the pinned executable, read-only.
@@ -121,17 +121,11 @@ safe-outputs:
   staged: false
   timeout-minutes: 10
   environment: gumbot-publisher
-  # Native label checks need Issues read; the shared compiler restores it.
   github-app:
     client-id: ${{ vars.GUMBOT_CLIENT_ID }}
     private-key: ${{ secrets.GUMBOT_PRIVATE_KEY }}
     owner: gumnut-ai
     repositories: [immich-adapter]
-  env:
-    GIT_AUTHOR_NAME: gumnut-bot[bot]
-    GIT_AUTHOR_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
-    GIT_COMMITTER_NAME: gumnut-bot[bot]
-    GIT_COMMITTER_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
   create-pull-request:
     max: 10
     base-branch: main
@@ -147,11 +141,8 @@ safe-outputs:
     allowed-branches: ["dependency-maintenance/*"]
     fallback-as-issue: false
     if-no-changes: error
-    # Active delivery controls and workflows remain protected. Unsupported
-    # workflow-version changes are an explicit human delivery blocker.
-    protected-files:
-      policy: blocked
-      exclude: [AGENTS.md, README.md, package.json, bun.lock, .bun-version, uv.lock, pyproject.toml, .python-version, .uv-version, Dockerfile]
+    protected-files: allowed
+    allow-workflows: true
   push-to-pull-request-branch:
     max: 10
     target: "*"
@@ -160,35 +151,14 @@ safe-outputs:
     github-token-for-extra-empty-commit: none
     if-no-changes: error
     patch-format: bundle
-    protected-files:
-      policy: blocked
-      exclude: [AGENTS.md, README.md, package.json, bun.lock, .bun-version, uv.lock, pyproject.toml, .python-version, .uv-version, Dockerfile]
-  scripts:
-    handoff-dependency-pr:
-      description: Perform one agent-selected missing assignment or review request for a clean dependency PR at its exact head.
-      inputs:
-        action:
-          description: Missing action selected after inspecting current assignments, review requests and completed reviews; assign or request_review.
-          type: string
-          required: true
-        pull_request_number:
-          description: Existing open adapter dependency PR number.
-          type: number
-          required: true
-        head_sha:
-          description: Full current head SHA whose CI, findings and mergeability you verified.
-          type: string
-          required: true
-        reviewer:
-          description: Human candidate selected from contribution history; publisher verifies account and repository write access.
-          type: string
-          required: true
-      script: |
-        return await require(process.env.DEPENDENCY_MAINTENANCE_TRUSTED + '/delivery.cjs').handoff({ github, context, item });
-  steps:
-    # Reviewed immutable commit includes delivery repairs beyond the released tag.
-    - name: Constrain native dependency delivery
-      uses: gumnut-ai/automation/actions/dependency-delivery@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
+    protected-files: allowed
+    allow-workflows: true
+  assign-to-user:
+    max: 100
+    target: "*"
+  add-reviewer:
+    max: 100
+    target: "*"
   noop:
     report-as-issue: false
   missing-tool:
@@ -230,6 +200,8 @@ steps:
       enable-cache: true
       cache-suffix: dependency-maintenance-agent
       cache-dependency-glob: "uv.lock"
+  - name: Prepare pinned Python for AWF
+    run: bash scripts/prepare_maintainer_python.sh
 pre-agent-steps:
   - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
     with:
@@ -241,7 +213,7 @@ pre-agent-steps:
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/dependency-maintenance.md@187e77e153bd935ee55e56082f4aeea4a27aa67d
+  - gumnut-ai/automation/daemons/dependency-maintenance.md@de74f5b115a9d2ee07a83d2335195b34f9b7effd
 
 ---
 
@@ -264,26 +236,16 @@ human follow-up. Do not use paid production credentials for validation.
 
 Emit at most one code proposal: native `create_pull_request` for an uncovered
 update on `dependency-maintenance/<unused-topic>`, OR native
-`push_to_pull_request_branch` for a repair to an eligible existing PR. For repairs,
+`push_to_pull_request_branch` for a repair to an eligible existing same-repository
+bot PR targeting main. Verify its actual author, dependency scope and current head.
+For repairs,
 check out the selected pre-fetched origin branch using its actual head-ref name
 and preserve that observed remote-tracking head as the incremental baseline; append committed fixes rather than rebasing or
 rewriting existing commits. Supply the actual local branch and explicit adapter
 repository/PR number to the native push tool. Use the pinned native bundle
-transport for generated artifacts. Do not hand-edit artifacts or bypass native
-protected-file failures. Source and workflow-version changes that the publisher
-cannot carry are incomplete work for human follow-up, never replacement PRs.
-
-Use `handoff_dependency_pr` only for an existing eligible PR whose exact current
-head you inspected and found clean and mergeable with main: required checks
-passed, no unresolved actionable review findings or known relevant failures.
-Choose an eligible human with contribution evidence. Pass that head SHA and the
-reviewer login; the isolated handler binds the target and verifies assignment
-or review-request read-back for the selected `action`. Inspect current human
-assignments, pending review requests and completed reviews yourself; emit only
-missing `assign` or `request_review` actions, never repeat satisfied handoffs.
-Request no handoff for a PR changed in this run:
-its new CI must run first, and a later daily run can hand it off. Preserve prior
-human assignments and review requests. Emit at most five readiness-only handoffs.
+transport for generated artifacts. Regenerate artifacts using the candidate toolchain; do not hand-edit them.
+Failed direct pushes do not open stacked fallback PRs; record the failure and
+revisit from fresh state.
 
 An admitted run always investigates, including no-work runs. Follow the shared
 outcome rules for validated delivery, incomplete investigation and completed
@@ -294,3 +256,13 @@ or selected-proposal checks leave no deliverable, emit `report_incomplete`.
 Do not create reports, issue comments or cost measurement machinery. Never
 approve, merge, delete branches, modify default branch state, close/replace PRs,
 or direct production operations.
+
+Use native publication only. Keep scope, limits, readiness, deduplication and human
+selection in agent policy. Workflow and security-file changes may be proposed
+through ordinary human-reviewed PRs when within the role's scope. Native transport
+does not upload Git LFS objects; defer proposals requiring new LFS uploads.
+Never retry uncertain publication blindly; reconcile the actual branch and PR.
+
+Follow the shared human-review readiness and deduplication policy in
+`.agents/daemons/AGENTS.md`. Use native numeric PR targets on a later activation;
+never use a fresh-PR temporary alias or hand off code changed in this activation.

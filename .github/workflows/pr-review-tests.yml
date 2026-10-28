@@ -1,10 +1,10 @@
 name: PR review workflow checks
 on:
   pull_request:
-    paths: ['.agents/daemons/librarian/**', '.agents/daemons/codebase-maintainer/**', '.node-version', '.github/pr-approval/**', '.github/workflows/pr-approval*', '.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*', '.github/dependency-maintenance/**', '.github/workflows/dependency-maintenance*']
+    paths: ['.agents/daemons/AGENTS.md', '.agents/daemons/dependency-maintenance/**', '.agents/daemons/librarian/**', '.agents/daemons/codebase-maintainer/**', '.node-version', 'scripts/prepare_maintainer_python.sh', '.github/pr-approval/**', '.github/workflows/pr-approval*', '.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*', '.github/dependency-maintenance/**', '.github/workflows/dependency-maintenance*']
   push:
     branches: [main]
-    paths: ['.agents/daemons/librarian/**', '.agents/daemons/codebase-maintainer/**', '.node-version', '.github/pr-approval/**', '.github/workflows/pr-approval*', '.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/agent-delivery/**', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*', '.github/dependency-maintenance/**', '.github/workflows/dependency-maintenance*']
+    paths: ['.agents/daemons/AGENTS.md', '.agents/daemons/dependency-maintenance/**', '.agents/daemons/librarian/**', '.agents/daemons/codebase-maintainer/**', '.node-version', 'scripts/prepare_maintainer_python.sh', '.github/pr-approval/**', '.github/workflows/pr-approval*', '.github/claude-review/**', '.github/workflows/claude-review.yml', '.github/pr-review/**', '.github/workflows/pr-review*', '.github/librarian/**', '.github/maintainer/**', '.github/workflows/librarian*', '.github/workflows/maintainer*', '.github/dependency-maintenance/**', '.github/workflows/dependency-maintenance*']
 permissions:
   contents: read
 jobs:
@@ -23,9 +23,7 @@ jobs:
           path: .shared-automation
           persist-credentials: false
           sparse-checkout: |
-            dependency-maintenance
             native-toolchain
-            daemon-delivery
       - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
@@ -45,10 +43,8 @@ jobs:
       - run: node --test .github/pr-review/reviewer*.test.cjs
         env:
           GH_AW_ACTIONS_DIR: ${{ github.workspace }}/.native-gh-aw/actions/setup/js
-      - name: Check daemon human-review handoff and workflow wiring
-        run: node --test .github/agent-delivery/*.test.cjs .github/librarian/verify-delivery.test.cjs .github/maintainer/verify-delivery.test.cjs
-        env:
-          GH_AW_SETUP_DIR: ${{ github.workspace }}/.native-gh-aw/actions/setup/js
+      - name: Check native maintenance boundaries
+        run: node --test .github/maintainer/native-policy.test.cjs
       - name: Verify daemon workflow regeneration
         env:
           GH_TOKEN: ${{ github.token }}
@@ -61,7 +57,7 @@ jobs:
           chmod +x "$compiler"
           "$compiler" compile pr-review --action-tag c35393777e5604a63721d09512263b1383301d4f --no-check-update
           python3 .github/pr-review/reviewer-compile.py
-          node .github/maintainer/compile.cjs "$compiler" librarian
-          node .github/maintainer/compile.cjs "$compiler" maintainer
-          node .shared-automation/dependency-maintenance/compile.cjs "$compiler"
+          "$compiler" compile librarian --action-tag v0.89.21 --no-check-update
+          "$compiler" compile maintainer --action-tag v0.89.21 --no-check-update
+          "$compiler" compile dependency-maintenance --action-tag v0.89.21 --no-check-update
           git diff --exit-code -- .github/workflows/pr-review.lock.yml .github/workflows/librarian.lock.yml .github/workflows/maintainer.lock.yml .github/workflows/dependency-maintenance.lock.yml .github/aw/actions-lock.json
