@@ -1,6 +1,6 @@
 ---
 title: "Running with Immich Mobile"
-last-updated: 2026-10-26
+last-updated: 2026-10-28
 ---
 
 # Running with Immich Mobile
@@ -119,8 +119,9 @@ already-authenticated API traffic, but it cannot complete mobile OAuth.
 * Set Immich mobile "Server Endpoint URL" to the HTTPS local endpoint
 * Ensure device can reach dev machine IP (same Wi-Fi/VPN)
 * If the proxy terminates HTTPS and forwards HTTP to the adapter, forward
-  `X-Forwarded-Proto: https`. The adapter uses this header to build the mobile
-  OAuth callback URL (`rewrite_redirect_uri` in
+  `X-Forwarded-Proto: https` and preserve the original `Host` header, including
+  the device-facing port. The adapter changes only the callback scheme; its
+  host and port come from `Host` (`rewrite_redirect_uri` in
   [`routers/api/oauth.py`](../../routers/api/oauth.py)).
 * To inspect request and response contents, terminate TLS at the proxy. The
   certificate presented to the device must be trusted there; for a local CA,
@@ -131,17 +132,23 @@ already-authenticated API traffic, but it cannot complete mobile OAuth.
 
 ### Proxyman Setup
 
+[Proxyman's reverse-proxy setup](https://proxyman.com/docs/advanced-features/reverse-proxy)
+documents an HTTP local listener. Its "Force Using SSL when connecting to
+Remote Port" option enables TLS to the upstream server; it does not create an
+HTTPS listener for the mobile app. Use the direct HTTPS adapter setup in
+steps 1–5 above for mobile OAuth. The controls below configure the proxy
+listener; they do not provide an OAuth traffic-capture workflow.
+
 * Select "Reverse Proxy..." from the "Tools Menu"
 * Check "Enable Reverse Proxy Tool" if not already checked
 * Click "+" in the lower left to create a new reverse proxy
-* Specify a name for the proxy, the local port, the remote host or IP address, and the remote port
-* For OAuth, set Immich mobile's server URL to Proxyman's HTTPS local
-  endpoint. The certificate presented to the device must be trusted.
-* If Proxyman connects to the adapter over TLS, run the adapter with an SSL
-  certificate and check "Force Using SSL when connecting to Remote Port".
-  If Proxyman terminates HTTPS and forwards HTTP, pass
-  `X-Forwarded-Proto: https` to the adapter as described above.
+* Specify a name, a local port, and the adapter's host and port
+* If the adapter uses HTTPS, check "Force Using SSL when connecting to Remote Port"
+* Enable "Preserve Host in Header" so the adapter receives the device-facing host and port
 * Click "Add" to create and start the reverse proxy
 
-The HTTPS URL entered in Immich is the local endpoint. Proxyman's Remote Port
-SSL setting controls its separate connection to the adapter.
+Proxyman documents client connections to `http://<dev-machine-ip>:<local-port>`.
+Do not use an HTTPS URL for this listener based on the Remote Port SSL setting.
+To inspect mobile OAuth itself, configure a trusted device-facing HTTPS
+listener with the forwarding behavior described above; the Proxyman steps
+here do not establish that arrangement.
