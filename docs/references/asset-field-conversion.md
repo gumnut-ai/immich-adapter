@@ -1,6 +1,6 @@
 ---
 title: "Asset Field Conversion"
-last-updated: 2026-10-15
+last-updated: 2026-10-29
 ---
 
 # Asset Field Conversion
@@ -27,7 +27,7 @@ Use the constants in `routers/utils/asset_conversion.py`, chosen by what the con
 |----------|--------|---------|
 | `ASSET_INCLUDE` | `metadata, people, file_data` | Reads feeding `convert_gumnut_asset_to_immich` (it emits `people`): `get_asset_info`, search, memories, the upload-success retrieve. |
 | `ASSET_INCLUDE_NO_PEOPLE` | `metadata, file_data` | The sync-stream `entity_fetch` reads, whose converters read the `file_data` scalars but never `people`. |
-| `ASSET_INCLUDE_METADATA_ONLY` | `metadata` | Reads that touch only `metadata`: timeline buckets (place names and GPS), map markers (GPS), the bulk per-asset datetime rewrite (`original_datetime`). |
+| `ASSET_INCLUDE_METADATA_ONLY` | `metadata` | Reads that touch only `metadata`: the `/api/search/explore` scan (city grouping; selected assets are re-fetched with `ASSET_INCLUDE`), timeline buckets (place names and GPS), map markers (GPS), and the bulk per-asset datetime rewrite (`original_datetime`). |
 
 Reads that consume only **lean-core** fields (`id`, `mime_type`, `width`/`height`, `duration`, `trashed_at`, `local_datetime`, `stack_id`, `kind`, `file_size_bytes`) request **no** `include` — those stay populated regardless (today: trash-id collection, asset-count stats, the `/faces` width/height read, and `/download/info` sizes). `stack_id` earns its place on that list: the timeline's burst collapse still depends on it arriving as a lean-core field alongside an `include=metadata` request, and if it ever moved behind a token the feature would degrade to no collapse and no badges with no error and no failing test.
 
