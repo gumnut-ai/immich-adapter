@@ -223,7 +223,7 @@ pre-agent-steps:
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/dependency-maintenance.md@de74f5b115a9d2ee07a83d2335195b34f9b7effd
+  - gumnut-ai/automation/daemons/dependency-maintenance.md@03f51dbd620efd698c14c6b532d345182ba6c756
 
 ---
 

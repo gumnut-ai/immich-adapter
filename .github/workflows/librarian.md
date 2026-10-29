@@ -205,7 +205,7 @@ pre-agent-steps:
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/librarian.md@ec2bba2086ad77a4db2a13aa17ac97b3b2149463
+  - gumnut-ai/automation/daemons/librarian.md@03f51dbd620efd698c14c6b532d345182ba6c756
 
 ---
 
@@ -292,17 +292,15 @@ PR or review request exists yet. Exclude logins ending in `[bot]` and known auto
 DAEMON.md caps and status-transition limits before publishing; when they leave no
 room, report the verified deferral. Use the repository linter directly and
 relevant repository guidance to validate any edit. Check whitespace in the
-entire candidate change, including new files. If there is no justified edit,
-call the `noop` safe-output tool with the dispatch revision, recent commits and
+entire candidate change, including new files. If completed required inspection
+leaves no eligible edit or handoff, call `noop` with the dispatch revision, recent commits and
 topics inspected, rotating area and document paths, implementation evidence,
 linter results, any candidate-clearance findings and coverage limits. Distinguish
-checked and consistent from already proposed, cap-limited, or insufficient evidence.
+checked and consistent from verified overlap or cap deferrals and uninspected scope.
 Do not claim repository-wide documentation health from this bounded sample.
-A failed required source or validation check is incomplete work. Unavailable
-evidence needed to clear a supported candidate prevents its proposal and must
-be reported as incomplete candidate clearance, not a successful no-work result.
-Choose one native outcome: delivery, completed no-work noop, or report_incomplete for blocked work. Never emit noop alongside a PR proposal. A text-only answer does not
-establish a completed no-work run.
+Follow the shared native outcome rules for blocked required source, candidate
+clearance or validation work. A text-only answer does not establish a completed
+no-work run.
 If preparation, inference, or validation fails, report that specific phase and
 the source revision. A timeout or interruption leaves the proposal incomplete.
 The agent job may report that its checkout is clean, but gh-aw's completed
