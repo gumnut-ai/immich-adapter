@@ -1,6 +1,6 @@
 ---
 title: "Pagination and Enumeration"
-last-updated: 2026-10-18
+last-updated: 2026-10-29
 ---
 
 # Pagination and Enumeration
@@ -24,6 +24,24 @@ gumnut_results = await client.search.search(**search_kwargs)
 Substituting an adapter-side default (e.g., `limit = int(request.size) if request.size else 50`) fragments the source of truth — the backend default and an adapter-hardcoded 50 can silently disagree, and a future change to the Gumnut API's default won't propagate. Same principle for any optional kwarg passed through the adapter: preserve the optionality, don't normalize.
 
 Generated Immich DTO constraints can exceed the backend's per-page cap — e.g., `MetadataSearchDto.size` allows `le=1000.0` while the Gumnut API enforces `GUMNUT_API_MAX_PAGE_SIZE`, and the Immich mobile client uses these high values by default. Clamp at the adapter site against `GUMNUT_API_MAX_PAGE_SIZE` (defined in `routers/api/constants.py`); without it the Gumnut API 422s and the user sees a generic "Failed to ..." surface. **Don't shortcut by tightening the generated DTO** (e.g., dropping `Field(le=1000.0)` to `le=200.0`) — `routers/immich_models.py` is overwritten on every Immich version bump, which restores upstream's constraint and silently reintroduces the bug.
+
+## Filter-only search pages
+
+`POST /api/search/metadata` and `POST /api/search/smart` use asset listing
+when no text or camera/place terms remain after trimming whitespace. Supported
+people, capture-date, and rating/favorite restrictions are forwarded together;
+people IDs retain ALL-of intersection semantics. Requests retain the
+authenticated client's selected library scope. Unsupported restrictive fields
+on these no-content requests return empty results rather than broadening the
+listing. Nonempty composed terms continue to use content search.
+
+These routes bridge numeric Immich pages to the Gumnut API's cursor listing
+by walking to the requested page plus one matching lookahead asset. `nextPage`
+is the next numeric page as a string, or null when exhausted. The deprecated
+`total` reports the returned page length, not an exact library count. Later
+numeric pages repeat the earlier cursor walk; concurrent library changes can
+shift page boundaries. Capture-date bounds preserve the existing
+[date translation](route-and-dto-contracts.md#immich-web-today-wire-format).
 
 ## Unpaginated Immich endpoints — cap the walk and log it
 

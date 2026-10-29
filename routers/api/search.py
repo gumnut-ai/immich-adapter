@@ -270,16 +270,15 @@ async def search_asset_statistics(
     return SearchStatisticsResponseDto(total=total)
 
 
-# Fields on MetadataSearchDto that a plain asset listing can honor (or that
+# Fields on search DTOs that a plain asset listing can honor (or that
 # don't restrict the result set), so their presence does NOT disqualify a
-# request from the criterion-less enumeration path: pagination, response-shape
+# request from the filter-only listing path: pagination, response-shape
 # hints, sort order, and the visibility/trash selectors `_list_asset_page`
 # translates. Every *other* field is a restricting filter. Framing this as an
 # allow-list (rather than enumerating the restricting fields) fails safe:
 # MetadataSearchDto is generated from Immich's OpenAPI spec and regenerated on
 # version bumps, so a newly added filter is absent from this set and therefore
-# treated as restricting — it keeps the existing search path instead of being
-# silently ignored by an enumeration that returns the whole library.
+# treated as restricting rather than silently ignored by a listing.
 _ENUMERATION_HONORABLE_FIELDS = frozenset(
     {
         "page",
@@ -296,6 +295,9 @@ _ENUMERATION_HONORABLE_FIELDS = frozenset(
         "withStacked",
         "isFavorite",
         "rating",
+        "personIds",
+        "takenAfter",
+        "takenBefore",
     }
 )
 
@@ -339,8 +341,8 @@ def _compose_free_text_query(
     Exact filtering needs a typed parameter on the Gumnut API; until that
     exists, this is the closest approximation available.
 
-    Returns ``None`` when nothing is populated, preserving the existing
-    no-criterion behavior for callers that supply neither text nor filters.
+    Returns ``None`` when no content terms are populated, allowing supported
+    structured filters to use asset listing.
     """
     # No getattr default: both DTOs declare all six fields, and these models are
     # generated from Immich's OpenAPI spec. A rename on a version bump should
@@ -372,28 +374,22 @@ def _empty_search_response() -> SearchResponseDto:
     )
 
 
-def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
-    """True when a metadata search is a filter-less asset-listing walk.
+def _can_list_filter_only(request: MetadataSearchDto | SmartSearchDto) -> bool:
+    """Whether listing can honor every populated field of a no-content search.
 
-    immich-go lists every server asset with a criterion-less
-    `POST /api/search/metadata` — its body carries only pagination plus
-    `visibility`/`order`/`withExif` and (for its trashed pass) `trashedAfter`,
-    no query/date/person/etc. Real Immich returns *all* assets for such a
-    request, but the Gumnut API's `search.search` mandates a criterion and 400s
-    on an empty one, aborting immich-go before it uploads anything. So route a
-    criterion-less enumeration to a plain asset listing instead
-    (`_list_asset_page`).
-
-    A request is criterion-less only when every populated field is
-    enumeration-honorable (see `_ENUMERATION_HONORABLE_FIELDS`). Any restricting
-    filter keeps the request on the existing `search.search` path — which serves
-    query/date/person and 400s on the rest, exactly as before. Gating on the
-    absence of every restricting filter (rather than ignoring the ones the
-    listing can't honor) means the enumeration branch never silently drops a
-    filter and returns everything.
+    Unknown restrictive filters fail closed at the caller rather than losing
+    narrowing when translated to asset listing. Text and camera/place terms
+    must still use content search.
     """
+    text = (
+        request.description if isinstance(request, MetadataSearchDto) else request.query
+    )
+    if _compose_free_text_query(text, request) is not None:
+        return False
     for field_name, value in request:
         if field_name in _ENUMERATION_HONORABLE_FIELDS:
+            continue
+        if field_name in {"description", "query", *_FREE_TEXT_FILTER_FIELDS}:
             continue
         if field_name == "filter":
             if _filter_restricts(value):
@@ -411,7 +407,7 @@ def _is_criterion_less_enumeration(request: MetadataSearchDto) -> bool:
 
 
 async def _list_asset_page(
-    request: MetadataSearchDto,
+    request: MetadataSearchDto | SmartSearchDto,
     client: AsyncGumnut,
     current_user: UserResponseDto,
 ) -> SearchResponseDto:
@@ -449,16 +445,29 @@ async def _list_asset_page(
 
     # The listing supports direction but not `orderBy.field`. Prefer `orderBy`
     # over the deprecated `order`, and default to newest first.
-    if request.orderBy is not None:
+    if isinstance(request, MetadataSearchDto) and request.orderBy is not None:
         direction = request.orderBy.direction
     else:
-        direction = request.order or AssetOrder.desc
+        direction = (
+            request.order if isinstance(request, MetadataSearchDto) else None
+        ) or AssetOrder.desc
     list_kwargs: dict[str, Any] = {
         "state": state,
         "limit": GUMNUT_API_MAX_PAGE_SIZE,
         "include": ASSET_INCLUDE,
         "order": direction.value,
     }
+    if request.personIds:
+        # The list API intersects all supplied people, matching content search.
+        list_kwargs["person_ids"] = [
+            uuid_to_gumnut_person_id(pid) for pid in request.personIds
+        ]
+    # Preserve the existing capture-date translation, including its timezone
+    # behavior; see Route and DTO Contracts, "Immich web today wire format".
+    if request.takenAfter is not None:
+        list_kwargs["local_datetime_after"] = request.takenAfter
+    if request.takenBefore is not None:
+        list_kwargs["local_datetime_before"] = request.takenBefore
     extra_query = rating_extra_query(
         rating_filter_values(
             rating=request.rating,
@@ -527,15 +536,18 @@ async def search_assets(
     if _filter_restricts(request.filter):
         return _empty_search_response()
 
-    if _is_criterion_less_enumeration(request):
-        return await _list_asset_page(request, client, current_user)
+    query = _compose_free_text_query(request.description, request)
+    if query is None:
+        if _can_list_filter_only(request):
+            return await _list_asset_page(request, client, current_user)
+        return _empty_search_response()
 
     person_ids = None
     if request.personIds:
         person_ids = [uuid_to_gumnut_person_id(pid) for pid in request.personIds]
 
     search_kwargs: dict[str, Any] = {
-        "query": _compose_free_text_query(request.description, request),
+        "query": query,
         # These map to the Gumnut API's local_datetime bounds by deliberate
         # translation, not identity, and web sends them in the keepLocalTime
         # wire format so its offset is fictitious (both: see code practices,
@@ -601,8 +613,14 @@ async def search_smart(
     if _filter_restricts(request.filter):
         return _empty_search_response()
 
+    query = _compose_free_text_query(request.query, request)
+    if query is None:
+        if _can_list_filter_only(request):
+            return await _list_asset_page(request, client, current_user)
+        return _empty_search_response()
+
     search_kwargs: dict[str, Any] = {
-        "query": _compose_free_text_query(request.query, request),
+        "query": query,
         "include": ASSET_INCLUDE,
     }
     extra_query = rating_extra_query(

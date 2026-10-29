@@ -1,14 +1,17 @@
 """Tests for /search/* endpoints."""
 
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
+import httpx
 import pytest
+from gumnut import AsyncGumnut
 
 from routers.api.search import (
+    _can_list_filter_only,
     _fetch_month_assets_at_offsets,
-    _is_criterion_less_enumeration,
     get_explore_data,
     search_asset_statistics,
     search_assets,
@@ -39,6 +42,7 @@ from routers.utils.gumnut_id_conversion import (
     safe_uuid_from_person_id,
     uuid_to_gumnut_person_id,
 )
+from tests.conftest import MockPaginatedListing
 
 
 def _make_person(
@@ -479,7 +483,7 @@ class TestSearchMetadata:
         assert result.assets.nextPage is None
 
     @pytest.mark.anyio
-    async def test_converts_person_ids(self, mock_current_user):
+    async def test_converts_person_ids(self, mock_current_user, mock_sync_cursor_page):
         """Test that Immich person UUIDs are converted to Gumnut IDs."""
         person_uuid = uuid4()
         gumnut_person_id = uuid_to_gumnut_person_id(person_uuid)
@@ -488,7 +492,7 @@ class TestSearchMetadata:
         search_response.data = []
 
         mock_client = Mock()
-        mock_client.search.search = AsyncMock(return_value=search_response)
+        mock_client.assets.list = Mock(return_value=mock_sync_cursor_page([]))
 
         request = MetadataSearchDto(personIds=[person_uuid])
 
@@ -496,7 +500,7 @@ class TestSearchMetadata:
             request=request, client=mock_client, current_user=mock_current_user
         )
 
-        call_kwargs = mock_client.search.search.call_args[1]
+        call_kwargs = mock_client.assets.list.call_args.kwargs
         assert call_kwargs["person_ids"] == [gumnut_person_id]
 
     @pytest.mark.anyio
@@ -743,25 +747,20 @@ class TestCriterionLessEnumeration:
     """Test the classifier that routes a filter-less metadata search to a listing."""
 
     def test_empty_request_is_enumeration(self):
-        assert _is_criterion_less_enumeration(MetadataSearchDto()) is True
+        assert _can_list_filter_only(MetadataSearchDto()) is True
 
     def test_empty_structured_filter_does_not_disqualify(self):
-        assert (
-            _is_criterion_less_enumeration(MetadataSearchDto(filter=SearchFilter()))
-            is True
-        )
+        assert _can_list_filter_only(MetadataSearchDto(filter=SearchFilter())) is True
 
     def test_all_null_structured_filter_does_not_disqualify(self):
         assert (
-            _is_criterion_less_enumeration(
-                MetadataSearchDto(filter=SearchFilter(city=None))
-            )
+            _can_list_filter_only(MetadataSearchDto(filter=SearchFilter(city=None)))
             is True
         )
 
     def test_empty_nested_filter_object_conservatively_restricts(self):
         assert (
-            _is_criterion_less_enumeration(
+            _can_list_filter_only(
                 MetadataSearchDto(filter=SearchFilter(city=StringFilterNullable()))
             )
             is False
@@ -770,7 +769,7 @@ class TestCriterionLessEnumeration:
     def test_enumeration_honorable_fields_do_not_disqualify(self):
         # The fields immich-go's asset sweep sends, plus withDeleted.
         assert (
-            _is_criterion_less_enumeration(
+            _can_list_filter_only(
                 MetadataSearchDto(
                     page=1,
                     size=1000,
@@ -784,18 +783,13 @@ class TestCriterionLessEnumeration:
             )
             is True
         )
-        assert (
-            _is_criterion_less_enumeration(MetadataSearchDto(withDeleted=True)) is True
-        )
+        assert _can_list_filter_only(MetadataSearchDto(withDeleted=True)) is True
 
     def test_structured_order_by_does_not_disqualify(self):
         # Sort fields do not restrict membership, even when unsupported.
+        assert _can_list_filter_only(MetadataSearchDto(orderBy=SearchOrder())) is True
         assert (
-            _is_criterion_less_enumeration(MetadataSearchDto(orderBy=SearchOrder()))
-            is True
-        )
-        assert (
-            _is_criterion_less_enumeration(
+            _can_list_filter_only(
                 MetadataSearchDto(
                     orderBy=SearchOrder(
                         direction=AssetOrder.asc,
@@ -810,7 +804,7 @@ class TestCriterionLessEnumeration:
         # Favorite false is translated by the listing path; unsupported false
         # flags narrow nothing. Neither needs the search path.
         assert (
-            _is_criterion_less_enumeration(
+            _can_list_filter_only(
                 MetadataSearchDto(isFavorite=False, isNotInAlbum=False)
             )
             is True
@@ -820,9 +814,6 @@ class TestCriterionLessEnumeration:
         "request_kwargs",
         [
             {"description": "sunset"},
-            {"takenAfter": datetime(2024, 1, 1, tzinfo=UTC)},
-            {"takenBefore": datetime(2024, 1, 1, tzinfo=UTC)},
-            {"personIds": [uuid4()]},
             {"albumIds": [uuid4()]},
             {"tagIds": [uuid4()]},
             {"city": "Paris"},
@@ -834,13 +825,196 @@ class TestCriterionLessEnumeration:
         ],
     )
     def test_restricting_filters_disqualify(self, request_kwargs):
-        assert (
-            _is_criterion_less_enumeration(MetadataSearchDto(**request_kwargs)) is False
-        )
+        assert _can_list_filter_only(MetadataSearchDto(**request_kwargs)) is False
 
 
 class TestSearchMetadataEnumeration:
     """Test that a criterion-less /search/metadata enumerates via a plain listing."""
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("dto", "handler"),
+        [(MetadataSearchDto, search_assets), (SmartSearchDto, search_smart)],
+    )
+    async def test_listing_retains_authenticated_library_scope(
+        self, mock_current_user, dto, handler
+    ):
+        requests: list[httpx.Request] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json={"data": [], "has_more": False})
+
+        people = [uuid4(), uuid4()]
+        async with AsyncGumnut(
+            api_key="apikey_test",
+            base_url="https://api.example.test",
+            default_query={"library_id": "lib_test"},
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        ) as client:
+            await handler(
+                request=dto(personIds=people, isFavorite=True),
+                client=client,
+                current_user=mock_current_user,
+            )
+
+        assert len(requests) == 1
+        sent = requests[0]
+        assert sent.url.path == "/api/assets"
+        assert sent.headers["authorization"] == "Bearer apikey_test"
+        assert sent.url.params["library_id"] == "lib_test"
+        assert sent.url.params.get_list("person_ids") == [
+            uuid_to_gumnut_person_id(person) for person in people
+        ]
+        assert sent.url.params["ratings"] == "5"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("dto", "handler"),
+        [(MetadataSearchDto, search_assets), (SmartSearchDto, search_smart)],
+    )
+    @pytest.mark.parametrize("blank", [None, "", " \t\n"])
+    @pytest.mark.parametrize(
+        ("rating_fields", "ratings"),
+        [
+            ({}, None),
+            ({"isFavorite": False}, "0,1,2,3,4"),
+            ({"isFavorite": True}, "5"),
+            ({"rating": 3, "isFavorite": True}, "3"),
+            ({"rating": None, "isFavorite": True}, "0"),
+        ],
+    )
+    async def test_filter_only_forwards_all_narrowing(
+        self,
+        mock_current_user,
+        mock_sync_cursor_page,
+        dto,
+        handler,
+        blank,
+        rating_fields,
+        ratings,
+    ):
+        people = [uuid4(), uuid4()]
+        after = datetime.fromisoformat("2024-01-01T00:00:00+05:30")
+        before = datetime.fromisoformat("2024-06-01T00:00:00+05:30")
+        fields = dict(
+            personIds=people,
+            takenAfter=after,
+            takenBefore=before,
+            make=" ",
+            city="\t",
+            **rating_fields,
+        )
+        request = dto.model_validate(
+            {("query" if dto is SmartSearchDto else "description"): blank, **fields}
+        )
+        client = Mock()
+        client.assets.list = Mock(return_value=mock_sync_cursor_page([]))
+
+        await handler(request=request, client=client, current_user=mock_current_user)
+
+        client.search.search.assert_not_called()
+        kwargs = client.assets.list.call_args.kwargs
+        assert kwargs["person_ids"] == [uuid_to_gumnut_person_id(p) for p in people]
+        assert kwargs["local_datetime_after"] is after
+        assert kwargs["local_datetime_before"] is before
+        assert kwargs["include"] == ASSET_INCLUDE
+        assert kwargs["state"] == "live"
+        # The injected client retains its credential and chosen library scope.
+        assert "library_id" not in kwargs
+        if ratings is None:
+            assert "extra_query" not in kwargs
+        else:
+            assert kwargs["extra_query"] == {"ratings": ratings}
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("dto", "handler"),
+        [(MetadataSearchDto, search_assets), (SmartSearchDto, search_smart)],
+    )
+    async def test_filtered_numeric_pages_cross_cursor_boundaries(
+        self,
+        mock_current_user,
+        dto,
+        handler,
+    ):
+        assets = [
+            _make_search_asset(datetime(2024, 6, 1, tzinfo=UTC)) for _ in range(650)
+        ]
+        listing = MockPaginatedListing(assets, page_size=200)
+        client = Mock()
+        client.assets.list = Mock(return_value=listing)
+        request = dto(size=100, page=3, personIds=[uuid4()], isFavorite=True)
+
+        result = await handler(
+            request=request, client=client, current_user=mock_current_user
+        )
+
+        assert client.assets.list.call_args.kwargs["limit"] == 200
+        assert listing.pages_fetched == 2
+        assert [item.id for item in result.assets.items] == [
+            safe_uuid_from_asset_id(asset.id) for asset in assets[200:300]
+        ]
+        assert result.assets.nextPage == "4"
+        assert result.assets.total == result.assets.count == 100
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("dto", "handler"),
+        [(MetadataSearchDto, search_assets), (SmartSearchDto, search_smart)],
+    )
+    async def test_filter_only_cancellation_propagates(
+        self, mock_current_user, dto, handler
+    ):
+        async def cancelled_listing():
+            raise asyncio.CancelledError
+            yield
+
+        client = Mock()
+        client.assets.list = Mock(return_value=cancelled_listing())
+        with pytest.raises(asyncio.CancelledError):
+            await handler(
+                request=dto(personIds=[uuid4()]),
+                client=client,
+                current_user=mock_current_user,
+            )
+        client.search.search.assert_not_called()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("dto", "handler"),
+        [(MetadataSearchDto, search_assets), (SmartSearchDto, search_smart)],
+    )
+    @pytest.mark.parametrize(
+        "unsupported",
+        [
+            {"albumIds": [uuid4()]},
+            {"type": AssetTypeEnum.IMAGE},
+            {"libraryId": uuid4()},
+            {"createdAfter": datetime(2024, 1, 1, tzinfo=UTC)},
+            {"tagIds": [uuid4()]},
+            {"isNotInAlbum": True},
+        ],
+    )
+    async def test_unsupported_filter_does_not_broaden_supported_filters(
+        self,
+        mock_current_user,
+        dto,
+        handler,
+        unsupported,
+    ):
+        client = Mock()
+
+        result = await handler(
+            request=dto(personIds=[uuid4()], isFavorite=True, **unsupported),
+            client=client,
+            current_user=mock_current_user,
+        )
+
+        assert result.assets.items == []
+        assert result.assets.nextPage is None
+        client.assets.list.assert_not_called()
+        client.search.search.assert_not_called()
 
     @pytest.mark.anyio
     async def test_criterion_less_routes_to_listing(
@@ -2237,13 +2411,12 @@ class TestCameraAndPlaceFilters:
         )
 
     @pytest.mark.anyio
-    async def test_query_stays_none_when_nothing_is_populated(self, mock_current_user):
-        """A request with only non-text criteria must not gain an empty query.
-
-        Sending "" instead of None would turn "no text criterion" into a
-        full-text search for nothing, which the Gumnut API treats differently.
-        """
+    async def test_no_content_terms_use_listing(
+        self, mock_current_user, mock_sync_cursor_page
+    ):
+        """A people-only request uses listing without creating an empty query."""
         client = self._mock_client()
+        client.assets.list = Mock(return_value=mock_sync_cursor_page([]))
         person_id = uuid4()
         request = MetadataSearchDto(personIds=[person_id])
 
@@ -2251,7 +2424,8 @@ class TestCameraAndPlaceFilters:
             request=request, client=client, current_user=mock_current_user
         )
 
-        assert self._query_for(client) is None
+        client.search.search.assert_not_called()
+        client.assets.list.assert_called_once()
 
     @pytest.mark.anyio
     async def test_blank_and_whitespace_only_values_are_ignored(
