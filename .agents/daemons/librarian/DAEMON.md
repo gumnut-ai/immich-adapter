@@ -68,7 +68,9 @@ If it cannot compute a merge-base (a shallow checkout), run every check `--list-
 
 ## Limits
 - Push at most 3 commits per activation.
-- Maintain at most 3 open librarian PRs at a time, and at most 1 of them a design-doc status transition.
+- New proposals must leave at most 3 open librarian PRs, and at most 1 of them
+  a design-doc status transition. These creation caps do not prevent repairing
+  an existing role PR.
 - One topical area per PR; one status transition per PR.
 
 ## Discovery boundary
