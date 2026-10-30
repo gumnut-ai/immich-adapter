@@ -30,7 +30,7 @@ for (const role of ['dependency-maintenance', 'librarian', 'maintainer']) {
       if (role === 'librarian') assert.deepEqual(repair.required_labels, ['librarian']);
       const agent = lock.match(/^  agent:\n[\s\S]*?(?=^  [a-z_]+:\n|(?![\s\S]))/m)?.[0];
       assert.ok(agent, 'missing inference job');
-      const permissions = agent.match(/    permissions:\n([\s\S]*?)(?=    [a-z_]+:)/)?.[1];
+      const permissions = agent.match(/^    permissions:\n((?:      .*\n)+)/m)?.[1];
       assert.ok(permissions, 'missing inference permissions');
       assert.doesNotMatch(permissions, /: write/, 'repair credentials must remain isolated from inference');
       const agentConfig = agent.match(/GH_AW_SAFE_OUTPUTS_CONFIG: ("[^\n]+")/);
