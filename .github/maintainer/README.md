@@ -20,11 +20,14 @@ include Contents, Pull requests, Issues and Workflows write, and Administration
 read; native token minting requests the permissions needed by configured outputs.
 The agent never receives the App key or publisher token.
 
-Native publication creates same-repository PRs. Workflow and security-file edits
+Native publication creates same-repository PRs and repairs the role's existing
+PRs carrying the `maintainer` label under the shared existing-PR repair policy.
+Workflow and security-file edits
 within the role's scope may be proposed for ordinary CI and human review. There is
 no custom path validator or captured-head rejection. Native transport cannot
-upload Git LFS objects; defer proposals requiring new uploads. This role creates
-proposals rather than repairing dependency branches. Inspect uncertain publication
+upload Git LFS objects; defer proposals requiring new uploads. Repairs retain
+the existing PR identity and append commits within the role's scope and work
+limits; failed repairs cannot open a fallback PR. Inspect uncertain publication
 through GitHub readback before retrying.
 
 Human handoff uses a native numeric review target on a later

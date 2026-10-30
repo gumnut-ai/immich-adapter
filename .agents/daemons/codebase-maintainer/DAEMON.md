@@ -42,7 +42,9 @@ Passing CI alone does not establish that a cleanup preserves supported behavior.
 Do not use sudo or launch a nested AWF runtime from the confined agent session.
 
 ## Limits
-- At most 1 open cleanup PR at a time, counting prior maintenance executors.
+- Create a new proposal only when there is no open cleanup PR (at most 1),
+  counting prior maintenance executors. This creation cap does not prevent
+  repairing an existing role PR.
 - At most 1 proposal per activation, with one concern per PR.
 
 ## Human review

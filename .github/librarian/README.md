@@ -3,7 +3,7 @@
 `.github/workflows/librarian.md` is the source for the checked-in
 `librarian.lock.yml`. Compile it directly with unmodified GH-AW v0.89.21;
 no generated YAML corrections, runtime patches or delivery adapters are used.
-Shared instructions are embedded from immutable imports. Local daemon policy owns
+Shared role and existing-PR repair instructions are embedded from immutable imports. Local daemon policy owns
 scope, investigation, checks, caps, deduplication and human selection.
 
 The daily schedule is 12:00 UTC. Admission requires `LIBRARIAN_ENABLED=true`. Dispatch

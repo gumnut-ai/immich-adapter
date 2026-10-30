@@ -223,7 +223,8 @@ pre-agent-steps:
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/dependency-maintenance.md@85d780319674b0db9a6947fe54105972c20a1d45
+  - gumnut-ai/automation/daemons/dependency-maintenance.md@190d23eb282f5c8479c5169ce71839fa07c10c7e
+  - gumnut-ai/automation/daemons/pr-repair.md@190d23eb282f5c8479c5169ce71839fa07c10c7e
 
 ---
 
@@ -247,15 +248,9 @@ human follow-up. Do not use paid production credentials for validation.
 Emit at most one code proposal: native `create_pull_request` for an uncovered
 update on `dependency-maintenance/<unused-topic>`, OR native
 `push_to_pull_request_branch` for a repair to an eligible existing same-repository
-bot PR targeting main. Verify its actual author, dependency scope and current head.
-For repairs,
-check out the selected pre-fetched origin branch using its actual head-ref name
-and preserve that observed remote-tracking head as the incremental baseline; append committed fixes rather than rebasing or
-rewriting existing commits. Supply the actual local branch and explicit adapter
-repository/PR number to the native push tool. Use the pinned native bundle
-transport for generated artifacts. Regenerate artifacts using the candidate toolchain; do not hand-edit them.
-Failed direct pushes do not open stacked fallback PRs; record the failure and
-revisit from fresh state.
+bot PR targeting main. Verify its actual author and dependency scope. Use the
+pinned native bundle transport for generated artifacts. Regenerate artifacts
+using the candidate toolchain; do not hand-edit them.
 
 An admitted run always investigates, including no-work runs. Follow the shared
 outcome rules for validated delivery, incomplete investigation and completed
@@ -271,7 +266,6 @@ Use native publication only. Keep scope, limits, readiness, deduplication and hu
 selection in agent policy. Workflow and security-file changes may be proposed
 through ordinary human-reviewed PRs when within the role's scope. Native transport
 does not upload Git LFS objects; defer proposals requiring new LFS uploads.
-Never retry uncertain publication blindly; reconcile the actual branch and PR.
 
 Follow the shared human-review readiness and deduplication policy in
 `.agents/daemons/AGENTS.md`. Use native numeric PR targets on a later activation;

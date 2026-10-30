@@ -22,15 +22,15 @@ for (const role of ['dependency-maintenance', 'librarian', 'maintainer']) {
     assert.ok(encoded, 'missing native handlers');
     const handlers = JSON.parse(JSON.parse(encoded[1]));
     assert.ok(handlers.create_pull_request, 'creation must remain enabled');
-    if (role === 'librarian' || role === 'dependency-maintenance') {
+    {
       const repair = handlers.push_to_pull_request_branch;
       assert.ok(repair, 'existing PR repair must remain available');
       assert.equal(repair.target, '*');
       assert.equal(repair.fallback_as_pull_request, false, 'failed repairs must retain the existing PR identity');
-      if (role === 'librarian') assert.deepEqual(repair.required_labels, ['librarian']);
+      if (role !== 'dependency-maintenance') assert.deepEqual(repair.required_labels, [role]);
       const agent = lock.match(/^  agent:\n[\s\S]*?(?=^  [a-z_]+:\n|(?![\s\S]))/m)?.[0];
       assert.ok(agent, 'missing inference job');
-      const permissions = agent.match(/^    permissions:\n((?:      .*\n)+)/m)?.[1];
+      const permissions = agent.match(/^    permissions:\n((?:      [\w-]+: \w+\n)+)/m)?.[1];
       assert.ok(permissions, 'missing inference permissions');
       assert.doesNotMatch(permissions, /: write/, 'repair credentials must remain isolated from inference');
       const agentConfig = agent.match(/GH_AW_SAFE_OUTPUTS_CONFIG: ("[^\n]+")/);

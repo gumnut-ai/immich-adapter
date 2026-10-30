@@ -216,7 +216,8 @@ pre-agent-steps:
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/librarian.md@85d780319674b0db9a6947fe54105972c20a1d45
+  - gumnut-ai/automation/daemons/librarian.md@190d23eb282f5c8479c5169ce71839fa07c10c7e
+  - gumnut-ai/automation/daemons/pr-repair.md@190d23eb282f5c8479c5169ce71839fa07c10c7e
 
 ---
 
@@ -233,24 +234,7 @@ implementation and documentation; do not substitute a moving `origin/main`.
 Record that revision before changing branches or making edits. No dispatch input
 may change the role, provider, model, credentials, or instructions.
 
-Before new overlapping discovery, inspect actionable feedback on existing
-same-repository librarian PRs targeting main. Verify role ownership from the
-actual author, scope and history, the librarian label, and the current head;
-a label alone does not establish ownership. Prefer a supported repair within
-DAEMON.md scope and caps over a new overlapping proposal. Preserve human edits,
-pending review requests, PR identity and existing commits. Never repair a PR
-created in this activation or rebase, force-push or otherwise rewrite history.
-For an eligible repair, check out the actual pre-fetched origin head-ref branch
-and retain its observed remote-tracking head as the incremental baseline. If
-needed, fetch the verified same-repository head through read-only access. Append
-committed fixes and validate the complete candidate change. Call native
-`push_to_pull_request_branch` with the actual local branch and explicit
-repository/PR number, using the configured bundle transport. Emit at most one
-code proposal per activation: an existing-PR repair OR a new topical proposal.
-Changed heads wait for exact-head CI and review on a later readiness activation.
-When available tools cannot safely repair a PR, follow the shared recovery
-handoff instructions and retain its URL, observed head, actionable findings and
-blocking capability; do not replace it or trigger another agent.
+Emit at most one topical code proposal per activation, including repairs.
 
 For new work, start discovery from local Git history: inspect the latest 20
 first-parent commits at the dispatch revision, then select up to three changes most likely
@@ -280,7 +264,7 @@ author, head branch, title and labels), deduplicate results across searches, and
 retain targeted source, diff or review excerpts. Do not reread unchanged pages
 or full tool outputs, or search generated lockfiles for documentation evidence.
 
-Only after finding a supported candidate, clear it before publishing:
+For a new proposal, only after finding a supported candidate, clear it before publishing:
 
 - Establish the complete current open librarian inventory from every executor
   for the DAEMON.md open-PR and lifecycle caps. Paginate the open inventory to
