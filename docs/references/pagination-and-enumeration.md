@@ -36,7 +36,7 @@ on these no-content requests return empty results rather than broadening the
 listing. Nonempty composed terms continue to use content search.
 
 The listing converts every asset to `timeline` visibility, so an omitted or
-`timeline` visibility can be represented; archive and hidden visibility
+`timeline` visibility can be represented; any other visibility
 requests return empty results. `withDeleted=true` lists live and trashed assets.
 Without it, `trashedAfter` selects the trashed listing, and its lower bound is
 applied before page positions are counted. When both selectors are present,
