@@ -1,6 +1,6 @@
 ---
 title: "Pagination and Enumeration"
-last-updated: 2026-10-29
+last-updated: 2026-10-31
 ---
 
 # Pagination and Enumeration
@@ -34,6 +34,14 @@ people IDs retain ALL-of intersection semantics. Requests retain the
 authenticated client's selected library scope. Unsupported restrictive fields
 on these no-content requests return empty results rather than broadening the
 listing. Nonempty composed terms continue to use content search.
+
+The listing converts every asset to `timeline` visibility, so an omitted or
+`timeline` visibility can be represented; archive and hidden visibility
+requests return empty results. `withDeleted=true` lists live and trashed assets.
+Without it, `trashedAfter` selects the trashed listing, and its lower bound is
+applied before page positions are counted. When both selectors are present,
+live assets remain eligible while trashed assets older than the bound are
+skipped.
 
 These routes bridge numeric Immich pages to the Gumnut API's cursor listing
 by walking to the requested page plus one matching lookahead asset. `nextPage`
