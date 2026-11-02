@@ -91,6 +91,8 @@ engine:
   env:
     # Bound execution by credits and time, not cumulative-context heuristics.
     GH_AW_CODEX_CONTEXT_REBUILD_CIRCUIT_BREAKER: "false"
+    # Keep inference writes out of the host's setup-uv cache.
+    UV_CACHE_DIR: /tmp/gh-aw/agent/package-state-${{ github.run_id }}-${{ github.run_attempt }}/uv
     GIT_AUTHOR_NAME: gumnut-bot[bot]
     GIT_AUTHOR_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
     GIT_COMMITTER_NAME: gumnut-bot[bot]
@@ -104,7 +106,7 @@ engine:
     - 'model_reasoning_effort="xhigh"'
     - "-c"
     - >-
-      'shell_environment_policy={inherit="all",include_only=["PATH","HOME","USER","LOGNAME","SHELL","TMPDIR","TEMP","TMP","LANG","LC_ALL","LC_CTYPE","HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY","SSL_CERT_FILE","SSL_CERT_DIR","NODE_EXTRA_CA_CERTS","REQUESTS_CA_BUNDLE","UV_PYTHON_INSTALL_DIR","pythonLocation","GIT_AUTHOR_NAME","GIT_AUTHOR_EMAIL","GIT_COMMITTER_NAME","GIT_COMMITTER_EMAIL"]}'
+      'shell_environment_policy={inherit="all",include_only=["PATH","HOME","USER","LOGNAME","SHELL","TMPDIR","TEMP","TMP","LANG","LC_ALL","LC_CTYPE","HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY","SSL_CERT_FILE","SSL_CERT_DIR","NODE_EXTRA_CA_CERTS","REQUESTS_CA_BUNDLE","UV_CACHE_DIR","UV_PYTHON_INSTALL_DIR","pythonLocation","GIT_AUTHOR_NAME","GIT_AUTHOR_EMAIL","GIT_COMMITTER_NAME","GIT_COMMITTER_EMAIL"]}'
 sandbox:
   agent:
     version: v0.28.25
