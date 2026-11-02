@@ -30,7 +30,9 @@ concurrency:
   group: adapter-dependency-maintenance
   cancel-in-progress: false
   queue: single
-runs-on: blacksmith-2vcpu-ubuntu-2404
+runs-on: ubuntu-24.04
+# Match framework jobs to the GitHub-hosted agent workspace.
+runs-on-slim: ubuntu-24.04
 timeout-minutes: 60
 # 1 AIC = $0.01 at the runtime's pricing; not a provider invoice guarantee.
 # Initial native execution limits; execution limits only.
@@ -87,6 +89,8 @@ engine:
   harness:
     max-retries: 0
   env:
+    # Bound execution by credits and time, not cumulative-context heuristics.
+    GH_AW_CODEX_CONTEXT_REBUILD_CIRCUIT_BREAKER: "false"
     GIT_AUTHOR_NAME: gumnut-bot[bot]
     GIT_AUTHOR_EMAIL: 333470196+gumnut-bot[bot]@users.noreply.github.com
     GIT_COMMITTER_NAME: gumnut-bot[bot]
@@ -182,7 +186,7 @@ safe-outputs:
   threat-detection:
     max-ai-credits: 2
     report-as-issue: false
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
 jobs:
   agent:
     timeout-minutes: 90
@@ -223,8 +227,8 @@ pre-agent-steps:
       git config user.email '333470196+gumnut-bot[bot]@users.noreply.github.com'
 inlined-imports: true
 imports:
-  - gumnut-ai/automation/daemons/dependency-maintenance.md@190d23eb282f5c8479c5169ce71839fa07c10c7e
-  - gumnut-ai/automation/daemons/pr-repair.md@190d23eb282f5c8479c5169ce71839fa07c10c7e
+  - gumnut-ai/automation/daemons/dependency-maintenance.md@19a1bb42927803eae7c7f2a78e0dfd67385f8e0d
+  - gumnut-ai/automation/daemons/pr-repair.md@19a1bb42927803eae7c7f2a78e0dfd67385f8e0d
 
 ---
 

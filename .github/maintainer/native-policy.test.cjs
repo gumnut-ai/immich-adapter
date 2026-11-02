@@ -7,6 +7,17 @@ for (const role of ['dependency-maintenance', 'librarian', 'maintainer']) {
   const lock = fs.readFileSync(path.join(__dirname, `../workflows/${role}.lock.yml`), 'utf8');
   test(`${role} uses native publication with isolated credentials and failure gating`, () => {
 
+    assert.match(source, /^runs-on: ubuntu-24\.04$/m);
+    assert.match(source, /^runs-on-slim: ubuntu-24\.04$/m);
+    const runners = [...lock.matchAll(/^    runs-on: (.+)$/gm)].map(match => match[1]);
+    assert.ok(runners.length >= 6);
+    assert.deepEqual([...new Set(runners)], ['ubuntu-24.04']);
+    assert.match(source, /GH_AW_CODEX_CONTEXT_REBUILD_CIRCUIT_BREAKER: "false"/);
+    assert.match(lock, /GH_AW_CODEX_CONTEXT_REBUILD_CIRCUIT_BREAKER: "?false"?/);
+    assert.doesNotMatch(source, /GH_AW_CODEX_MAX_REBUILD_FACTOR/);
+    assert.match(source, /^max-ai-credits: 20$/m);
+    assert.match(source, new RegExp(`^timeout-minutes: ${role === 'librarian' ? 30 : 60}$`, 'm'));
+    assert.match(source, /^max-daily-ai-credits: (?:40|60)$/m);
     const publisher = lock.match(/^  safe_outputs:\n[\s\S]*?(?=^  [a-z_]+:\n|(?![\s\S]))/m)?.[0];
     assert.ok(publisher, 'missing publisher job');
     const hook = publisher.match(/      - name: Authenticate publication checkout with the publisher App\n([\s\S]*?)(?=      - name:)/)?.[1];

@@ -1,5 +1,13 @@
 # Codebase cleanup and dependency coverage
 
+Maintenance jobs use GitHub-hosted `ubuntu-24.04` consistently through native
+`runs-on`, `runs-on-slim` and threat-detection runner settings so the compiled
+workspace matches the runner. The supported engine environment setting
+`GH_AW_CODEX_CONTEXT_REBUILD_CIRCUIT_BREAKER: "false"` disables the cumulative
+context heuristic; existing credit and timeout bounds remain in force. Native
+credits are estimated accounting, not a provider invoice ceiling. Hosted
+workspace access and successful completion still require execution evidence.
+
 `.github/workflows/maintainer.md` is the source for the checked-in
 `maintainer.lock.yml`. Compile it directly with unmodified GH-AW v0.89.21;
 no generated YAML corrections, runtime patches or delivery adapters are used.
