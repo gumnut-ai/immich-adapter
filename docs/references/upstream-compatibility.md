@@ -1,6 +1,6 @@
 ---
 title: "Upstream Compatibility"
-last-updated: 2026-10-01
+last-updated: 2026-11-03
 ---
 
 # Upstream Compatibility
@@ -55,7 +55,11 @@ Some SDK contracts are already pinned by committed tests, so a bump that breaks 
    - For loosely-specified response values (free-form strings, group/field names), also check how the Immich **clients** consume the response (`immich/web/src/` and `immich/mobile/lib/`) — clients hard-match values the OpenAPI spec doesn't constrain. E.g., the explore page renders only the group with `fieldName == "exifInfo.city"`, so a spec-valid response with different group names would silently render nothing.
    - The same duty applies to any **claim about client behavior you write down** — in a comment, docstring, test name, or doc — not just to implementation decisions. "Web passes `X`" / "no client reads this field" are plausible-sounding and frequently wrong: one param is typically passed differently across its call sites — `withHidden` is passed both ways, and omitted entirely by some callers — so what one caller does rarely generalizes. Grep the fork for **every** caller before asserting or refuting one, and don't commit the resulting tally: it rots on the next fork sync with nothing in CI pinning it.
    - The spec is **not the full route surface**: `@ApiExcludeEndpoint` routes are absent from OpenAPI, generated clients, and spec diffs. Check the controller when determining whether a route exists.
-5. **Validate compatibility**: Run `validate_api_compatibility.py` to ensure correct implementation
+5. **Check API shape compatibility**: Run the
+   [API compatibility tool](development-tools.md#api-compatibility-tool) to
+   compare endpoint methods, parameters, request bodies, and responses in the
+   OpenAPI specifications. It does not validate runtime behavior; verify
+   behavioral parity against the pinned Immich source as described above.
 6. **Test endpoints**: Verify responses match Immich API expectations
 7. **Audit `/me/preferences` for a gating boolean**: Many client UI features (memories, tags, ratings, folders, people, shared links, email notifications, cast) are gated client-side on a flag in `UserPreferencesResponseDto`. The default in `routers/api/users.py::userPreferencesResponse` ships most of these as `enabled=False`, which silently hides the corresponding UI even after the backing endpoints are wired up. When implementing an endpoint that backs a client UI feature, grep `routers/api/users.py` for the matching preference field and flip its `enabled` to `True`. The Immich web client checks these via `$preferences?.<area>?.enabled`; missing the flip means the new endpoints become dead code on the client.
 8. **Audit `routers/api/server.py::server_features`**: Many client UI features are also gated by a server-feature flag advertised via `GET /server/features`. When promoting an area from stub to a real implementation, flip the matching key from `False` to `True` and update the explanatory comment so it scopes only to the remaining stubbed sub-features. Leaving the flag at `False` after implementing the endpoint silently hides the UI; flipping it to `True` while parts of the area are still stubbed surfaces non-functional UI.
