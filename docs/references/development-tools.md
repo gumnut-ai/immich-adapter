@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-10-22
+last-updated: 2026-11-04
 ---
 
 # Development Tools
@@ -87,12 +87,12 @@ triggers, and workflow inputs.
 The `dump_openapi_json.py` tool prints the adapter's OpenAPI specification from the FastAPI app to stdout, without running a server:
 
 ```bash
-uv run tools/dump_openapi_json.py | sed -n '/^{/,$p' > /tmp/spec.json
+uv run --locked python tools/dump_openapi_json.py > /tmp/spec.json
 ```
 
-Importing the app emits log lines to **stdout** ahead of the JSON, so a bare `> /tmp/spec.json` yields a file the validator rejects (`Extra data: line 1 column 5`). Strip everything before the first `{`, then feed the result to the compatibility validator via `--adapter-spec=/tmp/spec.json`.
+The exporter sends application import and schema-generation diagnostics to stderr, leaving stdout as one JSON document. Pass the resulting file to the compatibility validator via `--adapter-spec=/tmp/spec.json`.
 
-The script runs in its own isolated PEP 723 environment, not the project venv, so its inline `dependencies` header is a **parallel copy** of every package the app pulls in at import time. Adding a `pyproject.toml` dependency that any module imports at import time (directly or transitively from `main`) requires adding it to the script header too — otherwise the check-compatibility CI job fails with `Error importing main app: No module named '...'` while every other check passes.
+Run the exporter from the repository root with the locked project environment so it uses the application's dependencies and Python version. `pyproject.toml`, `uv.lock`, and `.python-version` own that environment; the exporter has no separate dependency manifest.
 
 ## Gumnut SDK Release Lag
 
