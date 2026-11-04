@@ -47,7 +47,8 @@ jobs:
           SESSION_ENCRYPTION_KEY: "dummy-key"
         run: |
           echo "Generating OpenAPI specification..."
-          uv run tools/dump_openapi_json.py > adapter-openapi.json
+          uv run --locked python tools/dump_openapi_json.py > adapter-openapi.json
+          uv run --locked python -c 'import json; json.load(open("adapter-openapi.json"))'
           echo "OpenAPI specification generated successfully"
 
       - name: Run API compatibility check

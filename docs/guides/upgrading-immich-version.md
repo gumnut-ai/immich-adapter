@@ -1,6 +1,6 @@
 ---
 title: "Upgrading the Immich Target Version"
-last-updated: 2026-10-01
+last-updated: 2026-11-04
 ---
 
 # Upgrading the Immich Target Version
@@ -220,7 +220,7 @@ The validator reports which Immich routes and parameters the adapter does not ex
 
 ```bash
 ENVIRONMENT=test SESSION_ENCRYPTION_KEY=dummy-key \
-  uv run tools/dump_openapi_json.py | sed -n '/^{/,$p' > "$S/adapter.json"
+  uv run --locked python tools/dump_openapi_json.py > "$S/adapter.json"
 
 uv run tools/validate_api_compatibility.py --immich-spec="$S/old.json" --adapter-spec="$S/adapter.json" > "$S/compat-old.txt"
 uv run tools/validate_api_compatibility.py --immich-spec="$S/new.json" --adapter-spec="$S/adapter.json" > "$S/compat-new.txt"
