@@ -85,10 +85,8 @@ async def chunked_per_item_bulk[T](
     success).
     """
     request_size = len(asset_uuids)
-    gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in asset_uuids]
-    for chunk in batched(zip(gumnut_ids, asset_uuids), GUMNUT_API_MAX_BULK_IDS):
-        chunk_gumnut_ids = [g for g, _ in chunk]
-        chunk_uuids = tuple(u for _, u in chunk)
+    for chunk_uuids in batched(asset_uuids, GUMNUT_API_MAX_BULK_IDS):
+        chunk_gumnut_ids = [uuid_to_gumnut_asset_id(u) for u in chunk_uuids]
         try:
             response = await sdk_call(chunk_gumnut_ids)
         except APIStatusError as exc:
