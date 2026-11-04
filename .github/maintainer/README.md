@@ -1,7 +1,7 @@
 # Codebase cleanup and dependency coverage
 
-Maintenance jobs use GitHub-hosted `ubuntu-24.04` consistently through native
-`runs-on`, `runs-on-slim` and threat-detection runner settings so the compiled
+Maintenance jobs use Blacksmith `blacksmith-2vcpu-ubuntu-2404` consistently
+through native `runs-on`, `runs-on-slim` and threat-detection runner settings so the compiled
 workspace matches the runner. The supported engine environment setting
 `GH_AW_CODEX_CONTEXT_REBUILD_CIRCUIT_BREAKER: "false"` disables the cumulative
 context heuristic; existing credit and timeout bounds remain in force. Native

@@ -31,9 +31,9 @@ concurrency:
   group: adapter-maintainer
   cancel-in-progress: false
   queue: single
-runs-on: ubuntu-24.04
-# Match framework jobs to the GitHub-hosted agent workspace.
-runs-on-slim: ubuntu-24.04
+runs-on: blacksmith-2vcpu-ubuntu-2404
+# Match framework jobs to the Blacksmith agent workspace.
+runs-on-slim: blacksmith-2vcpu-ubuntu-2404
 timeout-minutes: 60
 # 1 AIC = $0.01 at the runtime's pricing; not a provider invoice guarantee.
 # Initial manual-validation limits within the shared $50/month replacement goal.
@@ -180,7 +180,7 @@ safe-outputs:
   threat-detection:
     max-ai-credits: 2
     report-as-issue: false
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
 jobs:
   agent:
     timeout-minutes: 90
