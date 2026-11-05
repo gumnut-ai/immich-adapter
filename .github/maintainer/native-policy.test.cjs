@@ -5,13 +5,13 @@ const path = require('node:path');
 for (const role of ['dependency-maintenance', 'librarian', 'maintainer']) {
   const source = fs.readFileSync(path.join(__dirname, `../workflows/${role}.md`), 'utf8');
   const lock = fs.readFileSync(path.join(__dirname, `../workflows/${role}.lock.yml`), 'utf8');
-  test(`${role} uses native publication with isolated credentials and failure gating`, () => {
+  test(`${role} uses Blacksmith and native publication with isolated credentials and failure gating`, () => {
 
-    assert.match(source, /^runs-on: ubuntu-24\.04$/m);
-    assert.match(source, /^runs-on-slim: ubuntu-24\.04$/m);
+    assert.match(source, /^runs-on: blacksmith-2vcpu-ubuntu-2404$/m);
+    assert.match(source, /^runs-on-slim: blacksmith-2vcpu-ubuntu-2404$/m);
     const runners = [...lock.matchAll(/^    runs-on: (.+)$/gm)].map(match => match[1]);
     assert.ok(runners.length >= 6);
-    assert.deepEqual([...new Set(runners)], ['ubuntu-24.04']);
+    assert.deepEqual([...new Set(runners)], ['blacksmith-2vcpu-ubuntu-2404']);
     assert.match(source, /GH_AW_CODEX_CONTEXT_REBUILD_CIRCUIT_BREAKER: "false"/);
     assert.match(lock, /GH_AW_CODEX_CONTEXT_REBUILD_CIRCUIT_BREAKER: "?false"?/);
     assert.doesNotMatch(source, /GH_AW_CODEX_MAX_REBUILD_FACTOR/);
