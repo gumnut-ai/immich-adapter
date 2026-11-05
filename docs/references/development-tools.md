@@ -1,6 +1,6 @@
 ---
 title: "Development Tools"
-last-updated: 2026-11-04
+last-updated: 2026-11-05
 ---
 
 # Development Tools
@@ -58,11 +58,19 @@ described in [Verifying upstream behavior](upstream-compatibility.md#verifying-u
 
 ### Usage
 
+The command below compares against the adapter's pinned Immich target. This
+validator uses the spec URL as supplied; unlike the model generator, it does
+not substitute `.immich-container-tag`. Use `main` only for a deliberate
+latest-upstream comparison. For a version upgrade, compare the old and new
+local specs as described in
+[the upgrade guide](../guides/upgrading-immich-version.md).
+
 ```bash
 # Compare specific endpoints (omit --endpoints to compare all)
+immich_tag=$(cat .immich-container-tag)
 uv run tools/validate_api_compatibility.py \
   --endpoints=server,users \
-  --immich-spec=https://github.com/immich-app/immich/blob/main/open-api/immich-openapi-specs.json \
+  --immich-spec="https://github.com/immich-app/immich/blob/${immich_tag}/open-api/immich-openapi-specs.json" \
   --adapter-spec=http://localhost:3001/openapi.json
 ```
 
