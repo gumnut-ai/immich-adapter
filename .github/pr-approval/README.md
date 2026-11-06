@@ -1,9 +1,10 @@
 # Standing PR approval pilot
 
-This repository's coordinator is disabled until `PR_APPROVAL_MODE` is set to
-`shadow` or `publish`. It combines existing Claude and hosted
-Codex reviews; it adds no model inference and never merges a PR. Static tests
-do not prove GitHub accepts its approval toward the repository's ruleset.
+The coordinator runs automatically once its workflows and reviewer App are
+installed and its protected publisher credentials are configured. No separate
+enable setting is required. It combines existing Claude and hosted Codex
+reviews, adds no model inference, and never merges a PR. Static tests do not
+prove GitHub counts its approval toward the repository's ruleset.
 
 ## Accepted trust boundary
 
@@ -115,54 +116,52 @@ independently review the code.
 The pilot adds one request job for supported review events, one assessment job
 for associated completed runs, and a publication job only when the formal
 decision needs changing. These are billed per-job runner minutes, not model
-usage. Disabled jobs allocate no runners; shadow mode has no publisher job.
+usage. Assessments run automatically; the publisher job is admitted only when
+a formal decision needs changing and uses the protected App credentials.
 Scheduled assessments allocate one runner job per admitted tick in addition to
 event-driven jobs; GitHub schedules can be delayed. The workflow owns the interval.
 
 ## Provision and verify
 
-1. Merge the reviewed workflow and policy while the coordinator remains disabled.
-   Install the separate `gumnut-reviewer` GitHub App on this repository with
-   Pull Requests write and Contents write. Pull Requests write alone can submit an `APPROVED` review,
-   but GitHub's required-review count needs repository-writer access. Accept
-   Contents write for the installation while keeping the publisher's runtime
-   token limited to Pull Requests write. The App key can mint broader code-write
-   tokens, so retain its protected credential custody.
-   Set `PR_APPROVAL_BOT_LOGIN` to its exact observed `<slug>[bot]` identity.
-   Configure the numeric `PR_APPROVAL_APP_ID` and `PR_APPROVAL_APP_PRIVATE_KEY` in the
-   `pr-approval-publisher` environment; restrict that environment to the default
-   branch. Keep secret values out of issues, PRs and chat.
-2. Configure hosted Codex automatic review for **All PRs**, rather than relying
-   solely on personal preferences. Verify a bot-created PR actually receives a
-   review; a bot-authored trigger comment is not assumed to work. The existing
-   Claude workflow now accepts bot-triggered internal PR events, while preserving
-   its default-branch dispatch and advisory-only tools.
-3. Set `PR_APPROVAL_MODE=shadow`. On a small human PR and a `gumnut-bot` PR,
-   read back Claude and Codex feedback and inspect coordinator assessments.
-   Verify old sign-offs remain accepted after a push, incomplete runs remain
-   distinct from clean verdicts, and significant or unrecognized feedback blocks.
-   Test a concern followed by a fix and later clean sign-off. Record PR and run
-   URLs, source feedback links/commits, expected and observed decisions, and any
-   manual intervention needed; activation requires all those cases to agree.
-4. After shadow verification, explicitly admit the publication test and set
-   `PR_APPROVAL_MODE=publish`. Verify complete clean approval, a later push
-   retaining approval, significant-concern withdrawal and clean reapproval,
-   explicit dismissal, unknown-output withholding, duplicate events, rejected
-   self-approval and failed/ambiguous publication. Read back the evidence explanation.
-   Check the actual ruleset decision, not just an `APPROVED` API response.
-5. Unset `PR_APPROVAL_MODE` to stop new assessments/publication, and cancel active
-   runs separately for an immediate stop. Disabling does not dismiss approvals
-   already submitted. Inspect and reconcile any pending publication intent before
-   retrying it; credential revocation does not undo an existing review.
+1. Merge the reviewed workflow and policy and install the separate
+   `gumnut-reviewer` GitHub App on this repository with Pull Requests write and
+   Contents write. Pull Requests write alone can submit an `APPROVED` review,
+   but GitHub's required-review count needs repository-writer access. Keep the
+   publisher's repository-scoped runtime token limited to Pull Requests write.
+   The App key can mint broader code-write tokens, so retain its protected custody.
+   The caller defaults to `gumnut-reviewer[bot]`; set `PR_APPROVAL_BOT_LOGIN`
+   only when using a different App, to its exact observed `<slug>[bot]` identity.
+   Configure numeric `PR_APPROVAL_APP_ID` and `PR_APPROVAL_APP_PRIVATE_KEY` in
+   the `pr-approval-publisher` environment, restricted to the default branch.
+   Keep secret values out of issues, PRs and chat. A missing installation or
+   credential cannot publish; token creation must succeed for this repository.
+2. Configure hosted Codex automatic review for **All PRs** and the independent
+   Claude reviewer. Verify a bot-created PR receives both sign-offs; a bot-authored
+   trigger comment is not assumed to work. Once the installation and credentials
+   are ready, eligible events and scheduled assessments can publish without
+   another activation step. There is no shadow/publication mode variable.
+3. On a small human PR and a `gumnut-bot` PR, read back the reviewer feedback,
+   coordinator assessment and formal review. Verify retained sign-offs after a
+   push, significant-concern withdrawal and clean reapproval, incomplete and
+   unknown-output withholding, explicit dismissal, duplicates, rejected
+   self-approval and failed/ambiguous publication. Record PR/run URLs, source
+   feedback links and commits, expected/observed decisions and manual intervention.
+   Check the actual ruleset decision, not only an `APPROVED` API response.
+4. Disable the approval request and coordinator workflows through GitHub Actions
+   to pause new work; cancel active runs separately for an immediate stop.
+   Removing the App installation or revoking its credentials prevents future
+   publication. Neither action dismisses approvals already submitted. Reconcile
+   any pending publication intent before retrying.
 
 ## Shared implementation
 
 The coordinator and request routing are maintained in
-[gumnut-ai/automation](https://github.com/gumnut-ai/automation), using the same
-immutable commit as the Claude review workflow. The canonical
-[standing approval policy](https://github.com/gumnut-ai/automation/blob/187e77e153bd935ee55e56082f4aeea4a27aa67d/README.md#standing-approval-policy)
+[gumnut-ai/automation](https://github.com/gumnut-ai/automation), using one reviewed
+immutable revision for approval actions and their regression suite. Claude review
+and native toolchain pins can advance independently. The canonical
+[standing approval policy](https://github.com/gumnut-ai/automation/blob/c14c5a06778622f4221aa8aa5114ece628494858/README.md#standing-approval-policy)
 describes the shared decision rules. This repository retains event sources,
-schedules, permissions, activation modes and the protected publisher environment.
+schedules, permissions, App credentials and the protected publisher environment.
 Shared implementation tests run in the automation repository.
 
 Checks: `node --test .github/pr-approval/*.test.cjs .github/claude-review/*.test.cjs`,
@@ -175,13 +174,13 @@ reviewer retains its existing runner. Rerun the read-only
 [runner validation workflow](../workflows/approval-runner-validation.yml) with
 `gh workflow run approval-runner-validation.yml --ref main`. It compares five
 independent jobs per runner using the pinned shared approval tests and no-op
-composite operations, without publisher credentials. It also runs when its own
+composite assessment, without publisher credentials. It also runs when its own
 workflow file changes in a PR.
 
 Synthetic publication tests verify submit/readback and duplicate handling with
 API fixtures; they do not establish a counted GitHub approval. After merging a
 runner change, verify a real admitted request, assessment and protected publisher
 run, read back the review and ruleset result, and compare live job durations and
-per-job rounded costs. Keep the default-branch publisher restriction and current
-activation mode intact. Restore the previous runner labels if acquisition or
+per-job rounded costs. Keep the default-branch publisher restriction and scoped
+App credentials intact. Restore the previous runner labels if acquisition or
 publication fails; inspect pending publication intent before any retry.

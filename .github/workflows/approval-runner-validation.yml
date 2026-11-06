@@ -28,39 +28,24 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: gumnut-ai/automation
-          ref: 187e77e153bd935ee55e56082f4aeea4a27aa67d
+          ref: c14c5a06778622f4221aa8aa5114ece628494858
           path: .approval-runtime
           persist-credentials: false
       # Synthetic API fixtures cover real submit/readback logic, never a live review.
       - name: Request, assessment and publication regressions
         run: node --test .approval-runtime/pr-approval/*.test.cjs
-      # Empty activation is deliberate: exercise composite execution without API writes.
-      - name: Inactive request
-        id: source
-        uses: gumnut-ai/automation/actions/pr-approval@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
-        with:
-          operation: source
-      - name: Inactive routing
-        id: route
-        uses: gumnut-ai/automation/actions/pr-approval@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
-        with:
-          operation: route
+      # An empty assessment exercises the composite without API requests or writes.
       - name: Empty assessment
         id: inspect
-        uses: gumnut-ai/automation/actions/pr-approval@187e77e153bd935ee55e56082f4aeea4a27aa67d # zizmor: ignore[ref-version-mismatch]
+        uses: gumnut-ai/automation/actions/pr-approval@c14c5a06778622f4221aa8aa5114ece628494858 # zizmor: ignore[ref-version-mismatch]
         with:
           operation: inspect
-          mode: shadow
           bot-login: fixture-reviewer[bot]
           numbers: '[]'
       - name: Verify no-op results
         env:
-          SOURCE_ELIGIBLE: ${{ steps.source.outputs.eligible }}
-          ROUTE_ELIGIBLE: ${{ steps.route.outputs.eligible }}
           ACTIONABLE: ${{ steps.inspect.outputs.actionable }}
           NUMBERS: ${{ steps.inspect.outputs.numbers }}
         run: |
-          test "$SOURCE_ELIGIBLE" = false
-          test "$ROUTE_ELIGIBLE" = false
           test "$ACTIONABLE" = false
           test "$NUMBERS" = '[]'
