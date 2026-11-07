@@ -45,9 +45,20 @@ test('official Action stays direct with App OAuth auth and shared configuration'
   assert.doesNotMatch(workflow, /persist-credentials: true|ref: \$\{\{[^}]*(?:head|refs\/pull)/);
   assert.match(fs.readFileSync(path.join(__dirname, 'INSTRUCTIONS.md'), 'utf8'), /Native `Read`, `Grep`, and `Glob`/);
 });
-test('all shared components use one immutable version', () => {
-  const files = ['claude-review.yml', 'pr-approval-request.yml', 'pr-approval-coordinator.yml'];
-  const pins = files.flatMap(file => [...fs.readFileSync(path.join(__dirname, '../workflows', file), 'utf8').matchAll(/gumnut-ai\/automation\/actions\/[a-z-]+@([^\s]+)/g)].map(match => match[1]));
-  assert.equal(pins.length, 7); assert.equal(new Set(pins).size, 1);
-  assert.match(pins[0], /^[a-f0-9]{40}$/);
+test('Claude and standing approval each use a consistent immutable version', () => {
+  const read = file => fs.readFileSync(path.join(__dirname, '../workflows', file), 'utf8');
+  const pins = (text, component) => [...text.matchAll(new RegExp(`gumnut-ai/automation/actions/${component}@([^\\s]+)`, 'g'))].map(match => match[1]);
+  const claudePins = pins(read('claude-review.yml'), 'claude-[a-z-]+');
+  const approvalFiles = ['pr-approval-request.yml', 'pr-approval-coordinator.yml', 'approval-runner-validation.yml'];
+  const approvalPins = approvalFiles.flatMap(file => pins(read(file), 'pr-approval'));
+  assert.equal(claudePins.length, 3);
+  assert.equal(approvalPins.length, 5);
+  // Independent components can advance without upgrading the isolated Claude runtime.
+  for (const group of [claudePins, approvalPins]) {
+    assert.ok(group.length > 0);
+    assert.equal(new Set(group).size, 1);
+    assert.match(group[0], /^[a-f0-9]{40}$/);
+  }
+  const runtime = read('approval-runner-validation.yml').match(/repository: gumnut-ai\/automation\n\s+ref: ([a-f0-9]{40})/)?.[1];
+  assert.equal(runtime, approvalPins[0]);
 });
