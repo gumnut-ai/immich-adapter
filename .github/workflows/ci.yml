@@ -23,7 +23,7 @@ jobs:
       # According to https://docs.astral.sh/uv/guides/integration/github/#setting-up-python
       # This can be faster, because GitHub caches the Python versions alongside the runner.
       - name: "Set up Python"
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version-file: ".python-version"
 
@@ -55,7 +55,7 @@ jobs:
           persist-credentials: false
 
       - name: "Set up Python"
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version-file: ".python-version"
 
@@ -103,7 +103,7 @@ jobs:
           persist-credentials: false
 
       - name: "Set up Python"
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version-file: ".python-version"
 
