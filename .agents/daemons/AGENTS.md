@@ -17,11 +17,7 @@ workflow defines executable activation and scheduling. A policy file alone does
 not enable a role. Verify activation through the workflow's documented gates.
 
 Humans review and merge PRs. The existing Codex integration provides automated
-review when requested with `@codex review`; no native replacement reviewer is
-active.
-
-Review lanes live under `pr-review/references/lanes/`. Each inline finding carries
-a `` `§ <lane-name>` `` badge taken from the lane's filename.
+review when requested with `@codex review`.
 
 ## Repo conventions
 
@@ -101,5 +97,3 @@ incomplete handoffs. Never approve, merge, delete branches or operate production
 - `codebase-maintainer/` — proposes useful codebase maintenance without routine dependency scans.
 - `dependency-maintenance/` — repairs dependency PRs and proposes useful compatible updates daily.
 - `librarian/` — keeps this repo's documentation current and complete.
-- `pr-review/` — reviews pull requests under repo-authored policy, across the lanes
-  in `pr-review/references/lanes/`.

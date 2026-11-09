@@ -55,8 +55,7 @@ git diff --check
 ```
 
 Workflow CI regenerates all three maintenance lockfiles directly and compares
-them byte for byte. The separate PR reviewer retains its existing compatibility
-code until its own migration; its helpers are not part of maintenance publication.
+them byte for byte.
 
 ## Optional locked dependency indexing
 
