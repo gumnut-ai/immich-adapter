@@ -1990,6 +1990,32 @@ async def get_asset_metadata_by_key(
     return
 
 
+async def _retrieve_playback_variant(
+    asset_uuid: UUID, client: AsyncGumnut
+) -> ThumbnailVariant:
+    """Select the original for video playback, refusing non-video originals.
+
+    Upstream Immich serves this route only for video assets and answers
+    anything else with 404; other originals belong on the original-download
+    route. The check reads the MIME type of the `original` rung that would be
+    streamed.
+    """
+    selected = await _retrieve_variant(asset_uuid, client, "original")
+    if not selected.mimetype.startswith("video/"):
+        logger.warning(
+            "Video playback requested for non-video asset",
+            extra={
+                "asset_id": uuid_to_gumnut_asset_id(asset_uuid),
+                "mimetype": selected.mimetype,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Asset not found or asset is not a video",
+        )
+    return selected
+
+
 @router.get("/{id}/video/playback")
 async def play_asset_video(
     id: UUID,
@@ -2005,6 +2031,8 @@ async def play_asset_video(
     Streams the original video variant from CDN. Forwards the client's Range
     header for seeking; `stream_from_cdn` advertises `Accept-Ranges: bytes` on
     the initial 200 response so iOS AVPlayer treats the source as seekable.
+    Non-video assets return 404, as upstream Immich does for this route (see
+    `_retrieve_playback_variant`).
     """
     range_header = request.headers.get("range")
     if isinstance(cache_context, ThumbnailCacheContext):
@@ -2014,7 +2042,7 @@ async def play_asset_video(
         )
 
         async def load() -> ThumbnailVariant:
-            return await _retrieve_variant(id, client, "original")
+            return await _retrieve_playback_variant(id, client)
 
         result = await cache.get(
             cache_scope,
@@ -2038,8 +2066,9 @@ async def play_asset_video(
                 selected.url, selected.mimetype, range_header=range_header
             )
     record_video_cache_lookup("bypass", VIDEO_METADATA_CACHE_TTL_SECONDS)
-    return await _retrieve_and_stream_variant(
-        id, client, "original", range_header=range_header
+    selected = await _retrieve_playback_variant(id, client)
+    return await stream_from_cdn(
+        selected.url, selected.mimetype, range_header=range_header
     )
 
 

@@ -244,3 +244,34 @@ async def test_metadata_failure_is_live_and_never_cached():
         assert sdk.assets.retrieve.await_count == 2
         cdn.assert_not_awaited()
     await cache.close()
+
+
+@pytest.mark.anyio
+async def test_non_video_original_is_rejected_live_and_never_cached():
+    # Same signed capability format as a cacheable video; only the type differs.
+    selection = video()
+    selection.mime_type = "image/svg+xml"
+    selection.asset_urls["original"].mimetype = "image/svg+xml"
+    cache = ThumbnailCache(
+        5, 10, namespace="video", cacheable=is_cacheable_video_selection
+    )
+    sdk = Mock()
+    sdk.assets.retrieve = AsyncMock(return_value=selection)
+    asset_id = uuid4()
+    with (
+        patch("routers.api.assets.get_video_cache", return_value=cache),
+        patch("routers.api.assets.stream_from_cdn", AsyncMock()) as cdn,
+    ):
+        for _ in range(2):
+            with pytest.raises(HTTPException) as exc_info:
+                await play_asset_video(
+                    asset_id,
+                    request(),
+                    client=sdk,
+                    cache_context=ThumbnailCacheContext("scope", None),
+                )
+            assert exc_info.value.status_code == 404
+        assert sdk.assets.retrieve.await_count == 2
+        assert not cache._entries
+        cdn.assert_not_awaited()
+    await cache.close()
