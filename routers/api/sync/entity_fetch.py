@@ -1,6 +1,7 @@
 """Batch entity fetching from the Gumnut API."""
 
 import logging
+from itertools import batched
 from uuid import UUID
 
 from gumnut import AsyncGumnut
@@ -23,11 +24,6 @@ from routers.utils.gumnut_id_conversion import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _batched(items: list[str], size: int) -> list[list[str]]:
-    """Split a list into chunks of the given size."""
-    return [items[i : i + size] for i in range(0, len(items), size)]
 
 
 class StackMemberReadInconsistent(Exception):
@@ -162,7 +158,8 @@ async def fetch_entities_map(
     result: dict[str, EntityType] = {}
     missing_ids: set[str] = set()
 
-    for chunk in _batched(unique_ids, GUMNUT_API_MAX_BULK_IDS):
+    for batch in batched(unique_ids, GUMNUT_API_MAX_BULK_IDS):
+        chunk = list(batch)
         if gumnut_entity_type == "asset":
             result.update(await _read_library_assets(gumnut_client, chunk))
 
@@ -247,7 +244,8 @@ async def fetch_suppressed_face_ids(
     )
 
     fetched_assets: dict[str, AssetResponse] = {}
-    for chunk in _batched(asset_ids, GUMNUT_API_MAX_BULK_IDS):
+    for batch in batched(asset_ids, GUMNUT_API_MAX_BULK_IDS):
+        chunk = list(batch)
         page = await gumnut_client.assets.list(state="all", ids=chunk, limit=len(chunk))
         fetched_assets.update({asset.id: asset for asset in page.data})
 
