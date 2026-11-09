@@ -5,7 +5,7 @@ the existing hosted Codex reviewer. It uses Anthropic's Claude Code Action and
 Claude Opus 5.5 at medium effort, and posts inline findings plus a compact
 summary directly on the PR as `claude[bot]` through the official Claude GitHub
 App. It does not approve, request changes, merge, or fix code. The inline tool
-may create a `COMMENTED` GitHub review to attach findings. The disabled native reviewer remains separate and unchanged.
+may create a `COMMENTED` GitHub review to attach findings.
 
 The new reviewer is **disabled until explicitly enabled**. Static checks do not
 verify subscription authentication, model access, review quality, or delivery.
@@ -58,7 +58,7 @@ path-denying Read hook. The checkout is the policy revision; changed PR source
 still comes from GitHub at the recorded head/base SHAs.
 
 Two existing GitHub components provide the external services, using the same
-image digests already pinned by our native PR reviewer:
+image digests pinned by the shared reviewer configuration:
 
 - [AWF API proxy](https://github.com/github/gh-aw-firewall/tree/v0.28.25/containers/api-proxy)
   injects the real subscription bearer token outside the execution container.
@@ -210,7 +210,7 @@ runtime and isolation tests run in the automation repository:
 
 ```sh
 node --test .github/claude-review/*.test.cjs
-actionlint .github/workflows/claude-review.yml .github/workflows/pr-review-tests.yml
+actionlint .github/workflows/claude-review.yml .github/workflows/automation-checks.yml
 zizmor .github/workflows/claude-review.yml
 ```
 
