@@ -15,7 +15,10 @@ logger.info("WebSocket connected", extra={"sid": sid, "user_id": user_id, "devic
 This enables better searching and correlation in Sentry.
 
 Never log signed CDN URLs: their query strings are bearer credentials. Use the
-`asset_id` and bare hostname for correlation.
+`asset_id` and bare hostname for correlation. That includes formatting an
+`httpx.HTTPStatusError`, whose message quotes the full request URL. The Sentry
+log hook redacts these values as a backstop, but stdout logs keep the message
+as written.
 
 ## Session tokens
 

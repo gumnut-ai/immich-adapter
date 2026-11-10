@@ -11,8 +11,8 @@ from sentry_sdk.utils import iter_event_frames
 from config.settings import get_settings
 from config.telemetry import (
     redact_sensitive_cdn_query,
-    redact_sensitive_cdn_text,
     redact_sensitive_cdn_url,
+    redact_sensitive_cdn_values,
     redact_session_tokens,
 )
 
@@ -67,22 +67,10 @@ def _scrub_session_tokens(event: Any) -> Any:
 def _redact_error_event(event: Event, _hint: Hint) -> Event | None:
     """Remove signed-CDN credentials, filenames and session tokens from error
     event values."""
-
-    def redact(value: Any) -> Any:
-        if isinstance(value, str):
-            return redact_sensitive_cdn_text(value)
-        if isinstance(value, dict):
-            for key, item in value.items():
-                value[key] = redact(item)
-        elif isinstance(value, list):
-            for index, item in enumerate(value):
-                value[index] = redact(item)
-        return value
-
     # before_send must never drop an otherwise useful error event over CDN
     # redaction.
     with contextlib.suppress(Exception):
-        redact(event)
+        event = redact_sensitive_cdn_values(event)
     try:
         return _scrub_session_tokens(event)
     except Exception:
@@ -101,9 +89,11 @@ def _before_send_transaction(event: Event, hint: Hint) -> Event | None:
 
 
 def _before_send_log(log: Any, _hint: Hint) -> Any:
-    """Scrub session tokens from a log's body and attributes."""
+    """Scrub signed-CDN credentials, filenames and session tokens from a log's
+    body and attributes. A message that formats an `httpx.HTTPStatusError`
+    quotes the full signed request URL."""
     try:
-        return redact_session_tokens(log)
+        return redact_session_tokens(redact_sensitive_cdn_values(log))
     except Exception:
         return None
 

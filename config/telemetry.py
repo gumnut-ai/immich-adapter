@@ -6,6 +6,8 @@ from typing import Any
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 from uuid import UUID
 
+from sentry_sdk.utils import safe_repr
+
 _SENSITIVE_CDN_QUERY_KEYS = frozenset({"dl", "verify"})
 _REDACTED_QUERY_VALUE = "REDACTED"
 _URL_IN_TEXT = re.compile(r"https?://\S+")
@@ -48,6 +50,27 @@ def redact_sensitive_cdn_text(text: str) -> str:
     return redact_sensitive_cdn_query(text)
 
 
+def redact_sensitive_cdn_values(value: Any) -> Any:
+    """Return a JSON-like telemetry payload with signed-CDN credentials and
+    filenames redacted in every string.
+
+    Builds new containers rather than mutating: log attributes reference the
+    caller's own `extra` objects.
+    """
+    if isinstance(value, str):
+        return redact_sensitive_cdn_text(value)
+    if isinstance(value, dict):
+        return {key: redact_sensitive_cdn_values(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_sensitive_cdn_values(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    # A log's `extra=` values reach the log hook as objects, such as an
+    # `httpx.URL`, and the SDK reprs them only afterwards. The session-token
+    # rules below read a `UUID` repr as a token too.
+    return redact_sensitive_cdn_text(safe_repr(value))
+
+
 # A session's bearer token is its UUID, so it is indistinguishable from an
 # asset or user id by shape alone. Redact it only where the context marks it as
 # a session:
@@ -69,8 +92,9 @@ _SESSION_TOKEN_IN_TEXT = re.compile(
     r"|sessions:by_updated_at\s+(?:[0-9.eE+-]+\s+)?)"
     rf"({_UUID})"
 )
-# Serialized frame locals arrive as reprs (`'<uuid>'`, `b'<uuid>'`,
-# `UUID('<uuid>')`); extras and log attributes as the values themselves.
+# Serialized frame locals and object-valued log attributes arrive as reprs
+# (`'<uuid>'`, `b'<uuid>'`, `UUID('<uuid>')`); other extras and log
+# attributes as the values themselves.
 _QUOTED = re.compile(r"^(?:b|UUID\()?(['\"])(.*)\1\)?$", re.DOTALL)
 _BARE_SESSION_TOKEN = re.compile(rf"^{_UUID}$")
 _SESSION_TOKEN_FIELDS = frozenset(
