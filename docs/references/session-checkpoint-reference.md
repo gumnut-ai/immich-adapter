@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Storage Reference"
-last-updated: 2026-10-23
+last-updated: 2026-11-10
 ---
 
 # Session and Checkpoint Storage Reference
@@ -17,11 +17,13 @@ The adapter uses core Redis data structures only; it does not require RedisJSON 
 
 | Key | Redis type | Purpose |
 |-----|------------|---------|
-| `session:{uuid}` | Hash | One adapter session, including the encrypted Gumnut JWT and client metadata |
-| `user:{user_id}:sessions` | Set | Session UUIDs associated with one user |
+| `session:{token}` | Hash | One adapter session, including the encrypted Gumnut JWT and client metadata |
+| `user:{user_id}:sessions` | Set | Session tokens associated with one user |
 | `sessions:by_updated_at` | Sorted set | Explicit stale-session maintenance ordered by session activity |
 
-The stable session UUID is the client-facing Immich access token. It is independent of the backend JWT, so a JWT refresh can update encrypted server-side custody without changing the client token or checkpoint namespace.
+The session token is a random UUID and the client-facing Immich access token. It is independent of the backend JWT, so a JWT refresh can update encrypted server-side custody without changing the client token or checkpoint namespace.
+
+A session's public id, which `/api/sessions` lists it by and its routes take, is not stored: `services/session_store.py::public_session_id` derives it from the token with a domain-separated SHA-256, so every record has one, including those written before it existed. It is not a credential and cannot be reversed into the token.
 
 Representative session fields are `user_id`, `library_id`, `stored_jwt`, `device_type`, `device_os`, `app_version`, `created_at`, `updated_at`, `sync_epoch`, `client_epoch`, `is_pending_sync_reset` (kept in step with the epochs for adapters that predate them), `library_checked_at`, and `library_from_choice`. Treat `services/session_store.py::Session` as the field authority rather than copying defaults or client-version examples here.
 
@@ -34,7 +36,7 @@ is in [Session and checkpoint architecture](../architecture/session-checkpoint-i
 
 | Key | Redis type | Field | Value |
 |-----|------------|-------|-------|
-| `session:{uuid}:checkpoints` (sync epoch 0), `session:{uuid}:checkpoints:{epoch}` | Hash | Generated `SyncEntityType` value | `{updated_at}|{cursor}` |
+| `session:{token}:checkpoints` (sync epoch 0), `session:{token}:checkpoints:{epoch}` | Hash | Generated `SyncEntityType` value | `{updated_at}|{cursor}` |
 
 A synthetic record looks like:
 

@@ -15,7 +15,6 @@ from routers.api.auth import router as auth_router
 from routers.middleware.auth_middleware import AuthMiddleware
 from routers.utils.cookies import ImmichCookie
 from services.session_store import Session, SessionStore
-from services.websockets import WebSocketEvent
 
 
 class TestPostLogout:
@@ -48,7 +47,7 @@ class TestPostLogout:
         mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_delete", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -70,7 +69,7 @@ class TestPostLogout:
             ImmichCookie.ACCESS_TOKEN.value: "cookie-session-token",
         }
 
-        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_delete", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -90,7 +89,7 @@ class TestPostLogout:
         mock_request.state = Mock(spec=[])  # No session_token attribute
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_delete", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -136,7 +135,7 @@ class TestPostLogout:
         mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_delete", new_callable=AsyncMock):
             await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -157,7 +156,7 @@ class TestPostLogout:
         mock_request.state = Mock(spec=[])
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_delete", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -173,11 +172,12 @@ class TestPostLogout:
         self, mock_request, mock_response, mock_session_store
     ):
         """Test that logout emits on_session_delete WebSocket event."""
-        mock_request.state.session_token = "test-session-token"
+        token = "test-session-token"
+        mock_request.state.session_token = token
         mock_request.cookies = {}
 
         with patch(
-            "routers.api.auth.emit_session_event", new_callable=AsyncMock
+            "routers.api.auth.emit_session_delete", new_callable=AsyncMock
         ) as mock_emit:
             await post_logout(
                 request=mock_request,
@@ -186,11 +186,7 @@ class TestPostLogout:
                 session_store=mock_session_store,
             )
 
-            mock_emit.assert_called_once()
-            call = mock_emit.call_args
-            assert call[0][0] == WebSocketEvent.SESSION_DELETE
-            assert call[0][1] == "test-session-token"
-            assert call[0][2] == "test-session-token"
+            mock_emit.assert_called_once_with(token)
 
     @pytest.mark.anyio
     async def test_logout_websocket_error_does_not_fail_logout(
@@ -201,7 +197,7 @@ class TestPostLogout:
         mock_request.cookies = {}
 
         # Patch the underlying emit so the SocketIOError originates *inside*
-        # emit_session_event (which now swallows it centrally).
+        # emit_session_event (which swallows it centrally).
         with patch(
             "services.websockets._emit_event",
             new_callable=AsyncMock,
@@ -285,7 +281,7 @@ class TestValidateAccessTokenIntegration:
         store = AsyncMock(spec=SessionStore)
         now = datetime.now(UTC)
         session = Session(
-            id=self.TEST_SESSION_ID,
+            token=self.TEST_SESSION_ID,
             user_id="user_123",
             library_id="lib_456",
             stored_jwt="encrypted-placeholder",
@@ -297,7 +293,7 @@ class TestValidateAccessTokenIntegration:
             library_checked_at=now.timestamp(),
         )
         session.get_jwt = MagicMock(return_value=self.TEST_JWT)
-        store.get_by_id.return_value = session
+        store.get_by_token.return_value = session
         return store
 
     @pytest.fixture

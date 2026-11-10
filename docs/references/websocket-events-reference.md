@@ -1,6 +1,6 @@
 ---
 title: "Immich WebSocket Events Reference"
-last-updated: 2026-10-23
+last-updated: 2026-11-10
 ---
 
 # Immich WebSocket Events Reference
@@ -243,8 +243,11 @@ People views refresh their thumbnail cache key on receipt.
 - **Web**: Global listener. Triggers logout navigation through the auth manager.
 - **Mobile**: Not used.
 
+**Adapter payload**: the session's public id, the one `/api/sessions` lists,
+never its token.
+
 **Adapter timing**: Logout and session-deletion requests await
-`emit_session_event` before returning the HTTP response.
+`emit_session_delete` before returning the HTTP response.
 
 ---
 

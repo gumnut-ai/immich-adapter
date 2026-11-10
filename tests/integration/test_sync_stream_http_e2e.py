@@ -291,7 +291,7 @@ def mock_session():
     """Create a mock session that auth middleware will find."""
     now = datetime.now(UTC)
     session = Session(
-        id=TEST_SESSION_UUID,
+        token=TEST_SESSION_UUID,
         user_id=str(TEST_USER_UUID),
         library_id="",
         stored_jwt="encrypted-jwt-token",
@@ -310,7 +310,7 @@ def mock_session():
 def mock_session_store(mock_session):
     """Mock session store that returns our test session."""
     store = AsyncMock(spec=SessionStore)
-    store.get_by_id.return_value = mock_session
+    store.get_by_token.return_value = mock_session
     store.update_activity.return_value = None
     store.set_pending_sync_reset.return_value = None
     return store

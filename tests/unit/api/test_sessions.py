@@ -19,13 +19,15 @@ from routers.api.sessions import (
     update_session,
 )
 from routers.immich_models import SessionCreateDto, SessionUpdateDto
-from services.session_store import Session, SessionStore
-from services.websockets import WebSocketEvent
+from services.session_store import Session, SessionStore, public_session_id
 
-# Test UUIDs for consistent testing
-TEST_SESSION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
-TEST_SESSION_ID_2 = UUID("650e8400-e29b-41d4-a716-446655440001")
+# Test UUIDs for consistent testing; session tokens are the credentials
+TEST_SESSION_TOKEN = UUID("550e8400-e29b-41d4-a716-446655440000")
+TEST_SESSION_TOKEN_2 = UUID("650e8400-e29b-41d4-a716-446655440001")
 TEST_USER_ID = UUID("770e8400-e29b-41d4-a716-446655440002")
+# The public ids those sessions are listed, updated and deleted by
+TEST_PUBLIC_ID = public_session_id(TEST_SESSION_TOKEN)
+TEST_PUBLIC_ID_2 = public_session_id(TEST_SESSION_TOKEN_2)
 TEST_ENCRYPTED_JWT = "gAAAAABh..."  # Mock encrypted JWT
 
 
@@ -36,7 +38,7 @@ class TestHelperFunctions:
         """Test converting session to DTO when it's the current session."""
         now = datetime.now(UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_TOKEN,
             user_id="user_1",
             library_id="lib_1",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -47,21 +49,21 @@ class TestHelperFunctions:
             updated_at=now,
         )
 
-        # Current session token matches session.id
-        result = _session_to_response_dto(session, str(TEST_SESSION_ID))
+        # Current session token matches session.token
+        result = _session_to_response_dto(session, str(TEST_SESSION_TOKEN))
 
         assert result.current is True
         assert result.deviceType == "iOS"
         assert result.deviceOS == "iOS 17"
         assert result.appVersion == "1.94.0"
         assert result.isPendingSyncReset is False
-        assert result.id == TEST_SESSION_ID
+        assert result.id == TEST_PUBLIC_ID
 
     def test_session_to_response_dto_current_false(self):
         """Test converting session to DTO when it's not the current session."""
         now = datetime.now(UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_TOKEN,
             user_id="user_1",
             library_id="lib_1",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -77,13 +79,13 @@ class TestHelperFunctions:
 
         assert result.current is False
         assert result.isPendingSyncReset is True
-        assert result.id == TEST_SESSION_ID
+        assert result.id == TEST_PUBLIC_ID
 
     def test_session_to_response_dto_empty_app_version(self):
         """Test that empty app_version is converted to None."""
         now = datetime.now(UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_TOKEN,
             user_id="user_1",
             library_id="lib_1",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -132,7 +134,7 @@ class TestGetSessions:
     def mock_request(self):
         """Create a mock request with session token."""
         request = Mock()
-        request.state.session_token = str(TEST_SESSION_ID)
+        request.state.session_token = str(TEST_SESSION_TOKEN)
         return request
 
     @pytest.fixture
@@ -142,7 +144,7 @@ class TestGetSessions:
 
         return [
             Session(
-                id=TEST_SESSION_ID,
+                token=TEST_SESSION_TOKEN,
                 user_id=str(TEST_USER_ID),
                 library_id="lib_456",
                 stored_jwt=TEST_ENCRYPTED_JWT,
@@ -153,7 +155,7 @@ class TestGetSessions:
                 updated_at=now,
             ),
             Session(
-                id=TEST_SESSION_ID_2,
+                token=TEST_SESSION_TOKEN_2,
                 user_id=str(TEST_USER_ID),
                 library_id="lib_456",
                 stored_jwt=TEST_ENCRYPTED_JWT,
@@ -185,10 +187,10 @@ class TestGetSessions:
         current_sessions = [s for s in result if s.current]
         assert len(current_sessions) == 1
 
-        # Verify session IDs are used as response IDs
+        # Sessions are listed by public id, never by token
         response_ids = {s.id for s in result}
-        assert TEST_SESSION_ID in response_ids
-        assert TEST_SESSION_ID_2 in response_ids
+        assert response_ids == {TEST_PUBLIC_ID, TEST_PUBLIC_ID_2}
+        assert not response_ids & {TEST_SESSION_TOKEN, TEST_SESSION_TOKEN_2}
 
     @pytest.mark.anyio
     async def test_get_sessions_empty(self, mock_request, mock_session_store):
@@ -230,7 +232,7 @@ class TestDeleteAllSessions:
     def mock_request(self):
         """Create a mock request with session token."""
         request = Mock()
-        request.state.session_token = str(TEST_SESSION_ID)
+        request.state.session_token = str(TEST_SESSION_TOKEN)
         return request
 
     @pytest.mark.anyio
@@ -242,7 +244,7 @@ class TestDeleteAllSessions:
 
         sessions = [
             Session(
-                id=TEST_SESSION_ID,
+                token=TEST_SESSION_TOKEN,
                 user_id=str(TEST_USER_ID),
                 library_id="lib_456",
                 stored_jwt=TEST_ENCRYPTED_JWT,
@@ -253,7 +255,7 @@ class TestDeleteAllSessions:
                 updated_at=now,
             ),
             Session(
-                id=TEST_SESSION_ID_2,
+                token=TEST_SESSION_TOKEN_2,
                 user_id=str(TEST_USER_ID),
                 library_id="lib_456",
                 stored_jwt=TEST_ENCRYPTED_JWT,
@@ -266,9 +268,9 @@ class TestDeleteAllSessions:
         ]
 
         mock_session_store.get_by_user.return_value = sessions
-        mock_session_store.delete_by_id.return_value = True
+        mock_session_store.delete_by_token.return_value = True
 
-        with patch("routers.api.sessions.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.sessions.emit_session_delete", new_callable=AsyncMock):
             result = await delete_all_sessions(
                 request=mock_request,
                 current_user_id=TEST_USER_ID,
@@ -277,7 +279,9 @@ class TestDeleteAllSessions:
 
         assert result is None
         # Should only delete the other session, not the current one
-        mock_session_store.delete_by_id.assert_called_once_with(str(TEST_SESSION_ID_2))
+        mock_session_store.delete_by_token.assert_called_once_with(
+            str(TEST_SESSION_TOKEN_2)
+        )
 
     @pytest.mark.anyio
     async def test_delete_all_sessions_no_other_sessions(
@@ -288,7 +292,7 @@ class TestDeleteAllSessions:
 
         sessions = [
             Session(
-                id=TEST_SESSION_ID,
+                token=TEST_SESSION_TOKEN,
                 user_id=str(TEST_USER_ID),
                 library_id="lib_456",
                 stored_jwt=TEST_ENCRYPTED_JWT,
@@ -302,7 +306,7 @@ class TestDeleteAllSessions:
 
         mock_session_store.get_by_user.return_value = sessions
 
-        with patch("routers.api.sessions.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.sessions.emit_session_delete", new_callable=AsyncMock):
             result = await delete_all_sessions(
                 request=mock_request,
                 current_user_id=TEST_USER_ID,
@@ -310,8 +314,8 @@ class TestDeleteAllSessions:
             )
 
         assert result is None
-        # Should not call delete_by_id at all
-        mock_session_store.delete_by_id.assert_not_called()
+        # Should not call delete_by_token at all
+        mock_session_store.delete_by_token.assert_not_called()
 
     @pytest.mark.anyio
     async def test_delete_all_sessions_emits_websocket_events(
@@ -322,7 +326,7 @@ class TestDeleteAllSessions:
 
         sessions = [
             Session(
-                id=TEST_SESSION_ID,
+                token=TEST_SESSION_TOKEN,
                 user_id=str(TEST_USER_ID),
                 library_id="lib_456",
                 stored_jwt=TEST_ENCRYPTED_JWT,
@@ -333,7 +337,7 @@ class TestDeleteAllSessions:
                 updated_at=now,
             ),
             Session(
-                id=TEST_SESSION_ID_2,
+                token=TEST_SESSION_TOKEN_2,
                 user_id=str(TEST_USER_ID),
                 library_id="lib_456",
                 stored_jwt=TEST_ENCRYPTED_JWT,
@@ -346,10 +350,10 @@ class TestDeleteAllSessions:
         ]
 
         mock_session_store.get_by_user.return_value = sessions
-        mock_session_store.delete_by_id.return_value = True
+        mock_session_store.delete_by_token.return_value = True
 
         with patch(
-            "routers.api.sessions.emit_session_event", new_callable=AsyncMock
+            "routers.api.sessions.emit_session_delete", new_callable=AsyncMock
         ) as mock_emit:
             await delete_all_sessions(
                 request=mock_request,
@@ -358,11 +362,7 @@ class TestDeleteAllSessions:
             )
 
             # Should emit for the deleted session (not the current one)
-            mock_emit.assert_called_once()
-            call = mock_emit.call_args
-            assert call[0][0] == WebSocketEvent.SESSION_DELETE
-            assert call[0][1] == str(TEST_SESSION_ID_2)
-            assert call[0][2] == str(TEST_SESSION_ID_2)
+            mock_emit.assert_called_once_with(str(TEST_SESSION_TOKEN_2))
 
 
 class TestUpdateSession:
@@ -378,7 +378,7 @@ class TestUpdateSession:
     def mock_request(self):
         """Create a mock request with session token."""
         request = Mock()
-        request.state.session_token = str(TEST_SESSION_ID)
+        request.state.session_token = str(TEST_SESSION_TOKEN)
         return request
 
     @pytest.mark.anyio
@@ -386,7 +386,7 @@ class TestUpdateSession:
         """Test successful session update."""
         now = datetime.now(UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_TOKEN,
             user_id=str(TEST_USER_ID),
             library_id="lib_456",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -398,7 +398,7 @@ class TestUpdateSession:
         )
 
         updated_session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_TOKEN,
             user_id=str(TEST_USER_ID),
             library_id="lib_456",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -410,13 +410,14 @@ class TestUpdateSession:
             client_epoch=-1,
         )
 
-        mock_session_store.get_by_id.side_effect = [session, updated_session]
+        mock_session_store.get_user_session.return_value = session
+        mock_session_store.get_by_token.return_value = updated_session
         mock_session_store.set_pending_sync_reset.return_value = True
 
         dto = SessionUpdateDto(isPendingSyncReset=True)
 
         result = await update_session(
-            id=TEST_SESSION_ID,
+            id=TEST_PUBLIC_ID,
             session_update=dto,
             request=mock_request,
             current_user_id=TEST_USER_ID,
@@ -424,16 +425,19 @@ class TestUpdateSession:
         )
 
         assert result.isPendingSyncReset is True
-        assert result.id == TEST_SESSION_ID
-        mock_session_store.get_by_id.assert_called_with(str(TEST_SESSION_ID))
+        assert result.id == TEST_PUBLIC_ID
+        mock_session_store.get_user_session.assert_called_once_with(
+            str(TEST_USER_ID), TEST_PUBLIC_ID
+        )
+        mock_session_store.get_by_token.assert_called_with(str(TEST_SESSION_TOKEN))
         mock_session_store.set_pending_sync_reset.assert_called_once_with(
-            str(TEST_SESSION_ID), True
+            str(TEST_SESSION_TOKEN), True
         )
 
     @pytest.mark.anyio
     async def test_update_session_not_found(self, mock_request, mock_session_store):
         """Test update session returns 400 when not found."""
-        mock_session_store.get_by_id.return_value = None
+        mock_session_store.get_user_session.return_value = None
 
         random_uuid = uuid4()
         dto = SessionUpdateDto(isPendingSyncReset=True)
@@ -451,43 +455,11 @@ class TestUpdateSession:
         assert "Not found" in exc_info.value.detail
 
     @pytest.mark.anyio
-    async def test_update_session_wrong_user(self, mock_request, mock_session_store):
-        """Test update session returns 400 when session belongs to different user."""
-        now = datetime.now(UTC)
-        session = Session(
-            id=TEST_SESSION_ID,
-            user_id="different_user",  # Different user
-            library_id="lib_456",
-            stored_jwt=TEST_ENCRYPTED_JWT,
-            device_type="iOS",
-            device_os="iOS 17",
-            app_version="1.0",
-            created_at=now,
-            updated_at=now,
-        )
-
-        mock_session_store.get_by_id.return_value = session
-
-        dto = SessionUpdateDto(isPendingSyncReset=True)
-
-        with pytest.raises(HTTPException) as exc_info:
-            await update_session(
-                id=TEST_SESSION_ID,
-                session_update=dto,
-                request=mock_request,
-                current_user_id=TEST_USER_ID,
-                session_store=mock_session_store,
-            )
-
-        assert exc_info.value.status_code == 400
-        assert "Not found" in exc_info.value.detail
-
-    @pytest.mark.anyio
     async def test_update_session_no_changes(self, mock_request, mock_session_store):
         """Test update session with no changes still returns session."""
         now = datetime.now(UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_TOKEN,
             user_id=str(TEST_USER_ID),
             library_id="lib_456",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -498,19 +470,19 @@ class TestUpdateSession:
             updated_at=now,
         )
 
-        mock_session_store.get_by_id.return_value = session
+        mock_session_store.get_user_session.return_value = session
 
         dto = SessionUpdateDto()  # No changes
 
         result = await update_session(
-            id=TEST_SESSION_ID,
+            id=TEST_PUBLIC_ID,
             session_update=dto,
             request=mock_request,
             current_user_id=TEST_USER_ID,
             session_store=mock_session_store,
         )
 
-        assert result.id == TEST_SESSION_ID
+        assert result.id == TEST_PUBLIC_ID
         # set_pending_sync_reset should not be called
         mock_session_store.set_pending_sync_reset.assert_not_called()
 
@@ -528,7 +500,7 @@ class TestDeleteSession:
     def mock_request(self):
         """Create a mock request with session token."""
         request = Mock()
-        request.state.session_token = str(TEST_SESSION_ID)
+        request.state.session_token = str(TEST_SESSION_TOKEN)
         return request
 
     @pytest.mark.anyio
@@ -536,7 +508,7 @@ class TestDeleteSession:
         """Test successful session deletion."""
         now = datetime.now(UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_TOKEN,
             user_id=str(TEST_USER_ID),
             library_id="lib_456",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -547,25 +519,29 @@ class TestDeleteSession:
             updated_at=now,
         )
 
-        mock_session_store.get_by_id.return_value = session
-        mock_session_store.delete_by_id.return_value = True
+        mock_session_store.get_user_session.return_value = session
+        mock_session_store.delete_by_token.return_value = True
 
-        with patch("routers.api.sessions.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.sessions.emit_session_delete", new_callable=AsyncMock):
             result = await delete_session(
-                id=TEST_SESSION_ID,
+                id=TEST_PUBLIC_ID,
                 request=mock_request,
                 current_user_id=TEST_USER_ID,
                 session_store=mock_session_store,
             )
 
         assert result is None
-        mock_session_store.get_by_id.assert_called_once_with(str(TEST_SESSION_ID))
-        mock_session_store.delete_by_id.assert_called_once_with(str(TEST_SESSION_ID))
+        mock_session_store.get_user_session.assert_called_once_with(
+            str(TEST_USER_ID), TEST_PUBLIC_ID
+        )
+        mock_session_store.delete_by_token.assert_called_once_with(
+            str(TEST_SESSION_TOKEN)
+        )
 
     @pytest.mark.anyio
     async def test_delete_session_not_found(self, mock_request, mock_session_store):
         """Test delete session returns 400 when not found."""
-        mock_session_store.get_by_id.return_value = None
+        mock_session_store.get_user_session.return_value = None
 
         random_uuid = uuid4()
 
@@ -581,42 +557,13 @@ class TestDeleteSession:
         assert "Not found" in exc_info.value.detail
 
     @pytest.mark.anyio
-    async def test_delete_session_wrong_user(self, mock_request, mock_session_store):
-        """Test delete session returns 400 when session belongs to different user."""
-        now = datetime.now(UTC)
-        session = Session(
-            id=TEST_SESSION_ID,
-            user_id="different_user",  # Different user
-            library_id="lib_456",
-            stored_jwt=TEST_ENCRYPTED_JWT,
-            device_type="iOS",
-            device_os="iOS 17",
-            app_version="1.0",
-            created_at=now,
-            updated_at=now,
-        )
-
-        mock_session_store.get_by_id.return_value = session
-
-        with pytest.raises(HTTPException) as exc_info:
-            await delete_session(
-                id=TEST_SESSION_ID,
-                request=mock_request,
-                current_user_id=TEST_USER_ID,
-                session_store=mock_session_store,
-            )
-
-        assert exc_info.value.status_code == 400
-        assert "Not found" in exc_info.value.detail
-
-    @pytest.mark.anyio
     async def test_delete_session_emits_websocket_event(
         self, mock_request, mock_session_store
     ):
         """Test that delete_session emits on_session_delete event."""
         now = datetime.now(UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_TOKEN,
             user_id=str(TEST_USER_ID),
             library_id="lib_456",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -627,24 +574,20 @@ class TestDeleteSession:
             updated_at=now,
         )
 
-        mock_session_store.get_by_id.return_value = session
-        mock_session_store.delete_by_id.return_value = True
+        mock_session_store.get_user_session.return_value = session
+        mock_session_store.delete_by_token.return_value = True
 
         with patch(
-            "routers.api.sessions.emit_session_event", new_callable=AsyncMock
+            "routers.api.sessions.emit_session_delete", new_callable=AsyncMock
         ) as mock_emit:
             await delete_session(
-                id=TEST_SESSION_ID,
+                id=TEST_PUBLIC_ID,
                 request=mock_request,
                 current_user_id=TEST_USER_ID,
                 session_store=mock_session_store,
             )
 
-            mock_emit.assert_called_once()
-            call = mock_emit.call_args
-            assert call[0][0] == WebSocketEvent.SESSION_DELETE
-            assert call[0][1] == str(TEST_SESSION_ID)
-            assert call[0][2] == str(TEST_SESSION_ID)
+            mock_emit.assert_called_once_with(str(TEST_SESSION_TOKEN))
 
     @pytest.mark.anyio
     async def test_delete_session_websocket_error_does_not_fail_deletion(
@@ -653,7 +596,7 @@ class TestDeleteSession:
         """Test that WebSocket emission errors don't fail the session deletion."""
         now = datetime.now(UTC)
         session = Session(
-            id=TEST_SESSION_ID,
+            token=TEST_SESSION_TOKEN,
             user_id=str(TEST_USER_ID),
             library_id="lib_456",
             stored_jwt=TEST_ENCRYPTED_JWT,
@@ -664,18 +607,18 @@ class TestDeleteSession:
             updated_at=now,
         )
 
-        mock_session_store.get_by_id.return_value = session
-        mock_session_store.delete_by_id.return_value = True
+        mock_session_store.get_user_session.return_value = session
+        mock_session_store.delete_by_token.return_value = True
 
         # Patch the underlying emit so the SocketIOError originates *inside*
-        # emit_session_event (which now swallows it centrally).
+        # emit_session_event (which swallows it centrally).
         with patch(
             "services.websockets._emit_event",
             new_callable=AsyncMock,
             side_effect=SocketIOError("WebSocket error"),
         ):
             result = await delete_session(
-                id=TEST_SESSION_ID,
+                id=TEST_PUBLIC_ID,
                 request=mock_request,
                 current_user_id=TEST_USER_ID,
                 session_store=mock_session_store,
@@ -683,7 +626,7 @@ class TestDeleteSession:
 
             # Deletion should still succeed despite WebSocket error
             assert result is None
-            mock_session_store.delete_by_id.assert_called_once()
+            mock_session_store.delete_by_token.assert_called_once()
 
 
 class TestLockSession:

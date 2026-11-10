@@ -52,7 +52,7 @@ def playback():
     )
     session.get_jwt.return_value = "header." + claims + ".signature"
     store = AsyncMock()
-    store.get_by_id.return_value = session
+    store.get_by_token.return_value = session
     cache = ThumbnailCache(
         5, 10, namespace="video", cacheable=is_cacheable_video_selection
     )
@@ -147,7 +147,7 @@ def test_asset_the_api_denies_is_not_found_and_never_proxied(playback):
 
 def test_unknown_session_is_unauthorized_before_any_lookup(playback):
     http, sdk, store, cdn_requests = playback
-    store.get_by_id.return_value = None
+    store.get_by_token.return_value = None
 
     response = http.get(f"/api/assets/{uuid4()}/video/playback", headers=HEADERS)
 

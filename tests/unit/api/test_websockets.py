@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from routers.api.server import get_server_version
-from services.session_store import Session, SessionStoreError
+from services.session_store import Session, SessionStoreError, public_session_id
 from services.websockets import (
     WebSocketEvent,
     _extract_session_token,
@@ -16,6 +16,7 @@ from services.websockets import (
     _sid_to_user,
     connect,
     disconnect,
+    emit_session_delete,
     emit_session_event,
     emit_user_event,
     sio,
@@ -28,13 +29,13 @@ TEST_ENCRYPTED_JWT = "gAAAAABh..."
 
 
 def create_test_session(
-    session_id: UUID = TEST_SESSION_ID,
+    session_token: UUID = TEST_SESSION_ID,
     user_id: str = TEST_USER_ID,
 ) -> Session:
     """Create a test session."""
     now = datetime.now(UTC)
     return Session(
-        id=session_id,
+        token=session_token,
         user_id=user_id,
         library_id="lib_456",
         stored_jwt=TEST_ENCRYPTED_JWT,
@@ -158,7 +159,7 @@ class TestConnectHandler:
         """Create a mock SessionStore."""
         store = AsyncMock()
         session = create_test_session()
-        store.get_by_id.return_value = session
+        store.get_by_token.return_value = session
         return store
 
     @pytest.fixture
@@ -190,7 +191,7 @@ class TestConnectHandler:
         self, mock_session_store, mock_sio
     ):
         """Test that connections with invalid session tokens are rejected."""
-        mock_session_store.get_by_id.return_value = None
+        mock_session_store.get_by_token.return_value = None
 
         async def mock_get_session_store():
             return mock_session_store
@@ -209,7 +210,7 @@ class TestConnectHandler:
         self, mock_session_store, mock_sio
     ):
         """Test that connections are rejected when session lookup fails."""
-        mock_session_store.get_by_id.side_effect = SessionStoreError(
+        mock_session_store.get_by_token.side_effect = SessionStoreError(
             "Failed to retrieve session"
         )
 
@@ -249,8 +250,8 @@ class TestConnectHandler:
             mock_sio["enter_room"].assert_any_call(
                 "test-sid", _session_room(str(TEST_SESSION_ID))
             )
-            # Should track session with tuple (user_id, session_id)
-            assert _sid_to_user["test-sid"] == (TEST_USER_ID, str(TEST_SESSION_ID))
+            # Should track the socket's user
+            assert _sid_to_user["test-sid"] == TEST_USER_ID
 
     @pytest.mark.anyio
     async def test_emits_server_version_on_connect(self, mock_session_store, mock_sio):
@@ -299,7 +300,7 @@ class TestConnectHandler:
             environ = {"HTTP_AUTHORIZATION": f"Bearer {TEST_SESSION_ID}"}
             result = await connect("test-sid", environ)
             assert result is None  # Not False = accepted
-            assert _sid_to_user["test-sid"] == (TEST_USER_ID, str(TEST_SESSION_ID))
+            assert _sid_to_user["test-sid"] == TEST_USER_ID
 
     @pytest.mark.anyio
     async def test_accepts_cookie_auth(self, mock_session_store, mock_sio):
@@ -315,7 +316,7 @@ class TestConnectHandler:
             environ = {"HTTP_COOKIE": f"immich_access_token={TEST_SESSION_ID}"}
             result = await connect("test-sid", environ)
             assert result is None  # Not False = accepted
-            assert _sid_to_user["test-sid"] == (TEST_USER_ID, str(TEST_SESSION_ID))
+            assert _sid_to_user["test-sid"] == TEST_USER_ID
 
     @pytest.mark.anyio
     async def test_joins_session_room_for_session_delete_events(
@@ -362,7 +363,7 @@ class TestDisconnectHandler:
     @pytest.mark.anyio
     async def test_removes_socket_from_tracking(self):
         """Test that disconnected sockets are removed from tracking."""
-        _sid_to_user["test-sid"] = ("user_123", "session_456")
+        _sid_to_user["test-sid"] = "user_123"
 
         await disconnect("test-sid")
 
@@ -516,16 +517,15 @@ class TestEmitSessionEvent:
             yield mock_emit
 
     @pytest.mark.anyio
-    async def test_emits_session_delete_to_session_room(self, mock_sio_emit):
-        """Test that SESSION_DELETE is emitted to the session room."""
-        await emit_session_event(
-            WebSocketEvent.SESSION_DELETE, "session-token-123", "session-token-123"
-        )
+    async def test_session_delete_reaches_the_session_room_with_its_public_id(
+        self, mock_sio_emit
+    ):
+        await emit_session_delete(str(TEST_SESSION_ID))
 
         mock_sio_emit.assert_called_once_with(
             "on_session_delete",
-            "session-token-123",
-            room=_session_room("session-token-123"),
+            str(public_session_id(TEST_SESSION_ID)),
+            room=_session_room(str(TEST_SESSION_ID)),
         )
 
     @pytest.mark.anyio

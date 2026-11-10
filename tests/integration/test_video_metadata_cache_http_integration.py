@@ -36,7 +36,7 @@ def test_video_session_rechecked_range_forwarded_and_failed_mutation_invalidates
     )
     session.get_jwt.return_value = "header." + claims + ".signature"
     store = AsyncMock()
-    store.get_by_id.return_value = session
+    store.get_by_token.return_value = session
     cache = ThumbnailCache(
         5, 10, namespace="video", cacheable=is_cacheable_video_selection
     )
@@ -88,11 +88,11 @@ def test_video_session_rechecked_range_forwarded_and_failed_mutation_invalidates
         headers["range"] = "bytes=2-999"
         assert http.get(path, headers=headers).headers["content-range"] == "bytes=2-999"
         assert sdk.assets.retrieve.await_count == 1
-        assert store.get_by_id.await_count == 2
+        assert store.get_by_token.await_count == 2
         assert http.put("/api/assets/example/edits", headers=headers).status_code == 500
         assert "/version/new" in http.get(path, headers=headers).text
         assert sdk.assets.retrieve.await_count == 2
-        store.get_by_id.return_value = None
+        store.get_by_token.return_value = None
         assert http.get(path, headers=headers).status_code == 401
         assert sdk.assets.retrieve.await_count == 2
 

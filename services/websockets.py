@@ -22,6 +22,7 @@ from services.session_store import (
     SessionDataError,
     SessionStoreError,
     get_session_store,
+    public_session_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,8 +95,8 @@ class AssetEditReadyV2Payload(BaseModel):
     edit: list[SyncAssetEditV1]
 
 
-# Maps socket ID -> (user_id, session_id) for disconnect cleanup
-_sid_to_user: dict[str, tuple[str, str]] = {}
+# Maps socket ID -> user_id for disconnect cleanup
+_sid_to_user: dict[str, str] = {}
 
 
 def _session_room(session_token: str) -> str:
@@ -167,7 +168,7 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
     # Look up session in Redis
     try:
         session_store = await get_session_store()
-        session = await session_store.get_by_id(session_token)
+        session = await session_store.get_by_token(session_token)
     except SessionStoreError, SessionDataError:
         logger.exception(
             "WebSocket auth failed - session lookup error",
@@ -184,10 +185,9 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
 
     # Join user room and session room, and track session
     user_id = session.user_id
-    session_id = str(session.id)
     await sio.enter_room(sid, user_id)
-    await sio.enter_room(sid, _session_room(session_id))
-    _sid_to_user[sid] = (user_id, session_id)
+    await sio.enter_room(sid, _session_room(str(session.token)))
+    _sid_to_user[sid] = user_id
 
     logger.debug(
         "WebSocket authenticated",
@@ -227,11 +227,7 @@ def connect_error(data: Any) -> None:
 @sio.event
 async def disconnect(sid: str) -> None:
     """Handle WebSocket disconnection."""
-    ids = _sid_to_user.pop(sid, None)
-    if ids is None:
-        user_id = None
-    else:
-        user_id, _ = ids
+    user_id = _sid_to_user.pop(sid, None)
     logger.debug(
         "WebSocket disconnected",
         extra={"sid": sid, "user_id": user_id},
@@ -320,7 +316,7 @@ async def emit_user_event_per_id(
 
 async def emit_session_event(
     event: WebSocketEvent,
-    session_id: str,
+    session_token: str,
     payload: EventPayload = None,
 ) -> None:
     """
@@ -336,21 +332,35 @@ async def emit_session_event(
 
     Args:
         event: The event type (from WebSocketEvent enum)
-        session_id: The session ID (session token)
-        payload: Event data - Pydantic model (auto-serialized), string, list, or None
+        session_token: The token of the session to reach, which names its room
+        payload: Event data - Pydantic model (auto-serialized), string, list, or None.
+            Never the session token.
 
     Raises:
         pydantic.ValidationError: If payload is a Pydantic model that fails serialization
     """
     try:
-        await _emit_event(event, _session_room(session_id), payload)
+        await _emit_event(event, _session_room(session_token), payload)
     except SocketIOError as ws_error:
         logger.warning(
             "Failed to emit WebSocket session event",
             extra={
                 "event": event.value,
-                "session_id": session_telemetry_id(session_id),
+                "session_id": session_telemetry_id(session_token),
                 "error": str(ws_error),
             },
             exc_info=True,
         )
+
+
+async def emit_session_delete(session_token: str) -> None:
+    """Tell a session's clients it was deleted (``on_session_delete``).
+
+    The payload is the session's public id, as in upstream Immich, never its
+    token. Best-effort, like ``emit_session_event``.
+    """
+    await emit_session_event(
+        WebSocketEvent.SESSION_DELETE,
+        session_token,
+        str(public_session_id(session_token)),
+    )

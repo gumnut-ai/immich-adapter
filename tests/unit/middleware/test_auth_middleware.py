@@ -24,11 +24,11 @@ TEST_ENCRYPTED_JWT = "gAAAAABh..."  # Mock encrypted JWT
 TEST_JWT = "test.jwt.token"
 
 
-def create_test_session(session_id: UUID = TEST_SESSION_ID) -> Session:
+def create_test_session(session_token: UUID = TEST_SESSION_ID) -> Session:
     """Create a test session."""
     now = datetime.now(UTC)
     return Session(
-        id=session_id,
+        token=session_token,
         user_id=TEST_USER_UUID,
         library_id="lib_456",
         stored_jwt=TEST_ENCRYPTED_JWT,
@@ -45,7 +45,7 @@ def mock_session_store():
     """Create a mock SessionStore."""
     store = AsyncMock()
     session = create_test_session()
-    store.get_by_id.return_value = session
+    store.get_by_token.return_value = session
     store.update_stored_jwt.return_value = True
     return store
 
@@ -93,7 +93,7 @@ def client_with_mocks(app_with_mocks, mock_session_store):
         mock_get_session_store,
     ):
         # Also mock the session's get_jwt method
-        session = mock_session_store.get_by_id.return_value
+        session = mock_session_store.get_by_token.return_value
         session.get_jwt = MagicMock(return_value=TEST_JWT)
 
         yield TestClient(app_with_mocks)
@@ -168,7 +168,7 @@ class TestAuthMiddleware:
     ):
         """When the library was last resolved, and whether it was the user's
         choice, reach the resolver without a second Redis read."""
-        session = mock_session_store.get_by_id.return_value
+        session = mock_session_store.get_by_token.return_value
         session.library_checked_at = 1700000000.5
         session.library_from_choice = True
         headers = {"Authorization": f"Bearer {TEST_SESSION_ID}"}
@@ -183,7 +183,7 @@ class TestAuthMiddleware:
     ):
         """A session that has not resolved its library yet ("" in Redis)
         exposes None, so the first scoped request knows to resolve it."""
-        mock_session_store.get_by_id.return_value.library_id = ""
+        mock_session_store.get_by_token.return_value.library_id = ""
         headers = {"Authorization": f"Bearer {TEST_SESSION_ID}"}
 
         response = client_with_mocks.get("/api/test/protected", headers=headers)
@@ -215,7 +215,7 @@ class TestAuthMiddleware:
 
     def test_session_not_found(self, client_with_mocks, mock_session_store):
         """Test that missing session returns 401."""
-        mock_session_store.get_by_id.return_value = None
+        mock_session_store.get_by_token.return_value = None
         headers = {"Authorization": "Bearer nonexistent-session"}
 
         response = client_with_mocks.get("/api/test/protected", headers=headers)
@@ -300,7 +300,7 @@ class TestAuthMiddleware:
         assert data["session_library_id"] is None
         assert data["is_web_client"] is False
         # API keys are self-contained backend credentials — no session lookup.
-        mock_session_store.get_by_id.assert_not_awaited()
+        mock_session_store.get_by_token.assert_not_awaited()
 
     def test_api_key_takes_precedence_over_session_token(
         self, client_with_mocks, mock_session_store
@@ -319,7 +319,7 @@ class TestAuthMiddleware:
         data = response.json()
         assert data["jwt_token"] == api_key
         assert data["session_token"] is None
-        mock_session_store.get_by_id.assert_not_awaited()
+        mock_session_store.get_by_token.assert_not_awaited()
 
     def test_empty_api_key_falls_through_to_session_auth(
         self, client_with_mocks, mock_session_store
@@ -343,7 +343,7 @@ class TestAuthMiddleware:
         # Resolved via the session store, not the empty api key.
         assert data["jwt_token"] == TEST_JWT
         assert data["session_token"] == session_token
-        mock_session_store.get_by_id.assert_awaited_once()
+        mock_session_store.get_by_token.assert_awaited_once()
 
     def test_invalid_api_key_still_reaches_backend(
         self, client_with_mocks, mock_session_store
@@ -360,7 +360,7 @@ class TestAuthMiddleware:
         assert response.status_code == 200
         data = response.json()
         assert data["jwt_token"] == "not-a-real-key"
-        mock_session_store.get_by_id.assert_not_awaited()
+        mock_session_store.get_by_token.assert_not_awaited()
 
 
 class TestTokenRefresh:
@@ -400,7 +400,7 @@ class TestTokenRefresh:
             "routers.middleware.auth_middleware.get_session_store",
             mock_get_session_store,
         ):
-            session = mock_session_store.get_by_id.return_value
+            session = mock_session_store.get_by_token.return_value
             session.get_jwt = MagicMock(return_value=TEST_JWT)
             yield TestClient(app_with_refresh)
 
@@ -463,7 +463,7 @@ class TestSessionLookupErrors:
         mock_session_store = AsyncMock()
         session = create_test_session()
         session.get_jwt = MagicMock(side_effect=JWTEncryptionError("decryption failed"))
-        mock_session_store.get_by_id.return_value = session
+        mock_session_store.get_by_token.return_value = session
 
         async def mock_get_session_store():
             return mock_session_store
@@ -487,7 +487,7 @@ class TestSessionLookupErrors:
         mock_session_store = AsyncMock()
         session = create_test_session()
         session.get_jwt = MagicMock(side_effect=JWTEncryptionError("decryption failed"))
-        mock_session_store.get_by_id.return_value = session
+        mock_session_store.get_by_token.return_value = session
 
         async def mock_get_session_store():
             return mock_session_store
@@ -511,7 +511,9 @@ class TestSessionLookupErrors:
     def test_redis_error_returns_500(self, app_for_errors):
         """Test that Redis errors return 500."""
         mock_session_store = AsyncMock()
-        mock_session_store.get_by_id.side_effect = Exception("Redis connection error")
+        mock_session_store.get_by_token.side_effect = Exception(
+            "Redis connection error"
+        )
 
         async def mock_get_session_store():
             return mock_session_store
@@ -562,7 +564,7 @@ class TestSentryUserAttribution:
         self, client_with_mocks, mock_session_store
     ):
         """A session whose user id isn't a UUID is logged, not raised."""
-        mock_session_store.get_by_id.return_value.user_id = "not-a-uuid"
+        mock_session_store.get_by_token.return_value.user_id = "not-a-uuid"
 
         with patch(
             "routers.middleware.auth_middleware.sentry_sdk.set_user"

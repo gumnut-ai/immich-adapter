@@ -11,7 +11,7 @@ from routers.immich_models import (
 )
 from routers.utils.current_user import get_current_user_id
 from services.session_store import Session, SessionStore, get_session_store
-from services.websockets import WebSocketEvent, emit_session_event
+from services.websockets import emit_session_delete
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,8 @@ def _session_to_response_dto(
     """
     Convert a Session object to SessionResponseDto.
 
+    The DTO carries the session's public id, never its token.
+
     Args:
         session: The internal Session object
         current_session_token: The session token of the current request (for setting current=True)
@@ -39,12 +41,11 @@ def _session_to_response_dto(
     Returns:
         SessionResponseDto for the Immich API response
     """
-    session_id_str = str(session.id)
     return SessionResponseDto(
         id=session.id,
         createdAt=session.created_at.isoformat(),
         updatedAt=session.updated_at.isoformat(),
-        current=(session_id_str == current_session_token),
+        current=(str(session.token) == current_session_token),
         deviceOS=session.device_os,
         deviceType=session.device_type,
         appVersion=session.app_version if session.app_version else None,
@@ -112,15 +113,13 @@ async def delete_all_sessions(
     sessions = await session_store.get_by_user(str(current_user_id))
 
     for session in sessions:
-        session_token = str(session.id)
+        session_token = str(session.token)
         if session_token != current_session_token:
             try:
-                await session_store.delete_by_id(session_token)
+                await session_store.delete_by_token(session_token)
                 # Emit WebSocket event to notify the deleted session's client
                 try:
-                    await emit_session_event(
-                        WebSocketEvent.SESSION_DELETE, session_token, session_token
-                    )
+                    await emit_session_delete(session_token)
                 except Exception as ws_error:
                     logger.warning(
                         "Failed to emit WebSocket event after session delete",
@@ -155,15 +154,13 @@ async def update_session(
     """
     current_session_token = _get_session_token(request)
 
-    session_token = str(id)
-    session = await session_store.get_by_id(session_token)
-
-    # Verify session exists and belongs to current user
-    if not session or session.user_id != str(current_user_id):
+    session = await session_store.get_user_session(str(current_user_id), id)
+    if not session:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Not found",
         )
+    session_token = str(session.token)
 
     # Update the session if isPendingSyncReset is provided
     if session_update.isPendingSyncReset is not None:
@@ -171,7 +168,7 @@ async def update_session(
             session_token, session_update.isPendingSyncReset
         )
         # Refresh session data after update
-        updated_session = await session_store.get_by_id(session_token)
+        updated_session = await session_store.get_by_token(session_token)
         if updated_session:
             session = updated_session
 
@@ -186,25 +183,21 @@ async def delete_session(
     session_store: SessionStore = Depends(get_session_store),
 ) -> None:
     """
-    Delete a specific session by ID.
+    Delete a specific session by its public id.
     """
     _get_session_token(request)  # Ensure authenticated
 
-    session_token = str(id)
-    session = await session_store.get_by_id(session_token)
-
-    # Verify session exists and belongs to current user
-    if not session or session.user_id != str(current_user_id):
+    session = await session_store.get_user_session(str(current_user_id), id)
+    if not session:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Not found",
         )
+    session_token = str(session.token)
 
-    await session_store.delete_by_id(session_token)
+    await session_store.delete_by_token(session_token)
 
-    await emit_session_event(
-        WebSocketEvent.SESSION_DELETE, session_token, session_token
-    )
+    await emit_session_delete(session_token)
 
 
 @router.post("/{id}/lock", status_code=204)

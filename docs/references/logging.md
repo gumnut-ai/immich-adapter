@@ -1,6 +1,6 @@
 ---
 title: Logging
-last-updated: 2026-11-09
+last-updated: 2026-11-10
 ---
 
 # Logging
@@ -19,9 +19,9 @@ Never log signed CDN URLs: their query strings are bearer credentials. Use the
 
 ## Session tokens
 
-Never log a session token. A session's bearer token is its id, so
-`str(session.id)`, the `session_token` request state and the `{id}` of the
-`/api/sessions` routes are all credentials. Where a record needs to correlate
+Never log a session token: `Session.token`, the `session_token` request state
+and the Redis keys built from it are credentials. `Session.id`, the public id
+the `/api/sessions` routes take, is not. Where a record needs to correlate
 with a session, log `session_telemetry_id(token)` from `config/telemetry.py`
 under `session_id`: it is stable per session, cannot be reversed, and matches
 the `session:<id>` cache keys that spans show.

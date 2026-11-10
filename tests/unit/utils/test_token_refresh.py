@@ -24,12 +24,12 @@ from services.session_store import Session
 TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
 
-def make_session(session_id: UUID, jwt: str = "decrypted-jwt-token") -> Session:
+def make_session(session_token: UUID, jwt: str = "decrypted-jwt-token") -> Session:
     """Build a test Session whose get_jwt() returns the given decrypted JWT."""
     now = datetime.now(UTC)
     session = Session(
-        id=session_id,
-        user_id=f"user_{session_id}",
+        token=session_token,
+        user_id=f"user_{session_token}",
         library_id="lib_456",
         stored_jwt="encrypted-jwt",
         device_type="iOS",
@@ -107,7 +107,7 @@ class TestTokenRefreshIntegration:
     def mock_session_store(self):
         """Create a mock SessionStore."""
         store = AsyncMock()
-        store.get_by_id.return_value = make_session(TEST_SESSION_UUID)
+        store.get_by_token.return_value = make_session(TEST_SESSION_UUID)
         store.update_stored_jwt.return_value = True
         return store
 
@@ -363,7 +363,7 @@ class TestPerRequestIsolation:
         idle_uuid = UUID("22222222-2222-4222-8222-222222222222")
 
         store = AsyncMock()
-        store.get_by_id.side_effect = lambda token: make_session(
+        store.get_by_token.side_effect = lambda token: make_session(
             UUID(token), jwt=f"jwt-{token}"
         )
         store.update_stored_jwt.return_value = True

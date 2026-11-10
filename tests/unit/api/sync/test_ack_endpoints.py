@@ -25,7 +25,7 @@ def _session_store() -> AsyncMock:
     store = AsyncMock(spec=SessionStore)
     session = create_mock_session()
     session.sync_epoch = session.client_epoch = EPOCH
-    store.get_by_id.return_value = session
+    store.get_by_token.return_value = session
     return store
 
 
