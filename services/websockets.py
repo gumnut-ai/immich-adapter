@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from socketio.exceptions import SocketIOError
 
 from config.settings import get_settings
+from config.telemetry import session_telemetry_id
 from routers.immich_models import (
     SyncAssetEditV1,
     SyncAssetExifV1,
@@ -97,6 +98,15 @@ class AssetEditReadyV2Payload(BaseModel):
 _sid_to_user: dict[str, tuple[str, str]] = {}
 
 
+def _session_room(session_token: str) -> str:
+    """Socket.IO room of one session's clients.
+
+    Socket.IO logs room names at INFO, so the room is named after the
+    session's telemetry id rather than its bearer token.
+    """
+    return f"session:{session_telemetry_id(session_token)}"
+
+
 def _extract_session_token(environ: dict[str, Any]) -> str | None:
     """
     Extract session token from Socket.IO connection environment.
@@ -161,14 +171,14 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
     except SessionStoreError, SessionDataError:
         logger.exception(
             "WebSocket auth failed - session lookup error",
-            extra={"sid": sid, "session_token": session_token},
+            extra={"sid": sid, "session_id": session_telemetry_id(session_token)},
         )
         return False
 
     if not session:
         logger.warning(
             "WebSocket auth failed - session not found",
-            extra={"sid": sid, "session_token": session_token},
+            extra={"sid": sid, "session_id": session_telemetry_id(session_token)},
         )
         return False  # Reject connection
 
@@ -176,7 +186,7 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
     user_id = session.user_id
     session_id = str(session.id)
     await sio.enter_room(sid, user_id)
-    await sio.enter_room(sid, session_id)
+    await sio.enter_room(sid, _session_room(session_id))
     _sid_to_user[sid] = (user_id, session_id)
 
     logger.debug(
@@ -333,13 +343,13 @@ async def emit_session_event(
         pydantic.ValidationError: If payload is a Pydantic model that fails serialization
     """
     try:
-        await _emit_event(event, session_id, payload)
+        await _emit_event(event, _session_room(session_id), payload)
     except SocketIOError as ws_error:
         logger.warning(
             "Failed to emit WebSocket session event",
             extra={
                 "event": event.value,
-                "session_id": session_id,
+                "session_id": session_telemetry_id(session_id),
                 "error": str(ws_error),
             },
             exc_info=True,

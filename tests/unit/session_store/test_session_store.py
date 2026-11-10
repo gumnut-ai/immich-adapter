@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 import redis.exceptions
 
+from config.telemetry import session_telemetry_id
 from services.session_store import (
     _REQUIRED_SESSION_FIELDS,
     _UPDATE_IF_EXISTS_LUA,
@@ -170,7 +171,8 @@ class TestSessionDataclass:
             Session.from_dict(TEST_SESSION_ID, data)
 
         assert "missing required fields" in str(exc_info.value)
-        assert str(TEST_SESSION_ID) in str(exc_info.value)
+        assert session_telemetry_id(TEST_SESSION_ID) in str(exc_info.value)
+        assert str(TEST_SESSION_ID) not in str(exc_info.value)
 
     def test_from_dict_malformed_datetime_raises_error(self):
         """Test from_dict raises SessionDataError for invalid datetime."""
@@ -190,7 +192,8 @@ class TestSessionDataclass:
             Session.from_dict(TEST_SESSION_ID, data)
 
         assert "malformed data" in str(exc_info.value)
-        assert str(TEST_SESSION_ID) in str(exc_info.value)
+        assert session_telemetry_id(TEST_SESSION_ID) in str(exc_info.value)
+        assert str(TEST_SESSION_ID) not in str(exc_info.value)
 
     def test_get_jwt_decrypts_stored_jwt(self):
         """Test get_jwt() decrypts the stored JWT."""

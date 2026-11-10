@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 from typing import Any
@@ -5,19 +6,67 @@ from urllib.parse import urlparse
 
 import sentry_sdk
 from sentry_sdk.types import Event, Hint
+from sentry_sdk.utils import iter_event_frames
 
 from config.settings import get_settings
 from config.telemetry import (
     redact_sensitive_cdn_query,
     redact_sensitive_cdn_text,
     redact_sensitive_cdn_url,
+    redact_session_tokens,
 )
 
 logger = logging.getLogger(__name__)
 
+# Stack locals can hold a session bearer token under arbitrary names:
+# `session_token`, `session_uuid`, a session route's `id` path parameter, the
+# ASGI `scope` and Socket.IO `environ` (request headers and path parameters),
+# redis-py's command arguments. `include_local_variables` stays at its default
+# (True) and the SDK scrubber matches only exact well-known names, so locals are
+# dropped wholesale from every library and standard-library frame (`in_app` not
+# true), and from the adapter's own frames in the modules below. A new adapter
+# module that handles session tokens belongs here.
+_SESSION_TOKEN_MODULES = (
+    "routers.api.auth",
+    "routers.api.oauth",
+    "routers.api.sessions",
+    "routers.api.sync.routes",
+    "routers.middleware",
+    "routers.utils.cookies",
+    "routers.utils.gumnut_client",
+    "routers.utils.thumbnail_cache",
+    "services.checkpoint_store",
+    "services.library_resolver",
+    "services.session_store",
+    "services.websockets",
+)
 
-def _redact_error_event(event: Event, _hint: Hint) -> Event:
-    """Remove signed-CDN credentials and filenames from error event values."""
+
+def _in_session_token_module(module: object) -> bool:
+    return isinstance(module, str) and any(
+        module == name or module.startswith(name + ".")
+        for name in _SESSION_TOKEN_MODULES
+    )
+
+
+def _keeps_frame_vars(frame: dict[str, Any]) -> bool:
+    return frame.get("in_app") is True and not _in_session_token_module(
+        frame.get("module")
+    )
+
+
+def _scrub_session_tokens(event: Any) -> Any:
+    """Drop stack locals that may hold a session token, then substitute any
+    token left in the payload with its telemetry id (see `config.telemetry`)."""
+    for frame in iter_event_frames(event):
+        if isinstance(frame, dict) and "vars" in frame and not _keeps_frame_vars(frame):
+            frame["vars"] = {"scrubbed": "[Filtered]"}
+    return redact_session_tokens(event)
+
+
+def _redact_error_event(event: Event, _hint: Hint) -> Event | None:
+    """Remove signed-CDN credentials, filenames and session tokens from error
+    event values."""
 
     def redact(value: Any) -> Any:
         if isinstance(value, str):
@@ -30,12 +79,33 @@ def _redact_error_event(event: Event, _hint: Hint) -> Event:
                 value[index] = redact(item)
         return value
 
-    try:
+    # before_send must never drop an otherwise useful error event over CDN
+    # redaction.
+    with contextlib.suppress(Exception):
         redact(event)
-        return event
+    try:
+        return _scrub_session_tokens(event)
     except Exception:
-        # before_send must never drop an otherwise useful error event.
-        return event
+        # A session token is a live credential: drop the event rather than
+        # risk sending one.
+        return None
+
+
+def _before_send_transaction(event: Event, hint: Hint) -> Event | None:
+    """Scrub session tokens from spans and request data, then enrich spans."""
+    try:
+        event = _scrub_session_tokens(event)
+    except Exception:
+        return None
+    return _enrich_http_spans(event, hint)
+
+
+def _before_send_log(log: Any, _hint: Hint) -> Any:
+    """Scrub session tokens from a log's body and attributes."""
+    try:
+        return redact_session_tokens(log)
+    except Exception:
+        return None
 
 
 def _enrich_http_spans(event, _hint):
@@ -99,24 +169,30 @@ def _enrich_http_spans(event, _hint):
     return event
 
 
+def sentry_init_options(dsn: str) -> dict[str, Any]:
+    """Keyword arguments for ``sentry_sdk.init``, shared with telemetry tests."""
+    return {
+        "dsn": dsn,
+        "release": os.environ.get("RENDER_GIT_COMMIT"),
+        "_experiments": {
+            "enable_logs": True,
+        },
+        "traces_sample_rate": 0.1,
+        "profiles_sample_rate": 0.1,
+        # Profiles will be automatically collected while
+        # there is an active span.
+        "profile_lifecycle": "trace",
+        "environment": get_settings().environment,
+        "before_send": _redact_error_event,
+        "before_send_transaction": _before_send_transaction,
+        "before_send_log": _before_send_log,
+    }
+
+
 def init_sentry():
     """Initialize Sentry for logging, error tracking, and monitoring."""
     sentry_dsn = get_settings().sentry_dsn
     if sentry_dsn:
-        sentry_sdk.init(
-            dsn=sentry_dsn,
-            release=os.environ.get("RENDER_GIT_COMMIT"),
-            _experiments={
-                "enable_logs": True,
-            },
-            traces_sample_rate=0.1,
-            profiles_sample_rate=0.1,
-            # Profiles will be automatically collected while
-            # there is an active span.
-            profile_lifecycle="trace",
-            environment=get_settings().environment,
-            before_send=_redact_error_event,
-            before_send_transaction=_enrich_http_spans,
-        )
+        sentry_sdk.init(**sentry_init_options(sentry_dsn))
     else:
         logger.info("Sentry disabled: SENTRY_DSN is empty or not set")

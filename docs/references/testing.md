@@ -1,6 +1,6 @@
 ---
 title: Testing
-last-updated: 2026-10-01
+last-updated: 2026-11-09
 ---
 
 # Testing
@@ -13,6 +13,7 @@ last-updated: 2026-10-01
 - Reuse shared model helpers in `tests/conftest.py` for test data when they fit
   the scenario.
 - Avoid asserting on logging in tests by default — logging is usually non-functional behavior. Exception: when log level itself is an explicit contract (for example, upstream status severity policy), assertions may verify level/metadata while avoiding brittle full-message matching.
+- Importing `main` applies `config/logging.py::LOGGING_CONFIG`, whose `uvicorn*` and `fastapi` loggers do not propagate to root. Integration tests import `main` during collection, so a test that captures log output through a root handler alone misses those loggers in a full-suite run; also attach to the `LOGGING_CONFIG["loggers"]` loggers, as `tests/unit/config/test_session_token_telemetry.py` does.
 - Construct SDK errors via the `tests/conftest.py` helpers — `make_sdk_status_error(status, msg, body=..., cls=<APIStatusError subclass, e.g. AuthenticationError>)` and `make_sdk_connection_error()` — not hand-built `httpx.Request`/`Response` + exception. Pass `body={"detail": ...}` when a test asserts on the surfaced message (the global handler reads `exc.body["detail"]`).
 - When mocking SDK paginator calls used with `async for` (e.g., `client.faces.list`), use `Mock(return_value=MockSyncCursorPage([...]))` — not `AsyncMock`. `AsyncMock` wraps the return in a coroutine, which breaks `async for` iteration. Use `AsyncMock` only for calls consumed with `await`.
 - The shared `MockSyncCursorPage` (`tests/conftest.py`) yields a flat list — it can't distinguish "limit is per-page" from "limit is a result cap" semantics. When testing code that explicitly `break`s out of `async for` after N items (e.g., `_fetch_assets_for_day`), use the shared `MockPaginatedListing` (`tests/conftest.py`), which tracks page boundaries so a regression that drops the break visibly walks extra pages. Its `page_size` must equal the `limit` the code actually sends — either read it off the call or pin it with a `call_args.kwargs["limit"] == page_size` assertion; a test-picked number with neither lets the two silently drift.

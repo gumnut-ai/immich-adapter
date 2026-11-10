@@ -8,6 +8,7 @@ from uuid import UUID
 
 import sentry_sdk
 
+from config.telemetry import session_telemetry_id
 from routers.immich_models import SyncEntityType
 from services.session_store import checkpoint_key
 from utils.redis_client import get_redis_client, parse_redis_peer
@@ -161,7 +162,7 @@ class CheckpointStore:
                 logger.warning(
                     "Skipping corrupt checkpoint (old format?), will re-sync",
                     extra={
-                        "session_token": str(session_token),
+                        "session_id": session_telemetry_id(session_token),
                         "entity_type": entity_type_str,
                         "value": value,
                     },
@@ -202,7 +203,7 @@ class CheckpointStore:
             logger.warning(
                 "Skipping corrupt checkpoint (old format?), will re-sync",
                 extra={
-                    "session_token": str(session_token),
+                    "session_id": session_telemetry_id(session_token),
                     "entity_type": entity_type.value,
                     "value": value,
                 },

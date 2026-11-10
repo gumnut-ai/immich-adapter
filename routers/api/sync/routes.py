@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from gumnut import AsyncGumnut
 
+from config.telemetry import session_telemetry_id
 from routers.api.sync.events import bind_sync_epoch, to_ack_string
 from routers.api.sync.stream import generate_reset_stream, generate_sync_stream
 from routers.immich_models import (
@@ -179,7 +180,7 @@ async def get_sync_ack(
     logger.info(
         f"GET /sync/ack returning {len(ack_dtos)} checkpoints",
         extra={
-            "session_id": str(session_uuid),
+            "session_id": session_telemetry_id(session_uuid),
             "checkpoint_count": len(ack_dtos),
             "types": [dto.type.value for dto in ack_dtos],
         },
@@ -236,14 +237,17 @@ async def send_sync_ack(
                 logger.warning(
                     "SyncResetV1 encountered - ignoring other acks",
                     extra={
-                        "session_id": session_token,
+                        "session_id": session_telemetry_id(session_token),
                         "ignored_checkpoint_count": len(checkpoints_to_store),
                         "ignored_remaining_count": remaining_acks,
                     },
                 )
             logger.info(
                 "SyncResetV1 acknowledged - resetting sync progress",
-                extra={"session_id": session_token, "epoch": ack_epoch},
+                extra={
+                    "session_id": session_telemetry_id(session_token),
+                    "epoch": ack_epoch,
+                },
             )
             await session_store.acknowledge_sync_reset(session_token, ack_epoch)
             await session_store.update_activity(session_token)
@@ -265,7 +269,10 @@ async def send_sync_ack(
     if stale_count:
         logger.info(
             "Dropped acks for a sync epoch the session has left",
-            extra={"session_id": session_token, "stale_count": stale_count},
+            extra={
+                "session_id": session_telemetry_id(session_token),
+                "stale_count": stale_count,
+            },
         )
 
     # Update session activity timestamp
@@ -274,7 +281,7 @@ async def send_sync_ack(
     logger.info(
         f"Acknowledged {len(checkpoints_to_store)} checkpoints",
         extra={
-            "session_id": session_token,
+            "session_id": session_telemetry_id(session_token),
             "checkpoint_count": len(checkpoints_to_store),
             "types": [et.value for et in checkpoints_to_store],
         },
@@ -306,7 +313,7 @@ async def delete_sync_ack(
         await checkpoint_store.delete_all(session_uuid, epoch)
         logger.info(
             "Deleted all checkpoints",
-            extra={"session_id": str(session_uuid)},
+            extra={"session_id": session_telemetry_id(session_uuid)},
         )
     elif len(request.types) > 0:
         # Specific types requested - delete those
@@ -314,7 +321,7 @@ async def delete_sync_ack(
         logger.info(
             f"Deleted {len(request.types)} checkpoint types",
             extra={
-                "session_id": str(session_uuid),
+                "session_id": session_telemetry_id(session_uuid),
                 "types": [t.value for t in request.types],
             },
         )
@@ -367,7 +374,7 @@ async def get_sync_stream(
                 logger.info(
                     "Session needs a sync reset - sending SyncResetV1",
                     extra={
-                        "session_id": session_token,
+                        "session_id": session_telemetry_id(session_token),
                         "library_moved": library_moved,
                     },
                 )
@@ -382,7 +389,7 @@ async def get_sync_stream(
     if request.reset and session_uuid:
         logger.info(
             "request.reset=True - clearing all checkpoints for full sync",
-            extra={"session_id": session_token},
+            extra={"session_id": session_telemetry_id(session_token)},
         )
         await checkpoint_store.delete_all(session_uuid, epoch)
 
@@ -394,7 +401,7 @@ async def get_sync_stream(
         logger.debug(
             f"Loaded {len(checkpoint_map)} checkpoints for sync stream",
             extra={
-                "session_id": session_token,
+                "session_id": session_telemetry_id(session_token),
                 "checkpoint_types": [t.value for t in checkpoint_map],
             },
         )

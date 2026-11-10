@@ -1,0 +1,350 @@
+"""Session bearer tokens never reach telemetry.
+
+Each test drives real session-bearing code with Sentry initialized from the
+production options (traces sampled at 100%) and a capturing transport, and
+with a stdout handler built from the production logging config. It then
+asserts the token appears nowhere in the serialized envelopes (transactions,
+error events, logs) or in the formatted log output, tracebacks included.
+"""
+
+import copy
+import io
+import logging
+import logging.config
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
+
+import fakeredis
+import pytest
+import sentry_sdk
+from sentry_sdk.envelope import Envelope
+from sentry_sdk.transport import Transport
+
+from config.logging import LOGGING_CONFIG
+from config.sentry import sentry_init_options
+from config.telemetry import session_telemetry_id
+
+# Importing the app applies the production logging config (non-propagating
+# uvicorn loggers) at collection, whatever order the suite runs in.
+from main import app
+from routers.api.sync.routes import send_sync_ack
+from routers.immich_models import SyncAckSetDto, SyncEntityType
+from services.checkpoint_store import CheckpointStore
+from services.session_store import SessionStore, SessionStoreError
+from services.websockets import WebSocketEvent, connect, emit_session_event, sio
+
+
+class _CaptureTransport(Transport):
+    def __init__(self, options: dict[str, Any] | None = None) -> None:
+        super().__init__(options)
+        self.envelopes: list[Envelope] = []
+
+    def capture_envelope(self, envelope: Envelope) -> None:
+        self.envelopes.append(envelope)
+
+
+def _records_with(token: str) -> list[str]:
+    """Log records emitted so far whose attributes contain the token.
+
+    The Sentry and stdout backstops would hide a call site that still puts a
+    token on its record, so the records are checked at the source too.
+    """
+    return [
+        record.getMessage()
+        for record in _captured_records
+        if token in repr(vars(record)) or token in record.getMessage()
+    ]
+
+
+_captured_records: list[logging.LogRecord] = []
+
+
+class _RecordCollector(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        _captured_records.append(record)
+
+
+@dataclass
+class Telemetry:
+    transport: _CaptureTransport
+    stdout: io.StringIO
+    item_types: set[str] = field(default_factory=set)
+
+    def flush(self) -> str:
+        """Flush Sentry and return everything emitted so far as one string."""
+        sentry_sdk.flush()
+        rendered = []
+        for envelope in self.transport.envelopes:
+            for item in envelope.items:
+                self.item_types.add(item.type or "")
+            rendered.append(envelope.serialize().decode("utf-8", "replace"))
+        return "\n".join(rendered) + "\n" + self.stdout.getvalue()
+
+
+@pytest.fixture
+def telemetry() -> Iterator[Telemetry]:
+    transport = _CaptureTransport()
+    options = sentry_init_options("https://public@example.invalid/1")
+    options.update(
+        traces_sample_rate=1.0, profiles_sample_rate=0.0, transport=transport
+    )
+    prior_client = sentry_sdk.get_client()
+    sentry_sdk.init(**options)
+
+    stdout = io.StringIO()
+    handler = logging.StreamHandler(stdout)
+    configurator = logging.config.DictConfigurator({"version": 1})
+    handler.setFormatter(
+        configurator.configure_formatter(
+            copy.deepcopy(LOGGING_CONFIG["formatters"]["default"])
+        )
+    )
+    collector = _RecordCollector()
+    _captured_records.clear()
+    # The root logger plus the configured loggers that do not propagate to it.
+    loggers = [logging.getLogger()] + [
+        logging.getLogger(name) for name in LOGGING_CONFIG["loggers"]
+    ]
+    prior_level = loggers[0].level
+    for logger in loggers:
+        logger.addHandler(handler)
+        logger.addHandler(collector)
+    loggers[0].setLevel(logging.INFO)
+    try:
+        yield Telemetry(transport, stdout)
+    finally:
+        for logger in loggers:
+            logger.removeHandler(collector)
+            logger.removeHandler(handler)
+        loggers[0].setLevel(prior_level)
+        sentry_sdk.get_client().close()
+        sentry_sdk.get_global_scope().set_client(prior_client)
+
+
+@pytest.fixture
+def redis() -> fakeredis.FakeAsyncRedis:
+    return fakeredis.FakeAsyncRedis(decode_responses=True)
+
+
+async def _create_session(store: SessionStore) -> str:
+    session = await store.create(
+        jwt_token="header.payload.signature",
+        user_id="user_1",
+        library_id="lib_1",
+        device_type="iOS",
+        device_os="iOS 17",
+        app_version="1.94.0",
+    )
+    return str(session.id)
+
+
+@pytest.mark.anyio
+async def test_session_cache_and_redis_spans_carry_no_token(telemetry, redis):
+    store = SessionStore(redis)
+    checkpoints = CheckpointStore(redis)
+
+    with sentry_sdk.start_transaction(op="http.server", name="sync"):
+        token = await _create_session(store)
+        assert await store.get_by_id(token) is not None
+        session_uuid = (await store.get_by_id(token)).id  # type: ignore[union-attr]
+        assert await checkpoints.set_many(
+            session_uuid, 0, [(SyncEntityType.AssetV1, "cursor")]
+        )
+        assert await checkpoints.get_all(session_uuid, 0)
+        assert await store.update_activity(token)
+
+    emitted = telemetry.flush()
+
+    assert "transaction" in telemetry.item_types
+    assert '"op": "cache.get"' in emitted or '"op":"cache.get"' in emitted
+    assert "db.redis" in emitted
+    assert f"session:{session_telemetry_id(token)}" in emitted
+    assert token not in emitted
+
+
+@pytest.mark.anyio
+async def test_sync_ack_logs_carry_no_token(telemetry, redis):
+    store = SessionStore(redis)
+    token = await _create_session(store)
+    request = Mock()
+    request.state.session_token = token
+
+    await send_sync_ack(
+        request=SyncAckSetDto(acks=[]),
+        http_request=request,
+        checkpoint_store=CheckpointStore(redis),
+        session_store=store,
+    )
+    # An ack from another sync epoch is dropped and logged separately.
+    await send_sync_ack(
+        request=SyncAckSetDto(acks=["AssetV1|cursor|99"]),
+        http_request=request,
+        checkpoint_store=CheckpointStore(redis),
+        session_store=store,
+    )
+
+    emitted = telemetry.flush()
+
+    assert "log" in telemetry.item_types
+    assert "Acknowledged 0 checkpoints" in emitted
+    assert "Dropped acks for a sync epoch" in emitted
+    assert session_telemetry_id(token) in emitted
+    assert token not in emitted
+    assert _records_with(token) == []
+
+
+@pytest.mark.anyio
+async def test_websocket_lookup_failure_exception_carries_no_token(telemetry, redis):
+    """A corrupt session's lookup error is logged with its traceback and
+    stack locals; neither the message, the extras nor the locals may hold the
+    token the client presented."""
+    token = str(uuid4())
+    await redis.hset(f"session:{token}", mapping={"user_id": "user_1"})
+    environ = {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+
+    with patch(
+        "services.websockets.get_session_store",
+        AsyncMock(return_value=SessionStore(redis)),
+    ):
+        assert await connect("sid-1", environ) is False
+
+    emitted = telemetry.flush()
+
+    assert "event" in telemetry.item_types
+    assert "SessionDataError" in telemetry.stdout.getvalue()
+    assert session_telemetry_id(token) in emitted
+    assert token not in emitted
+    assert _records_with(token) == []
+
+
+@pytest.mark.anyio
+async def test_websocket_session_room_logs_carry_no_token(telemetry, redis):
+    """Socket.IO logs room names at INFO, so a session's room must not be its
+    token, and session events must still reach the room it joined."""
+    store = SessionStore(redis)
+    token = await _create_session(store)
+    environ = {"HTTP_X_IMMICH_USER_TOKEN": token}
+
+    with (
+        patch(
+            "services.websockets.get_session_store",
+            AsyncMock(return_value=store),
+        ),
+        patch.object(sio.manager, "enter_room", AsyncMock()) as enter_room,
+        patch.object(sio.manager, "emit", AsyncMock()) as manager_emit,
+    ):
+        assert await connect("sid-1", environ) is not False
+        await emit_session_event(WebSocketEvent.SESSION_DELETE, token, token)
+
+    emitted = telemetry.flush()
+
+    joined_rooms = {call.args[2] for call in enter_room.await_args_list}
+    session_room = manager_emit.await_args_list[-1].kwargs["room"]
+    assert session_room in joined_rooms
+    assert "is entering room" in emitted
+    assert token not in emitted
+    assert _records_with(token) == []
+    assert token not in str(sorted(joined_rooms))
+
+
+def test_session_route_in_access_log_carries_no_token(telemetry):
+    """The session-management routes put a session's token in the URL path,
+    which the server access log records."""
+    token = str(uuid4())
+
+    logging.getLogger("uvicorn.access").info(
+        '%s - "%s %s HTTP/%s" %d',
+        "192.0.2.1:50000",
+        "PUT",
+        f"/api/sessions/{token}",
+        "1.1",
+        200,
+    )
+
+    emitted = telemetry.flush()
+
+    assert f"/api/sessions/{session_telemetry_id(token)}" in emitted
+    assert token not in emitted
+
+
+@pytest.mark.anyio
+async def test_failed_session_request_carries_no_token(telemetry, redis):
+    """An unhandled error on a session route: the request URL and headers, the
+    transaction and the error event's stack locals (auth middleware, route
+    resolution) all see the token."""
+    from httpx import ASGITransport, AsyncClient
+
+    from routers.utils.current_user import get_current_user_id
+
+    store = SessionStore(redis)
+    token = await _create_session(store)
+
+    def failing_user_lookup() -> None:
+        raise RuntimeError("user lookup failed")
+
+    app.dependency_overrides[get_current_user_id] = failing_user_lookup
+    try:
+        with patch(
+            "routers.middleware.auth_middleware.get_session_store",
+            AsyncMock(return_value=store),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app, raise_app_exceptions=False),
+                base_url="http://testserver",
+            ) as client:
+                response = await client.put(
+                    f"/api/sessions/{token}",
+                    headers={"x-immich-user-token": token},
+                    json={"isPendingSyncReset": True},
+                )
+    finally:
+        app.dependency_overrides.pop(get_current_user_id, None)
+
+    emitted = telemetry.flush()
+
+    assert response.status_code == 500
+    assert {"event", "transaction"} <= telemetry.item_types
+    assert "user lookup failed" in emitted
+    assert f"/api/sessions/{session_telemetry_id(token)}" in emitted
+    assert token not in emitted
+
+
+@pytest.mark.anyio
+async def test_redis_failure_exception_carries_no_token(telemetry):
+    """redis-py's frames hold whole commands, where the token is a set member or
+    a script argument with no `session:` prefix to recognize it by."""
+    import socket
+
+    import redis.asyncio
+    import redis.exceptions
+    from redis.asyncio.retry import Retry
+    from redis.backoff import NoBackoff
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed_port = probe.getsockname()[1]
+    client = redis.asyncio.Redis(
+        port=closed_port,
+        socket_connect_timeout=0.2,
+        retry=Retry(NoBackoff(), retries=0),
+    )
+    token = str(uuid4())
+    store = SessionStore(client)
+
+    for operation in (store.update_activity, store.delete_by_id):
+        try:
+            await operation(token)
+        except redis.exceptions.RedisError, SessionStoreError:
+            logging.getLogger(__name__).exception("Session write failed")
+        else:
+            raise AssertionError("expected the closed Redis port to fail")
+    await client.aclose()
+
+    emitted = telemetry.flush()
+
+    assert "event" in telemetry.item_types
+    assert "Session write failed" in emitted
+    assert token not in emitted
