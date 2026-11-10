@@ -4031,12 +4031,6 @@ class TestPlayAssetVideo:
             "https://cdn.example.com/video.mp4",
             "video/mp4",
             range_header=None,
-            forwarded_headers=(
-                "content-length",
-                "etag",
-                "last-modified",
-                "cache-control",
-            ),
         )
 
     @pytest.mark.anyio
@@ -4069,12 +4063,6 @@ class TestPlayAssetVideo:
             "https://cdn.example.com/video.mp4",
             "video/mp4",
             range_header="bytes=1000-2000",
-            forwarded_headers=(
-                "content-length",
-                "etag",
-                "last-modified",
-                "cache-control",
-            ),
         )
 
     @pytest.mark.anyio
@@ -4100,6 +4088,43 @@ class TestPlayAssetVideo:
             )
 
         assert exc_info.value.status_code == 404
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "mimetype", ["image/svg+xml", "image/jpeg", "application/octet-stream"]
+    )
+    async def test_play_asset_video_rejects_non_video_original(
+        self, sample_uuid, mimetype
+    ):
+        """A non-video original is a 404, like upstream, and is never streamed."""
+        mock_client = Mock()
+        mock_client.assets.retrieve = AsyncMock(
+            return_value=_make_mock_asset_with_urls(
+                {
+                    "original": {
+                        "url": "https://cdn.example.com/original",
+                        "mimetype": mimetype,
+                    }
+                },
+                mime_type=mimetype,
+            )
+        )
+        mock_request = Mock()
+        mock_request.headers = {"range": "bytes=0-"}
+
+        with (
+            patch(
+                "routers.api.assets.stream_from_cdn", new_callable=AsyncMock
+            ) as mock_cdn,
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await play_asset_video(
+                sample_uuid, request=mock_request, client=mock_client
+            )
+
+        assert exc_info.value.status_code == 404
+        assert exc_info.value.detail == "Asset not found or asset is not a video"
+        mock_cdn.assert_not_awaited()
 
 
 class TestParseDateTime:
