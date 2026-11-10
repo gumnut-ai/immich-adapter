@@ -247,7 +247,9 @@ People views refresh their thumbnail cache key on receipt.
 never its token.
 
 **Adapter timing**: Logout and session-deletion requests await
-`emit_session_delete` before returning the HTTP response.
+`close_session_sockets` before returning the HTTP response. It sends this
+event and then disconnects the session's sockets; see
+[Session revocation](../architecture/websocket-implementation.md#session-revocation).
 
 ---
 

@@ -79,10 +79,13 @@ class Wire:
     """Socket.IO packets sent to each engine.io connection, in order."""
 
     def __init__(self) -> None:
-        self.sent: dict[str, list[packet.Packet]] = {}
+        # (Socket.IO packet type, decoded data) per engine.io connection.
+        self.sent: dict[str, list[tuple[int, Any]]] = {}
+        self.opened: list[str] = []
 
     async def send(self, eio_sid: str, data: Any) -> None:
-        self.sent.setdefault(eio_sid, []).append(packet.Packet(encoded_packet=data))
+        pkt = packet.Packet(encoded_packet=data)
+        self.sent.setdefault(eio_sid, []).append((pkt.packet_type, pkt.data))
 
     async def send_packet(self, eio_sid: str, eio_pkt: Any) -> None:
         # Room emits encode once and hand engine.io a ready message packet.
@@ -91,16 +94,17 @@ class Wire:
     async def open(self, eio_sid: str, token: str) -> None:
         """Open a connection the way the mobile client does, and assert the
         server accepted it."""
+        self.opened.append(eio_sid)
         await sio._handle_eio_connect(eio_sid, {"HTTP_X_IMMICH_USER_TOKEN": token})
         await sio._handle_eio_message(eio_sid, "0")
-        assert self.sent[eio_sid][-1].packet_type == packet.CONNECT
+        assert self.sent[eio_sid][-1][0] == packet.CONNECT
 
     def events(self, eio_sid: str) -> list[Any]:
         """Event names, and `DISCONNECT`, sent to a connection."""
         return [
-            pkt.data[0] if pkt.packet_type == packet.EVENT else pkt.packet_type
-            for pkt in self.sent.get(eio_sid, [])
-            if pkt.packet_type in (packet.EVENT, packet.DISCONNECT)
+            data[0] if packet_type == packet.EVENT else packet_type
+            for packet_type, data in self.sent.get(eio_sid, [])
+            if packet_type in (packet.EVENT, packet.DISCONNECT)
         ]
 
     def mark(self) -> None:
@@ -116,7 +120,9 @@ async def wire(store: SessionStore) -> AsyncIterator[Wire]:
         patch("services.websockets.get_session_store", AsyncMock(return_value=store)),
     ):
         yield recorder
-        for eio_sid in list(recorder.sent):
+        # The room manager is process-global: close every connection, even
+        # after a failed test, so later tests start with empty rooms.
+        for eio_sid in recorder.opened:
             await sio._handle_eio_disconnect(eio_sid, sio.reason.CLIENT_DISCONNECT)
     _sid_to_user.clear()
 
@@ -171,7 +177,10 @@ async def test_deleting_a_session_disconnects_all_of_its_sockets(client, store, 
     # The client is told first, so web can navigate to its logout screen.
     for eio_sid in ("other-1", "other-2"):
         assert wire.events(eio_sid) == [SESSION_DELETE, packet.DISCONNECT]
-        assert wire.sent[eio_sid][0].data[1] == str(public_session_id(other))
+        assert wire.sent[eio_sid][0][1] == [
+            SESSION_DELETE,
+            str(public_session_id(other)),
+        ]
     assert wire.events("mine") == []
 
     wire.mark()
@@ -182,7 +191,7 @@ async def test_deleting_a_session_disconnects_all_of_its_sockets(client, store, 
 
     # Reconnecting with the deleted token is refused.
     await sio._handle_eio_message("other-1", "0")
-    assert wire.sent["other-1"][-1].packet_type == packet.CONNECT_ERROR
+    assert wire.sent["other-1"][-1][0] == packet.CONNECT_ERROR
 
 
 @pytest.mark.anyio

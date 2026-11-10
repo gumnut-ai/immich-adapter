@@ -270,7 +270,9 @@ class TestDeleteAllSessions:
         mock_session_store.get_by_user.return_value = sessions
         mock_session_store.delete_by_token.return_value = True
 
-        with patch("routers.api.sessions.close_session_sockets", new_callable=AsyncMock):
+        with patch(
+            "routers.api.sessions.close_session_sockets", new_callable=AsyncMock
+        ):
             result = await delete_all_sessions(
                 request=mock_request,
                 current_user_id=TEST_USER_ID,
@@ -306,7 +308,9 @@ class TestDeleteAllSessions:
 
         mock_session_store.get_by_user.return_value = sessions
 
-        with patch("routers.api.sessions.close_session_sockets", new_callable=AsyncMock):
+        with patch(
+            "routers.api.sessions.close_session_sockets", new_callable=AsyncMock
+        ):
             result = await delete_all_sessions(
                 request=mock_request,
                 current_user_id=TEST_USER_ID,
@@ -522,7 +526,9 @@ class TestDeleteSession:
         mock_session_store.get_user_session.return_value = session
         mock_session_store.delete_by_token.return_value = True
 
-        with patch("routers.api.sessions.close_session_sockets", new_callable=AsyncMock):
+        with patch(
+            "routers.api.sessions.close_session_sockets", new_callable=AsyncMock
+        ):
             result = await delete_session(
                 id=TEST_PUBLIC_ID,
                 request=mock_request,
