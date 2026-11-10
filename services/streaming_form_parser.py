@@ -25,6 +25,14 @@ logger = logging.getLogger(__name__)
 
 MAX_FIELD_BYTES = 64 * 1024  # 64KB — cap for non-file form fields
 
+# Caps on the non-file fields of one upload. Immich's upload DTO has eight
+# non-file fields, and the clients send at most about ten: the mobile app and
+# immich-go add the legacy deviceAssetId/deviceId, and immich-go adds a few of
+# its own. The count leaves room for older clients; the total is far above
+# what any of them send.
+MAX_FORM_FIELDS = 32
+MAX_TOTAL_FIELD_BYTES = 256 * 1024
+
 # Fields that must be present before the file part starts. Immich v3 dropped
 # deviceAssetId/deviceId from the upload DTO, so fileCreatedAt is the only
 # required pre-file field now.
@@ -63,6 +71,8 @@ class StreamingFormParser:
 
         # Results
         self._form_fields: dict[str, str] = {}
+        self._field_count = 0
+        self._field_bytes = 0
 
         # Signaling: set when file part headers are parsed (filename + content_type
         # are available). The upload thread waits on this before starting the request.
@@ -156,6 +166,12 @@ class StreamingFormParser:
             )
             # Signal that file info is available for the upload thread
             self._headers_ready.set()
+        else:
+            # Count parts rather than distinct names: a repeated name
+            # overwrites the stored value but is still parsed.
+            self._field_count += 1
+            if self._field_count > MAX_FORM_FIELDS:
+                raise ValueError(f"Form has more than {MAX_FORM_FIELDS} fields")
 
     def _on_part_data(self, data: bytes, start: int, end: int) -> None:
         chunk = data[start:end]
@@ -167,6 +183,11 @@ class StreamingFormParser:
         else:
             if len(self._current_field_data) + len(chunk) > MAX_FIELD_BYTES:
                 raise ValueError(f"Form field exceeds {MAX_FIELD_BYTES} byte limit")
+            self._field_bytes += len(chunk)
+            if self._field_bytes > MAX_TOTAL_FIELD_BYTES:
+                raise ValueError(
+                    f"Form fields exceed {MAX_TOTAL_FIELD_BYTES} bytes in total"
+                )
             self._current_field_data.extend(chunk)
 
     def _on_part_end(self) -> None:

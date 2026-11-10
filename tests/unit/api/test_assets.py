@@ -886,55 +886,57 @@ class TestUploadAsset:
         self, mock_current_user
     ):
         """Missing Content-Length header falls through to buffered path."""
-        mock_client = Mock()
-        mock_client.assets.with_raw_response.create = AsyncMock(
-            side_effect=Exception("test error")
-        )
-
         request = _make_mock_request(content_length=1024)
         # Remove content-length header to simulate missing
         del request.headers["content-length"]
         settings = _make_mock_settings(threshold=100 * 1024 * 1024)
 
         with (
-            pytest.raises(HTTPException),
-            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+            patch(
+                "routers.api.assets._limit_body", side_effect=lambda r, _limit: r
+            ) as mock_limit,
+            patch(
+                "routers.api.assets._upload_buffered", new_callable=AsyncMock
+            ) as mock_buffered,
         ):
             await upload_asset(
                 request=request,
-                client=mock_client,
+                client=Mock(),
                 current_user=mock_current_user,
                 settings=settings,
             )
 
-        request.form.assert_called_once()
+        # No usable length, so the buffered body gets the byte limit.
+        mock_limit.assert_called_once()
+        mock_buffered.assert_awaited_once()
 
     @pytest.mark.anyio
     async def test_upload_strategy_invalid_content_length_uses_buffered(
         self, mock_current_user
     ):
         """Non-numeric Content-Length falls through to buffered path."""
-        mock_client = Mock()
-        mock_client.assets.with_raw_response.create = AsyncMock(
-            side_effect=Exception("test error")
-        )
-
         request = _make_mock_request(content_length=1024)
         request.headers["content-length"] = "not-a-number"
         settings = _make_mock_settings(threshold=100 * 1024 * 1024)
 
         with (
-            pytest.raises(HTTPException),
-            patch("routers.api.assets.emit_user_event", new_callable=AsyncMock),
+            patch(
+                "routers.api.assets._limit_body", side_effect=lambda r, _limit: r
+            ) as mock_limit,
+            patch(
+                "routers.api.assets._upload_buffered", new_callable=AsyncMock
+            ) as mock_buffered,
         ):
             await upload_asset(
                 request=request,
-                client=mock_client,
+                client=Mock(),
                 current_user=mock_current_user,
                 settings=settings,
             )
 
-        request.form.assert_called_once()
+        # No usable length, so the buffered body gets the byte limit.
+        mock_limit.assert_called_once()
+        mock_buffered.assert_awaited_once()
 
     @pytest.mark.anyio
     async def test_upload_strategy_threshold_zero_forces_streaming(

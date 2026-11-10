@@ -39,6 +39,12 @@ from services.streaming_pipe import StreamingPipe
 
 logger = logging.getLogger(__name__)
 
+# How long to keep reading the request body after the Gumnut API has answered.
+# The rest of a client's body (any trailing fields and the closing boundary)
+# follows the file data at once, so a body still arriving this long after the
+# upstream response is not part of the upload.
+POST_UPLOAD_DRAIN_TIMEOUT_SECONDS = 10.0
+
 # --- Shared httpx client (lazy singleton) ---
 
 _streaming_http_client: httpx.Client | None = None
@@ -370,10 +376,21 @@ class StreamingUploadPipeline:
                 if self.refreshed_token:
                     set_refreshed_token(self.refreshed_token)
 
-                # Wait for feed + parser to complete
+                # Wait for feed + parser to complete. The asset already exists,
+                # so a body that keeps arriving is cut off (the finally block
+                # stops the feed) rather than failing the upload.
                 try:
-                    await feed_task
-                    await parser_future
+                    async with asyncio.timeout(POST_UPLOAD_DRAIN_TIMEOUT_SECONDS):
+                        await asyncio.shield(feed_task)
+                        await asyncio.shield(parser_future)
+                except TimeoutError:
+                    logger.warning(
+                        "Request body still arriving after the upload completed",
+                        extra={
+                            "asset_id": result.get("id"),
+                            "drain_timeout_seconds": POST_UPLOAD_DRAIN_TIMEOUT_SECONDS,
+                        },
+                    )
                 except Exception:
                     if self._parse_error is not None:
                         logger.exception(
