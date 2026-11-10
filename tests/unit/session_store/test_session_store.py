@@ -48,7 +48,9 @@ class TestPublicSessionId:
     def test_is_unrelated_to_the_telemetry_id(self):
         telemetry_id = session_telemetry_id(TEST_SESSION_ID)
 
-        assert telemetry_id not in public_session_id(TEST_SESSION_ID).hex
+        # Both start from a SHA-256 of the token; compare ahead of the UUID
+        # version nibble.
+        assert public_session_id(TEST_SESSION_ID).hex[:12] != telemetry_id[:12]
 
     def test_session_id_is_derived_from_its_token(self):
         session = Session(

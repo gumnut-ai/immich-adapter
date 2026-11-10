@@ -1,6 +1,6 @@
 ---
 title: "Session and Checkpoint Implementation in immich-adapter"
-last-updated: 2026-11-09
+last-updated: 2026-11-10
 ---
 
 # Session and Checkpoint Implementation in immich-adapter
@@ -51,6 +51,15 @@ Logout clears auth cookies and attempts to delete the current session; a store
 failure is logged without preventing cookie clearing. Session management can
 also remove a specific session or all other sessions for a user. The HTTP
 behavior and DTOs live in `routers/api/auth.py` and `routers/api/sessions.py`.
+
+Session management addresses a session by its public id, never its token, as
+upstream Immich does. The id is derived from the token rather than stored (the
+[storage reference](../references/session-checkpoint-reference.md#session-records)
+gives the derivation), so it is not a credential, and the login response is the
+only response that carries a token. `GET /api/sessions` marks the caller's own
+session `current` by comparing tokens server-side; `PUT` and `DELETE
+/api/sessions/{id}` search only the caller's sessions, so another user's id, or
+a token, is not found. `on_session_delete` carries the public id.
 
 ## Library and epoch isolation
 
@@ -126,7 +135,9 @@ describes the accepted checkpoint serialization and corruption boundary.
 ## Security and lifecycle notes
 
 - **JWT custody stays server-side.** Stored JWTs are encrypted; Immich clients
-  receive the stable UUID session token.
+  receive the stable UUID session token, at login only.
+- **Tokens are stored as issued.** Redis keys and the user index hold the
+  token itself; upstream Immich stores a SHA-256 of it.
 - **Updates cannot resurrect deleted sessions.** Session field and activity
   updates are conditional and atomic. If deletion wins the race, an update
   writes neither a partial hash nor an activity-index entry. Library and

@@ -292,3 +292,15 @@ async def test_sessions_stored_before_public_ids_keep_working(client, store):
     assert mine not in listed
     assert len(listed) == 2
     assert list(listed.values()).count(True) == 1
+
+
+@pytest.mark.anyio
+async def test_user_session_lookup_ignores_another_users_session_in_the_index(store):
+    """An index entry pointing at another user's session does not make it the
+    caller's."""
+    theirs = await store.get_by_token(await _login(store, user_id=OTHER_USER_ID))
+    assert theirs is not None
+    await store._redis.sadd(f"user:{USER_ID}:sessions", str(theirs.token))
+
+    assert await store.get_user_session(USER_ID, theirs.id) is None
+    assert await store.get_user_session(OTHER_USER_ID, theirs.id) == theirs

@@ -1,6 +1,6 @@
 ---
 title: "WebSocket Implementation"
-last-updated: 2026-11-09
+last-updated: 2026-11-10
 ---
 
 # WebSocket Implementation
@@ -34,7 +34,7 @@ the wildcard with an explicit origin allowlist.
 
 ## Authentication
 
-Immich clients send the same adapter session UUID used by HTTP requests:
+Immich clients send the same adapter session token used by HTTP requests:
 
 | Client path | Credential location |
 |-------------|---------------------|
@@ -44,7 +44,7 @@ Immich clients send the same adapter session UUID used by HTTP requests:
 
 The connect handler:
 
-1. extracts a session UUID from the supported header/cookie precedence;
+1. extracts a session token from the supported header/cookie precedence;
 2. rejects a missing or malformed token;
 3. loads the session from Redis and rejects an expired or unknown session;
 4. joins the socket to the user and session rooms;

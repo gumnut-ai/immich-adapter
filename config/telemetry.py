@@ -52,8 +52,9 @@ def redact_sensitive_cdn_text(text: str) -> str:
 # asset or user id by shape alone. Redact it only where the context marks it as
 # a session:
 # - text: the Redis keys built from it (`session:<token>`,
-#   `session:<token>:checkpoints`), the `/api/sessions/<token>` routes, a
-#   `Bearer <token>` credential, the web client's `immich_access_token`
+#   `session:<token>:checkpoints`), the `/api/sessions/<id>` routes (which take
+#   a public session id, but a page loaded before ids existed still sends a
+#   token), a `Bearer <token>` credential, the web client's `immich_access_token`
 #   cookie, and the session index commands that redis-py quotes in pipeline
 #   errors (`SREM user:<id>:sessions <token>`,
 #   `ZADD sessions:by_updated_at <score> <token>`);
