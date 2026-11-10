@@ -1,6 +1,6 @@
 ---
 title: "Immich Adapter Architecture"
-last-updated: 2026-11-09
+last-updated: 2026-11-10
 ---
 
 # Immich Adapter Architecture
@@ -178,8 +178,9 @@ traffic. Uptime probes and other unknown callers remain untagged. The raw
 User-Agent is recorded as the high-cardinality `user_agent.original` span
 attribute, not as a Sentry tag.
 
-The Sentry event hooks redact signed CDN credentials and filenames from error
-event values. HTTP client transaction spans likewise redact CDN query strings,
+The Sentry event and log hooks redact signed CDN credentials and filenames from
+error event values and from log bodies and attributes. HTTP client transaction
+spans likewise redact CDN query strings,
 URLs, and descriptions, and add `server.address` (and a valid
 `server.port`) for upstream correlation. Error, transaction and log hooks
 also replace session tokens with a non-reversible session telemetry id and drop

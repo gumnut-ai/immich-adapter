@@ -48,6 +48,22 @@ def redact_sensitive_cdn_text(text: str) -> str:
     return redact_sensitive_cdn_query(text)
 
 
+def redact_sensitive_cdn_values(value: Any) -> Any:
+    """Return a JSON-like telemetry payload with signed-CDN credentials and
+    filenames redacted in every string.
+
+    Builds new containers rather than mutating: log attributes reference the
+    caller's own `extra` objects.
+    """
+    if isinstance(value, str):
+        return redact_sensitive_cdn_text(value)
+    if isinstance(value, dict):
+        return {key: redact_sensitive_cdn_values(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_sensitive_cdn_values(item) for item in value]
+    return value
+
+
 # A session's bearer token is its UUID, so it is indistinguishable from an
 # asset or user id by shape alone. Redact it only where the context marks it as
 # a session:
