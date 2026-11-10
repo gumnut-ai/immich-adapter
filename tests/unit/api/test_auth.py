@@ -168,17 +168,17 @@ class TestPostLogout:
         assert result.successful is True
 
     @pytest.mark.anyio
-    async def test_logout_emits_websocket_event(
+    async def test_logout_closes_the_sessions_sockets(
         self, mock_request, mock_response, mock_session_store
     ):
-        """Test that logout emits on_session_delete WebSocket event."""
+        """Test that logout closes the session's sockets."""
         token = "test-session-token"
         mock_request.state.session_token = token
         mock_request.cookies = {}
 
         with patch(
             "routers.api.auth.close_session_sockets", new_callable=AsyncMock
-        ) as mock_emit:
+        ) as mock_close:
             await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -186,7 +186,7 @@ class TestPostLogout:
                 session_store=mock_session_store,
             )
 
-            mock_emit.assert_called_once_with(token)
+            mock_close.assert_called_once_with(token)
 
     @pytest.mark.anyio
     async def test_logout_websocket_error_does_not_fail_logout(

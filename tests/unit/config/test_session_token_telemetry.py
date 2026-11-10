@@ -34,7 +34,14 @@ from routers.api.sync.routes import send_sync_ack
 from routers.immich_models import SyncAckSetDto, SyncEntityType
 from services.checkpoint_store import CheckpointStore
 from services.session_store import SessionStore, SessionStoreError
-from services.websockets import WebSocketEvent, connect, emit_session_event, sio
+from services.websockets import (
+    WebSocketEvent,
+    _sid_to_user,
+    close_session_sockets,
+    connect,
+    emit_session_event,
+    sio,
+)
 
 
 class _CaptureTransport(Transport):
@@ -248,6 +255,51 @@ async def test_websocket_session_room_logs_carry_no_token(telemetry, redis):
     assert token not in emitted
     assert _records_with(token) == []
     assert token not in str(sorted(joined_rooms))
+
+
+@pytest.mark.anyio
+async def test_closing_a_sessions_sockets_logs_carry_no_token(telemetry, redis):
+    """Deleting a session disconnects its sockets: python-socketio logs each
+    disconnect and room exit at INFO, and a failed disconnect is logged with
+    its traceback and stack locals. None of them may hold the token."""
+    store = SessionStore(redis)
+    token = await _create_session(store)
+    environ = {"HTTP_X_IMMICH_USER_TOKEN": token}
+    real_disconnect = sio.disconnect
+    failed: list[str] = []
+
+    async def disconnect_failing_once(sid: str) -> None:
+        if not failed:
+            failed.append(sid)
+            raise RuntimeError("transport closed")
+        await real_disconnect(sid)
+
+    with (
+        patch(
+            "services.websockets.get_session_store",
+            AsyncMock(return_value=store),
+        ),
+        patch.object(sio.eio, "send", AsyncMock()),
+        patch.object(sio.eio, "send_packet", AsyncMock()),
+    ):
+        try:
+            for eio_sid in ("eio-1", "eio-2"):
+                await sio._handle_eio_connect(eio_sid, environ)
+                await sio._handle_eio_message(eio_sid, "0")
+            with patch.object(sio, "disconnect", side_effect=disconnect_failing_once):
+                await close_session_sockets(token)
+        finally:
+            for eio_sid in ("eio-1", "eio-2"):
+                await sio._handle_eio_disconnect(eio_sid, sio.reason.CLIENT_DISCONNECT)
+            _sid_to_user.clear()
+
+    emitted = telemetry.flush()
+
+    assert "Disconnecting" in emitted
+    assert "Failed to disconnect a deleted session's socket" in emitted
+    assert "RuntimeError" in telemetry.stdout.getvalue()
+    assert token not in emitted
+    assert _records_with(token) == []
 
 
 def test_session_route_in_access_log_carries_no_token(telemetry):

@@ -322,10 +322,10 @@ class TestDeleteAllSessions:
         mock_session_store.delete_by_token.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_delete_all_sessions_emits_websocket_events(
+    async def test_delete_all_sessions_closes_other_sessions_sockets(
         self, mock_request, mock_session_store
     ):
-        """Test that delete_all_sessions emits on_session_delete for each deleted session."""
+        """Test that delete_all_sessions closes each deleted session's sockets."""
         now = datetime.now(UTC)
 
         sessions = [
@@ -358,15 +358,15 @@ class TestDeleteAllSessions:
 
         with patch(
             "routers.api.sessions.close_session_sockets", new_callable=AsyncMock
-        ) as mock_emit:
+        ) as mock_close:
             await delete_all_sessions(
                 request=mock_request,
                 current_user_id=TEST_USER_ID,
                 session_store=mock_session_store,
             )
 
-            # Should emit for the deleted session (not the current one)
-            mock_emit.assert_called_once_with(str(TEST_SESSION_TOKEN_2))
+            # Should close the deleted session's sockets, not the current one's
+            mock_close.assert_called_once_with(str(TEST_SESSION_TOKEN_2))
 
 
 class TestUpdateSession:
@@ -563,10 +563,10 @@ class TestDeleteSession:
         assert "Not found" in exc_info.value.detail
 
     @pytest.mark.anyio
-    async def test_delete_session_emits_websocket_event(
+    async def test_delete_session_closes_its_sockets(
         self, mock_request, mock_session_store
     ):
-        """Test that delete_session emits on_session_delete event."""
+        """Test that delete_session closes the deleted session's sockets."""
         now = datetime.now(UTC)
         session = Session(
             token=TEST_SESSION_TOKEN,
@@ -585,7 +585,7 @@ class TestDeleteSession:
 
         with patch(
             "routers.api.sessions.close_session_sockets", new_callable=AsyncMock
-        ) as mock_emit:
+        ) as mock_close:
             await delete_session(
                 id=TEST_PUBLIC_ID,
                 request=mock_request,
@@ -593,7 +593,7 @@ class TestDeleteSession:
                 session_store=mock_session_store,
             )
 
-            mock_emit.assert_called_once_with(str(TEST_SESSION_TOKEN))
+            mock_close.assert_called_once_with(str(TEST_SESSION_TOKEN))
 
     @pytest.mark.anyio
     async def test_delete_session_websocket_error_does_not_fail_deletion(

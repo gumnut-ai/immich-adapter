@@ -356,23 +356,12 @@ async def emit_session_event(
 async def close_session_sockets(session_token: str) -> None:
     """End a deleted session's Socket.IO connections.
 
-    Emits ``on_session_delete`` to the session's room, then disconnects every
-    socket in it. The payload is the session's public id, as in upstream
-    Immich, never its token. The event goes first so the web client can run
-    its logout navigation before the disconnect arrives.
-
-    Disconnecting removes a socket from all of its rooms, including the user
-    room, so a deleted session stops receiving the user's events even when its
-    client ignores ``on_session_delete``. Leaving only the session room would
-    not do that. A server-initiated disconnect is not retried by the Immich
-    clients, and a reconnect with the deleted token is rejected by ``connect``.
-
-    Only sockets connected to this process are reached: the server uses the
-    default in-memory client manager.
-
-    Best-effort, like ``emit_session_event``: a failed disconnect is logged
-    and the remaining sockets are still disconnected, since the session is
-    already deleted and logout or session deletion must not fail here.
+    Emits ``on_session_delete`` to the session's room, carrying the session's
+    public id (never its token), then disconnects every socket in the room.
+    Disconnecting, rather than leaving the session room, is what also removes
+    a socket from the user room. Best-effort: a failed disconnect is logged
+    and the rest still run. See docs/architecture/websocket-implementation.md
+    § Session revocation for client behavior and limits.
     """
     await emit_session_event(
         WebSocketEvent.SESSION_DELETE,

@@ -68,13 +68,15 @@ Event payload and trigger details deliberately live in the [event reference](../
 
 ## Session revocation
 
-Logout, `DELETE /api/sessions` and `DELETE /api/sessions/{id}` delete the session from Redis and then call `close_session_sockets` for each deleted session. It emits `on_session_delete` first, so the web client can run its logout navigation, and then disconnects every socket in the session room. A disconnect removes the socket from all of its rooms, including the user room, so the deleted session stops receiving the user's events even if its client ignores `on_session_delete`. Removing a socket from the session room alone would leave it in the user room.
+Logout, `DELETE /api/sessions` and `DELETE /api/sessions/{id}` delete the session from Redis and then call `close_session_sockets` for each deleted session. It emits `on_session_delete` first, so the web client can run its logout navigation, and then disconnects every socket in the session room. A disconnect removes the socket from all of its rooms, including the user room, so the deleted session stops receiving the user's events even if its client ignores `on_session_delete`; leaving only the session room would not.
 
 Neither Immich client retries a server-initiated disconnect: web reconnects after the next login, and mobile builds a new socket when it next connects. A reconnect with the deleted token is rejected by the connect handler. Deleting all other sessions never targets the caller's own session, so the caller's sockets stay connected.
 
 OAuth login creates sessions without a Redis TTL, so a session does not expire on its own while a socket is connected; a session created with an expiry would need its own disconnect.
 
 The server uses python-socketio's default in-memory client manager, so revocation, like every emit, reaches only sockets connected to the process that handled the request.
+
+A socket whose connect looked up the session just before it was deleted can join its rooms after the sweep and keep receiving the user's events until it disconnects. The window is the connect handler's single Redis read; it is accepted rather than closed with a second lookup.
 
 ## Delivery and failure semantics
 
@@ -92,4 +94,4 @@ Bulk writes that return no updated asset payload normally skip an extra read sol
 
 ## Verification
 
-`tests/unit/api/test_websockets.py` covers credential precedence, connection rejection/acceptance, room membership, disconnect cleanup, serialization, targeting, and swallowed transport failures. `tests/unit/api/test_session_socket_revocation.py` drives each revocation route against the real Socket.IO room manager and checks that a deleted session's sockets receive no later user events while the caller's do. Runtime protocol configuration is pinned separately by `tests/unit/config/test_uvicorn_ws_config.py`.
+`tests/unit/api/test_websockets.py` covers credential precedence, connection rejection/acceptance, room membership, disconnect cleanup, serialization, targeting, and swallowed transport failures. `tests/unit/api/test_session_ids.py` drives each revocation route against the real Socket.IO room manager and checks that a deleted session's sockets receive no later user events while the caller's do. Runtime protocol configuration is pinned separately by `tests/unit/config/test_uvicorn_ws_config.py`.
