@@ -19,6 +19,7 @@ from routers.immich_models import (
     SyncAssetV2,
 )
 from services.session_store import (
+    Session,
     SessionDataError,
     SessionStoreError,
     get_session_store,
@@ -144,6 +145,26 @@ def _extract_session_token(environ: dict[str, Any]) -> str | None:
     return None
 
 
+async def _load_session(sid: str, session_token: str) -> Session | None:
+    """Look up a connecting socket's session, logging why it is refused."""
+    try:
+        session_store = await get_session_store()
+        session = await session_store.get_by_token(session_token)
+    except SessionStoreError, SessionDataError:
+        logger.exception(
+            "WebSocket auth failed - session lookup error",
+            extra={"sid": sid, "session_id": session_telemetry_id(session_token)},
+        )
+        return None
+
+    if not session:
+        logger.warning(
+            "WebSocket auth failed - session not found",
+            extra={"sid": sid, "session_id": session_telemetry_id(session_token)},
+        )
+    return session
+
+
 @sio.event
 async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
     """
@@ -165,22 +186,8 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
         )
         return False  # Reject connection
 
-    # Look up session in Redis
-    try:
-        session_store = await get_session_store()
-        session = await session_store.get_by_token(session_token)
-    except SessionStoreError, SessionDataError:
-        logger.exception(
-            "WebSocket auth failed - session lookup error",
-            extra={"sid": sid, "session_id": session_telemetry_id(session_token)},
-        )
-        return False
-
+    session = await _load_session(sid, session_token)
     if not session:
-        logger.warning(
-            "WebSocket auth failed - session not found",
-            extra={"sid": sid, "session_id": session_telemetry_id(session_token)},
-        )
         return False  # Reject connection
 
     # Join user room and session room, and track session
@@ -188,6 +195,15 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
     await sio.enter_room(sid, user_id)
     await sio.enter_room(sid, _session_room(str(session.token)))
     _sid_to_user[sid] = user_id
+
+    # The session may have been deleted after the lookup above, and its
+    # sockets closed before this one joined the session room. Reading it again
+    # after joining means a deletion either finds this socket in the room or
+    # is seen here. The socket is already tracked, so a disconnect during this
+    # read clears it.
+    if not await _load_session(sid, session_token):
+        _sid_to_user.pop(sid, None)
+        return False  # Rejecting also removes the socket from its rooms
 
     logger.debug(
         "WebSocket authenticated",

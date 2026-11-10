@@ -49,7 +49,8 @@ The connect handler:
 3. loads the session from Redis and rejects an expired or unknown session;
 4. joins the socket to the user and session rooms;
 5. records the socket mapping;
-6. emits the current server version to the connecting client.
+6. loads the session again and rejects the socket if it was deleted in the meantime (see [Session revocation](#session-revocation));
+7. emits the current server version to the connecting client.
 
 The client never sends the encrypted backend JWT to Socket.IO. Session custody and refresh are described in [Session and Checkpoint Implementation](session-checkpoint-implementation.md).
 
@@ -74,9 +75,9 @@ Neither Immich client retries a server-initiated disconnect: web reconnects afte
 
 OAuth login creates sessions without a Redis TTL, so a session does not expire on its own while a socket is connected; a session created with an expiry would need its own disconnect.
 
-The server uses python-socketio's default in-memory client manager, so revocation, like every emit, reaches only sockets connected to the process that handled the request.
+The connect handler reads the session again after joining its rooms, so a socket that connects while its session is being deleted is either closed with the session room or refused.
 
-A socket whose connect looked up the session just before it was deleted can join its rooms after the sweep and keep receiving the user's events until it disconnects. The window is the connect handler's single Redis read; it is accepted rather than closed with a second lookup.
+The server uses python-socketio's default in-memory client manager, so revocation, like every emit, reaches only sockets connected to the process that handled the request, not sockets connected to another instance of the service.
 
 ## Delivery and failure semantics
 

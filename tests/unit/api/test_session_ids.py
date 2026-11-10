@@ -29,7 +29,12 @@ from routers.api.sessions import router as sessions_router
 from routers.middleware.auth_middleware import AuthMiddleware
 from routers.utils.current_user import get_current_user_id
 from routers.utils.gumnut_client import get_authenticated_gumnut_client_optional
-from services.session_store import SessionStore, get_session_store, public_session_id
+from services.session_store import (
+    Session,
+    SessionStore,
+    get_session_store,
+    public_session_id,
+)
 from services.websockets import (
     WebSocketEvent,
     _sid_to_user,
@@ -353,13 +358,17 @@ class Wire:
         # Room emits encode once and hand engine.io a ready message packet.
         await self.send(eio_sid, eio_pkt.data)
 
-    async def open(self, eio_sid: str, token: str) -> None:
-        """Open a connection the way the mobile client does, and assert the
-        server accepted it."""
+    async def connect(self, eio_sid: str, token: str) -> int:
+        """Connect the way the mobile client does; return the packet type the
+        server answered with."""
         self.opened.append(eio_sid)
         await sio._handle_eio_connect(eio_sid, {"HTTP_X_IMMICH_USER_TOKEN": token})
         await sio._handle_eio_message(eio_sid, "0")
-        assert self.sent[eio_sid][-1][0] == packet.CONNECT
+        return self.sent[eio_sid][-1][0]
+
+    async def open(self, eio_sid: str, token: str) -> None:
+        """Connect, and assert the server accepted the connection."""
+        assert await self.connect(eio_sid, token) == packet.CONNECT
 
     def events(self, eio_sid: str) -> list[Any]:
         """Event names, and `DISCONNECT`, sent to a connection."""
@@ -376,6 +385,8 @@ class Wire:
 @pytest.fixture
 async def wire(store: SessionStore) -> AsyncIterator[Wire]:
     recorder = Wire()
+    # Other tests call the connect handler directly and leave sockets tracked.
+    _sid_to_user.clear()
     with (
         patch.object(sio.eio, "send", side_effect=recorder.send),
         patch.object(sio.eio, "send_packet", side_effect=recorder.send_packet),
@@ -516,3 +527,62 @@ async def test_a_failed_disconnect_does_not_stop_the_others(store, wire, caplog)
         if record.name == "services.websockets" and record.levelno >= logging.WARNING
     ]
     assert getattr(warning, "session_id") == session_telemetry_id(token)
+
+
+@pytest.mark.anyio
+async def test_a_session_deleted_while_its_socket_connects_is_refused(
+    client, store, wire
+):
+    """The session is deleted after the connect handler's lookup returns but
+    before the socket joins its rooms, so the deletion finds no socket to
+    close; the connection must still be refused."""
+    mine = await _login(store)
+    other = await _login(store)
+    await wire.open("mine", mine)
+    read_session = store.get_by_token
+    deleted = False
+
+    async def delete_after_first_read(token: str) -> Session | None:
+        nonlocal deleted
+        session = await read_session(token)
+        if token == other and not deleted:
+            deleted = True
+            response = await client.delete(
+                f"/api/sessions/{public_session_id(other)}", headers=_bearer(mine)
+            )
+            assert response.status_code == 204
+        return session
+
+    with patch.object(store, "get_by_token", side_effect=delete_after_first_read):
+        answer = await wire.connect("other", other)
+
+    assert deleted
+    assert answer == packet.CONNECT_ERROR
+    assert len(_sid_to_user) == 1  # only the caller's socket is tracked
+    await _assert_user_events_reach(wire, "mine")
+    assert wire.events("other") == []
+
+
+@pytest.mark.anyio
+async def test_a_socket_that_drops_while_its_session_is_read_again_is_untracked(
+    store, wire
+):
+    mine = await _login(store)
+    other = await _login(store)
+    await wire.open("mine", mine)
+    read_session = store.get_by_token
+    reads = 0
+
+    async def drop_during_second_read(token: str) -> Session | None:
+        nonlocal reads
+        if token == other:
+            reads += 1
+            if reads == 2:
+                await sio._handle_eio_disconnect("other", sio.reason.CLIENT_DISCONNECT)
+        return await read_session(token)
+
+    with patch.object(store, "get_by_token", side_effect=drop_during_second_read):
+        await wire.connect("other", other)
+
+    assert reads == 2
+    assert len(_sid_to_user) == 1  # only the caller's socket is tracked
