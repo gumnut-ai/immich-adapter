@@ -419,16 +419,20 @@ class SessionStore:
         orphaned_tokens = []
 
         for session_token, data in zip(session_token_list, results):
-            if data:
-                try:
-                    session_uuid = UUID(session_token)
-                    sessions.append(Session.from_dict(session_uuid, data))
-                except SessionDataError, ValueError:
-                    # Treat corrupted sessions as orphaned
-                    orphaned_tokens.append(session_token)
-            else:
+            if not data:
                 # Session expired via TTL, mark for cleanup
                 orphaned_tokens.append(session_token)
+                continue
+            try:
+                session = Session.from_dict(UUID(session_token), data)
+            except SessionDataError, ValueError:
+                # Treat corrupted sessions as orphaned
+                orphaned_tokens.append(session_token)
+                continue
+            # Never hand out another user's session, even if the index names
+            # it. Not cleaned up here: its activity index entry is its owner's.
+            if session.user_id == user_id:
+                sessions.append(session)
 
         # Clean up orphaned index entries
         if orphaned_tokens:
@@ -442,7 +446,7 @@ class SessionStore:
         Searches only that user's sessions, so another user's id is not found.
         """
         for session in await self.get_by_user(user_id):
-            if session.id == session_id and session.user_id == user_id:
+            if session.id == session_id:
                 return session
         return None
 

@@ -24,12 +24,12 @@ from services.session_store import Session
 TEST_SESSION_UUID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
 
-def make_session(session_id: UUID, jwt: str = "decrypted-jwt-token") -> Session:
+def make_session(session_token: UUID, jwt: str = "decrypted-jwt-token") -> Session:
     """Build a test Session whose get_jwt() returns the given decrypted JWT."""
     now = datetime.now(UTC)
     session = Session(
-        token=session_id,
-        user_id=f"user_{session_id}",
+        token=session_token,
+        user_id=f"user_{session_token}",
         library_id="lib_456",
         stored_jwt="encrypted-jwt",
         device_type="iOS",

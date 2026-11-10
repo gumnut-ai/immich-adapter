@@ -21,12 +21,8 @@ from routers.utils.gumnut_client import (
     get_authenticated_gumnut_client,
     get_authenticated_gumnut_client_optional,
 )
-from services.session_store import (
-    SessionStore,
-    get_session_store,
-    public_session_id,
-)
-from services.websockets import WebSocketEvent, emit_session_event
+from services.session_store import SessionStore, get_session_store
+from services.websockets import emit_session_delete
 
 logger = logging.getLogger(__name__)
 
@@ -92,11 +88,7 @@ async def post_logout(
                 extra={"error": str(e)},
                 exc_info=True,
             )
-        await emit_session_event(
-            WebSocketEvent.SESSION_DELETE,
-            session_token,
-            str(public_session_id(session_token)),
-        )
+        await emit_session_delete(session_token)
 
     response.delete_cookie(ImmichCookie.ACCESS_TOKEN.value)
     response.delete_cookie(ImmichCookie.AUTH_TYPE.value)

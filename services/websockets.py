@@ -22,6 +22,7 @@ from services.session_store import (
     SessionDataError,
     SessionStoreError,
     get_session_store,
+    public_session_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,8 +95,8 @@ class AssetEditReadyV2Payload(BaseModel):
     edit: list[SyncAssetEditV1]
 
 
-# Maps socket ID -> (user_id, public session id) for disconnect cleanup
-_sid_to_user: dict[str, tuple[str, str]] = {}
+# Maps socket ID -> user_id for disconnect cleanup
+_sid_to_user: dict[str, str] = {}
 
 
 def _session_room(session_token: str) -> str:
@@ -186,7 +187,7 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool | None:
     user_id = session.user_id
     await sio.enter_room(sid, user_id)
     await sio.enter_room(sid, _session_room(str(session.token)))
-    _sid_to_user[sid] = (user_id, str(session.id))
+    _sid_to_user[sid] = user_id
 
     logger.debug(
         "WebSocket authenticated",
@@ -226,11 +227,7 @@ def connect_error(data: Any) -> None:
 @sio.event
 async def disconnect(sid: str) -> None:
     """Handle WebSocket disconnection."""
-    ids = _sid_to_user.pop(sid, None)
-    if ids is None:
-        user_id = None
-    else:
-        user_id, _ = ids
+    user_id = _sid_to_user.pop(sid, None)
     logger.debug(
         "WebSocket disconnected",
         extra={"sid": sid, "user_id": user_id},
@@ -337,7 +334,7 @@ async def emit_session_event(
         event: The event type (from WebSocketEvent enum)
         session_token: The token of the session to reach, which names its room
         payload: Event data - Pydantic model (auto-serialized), string, list, or None.
-            Never the session token; SESSION_DELETE carries the public session id.
+            Never the session token.
 
     Raises:
         pydantic.ValidationError: If payload is a Pydantic model that fails serialization
@@ -354,3 +351,16 @@ async def emit_session_event(
             },
             exc_info=True,
         )
+
+
+async def emit_session_delete(session_token: str) -> None:
+    """Tell a session's clients it was deleted (``on_session_delete``).
+
+    The payload is the session's public id, as in upstream Immich, never its
+    token. Best-effort, like ``emit_session_event``.
+    """
+    await emit_session_event(
+        WebSocketEvent.SESSION_DELETE,
+        session_token,
+        str(public_session_id(session_token)),
+    )

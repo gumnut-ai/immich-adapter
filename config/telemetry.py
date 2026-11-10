@@ -53,8 +53,8 @@ def redact_sensitive_cdn_text(text: str) -> str:
 # a session:
 # - text: the Redis keys built from it (`session:<token>`,
 #   `session:<token>:checkpoints`), the `/api/sessions/<id>` routes (which take
-#   a public session id, but a page loaded before ids existed still sends a
-#   token), a `Bearer <token>` credential, the web client's `immich_access_token`
+#   a public session id, but a page that listed sessions by token before that
+#   may still send one), a `Bearer <token>` credential, the web client's `immich_access_token`
 #   cookie, and the session index commands that redis-py quotes in pipeline
 #   errors (`SREM user:<id>:sessions <token>`,
 #   `ZADD sessions:by_updated_at <score> <token>`);

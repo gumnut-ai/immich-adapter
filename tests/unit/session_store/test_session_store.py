@@ -380,7 +380,7 @@ class TestSessionStoreCreate:
 
 
 class TestSessionStoreGet:
-    """Tests for SessionStore.get() and get_by_token()."""
+    """Tests for SessionStore.get_by_token()."""
 
     @pytest.fixture
     def mock_redis(self):
@@ -426,7 +426,7 @@ class TestSessionStoreGet:
 
     @pytest.mark.anyio
     async def test_get_by_token(self, session_store, mock_redis):
-        """Test getting session by ID."""
+        """Test getting session by token."""
         mock_redis.hgetall.return_value = {
             "user_id": "user_123",
             "library_id": "lib_456",

@@ -247,7 +247,7 @@ People views refresh their thumbnail cache key on receipt.
 never its token.
 
 **Adapter timing**: Logout and session-deletion requests await
-`emit_session_event` before returning the HTTP response.
+`emit_session_delete` before returning the HTTP response.
 
 ---
 

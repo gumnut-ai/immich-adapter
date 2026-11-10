@@ -14,8 +14,7 @@ from routers.api.auth import post_logout, validate_access_token
 from routers.api.auth import router as auth_router
 from routers.middleware.auth_middleware import AuthMiddleware
 from routers.utils.cookies import ImmichCookie
-from services.session_store import Session, SessionStore, public_session_id
-from services.websockets import WebSocketEvent
+from services.session_store import Session, SessionStore
 
 
 class TestPostLogout:
@@ -48,7 +47,7 @@ class TestPostLogout:
         mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_delete", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -70,7 +69,7 @@ class TestPostLogout:
             ImmichCookie.ACCESS_TOKEN.value: "cookie-session-token",
         }
 
-        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_delete", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -90,7 +89,7 @@ class TestPostLogout:
         mock_request.state = Mock(spec=[])  # No session_token attribute
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_delete", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -136,7 +135,7 @@ class TestPostLogout:
         mock_request.state.session_token = "test-session-token"
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_delete", new_callable=AsyncMock):
             await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -157,7 +156,7 @@ class TestPostLogout:
         mock_request.state = Mock(spec=[])
         mock_request.cookies = {}
 
-        with patch("routers.api.auth.emit_session_event", new_callable=AsyncMock):
+        with patch("routers.api.auth.emit_session_delete", new_callable=AsyncMock):
             result = await post_logout(
                 request=mock_request,
                 response=mock_response,
@@ -172,14 +171,13 @@ class TestPostLogout:
     async def test_logout_emits_websocket_event(
         self, mock_request, mock_response, mock_session_store
     ):
-        """Logout emits on_session_delete to the session's room, carrying its
-        public id rather than its token."""
-        token = "550e8400-e29b-41d4-a716-446655440000"
+        """Test that logout emits on_session_delete WebSocket event."""
+        token = "test-session-token"
         mock_request.state.session_token = token
         mock_request.cookies = {}
 
         with patch(
-            "routers.api.auth.emit_session_event", new_callable=AsyncMock
+            "routers.api.auth.emit_session_delete", new_callable=AsyncMock
         ) as mock_emit:
             await post_logout(
                 request=mock_request,
@@ -188,12 +186,7 @@ class TestPostLogout:
                 session_store=mock_session_store,
             )
 
-            mock_emit.assert_called_once()
-            call = mock_emit.call_args
-            assert call[0][0] == WebSocketEvent.SESSION_DELETE
-            assert call[0][1] == token
-            assert call[0][2] == str(public_session_id(token))
-            assert call[0][2] != token
+            mock_emit.assert_called_once_with(token)
 
     @pytest.mark.anyio
     async def test_logout_websocket_error_does_not_fail_logout(
@@ -204,7 +197,7 @@ class TestPostLogout:
         mock_request.cookies = {}
 
         # Patch the underlying emit so the SocketIOError originates *inside*
-        # emit_session_event (which now swallows it centrally).
+        # emit_session_event (which swallows it centrally).
         with patch(
             "services.websockets._emit_event",
             new_callable=AsyncMock,

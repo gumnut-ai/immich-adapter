@@ -24,11 +24,11 @@ TEST_ENCRYPTED_JWT = "gAAAAABh..."  # Mock encrypted JWT
 TEST_JWT = "test.jwt.token"
 
 
-def create_test_session(session_id: UUID = TEST_SESSION_ID) -> Session:
+def create_test_session(session_token: UUID = TEST_SESSION_ID) -> Session:
     """Create a test session."""
     now = datetime.now(UTC)
     return Session(
-        token=session_id,
+        token=session_token,
         user_id=TEST_USER_UUID,
         library_id="lib_456",
         stored_jwt=TEST_ENCRYPTED_JWT,

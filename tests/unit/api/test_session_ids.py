@@ -154,7 +154,7 @@ async def test_revoking_other_sessions_keeps_the_callers_session(client, store):
     mine = await _login(store)
     other = await _login(store)
 
-    with patch("routers.api.sessions.emit_session_event", new_callable=AsyncMock):
+    with patch("routers.api.sessions.emit_session_delete", new_callable=AsyncMock):
         response = await client.delete("/api/sessions", headers=_bearer(mine))
 
     assert response.status_code == 204
@@ -263,9 +263,10 @@ async def test_updating_a_listed_id_updates_that_session(client, store):
 
 
 @pytest.mark.anyio
-async def test_sessions_stored_before_public_ids_keep_working(client, store):
-    """A session hash written by an earlier adapter version needs no migration:
-    its token still authenticates and it is listed by a public id."""
+async def test_session_records_from_before_public_ids_keep_working(client, store):
+    """A session hash in the exact format the adapter wrote before public ids
+    needs no migration: its token still authenticates and it is listed by a
+    public id."""
     mine = await _login(store)
     token = "3f2c1b7e-9a4d-4e5f-8b6a-1c2d3e4f5a6b"
     now = datetime.now(UTC).isoformat()
@@ -281,7 +282,11 @@ async def test_sessions_stored_before_public_ids_keep_working(client, store):
             "app_version": "1.94.0",
             "created_at": now,
             "updated_at": now,
+            "sync_epoch": "0",
+            "client_epoch": "0",
             "is_pending_sync_reset": "0",
+            "library_checked_at": "0.0",
+            "library_from_choice": "0",
         },
     )
     await redis.sadd(f"user:{USER_ID}:sessions", token)
@@ -295,12 +300,13 @@ async def test_sessions_stored_before_public_ids_keep_working(client, store):
 
 
 @pytest.mark.anyio
-async def test_user_session_lookup_ignores_another_users_session_in_the_index(store):
-    """An index entry pointing at another user's session does not make it the
-    caller's."""
+async def test_another_users_session_in_the_index_is_not_the_callers(store):
+    """An index entry naming another user's session does not make it the
+    caller's, for listing, revoking or lookup by id."""
     theirs = await store.get_by_token(await _login(store, user_id=OTHER_USER_ID))
     assert theirs is not None
     await store._redis.sadd(f"user:{USER_ID}:sessions", str(theirs.token))
 
+    assert await store.get_by_user(USER_ID) == []
     assert await store.get_user_session(USER_ID, theirs.id) is None
     assert await store.get_user_session(OTHER_USER_ID, theirs.id) == theirs

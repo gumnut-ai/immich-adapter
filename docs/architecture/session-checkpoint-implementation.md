@@ -52,14 +52,13 @@ failure is logged without preventing cookie clearing. Session management can
 also remove a specific session or all other sessions for a user. The HTTP
 behavior and DTOs live in `routers/api/auth.py` and `routers/api/sessions.py`.
 
-Session management addresses a session by its public id, never its token, as
-upstream Immich does. The id is derived from the token rather than stored (the
-[storage reference](../references/session-checkpoint-reference.md#session-records)
-gives the derivation), so it is not a credential, and the login response is the
-only response that carries a token. `GET /api/sessions` marks the caller's own
-session `current` by comparing tokens server-side; `PUT` and `DELETE
-/api/sessions/{id}` search only the caller's sessions, so another user's id, or
-a token, is not found. `on_session_delete` carries the public id.
+Session management addresses a session by its
+[public id](../references/session-checkpoint-reference.md#session-records), never
+its token, as upstream Immich does, and the login response is the only response
+that carries a token. `GET /api/sessions` marks the caller's own session
+`current` by comparing tokens server-side; `PUT` and `DELETE /api/sessions/{id}`
+search only the caller's sessions, so another user's id, or a token, is not
+found. `on_session_delete` carries the public id.
 
 ## Library and epoch isolation
 

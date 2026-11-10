@@ -59,7 +59,8 @@ Callers use the public wrappers in `services/websockets.py`:
 
 - `emit_user_event` — one event to a user's room;
 - `emit_user_event_per_id` — concurrent one-ID events for wire contracts that require them;
-- `emit_session_event` — one event to a session room.
+- `emit_session_event` — one event to a session room;
+- `emit_session_delete` — `on_session_delete` to a session room, carrying the session's public id rather than its token.
 
 Pydantic payloads are serialized with `model_dump(mode="json")`, so UUIDs, datetimes, and enums use their JSON forms. Callers should pass typed DTOs or the explicitly supported scalar/list shapes instead of pre-serializing arbitrary JSON.
 
